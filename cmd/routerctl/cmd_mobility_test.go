@@ -16,6 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
@@ -139,6 +140,9 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 		"--mobility-prefix", "10.77.70.0/24",
 		"--owned-address", "10.77.70.22/32",
 		"--rr-set", "pve-rrs",
+		"--direct-peer-group", "pve-fou-direct-leaves",
+		"--rr-local-preference", "110",
+		"--direct-local-preference", "240",
 		"--policy", "pve-fou-leaves",
 		"--join-audience", "pve-private-underlay",
 		"--join-nonce", "pve-leaf-b-0001",
@@ -171,8 +175,39 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 	if claim.JoinHMAC == "" || claim.JoinHMAC == "EXAMPLE_HMAC_SHA256_HEX" {
 		t.Fatalf("claim.JoinHMAC = %q", claim.JoinHMAC)
 	}
-	if claim.TunnelAddress != "10.255.10.22/32" || len(claim.Mobility.OwnedAddresses) != 1 || claim.Mobility.OwnedAddresses[0] != "10.77.70.22/32" {
+	if claim.TunnelAddress != "10.255.10.22/32" || !claim.DirectMesh || len(claim.Mobility.OwnedAddresses) != 1 || claim.Mobility.OwnedAddresses[0] != "10.77.70.22/32" {
 		t.Fatalf("claim = %#v", claim)
+	}
+	var transport api.SAMTransportProfileSpec
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != "pve-leaf-b" {
+			continue
+		}
+		var err error
+		transport, err = resource.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatalf("SAMTransportProfile spec: %v", err)
+		}
+	}
+	if len(transport.PeersFrom) != 2 || transport.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" || transport.PeersFrom[1].Resource != "SAMPeerGroup/pve-fou-direct-leaves" || !transport.PeersFrom[1].Direct {
+		t.Fatalf("generated direct transport peersFrom = %#v", transport.PeersFrom)
+	}
+	if transport.BGP.ImportPolicy.LocalPreference != 110 || transport.BGP.DirectLocalPreference != 240 {
+		t.Fatalf("generated direct transport preferences = %#v", transport.BGP)
+	}
+	var bgpRouter api.BGPRouterSpec
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || resource.Metadata.Name != "mobility-bgp" {
+			continue
+		}
+		var err error
+		bgpRouter, err = resource.BGPRouterSpec()
+		if err != nil {
+			t.Fatalf("BGPRouter spec: %v", err)
+		}
+	}
+	if expected := bgpstate.MobilityNodeIdentityCommunity("pve-leaf-b"); !bgpstate.HasCommunity(bgpRouter.Communities.Set.Out, expected) {
+		t.Fatalf("generated BGPRouter outbound communities = %#v, want direct leaf identity %q", bgpRouter.Communities.Set.Out, expected)
 	}
 	var foundClient bool
 	for _, resource := range router.Spec.Resources {
@@ -209,6 +244,32 @@ func TestMobilityLeafConfigCommandRejectsMissingRequiredInput(t *testing.T) {
 	err := mobilityCommand([]string{"leaf-config", "--leaf-id", "leaf-a"}, &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "mobility leaf-config requires --") {
 		t.Fatalf("leaf-config error = %v stdout=%s stderr=%s", err, stdout.String(), stderr.String())
+	}
+}
+
+func TestMobilityGeneratedLeafConfigRejectsNonPreferredDirectPath(t *testing.T) {
+	_, err := mobilityGeneratedLeafConfig(mobilityLeafConfigOptions{
+		LeafID:                "leaf-a",
+		UnderlayIfName:        "eth0",
+		UnderlayAddress:       "10.30.0.2/24",
+		LocalEndpoint:         "10.30.0.2",
+		EndpointPrefix:        "10.30.0.0/24",
+		InnerPrefix:           "10.255.10.0/24",
+		TunnelAddress:         "10.255.10.2/32",
+		MobilityPrefix:        "10.77.70.0/24",
+		OwnedAddress:          "10.77.70.2/32",
+		RRSet:                 "rrs",
+		DirectPeerGroup:       "direct-leaves",
+		Policy:                "leaves",
+		JoinAudience:          "underlay",
+		BootstrapEndpoints:    []string{"https://10.30.0.10:65432"},
+		BGPASN:                64577,
+		Mode:                  "ipip",
+		RRLocalPreference:     200,
+		DirectLocalPreference: 200,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--direct-local-preference greater than --rr-local-preference") {
+		t.Fatalf("mobilityGeneratedLeafConfig error = %v", err)
 	}
 }
 

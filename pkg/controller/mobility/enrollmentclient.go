@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -34,7 +35,7 @@ type SAMEnrollmentClientStore interface {
 
 type SAMEnrollmentJoinClient interface {
 	SubmitSAMEnrollmentClaim(context.Context, controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error)
-	GetSAMRRSet(context.Context, controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error)
+	GetSAMEnrollmentTopology(context.Context, controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error)
 }
 
 type SAMEnrollmentClientController struct {
@@ -87,13 +88,17 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	}
 	claimDigest := samEnrollmentClientClaimDigest(claimResource)
 	source := "SAMRRSet/" + rrSetName
-	rrState, err := c.fetchedRRSetState(source, now)
+	rrState, err := c.fetchedRRSetState(source, claim.PolicyRef, now)
 	if err != nil {
 		return err
 	}
 	observedRRSet := ""
 	if rrState.Found {
 		observedRRSet = source
+	}
+	observedDirectPeerGroup := ""
+	if claim.DirectMesh && rrState.PeerGroupName != "" {
+		observedDirectPeerGroup = "SAMPeerGroup/" + rrState.PeerGroupName
 	}
 	refreshBefore := durationDefault(spec.StateTTLRefreshBefore, defaultSAMEnrollmentRefreshBefore)
 	reason := samEnrollmentClientRefreshReason(rrState, claimDigest, previous.ClaimDigest, refreshBefore, now)
@@ -103,70 +108,79 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			next = now.Add(refreshBefore)
 		}
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
-			Phase:         "Ready",
-			ClaimRef:      spec.ClaimRef,
-			ObservedRRSet: source,
-			LastAttempt:   previous.LastAttempt,
-			LastSuccess:   previous.LastSuccess,
-			NextAttempt:   next,
-			Backoff:       "",
-			FailureCount:  0,
-			ClaimDigest:   claimDigest,
-			Reason:        "rrset-current",
+			Phase:                   "Ready",
+			ClaimRef:                spec.ClaimRef,
+			ObservedRRSet:           source,
+			ObservedDirectPeerGroup: observedDirectPeerGroup,
+			LastAttempt:             previous.LastAttempt,
+			LastSuccess:             previous.LastSuccess,
+			NextAttempt:             next,
+			Backoff:                 "",
+			FailureCount:            0,
+			ClaimDigest:             claimDigest,
+			Reason:                  "rrset-current",
 		}, now)
 	}
 	nextAttempt := previous.NextAttempt
 	if !nextAttempt.IsZero() && now.Before(nextAttempt) {
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
-			Phase:         "Backoff",
-			ClaimRef:      spec.ClaimRef,
-			ObservedRRSet: observedRRSet,
-			LastAttempt:   previous.LastAttempt,
-			LastSuccess:   previous.LastSuccess,
-			NextAttempt:   nextAttempt,
-			Backoff:       previous.Backoff,
-			FailureCount:  previous.FailureCount,
-			ClaimDigest:   claimDigest,
-			Reason:        reason,
+			Phase:                   "Backoff",
+			ClaimRef:                spec.ClaimRef,
+			ObservedRRSet:           observedRRSet,
+			ObservedDirectPeerGroup: observedDirectPeerGroup,
+			LastAttempt:             previous.LastAttempt,
+			LastSuccess:             previous.LastSuccess,
+			NextAttempt:             nextAttempt,
+			Backoff:                 previous.Backoff,
+			FailureCount:            previous.FailureCount,
+			ClaimDigest:             claimDigest,
+			Reason:                  reason,
 		}, now)
 	}
-	err = c.joinFetchAndPersist(ctx, spec, claimResource, rrSetName, now)
+	err = c.joinFetchAndPersist(ctx, spec, claimResource, claim, rrSetName, now)
 	if err != nil {
 		failures := previous.FailureCount + 1
 		backoff := samEnrollmentClientBackoff(spec, failures)
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
-			Phase:         "Degraded",
-			ClaimRef:      spec.ClaimRef,
-			ObservedRRSet: observedRRSet,
-			LastAttempt:   now,
-			LastSuccess:   previous.LastSuccess,
-			NextAttempt:   now.Add(backoff),
-			Backoff:       backoff.String(),
-			FailureCount:  failures,
-			ClaimDigest:   claimDigest,
-			Reason:        err.Error(),
+			Phase:                   "Degraded",
+			ClaimRef:                spec.ClaimRef,
+			ObservedRRSet:           observedRRSet,
+			ObservedDirectPeerGroup: observedDirectPeerGroup,
+			LastAttempt:             now,
+			LastSuccess:             previous.LastSuccess,
+			NextAttempt:             now.Add(backoff),
+			Backoff:                 backoff.String(),
+			FailureCount:            failures,
+			ClaimDigest:             claimDigest,
+			Reason:                  err.Error(),
 		}, now)
 	}
 	records, err := c.Store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
 		return err
 	}
-	refreshed := latestActiveSAMEnrollmentRRSet(records, now)
+	refreshed := latestActiveSAMEnrollmentRRSet(records, claim.PolicyRef, now)
+	if claim.DirectMesh && refreshed.PeerGroupName != "" {
+		observedDirectPeerGroup = "SAMPeerGroup/" + refreshed.PeerGroupName
+	} else {
+		observedDirectPeerGroup = ""
+	}
 	return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
-		Phase:         "Ready",
-		ClaimRef:      spec.ClaimRef,
-		ObservedRRSet: source,
-		LastAttempt:   now,
-		LastSuccess:   now,
-		NextAttempt:   refreshed.ExpiresAt.Add(-refreshBefore),
-		Backoff:       "",
-		FailureCount:  0,
-		ClaimDigest:   claimDigest,
-		Reason:        reason,
+		Phase:                   "Ready",
+		ClaimRef:                spec.ClaimRef,
+		ObservedRRSet:           source,
+		ObservedDirectPeerGroup: observedDirectPeerGroup,
+		LastAttempt:             now,
+		LastSuccess:             now,
+		NextAttempt:             refreshed.ExpiresAt.Add(-refreshBefore),
+		Backoff:                 "",
+		FailureCount:            0,
+		ClaimDigest:             claimDigest,
+		Reason:                  reason,
 	}, now)
 }
 
-func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claim api.Resource, rrSetName string, now time.Time) error {
+func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, now time.Time) error {
 	var lastErr error
 	var submitted []struct {
 		client SAMEnrollmentJoinClient
@@ -177,7 +191,7 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		return err
 	}
 	for _, client := range clients {
-		submit, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim})
+		submit, err := client.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claimResource})
 		if err != nil {
 			lastErr = err
 			continue
@@ -188,22 +202,60 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		}{client: client, result: submit})
 	}
 	for _, item := range submitted {
-		rrSet, err := item.client.GetSAMRRSet(ctx, controlapi.SAMRRSetGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claim.Metadata.Name})
+		topology, err := item.client.GetSAMEnrollmentTopology(ctx, controlapi.SAMEnrollmentTopologyGetRequest{Name: rrSetName, ClaimRef: "SAMEnrollmentClaim/" + claimResource.Metadata.Name})
 		if err != nil {
 			lastErr = err
+			continue
+		}
+		if topology.RRSet.Metadata.Name != rrSetName {
+			lastErr = fmt.Errorf("enrollment topology returned SAMRRSet/%s, want SAMRRSet/%s", topology.RRSet.Metadata.Name, rrSetName)
+			continue
+		}
+		rrSetSpec, err := topology.RRSet.SAMRRSetSpec()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if strings.TrimSpace(rrSetSpec.EnrollmentPolicyRef) != strings.TrimSpace(claim.PolicyRef) {
+			lastErr = fmt.Errorf("enrollment topology SAMRRSet/%s enrollmentPolicyRef %q does not match claim policyRef %q", rrSetName, rrSetSpec.EnrollmentPolicyRef, claim.PolicyRef)
+			continue
+		}
+		if !claim.DirectMesh && topology.PeerGroup != nil {
+			lastErr = fmt.Errorf("enrollment topology returned a direct SAMPeerGroup for non-direct claim %s", claimResource.ID())
 			continue
 		}
 		expiresAt := item.result.ExpiresAt
 		if expiresAt.IsZero() {
 			expiresAt = now.Add(DefaultLeaseTTL)
 		}
-		record, err := codec.FetchedSAMRRSetRecord(rrSet.RRSet, item.result.ObservedAt, expiresAt, codec.FetchedSAMRRSetRecordOptions{
-			Name:                              safeName("fetched-sam-rrset-" + rrSet.RRSet.Metadata.Name),
+		recordOptions := codec.FetchedSAMEnrollmentTopologyRecordOptions{
+			Name:                              safeName("fetched-sam-enrollment-topology-" + topology.RRSet.Metadata.Name),
 			Generation:                        dynamicGeneration,
 			DefaultTTL:                        DefaultLeaseTTL,
 			IncludeEmptyDirectivesActionPlans: true,
 			Digest:                            digestDynamicPart,
-		})
+		}
+		directPeerGroup := topology.PeerGroup
+		if err := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, directPeerGroup); err != nil {
+			if !claim.DirectMesh || directPeerGroup == nil {
+				lastErr = err
+				continue
+			}
+			// Direct peers are opportunistic. Validate their full runtime shape
+			// before persistence, then retain only the independently valid RRSet
+			// when the direct payload is stale, malformed, or incompatible.
+			directPeerGroup = nil
+			if fallbackErr := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, nil); fallbackErr != nil {
+				lastErr = fallbackErr
+				continue
+			}
+		}
+		record, err := codec.FetchedSAMEnrollmentTopologyRecord(topology.RRSet, directPeerGroup, item.result.ObservedAt, expiresAt, recordOptions)
+		if err != nil && claim.DirectMesh && directPeerGroup != nil {
+			// Keep the codec fallback as a final structural guard. Semantic
+			// validation above is deliberately separate from serialization.
+			record, err = codec.FetchedSAMEnrollmentTopologyRecord(topology.RRSet, nil, item.result.ObservedAt, expiresAt, recordOptions)
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -297,16 +349,17 @@ func samEnrollmentClientControlAPIToken(source api.SecretValueSourceSpec) (strin
 }
 
 type samEnrollmentClientStatus struct {
-	Phase         string
-	ClaimRef      string
-	ObservedRRSet string
-	LastAttempt   time.Time
-	LastSuccess   time.Time
-	NextAttempt   time.Time
-	Backoff       string
-	FailureCount  int
-	ClaimDigest   string
-	Reason        string
+	Phase                   string
+	ClaimRef                string
+	ObservedRRSet           string
+	ObservedDirectPeerGroup string
+	LastAttempt             time.Time
+	LastSuccess             time.Time
+	NextAttempt             time.Time
+	Backoff                 string
+	FailureCount            int
+	ClaimDigest             string
+	Reason                  string
 }
 
 func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string, status samEnrollmentClientStatus, now time.Time) error {
@@ -324,6 +377,9 @@ func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string
 	}
 	if status.ObservedRRSet != "" {
 		out["observedRRSet"] = status.ObservedRRSet
+	}
+	if status.ObservedDirectPeerGroup != "" {
+		out["observedDirectPeerGroup"] = status.ObservedDirectPeerGroup
 	}
 	if !status.LastAttempt.IsZero() {
 		out["lastAttempt"] = status.LastAttempt.UTC().Format(time.RFC3339)
@@ -344,30 +400,75 @@ func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string
 }
 
 type samEnrollmentRRSetState struct {
-	Found      bool
-	ObservedAt time.Time
-	ExpiresAt  time.Time
+	Found         bool
+	PeerGroupName string
+	ObservedAt    time.Time
+	ExpiresAt     time.Time
 }
 
-func (c SAMEnrollmentClientController) fetchedRRSetState(source string, now time.Time) (samEnrollmentRRSetState, error) {
+func (c SAMEnrollmentClientController) fetchedRRSetState(source, policyRef string, now time.Time) (samEnrollmentRRSetState, error) {
 	records, err := c.Store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
 		return samEnrollmentRRSetState{}, err
 	}
-	return latestActiveSAMEnrollmentRRSet(records, now), nil
+	return latestActiveSAMEnrollmentRRSet(records, policyRef, now), nil
 }
 
-func latestActiveSAMEnrollmentRRSet(records []routerstate.DynamicConfigPartRecord, now time.Time) samEnrollmentRRSetState {
-	var out samEnrollmentRRSetState
+func latestActiveSAMEnrollmentRRSet(records []routerstate.DynamicConfigPartRecord, policyRef string, now time.Time) samEnrollmentRRSetState {
+	var latest *routerstate.DynamicConfigPartRecord
 	for _, record := range records {
 		if record.EffectiveStatus(now) != "active" {
 			continue
 		}
-		if !out.Found || record.ObservedAt.After(out.ObservedAt) {
-			out = samEnrollmentRRSetState{Found: true, ObservedAt: record.ObservedAt, ExpiresAt: record.ExpiresAt}
+		if latest == nil || record.ObservedAt.After(latest.ObservedAt) {
+			copy := record
+			latest = &copy
 		}
 	}
-	return out
+	if latest == nil {
+		return samEnrollmentRRSetState{}
+	}
+	validRRSet, peerGroupName := samEnrollmentTopologyRecordPeerGroupName(*latest, policyRef)
+	if !validRRSet {
+		return samEnrollmentRRSetState{}
+	}
+	return samEnrollmentRRSetState{
+		Found:         true,
+		PeerGroupName: peerGroupName,
+		ObservedAt:    latest.ObservedAt,
+		ExpiresAt:     latest.ExpiresAt,
+	}
+}
+
+func samEnrollmentTopologyRecordPeerGroupName(record routerstate.DynamicConfigPartRecord, policyRef string) (bool, string) {
+	sourceKind, sourceName, sourceOK := strings.Cut(strings.TrimSpace(record.Source), "/")
+	if !sourceOK || sourceKind != "SAMRRSet" || strings.TrimSpace(sourceName) == "" {
+		return false, ""
+	}
+	resources, err := codec.DecodeGenericResources(record)
+	if err != nil {
+		return false, ""
+	}
+	validRRSet := false
+	peerGroupName := ""
+	for _, resource := range resources {
+		if resource.APIVersion != api.MobilityAPIVersion {
+			continue
+		}
+		switch resource.Kind {
+		case "SAMRRSet":
+			spec, err := resource.SAMRRSetSpec()
+			if err == nil && strings.TrimSpace(resource.Metadata.Name) == strings.TrimSpace(sourceName) && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) {
+				validRRSet = true
+			}
+		case "SAMPeerGroup":
+			spec, err := resource.SAMPeerGroupSpec()
+			if err == nil && strings.TrimSpace(resource.Metadata.Name) != "" && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) && strings.TrimSpace(spec.TransportFingerprint) != "" {
+				peerGroupName = strings.TrimSpace(resource.Metadata.Name)
+			}
+		}
+	}
+	return validRRSet, peerGroupName
 }
 
 func samEnrollmentClientRefreshReason(rrState samEnrollmentRRSetState, claimDigest, previousClaimDigest string, refreshBefore time.Duration, now time.Time) string {

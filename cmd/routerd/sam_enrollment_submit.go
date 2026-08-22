@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -48,6 +49,9 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	policy, err := submittedSAMEnrollmentClaimPolicy(router, store, source, claim, observedAt)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
+	}
+	if claim.DirectMesh && strings.TrimSpace(policy.DirectMesh.PeerGroupRef) == "" {
+		return nil, fmt.Errorf("%w: %s spec.directMesh requires %s spec.directMesh.peerGroupRef", controlapi.ErrBadRequest, claimResource.ID(), claim.PolicyRef)
 	}
 	if err := validateSubmittedSAMEnrollmentClaimJoinToken(claimResource.ID(), policy, claim); err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
@@ -89,7 +93,7 @@ func submitSAMEnrollmentClaim(router *api.Router, store samEnrollmentClaimStore,
 	return &result, nil
 }
 
-func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMRRSetGetRequest, now time.Time) (*controlapi.SAMRRSetGetResult, error) {
+func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrollmentClaimStore, req controlapi.SAMEnrollmentTopologyGetRequest, now time.Time) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
 	if router == nil {
 		return nil, fmt.Errorf("%w: router config unavailable", controlapi.ErrBadRequest)
 	}
@@ -98,7 +102,7 @@ func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimSto
 	}
 	rrSetName := strings.TrimSpace(req.Name)
 	if rrSetName == "" {
-		return nil, fmt.Errorf("%w: SAMRRSet name is required", controlapi.ErrBadRequest)
+		return nil, fmt.Errorf("%w: SAM enrollment topology name is required", controlapi.ErrBadRequest)
 	}
 	claimName, err := samEnrollmentClaimNameFromRef(req.ClaimRef)
 	if err != nil {
@@ -149,11 +153,11 @@ func getSAMRRSetForAcceptedClaim(router *api.Router, store samEnrollmentClaimSto
 	if strings.TrimSpace(policy.RRSetRef) != wantRRSetRef {
 		return nil, fmt.Errorf("%w: %s references %s, not %s", controlapi.ErrBadRequest, claim.PolicyRef, policy.RRSetRef, wantRRSetRef)
 	}
-	rrSetResource, err := projectSAMRRSetForEnrollment(router, policyName, policy, rrSetName)
+	rrSetResource, peerGroup, err := projectSAMEnrollmentTopologyForEnrollment(&effective, claim, policyName, policy, rrSetName, now.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
-	result := controlapi.NewSAMRRSetGetResult(rrSetName, rrSetResource)
+	result := controlapi.NewSAMEnrollmentTopologyGetResult(rrSetName, rrSetResource, peerGroup)
 	return &result, nil
 }
 
@@ -311,6 +315,25 @@ func findSAMEnrollmentPolicy(router *api.Router, name string) (api.SAMEnrollment
 	return api.SAMEnrollmentPolicySpec{}, false, nil
 }
 
+// projectSAMEnrollmentTopologyForEnrollment serializes the selected RR nodes
+// and, for a direct-mesh admitted leaf, the policy-scoped direct leaf topology
+// across the enrollment boundary. Both resources are deliberately runtime-only
+// snapshots built from the effective configuration after admission.
+func projectSAMEnrollmentTopologyForEnrollment(router *api.Router, claim api.SAMEnrollmentClaimSpec, policyName string, policy api.SAMEnrollmentPolicySpec, rrSetName string, now time.Time) (api.Resource, *api.Resource, error) {
+	rrSet, err := projectSAMRRSetForEnrollment(router, policyName, policy, rrSetName)
+	if err != nil {
+		return api.Resource{}, nil, err
+	}
+	if !claim.DirectMesh || strings.TrimSpace(policy.DirectMesh.PeerGroupRef) == "" {
+		return rrSet, nil, nil
+	}
+	peerGroup, err := projectSAMEnrollmentDirectPeerGroupForEnrollment(router, claim, policy, now)
+	if err != nil {
+		return api.Resource{}, nil, err
+	}
+	return rrSet, &peerGroup, nil
+}
+
 // projectSAMRRSetForEnrollment serializes the selected RR nodes across the
 // enrollment boundary. SAMRRSet itself is deliberately runtime-only: static
 // identity/topology lives in the policy's SAMNodeSet, and the result is scoped
@@ -345,6 +368,61 @@ func projectSAMRRSetForEnrollment(router *api.Router, policyName string, policy 
 			Nodes:               nodes,
 		},
 	}, nil
+}
+
+func projectSAMEnrollmentDirectPeerGroupForEnrollment(router *api.Router, claim api.SAMEnrollmentClaimSpec, policy api.SAMEnrollmentPolicySpec, now time.Time) (api.Resource, error) {
+	peerGroupName, err := samEnrollmentDirectPeerGroupName(policy.DirectMesh.PeerGroupRef)
+	if err != nil {
+		return api.Resource{}, err
+	}
+	transport, found, err := findSAMTransportProfile(router, policy.TransportProfileRef)
+	if err != nil {
+		return api.Resource{}, err
+	}
+	if !found {
+		return api.Resource{}, fmt.Errorf("%s references missing %s", claim.PolicyRef, policy.TransportProfileRef)
+	}
+	active, err := samenrollment.ActiveClaims(router.Spec.Resources, claim.PolicyRef, policy, now.UTC())
+	if err != nil {
+		return api.Resource{}, err
+	}
+	directTopology, _ := samenrollment.ActiveDirectMeshTopology(active, policy, claim.LeafID, strings.EqualFold(strings.TrimSpace(transport.Encryption), "wireguard"))
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: peerGroupName},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  strings.TrimSpace(claim.PolicyRef),
+			TransportFingerprint: mobilityconfig.SAMTransportMeshFingerprint(transport),
+			Nodes:                directTopology.Nodes.Nodes,
+			OwnedPrefixesByNode:  directTopology.OwnedPrefixesByNode,
+		},
+	}, nil
+}
+
+func samEnrollmentDirectPeerGroupName(ref string) (string, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMPeerGroup" || strings.TrimSpace(name) == "" {
+		return "", fmt.Errorf("spec.directMesh.peerGroupRef must reference SAMPeerGroup/<name>")
+	}
+	return strings.TrimSpace(name), nil
+}
+
+func findSAMTransportProfile(router *api.Router, ref string) (api.SAMTransportProfileSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMTransportProfile" || strings.TrimSpace(name) == "" {
+		return api.SAMTransportProfileSpec{}, false, fmt.Errorf("transportProfileRef must reference SAMTransportProfile/<name>")
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			return api.SAMTransportProfileSpec{}, true, err
+		}
+		return spec, true, nil
+	}
+	return api.SAMTransportProfileSpec{}, false, nil
 }
 
 func cloneSAMRRSetNode(node api.SAMNodeSpec) api.SAMNodeSpec {

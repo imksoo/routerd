@@ -118,6 +118,11 @@ func TestJoinCanonicalPayloadSortsClaimsAndKeepsWireGuardOptional(t *testing.T) 
 	if got := JoinCanonicalPayload(claim); got != want {
 		t.Fatalf("canonical payload:\n%s\nwant:\n%s", got, want)
 	}
+	claim.DirectMesh = true
+	if payload := JoinCanonicalPayload(claim); !strings.Contains(payload, "\ndirectMesh=true\n") {
+		t.Fatalf("direct claim payload is missing its signed opt-in:\n%s", payload)
+	}
+	claim.DirectMesh = false
 
 	claim.WireGuard = api.SAMEnrollmentClaimWireGuardSpec{}
 	payload := JoinCanonicalPayload(claim)
@@ -162,6 +167,36 @@ func TestJoinHMACChangesWithReplayFields(t *testing.T) {
 	claim.JoinTimestamp = "2026-06-28T00:01:00Z"
 	if got := JoinHMAC([]byte("test-join-token"), claim); got == first {
 		t.Fatalf("HMAC did not change after timestamp changed: %q", got)
+	}
+}
+
+func TestActiveDirectMeshTopologyKeepsUnencryptedTopologyAndRejectsIncompleteWireGuard(t *testing.T) {
+	selection := ActiveClaimSelection{Claims: []ActiveClaim{{
+		ResourceName: "leaf-b",
+		Claim: api.SAMEnrollmentClaimSpec{
+			LeafID:        "leaf-b",
+			DirectMesh:    true,
+			TunnelAddress: "10.255.0.32/32",
+			Endpoint:      "10.30.0.32",
+			Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{"10.77.60.32/32"}},
+		},
+		Tunnel: netip.MustParsePrefix("10.255.0.32/32"),
+	}}}
+
+	unencrypted, leafIDs := ActiveDirectMeshTopology(selection, api.SAMEnrollmentPolicySpec{}, "leaf-a", false)
+	if len(unencrypted.Nodes.Nodes) != 1 || len(leafIDs) != 1 || leafIDs[0] != "leaf-b" {
+		t.Fatalf("unencrypted direct topology = %#v, leafIDs=%#v", unencrypted, leafIDs)
+	}
+	if got := unencrypted.Nodes.Nodes[0].WireGuard; got.PublicKey != "" || got.Endpoint != "" || len(got.AllowedIPs) != 0 || got.PersistentKeepalive != 0 {
+		t.Fatalf("unencrypted direct topology unexpectedly has WireGuard material: %#v", got)
+	}
+	if got := unencrypted.OwnedPrefixesByNode["leaf-b"]; len(got) != 1 || got[0] != "10.77.60.32/32" {
+		t.Fatalf("direct owned prefixes = %#v", unencrypted.OwnedPrefixesByNode)
+	}
+
+	encrypted, leafIDs := ActiveDirectMeshTopology(selection, api.SAMEnrollmentPolicySpec{}, "leaf-a", true)
+	if len(encrypted.Nodes.Nodes) != 0 || len(leafIDs) != 0 {
+		t.Fatalf("encrypted direct topology accepted a peer without WireGuard identity: %#v, leafIDs=%#v", encrypted, leafIDs)
 	}
 }
 

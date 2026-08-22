@@ -2444,7 +2444,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = r.Router
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "SAMPeerGroup", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2463,7 +2463,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "SAMRRSet", "SAMEnrollmentPolicy", "SAMEnrollmentClaim", "BGPRouter"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "SAMPeerGroup", "SAMRRSet", "SAMEnrollmentPolicy", "SAMEnrollmentClaim", "BGPRouter"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err

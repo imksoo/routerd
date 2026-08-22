@@ -820,10 +820,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			})
 			return result, nil
 		},
-		GetSAMRRSet: func(r *http.Request, req controlapi.SAMRRSetGetRequest) (*controlapi.SAMRRSetGetResult, error) {
+		GetSAMEnrollmentTopology: func(r *http.Request, req controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
 			applyMu.Lock()
 			defer applyMu.Unlock()
-			return getSAMRRSetForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			return getSAMEnrollmentTopologyForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
 		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)

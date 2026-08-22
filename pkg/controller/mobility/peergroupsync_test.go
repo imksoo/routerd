@@ -77,8 +77,8 @@ func TestSelectSyncCandidateUsesRevisionNotArrivalOrder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if spec.Peers[0].NodeRef != "new" {
-			t.Fatalf("selected peer = %q", spec.Peers[0].NodeRef)
+		if spec.Nodes[0].NodeRef != "new" {
+			t.Fatalf("selected node = %q", spec.Nodes[0].NodeRef)
 		}
 	}
 }
@@ -122,8 +122,8 @@ func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncPeerGroup: %v", err)
 	}
-	if !ok || len(group.Peers) != 1 || group.Peers[0].NodeRef != "rr-rt01" {
-		t.Fatalf("synced group = %#v ok=%v, want rr peer", group, ok)
+	if !ok || len(group.Nodes) != 1 || group.Nodes[0].NodeRef != "rr-rt01" {
+		t.Fatalf("synced group = %#v ok=%v, want rr node", group, ok)
 	}
 	part := latestPart(t, store, PeerGroupSyncDynamicSource("svnet1-rrs"))
 	resources := decodeResources(t, part.ResourcesJSON)

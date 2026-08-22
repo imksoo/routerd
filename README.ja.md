@@ -103,7 +103,10 @@ routerd は、次の独立した特徴を大切にします。
   fail-static に扱われ、stale な last-known-good sync record がある場合は source を
   stale と warning 付きで表示しつつ、生成済み transport / BGP artifact を維持します。
   enrollment は別経路です。受理済み leaf は policy-scoped な runtime `SAMRRSet` を
-  取得し、静的な RR topology は author しません。静的な identity/topology は
+  取得し、静的な RR topology は author しません。policy は任意で **leaf 間の直接経路**
+  も提供できます。routerd は署名済みで opt-in した leaf だけにこれを試行し、確立中は
+  BGP local preference を高くしますが、直接経路が欠ける・届かない場合も RR peer を
+  安全な fallback として残します。静的な identity/topology は
   `SAMNodeSet` が持ち、各 MobilityPool はローカルの `/32` と capture intent を持ちます。
   startup fence は readiness 優先ですが上限付きで、明示的な
   allowed prefix がない RR-client import admission は宣言済み MobilityPool prefix

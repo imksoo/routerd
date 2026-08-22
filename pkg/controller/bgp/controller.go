@@ -118,14 +118,28 @@ type Controller struct {
 	MaxPrefixes         int
 	WatchReconnectDelay time.Duration
 
-	mu                   sync.Mutex
-	started              bool
-	startedAt            time.Time
-	globalKey            string
-	desiredPeerKeys      map[string]desiredPeer
-	appliedPeerKeys      map[string]desiredPeer
-	appliedConfig        bgpdaemon.AppliedConfig
-	importPolicyKey      string
+	mu        sync.Mutex
+	started   bool
+	startedAt time.Time
+	globalKey string
+	// policyKey covers both import and export policy objects. importPolicyKey
+	// deliberately excludes exports and is only used to determine whether the
+	// existing RIB must be soft-reset inbound.
+	policyKey                string
+	desiredPeerKeys          map[string]desiredPeer
+	appliedPeerKeys          map[string]desiredPeer
+	appliedConfig            bgpdaemon.AppliedConfig
+	importPolicyKey          string
+	pendingImportPolicyReset bool
+	// retiringDirectPeerAddresses is persisted before removal so routerd-bgp
+	// cannot restore an obsolete high-preference direct session after a crash.
+	retiringDirectPeerAddresses map[string]bool
+	// pendingDirectPeerAdditions marks direct peers journaled before AddPeer.
+	// It closes the corresponding crash window before final applied-state save.
+	pendingDirectPeerAdditions map[string]bool
+	// retiringStaticPaths is the analogous restart fence for locally originated
+	// advertisements. The retained UUID is required to finish a live withdrawal.
+	retiringStaticPaths  map[string]bgpdaemon.AppliedPath
 	pathUUIDs            map[string][]byte
 	observed             bool
 	lastState            bgpstate.State
@@ -159,8 +173,13 @@ type desiredPeer struct {
 	ConvergenceProfile      string
 	ImportPolicy            routerapi.BGPImportPolicySpec
 	ImportPolicyName        string
-	ExportPolicy            routerapi.BGPExportPolicySpec
-	ExportPolicyName        string
+	// PreserveImportPrefixes prevents router-wide dynamic mobility prefixes
+	// from widening a direct SAM peer's explicit admission boundary. Direct
+	// peer groups are untrusted accelerators and may only receive the /32s
+	// named in their profile's allowlist.
+	PreserveImportPrefixes bool
+	ExportPolicy           routerapi.BGPExportPolicySpec
+	ExportPolicyName       string
 }
 
 type desiredDynamicPeer struct {
@@ -254,7 +273,22 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	effectiveImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
 	desired = applyRouterBGPDefaults(routerResource.Metadata.Name, routerSpec, desired, staticExportPrefixes, dynamicExportPrefixes)
 	desiredDynamic = applyRouterBGPDynamicDefaults(routerResource.Metadata.Name, routerSpec, desiredDynamic, staticExportPrefixes, dynamicExportPrefixes)
-	adoptedRestoredPolicies, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic)
+	// Direct SAM peers are optional higher-preference accelerators. Withdraw an
+	// obsolete direct session before removing its narrow import policy. If that
+	// deletion fails, retain the old policy and stop rather than leave a live
+	// high-preference path without its signed topology source.
+	if _, err := c.removeObsoleteDirectPeers(ctx, routerSpec, desired); err != nil {
+		return c.savePendingAll("GoBGPPeerRemoveFailed", err)
+	}
+	// A fallback peer can become a direct peer at the same address. Journal that
+	// role upgrade before changing policies: if routerd stops after the narrow,
+	// high-preference policy is installed but before UpdatePeer completes, the
+	// next reconcile must still identify the live session as direct and withdraw
+	// it before removing the policy. RR peers continue forwarding meanwhile.
+	if err := c.journalDirectPeerTransitions(ctx, routerSpec, desired); err != nil {
+		return c.savePendingAll("GoBGPPeerTransitionFenceFailed", err)
+	}
+	policyResult, err := c.reconcilePolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic)
 	if err != nil {
 		return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 	}
@@ -262,9 +296,23 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 		return c.savePendingAll("GoBGPDynamicPeerApplyFailed", err)
 	}
 	exportPolicyRefreshPeers := exportPolicyChangedPeers(c.appliedPeerKeys, desired)
-	changed, err := c.reconcilePeers(ctx, desired)
+	changed, err := c.reconcilePeers(ctx, routerSpec, desired)
 	if err != nil {
 		return c.savePendingAll("GoBGPPeerApplyFailed", err)
+	}
+	// Replacing a GoBGP import policy changes the filter object, but does not
+	// necessarily change a peer's stable transport configuration. In
+	// particular, direct-mesh peers deliberately keep their import prefix list
+	// out of the peer recreation key so a narrowed allowlist cannot flap the
+	// session. Ask every current peer for a soft inbound re-evaluation before
+	// observing the RIB; otherwise a route admitted by the old (possibly wider)
+	// direct policy could retain its higher local preference until some unrelated
+	// BGP event happens.
+	if policyResult.NeedsInboundReset {
+		if err := c.softResetImportPolicy(ctx, desired); err != nil {
+			return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
+		}
+		c.pendingImportPolicyReset = false
 	}
 	if err := c.hardResetBFDDownPeers(ctx, bfdDownTransitions); err != nil {
 		return c.savePendingAll("GoBGPBFDResetFailed", err)
@@ -274,7 +322,10 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 			return c.savePendingAll("GoBGPExportPolicyRefreshFailed", err)
 		}
 	}
-	if err := c.reconcileAdvertisements(ctx, routerSpec, applied.Paths); err != nil {
+	if err := c.withdrawPendingStaticPaths(ctx); err != nil {
+		return c.savePendingAll("GoBGPPathRemoveFailed", err)
+	}
+	if err := c.reconcileAdvertisements(ctx, routerSpec, c.appliedConfig.Paths); err != nil {
 		return c.savePendingAll("GoBGPPathApplyFailed", err)
 	}
 	appliedSpec := routerSpec
@@ -289,22 +340,37 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if err != nil {
 		return c.savePendingAll("GoBGPObserveFailed", err)
 	}
-	if !adoptedRestoredPolicies {
+	if !policyResult.AdoptedRestored {
 		importDrift, err := c.importPolicyDrift(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic)
 		if err != nil {
 			return c.savePendingAll("GoBGPPolicyObserveFailed", err)
 		}
 		if importDrift.RefreshNeeded() {
+			if err := c.persistPendingImportPolicyReset(ctx); err != nil {
+				return c.savePendingAll("GoBGPImportPolicyFencePersistFailed", err)
+			}
 			if err := c.applyBGPPolicies(ctx, routerResource.Metadata.Name, effectiveImportPolicy, desired, desiredDynamic); err != nil {
 				return c.savePendingAll("GoBGPPolicyApplyFailed", err)
 			}
-			c.importPolicyKey = bgpPoliciesKey(effectiveImportPolicy, desired, desiredDynamic)
+			c.policyKey = bgpPoliciesKey(effectiveImportPolicy, desired, desiredDynamic)
+			c.importPolicyKey = bgpImportPoliciesKey(effectiveImportPolicy, desired, desiredDynamic)
+			c.pendingImportPolicyReset = true
 			if err := c.refreshPeerImportPolicyAssignments(ctx, desired, importDrift.PeerAddresses); err != nil {
 				return c.savePendingAll("GoBGPPeerApplyFailed", err)
 			}
 			if err := c.softResetImportPolicy(ctx, desired); err != nil {
 				return c.savePendingAll("GoBGPImportPolicyRefreshFailed", err)
 			}
+			c.pendingImportPolicyReset = false
+			// The applied state was deliberately fenced before the live policy
+			// repair above. Clear that durable fence now that every peer has been
+			// re-evaluated, otherwise the next ordinary reconcile would perform a
+			// redundant inbound reset.
+			applied.PendingImportPolicyReset = false
+			if err := c.Server.SaveAppliedConfig(ctx, applied); err != nil {
+				return c.savePendingAll("GoBGPAppliedStatePersistFailed", err)
+			}
+			c.appliedConfig = applied
 			state, routes, livenessMarkers, err = c.observeState(ctx, allowedImportPrefixes, desired)
 			if err != nil {
 				return c.savePendingAll("GoBGPObserveFailed", err)
@@ -344,10 +410,15 @@ func (c *Controller) stopServerLocked() {
 	c.started = false
 	c.startedAt = time.Time{}
 	c.globalKey = ""
+	c.policyKey = ""
 	c.desiredPeerKeys = nil
 	c.appliedPeerKeys = nil
 	c.appliedConfig = bgpdaemon.AppliedConfig{}
 	c.importPolicyKey = ""
+	c.pendingImportPolicyReset = false
+	c.retiringDirectPeerAddresses = nil
+	c.pendingDirectPeerAdditions = nil
+	c.retiringStaticPaths = nil
 	c.pathUUIDs = nil
 	c.observed = false
 	c.lastState = bgpstate.State{}
@@ -523,6 +594,20 @@ func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
 	applied = bgpdaemon.Normalize(applied)
 	c.appliedConfig = applied
 	c.appliedPeerKeys = desiredPeersFromApplied(applied.Global.ASN, applied.Peers)
+	c.pendingImportPolicyReset = applied.PendingImportPolicyReset
+	c.retiringDirectPeerAddresses = map[string]bool{}
+	c.pendingDirectPeerAdditions = map[string]bool{}
+	for _, address := range applied.PendingDirectPeerAdditions {
+		if address = strings.TrimSpace(address); address != "" {
+			c.pendingDirectPeerAdditions[address] = true
+		}
+	}
+	for _, address := range applied.PendingDirectPeerRemovals {
+		if address = strings.TrimSpace(address); address != "" {
+			c.retiringDirectPeerAddresses[address] = true
+		}
+	}
+	c.retiringStaticPaths = staticAppliedPaths(applied.PendingStaticPathRemovals)
 }
 
 func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterSpec) error {
@@ -665,6 +750,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				RouteReflectorClient:    spec.RouteReflectorClient,
 				RouteReflectorClusterID: strings.TrimSpace(spec.RouteReflectorClusterID),
 				ImportPolicy:            spec.ImportPolicy,
+				PreserveImportPrefixes:  strings.EqualFold(strings.TrimSpace(resource.Metadata.Annotations["mobility.routerd.net/direct-peer"]), "true"),
 				ExportPolicy:            spec.ExportPolicy,
 				Timers:                  spec.Timers,
 			}
@@ -718,7 +804,9 @@ func applyRouterBGPDefaults(routerName string, routerSpec routerapi.BGPRouterSpe
 		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
 		peer.GracefulRestart = canonicalGracefulRestartSpec(routerSpec.GracefulRestart, peer.ConvergenceProfile)
 		if peerHasImportPolicy(peer.ImportPolicy) {
-			peer.ImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
+			if !peer.PreserveImportPrefixes {
+				peer.ImportPolicy.AllowedPrefixes = mergeAllowedPrefixes(peer.ImportPolicy.AllowedPrefixes, dynamicExportPrefixes)
+			}
 			peer.ImportPolicyName = peerImportPolicyName(routerName, address)
 		} else {
 			peer.ImportPolicy = globalImportPolicy
@@ -775,29 +863,79 @@ func peerHasImportPolicy(spec routerapi.BGPImportPolicySpec) bool {
 	return len(stringutil.UniqueTrimmedSorted(spec.AllowedPrefixes)) > 0 ||
 		len(stringutil.UniqueTrimmedSorted(spec.RequiredCommunities)) > 0 ||
 		len(stringutil.UniqueTrimmedSorted(spec.ForbiddenCommunities)) > 0 ||
-		strings.TrimSpace(spec.NextHopRewrite) != ""
+		strings.TrimSpace(spec.NextHopRewrite) != "" ||
+		spec.LocalPreference != 0
 }
 
-func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) (bool, error) {
+type policyReconcileResult struct {
+	// AdoptedRestored is true only when a freshly constructed controller proved
+	// that the policy already installed in GoBGP is semantically identical.
+	// There is then no need to rewrite policy objects or reset peers.
+	AdoptedRestored bool
+	// NeedsInboundReset means the update replaced a policy that may already have
+	// admitted routes. Peers must be soft-reset inbound before the RIB is read
+	// because GoBGP does not retroactively re-evaluate those routes. The very
+	// first policy install happens before peers exist and therefore does not need
+	// this reset.
+	NeedsInboundReset bool
+}
+
+func (c *Controller) reconcilePolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) (policyReconcileResult, error) {
 	key := bgpPoliciesKey(spec, peers, dynamicPeers)
-	if c.importPolicyKey == key {
-		return false, nil
+	importKey := bgpImportPoliciesKey(spec, peers, dynamicPeers)
+	if c.policyKey == key {
+		return policyReconcileResult{NeedsInboundReset: c.pendingImportPolicyReset}, nil
 	}
-	if c.importPolicyKey == "" && len(c.appliedConfig.Peers) > 0 {
+	if c.policyKey == "" && len(c.appliedConfig.Peers) > 0 {
 		drift, err := c.importPolicyDrift(ctx, routerName, spec, peers, dynamicPeers)
 		if err != nil {
-			return false, err
+			return policyReconcileResult{}, err
 		}
 		if !drift.RefreshNeeded() {
-			c.importPolicyKey = key
-			return true, nil
+			c.policyKey = key
+			c.importPolicyKey = importKey
+			return policyReconcileResult{AdoptedRestored: true, NeedsInboundReset: c.pendingImportPolicyReset}, nil
+		}
+	}
+	// Write the recovery fence before altering GoBGP. A crash after the policy
+	// takes effect but before ResetPeer would otherwise leave an old direct
+	// route (with higher LOCAL_PREF) in the RIB even though the persisted state
+	// still describes the wider, previous admission policy.
+	needsInboundReset := (c.importPolicyKey != "" && c.importPolicyKey != importKey) ||
+		(c.importPolicyKey == "" && len(c.appliedConfig.Peers) > 0)
+	if needsInboundReset {
+		if err := c.persistPendingImportPolicyReset(ctx); err != nil {
+			return policyReconcileResult{}, err
 		}
 	}
 	if err := c.applyBGPPolicies(ctx, routerName, spec, peers, dynamicPeers); err != nil {
-		return false, err
+		return policyReconcileResult{}, err
 	}
-	c.importPolicyKey = key
-	return false, nil
+	// Persisted applied state is the evidence that this policy replacement can
+	// affect an already-populated RIB. Without it this is the initial install:
+	// peers are created afterwards and there is nothing stale to reprocess.
+	// Export-only edits require an outbound refresh but must not make already
+	// accepted routes look stale. A distinct import-only key preserves the
+	// direct-mesh safety reset for changed /32 admission while avoiding an
+	// unrelated inbound reset for export policy changes.
+	c.policyKey = key
+	c.importPolicyKey = importKey
+	c.pendingImportPolicyReset = needsInboundReset
+	return policyReconcileResult{NeedsInboundReset: needsInboundReset}, nil
+}
+
+func (c *Controller) persistPendingImportPolicyReset(ctx context.Context) error {
+	if c.pendingImportPolicyReset {
+		return nil
+	}
+	pending := c.appliedConfig
+	pending.PendingImportPolicyReset = true
+	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+		return fmt.Errorf("persist pending import-policy reset fence: %w", err)
+	}
+	c.appliedConfig = pending
+	c.pendingImportPolicyReset = true
+	return nil
 }
 
 func (c *Controller) applyBGPPolicies(ctx context.Context, routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) error {
@@ -816,15 +954,14 @@ type bgpPolicyPlan struct {
 func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) bgpPolicyPlan {
 	name := bgpPolicyName(routerName, "import")
 	req := &gobgpapi.SetPoliciesRequest{}
-	prefixes := importPolicyPrefixes(spec)
-	assignment := globalImportPolicyAssignment(name, len(prefixes) > 0)
-	if len(prefixes) > 0 {
+	assignment := globalImportPolicyAssignment(name, peerHasImportPolicy(spec))
+	if peerHasImportPolicy(spec) {
 		appendImportPolicy(req, name, bgpPolicyName(routerName, "import-prefixes"), spec)
 	}
 	importPolicies := map[string]bool{name: true}
 	for _, peer := range sortedDesiredPeers(peers) {
 		importPolicyName := strings.TrimSpace(peer.ImportPolicyName)
-		if importPolicyName != "" && !importPolicies[importPolicyName] && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
+		if importPolicyName != "" && !importPolicies[importPolicyName] && peerHasImportPolicy(peer.ImportPolicy) {
 			appendImportPolicy(req, importPolicyName, importPolicyName+"-prefixes", peer.ImportPolicy)
 			importPolicies[importPolicyName] = true
 		}
@@ -852,7 +989,7 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 	}
 	for _, peer := range sortedDesiredDynamicPeers(dynamicPeers) {
 		importPolicyName := strings.TrimSpace(peer.ImportPolicyName)
-		if importPolicyName != "" && !importPolicies[importPolicyName] && len(importPolicyPrefixes(peer.ImportPolicy)) > 0 {
+		if importPolicyName != "" && !importPolicies[importPolicyName] && peerHasImportPolicy(peer.ImportPolicy) {
 			appendImportPolicy(req, importPolicyName, importPolicyName+"-prefixes", peer.ImportPolicy)
 			importPolicies[importPolicyName] = true
 		}
@@ -883,16 +1020,18 @@ func buildBGPPolicyPlan(routerName string, spec routerapi.BGPImportPolicySpec, p
 
 func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetName string, spec routerapi.BGPImportPolicySpec) {
 	prefixes := importPolicyPrefixes(spec)
-	if len(prefixes) == 0 || strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
+	if strings.TrimSpace(policyName) == "" {
 		return
 	}
 	policyName = strings.TrimSpace(policyName)
 	prefixSetName = strings.TrimSpace(prefixSetName)
-	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-		DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-		Name:        prefixSetName,
-		Prefixes:    prefixes,
-	})
+	if len(prefixes) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
+	}
 	requiredSetName := policyName + "-required-communities"
 	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
 	if len(requiredCommunities) > 0 {
@@ -922,10 +1061,13 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
 		})
 	}
-	acceptConditions := &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-		Type: gobgpapi.MatchSet_TYPE_ANY,
-		Name: prefixSetName,
-	}}
+	acceptConditions := &gobgpapi.Conditions{}
+	if len(prefixes) > 0 {
+		acceptConditions.PrefixSet = &gobgpapi.MatchSet{
+			Type: gobgpapi.MatchSet_TYPE_ANY,
+			Name: prefixSetName,
+		}
+	}
 	if len(requiredCommunities) > 0 {
 		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
 			Type: gobgpapi.MatchSet_TYPE_ALL,
@@ -938,6 +1080,7 @@ func appendImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetN
 		Actions: &gobgpapi.Actions{
 			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 			Nexthop:     nextHopRewriteAction(spec),
+			LocalPref:   importLocalPreferenceAction(spec),
 		},
 	})
 	req.Policies = append(req.Policies, &gobgpapi.Policy{
@@ -966,6 +1109,7 @@ type canonicalDefinedSet struct {
 	Name     string
 	Type     int32
 	Prefixes []canonicalPrefix
+	List     []string
 }
 
 type canonicalPrefix struct {
@@ -980,11 +1124,14 @@ type canonicalPolicy struct {
 }
 
 type canonicalStatement struct {
-	Name          string
-	PrefixSetName string
-	PrefixSetType int32
-	RouteAction   int32
-	NextHop       string
+	Name             string
+	PrefixSetName    string
+	PrefixSetType    int32
+	CommunitySetName string
+	CommunitySetType int32
+	RouteAction      int32
+	NextHop          string
+	LocalPreference  *uint32
 }
 
 type canonicalPolicyAssignment struct {
@@ -1041,6 +1188,9 @@ func desiredImportPolicyState(plan bgpPolicyPlan, peers map[string]desiredPeer) 
 			if setName := strings.TrimSpace(statement.GetConditions().GetPrefixSet().GetName()); setName != "" {
 				importDefinedSetNames[setName] = true
 			}
+			if setName := strings.TrimSpace(statement.GetConditions().GetCommunitySet().GetName()); setName != "" {
+				importDefinedSetNames[setName] = true
+			}
 		}
 	}
 	for _, set := range plan.SetPolicies.GetDefinedSets() {
@@ -1065,7 +1215,7 @@ func desiredImportPolicyState(plan bgpPolicyPlan, peers map[string]desiredPeer) 
 
 func policyHasImportAction(policy *gobgpapi.Policy) bool {
 	for _, statement := range policy.GetStatements() {
-		if statement.GetActions().GetNexthop() != nil {
+		if statement.GetActions().GetNexthop() != nil || statement.GetActions().GetLocalPref() != nil {
 			return true
 		}
 	}
@@ -1078,8 +1228,8 @@ func (c *Controller) actualImportPolicyState(ctx context.Context, desired canoni
 		Policies:        map[string]canonicalPolicy{},
 		PeerAssignments: map[string]canonicalPolicyAssignment{},
 	}
-	for name := range desired.DefinedSets {
-		set, err := c.definedSetByName(ctx, name)
+	for name, desiredSet := range desired.DefinedSets {
+		set, err := c.definedSetByName(ctx, gobgpapi.DefinedType(desiredSet.Type), name)
 		if err != nil {
 			return canonicalImportPolicyState{}, err
 		}
@@ -1122,9 +1272,9 @@ func (c *Controller) actualImportPolicyState(ctx context.Context, desired canoni
 	return actual, nil
 }
 
-func (c *Controller) definedSetByName(ctx context.Context, name string) (*gobgpapi.DefinedSet, error) {
+func (c *Controller) definedSetByName(ctx context.Context, definedType gobgpapi.DefinedType, name string) (*gobgpapi.DefinedSet, error) {
 	var out *gobgpapi.DefinedSet
-	err := c.Server.ListDefinedSet(ctx, &gobgpapi.ListDefinedSetRequest{DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX, Name: name}, func(set *gobgpapi.DefinedSet) {
+	err := c.Server.ListDefinedSet(ctx, &gobgpapi.ListDefinedSetRequest{DefinedType: definedType, Name: name}, func(set *gobgpapi.DefinedSet) {
 		if strings.TrimSpace(set.GetName()) == name {
 			out = set
 		}
@@ -1164,6 +1314,8 @@ func canonicalizeDefinedSet(set *gobgpapi.DefinedSet) canonicalDefinedSet {
 			Max:    prefix.GetMaskLengthMax(),
 		})
 	}
+	out.List = append(out.List, set.GetList()...)
+	sort.Strings(out.List)
 	sort.Slice(out.Prefixes, func(i, j int) bool {
 		if out.Prefixes[i].Prefix != out.Prefixes[j].Prefix {
 			return out.Prefixes[i].Prefix < out.Prefixes[j].Prefix
@@ -1183,12 +1335,16 @@ func canonicalizePolicy(policy *gobgpapi.Policy) canonicalPolicy {
 	out := canonicalPolicy{Name: strings.TrimSpace(policy.GetName())}
 	for _, statement := range policy.GetStatements() {
 		prefixSet := statement.GetConditions().GetPrefixSet()
+		communitySet := statement.GetConditions().GetCommunitySet()
 		out.Statements = append(out.Statements, canonicalStatement{
-			Name:          strings.TrimSpace(statement.GetName()),
-			PrefixSetName: strings.TrimSpace(prefixSet.GetName()),
-			PrefixSetType: int32(prefixSet.GetType()),
-			RouteAction:   int32(statement.GetActions().GetRouteAction()),
-			NextHop:       canonicalNextHopAction(statement.GetActions().GetNexthop()),
+			Name:             strings.TrimSpace(statement.GetName()),
+			PrefixSetName:    strings.TrimSpace(prefixSet.GetName()),
+			PrefixSetType:    int32(prefixSet.GetType()),
+			CommunitySetName: strings.TrimSpace(communitySet.GetName()),
+			CommunitySetType: int32(communitySet.GetType()),
+			RouteAction:      int32(statement.GetActions().GetRouteAction()),
+			NextHop:          canonicalNextHopAction(statement.GetActions().GetNexthop()),
+			LocalPreference:  canonicalLocalPreferenceAction(statement.GetActions().GetLocalPref()),
 		})
 	}
 	sort.Slice(out.Statements, func(i, j int) bool { return out.Statements[i].Name < out.Statements[j].Name })
@@ -1206,6 +1362,14 @@ func canonicalNextHopAction(action *gobgpapi.NexthopAction) string {
 	default:
 		return ""
 	}
+}
+
+func canonicalLocalPreferenceAction(action *gobgpapi.LocalPrefAction) *uint32 {
+	if action == nil {
+		return nil
+	}
+	value := action.GetValue()
+	return &value
 }
 
 func canonicalizePolicyAssignment(assignment *gobgpapi.PolicyAssignment) canonicalPolicyAssignment {
@@ -1345,10 +1509,16 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 			GracefulRestart:         gr,
 			ConvergenceProfile:      peer.ConvergenceProfile,
 			ImportPolicy: routerapi.BGPImportPolicySpec{
-				AllowedPrefixes: peer.ImportPolicy.AllowedPrefixes,
-				NextHopRewrite:  peer.ImportPolicy.NextHopRewrite,
+				AllowedPrefixes:        peer.ImportPolicy.AllowedPrefixes,
+				AllowedPrefixLengthMin: peer.ImportPolicy.AllowedPrefixLengthMin,
+				AllowedPrefixLengthMax: peer.ImportPolicy.AllowedPrefixLengthMax,
+				RequiredCommunities:    peer.ImportPolicy.RequiredCommunities,
+				ForbiddenCommunities:   peer.ImportPolicy.ForbiddenCommunities,
+				NextHopRewrite:         peer.ImportPolicy.NextHopRewrite,
+				LocalPreference:        peer.ImportPolicy.LocalPreference,
 			},
-			ImportPolicyName: peer.ImportPolicyName,
+			ImportPolicyName:       peer.ImportPolicyName,
+			PreserveImportPrefixes: peer.PreserveImportPrefixes,
 			ExportPolicy: routerapi.BGPExportPolicySpec{
 				AllowedPrefixes: peer.ExportPolicy.AllowedPrefixes,
 			},
@@ -1360,14 +1530,18 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 
 func (c *Controller) buildAppliedConfig(spec routerapi.BGPRouterSpec, peers map[string]desiredPeer, advertisements map[string]bool, existingPaths []bgpdaemon.AppliedPath) bgpdaemon.AppliedConfig {
 	out := bgpdaemon.AppliedConfig{
-		Version:        bgpdaemon.AppliedVersion,
-		Global:         appliedGlobalFromSpec(spec, c.Router),
-		Peers:          map[string]bgpdaemon.AppliedPeer{},
-		Advertisements: mapKeys(advertisements),
-		Paths:          bgpdaemon.NonStaticPaths(existingPaths),
+		Version:                    bgpdaemon.AppliedVersion,
+		PendingImportPolicyReset:   c.pendingImportPolicyReset,
+		PendingDirectPeerAdditions: mapKeys(c.pendingDirectPeerAdditions),
+		PendingDirectPeerRemovals:  mapKeys(c.retiringDirectPeerAddresses),
+		PendingStaticPathRemovals:  staticAppliedPathValues(c.retiringStaticPaths),
+		Global:                     appliedGlobalFromSpec(spec, c.Router),
+		Peers:                      map[string]bgpdaemon.AppliedPeer{},
+		Advertisements:             mapKeys(advertisements),
+		Paths:                      bgpdaemon.NonStaticPaths(existingPaths),
 	}
 	for prefix := range advertisements {
-		out.Paths = append(out.Paths, bgpdaemon.StaticAppliedPath(prefix, c.pathUUIDs[prefix]))
+		out.Paths = append(out.Paths, staticAppliedPath(prefix, c.pathUUIDs[prefix], staticAdvertisementAttrs(spec)))
 	}
 	for address, peer := range peers {
 		out.Peers[address] = appliedPeer(peer)
@@ -1390,6 +1564,7 @@ func appliedGlobalFromSpec(spec routerapi.BGPRouterSpec, router *routerapi.Route
 			RequiredCommunities:    stringutil.UniqueTrimmedSorted(spec.ImportPolicy.RequiredCommunities),
 			ForbiddenCommunities:   stringutil.UniqueTrimmedSorted(spec.ImportPolicy.ForbiddenCommunities),
 			NextHopRewrite:         importNextHopRewrite(spec.ImportPolicy),
+			LocalPreference:        spec.ImportPolicy.LocalPreference,
 		},
 	}
 	for _, family := range bgpFamiliesForRouter(router) {
@@ -1423,8 +1598,10 @@ func appliedPeer(peer desiredPeer) bgpdaemon.AppliedPeer {
 			RequiredCommunities:    stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities),
 			ForbiddenCommunities:   stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities),
 			NextHopRewrite:         importNextHopRewrite(peer.ImportPolicy),
+			LocalPreference:        peer.ImportPolicy.LocalPreference,
 		},
-		ExportPolicyName: peer.ExportPolicyName,
+		PreserveImportPrefixes: peer.PreserveImportPrefixes,
+		ExportPolicyName:       peer.ExportPolicyName,
 		ExportPolicy: bgpdaemon.AppliedExportPolicy{
 			AllowedPrefixes: stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes),
 		},
@@ -1745,7 +1922,7 @@ func dynamicPeerGroupHash(group *gobgpapi.PeerGroup) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desiredPeer) (bool, error) {
+func (c *Controller) reconcilePeers(ctx context.Context, routerSpec routerapi.BGPRouterSpec, desired map[string]desiredPeer) (bool, error) {
 	if c.desiredPeerKeys == nil {
 		c.desiredPeerKeys = map[string]desiredPeer{}
 	}
@@ -1775,28 +1952,285 @@ func (c *Controller) reconcilePeers(ctx context.Context, desired map[string]desi
 		}
 		if c.desiredPeerMatches(address, current, peer) {
 			c.desiredPeerKeys[address] = peer
+			delete(c.pendingDirectPeerAdditions, address)
 			continue
 		}
 		if _, err := c.Server.UpdatePeer(ctx, &gobgpapi.UpdatePeerRequest{Peer: goBGPPeer(peer), DoSoftResetIn: true}); err != nil {
 			return changed, err
 		}
 		c.desiredPeerKeys[address] = peer
+		delete(c.pendingDirectPeerAdditions, address)
 		changed = true
 	}
 	for address, peer := range desired {
 		if current, ok := live[address]; ok {
 			if c.desiredPeerMatches(address, current, peer) {
 				c.desiredPeerKeys[address] = peer
+				delete(c.pendingDirectPeerAdditions, address)
 				continue
+			}
+		}
+		if peer.PreserveImportPrefixes && !c.pendingDirectPeerAdditions[address] {
+			if err := c.persistDirectPeerAddition(ctx, routerSpec, peer); err != nil {
+				return changed, err
 			}
 		}
 		if err := c.Server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peer)}); err != nil {
 			return changed, err
 		}
 		c.desiredPeerKeys[address] = peer
+		delete(c.pendingDirectPeerAdditions, address)
 		changed = true
 	}
 	return changed, nil
+}
+
+// journalDirectPeerTransitions records fallback-to-direct role changes before
+// their direct import policy can be installed. The journal intentionally also
+// updates appliedPeerKeys: if the process keeps running after a later peer
+// update failure, a following reconcile must classify that live session as
+// direct and withdraw it before relaxing its policy.
+func (c *Controller) journalDirectPeerTransitions(ctx context.Context, routerSpec routerapi.BGPRouterSpec, desired map[string]desiredPeer) error {
+	addresses := make([]string, 0, len(desired))
+	for address, peer := range desired {
+		if peer.PreserveImportPrefixes {
+			addresses = append(addresses, address)
+		}
+	}
+	sort.Strings(addresses)
+	unknownLivePredecessors := map[string]bool{}
+	for _, address := range addresses {
+		persisted, found := c.appliedConfig.Peers[address]
+		knownFallback := found && !persisted.PreserveImportPrefixes
+		if !found {
+			// A prior fallback AddPeer/UpdatePeer can have succeeded just before
+			// its ordinary final applied-state save failed. The live-peer cache
+			// is the only evidence in that short window; retain it as a
+			// pre-policy promotion fence as well.
+			previous, known := c.desiredPeerKeys[address]
+			if !known {
+				previous, known = c.appliedPeerKeys[address]
+			}
+			knownFallback = known && !previous.PreserveImportPrefixes
+			if !knownFallback {
+				unknownLivePredecessors[address] = true
+			}
+		}
+		// A brand-new direct peer has no live, persisted predecessor. Its
+		// existing AddPeer-side journal is sufficient and avoids making the
+		// initial policy install look like a restored populated RIB. The
+		// pre-policy fence is specifically for replacing a known fallback peer
+		// at the same address; an unrecorded live peer is checked below.
+		if !knownFallback {
+			continue
+		}
+		if err := c.persistDirectPeerAddition(ctx, routerSpec, desired[address]); err != nil {
+			return err
+		}
+	}
+	if len(unknownLivePredecessors) == 0 {
+		return nil
+	}
+	// An old routerd process can leave a static fallback peer alive after its
+	// state write was lost or removed. Treat a live same-address peer as a
+	// fallback predecessor too: writing the direct fence before policy mutation
+	// is safer than assuming an unrecorded session is harmless. Dynamic peers
+	// are unrelated listener-created sessions and are not candidates here.
+	liveStaticPeers := map[string]bool{}
+	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(peer *gobgpapi.Peer) {
+		if isRouterdDynamicPeer(peer) {
+			return
+		}
+		if address := peerAddress(peer); address != "" {
+			liveStaticPeers[address] = true
+		}
+	}); err != nil {
+		return fmt.Errorf("list peers before direct promotion fence: %w", err)
+	}
+	for _, address := range mapKeys(unknownLivePredecessors) {
+		if !liveStaticPeers[address] {
+			continue
+		}
+		if err := c.persistDirectPeerAddition(ctx, routerSpec, desired[address]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeObsoleteDirectPeers withdraws an earlier direct SAM session before
+// reconcilePolicies can remove its import filter. The normal peer reconciler
+// handles ordinary peer deletion after policy installation; that ordering is
+// unsafe only for the optional direct path because it has higher LOCAL_PREF.
+func (c *Controller) removeObsoleteDirectPeers(ctx context.Context, routerSpec routerapi.BGPRouterSpec, desired map[string]desiredPeer) (bool, error) {
+	previousPeers := make(map[string]desiredPeer, len(c.appliedPeerKeys)+len(c.desiredPeerKeys))
+	for address, peer := range c.appliedPeerKeys {
+		previousPeers[address] = peer
+	}
+	// desiredPeerKeys records a peer as soon as it has been added to GoBGP. It
+	// therefore closes the small window where a live direct peer was created
+	// successfully but persisting applied.json failed before the next reconcile.
+	for address, peer := range c.desiredPeerKeys {
+		previousPeers[address] = peer
+	}
+	addressSet := map[string]bool{}
+	for address, previous := range previousPeers {
+		if !previous.PreserveImportPrefixes {
+			continue
+		}
+		if next, stillDesired := desired[address]; stillDesired && next.PreserveImportPrefixes {
+			continue
+		}
+		addressSet[address] = true
+	}
+	for address := range c.retiringDirectPeerAddresses {
+		if next, stillDesired := desired[address]; stillDesired && next.PreserveImportPrefixes {
+			// The same peer is desired again (for example after an interrupted
+			// profile update), so it is no longer retirement work. It may have
+			// been replaced by a fallback peer after the earlier DeletePeer,
+			// though, so journal an addition and force UpdatePeer before the
+			// final desired-state save clears the durable marker.
+			delete(c.retiringDirectPeerAddresses, address)
+			if err := c.persistDirectPeerAddition(ctx, routerSpec, next); err != nil {
+				return false, err
+			}
+			continue
+		}
+		addressSet[address] = true
+	}
+	if len(addressSet) == 0 {
+		return false, nil
+	}
+	addresses := mapKeys(addressSet)
+	if err := c.persistDirectPeerRetirements(ctx, addresses); err != nil {
+		return false, err
+	}
+	live := map[string]bool{}
+	if err := c.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(peer *gobgpapi.Peer) {
+		if address := peerAddress(peer); address != "" {
+			live[address] = true
+		}
+	}); err != nil {
+		return false, fmt.Errorf("list peers before direct peer removal: %w", err)
+	}
+	changed := false
+	for _, address := range addresses {
+		if !live[address] {
+			delete(c.appliedPeerKeys, address)
+			delete(c.desiredPeerKeys, address)
+			delete(c.retiringDirectPeerAddresses, address)
+			delete(c.pendingDirectPeerAdditions, address)
+			changed = true
+			continue
+		}
+		if err := c.Server.DeletePeer(ctx, &gobgpapi.DeletePeerRequest{Address: address}); err != nil && !isMissingGoBGPPeer(err) {
+			return changed, fmt.Errorf("delete obsolete direct peer %s: %w", address, err)
+		}
+		delete(c.appliedPeerKeys, address)
+		delete(c.desiredPeerKeys, address)
+		delete(c.retiringDirectPeerAddresses, address)
+		delete(c.pendingDirectPeerAdditions, address)
+		changed = true
+	}
+	return changed, nil
+}
+
+// persistDirectPeerRetirements marks obsolete direct peers as withheld from
+// daemon restore before touching their live sessions. This is deliberately a
+// separate, durable step: the retained peer record keeps its old narrow policy
+// available to a live routerd-bgp, while the marker prevents a restart from
+// reviving that peer before routerd finishes the withdrawal.
+func (c *Controller) persistDirectPeerRetirements(ctx context.Context, addresses []string) error {
+	if len(addresses) == 0 {
+		return nil
+	}
+	pending := c.appliedConfig
+	if pending.Peers == nil {
+		pending.Peers = map[string]bgpdaemon.AppliedPeer{}
+	}
+	retiring := map[string]bool{}
+	for _, address := range pending.PendingDirectPeerRemovals {
+		if address = strings.TrimSpace(address); address != "" {
+			retiring[address] = true
+		}
+	}
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
+		}
+		existing, found := pending.Peers[address]
+		if !found || !existing.PreserveImportPrefixes {
+			// A direct peer can have been successfully updated in GoBGP just
+			// before the normal final applied-state save. In that crash window
+			// pending.Peers still describes the preceding fallback peer. Replace
+			// that stale record with the in-memory direct record so the durable
+			// retirement marker remains valid and restart-safe.
+			peer, found := c.desiredPeerKeys[address]
+			if !found || !peer.PreserveImportPrefixes {
+				peer, found = c.appliedPeerKeys[address]
+			}
+			if !found || !peer.PreserveImportPrefixes {
+				return fmt.Errorf("cannot persist direct peer retirement for %s without its direct peer record", address)
+			}
+			pending.Peers[address] = appliedPeer(peer)
+		}
+		retiring[address] = true
+	}
+	pending.PendingDirectPeerRemovals = mapKeys(retiring)
+	pending = bgpdaemon.Normalize(pending)
+	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+		return fmt.Errorf("persist direct peer retirement fence: %w", err)
+	}
+	c.appliedConfig = pending
+	if c.retiringDirectPeerAddresses == nil {
+		c.retiringDirectPeerAddresses = map[string]bool{}
+	}
+	for address := range retiring {
+		c.retiringDirectPeerAddresses[address] = true
+	}
+	return nil
+}
+
+// persistDirectPeerAddition journals a direct peer before its policy or live
+// peer state can change. The peer definition remains available for policy
+// refresh, but routerd-bgp skips the pending peer during restore until routerd
+// has observed a complete reconcile and written the final state.
+func (c *Controller) persistDirectPeerAddition(ctx context.Context, routerSpec routerapi.BGPRouterSpec, peer desiredPeer) error {
+	if !peer.PreserveImportPrefixes || strings.TrimSpace(peer.Address) == "" {
+		return nil
+	}
+	pending := c.appliedConfig
+	if pending.Global.ASN == 0 {
+		pending.Version = bgpdaemon.AppliedVersion
+		pending.Global = appliedGlobalFromSpec(routerSpec, c.Router)
+	}
+	if pending.Peers == nil {
+		pending.Peers = map[string]bgpdaemon.AppliedPeer{}
+	}
+	pending.Peers[peer.Address] = appliedPeer(peer)
+	additions := map[string]bool{}
+	for _, address := range pending.PendingDirectPeerAdditions {
+		if address = strings.TrimSpace(address); address != "" {
+			additions[address] = true
+		}
+	}
+	additions[peer.Address] = true
+	pending.PendingDirectPeerAdditions = mapKeys(additions)
+	pending = bgpdaemon.Normalize(pending)
+	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+		return fmt.Errorf("persist direct peer addition fence: %w", err)
+	}
+	c.appliedConfig = pending
+	if c.appliedPeerKeys == nil {
+		c.appliedPeerKeys = map[string]desiredPeer{}
+	}
+	c.appliedPeerKeys[peer.Address] = peer
+	if c.pendingDirectPeerAdditions == nil {
+		c.pendingDirectPeerAdditions = map[string]bool{}
+	}
+	c.pendingDirectPeerAdditions[peer.Address] = true
+	return nil
 }
 
 func isRouterdDynamicPeer(peer *gobgpapi.Peer) bool {
@@ -1900,22 +2334,41 @@ func (c *Controller) deleteDynamicPeerGroup(ctx context.Context, groupName strin
 
 func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi.BGPRouterSpec, appliedPaths []bgpdaemon.AppliedPath) error {
 	desired := advertisedPrefixes(spec)
+	desiredAttrs := staticAdvertisementAttrs(spec)
+	existing := staticAppliedPaths(appliedPaths)
 	c.pathUUIDs = staticPathUUIDs(appliedPaths)
+	retirements := map[string]bgpdaemon.AppliedPath{}
+	for prefix, current := range existing {
+		if !desired[prefix] || !staticPathAttrsEqual(current.Attrs, desiredAttrs) {
+			retirements[prefix] = current
+		}
+	}
+	if err := c.persistStaticPathRetirements(ctx, staticAppliedPathValues(retirements)); err != nil {
+		return err
+	}
 	for prefix := range c.pathUUIDs {
 		if !desired[prefix] {
 			if len(c.pathUUIDs[prefix]) > 0 {
-				if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil {
+				if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: c.pathUUIDs[prefix]}); err != nil && !isMissingGoBGPPath(err) {
 					return err
 				}
 			}
 			delete(c.pathUUIDs, prefix)
+			delete(c.retiringStaticPaths, prefix)
 		}
 	}
 	for prefix := range desired {
-		if len(c.pathUUIDs[prefix]) > 0 {
+		if current, found := existing[prefix]; found && staticPathAttrsEqual(current.Attrs, desiredAttrs) {
 			continue
 		}
-		path, err := localPath(prefix)
+		if uuid := c.pathUUIDs[prefix]; len(uuid) > 0 {
+			if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
+				return err
+			}
+			delete(c.pathUUIDs, prefix)
+			delete(c.retiringStaticPaths, prefix)
+		}
+		path, err := appliedPathToGoBGPPath(staticAppliedPath(prefix, nil, desiredAttrs))
 		if err != nil {
 			return err
 		}
@@ -1925,6 +2378,72 @@ func (c *Controller) reconcileAdvertisements(ctx context.Context, spec routerapi
 		}
 		c.pathUUIDs[prefix] = resp.GetUuid()
 	}
+	return nil
+}
+
+// withdrawPendingStaticPaths finishes a path withdrawal that was fenced in
+// applied.json before a prior reconciliation could complete. routerd-bgp does
+// not restore these paths, so retrying a missing UUID is safe and convergent.
+func (c *Controller) withdrawPendingStaticPaths(ctx context.Context) error {
+	for _, path := range staticAppliedPathValues(c.retiringStaticPaths) {
+		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
+		if err != nil {
+			return fmt.Errorf("decode retiring static BGP path %s UUID: %w", path.Prefix, err)
+		}
+		if len(uuid) == 0 {
+			return fmt.Errorf("retiring static BGP path %s has no UUID; restart routerd-bgp before retrying removal", path.Prefix)
+		}
+		if err := c.Server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil && !isMissingGoBGPPath(err) {
+			return fmt.Errorf("withdraw retiring static BGP path %s: %w", path.Prefix, err)
+		}
+		delete(c.retiringStaticPaths, path.Prefix)
+	}
+	return nil
+}
+
+// persistStaticPathRetirements removes paths from routerd-bgp's restart state
+// before their live DeletePath calls. In contrast to an ordinary final save,
+// this write is an intentional precondition: after it succeeds a daemon
+// restart cannot re-advertise a path which the current desired config removed.
+func (c *Controller) persistStaticPathRetirements(ctx context.Context, paths []bgpdaemon.AppliedPath) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	pending := c.appliedConfig
+	retiring := staticAppliedPaths(pending.PendingStaticPathRemovals)
+	for _, path := range paths {
+		path = bgpdaemon.NormalizeAppliedPath(path)
+		if path.Source != bgpdaemon.AppliedPathSourceStatic {
+			return fmt.Errorf("cannot retire non-static BGP path %s from static advertisement reconciliation", path.Prefix)
+		}
+		uuid, err := bgpdaemon.DecodeUUID(path.UUID)
+		if err != nil {
+			return fmt.Errorf("decode static BGP path %s UUID before retirement: %w", path.Prefix, err)
+		}
+		if len(uuid) == 0 {
+			return fmt.Errorf("static BGP path %s has no UUID; restart routerd-bgp before changing this advertisement", path.Prefix)
+		}
+		retiring[path.Prefix] = path
+	}
+	keptPaths := make([]bgpdaemon.AppliedPath, 0, len(pending.Paths))
+	for _, path := range pending.Paths {
+		path = bgpdaemon.NormalizeAppliedPath(path)
+		if path.Source == bgpdaemon.AppliedPathSourceStatic && retiring[path.Prefix].Prefix != "" {
+			continue
+		}
+		keptPaths = append(keptPaths, path)
+	}
+	pending.Paths = keptPaths
+	// Paths are the authoritative representation once present. Clear the
+	// legacy projection so Normalize does not put a retiring static route back.
+	pending.Advertisements = nil
+	pending.PendingStaticPathRemovals = staticAppliedPathValues(retiring)
+	pending = bgpdaemon.Normalize(pending)
+	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {
+		return fmt.Errorf("persist static path retirement fence: %w", err)
+	}
+	c.appliedConfig = pending
+	c.retiringStaticPaths = retiring
 	return nil
 }
 
@@ -1939,6 +2458,49 @@ func staticPathUUIDs(paths []bgpdaemon.AppliedPath) map[string][]byte {
 			continue
 		}
 		out[path.Prefix] = uuid
+	}
+	return out
+}
+
+// staticAdvertisementAttrs is the concrete meaning of BGPRouter's outbound
+// community set for routerd-created local advertisements. In particular, a
+// direct SAM leaf signs its owned /32 with its node identity here; import-side
+// direct policy can then authenticate the peer rather than merely its tunnel.
+func staticAdvertisementAttrs(spec routerapi.BGPRouterSpec) bgpdaemon.AppliedPathAttrs {
+	return bgpdaemon.AppliedPathAttrs{Communities: stringutil.UniqueTrimmedSorted(spec.Communities.Set.Out)}
+}
+
+func staticAppliedPath(prefix string, uuid []byte, attrs bgpdaemon.AppliedPathAttrs) bgpdaemon.AppliedPath {
+	path := bgpdaemon.StaticAppliedPath(prefix, uuid)
+	path.Attrs = attrs
+	return bgpdaemon.NormalizeAppliedPath(path)
+}
+
+func staticPathAttrsEqual(left, right bgpdaemon.AppliedPathAttrs) bool {
+	left.Communities = stringutil.UniqueTrimmedSorted(left.Communities)
+	right.Communities = stringutil.UniqueTrimmedSorted(right.Communities)
+	return reflect.DeepEqual(left, right)
+}
+
+func staticAppliedPaths(paths []bgpdaemon.AppliedPath) map[string]bgpdaemon.AppliedPath {
+	out := map[string]bgpdaemon.AppliedPath{}
+	for _, path := range bgpdaemon.Normalize(bgpdaemon.AppliedConfig{Paths: paths}).Paths {
+		if path.Source == bgpdaemon.AppliedPathSourceStatic {
+			out[path.Prefix] = path
+		}
+	}
+	return out
+}
+
+func staticAppliedPathValues(paths map[string]bgpdaemon.AppliedPath) []bgpdaemon.AppliedPath {
+	prefixes := make([]string, 0, len(paths))
+	for prefix := range paths {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	out := make([]bgpdaemon.AppliedPath, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		out = append(out, bgpdaemon.NormalizeAppliedPath(paths[prefix]))
 	}
 	return out
 }
@@ -1968,6 +2530,15 @@ func appliedImportPolicyAllowedPrefixes(applied bgpdaemon.AppliedConfig) []strin
 
 func isMissingGoBGPPath(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "can't find a specified path")
+}
+
+func isMissingGoBGPPeer(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "can't delete a peer configuration for") ||
+		strings.Contains(message, "not found peer")
 }
 
 func appliedPathToGoBGPPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, error) {
@@ -2034,6 +2605,17 @@ func standardCommunities(values []string) ([]uint32, error) {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		if value == "" {
+			continue
+		}
+		switch value {
+		case "internet":
+			out = append(out, 0)
+			continue
+		case "no-export":
+			out = append(out, uint32(0xffff)<<16|0xff01)
+			continue
+		case "no-advertise":
+			out = append(out, uint32(0xffff)<<16|0xff02)
 			continue
 		}
 		if strings.Contains(value, ":") {
@@ -2705,7 +3287,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 		}
 	}
 	applyPolicy := &gobgpapi.ApplyPolicy{}
-	if len(importPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
+	if peerHasImportPolicy(peer.ImportPolicy) && strings.TrimSpace(peer.ImportPolicyName) != "" {
 		applyPolicy.ImportPolicy = peerImportPolicyAssignment(peer.ImportPolicyName)
 	}
 	if len(exportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
@@ -2757,7 +3339,7 @@ func goBGPDynamicPeerGroup(peer desiredDynamicPeer) *gobgpapi.PeerGroup {
 		}
 	}
 	applyPolicy := &gobgpapi.ApplyPolicy{}
-	if len(importPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
+	if peerHasImportPolicy(peer.ImportPolicy) && strings.TrimSpace(peer.ImportPolicyName) != "" {
 		applyPolicy.ImportPolicy = peerImportPolicyAssignment(peer.ImportPolicyName)
 	}
 	if len(exportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
@@ -2841,6 +3423,13 @@ func gobgpDynamicPeerGracefulRestart(peer desiredDynamicPeer) *gobgpapi.Graceful
 }
 
 func (c *Controller) desiredPeerMatches(address string, _ *gobgpapi.Peer, desired desiredPeer) bool {
+	// A pre-policy direct-peer journal can deliberately describe a direct peer
+	// while the live daemon still has the preceding fallback peer. Do not let
+	// the cache suppress the required UpdatePeer; the marker is cleared only
+	// after that live update (or AddPeer) succeeds.
+	if c.pendingDirectPeerAdditions[address] {
+		return false
+	}
 	if cached, ok := c.desiredPeerKeys[address]; ok {
 		return stableDesiredPeerEqual(cached, desired)
 	}
@@ -3027,11 +3616,13 @@ type bgpPathRank struct {
 
 func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImportPrefix, peerAddressRewrite map[string]bool, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
 	prefix := normalizeRoutePrefix(dst.GetPrefix())
-	var candidates []struct {
+	type candidate struct {
 		nextHop string
 		rank    bgpPathRank
 		best    bool
+		stale   bool
 	}
+	var candidates []candidate
 	for _, path := range dst.GetPaths() {
 		if path.GetIsWithdraw() || path.GetIsNexthopInvalid() {
 			continue
@@ -3060,15 +3651,29 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 		if admit != nil && !admit(parsed, identityAddress, nextHop, communities) {
 			continue
 		}
-		candidates = append(candidates, struct {
-			nextHop string
-			rank    bgpPathRank
-			best    bool
-		}{nextHop: nextHop, rank: pathRank(path), best: path.GetBest()})
+		candidates = append(candidates, candidate{
+			nextHop: nextHop,
+			rank:    pathRank(path),
+			best:    path.GetBest(),
+			stale:   path.GetStale(),
+		})
 		prefix = parsed.String()
 	}
 	if len(candidates) == 0 || prefix == "" {
 		return nil
+	}
+	// A stale direct-mesh path can remain GoBGP's best path during graceful
+	// restart even after a lower-preference reflected path is live. Prefer the
+	// live set for FIB selection, while retaining stale-path forwarding when it
+	// is the only available set during the graceful-restart window.
+	liveCandidates := make([]candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !candidate.stale {
+			liveCandidates = append(liveCandidates, candidate)
+		}
+	}
+	if len(liveCandidates) > 0 {
+		candidates = liveCandidates
 	}
 	bestRank := candidates[0].rank
 	bestSet := false
@@ -3105,7 +3710,7 @@ func fibRoutesFromDestination(dst *gobgpapi.Destination, allowed []allowedImport
 func peerAddressFIBRewritePeers(desired map[string]desiredPeer) map[string]bool {
 	out := map[string]bool{}
 	for address, peer := range desired {
-		if importNextHopRewrite(peer.ImportPolicy) != "peer-address" || len(importPolicyPrefixes(peer.ImportPolicy)) == 0 {
+		if importNextHopRewrite(peer.ImportPolicy) != "peer-address" {
 			continue
 		}
 		if parsed, err := netip.ParseAddr(strings.TrimSpace(address)); err == nil {
@@ -3407,7 +4012,10 @@ func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 		AllowedPrefixes:        stringutil.UniqueTrimmedSorted(spec.AllowedPrefixes),
 		AllowedPrefixLengthMin: spec.AllowedPrefixLengthMin,
 		AllowedPrefixLengthMax: spec.AllowedPrefixLengthMax,
+		RequiredCommunities:    stringutil.UniqueTrimmedSorted(spec.RequiredCommunities),
+		ForbiddenCommunities:   stringutil.UniqueTrimmedSorted(spec.ForbiddenCommunities),
 		NextHopRewrite:         importNextHopRewrite(spec),
+		LocalPreference:        spec.LocalPreference,
 	}
 	data, err := json.Marshal(normalized)
 	if err != nil {
@@ -3418,26 +4026,43 @@ func importPolicyKey(spec routerapi.BGPImportPolicySpec) string {
 }
 
 func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) string {
+	return bgpPoliciesKeyWithExports(importSpec, peers, dynamicPeers, true)
+}
+
+// bgpImportPoliciesKey deliberately excludes exports. GoBGP must re-evaluate
+// learned routes when an import policy changes, but an export-only policy edit
+// has no bearing on the current RIB.
+func bgpImportPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer) string {
+	return bgpPoliciesKeyWithExports(importSpec, peers, dynamicPeers, false)
+}
+
+func bgpPoliciesKeyWithExports(importSpec routerapi.BGPImportPolicySpec, peers map[string]desiredPeer, dynamicPeers map[string]desiredDynamicPeer, includeExports bool) string {
 	type peerPolicyKey struct {
-		Address               string   `json:"address"`
-		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
-		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
-		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
-		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
-		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
-		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
-		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
+		Address                    string   `json:"address"`
+		ImportPolicyName           string   `json:"importPolicyName,omitempty"`
+		ImportAllowedPrefixes      []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin            int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax            int      `json:"importLengthMax,omitempty"`
+		ImportNextHopRewrite       string   `json:"importNextHopRewrite,omitempty"`
+		ImportLocalPreference      uint32   `json:"importLocalPreference,omitempty"`
+		ImportRequiredCommunities  []string `json:"importRequiredCommunities,omitempty"`
+		ImportForbiddenCommunities []string `json:"importForbiddenCommunities,omitempty"`
+		ExportPolicyName           string   `json:"exportPolicyName,omitempty"`
+		ExportAllowedPrefixes      []string `json:"exportAllowedPrefixes,omitempty"`
 	}
 	type dynamicPeerPolicyKey struct {
-		PeerGroupName         string   `json:"peerGroupName"`
-		Prefixes              []string `json:"prefixes,omitempty"`
-		ImportPolicyName      string   `json:"importPolicyName,omitempty"`
-		ImportAllowedPrefixes []string `json:"importAllowedPrefixes,omitempty"`
-		ImportLengthMin       int      `json:"importLengthMin,omitempty"`
-		ImportLengthMax       int      `json:"importLengthMax,omitempty"`
-		ImportNextHopRewrite  string   `json:"importNextHopRewrite,omitempty"`
-		ExportPolicyName      string   `json:"exportPolicyName,omitempty"`
-		ExportAllowedPrefixes []string `json:"exportAllowedPrefixes,omitempty"`
+		PeerGroupName              string   `json:"peerGroupName"`
+		Prefixes                   []string `json:"prefixes,omitempty"`
+		ImportPolicyName           string   `json:"importPolicyName,omitempty"`
+		ImportAllowedPrefixes      []string `json:"importAllowedPrefixes,omitempty"`
+		ImportLengthMin            int      `json:"importLengthMin,omitempty"`
+		ImportLengthMax            int      `json:"importLengthMax,omitempty"`
+		ImportNextHopRewrite       string   `json:"importNextHopRewrite,omitempty"`
+		ImportLocalPreference      uint32   `json:"importLocalPreference,omitempty"`
+		ImportRequiredCommunities  []string `json:"importRequiredCommunities,omitempty"`
+		ImportForbiddenCommunities []string `json:"importForbiddenCommunities,omitempty"`
+		ExportPolicyName           string   `json:"exportPolicyName,omitempty"`
+		ExportAllowedPrefixes      []string `json:"exportAllowedPrefixes,omitempty"`
 	}
 	normalized := struct {
 		Import       routerapi.BGPImportPolicySpec `json:"import"`
@@ -3448,39 +4073,62 @@ func bgpPoliciesKey(importSpec routerapi.BGPImportPolicySpec, peers map[string]d
 			AllowedPrefixes:        stringutil.UniqueTrimmedSorted(importSpec.AllowedPrefixes),
 			AllowedPrefixLengthMin: importSpec.AllowedPrefixLengthMin,
 			AllowedPrefixLengthMax: importSpec.AllowedPrefixLengthMax,
+			RequiredCommunities:    stringutil.UniqueTrimmedSorted(importSpec.RequiredCommunities),
+			ForbiddenCommunities:   stringutil.UniqueTrimmedSorted(importSpec.ForbiddenCommunities),
 			NextHopRewrite:         importNextHopRewrite(importSpec),
+			LocalPreference:        importSpec.LocalPreference,
 		},
 	}
 	for _, peer := range sortedDesiredPeers(peers) {
 		importPrefixes := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.AllowedPrefixes)
-		exportPrefixes := stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
-		if len(importPrefixes) == 0 && len(exportPrefixes) == 0 {
+		requiredCommunities := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities)
+		forbiddenCommunities := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities)
+		exportPrefixes := []string(nil)
+		exportPolicyName := ""
+		if includeExports {
+			exportPrefixes = stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
+			exportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
+		}
+		if len(importPrefixes) == 0 && len(requiredCommunities) == 0 && len(forbiddenCommunities) == 0 && len(exportPrefixes) == 0 {
 			continue
 		}
 		normalized.Peers = append(normalized.Peers, peerPolicyKey{
-			Address:               strings.TrimSpace(peer.Address),
-			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
-			ImportAllowedPrefixes: importPrefixes,
-			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
-			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
-			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
-			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
-			ExportAllowedPrefixes: exportPrefixes,
+			Address:                    strings.TrimSpace(peer.Address),
+			ImportPolicyName:           strings.TrimSpace(peer.ImportPolicyName),
+			ImportAllowedPrefixes:      importPrefixes,
+			ImportLengthMin:            peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:            peer.ImportPolicy.AllowedPrefixLengthMax,
+			ImportNextHopRewrite:       importNextHopRewrite(peer.ImportPolicy),
+			ImportLocalPreference:      peer.ImportPolicy.LocalPreference,
+			ImportRequiredCommunities:  requiredCommunities,
+			ImportForbiddenCommunities: forbiddenCommunities,
+			ExportPolicyName:           exportPolicyName,
+			ExportAllowedPrefixes:      exportPrefixes,
 		})
 	}
 	for _, peer := range sortedDesiredDynamicPeers(dynamicPeers) {
 		importPrefixes := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.AllowedPrefixes)
-		exportPrefixes := stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
+		requiredCommunities := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities)
+		forbiddenCommunities := stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities)
+		exportPrefixes := []string(nil)
+		exportPolicyName := ""
+		if includeExports {
+			exportPrefixes = stringutil.UniqueTrimmedSorted(peer.ExportPolicy.AllowedPrefixes)
+			exportPolicyName = strings.TrimSpace(peer.ExportPolicyName)
+		}
 		normalized.DynamicPeers = append(normalized.DynamicPeers, dynamicPeerPolicyKey{
-			PeerGroupName:         strings.TrimSpace(peer.PeerGroupName),
-			Prefixes:              append([]string(nil), peer.Prefixes...),
-			ImportPolicyName:      strings.TrimSpace(peer.ImportPolicyName),
-			ImportAllowedPrefixes: importPrefixes,
-			ImportLengthMin:       peer.ImportPolicy.AllowedPrefixLengthMin,
-			ImportLengthMax:       peer.ImportPolicy.AllowedPrefixLengthMax,
-			ImportNextHopRewrite:  importNextHopRewrite(peer.ImportPolicy),
-			ExportPolicyName:      strings.TrimSpace(peer.ExportPolicyName),
-			ExportAllowedPrefixes: exportPrefixes,
+			PeerGroupName:              strings.TrimSpace(peer.PeerGroupName),
+			Prefixes:                   append([]string(nil), peer.Prefixes...),
+			ImportPolicyName:           strings.TrimSpace(peer.ImportPolicyName),
+			ImportAllowedPrefixes:      importPrefixes,
+			ImportLengthMin:            peer.ImportPolicy.AllowedPrefixLengthMin,
+			ImportLengthMax:            peer.ImportPolicy.AllowedPrefixLengthMax,
+			ImportNextHopRewrite:       importNextHopRewrite(peer.ImportPolicy),
+			ImportLocalPreference:      peer.ImportPolicy.LocalPreference,
+			ImportRequiredCommunities:  requiredCommunities,
+			ImportForbiddenCommunities: forbiddenCommunities,
+			ExportPolicyName:           exportPolicyName,
+			ExportAllowedPrefixes:      exportPrefixes,
 		})
 	}
 	data, err := json.Marshal(normalized)
@@ -3496,6 +4144,13 @@ func nextHopRewriteAction(spec routerapi.BGPImportPolicySpec) *gobgpapi.NexthopA
 		return &gobgpapi.NexthopAction{Unchanged: true}
 	}
 	return &gobgpapi.NexthopAction{PeerAddress: true}
+}
+
+func importLocalPreferenceAction(spec routerapi.BGPImportPolicySpec) *gobgpapi.LocalPrefAction {
+	if spec.LocalPreference == 0 {
+		return nil
+	}
+	return &gobgpapi.LocalPrefAction{Value: spec.LocalPreference}
 }
 
 func globalImportPolicyAssignment(policyName string, includePolicy bool) *gobgpapi.PolicyAssignment {

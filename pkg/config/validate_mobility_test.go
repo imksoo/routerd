@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 )
@@ -202,6 +203,100 @@ func TestValidateSAMTransportProfileAllowsPeersFromWithoutPeers(t *testing.T) {
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
 	if err := Validate(samTransportProfileRouter(spec)); err != nil {
 		t.Fatalf("Validate peersFrom SAMTransportProfile: %v", err)
+	}
+}
+
+func TestValidateSAMTransportProfileDirectPeerSourceRequiresSafeShape(t *testing.T) {
+	base := validSAMTransportProfileSpec()
+	base.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "spec.addressingMode must be pair-stable") {
+		t.Fatalf("Validate direct source without pair-stable mode = %v, want pair-stable rejection", err)
+	}
+
+	base.AddressingMode = "pair-stable"
+	base.BGP.RouteReflectorClient = true
+	base.BGP.ImportPolicy.AllowedPrefixes = []string{"10.77.60.0/24"}
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "routeReflectorClient must be false") {
+		t.Fatalf("Validate direct source on RR client = %v, want RR client rejection", err)
+	}
+
+	base.BGP.RouteReflectorClient = false
+	base.BGP.ImportPolicy.LocalPreference = 0
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "importPolicy.localPreference is required") {
+		t.Fatalf("Validate direct source without explicit RR preference = %v, want preference requirement", err)
+	}
+
+	base.BGP.ImportPolicy.AllowedPrefixLengthMin = 32
+	base.BGP.ImportPolicy.AllowedPrefixLengthMax = 32
+	base.BGP.DirectLocalPreference = 100
+	base.BGP.ImportPolicy.LocalPreference = 100
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "directLocalPreference must exceed") {
+		t.Fatalf("Validate direct source below RR preference = %v, want preference rejection", err)
+	}
+
+	base.BGP.DirectLocalPreference = 0
+	base.BGP.ImportPolicy.LocalPreference = 200
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "directLocalPreference must exceed") {
+		t.Fatalf("Validate direct source with equal RR preference = %v, want preference rejection", err)
+	}
+
+	base.BGP.ImportPolicy.LocalPreference = 100
+	base.BGP.ImportPolicy.AllowedPrefixes = nil
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "importPolicy.allowedPrefixes is required") {
+		t.Fatalf("Validate direct source without explicit import allowlist = %v, want allowlist requirement", err)
+	}
+
+	base.BGP.ImportPolicy.AllowedPrefixes = []string{"10.77.60.0/24"}
+	base.BGP.ImportPolicy.AllowedPrefixLengthMin = 0
+	base.BGP.ImportPolicy.AllowedPrefixLengthMax = 0
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32") {
+		t.Fatalf("Validate direct source without /32 bounds = %v, want exact-prefix requirement", err)
+	}
+
+	base.BGP.ImportPolicy.AllowedPrefixLengthMin = 32
+	base.BGP.ImportPolicy.AllowedPrefixLengthMax = 32
+	base.BGP.ImportPolicy.AllowedPrefixes = []string{"not-a-cidr"}
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "must be an IPv4 or IPv6 prefix") {
+		t.Fatalf("Validate direct source with invalid allowlist entry = %v, want CIDR rejection", err)
+	}
+
+	base.BGP.ImportPolicy.AllowedPrefixes = []string{"2001:db8::/64"}
+	if err := Validate(samTransportProfileRouter(base)); err == nil || !strings.Contains(err.Error(), "must be an IPv4 CIDR") {
+		t.Fatalf("Validate direct source with IPv6 allowlist entry = %v, want IPv4 rejection", err)
+	}
+
+	base.BGP.ImportPolicy.AllowedPrefixes = []string{"10.77.60.0/24"}
+	if err := Validate(samTransportProfileRouter(base)); err != nil {
+		t.Fatalf("Validate direct source with safe RR fallback = %v", err)
+	}
+}
+
+func TestValidateSAMTransportProfileDirectPeerSourceRequiresRRFallback(t *testing.T) {
+	spec := validSAMTransportProfileSpec()
+	spec.AddressingMode = "pair-stable"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true}}
+	if err := Validate(samTransportProfileRouter(spec)); err == nil || !strings.Contains(err.Error(), "requires a preceding non-optional SAMRRSet") {
+		t.Fatalf("Validate direct-only source = %v, want RR fallback rejection", err)
+	}
+
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs", Optional: true},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	if err := Validate(samTransportProfileRouter(spec)); err == nil || !strings.Contains(err.Error(), "requires a preceding non-optional SAMRRSet") {
+		t.Fatalf("Validate optional RR fallback = %v, want RR fallback rejection", err)
+	}
+
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+		{Resource: "SAMNodeSet/late"},
+	}
+	if err := Validate(samTransportProfileRouter(spec)); err == nil || !strings.Contains(err.Error(), "direct must be the final peer source") {
+		t.Fatalf("Validate direct source followed by another source = %v, want terminal-source rejection", err)
 	}
 }
 
@@ -502,6 +597,101 @@ func TestValidateSAMEnrollmentPolicyAndClaim(t *testing.T) {
 	router.Spec.Resources[claimIndex].Spec = claim
 	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "outside authorized mobility prefixes") {
 		t.Fatalf("expected MobilityPool authorization error, got %v", err)
+	}
+}
+
+func TestValidateSAMEnrollmentClaimDirectMeshRequiresPolicyOptIn(t *testing.T) {
+	router := samEnrollmentRouter()
+	claimIndex := len(router.Spec.Resources) - 1
+	claim := router.Spec.Resources[claimIndex].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.DirectMesh = true
+	router.Spec.Resources[claimIndex].Spec = claim
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.directMesh requires SAMEnrollmentPolicy/cloudedge-leaves spec.directMesh.peerGroupRef") {
+		t.Fatalf("Validate direct claim without policy direct mesh = %v, want policy opt-in rejection", err)
+	}
+
+	policyIndex := claimIndex - 1
+	policy := router.Spec.Resources[policyIndex].Spec.(api.SAMEnrollmentPolicySpec)
+	policy.DirectMesh.PeerGroupRef = "SAMPeerGroup/cloudedge-direct-leaves"
+	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	policy.RRNodeSetRef = "SAMNodeSet/cloudedge-members"
+	router.Spec.Resources[policyIndex].Spec = policy
+	claim.RRSetRef = policy.RRSetRef
+	router.Spec.Resources[claimIndex].Spec = claim
+	for i := range router.Spec.Resources {
+		if router.Spec.Resources[i].APIVersion == api.MobilityAPIVersion && router.Spec.Resources[i].Kind == "SAMNodeSet" && router.Spec.Resources[i].Metadata.Name == "cloudedge-members" {
+			nodes := router.Spec.Resources[i].Spec.(api.SAMNodeSetSpec)
+			for j := range nodes.Nodes {
+				nodes.Nodes[j].RouteReflector = true
+			}
+			router.Spec.Resources[i].Spec = nodes
+		}
+	}
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate direct claim with policy opt-in = %v", err)
+	}
+}
+
+func TestValidateSAMEnrollmentPoliciesRequireUniqueRuntimeTopologyRefs(t *testing.T) {
+	router := samEnrollmentRouter()
+	var policy api.SAMEnrollmentPolicySpec
+	policyIndex := -1
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != "cloudedge-leaves" {
+			continue
+		}
+		var err error
+		policy, err = resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			t.Fatalf("policy spec: %v", err)
+		}
+		policyIndex = i
+		break
+	}
+	if policyIndex < 0 {
+		t.Fatal("cloudedge-leaves policy not found")
+	}
+	policy.RRSetRef = "SAMRRSet/cloudedge-rrs"
+	policy.RRNodeSetRef = "SAMNodeSet/cloudedge-members"
+	policy.DirectMesh.PeerGroupRef = "SAMPeerGroup/cloudedge-direct-leaves"
+	router.Spec.Resources[policyIndex].Spec = policy
+	claim := router.Spec.Resources[len(router.Spec.Resources)-1].Spec.(api.SAMEnrollmentClaimSpec)
+	claim.RRSetRef = policy.RRSetRef
+	router.Spec.Resources[len(router.Spec.Resources)-1].Spec = claim
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != "cloudedge-members" {
+			continue
+		}
+		nodes, err := resource.SAMNodeSetSpec()
+		if err != nil {
+			t.Fatalf("RR node set spec: %v", err)
+		}
+		for j := range nodes.Nodes {
+			nodes.Nodes[j].RouteReflector = true
+		}
+		router.Spec.Resources[i].Spec = nodes
+	}
+
+	duplicate := policy
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentPolicy"},
+		Metadata: api.ObjectMeta{Name: "other-leaves"},
+		Spec:     duplicate,
+	})
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "SAM enrollment RRSet refs must be unique per policy") {
+		t.Fatalf("Validate duplicate RRSet ref = %v, want unique RRSet rejection", err)
+	}
+
+	duplicate.RRSetRef = "SAMRRSet/other-rrs"
+	router.Spec.Resources[len(router.Spec.Resources)-1].Spec = duplicate
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "SAM enrollment direct peer-group refs must be unique per policy") {
+		t.Fatalf("Validate duplicate direct peer-group ref = %v, want unique peer-group rejection", err)
+	}
+
+	duplicate.DirectMesh.PeerGroupRef = "SAMPeerGroup/other-direct-leaves"
+	router.Spec.Resources[len(router.Spec.Resources)-1].Spec = duplicate
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate unique enrollment runtime topology refs: %v", err)
 	}
 }
 
@@ -939,9 +1129,9 @@ func TestValidateRejectsTopLevelSAMPeerGroup(t *testing.T) {
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 			Metadata: api.ObjectMeta{Name: "svnet1-rrs"},
-			Spec: api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
-				NodeRef:        "k8s-rt01",
-				RemoteEndpoint: "203.0.113.11",
+			Spec: api.SAMPeerGroupSpec{Nodes: []api.SAMNodeSpec{{
+				NodeRef:     "k8s-rt01",
+				SAMEndpoint: "203.0.113.11",
 			}}},
 		}}},
 	}
@@ -982,7 +1172,13 @@ func samTransportProfileRouter(spec api.SAMTransportProfileSpec) *api.Router {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
 				Metadata: api.ObjectMeta{Name: "mobility"},
-				Spec:     api.BGPRouterSpec{ASN: 64500, RouterID: "192.0.2.1"},
+				Spec: api.BGPRouterSpec{
+					ASN:      64500,
+					RouterID: "192.0.2.1",
+					Communities: api.BGPCommunitiesSpec{Set: api.BGPCommunitySetSpec{
+						Out: []string{bgpstate.MobilityNodeIdentityCommunity("pve-rt")},
+					}},
+				},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},

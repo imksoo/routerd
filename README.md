@@ -106,7 +106,11 @@ The project focuses on a few independent strengths:
   generated transport and BGP artifacts in place while status reports the
   source as stale with an operator warning. Enrollment is separate: an
   admitted leaf fetches a policy-scoped runtime `SAMRRSet`, never a statically
-  authored RR topology. Static identity/topology comes from `SAMNodeSet`, while
+  authored RR topology. A policy can additionally offer an **optional direct
+  leaf path**. routerd tries that path only for signed, opted-in leaves, gives
+  it a higher BGP local preference while it is established, and keeps the RR
+  peers as the safe fallback when the direct path is absent or unreachable.
+  Static identity/topology comes from `SAMNodeSet`, while
   each MobilityPool supplies the local `/32` and capture intent. Startup
   fencing is readiness-first but bounded, and
   generated RR-client import admission defaults to declared MobilityPool prefixes

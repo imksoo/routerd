@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/wireguard"
@@ -64,6 +66,95 @@ func wireGuardRouterWithFetchedRRSet(t *testing.T, router *api.Router, name, pol
 		t.Fatalf("BuildEffectiveConfigForOS: %v", err)
 	}
 	return &effective
+}
+
+// wireGuardRouterWithFetchedSAMPeerGroup models the policy-scoped direct-leaf
+// topology delivered with an RR snapshot. The peer group stays runtime-only:
+// it enters the leaf through one local DynamicConfigPart rather than through
+// the peer-group sync path.
+func wireGuardRouterWithFetchedSAMPeerGroup(t *testing.T, router *api.Router, name, policyRef, fingerprint string, nodes []api.SAMNodeSpec) *api.Router {
+	t.Helper()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	ownedPrefixesByNode := make(map[string][]string, len(nodes))
+	for i, node := range nodes {
+		// Enrollment projects a signed, exact /32 ownership boundary alongside
+		// each direct peer. Keep the WireGuard fixture structurally equivalent
+		// even though this test only consumes its tunnel key material.
+		ownedPrefixesByNode[node.NodeRef] = []string{fmt.Sprintf("198.18.0.%d/32", i+1)}
+	}
+	rrSet := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
+		Metadata: api.ObjectMeta{Name: "fetched-topology"},
+		Spec: api.SAMRRSetSpec{
+			EnrollmentPolicyRef: policyRef,
+			Nodes: []api.SAMNodeSpec{{
+				NodeRef:        "rr-a",
+				RouteReflector: true,
+				SAMEndpoint:    "203.0.113.10",
+				WireGuard: api.SAMNodeWireGuardSpec{
+					PublicKey:  "rrpub-a",
+					Endpoint:   "203.0.113.10:51820",
+					AllowedIPs: []string{"203.0.113.10/32"},
+				},
+			}},
+		},
+	}
+	group := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  policyRef,
+			TransportFingerprint: fingerprint,
+			Nodes:                append([]api.SAMNodeSpec(nil), nodes...),
+			OwnedPrefixesByNode:  ownedPrefixesByNode,
+		},
+	}
+	part := dynamicconfig.DynamicConfigPart{
+		TypeMeta: api.TypeMeta{APIVersion: dynamicconfig.ConfigAPIVersion, Kind: "DynamicConfigPart"},
+		Metadata: api.ObjectMeta{Name: "fetched-topology"},
+		Spec: dynamicconfig.DynamicConfigPartSpec{
+			Source:     "SAMRRSet/fetched-topology",
+			Generation: 1,
+			ObservedAt: now,
+			ExpiresAt:  now.Add(time.Hour),
+			Resources:  []api.Resource{rrSet, group},
+		},
+	}
+	policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*router)
+	if err != nil {
+		t.Fatalf("ExtractDynamicOverridePolicies: %v", err)
+	}
+	effective, _, err := dynamicconfig.BuildEffectiveConfigForOS(*router, []dynamicconfig.DynamicConfigPart{part}, policies, now, platform.OSLinux)
+	if err != nil {
+		t.Fatalf("BuildEffectiveConfigForOS: %v", err)
+	}
+	return &effective
+}
+
+func testWireGuardDirectTransportProfile(self, iface, groupRef string) api.SAMTransportProfileSpec {
+	return api.SAMTransportProfileSpec{
+		SelfNodeRef:       strings.TrimSpace(self),
+		Mode:              "ipip",
+		Encryption:        "wireguard",
+		InnerPrefix:       "10.255.0.0/24",
+		AddressingMode:    "pair-stable",
+		UnderlayInterface: iface,
+		BGP:               api.SAMTransportBGPProfileSpec{PeerASN: 64577},
+		PeersFrom: []api.SAMTransportPeersSourceSpec{
+			{Resource: "SAMRRSet/fetched-topology"},
+			{Resource: groupRef, Direct: true},
+		},
+	}
+}
+
+func addWireGuardDirectTransportProfile(router *api.Router, iface, groupRef string) api.SAMTransportProfileSpec {
+	profile := testWireGuardDirectTransportProfile(router.Metadata.Name, iface, groupRef)
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+		Metadata: api.ObjectMeta{Name: "direct-transport"},
+		Spec:     profile,
+	})
+	return profile
 }
 
 func assertStringSet(t *testing.T, label string, got, want []string) {
@@ -201,6 +292,389 @@ spec:
 			t.Fatalf("WireGuardPeer/%s allowedIPs = %#v, want %#v", want.name, peer.AllowedIPs, want.allowedIPs)
 		}
 	}
+}
+
+func TestWireGuardControllerDerivesPeersFromFetchedSAMPeerGroup(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/fetched-topology
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	profile := testWireGuardDirectTransportProfile(router.Metadata.Name, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	router = wireGuardRouterWithFetchedSAMPeerGroup(t, router, "cloudedge-direct", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(profile), []api.SAMNodeSpec{
+		{NodeRef: "leaf-a", SAMEndpoint: "10.20.0.31", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "selfpub", AllowedIPs: []string{"10.20.0.31/32"}}},
+		{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "leafpub-b", Endpoint: "198.51.100.32:51820", AllowedIPs: []string{"10.20.0.32/32"}, PersistentKeepalive: 25}},
+	})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	controller := WireGuardController{Router: router}
+	resources, statuses, pending, err := controller.resolvePeersFrom("wg-direct", api.WireGuardInterfaceSpec{
+		SelfNodeRef: "leaf-a",
+		PeersFrom: []api.WireGuardPeersSourceSpec{
+			{Resource: "SAMRRSet/fetched-topology"},
+			{Resource: "SAMPeerGroup/cloudedge-direct"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || len(statuses) != 2 || statuses[0].Phase != "Resolved" || statuses[0].PeerCount != 1 || statuses[1].Phase != "Direct" || statuses[1].PeerCount != 1 {
+		t.Fatalf("pending/statuses = %#v/%#v, want one RR fallback and one direct remote peer", pending, statuses)
+	}
+	if got := countResources(&api.Router{Spec: api.RouterSpec{Resources: resources}}, api.NetAPIVersion, "WireGuardPeer"); got != 2 {
+		t.Fatalf("WireGuardPeer count = %d, want RR and direct peers resources=%#v", got, resources)
+	}
+	for _, resource := range resources {
+		if resource.Kind == "WireGuardPeer" && resource.Metadata.Name == "leaf-a" {
+			t.Fatalf("self leaf became a WireGuard peer: %#v", resources)
+		}
+	}
+	peer := mustWireGuardPeer(t, &api.Router{Spec: api.RouterSpec{Resources: resources}}, "leaf-b")
+	if peer.PublicKey != "leafpub-b" || peer.Endpoint != "198.51.100.32:51820" || strings.Join(peer.AllowedIPs, ",") != "10.20.0.32/32" {
+		t.Fatalf("WireGuardPeer/leaf-b = %#v", peer)
+	}
+}
+
+func TestResolveWireGuardSAMResourcesDerivesPeersFromFetchedSAMPeerGroup(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/fetched-topology
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	profile := testWireGuardDirectTransportProfile(router.Metadata.Name, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	router = wireGuardRouterWithFetchedSAMPeerGroup(t, router, "cloudedge-direct", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(profile), []api.SAMNodeSpec{
+		{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "leafpub-b", Endpoint: "198.51.100.32:51820", AllowedIPs: []string{"10.20.0.32/32"}}},
+	})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	resolved, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := mustWireGuardPeer(t, resolved, "leaf-b")
+	if peer.Interface != "wg-direct" || peer.PublicKey != "leafpub-b" || strings.Join(peer.AllowedIPs, ",") != "10.20.0.32/32" {
+		t.Fatalf("WireGuardPeer/leaf-b = %#v", peer)
+	}
+	for _, resource := range resolved.Spec.Resources {
+		if resource.Kind != "IPv4Route" || resource.Metadata.Name != "wg-sam-endpoint-leaf-b" {
+			continue
+		}
+		route, err := resource.IPv4RouteSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if route.Destination != "10.20.0.32/32" || route.Device != "wg-direct" {
+			t.Fatalf("route = %#v", route)
+		}
+		return
+	}
+	t.Fatal("direct SAMPeerGroup route not generated")
+}
+
+func TestWireGuardControllerDirectGroupAbsenceAppliesRRFallback(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	router = wireGuardRouterWithFetchedRRSet(t, router, "cloudedge-rrs", "SAMEnrollmentPolicy/cloudedge-leaves", []api.SAMNodeSpec{{
+		NodeRef:        "rr-a",
+		RouteReflector: true,
+		SAMEndpoint:    "10.20.0.2",
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:  "rrpub-a",
+			Endpoint:   "198.51.100.2:51820",
+			AllowedIPs: []string{"10.20.0.2/32"},
+		},
+	}})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+
+	store := mapStore{}
+	var setconf string
+	controller := WireGuardController{
+		Router: router,
+		Store:  store,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip link show wg-direct":
+				return nil, errors.New("missing")
+			case "wg show wg-direct dump":
+				return []byte("priv\tifacepub\t51820\toff\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		CommandStdin: func(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+			if name == "wg" && strings.Join(args, " ") == "setconf wg-direct /dev/stdin" {
+				setconf = string(stdin)
+			}
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(setconf, "PublicKey = rrpub-a") {
+		t.Fatalf("RR fallback was not configured while direct group was absent:\n%s", setconf)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg-direct")
+	rows, ok := status["peersFrom"].([]map[string]any)
+	if !ok || len(rows) != 2 || rows[0]["phase"] != "Resolved" || rows[1]["phase"] != "Unavailable" {
+		t.Fatalf("peersFrom status = %#v, want resolved RR and unavailable direct group", status["peersFrom"])
+	}
+	if _, pending := status["pendingSources"]; pending {
+		t.Fatalf("direct group absence left WireGuard pending: %#v", status)
+	}
+}
+
+func TestWireGuardDirectGroupFingerprintMismatchKeepsRRFallback(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	router = wireGuardRouterWithFetchedRRSet(t, router, "cloudedge-rrs", "SAMEnrollmentPolicy/cloudedge-leaves", []api.SAMNodeSpec{{
+		NodeRef:        "rr-a",
+		RouteReflector: true,
+		SAMEndpoint:    "10.20.0.2",
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:  "rrpub-a",
+			Endpoint:   "198.51.100.2:51820",
+			AllowedIPs: []string{"10.20.0.2/32"},
+		},
+	}})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-direct"},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  "SAMEnrollmentPolicy/cloudedge-leaves",
+			TransportFingerprint: "sha256:wrong",
+			Nodes: []api.SAMNodeSpec{{
+				NodeRef:     "leaf-b",
+				SAMEndpoint: "10.20.0.32",
+				WireGuard: api.SAMNodeWireGuardSpec{
+					PublicKey:  "leafpub-b",
+					Endpoint:   "198.51.100.32:51820",
+					AllowedIPs: []string{"10.20.0.32/32"},
+				},
+			}},
+		},
+	})
+
+	controller := WireGuardController{Router: router}
+	resources, statuses, pending, err := controller.resolvePeersFrom("wg-direct", api.WireGuardInterfaceSpec{
+		SelfNodeRef: "leaf-a",
+		PeersFrom: []api.WireGuardPeersSourceSpec{
+			{Resource: "SAMRRSet/cloudedge-rrs"},
+			{Resource: "SAMPeerGroup/cloudedge-direct"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || len(statuses) != 2 || statuses[0].Phase != "Resolved" || statuses[1].Phase != "Incompatible" {
+		t.Fatalf("pending/statuses = %#v/%#v, want resolved RR and incompatible direct group", pending, statuses)
+	}
+	if got := countResources(&api.Router{Spec: api.RouterSpec{Resources: resources}}, api.NetAPIVersion, "WireGuardPeer"); got != 1 {
+		t.Fatalf("WireGuardPeer count = %d, want only RR fallback resources=%#v", got, resources)
+	}
+	if _, found := findWireGuardPeerResource(resources, "leaf-b"); found {
+		t.Fatalf("fingerprint-mismatched direct peer was generated: %#v", resources)
+	}
+
+	resolved, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := findWireGuardPeerResource(resolved.Spec.Resources, "leaf-b"); found {
+		t.Fatalf("effective router retained fingerprint-mismatched direct peer: %#v", resolved.Spec.Resources)
+	}
+}
+
+func TestWireGuardDirectGroupWaitsForUnreplacedRRFallback(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/fetched-topology
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	profile := testWireGuardDirectTransportProfile(router.Metadata.Name, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	router = wireGuardRouterWithFetchedSAMPeerGroup(t, router, "cloudedge-direct", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(profile), []api.SAMNodeSpec{{
+		NodeRef:     "leaf-b",
+		SAMEndpoint: "10.20.0.32",
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:  "leafpub-b",
+			Endpoint:   "198.51.100.32:51820",
+			AllowedIPs: []string{"10.20.0.32/32"},
+		},
+	}})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	// An explicit peer with the RR node name wins the normal effective-config
+	// merge but carries different material. Direct must stay disabled rather
+	// than claiming a fallback that would no longer exist after merging.
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer"},
+		Metadata: api.ObjectMeta{Name: "rr-a"},
+		Spec: api.WireGuardPeerSpec{
+			Interface:  "wg-direct",
+			PublicKey:  "different-static-key",
+			Endpoint:   "198.51.100.250:51820",
+			AllowedIPs: []string{"198.51.100.250/32"},
+		},
+	})
+
+	controller := WireGuardController{Router: router}
+	resources, statuses, pending, err := controller.resolvePeersFrom("wg-direct", api.WireGuardInterfaceSpec{
+		SelfNodeRef: "leaf-a",
+		PeersFrom: []api.WireGuardPeersSourceSpec{
+			{Resource: "SAMRRSet/fetched-topology"},
+			{Resource: "SAMPeerGroup/cloudedge-direct"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || len(statuses) != 2 || statuses[1].Phase != "Unavailable" || statuses[1].Reason != "matching RR fallback SAMRRSet has no usable WireGuard peer" {
+		t.Fatalf("pending/statuses = %#v/%#v, want unreplaced-RR fallback gate", pending, statuses)
+	}
+	if _, found := findWireGuardPeerResource(resources, "leaf-b"); found {
+		t.Fatalf("direct peer was generated despite overridden RR fallback: %#v", resources)
+	}
+
+	resolved, err := controller.resolvePeerResources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := findWireGuardPeerResource(resolved.Router.Spec.Resources, "leaf-b"); found {
+		t.Fatalf("resolved router retained direct peer despite overridden RR fallback: %#v", resolved.Router.Spec.Resources)
+	}
+	peer := mustWireGuardPeer(t, resolved.Router, "rr-a")
+	if peer.PublicKey != "different-static-key" {
+		t.Fatalf("explicit RR-name peer was not retained by the normal merge: %#v", peer)
+	}
+
+	effective, err := resolveWireGuardSAMResources(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := findWireGuardPeerResource(effective.Spec.Resources, "leaf-b"); found {
+		t.Fatalf("effective router retained direct peer despite overridden RR fallback: %#v", effective.Spec.Resources)
+	}
+}
+
+func TestWireGuardMalformedDirectGroupKeepsRRFallback(t *testing.T) {
+	router := mustWireGuardRouter(t, `
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: leaf-a}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: WireGuardInterface
+      metadata: {name: wg-direct}
+      spec:
+        selfNodeRef: leaf-a
+        privateKey: priv
+        peersFrom:
+          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMPeerGroup/cloudedge-direct
+`)
+	router = wireGuardRouterWithFetchedRRSet(t, router, "cloudedge-rrs", "SAMEnrollmentPolicy/cloudedge-leaves", []api.SAMNodeSpec{{
+		NodeRef:        "rr-a",
+		RouteReflector: true,
+		SAMEndpoint:    "10.20.0.2",
+		WireGuard: api.SAMNodeWireGuardSpec{
+			PublicKey:  "rrpub-a",
+			Endpoint:   "198.51.100.2:51820",
+			AllowedIPs: []string{"10.20.0.2/32"},
+		},
+	}})
+	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "cloudedge-direct"},
+		Spec:     map[string]any{"nodes": "not-a-node-list"},
+	})
+
+	controller := WireGuardController{Router: router}
+	resources, statuses, pending, err := controller.resolvePeersFrom("wg-direct", api.WireGuardInterfaceSpec{
+		SelfNodeRef: "leaf-a",
+		PeersFrom: []api.WireGuardPeersSourceSpec{
+			{Resource: "SAMRRSet/cloudedge-rrs"},
+			{Resource: "SAMPeerGroup/cloudedge-direct"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 || len(statuses) != 2 || statuses[0].Phase != "Resolved" || statuses[1].Phase != "Incompatible" {
+		t.Fatalf("pending/statuses = %#v/%#v, want resolved RR and incompatible direct group", pending, statuses)
+	}
+	if got := countResources(&api.Router{Spec: api.RouterSpec{Resources: resources}}, api.NetAPIVersion, "WireGuardPeer"); got != 1 {
+		t.Fatalf("WireGuardPeer count = %d, want only RR fallback resources=%#v", got, resources)
+	}
+}
+
+func findWireGuardPeerResource(resources []api.Resource, name string) (api.Resource, bool) {
+	for _, resource := range resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "WireGuardPeer" && resource.Metadata.Name == name {
+			return resource, true
+		}
+	}
+	return api.Resource{}, false
 }
 
 func mustWireGuardPeer(t *testing.T, router *api.Router, name string) api.WireGuardPeerSpec {

@@ -173,7 +173,7 @@ spec:
       metadata: { name: pve-fou-leaves }
       spec:
         transportProfileRef: SAMTransportProfile/pve-rr-a-fou
-        rrSetRef: SAMRRSet/pve-rrs
+        rrSetRef: SAMRRSet/pve-fou-rrs
         rrNodeSetRef: SAMNodeSet/pve-rrs
         joinTokenFrom:
           file: /usr/local/etc/routerd/secrets/pve-join-token

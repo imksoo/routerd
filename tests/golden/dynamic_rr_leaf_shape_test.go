@@ -114,7 +114,7 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 	assertMissingResource(t, leaf, api.NetAPIVersion, "BGPDynamicPeer", "cloudedge-leaves")
 
 	t.Run("leaf-a wireguard path consumes both RRs", func(t *testing.T) {
-		assertMissingResource(t, leafA, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+		assertMissingResource(t, leafA, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-public-wg-rrs")
 		assertMissingResource(t, leafA, api.MobilityAPIVersion, "SAMNodeSet", "cloudedge-rrs")
 		assertMissingResource(t, leafA, api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 		assertMissingResource(t, leafA, api.FederationAPIVersion, "EventGroup", "cloudedge")
@@ -130,8 +130,8 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(wgSpec.PeersFrom) != 1 || wgSpec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
-			t.Fatalf("leaf-a wireguard peersFrom = %#v, want SAMRRSet/cloudedge-rrs", wgSpec.PeersFrom)
+		if len(wgSpec.PeersFrom) != 1 || wgSpec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-public-wg-rrs" {
+			t.Fatalf("leaf-a wireguard peersFrom = %#v, want SAMRRSet/cloudedge-public-wg-rrs", wgSpec.PeersFrom)
 		}
 
 		profile := mustResource(t, leafA, api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
@@ -142,14 +142,14 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		if spec.Mode != "ipip" || spec.Encryption != "wireguard" {
 			t.Fatalf("leaf-a transport = %s/%s, want ipip/wireguard", spec.Mode, spec.Encryption)
 		}
-		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
-			t.Fatalf("leaf-a transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-public-wg-rrs" {
+			t.Fatalf("leaf-a transport peersFrom = %#v, want SAMRRSet/cloudedge-public-wg-rrs", spec.PeersFrom)
 		}
 		assertLeafBGPRouterPolicy(t, leafA, "leaf-a", "10.77.60.31/32")
 	})
 
 	t.Run("leaf-b fou path consumes both RRs without wireguard", func(t *testing.T) {
-		assertMissingResource(t, leafB, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-rrs")
+		assertMissingResource(t, leafB, api.MobilityAPIVersion, "SAMRRSet", "cloudedge-private-fou-rrs")
 		assertMissingResource(t, leafB, api.MobilityAPIVersion, "SAMNodeSet", "cloudedge-rrs")
 		assertMissingResource(t, leafB, api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 		assertMissingResource(t, leafB, api.FederationAPIVersion, "EventGroup", "cloudedge")
@@ -173,8 +173,8 @@ func TestCloudEdgeDynamicRRLeafExamplesUseDualRRShape(t *testing.T) {
 		if spec.EncapSport != 5555 || spec.EncapDport != 5555 {
 			t.Fatalf("leaf-b encap ports = %d/%d, want 5555/5555", spec.EncapSport, spec.EncapDport)
 		}
-		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-rrs" {
-			t.Fatalf("leaf-b transport peersFrom = %#v, want SAMRRSet/cloudedge-rrs", spec.PeersFrom)
+		if len(spec.PeersFrom) != 1 || spec.PeersFrom[0].Resource != "SAMRRSet/cloudedge-private-fou-rrs" {
+			t.Fatalf("leaf-b transport peersFrom = %#v, want SAMRRSet/cloudedge-private-fou-rrs", spec.PeersFrom)
 		}
 		assertLeafBGPRouterPolicy(t, leafB, "leaf-b", "10.77.60.32/32")
 	})

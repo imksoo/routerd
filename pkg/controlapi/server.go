@@ -38,7 +38,7 @@ type Handler struct {
 	Validate                 func(*http.Request, ValidateRequest) (*ValidateResult, error)
 	SubmitSAMEnrollmentClaim func(*http.Request, SAMEnrollmentClaimSubmitRequest) (*SAMEnrollmentClaimSubmitResult, error)
 	RevokeSAMEnrollmentClaim func(*http.Request, SAMEnrollmentClaimRevokeRequest) (*SAMEnrollmentClaimRevokeResult, error)
-	GetSAMRRSet              func(*http.Request, SAMRRSetGetRequest) (*SAMRRSetGetResult, error)
+	GetSAMEnrollmentTopology func(*http.Request, SAMEnrollmentTopologyGetRequest) (*SAMEnrollmentTopologyGetResult, error)
 	SetLogLevel              func(*http.Request, LogLevelRequest) (*LogLevelResult, error)
 	DHCPv6Event              func(*http.Request, DHCPv6EventRequest) (*DHCPv6EventResult, error)
 	DHCPLeaseEvent           func(*http.Request, DHCPLeaseEventRequest) (*DHCPLeaseEventResult, error)
@@ -86,8 +86,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleSubmitSAMEnrollmentClaim(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, Prefix+"/sam-enrollment-claims/") && strings.HasSuffix(r.URL.Path, "/revoke"):
 		h.handleRevokeSAMEnrollmentClaim(w, r)
-	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, Prefix+"/sam-rrsets/"):
-		h.handleGetSAMRRSet(w, r)
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, Prefix+"/sam-enrollment-topologies/"):
+		h.handleGetSAMEnrollmentTopology(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/log-level":
 		h.handleSetLogLevel(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == Prefix+"/dhcpv6-event":
@@ -675,18 +675,18 @@ func (h Handler) handleRevokeSAMEnrollmentClaim(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h Handler) handleGetSAMRRSet(w http.ResponseWriter, r *http.Request) {
-	if h.GetSAMRRSet == nil {
-		writeError(w, http.StatusNotImplemented, "sam rrset get handler is not configured")
+func (h Handler) handleGetSAMEnrollmentTopology(w http.ResponseWriter, r *http.Request) {
+	if h.GetSAMEnrollmentTopology == nil {
+		writeError(w, http.StatusNotImplemented, "sam enrollment topology get handler is not configured")
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, Prefix+"/sam-rrsets/")
+	name := strings.TrimPrefix(r.URL.Path, Prefix+"/sam-enrollment-topologies/")
 	name = strings.TrimSpace(name)
 	if name == "" || strings.Contains(name, "/") {
-		writeError(w, http.StatusBadRequest, "SAMRRSet name is required")
+		writeError(w, http.StatusBadRequest, "SAM enrollment topology name is required")
 		return
 	}
-	result, err := h.GetSAMRRSet(r, SAMRRSetGetRequest{
+	result, err := h.GetSAMEnrollmentTopology(r, SAMEnrollmentTopologyGetRequest{
 		Name:     name,
 		ClaimRef: r.URL.Query().Get("claim"),
 	})

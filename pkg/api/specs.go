@@ -634,6 +634,9 @@ type BGPImportPolicySpec struct {
 	RequiredCommunities    []string `yaml:"requiredCommunities,omitempty" json:"requiredCommunities,omitempty"`
 	ForbiddenCommunities   []string `yaml:"forbiddenCommunities,omitempty" json:"forbiddenCommunities,omitempty"`
 	NextHopRewrite         string   `yaml:"nextHopRewrite,omitempty" json:"nextHopRewrite,omitempty" jsonschema:"enum=,enum=peer-address,enum=unchanged"`
+	// LocalPreference is applied on accepted paths before best-path selection.
+	// A zero value leaves the BGP implementation default unchanged.
+	LocalPreference uint32 `yaml:"localPreference,omitempty" json:"localPreference,omitempty"`
 }
 
 type BGPExportPolicySpec struct {
@@ -741,6 +744,12 @@ type SAMTransportProfileSpec struct {
 type SAMTransportPeersSourceSpec struct {
 	Resource string `yaml:"resource" json:"resource"`
 	Optional bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	// Direct marks an enrollment-delivered SAMPeerGroup as an opportunistic
+	// leaf-to-leaf adjacency. A missing, expired, or incompatible direct group
+	// never removes peers resolved from the other sources in this profile.
+	// Direct paths use the peer address as next hop and take deterministic
+	// precedence over RR-reflected paths while their BGP session is established.
+	Direct bool `yaml:"direct,omitempty" json:"direct,omitempty"`
 	// NodeRefs narrows a static SAMNodeSet (or an RR/enrollment source) to the
 	// transport adjacencies this profile should create. The source remains the
 	// sole owner of endpoint identity and complete topology; this is only a
@@ -748,11 +757,26 @@ type SAMTransportPeersSourceSpec struct {
 	NodeRefs []string `yaml:"nodeRefs,omitempty" json:"nodeRefs,omitempty"`
 }
 
-// SAMPeerGroupSpec is a runtime payload published by SAMTransportProfile and
-// consumed through the peer-group sync cache. It is intentionally not an
-// operator-authored top-level resource kind.
+// SAMPeerGroupSpec is a runtime-only typed topology payload. Generic transport
+// publishers may synchronize it over the peer-group cache, while enrollment
+// can deliver a policy-scoped direct-leaf snapshot through its authenticated
+// control API. It intentionally is not an operator-authored top-level kind.
 type SAMPeerGroupSpec struct {
-	Peers []SAMTransportPeerSpec `yaml:"peers" json:"peers"`
+	// EnrollmentPolicyRef is set only on an enrollment-delivered direct-leaf
+	// group. It binds the runtime nodes to one admission policy and prevents a
+	// group name from being reused across policy domains.
+	EnrollmentPolicyRef string `yaml:"enrollmentPolicyRef,omitempty" json:"enrollmentPolicyRef,omitempty"`
+	// TransportFingerprint binds a direct-leaf group to the transport properties
+	// that must be identical at both ends. Generic published groups leave it
+	// empty.
+	TransportFingerprint string        `yaml:"transportFingerprint,omitempty" json:"transportFingerprint,omitempty"`
+	Nodes                []SAMNodeSpec `yaml:"nodes" json:"nodes"`
+	// OwnedPrefixesByNode is present only on an enrollment direct-mesh group.
+	// Each entry is copied from the admitted, signed claim for that node and
+	// binds its direct BGP session to exactly those IPv4 /32 advertisements.
+	// It prevents a reachable leaf from using direct's higher LOCAL_PREF to
+	// advertise a different address from the policy-wide mobility range.
+	OwnedPrefixesByNode map[string][]string `yaml:"ownedPrefixesByNode,omitempty" json:"ownedPrefixesByNode,omitempty"`
 }
 
 // SAMRRSet is the runtime enrollment snapshot returned to one admitted leaf.
@@ -784,10 +808,19 @@ type SAMEnrollmentPolicySpec struct {
 	TunnelAddressPrefixes []string                      `yaml:"tunnelAddressPrefixes" json:"tunnelAddressPrefixes"`
 	EndpointPrefixes      []string                      `yaml:"endpointPrefixes,omitempty" json:"endpointPrefixes,omitempty"`
 	WireGuard             SAMEnrollmentWireGuardSpec    `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	MobilityPoolRefs      []string                      `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
-	MobilityPrefixes      []string                      `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
-	TTL                   string                        `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	RevokeAfterInactive   string                        `yaml:"revokeAfterInactive,omitempty" json:"revokeAfterInactive,omitempty"`
+	// DirectMesh opts eligible leaves into an opportunistic direct data path.
+	// RR peers remain the control-plane and forwarding fallback.
+	DirectMesh          SAMEnrollmentDirectMeshSpec `yaml:"directMesh,omitempty" json:"directMesh,omitempty"`
+	MobilityPoolRefs    []string                    `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	MobilityPrefixes    []string                    `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
+	TTL                 string                      `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	RevokeAfterInactive string                      `yaml:"revokeAfterInactive,omitempty" json:"revokeAfterInactive,omitempty"`
+}
+
+type SAMEnrollmentDirectMeshSpec struct {
+	// PeerGroupRef names the policy-scoped, runtime-only SAMPeerGroup returned
+	// to direct-mesh-enabled admitted leaves.
+	PeerGroupRef string `yaml:"peerGroupRef,omitempty" json:"peerGroupRef,omitempty"`
 }
 
 type SAMEnrollmentLeafIDPolicySpec struct {
@@ -819,10 +852,13 @@ type SAMEnrollmentClaimSpec struct {
 	TunnelAddress string                          `yaml:"tunnelAddress" json:"tunnelAddress"`
 	Endpoint      string                          `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	WireGuard     SAMEnrollmentClaimWireGuardSpec `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
-	Mobility      SAMEnrollmentClaimMobilitySpec  `yaml:"mobility,omitempty" json:"mobility,omitempty"`
-	BGP           SAMEnrollmentClaimBGPSpec       `yaml:"bgp,omitempty" json:"bgp,omitempty"`
-	ExpiresAt     string                          `yaml:"expiresAt,omitempty" json:"expiresAt,omitempty"`
-	Revoked       bool                            `yaml:"revoked,omitempty" json:"revoked,omitempty"`
+	// DirectMesh opts this signed claim into the policy's direct-leaf snapshot.
+	// A false value keeps this leaf on RR peers only.
+	DirectMesh bool                           `yaml:"directMesh,omitempty" json:"directMesh,omitempty"`
+	Mobility   SAMEnrollmentClaimMobilitySpec `yaml:"mobility,omitempty" json:"mobility,omitempty"`
+	BGP        SAMEnrollmentClaimBGPSpec      `yaml:"bgp,omitempty" json:"bgp,omitempty"`
+	ExpiresAt  string                         `yaml:"expiresAt,omitempty" json:"expiresAt,omitempty"`
+	Revoked    bool                           `yaml:"revoked,omitempty" json:"revoked,omitempty"`
 }
 
 type SAMEnrollmentClaimWireGuardSpec struct {
@@ -843,8 +879,9 @@ type SAMEnrollmentClaimBGPSpec struct {
 
 // SAMEnrollmentClient runs leaf-side enrollment bootstrap/refresh. It submits
 // a local SAMEnrollmentClaim to one bootstrap RR endpoint, fetches the allowed
-// SAMRRSet, and stores that set as dynamic config for existing transport/BGP
-// controllers to consume.
+// topology snapshot (the RR set plus an eligible direct peer group), and
+// stores it as dynamic config for existing transport/BGP controllers to
+// consume. The RR set is always present; a direct group is optional.
 type SAMEnrollmentClientSpec struct {
 	ClaimRef              string                        `yaml:"claimRef" json:"claimRef"`
 	BootstrapEndpoints    []string                      `yaml:"bootstrapEndpoints,omitempty" json:"bootstrapEndpoints,omitempty"`
@@ -939,8 +976,11 @@ type SAMTransportBGPProfileSpec struct {
 	RouteReflectorClient    bool                `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string              `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`
 	ImportPolicy            BGPImportPolicySpec `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
-	ExportPolicy            BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
-	BFD                     SAMTransportBFDSpec `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+	// DirectLocalPreference is applied only to peers from a peersFrom entry
+	// marked direct. Zero uses the safe direct-mesh default.
+	DirectLocalPreference uint32              `yaml:"directLocalPreference,omitempty" json:"directLocalPreference,omitempty"`
+	ExportPolicy          BGPExportPolicySpec `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
+	BFD                   SAMTransportBFDSpec `yaml:"bfd,omitempty" json:"bfd,omitempty"`
 }
 
 type SAMTransportBFDSpec struct {
@@ -956,6 +996,14 @@ type SAMTransportPeerSpec struct {
 	NodeRef            string                `yaml:"nodeRef" json:"nodeRef"`
 	RemoteEndpoint     string                `yaml:"remoteEndpoint,omitempty" json:"remoteEndpoint,omitempty"`
 	RemoteEndpointFrom StatusValueSourceSpec `yaml:"remoteEndpointFrom,omitempty" json:"remoteEndpointFrom,omitempty"`
+	// Direct is an in-memory transport derivation marker. SAMPeerGroup publishes
+	// typed SAMNodeSpec values instead, so this must never be serialized as a
+	// standalone configuration field.
+	Direct bool `yaml:"-" json:"-"`
+	// AllowedPrefixes is an in-memory direct-mesh admission boundary copied
+	// from SAMPeerGroupSpec.OwnedPrefixesByNode. It must never become a
+	// user-authored transport peer field.
+	AllowedPrefixes []string `yaml:"-" json:"-"`
 }
 
 type BFDSpec struct {

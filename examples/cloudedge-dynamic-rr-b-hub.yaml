@@ -173,7 +173,7 @@ spec:
       metadata: { name: cloudedge-public-wg-leaves }
       spec:
         transportProfileRef: SAMTransportProfile/rr-b-wg
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-public-wg-rrs
         rrNodeSetRef: SAMNodeSet/cloudedge-rrs
         joinTokenFrom: { file: /usr/local/etc/routerd/secrets/cloudedge-join-token }
         joinAudience: cloudedge-public-underlay
@@ -194,7 +194,7 @@ spec:
       metadata: { name: cloudedge-private-fou-leaves }
       spec:
         transportProfileRef: SAMTransportProfile/rr-b-fou
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-private-fou-rrs
         rrNodeSetRef: SAMNodeSet/cloudedge-rrs
         joinTokenFrom: { file: /usr/local/etc/routerd/secrets/cloudedge-join-token }
         joinAudience: cloudedge-private-underlay

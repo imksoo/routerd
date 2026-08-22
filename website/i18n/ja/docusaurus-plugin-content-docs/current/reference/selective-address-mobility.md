@@ -235,7 +235,27 @@ routerd はフェデレーションやプロバイダーディスカバリーで
 
 本番ファブリックでは可能な限り `/20` 以上の `innerPrefix` を推奨します。`/24`（128 個の `/31` スロット）のように小さなプールはハッシュ＋剰余割り当てで衝突しやすくなります。
 
-`spec.peersFrom` は `SAMNodeSet/<name>` または `SAMPeerGroup/<name>` を参照できます。`SAMNodeSet` ソースは `spec.nodes[].nodeRef` を解決済みの topology に追加します。`samEndpoint` を持つ自ノード以外の全 node から peer を生成しますが、`nodeRefs` を指定すると列挙した adjacency node に限定されます。生成された peer はその `samEndpoint` を `remoteEndpoint` として使います。`SAMPeerGroup` ソースは再利用可能なトランスポート peer だけを追加します。`SAMPeerGroup` は top-level `spec.resources` には書けない runtime-only sync payload であり、publisher の `publishPeerGroup` と consumer の sync cache 経由でのみ扱われます。
+`spec.peersFrom` は `SAMNodeSet/<name>`、`SAMPeerGroup/<name>`、`SAMEnrollmentPolicy/<name>`、または取得済み `SAMRRSet/<name>` を参照できます。`SAMNodeSet` ソースは `spec.nodes[].nodeRef` を解決済みの topology に追加します。`samEndpoint` を持つ自ノード以外の全 node から peer を生成しますが、`nodeRefs` を指定すると列挙した adjacency node に限定されます。生成された peer はその `samEndpoint` を `remoteEndpoint` として使います。通常の `SAMPeerGroup` は、publisher の `publishPeerGroup` と consumer の sync cache 経由で再利用する runtime-only peer source です。top-level `spec.resources` に手書きはできません。
+
+enrollment policy は任意で leaf 間の直接経路も返せます。leaf は必須の RRSet を先に残したまま、policy-scoped group を `direct: true` で追加します。direct だけの構成は許可されません。direct は RR の bootstrap や fallback を置き換えるものではないためです。
+
+```yaml
+peersFrom:
+  - resource: SAMRRSet/pve-rrs
+  - resource: SAMPeerGroup/pve-direct-leaves
+    direct: true
+```
+
+この direct group は認証済み enrollment fetch で RRSet と同じ DynamicConfigPart に入るため、通常の sync cache は使いません。`addressingMode: pair-stable` が必要で、`routeReflectorClient` は false のままにします。direct profile では通常の RR import の `localPreference` も明示します。direct peer の import にはそれより高い local preference が付きます。これは administrative distance や AS_PATH の長さではなく、BGP local preference を使う設計です。iBGP の RR 反射では、実際に増える転送ホップを AS_PATH で確実には表せないためです。direct の既定値は `200` です。別の優先度ルールがあるファブリックでは、両方を明示します。
+
+```yaml
+bgp:
+  importPolicy:
+    localPreference: 100 # RR peer
+  directLocalPreference: 200 # direct peer。RR より大きくする
+```
+
+group がない・期限切れ・transport fingerprint 不一致・ネットワーク的に未到達なら direct artifact は作られず、RR tunnel/BGP peer がそのまま fallback になります。つまり direct は高速化の試行であり、RR を置き換えません。
 
 コントローラーはリコンサイル時にすべての source を解決します。直接 peer または topology のリストは受け付けません。`SAMNodeSet` が唯一の identity/topology/endpoint 入力であり、`nodeRefs` は adjacency だけを表します。必須の `peersFrom` source が未到着の場合、プロファイルは `Pending` になります。`optional: true` の source は到着するまで無視されます。source が以前に取得済みで DynamicConfigPart の TTL だけが切れている場合、routerd は source を `Stale` と warning 付きで表示し、生成済み transport artifact を削除せず last-known-good peer group を使い続けます。
 

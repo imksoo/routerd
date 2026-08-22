@@ -27,11 +27,32 @@ const (
 )
 
 type AppliedConfig struct {
-	Version   int                    `json:"version"`
-	UpdatedAt string                 `json:"updatedAt,omitempty"`
-	Global    AppliedGlobal          `json:"global,omitempty"`
-	Peers     map[string]AppliedPeer `json:"peers,omitempty"`
-	Paths     []AppliedPath          `json:"paths,omitempty"`
+	Version   int    `json:"version"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+	// PendingImportPolicyReset is a durable fence written before an import
+	// policy replacement that can invalidate already accepted routes. It makes
+	// a controller crash between SetPolicies and the soft inbound reset
+	// recoverable without trusting a stale RIB entry.
+	PendingImportPolicyReset bool `json:"pendingImportPolicyReset,omitempty"`
+	// PendingDirectPeerAdditions records direct SAM peers which were journaled
+	// before AddPeer but have not yet reached a complete desired-state save.
+	// routerd-bgp skips them on restore, while routerd can identify and finish
+	// or withdraw the live peer before changing its narrow import policy.
+	PendingDirectPeerAdditions []string `json:"pendingDirectPeerAdditions,omitempty"`
+	// PendingDirectPeerRemovals records direct SAM peers that must not be
+	// restored after routerd-bgp restarts. The peer record remains below so a
+	// live daemon keeps its existing policy during the withdrawal transaction.
+	// routerd writes this marker before DeletePeer, so a crash between the live
+	// deletion and the final desired-state save cannot resurrect the peer.
+	PendingDirectPeerRemovals []string `json:"pendingDirectPeerRemovals,omitempty"`
+	// PendingStaticPathRemovals contains locally originated paths which have
+	// been removed from the restart set but still need a live GoBGP withdrawal.
+	// Keeping their UUIDs makes a crash between DeletePath and the next complete
+	// desired-state save recoverable without re-advertising the stale prefix.
+	PendingStaticPathRemovals []AppliedPath          `json:"pendingStaticPathRemovals,omitempty"`
+	Global                    AppliedGlobal          `json:"global,omitempty"`
+	Peers                     map[string]AppliedPeer `json:"peers,omitempty"`
+	Paths                     []AppliedPath          `json:"paths,omitempty"`
 	// Advertisements is the legacy static-prefix view. New code should use Paths
 	// with source=routerd-static, but keeping this field preserves existing state
 	// files and control API clients.
@@ -56,6 +77,7 @@ type AppliedImportPolicy struct {
 	RequiredCommunities    []string `json:"requiredCommunities,omitempty"`
 	ForbiddenCommunities   []string `json:"forbiddenCommunities,omitempty"`
 	NextHopRewrite         string   `json:"nextHopRewrite,omitempty"`
+	LocalPreference        uint32   `json:"localPreference,omitempty"`
 }
 
 type AppliedExportPolicy struct {
@@ -69,21 +91,26 @@ type AppliedGracefulRestart struct {
 }
 
 type AppliedPeer struct {
-	Address                 string                  `json:"address"`
-	ASN                     uint32                  `json:"asn"`
-	PassiveMode             bool                    `json:"passiveMode,omitempty"`
-	Password                string                  `json:"password,omitempty"`
-	BFD                     string                  `json:"bfd,omitempty"`
-	EbgpMultihop            int                     `json:"ebgpMultihop,omitempty"`
-	RouteReflectorClient    bool                    `json:"routeReflectorClient,omitempty"`
-	RouteReflectorClusterID string                  `json:"routeReflectorClusterID,omitempty"`
-	TimersProfile           string                  `json:"timersProfile,omitempty"`
-	ConvergenceProfile      string                  `json:"convergenceProfile,omitempty"`
-	ImportPolicyName        string                  `json:"importPolicyName,omitempty"`
-	ImportPolicy            AppliedImportPolicy     `json:"importPolicy,omitempty"`
-	ExportPolicyName        string                  `json:"exportPolicyName,omitempty"`
-	ExportPolicy            AppliedExportPolicy     `json:"exportPolicy,omitempty"`
-	GracefulRestart         *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
+	Address                 string              `json:"address"`
+	ASN                     uint32              `json:"asn"`
+	PassiveMode             bool                `json:"passiveMode,omitempty"`
+	Password                string              `json:"password,omitempty"`
+	BFD                     string              `json:"bfd,omitempty"`
+	EbgpMultihop            int                 `json:"ebgpMultihop,omitempty"`
+	RouteReflectorClient    bool                `json:"routeReflectorClient,omitempty"`
+	RouteReflectorClusterID string              `json:"routeReflectorClusterID,omitempty"`
+	TimersProfile           string              `json:"timersProfile,omitempty"`
+	ConvergenceProfile      string              `json:"convergenceProfile,omitempty"`
+	ImportPolicyName        string              `json:"importPolicyName,omitempty"`
+	ImportPolicy            AppliedImportPolicy `json:"importPolicy,omitempty"`
+	// PreserveImportPrefixes keeps an explicit peer import allowlist from being
+	// widened with router-wide dynamic prefixes during daemon restore. It is
+	// used by direct SAM leaf peers, whose signed /32 boundary must survive a
+	// routerd-bgp restart unchanged.
+	PreserveImportPrefixes bool                    `json:"preserveImportPrefixes,omitempty"`
+	ExportPolicyName       string                  `json:"exportPolicyName,omitempty"`
+	ExportPolicy           AppliedExportPolicy     `json:"exportPolicy,omitempty"`
+	GracefulRestart        *AppliedGracefulRestart `json:"gracefulRestart,omitempty"`
 }
 
 type AppliedPath struct {
@@ -112,6 +139,9 @@ func Normalize(config AppliedConfig) AppliedConfig {
 	config.Global.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.RequiredCommunities)
 	config.Global.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(config.Global.ImportPolicy.ForbiddenCommunities)
 	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
+	config.PendingDirectPeerAdditions = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerAdditions)
+	config.PendingDirectPeerRemovals = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerRemovals)
+	config.PendingStaticPathRemovals = normalizeAppliedPaths(config.PendingStaticPathRemovals, nil)
 	config.Advertisements = stringutil.UniqueTrimmedSorted(config.Advertisements)
 	config.Paths = normalizeAppliedPaths(config.Paths, config.Advertisements)
 	config.Advertisements = StaticAdvertisements(config.Paths)
@@ -273,6 +303,17 @@ func WriteApplied(path string, config AppliedConfig) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return err
 	}
+	// tmp.Sync makes the file contents durable, but the rename itself is not
+	// guaranteed to survive a power loss until the containing directory is
+	// synced as well. Applied-state transition fences rely on that rename.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return err
+	}
 	ok = true
 	return nil
 }
@@ -307,7 +348,29 @@ func Validate(config AppliedConfig) error {
 			}
 		}
 	}
+	for _, pending := range []struct {
+		name      string
+		addresses []string
+	}{
+		{name: "pending direct peer addition", addresses: config.PendingDirectPeerAdditions},
+		{name: "pending direct peer removal", addresses: config.PendingDirectPeerRemovals},
+	} {
+		for _, address := range pending.addresses {
+			peer, found := config.Peers[address]
+			if !found || !peer.PreserveImportPrefixes {
+				return fmt.Errorf("%s %q is not a persisted direct peer", pending.name, address)
+			}
+		}
+	}
 	for _, path := range config.Paths {
+		if err := ValidateAppliedPath(path); err != nil {
+			return err
+		}
+	}
+	for _, path := range config.PendingStaticPathRemovals {
+		if path.Source != AppliedPathSourceStatic {
+			return fmt.Errorf("pending static BGP path %q has unexpected source %q", path.Prefix, path.Source)
+		}
 		if err := ValidateAppliedPath(path); err != nil {
 			return err
 		}

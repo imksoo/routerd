@@ -100,6 +100,12 @@ func controlSchema() map[string]any {
 			reflectedSchema(controlapi.ApplyResult{}),
 			reflectedSchema(controlapi.DeleteRequest{}),
 			reflectedSchema(controlapi.DeleteResult{}),
+			reflectedSchema(controlapi.SAMEnrollmentClaimSubmitRequest{}),
+			reflectedSchema(controlapi.SAMEnrollmentClaimSubmitResult{}),
+			reflectedSchema(controlapi.SAMEnrollmentClaimRevokeRequest{}),
+			reflectedSchema(controlapi.SAMEnrollmentClaimRevokeResult{}),
+			reflectedSchema(controlapi.SAMEnrollmentTopologyGetRequest{}),
+			reflectedSchema(controlapi.SAMEnrollmentTopologyGetResult{}),
 			reflectedSchema(controlapi.DHCPv6EventRequest{}),
 			reflectedSchema(controlapi.DHCPv6EventResult{}),
 			dhcpLeaseEventRequestSchema(),
@@ -157,6 +163,55 @@ func controlOpenAPISchema() map[string]any {
 					},
 					"responses": map[string]any{
 						"200":     responseRef("DeleteResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/sam-enrollment-claims": map[string]any{
+				"post": map[string]any{
+					"operationId": "submitSAMEnrollmentClaim",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("SAMEnrollmentClaimSubmitRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("SAMEnrollmentClaimSubmitResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/sam-enrollment-claims/{name}/revoke": map[string]any{
+				"post": map[string]any{
+					"operationId": "revokeSAMEnrollmentClaim",
+					"parameters": []any{
+						pathParam("name", "SAMEnrollmentClaim metadata.name to revoke."),
+					},
+					"requestBody": map[string]any{
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": schemaRef("SAMEnrollmentClaimRevokeRequest"),
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200":     responseRef("SAMEnrollmentClaimRevokeResult"),
+						"default": responseRef("Error"),
+					},
+				},
+			},
+			controlapi.Prefix + "/sam-enrollment-topologies/{name}": map[string]any{
+				"get": map[string]any{
+					"operationId": "getSAMEnrollmentTopology",
+					"parameters": []any{
+						pathParam("name", "SAMRRSet metadata.name selected by the enrollment policy."),
+						queryParam("claim", "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.", "string", ""),
+					},
+					"responses": map[string]any{
+						"200":     responseRef("SAMEnrollmentTopologyGetResult"),
 						"default": responseRef("Error"),
 					},
 				},
@@ -256,23 +311,29 @@ func controlOpenAPISchema() map[string]any {
 		},
 		"components": map[string]any{
 			"schemas": map[string]any{
-				"Status":                reflectedSchema(controlapi.Status{}),
-				"ConnectionTable":       reflectedSchema(controlapi.ConnectionTable{}),
-				"DNSQueries":            reflectedSchema(controlapi.DNSQueries{}),
-				"TrafficFlows":          reflectedSchema(controlapi.TrafficFlows{}),
-				"FirewallLogs":          reflectedSchema(controlapi.FirewallLogs{}),
-				"GetResult":             reflectedSchema(controlapi.GetResult{}),
-				"DescribeResult":        reflectedSchema(controlapi.DescribeResult{}),
-				"ProbeResult":           reflectedSchema(controlapi.ProbeResult{}),
-				"ApplyRequest":          reflectedSchema(controlapi.ApplyRequest{}),
-				"ApplyResult":           reflectedSchema(controlapi.ApplyResult{}),
-				"DeleteRequest":         reflectedSchema(controlapi.DeleteRequest{}),
-				"DeleteResult":          reflectedSchema(controlapi.DeleteResult{}),
-				"DHCPv6EventRequest":    reflectedSchema(controlapi.DHCPv6EventRequest{}),
-				"DHCPv6EventResult":     reflectedSchema(controlapi.DHCPv6EventResult{}),
-				"DHCPLeaseEventRequest": dhcpLeaseEventRequestSchema(),
-				"DHCPLeaseEventResult":  reflectedSchema(controlapi.DHCPLeaseEventResult{}),
-				"Error":                 reflectedSchema(controlapi.Error{}),
+				"Status":                          reflectedSchema(controlapi.Status{}),
+				"ConnectionTable":                 reflectedSchema(controlapi.ConnectionTable{}),
+				"DNSQueries":                      reflectedSchema(controlapi.DNSQueries{}),
+				"TrafficFlows":                    reflectedSchema(controlapi.TrafficFlows{}),
+				"FirewallLogs":                    reflectedSchema(controlapi.FirewallLogs{}),
+				"GetResult":                       reflectedSchema(controlapi.GetResult{}),
+				"DescribeResult":                  reflectedSchema(controlapi.DescribeResult{}),
+				"ProbeResult":                     reflectedSchema(controlapi.ProbeResult{}),
+				"ApplyRequest":                    reflectedSchema(controlapi.ApplyRequest{}),
+				"ApplyResult":                     reflectedSchema(controlapi.ApplyResult{}),
+				"DeleteRequest":                   reflectedSchema(controlapi.DeleteRequest{}),
+				"DeleteResult":                    reflectedSchema(controlapi.DeleteResult{}),
+				"SAMEnrollmentClaimSubmitRequest": reflectedSchema(controlapi.SAMEnrollmentClaimSubmitRequest{}),
+				"SAMEnrollmentClaimSubmitResult":  reflectedSchema(controlapi.SAMEnrollmentClaimSubmitResult{}),
+				"SAMEnrollmentClaimRevokeRequest": reflectedSchema(controlapi.SAMEnrollmentClaimRevokeRequest{}),
+				"SAMEnrollmentClaimRevokeResult":  reflectedSchema(controlapi.SAMEnrollmentClaimRevokeResult{}),
+				"SAMEnrollmentTopologyGetRequest": reflectedSchema(controlapi.SAMEnrollmentTopologyGetRequest{}),
+				"SAMEnrollmentTopologyGetResult":  reflectedSchema(controlapi.SAMEnrollmentTopologyGetResult{}),
+				"DHCPv6EventRequest":              reflectedSchema(controlapi.DHCPv6EventRequest{}),
+				"DHCPv6EventResult":               reflectedSchema(controlapi.DHCPv6EventResult{}),
+				"DHCPLeaseEventRequest":           dhcpLeaseEventRequestSchema(),
+				"DHCPLeaseEventResult":            reflectedSchema(controlapi.DHCPLeaseEventResult{}),
+				"Error":                           reflectedSchema(controlapi.Error{}),
 			},
 		},
 	}
@@ -340,6 +401,18 @@ func queryParam(name, description, typ string, fallback any) map[string]any {
 		"required":    false,
 		"description": description,
 		"schema":      schema,
+	}
+}
+
+func pathParam(name, description string) map[string]any {
+	return map[string]any{
+		"name":        name,
+		"in":          "path",
+		"required":    true,
+		"description": description,
+		"schema": map[string]any{
+			"type": "string",
+		},
 	}
 }
 

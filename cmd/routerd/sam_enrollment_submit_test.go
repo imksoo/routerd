@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -173,7 +174,7 @@ func TestSubmitSAMEnrollmentClaimRejectsExpiresAtBeyondPolicyTTL(t *testing.T) {
 	}
 }
 
-func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
+func TestGetSAMEnrollmentTopologyForAcceptedClaimReturnsRRSet(t *testing.T) {
 	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
 	router := loadSubmitTestRouter(t)
 	secretFile := filepath.Join(t.TempDir(), "join-token")
@@ -194,15 +195,15 @@ func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := getSAMRRSetForAcceptedClaim(router, store, controlapi.SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
-		t.Fatalf("pre-submit getSAMRRSetForAcceptedClaim error = %v, want accepted claim required", err)
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+		t.Fatalf("pre-submit getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
 	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
 	}
-	result, err := getSAMRRSetForAcceptedClaim(router, store, controlapi.SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
 	if err != nil {
-		t.Fatalf("getSAMRRSetForAcceptedClaim: %v", err)
+		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
 	if result.RRSet.APIVersion != api.MobilityAPIVersion || result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
 		t.Fatalf("rrset result = %#v", result.RRSet)
@@ -213,6 +214,166 @@ func TestGetSAMRRSetForAcceptedClaimReturnsOnlyClaimRRSet(t *testing.T) {
 	}
 	if len(spec.Nodes) != 2 || spec.Nodes[0].NodeRef != "pve-rr-a" || spec.Nodes[1].NodeRef != "pve-rr-b" {
 		t.Fatalf("rrset nodes = %#v", spec.Nodes)
+	}
+	if result.PeerGroup != nil {
+		t.Fatalf("peer group = %#v, want nil for non-direct claim", result.PeerGroup)
+	}
+}
+
+func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGroup(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	secretFile := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretFile, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("write join token: %v", err)
+	}
+	setSubmitTestJoinToken(t, router, "pve-wg-leaves", secretFile)
+	setSubmitTestDirectMeshPeerGroup(t, router, "pve-wg-leaves", "SAMPeerGroup/pve-direct-leaves")
+
+	requester := loadSubmitTestClaim(t, "pve-leaf-a")
+	requesterSpec, err := requester.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("requester spec: %v", err)
+	}
+	requesterSpec.DirectMesh = true
+	requesterSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), requesterSpec)
+	requester.Spec = requesterSpec
+
+	peer := loadSubmitTestClaim(t, "pve-leaf-c")
+	peerSpec, err := peer.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	peerSpec.DirectMesh = true
+	peerSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), peerSpec)
+	peer.Spec = peerSpec
+
+	nonDirect := peer
+	nonDirect.Metadata.Name = "pve-leaf-non-direct"
+	nonDirectSpec := peerSpec
+	nonDirectSpec.LeafID = "pve-leaf-non-direct"
+	nonDirectSpec.JoinNonce = "pve-leaf-non-direct-0001"
+	nonDirectSpec.TunnelAddress = "10.255.10.25/32"
+	nonDirectSpec.Endpoint = "10.31.0.25"
+	nonDirectSpec.WireGuard.PublicKey = "PVE_LEAF_NON_DIRECT_WIREGUARD_PUBLIC_KEY"
+	nonDirectSpec.WireGuard.Endpoint = "10.30.0.25:51820"
+	nonDirectSpec.WireGuard.AllowedIPs = []string{"10.31.0.25/32"}
+	nonDirectSpec.Mobility.OwnedAddresses = []string{"10.77.70.25/32", "10.77.70.18/32"}
+	nonDirectSpec.BGP.RouterID = "10.255.10.25"
+	nonDirectSpec.DirectMesh = false
+	nonDirectSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), nonDirectSpec)
+	nonDirect.Spec = nonDirectSpec
+
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	for _, claim := range []api.Resource{requester, peer, nonDirect} {
+		if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+			t.Fatalf("submit %s: %v", claim.Metadata.Name, err)
+		}
+	}
+
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	if err != nil {
+		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
+	}
+	if result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
+		t.Fatalf("rrset = %#v", result.RRSet)
+	}
+	if result.PeerGroup == nil || result.PeerGroup.Kind != "SAMPeerGroup" || result.PeerGroup.Metadata.Name != "pve-direct-leaves" {
+		t.Fatalf("peer group = %#v", result.PeerGroup)
+	}
+	group, err := result.PeerGroup.SAMPeerGroupSpec()
+	if err != nil {
+		t.Fatalf("peer group spec: %v", err)
+	}
+	if group.EnrollmentPolicyRef != requesterSpec.PolicyRef {
+		t.Fatalf("peer group policy = %q, want %q", group.EnrollmentPolicyRef, requesterSpec.PolicyRef)
+	}
+	transport, found, err := findSAMTransportProfile(router, "SAMTransportProfile/pve-rr-a-wg")
+	if err != nil || !found {
+		t.Fatalf("find transport profile: found=%v err=%v", found, err)
+	}
+	if group.TransportFingerprint != mobilityconfig.SAMTransportMeshFingerprint(transport) {
+		t.Fatalf("transport fingerprint = %q", group.TransportFingerprint)
+	}
+	if len(group.Nodes) != 1 || group.Nodes[0].NodeRef != "pve-leaf-c" {
+		t.Fatalf("direct nodes = %#v, want only opted-in remote leaf", group.Nodes)
+	}
+	if group.Nodes[0].SAMEndpoint != "10.31.0.23" || group.Nodes[0].WireGuard.PublicKey != "PVE_LEAF_C_WIREGUARD_PUBLIC_KEY" {
+		t.Fatalf("direct node material = %#v", group.Nodes[0])
+	}
+	if got := group.OwnedPrefixesByNode["pve-leaf-c"]; len(got) != 2 || got[0] != "10.77.70.19/32" || got[1] != "10.77.70.23/32" {
+		t.Fatalf("direct node signed owned prefixes = %#v", group.OwnedPrefixesByNode)
+	}
+}
+
+func TestSubmitSAMEnrollmentClaimRejectsDirectMeshWithoutPolicyPeerGroup(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	secretFile := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretFile, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("write join token: %v", err)
+	}
+	setSubmitTestJoinToken(t, router, "pve-wg-leaves", secretFile)
+	claim := loadSubmitTestClaim(t, "pve-leaf-a")
+	spec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	spec.DirectMesh = true
+	spec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), spec)
+	claim.Spec = spec
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+
+	_, err = submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	if err == nil || !strings.Contains(err.Error(), "directMesh.peerGroupRef") {
+		t.Fatalf("submitSAMEnrollmentClaim error = %v, want direct mesh policy rejection", err)
+	}
+}
+
+func TestGetSAMEnrollmentTopologyPolicyDirectMeshDisableKeepsRRFallback(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	router := loadSubmitTestRouter(t)
+	secretFile := filepath.Join(t.TempDir(), "join-token")
+	if err := os.WriteFile(secretFile, []byte("test-join-token\n"), 0o600); err != nil {
+		t.Fatalf("write join token: %v", err)
+	}
+	setSubmitTestJoinToken(t, router, "pve-wg-leaves", secretFile)
+	setSubmitTestDirectMeshPeerGroup(t, router, "pve-wg-leaves", "SAMPeerGroup/pve-direct-leaves")
+	claim := loadSubmitTestClaim(t, "pve-leaf-a")
+	claimSpec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	claimSpec.DirectMesh = true
+	claimSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), claimSpec)
+	claim.Spec = claimSpec
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer store.Close()
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+		t.Fatalf("submit direct claim: %v", err)
+	}
+
+	// Removing the optional accelerator must not strand already accepted
+	// direct claims. New direct submissions remain rejected at submit time,
+	// while existing claims receive their RR topology without a peer group.
+	setSubmitTestDirectMeshPeerGroup(t, router, "pve-wg-leaves", "")
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	if err != nil {
+		t.Fatalf("get topology after direct disable: %v", err)
+	}
+	if result.RRSet.Kind != "SAMRRSet" || result.PeerGroup != nil {
+		t.Fatalf("topology after direct disable = %#v, want RRSet-only fallback", result)
 	}
 }
 
@@ -248,8 +409,8 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || !result.ExpiresAt.Equal(revokeAt) {
 		t.Fatalf("revoke result = %#v", result)
 	}
-	if _, err := getSAMRRSetForAcceptedClaim(router, store, controlapi.SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
-		t.Fatalf("post-revoke getSAMRRSetForAcceptedClaim error = %v, want accepted claim required", err)
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+		t.Fatalf("post-revoke getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
 	if err != nil {
@@ -303,6 +464,23 @@ func setSubmitTestJoinToken(t *testing.T, router *api.Router, policyName, secret
 			t.Fatalf("policy spec: %v", err)
 		}
 		spec.JoinTokenFrom.File = secretFile
+		router.Spec.Resources[i].Spec = spec
+		return
+	}
+	t.Fatalf("missing policy %s", policyName)
+}
+
+func setSubmitTestDirectMeshPeerGroup(t *testing.T, router *api.Router, policyName, peerGroupRef string) {
+	t.Helper()
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != policyName {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			t.Fatalf("policy spec: %v", err)
+		}
+		spec.DirectMesh.PeerGroupRef = peerGroupRef
 		router.Spec.Resources[i].Spec = spec
 		return
 	}

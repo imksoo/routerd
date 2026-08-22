@@ -219,6 +219,17 @@ an operator signal that topology freshness is no longer being refreshed. Status
 also includes a `warning` field on stale sources so long-lived fail-static mode
 is visible without tearing down the working data plane.
 
+當 policy 設定了 `directMesh.peerGroupRef`，並且 leaf 的 claim 已簽署且選擇了
+`directMesh: true` 時，RR 會把第二個、帶 policy 範圍的 `SAMPeerGroup` 放進與
+`SAMRRSet` 相同的 dynamic-config part。該 group 只包含符合資格的遠端 leaf，必須符合
+本機 transport fingerprint，並且每個 leaf 都帶有自己經簽署確認的 IPv4 `/32` 清單。
+
+這個 direct group 是選用的加速器，不是新的 L2 overlay。`SAMTransportProfile` 保留
+`SAMRRSet` source，再把 direct group 作為最後一個 `direct: true` source 加入。只有 direct
+BGP session 存活時，它的路由才會取得比 RR 更高的 `LOCAL_PREF`。若 group 缺失、過期、
+不相容或 underlay 無法到達，routerd 不會建立該 direct artifact，仍使用 RR peer。這樣 RR
+同時負責啟動與安全備援。
+
 ## Capture strategies (how cloud ingress is built)
 
 `capture.type` selects the normal ingress mechanism. `capture.captureStrategy`

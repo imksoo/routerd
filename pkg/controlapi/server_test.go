@@ -226,13 +226,21 @@ func TestRevokeSAMEnrollmentClaimHandler(t *testing.T) {
 	}
 }
 
-func TestGetSAMRRSetHandler(t *testing.T) {
+func TestGetSAMEnrollmentTopologyHandler(t *testing.T) {
 	handler := Handler{
-		GetSAMRRSet: func(r *http.Request, req SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {
+		GetSAMEnrollmentTopology: func(r *http.Request, req SAMEnrollmentTopologyGetRequest) (*SAMEnrollmentTopologyGetResult, error) {
 			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" {
 				t.Fatalf("request = %#v", req)
 			}
-			result := NewSAMRRSetGetResult("pve-rrs", api.Resource{
+			peerGroup := api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+				Metadata: api.ObjectMeta{Name: "pve-direct-leaves"},
+				Spec: api.SAMPeerGroupSpec{
+					EnrollmentPolicyRef:  "SAMEnrollmentPolicy/pve-leaves",
+					TransportFingerprint: "sha256:test",
+				},
+			}
+			result := NewSAMEnrollmentTopologyGetResult("pve-rrs", api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
 				Metadata: api.ObjectMeta{Name: "pve-rrs"},
 				Spec: api.SAMRRSetSpec{
@@ -243,11 +251,11 @@ func TestGetSAMRRSetHandler(t *testing.T) {
 						SAMEndpoint:    "10.30.0.10",
 					}},
 				},
-			})
+			}, &peerGroup)
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodGet, Prefix+"/sam-rrsets/pve-rrs?claim=SAMEnrollmentClaim/pve-leaf-a", nil)
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/sam-enrollment-topologies/pve-rrs?claim=SAMEnrollmentClaim/pve-leaf-a", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -255,7 +263,7 @@ func TestGetSAMRRSetHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `"kind": "SAMRRSetGetResult"`) || !strings.Contains(rec.Body.String(), `"name": "pve-rrs"`) {
+	if !strings.Contains(rec.Body.String(), `"kind": "SAMEnrollmentTopologyGetResult"`) || !strings.Contains(rec.Body.String(), `"name": "pve-rrs"`) || !strings.Contains(rec.Body.String(), `"peerGroup"`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }

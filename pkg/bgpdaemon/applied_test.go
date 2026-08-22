@@ -12,9 +12,21 @@ import (
 func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bgp", "applied.json")
 	config := AppliedConfig{
-		Global: AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179, Families: []string{"ipv4-unicast"}, UseMultiplePaths: true},
+		Global: AppliedGlobal{
+			ASN:              64512,
+			RouterID:         "10.0.0.1",
+			ListenPort:       179,
+			Families:         []string{"ipv4-unicast"},
+			UseMultiplePaths: true,
+			ImportPolicy:     AppliedImportPolicy{LocalPreference: 200},
+		},
 		Peers: map[string]AppliedPeer{
-			"10.0.0.2": {Address: "10.0.0.2", ASN: 64513, TimersProfile: "fast"},
+			"10.0.0.2": {
+				Address:       "10.0.0.2",
+				ASN:           64513,
+				TimersProfile: "fast",
+				ImportPolicy:  AppliedImportPolicy{LocalPreference: 201},
+			},
 		},
 		Advertisements: []string{"10.20.0.0/24"},
 		Paths: []AppliedPath{{
@@ -40,6 +52,9 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 	}
 	if got.Version != AppliedVersion || got.Global.ASN != 64512 || got.Peers["10.0.0.2"].TimersProfile != "fast" {
 		t.Fatalf("applied config = %#v", got)
+	}
+	if got.Global.ImportPolicy.LocalPreference != 200 || got.Peers["10.0.0.2"].ImportPolicy.LocalPreference != 201 {
+		t.Fatalf("import local preferences = global=%d peer=%d, want 200/201", got.Global.ImportPolicy.LocalPreference, got.Peers["10.0.0.2"].ImportPolicy.LocalPreference)
 	}
 	if len(got.Paths) != 2 {
 		t.Fatalf("paths = %#v, want legacy static path plus mobility path", got.Paths)
@@ -99,5 +114,19 @@ func TestValidateRejectsInvalidAppliedPath(t *testing.T) {
 func TestValidateRejectsIncompleteAppliedConfig(t *testing.T) {
 	if err := Validate(AppliedConfig{Version: AppliedVersion}); err == nil {
 		t.Fatal("Validate accepted missing global")
+	}
+}
+
+func TestValidateRejectsTransitionForNonDirectPeer(t *testing.T) {
+	config := AppliedConfig{
+		Version:                    AppliedVersion,
+		Global:                     AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
+		PendingDirectPeerAdditions: []string{"10.0.0.2"},
+		PendingDirectPeerRemovals:  []string{"10.0.0.3"},
+		PendingStaticPathRemovals:  nil,
+		Peers:                      map[string]AppliedPeer{"10.0.0.2": {Address: "10.0.0.2", ASN: 64512}},
+	}
+	if err := Validate(config); err == nil {
+		t.Fatal("Validate accepted pending direct transition for ordinary peer")
 	}
 }

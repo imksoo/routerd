@@ -194,15 +194,20 @@ type SAMEnrollmentClaimRevokeResult struct {
 	Reason        string    `json:"reason,omitempty" yaml:"reason,omitempty"`
 }
 
-type SAMRRSetGetRequest struct {
+// SAMEnrollmentTopologyGetRequest asks an enrollment server for the runtime
+// topology admitted for one claim. The RR snapshot is always returned; a
+// direct-leaf peer group is returned only when the admitted claim opted into a
+// policy that publishes one.
+type SAMEnrollmentTopologyGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
 }
 
-type SAMRRSetGetResult struct {
-	TypeMeta `json:",inline" yaml:",inline"`
-	Metadata ObjectMeta   `json:"metadata" yaml:"metadata"`
-	RRSet    api.Resource `json:"rrSet" yaml:"rrSet"`
+type SAMEnrollmentTopologyGetResult struct {
+	TypeMeta  `json:",inline" yaml:",inline"`
+	Metadata  ObjectMeta    `json:"metadata" yaml:"metadata"`
+	RRSet     api.Resource  `json:"rrSet" yaml:"rrSet"`
+	PeerGroup *api.Resource `json:"peerGroup,omitempty" yaml:"peerGroup,omitempty"`
 }
 
 type LogLevelRequest struct {
@@ -623,13 +628,14 @@ func NewSAMEnrollmentClaimRevokeResult(claimRef, source string, generation int64
 	}
 }
 
-func NewSAMRRSetGetResult(name string, rrSet api.Resource) SAMRRSetGetResult {
-	return SAMRRSetGetResult{
-		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "SAMRRSetGetResult"},
+func NewSAMEnrollmentTopologyGetResult(name string, rrSet api.Resource, peerGroup *api.Resource) SAMEnrollmentTopologyGetResult {
+	return SAMEnrollmentTopologyGetResult{
+		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "SAMEnrollmentTopologyGetResult"},
 		Metadata: ObjectMeta{
 			Name: name,
 		},
-		RRSet: rrSet,
+		RRSet:     rrSet,
+		PeerGroup: peerGroup,
 	}
 }
 

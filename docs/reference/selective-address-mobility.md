@@ -315,15 +315,48 @@ For production fabrics, prefer `/20` or larger `innerPrefix` where practical;
 smaller pools such as `/24` (128 `/31` slots) collide more easily under
 hash+mod allocation.
 
-`spec.peersFrom` can reference either `SAMNodeSet/<name>` or
-`SAMPeerGroup/<name>`. A `SAMNodeSet` source contributes every
+`spec.peersFrom` can reference `SAMNodeSet/<name>`, `SAMPeerGroup/<name>`,
+`SAMEnrollmentPolicy/<name>`, or a fetched `SAMRRSet/<name>`. A `SAMNodeSet`
+source contributes every
 `spec.nodes[].nodeRef` to the resolved topology. It creates peers for every
 non-self node with a `samEndpoint`, unless `nodeRefs` narrows the source to the
 listed adjacent nodes. The generated peer uses that `samEndpoint` as
-`remoteEndpoint`. A `SAMPeerGroup` source contributes reusable transport peers
-only. `SAMPeerGroup` is a runtime-only sync payload, not a top-level
-`spec.resources` kind: a publisher creates it with `publishPeerGroup`, and a
-consumer reads it only through the peer-group sync cache.
+`remoteEndpoint`. A generic `SAMPeerGroup` source contributes reusable transport
+peers through the peer-group sync cache. `SAMPeerGroup` is runtime-only, not a
+top-level `spec.resources` kind.
+
+An enrollment policy can also offer an opportunistic direct-leaf group. The
+leaf still consumes its fetched `SAMRRSet` first, then adds the policy-scoped
+group with `direct: true`:
+
+```yaml
+peersFrom:
+  - resource: SAMRRSet/pve-rrs
+  - resource: SAMPeerGroup/pve-direct-leaves
+    direct: true
+```
+
+This second form is delivered atomically with the RRSet by the authenticated
+enrollment fetcher; it is not a static resource and does not use the generic
+sync cache. Direct mode requires `addressingMode: pair-stable`, leaves
+`routeReflectorClient` false, and gives direct imports a higher local preference
+than RR imports. A direct profile must explicitly set the ordinary RR
+`importPolicy.localPreference`. This is deliberately BGP local preference, not an
+administrative-distance or AS-path heuristic: RR reflection in iBGP does not
+reliably express the extra forwarding hop in AS_PATH. The direct default is
+`200`; set the two values explicitly when the fabric has another preference
+convention:
+
+```yaml
+bgp:
+  importPolicy:
+    localPreference: 100 # RR peers
+  directLocalPreference: 200 # direct peers; must be greater than RR
+```
+
+A missing, expired, incompatible, or unreachable direct group
+does not make the profile pending and never removes the RR-generated tunnel or
+BGP peers. In short: direct is an optimization; RR is the fallback.
 
 The controller resolves all sources at reconcile time. Direct peer and topology
 lists are not accepted: `SAMNodeSet` is the single identity/topology/endpoint

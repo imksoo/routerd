@@ -79,7 +79,10 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 	if err := validateMobilityPoolPrefixes(router); err != nil {
 		return err
 	}
-	if err := validateSAMEnrollmentReferences(router, idx); err != nil {
+	if err := validateSAMEnrollmentReferences(router, idx, allowRuntimePayloads); err != nil {
+		return err
+	}
+	if err := validateWireGuardDirectSAMFallback(router); err != nil {
 		return err
 	}
 	for _, res := range router.Spec.Resources {
@@ -758,6 +761,106 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 	return nil
 }
 
+// validateWireGuardDirectSAMFallback keeps a WireGuard underlay from becoming
+// a direct-only bootstrap path. The matching SAMTransportProfile already
+// requires an RRSet before its direct group; the WireGuard interface carrying
+// that group must retain the same kind of mandatory source as well.
+func validateWireGuardDirectSAMFallback(router *api.Router) error {
+	if router == nil {
+		return nil
+	}
+	directRefsByInterface := map[string]map[string]bool{}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" {
+			continue
+		}
+		profile, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(strings.TrimSpace(profile.Encryption), "wireguard") {
+			continue
+		}
+		for _, wireGuardResource := range router.Spec.Resources {
+			if wireGuardResource.APIVersion != api.NetAPIVersion || wireGuardResource.Kind != "WireGuardInterface" {
+				continue
+			}
+			wireGuard, err := wireGuardResource.WireGuardInterfaceSpec()
+			if err != nil {
+				return err
+			}
+			if !samTransportUsesWireGuardInterfaceForValidation(router, profile.UnderlayInterface, wireGuardResource.Metadata.Name, wireGuard.IfName) {
+				continue
+			}
+			for _, source := range profile.PeersFrom {
+				if !source.Direct {
+					continue
+				}
+				refs := directRefsByInterface[wireGuardResource.Metadata.Name]
+				if refs == nil {
+					refs = map[string]bool{}
+					directRefsByInterface[wireGuardResource.Metadata.Name] = refs
+				}
+				refs[strings.TrimSpace(source.Resource)] = true
+			}
+		}
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardInterface" {
+			continue
+		}
+		directRefs := directRefsByInterface[resource.Metadata.Name]
+		if len(directRefs) == 0 {
+			continue
+		}
+		wireGuard, err := resource.WireGuardInterfaceSpec()
+		if err != nil {
+			return err
+		}
+		for directRef := range directRefs {
+			directIndex := -1
+			for i, source := range wireGuard.PeersFrom {
+				if strings.TrimSpace(source.Resource) == directRef {
+					directIndex = i
+					break
+				}
+			}
+			if directIndex < 0 {
+				return fmt.Errorf("%s spec.peersFrom must include enrollment direct SAMPeerGroup %q declared by the WireGuard SAMTransportProfile", resource.ID(), directRef)
+			}
+			if directIndex != len(wireGuard.PeersFrom)-1 {
+				return fmt.Errorf("%s spec.peersFrom[%d] enrollment direct SAMPeerGroup must be the final peer source so no later source can replace its RR fallback", resource.ID(), directIndex)
+			}
+			hasRRFallback := false
+			for _, previous := range wireGuard.PeersFrom[:directIndex] {
+				kind, _, ok := strings.Cut(strings.TrimSpace(previous.Resource), "/")
+				if ok && kind == "SAMRRSet" && !previous.Optional {
+					hasRRFallback = true
+					break
+				}
+			}
+			if !hasRRFallback {
+				return fmt.Errorf("%s spec.peersFrom[%d] enrollment direct SAMPeerGroup requires a preceding non-optional SAMRRSet/<name> fallback source", resource.ID(), directIndex)
+			}
+		}
+	}
+	return nil
+}
+
+func samTransportUsesWireGuardInterfaceForValidation(router *api.Router, underlay, interfaceName, ifname string) bool {
+	names := map[string]bool{}
+	for _, name := range []string{interfaceName, ifname, api.ResolveInterfaceIfName(router, interfaceName), api.ResolveInterfaceIfName(router, ifname)} {
+		if name = strings.TrimSpace(name); name != "" {
+			names[name] = true
+		}
+	}
+	underlay = strings.TrimSpace(underlay)
+	if underlay == "" {
+		return false
+	}
+	return names[underlay] || names[api.ResolveInterfaceIfName(router, underlay)]
+}
+
 func captureActiveWhenVirtualAddressRef(activeWhen api.CaptureActiveWhen) string {
 	ref := strings.TrimSpace(activeWhen.VirtualAddressRef)
 	return strings.TrimPrefix(ref, "VirtualAddress/")
@@ -890,7 +993,7 @@ func validateMobilityPoolPrefixes(router *api.Router) error {
 	return nil
 }
 
-func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error {
+func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex, allowRuntimePayloads bool) error {
 	policies := map[string]api.SAMEnrollmentPolicySpec{}
 	claims := map[string]bool{}
 	mobilityPrefixes := map[string]netip.Prefix{}
@@ -900,6 +1003,13 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 	seenWireGuardPublicKeys := map[string]string{}
 	seenMobilityOwnedAddresses := map[string]string{}
 	seenBGPRouterIDs := map[string]string{}
+	// Runtime enrollment payloads merge resources by Kind/name, while their
+	// refresh records use the same names as source identifiers. A name shared
+	// by two policies would therefore let one policy overwrite the other's
+	// snapshot on a leaf. Keep both topology outputs policy-unique before a
+	// runtime refresh can create that ambiguous state.
+	rrSetOwners := map[string]string{}
+	directPeerGroupOwners := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion == api.MobilityAPIVersion && res.Kind == "SAMEnrollmentPolicy" {
 			spec, err := res.SAMEnrollmentPolicySpec()
@@ -910,6 +1020,18 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 			kind, name, ok := strings.Cut(strings.TrimSpace(spec.TransportProfileRef), "/")
 			if !ok || kind != "SAMTransportProfile" || !idx.Seen[api.MobilityAPIVersion+"/SAMTransportProfile/"+name] {
 				return fmt.Errorf("%s spec.transportProfileRef references missing SAMTransportProfile %q", res.ID(), spec.TransportProfileRef)
+			}
+			if rrSetRef := strings.TrimSpace(spec.RRSetRef); rrSetRef != "" {
+				if previous := rrSetOwners[rrSetRef]; previous != "" {
+					return fmt.Errorf("%s spec.rrSetRef %q is already used by %s; SAM enrollment RRSet refs must be unique per policy", res.ID(), rrSetRef, previous)
+				}
+				rrSetOwners[rrSetRef] = res.ID()
+			}
+			if peerGroupRef := strings.TrimSpace(spec.DirectMesh.PeerGroupRef); peerGroupRef != "" {
+				if previous := directPeerGroupOwners[peerGroupRef]; previous != "" {
+					return fmt.Errorf("%s spec.directMesh.peerGroupRef %q is already used by %s; SAM enrollment direct peer-group refs must be unique per policy", res.ID(), peerGroupRef, previous)
+				}
+				directPeerGroupOwners[peerGroupRef] = res.ID()
 			}
 			if ref := strings.TrimSpace(spec.RRNodeSetRef); ref != "" {
 				kind, name, ok := strings.Cut(ref, "/")
@@ -991,6 +1113,9 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex) error
 				continue
 			}
 			return fmt.Errorf("%s spec.policyRef references missing SAMEnrollmentPolicy %q", res.ID(), spec.PolicyRef)
+		}
+		if spec.DirectMesh && strings.TrimSpace(policy.DirectMesh.PeerGroupRef) == "" && !allowRuntimePayloads {
+			return fmt.Errorf("%s spec.directMesh requires %s spec.directMesh.peerGroupRef", res.ID(), spec.PolicyRef)
 		}
 		policyKey := strings.TrimSpace(spec.PolicyRef)
 		if previous := seenSAMEnrollmentValue(seenLeafIDs, policyKey, spec.LeafID, res.ID()); previous != "" {

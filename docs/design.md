@@ -203,7 +203,18 @@ also surfaced through `routerctl get BGPRouter`, `routerctl get VirtualAddress`,
 and `routerctl get IngressService` views plus low-cardinality OTel metrics for
 transitions and backend health.
 
-### 5.3 Daemon contract
+### 5.3 Dynamic SAM topology keeps a safe fallback
+
+Dynamic SAM enrollment is a functional-core boundary: an RR admits a signed
+leaf claim, projects a typed `SAMRRSet`, and a leaf's existing transport and
+BGP controllers apply that snapshot. A policy may bundle an optional direct
+leaf `SAMPeerGroup` in the same dynamic-config part. This does not replace the
+RR topology. The leaf retains its RR peers, and direct imported routes have a
+higher local preference only while their direct BGP session is established.
+Missing, incompatible, or unreachable direct peers therefore fall back to the
+RR path without a special recovery controller or a destructive topology update.
+
+### 5.4 Daemon contract
 
 Long-running OS processes (DHCPv6 client, DNS resolver, healthcheck, etc.) live as **daemons** rather than as controllers.
 Each daemon talks to the controller chain over a Unix domain socket using JSON, and persists its own state under files such as `lease.json`.

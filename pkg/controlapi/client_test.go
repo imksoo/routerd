@@ -293,11 +293,19 @@ func TestClientDoesNotRetryMutatingRequests(t *testing.T) {
 	}
 }
 
-func TestClientGetSAMRRSet(t *testing.T) {
-	want := NewSAMRRSetGetResult("pve-rrs", api.Resource{
+func TestClientGetSAMEnrollmentTopology(t *testing.T) {
+	peerGroup := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: "pve-direct-leaves"},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  "SAMEnrollmentPolicy/pve-leaves",
+			TransportFingerprint: "sha256:test",
+		},
+	}
+	want := NewSAMEnrollmentTopologyGetResult("pve-rrs", api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
 		Metadata: api.ObjectMeta{Name: "pve-rrs"},
-	})
+	}, &peerGroup)
 	payload, err := json.Marshal(want)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -317,15 +325,18 @@ func TestClientGetSAMRRSet(t *testing.T) {
 		retryAttempts: 1,
 		retryDelay:    time.Millisecond,
 	}
-	result, err := client.GetSAMRRSet(context.Background(), SAMRRSetGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"})
+	result, err := client.GetSAMEnrollmentTopology(context.Background(), SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"})
 	if err != nil {
-		t.Fatalf("GetSAMRRSet: %v", err)
+		t.Fatalf("GetSAMEnrollmentTopology: %v", err)
 	}
-	if gotPath != Prefix+"/sam-rrsets/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" {
+	if gotPath != Prefix+"/sam-enrollment-topologies/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" {
 		t.Fatalf("request path/query = %q claim=%q", gotPath, gotClaim)
 	}
 	if result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
 		t.Fatalf("result = %#v", result)
+	}
+	if result.PeerGroup == nil || result.PeerGroup.Kind != "SAMPeerGroup" || result.PeerGroup.Metadata.Name != "pve-direct-leaves" {
+		t.Fatalf("peer group = %#v", result.PeerGroup)
 	}
 }
 

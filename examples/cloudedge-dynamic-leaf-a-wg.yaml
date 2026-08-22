@@ -14,7 +14,7 @@ spec:
         listenPort: 51820
         mtu: 1420
         peersFrom:
-          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMRRSet/cloudedge-public-wg-rrs
 
     - apiVersion: net.routerd.net/v1alpha1
       kind: Interface
@@ -66,7 +66,7 @@ spec:
         underlayInterface: wg-cloudedge
         localEndpoint: 10.20.0.31
         peersFrom:
-          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMRRSet/cloudedge-public-wg-rrs
         bgp:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
@@ -84,7 +84,7 @@ spec:
       metadata: { name: leaf-a }
       spec:
         policyRef: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-public-wg-rrs
         leafID: leaf-a
         joinAudience: cloudedge-public-underlay
         joinNonce: leaf-a-0001

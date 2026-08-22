@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
@@ -373,21 +374,76 @@ func validateWireGuardEndpoint(endpoint string) error {
 }
 
 func validateSAMPeerGroup(res api.Resource, spec api.SAMPeerGroupSpec) error {
-	if len(spec.Peers) == 0 {
-		return fmt.Errorf("%s spec.peers requires at least one peer", res.ID())
+	policyRef := strings.TrimSpace(spec.EnrollmentPolicyRef)
+	if policyRef == "" && strings.TrimSpace(spec.TransportFingerprint) != "" {
+		return fmt.Errorf("%s spec.transportFingerprint requires spec.enrollmentPolicyRef", res.ID())
 	}
-	seenPeers := map[string]bool{}
-	for i, peer := range spec.Peers {
-		nodeRef := strings.TrimSpace(peer.NodeRef)
-		if nodeRef == "" {
-			return fmt.Errorf("%s spec.peers[%d].nodeRef is required", res.ID(), i)
+	if policyRef != "" {
+		if kind, name, ok := strings.Cut(policyRef, "/"); !ok || kind != "SAMEnrollmentPolicy" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.enrollmentPolicyRef must reference SAMEnrollmentPolicy/<name>", res.ID())
 		}
-		if seenPeers[nodeRef] {
-			return fmt.Errorf("%s spec.peers nodeRef %q is duplicated", res.ID(), nodeRef)
+		if strings.TrimSpace(spec.TransportFingerprint) == "" {
+			return fmt.Errorf("%s spec.transportFingerprint is required for an enrollment direct-mesh peer group", res.ID())
 		}
-		seenPeers[nodeRef] = true
-		if err := validateTunnelEndpointOrSource(res.ID(), fmt.Sprintf("peers[%d].remoteEndpoint", i), peer.RemoteEndpoint, peer.RemoteEndpointFrom); err != nil {
+	} else if len(spec.Nodes) == 0 {
+		return fmt.Errorf("%s spec.nodes requires at least one node", res.ID())
+	}
+	if len(spec.Nodes) == 0 {
+		if len(spec.OwnedPrefixesByNode) > 0 {
+			return fmt.Errorf("%s spec.ownedPrefixesByNode requires at least one direct-mesh node", res.ID())
+		}
+		return nil
+	}
+	if err := validateSAMNodeSet(res, api.SAMNodeSetSpec{Nodes: spec.Nodes}); err != nil {
+		return err
+	}
+	if policyRef != "" {
+		if err := validateSAMDirectPeerGroupOwnedPrefixes(res, spec); err != nil {
 			return err
+		}
+		for i, node := range spec.Nodes {
+			if node.RouteReflector {
+				return fmt.Errorf("%s spec.nodes[%d].routeReflector must be false in a direct-mesh peer group", res.ID(), i)
+			}
+		}
+	}
+	return nil
+}
+
+// validateSAMDirectPeerGroupOwnedPrefixes keeps an enrollment-delivered direct
+// peer group bound to the signed claim facts from which it was projected. The
+// direct path has higher LOCAL_PREF, so accepting a policy-wide prefix here
+// would let one reachable leaf win traffic for another leaf's /32.
+func validateSAMDirectPeerGroupOwnedPrefixes(res api.Resource, spec api.SAMPeerGroupSpec) error {
+	nodes := map[string]bool{}
+	seenPrefixes := map[string]string{}
+	for _, node := range spec.Nodes {
+		nodeRef := strings.TrimSpace(node.NodeRef)
+		nodes[nodeRef] = true
+		values := spec.OwnedPrefixesByNode[nodeRef]
+		if len(values) == 0 {
+			return fmt.Errorf("%s spec.ownedPrefixesByNode[%q] requires at least one signed IPv4 /32", res.ID(), nodeRef)
+		}
+		seenNodePrefixes := map[string]bool{}
+		for i, value := range values {
+			prefix, err := samenrollment.ParsePrefixOrAddress(value)
+			if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+				return fmt.Errorf("%s spec.ownedPrefixesByNode[%q][%d] must be an IPv4 /32", res.ID(), nodeRef, i)
+			}
+			key := prefix.String()
+			if seenNodePrefixes[key] {
+				return fmt.Errorf("%s spec.ownedPrefixesByNode[%q][%d] duplicates %q", res.ID(), nodeRef, i, key)
+			}
+			if previous := seenPrefixes[key]; previous != "" && previous != nodeRef {
+				return fmt.Errorf("%s spec.ownedPrefixesByNode[%q][%d] %q is also assigned to direct node %q", res.ID(), nodeRef, i, key, previous)
+			}
+			seenNodePrefixes[key] = true
+			seenPrefixes[key] = nodeRef
+		}
+	}
+	for nodeRef := range spec.OwnedPrefixesByNode {
+		if !nodes[strings.TrimSpace(nodeRef)] {
+			return fmt.Errorf("%s spec.ownedPrefixesByNode[%q] does not name a direct-mesh node", res.ID(), nodeRef)
 		}
 	}
 	return nil
@@ -406,6 +462,70 @@ func validateSAMRRSet(res api.Resource, spec api.SAMRRSetSpec) error {
 	for i, node := range spec.Nodes {
 		if !node.RouteReflector {
 			return fmt.Errorf("%s spec.nodes[%d].routeReflector must be true in an RR snapshot", res.ID(), i)
+		}
+	}
+	return nil
+}
+
+// ValidateFetchedSAMEnrollmentTopology validates the two runtime resources a
+// leaf receives from an enrollment RR before they are persisted together. It
+// intentionally validates the semantic resource shapes, not merely their JSON
+// codec: an optional direct peer group must never make a valid RR snapshot
+// unusable after the dynamic-config merge.
+func ValidateFetchedSAMEnrollmentTopology(rrSet api.Resource, peerGroup *api.Resource) error {
+	if rrSet.APIVersion != api.MobilityAPIVersion || rrSet.Kind != "SAMRRSet" || strings.TrimSpace(rrSet.Metadata.Name) == "" {
+		return fmt.Errorf("fetched resource must be %s/SAMRRSet", api.MobilityAPIVersion)
+	}
+	rrSetSpec, err := rrSet.SAMRRSetSpec()
+	if err != nil {
+		return err
+	}
+	if err := validateSAMRRSet(rrSet, rrSetSpec); err != nil {
+		return err
+	}
+	if peerGroup == nil {
+		return nil
+	}
+	if peerGroup.APIVersion != api.MobilityAPIVersion || peerGroup.Kind != "SAMPeerGroup" || strings.TrimSpace(peerGroup.Metadata.Name) == "" {
+		return fmt.Errorf("fetched peer group must be %s/SAMPeerGroup", api.MobilityAPIVersion)
+	}
+	peerGroupSpec, err := peerGroup.SAMPeerGroupSpec()
+	if err != nil {
+		return err
+	}
+	if err := validateSAMPeerGroup(*peerGroup, peerGroupSpec); err != nil {
+		return err
+	}
+	if strings.TrimSpace(peerGroupSpec.EnrollmentPolicyRef) != strings.TrimSpace(rrSetSpec.EnrollmentPolicyRef) {
+		return fmt.Errorf("fetched SAMPeerGroup/%s enrollmentPolicyRef %q does not match SAMRRSet/%s enrollmentPolicyRef %q", peerGroup.Metadata.Name, peerGroupSpec.EnrollmentPolicyRef, rrSet.Metadata.Name, rrSetSpec.EnrollmentPolicyRef)
+	}
+	if err := validateSAMDirectPeerGroupIdentityCollisions(rrSetSpec.Nodes, peerGroupSpec.Nodes); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateSAMDirectPeerGroupIdentityCollisions rejects only collisions that
+// involve an optional direct leaf. RR nodes may be independently diagnosed by
+// their own topology validation, but a direct peer whose required identity is
+// also forbidden for another topology node would otherwise report Direct while
+// accepting no route (or authenticating the wrong node).
+func validateSAMDirectPeerGroupIdentityCollisions(rrNodes, directNodes []api.SAMNodeSpec) error {
+	direct := map[string]bool{}
+	all := make([]string, 0, len(rrNodes)+len(directNodes))
+	for _, node := range rrNodes {
+		all = append(all, strings.TrimSpace(node.NodeRef))
+	}
+	for _, node := range directNodes {
+		nodeRef := strings.TrimSpace(node.NodeRef)
+		direct[nodeRef] = true
+		all = append(all, nodeRef)
+	}
+	for _, collision := range bgpstate.MobilityNodeIdentityCollisions(all) {
+		for _, nodeRef := range collision.NodeRefs {
+			if direct[nodeRef] {
+				return fmt.Errorf("fetched direct peer group has node identity collision %s for %s", collision.Community, strings.Join(collision.NodeRefs, ", "))
+			}
 		}
 	}
 	return nil
@@ -433,6 +553,14 @@ func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicyS
 	}
 	if strings.TrimSpace(spec.RRNodeSetRef) != "" && strings.TrimSpace(spec.RRSetRef) == "" {
 		return fmt.Errorf("%s spec.rrSetRef is required when spec.rrNodeSetRef is set", res.ID())
+	}
+	if peerGroupRef := strings.TrimSpace(spec.DirectMesh.PeerGroupRef); peerGroupRef != "" {
+		if kind, name, ok := strings.Cut(peerGroupRef, "/"); !ok || kind != "SAMPeerGroup" || strings.TrimSpace(name) == "" {
+			return fmt.Errorf("%s spec.directMesh.peerGroupRef must reference SAMPeerGroup/<name>", res.ID())
+		}
+		if strings.TrimSpace(spec.RRSetRef) == "" {
+			return fmt.Errorf("%s spec.rrSetRef is required when spec.directMesh.peerGroupRef is set", res.ID())
+		}
 	}
 	if pattern := strings.TrimSpace(spec.AllowedLeafIDs.Pattern); pattern != "" {
 		if _, err := regexp.Compile(pattern); err != nil {
@@ -721,12 +849,86 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 			return err
 		}
 	}
+	if err := validateSAMTransportDirectFallback(res.ID(), spec.PeersFrom); err != nil {
+		return err
+	}
 	addressingMode := mobilityconfig.NormalizeSAMTransportAddressingMode(spec.AddressingMode)
 	if strings.TrimSpace(spec.AddressingMode) != "" && addressingMode == "" {
 		return fmt.Errorf("%s spec.addressingMode must be edge-index or pair-stable", res.ID())
 	}
+	if samTransportHasDirectPeerSource(spec.PeersFrom) {
+		if addressingMode != "pair-stable" {
+			return fmt.Errorf("%s spec.addressingMode must be pair-stable when a peersFrom source is direct", res.ID())
+		}
+		if spec.BGP.GeneratePeers != nil && !*spec.BGP.GeneratePeers {
+			return fmt.Errorf("%s spec.bgp.generatePeers must not be false when a peersFrom source is direct", res.ID())
+		}
+		if spec.BGP.RouteReflectorClient {
+			return fmt.Errorf("%s spec.bgp.routeReflectorClient must be false when a peersFrom source is direct", res.ID())
+		}
+		if spec.BGP.ImportPolicy.LocalPreference == 0 {
+			return fmt.Errorf("%s spec.bgp.importPolicy.localPreference is required when a peersFrom source is direct", res.ID())
+		}
+		if len(compactStrings(spec.BGP.ImportPolicy.AllowedPrefixes)) == 0 {
+			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixes is required when a peersFrom source is direct", res.ID())
+		}
+		if err := validateSAMTransportDirectImportPrefixes(res.ID(), spec.BGP.ImportPolicy.AllowedPrefixes); err != nil {
+			return err
+		}
+		if spec.BGP.ImportPolicy.AllowedPrefixLengthMin != 32 || spec.BGP.ImportPolicy.AllowedPrefixLengthMax != 32 {
+			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixLengthMin and allowedPrefixLengthMax must both be 32 when a peersFrom source is direct", res.ID())
+		}
+		directPreference := mobilityconfig.EffectiveSAMTransportDirectLocalPreference(spec.BGP.DirectLocalPreference)
+		rrPreference := spec.BGP.ImportPolicy.LocalPreference
+		if rrPreference >= directPreference {
+			return fmt.Errorf("%s spec.bgp.directLocalPreference must exceed spec.bgp.importPolicy.localPreference when a peersFrom source is direct", res.ID())
+		}
+		if err := validateSAMTransportDirectExportIdentity(router, res, spec); err != nil {
+			return err
+		}
+	}
 	if err := validateSAMTransportTransitImportPolicy(router, res, spec); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateSAMTransportDirectExportIdentity ensures the local source tags its
+// own static /32 advertisement before any direct peer is allowed to require
+// that identity. Without this, the direct path safely rejects every route and
+// silently leaves the RR as the only usable path.
+func validateSAMTransportDirectExportIdentity(router *api.Router, res api.Resource, spec api.SAMTransportProfileSpec) error {
+	_, routerName, _ := strings.Cut(strings.TrimSpace(spec.BGP.RouterRef), "/")
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || strings.TrimSpace(resource.Metadata.Name) != routerName {
+			continue
+		}
+		routerSpec, err := resource.BGPRouterSpec()
+		if err != nil {
+			return err
+		}
+		expected := bgpstate.MobilityNodeIdentityCommunity(spec.SelfNodeRef)
+		if expected == "" || !bgpstate.HasCommunity(routerSpec.Communities.Set.Out, expected) {
+			return fmt.Errorf("%s direct peersFrom requires %s spec.communities.set.out to include local node identity %q", res.ID(), resource.ID(), expected)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s spec.bgp.routerRef references missing BGPRouter %q", res.ID(), spec.BGP.RouterRef)
+}
+
+// validateSAMTransportDirectImportPrefixes keeps direct iBGP admission
+// fail-closed. The BGP renderer treats an empty parsed prefix list as an
+// unrestricted policy, so every configured direct prefix must parse and must
+// be IPv4 before the /32 bounds in validateSAMTransportProfile can narrow it.
+func validateSAMTransportDirectImportPrefixes(resourceID string, values []string) error {
+	prefixes, err := validateBGPPrefixList(resourceID, "spec.bgp.importPolicy.allowedPrefixes", values)
+	if err != nil {
+		return err
+	}
+	for i, prefix := range prefixes {
+		if !prefix.Addr().Is4() {
+			return fmt.Errorf("%s spec.bgp.importPolicy.allowedPrefixes[%d] must be an IPv4 CIDR when a peersFrom source is direct", resourceID, i)
+		}
 	}
 	return nil
 }
@@ -788,6 +990,9 @@ func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMT
 	default:
 		return fmt.Errorf("%s spec.peersFrom[%d].resource must reference SAMPeerGroup/<name>, SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>", resourceID, index)
 	}
+	if source.Direct && kind != "SAMPeerGroup" {
+		return fmt.Errorf("%s spec.peersFrom[%d].direct is supported only for SAMPeerGroup/<name>", resourceID, index)
+	}
 	seen := map[string]bool{}
 	for nodeIndex, nodeRef := range source.NodeRefs {
 		nodeRef = strings.TrimSpace(nodeRef)
@@ -798,6 +1003,44 @@ func validateSAMTransportPeersFrom(resourceID string, index int, source api.SAMT
 			return fmt.Errorf("%s spec.peersFrom[%d].nodeRefs nodeRef %q is duplicated", resourceID, index, nodeRef)
 		}
 		seen[nodeRef] = true
+	}
+	return nil
+}
+
+func samTransportHasDirectPeerSource(sources []api.SAMTransportPeersSourceSpec) bool {
+	for _, source := range sources {
+		if source.Direct {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSAMTransportDirectFallback makes the direct source deliberately
+// subordinate to the enrolled RR topology. A direct group is a best-effort
+// optimization, not an alternative bootstrap or control-plane path: without a
+// preceding mandatory RRSet source, a missing direct group would leave a leaf
+// with no peer at all.
+func validateSAMTransportDirectFallback(resourceID string, sources []api.SAMTransportPeersSourceSpec) error {
+	hasRRFallback := false
+	for i, source := range sources {
+		kind, _, ok := strings.Cut(strings.TrimSpace(source.Resource), "/")
+		if !ok {
+			// validateSAMTransportPeersFrom reports the structural error first.
+			continue
+		}
+		if source.Direct {
+			if !hasRRFallback {
+				return fmt.Errorf("%s spec.peersFrom[%d].direct requires a preceding non-optional SAMRRSet/<name> fallback source", resourceID, i)
+			}
+			if i != len(sources)-1 {
+				return fmt.Errorf("%s spec.peersFrom[%d].direct must be the final peer source so no later source can replace its RR fallback", resourceID, i)
+			}
+			continue
+		}
+		if kind == "SAMRRSet" && !source.Optional {
+			hasRRFallback = true
+		}
 	}
 	return nil
 }

@@ -34,7 +34,7 @@ spec:
       metadata: { name: pve-leaf-b }
       spec:
         policyRef: SAMEnrollmentPolicy/pve-fou-leaves
-        rrSetRef: SAMRRSet/pve-rrs
+        rrSetRef: SAMRRSet/pve-fou-rrs
         leafID: pve-leaf-b
         joinAudience: pve-private-underlay
         joinNonce: pve-leaf-b-0001
@@ -77,7 +77,7 @@ spec:
       metadata: { name: pve-leaf-d }
       spec:
         policyRef: SAMEnrollmentPolicy/pve-fou-leaves
-        rrSetRef: SAMRRSet/pve-rrs
+        rrSetRef: SAMRRSet/pve-fou-rrs
         leafID: pve-leaf-d
         joinAudience: pve-private-underlay
         joinNonce: pve-leaf-d-0001

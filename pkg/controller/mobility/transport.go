@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/samenrollment"
@@ -131,7 +132,30 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	edgeIndex, err := transportAddressSlots(spec, peers, topologyNodes, inner)
 	if err != nil {
-		return transportDerivation{}, err
+		// Pair-stable slots are deliberately collision-detected instead of
+		// silently moving an existing tunnel. A collision introduced by an
+		// optional direct group must not take the established RR topology down,
+		// though: discard only the direct accelerator and retry the stable RR
+		// peers. A collision among fallback peers remains a hard configuration
+		// error, exactly as before.
+		fallbackPeers := transportFallbackPeers(peers)
+		if len(fallbackPeers) == len(peers) {
+			return transportDerivation{}, err
+		}
+		fallbackSlots, fallbackErr := transportAddressSlots(spec, fallbackPeers, topologyNodes, inner)
+		if fallbackErr != nil {
+			return transportDerivation{}, err
+		}
+		peers = fallbackPeers
+		edgeIndex = fallbackSlots
+		for i := range peerSources {
+			if peerSources[i].Phase != "Direct" {
+				continue
+			}
+			peerSources[i].Phase = "Incompatible"
+			peerSources[i].PeerCount = 0
+			peerSources[i].Reason = "direct peer-group pair-stable address slot collides with fallback topology"
+		}
 	}
 	out := transportDerivation{
 		PeersFrom:      peerSources,
@@ -216,10 +240,28 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			})
 		}
 		if generateBGPPeers {
-			importPolicy := transportBGPImportPolicyForPeer(spec.BGP.ImportPolicy, mobilityPoolImportPrefixes(c.Router), topologyNodes, peerNode, spec.BGP.RouteReflectorClient)
+			// An RR can legitimately relay the policy-wide /32 range. A direct
+			// leaf cannot: it is allowed only the signed /32s projected for this
+			// exact peer. Bind that narrow prefix set to the peer's identity and
+			// only then give it the higher LOCAL_PREF.
+			requirePeerIdentity := spec.BGP.RouteReflectorClient || peer.Direct
+			baseImportPolicy := spec.BGP.ImportPolicy
+			defaultAllowedPrefixes := mobilityPoolImportPrefixes(c.Router)
+			if peer.Direct {
+				baseImportPolicy.AllowedPrefixes = append([]string(nil), peer.AllowedPrefixes...)
+				defaultAllowedPrefixes = peer.AllowedPrefixes
+			}
+			importPolicy := transportBGPImportPolicyForPeer(baseImportPolicy, defaultAllowedPrefixes, topologyNodes, peerNode, requirePeerIdentity)
+			if peer.Direct {
+				importPolicy = directTransportBGPImportPolicy(importPolicy, spec.BGP.DirectLocalPreference)
+			}
+			annotations := transportAnnotations(owner.Metadata.Name, self, peerNode)
+			if peer.Direct {
+				annotations["mobility.routerd.net/direct-peer"] = "true"
+			}
 			out.Resources = append(out.Resources, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
-				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
+				Metadata: api.ObjectMeta{Name: bgpPeerName, OwnerRefs: ownerRef, Annotations: annotations},
 				Spec: api.BGPPeerSpec{
 					RouterRef:               strings.TrimSpace(spec.BGP.RouterRef),
 					PeerASN:                 spec.BGP.PeerASN,
@@ -238,6 +280,17 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	sort.Strings(out.PendingSources)
 	return out, nil
+}
+
+func transportFallbackPeers(peers []api.SAMTransportPeerSpec) []api.SAMTransportPeerSpec {
+	fallback := make([]api.SAMTransportPeerSpec, 0, len(peers))
+	for _, peer := range peers {
+		if peer.Direct {
+			continue
+		}
+		fallback = append(fallback, peer)
+	}
+	return fallback
 }
 
 func (c TransportController) targetOS() platform.OS {
@@ -259,8 +312,8 @@ func (c TransportController) transportTunnelName(mode string, edgeIndex int, par
 	return compactHashedName("samt", parts...)
 }
 
-func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, routeReflectorClient bool) api.BGPImportPolicySpec {
-	if !routeReflectorClient {
+func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowedPrefixes []string, topologyNodeRefs []string, peerNode string, requirePeerIdentity bool) api.BGPImportPolicySpec {
+	if !requirePeerIdentity {
 		return base
 	}
 	if len(cleanStrings(base.AllowedPrefixes)) == 0 {
@@ -284,6 +337,85 @@ func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowe
 	return base
 }
 
+func directTransportBGPImportPolicy(base api.BGPImportPolicySpec, preference uint32) api.BGPImportPolicySpec {
+	base.NextHopRewrite = "peer-address"
+	base.LocalPreference = mobilityconfig.EffectiveSAMTransportDirectLocalPreference(preference)
+	return base
+}
+
+// directPeerGroupOwnedPrefixes validates the runtime counterpart of the
+// enrollment direct-peer schema. It is intentionally repeated at the effect
+// boundary: dynamic config may have been created by an older or malformed RR,
+// and an optional accelerator must degrade to its RR fallback rather than turn
+// a missing ownership map into a broad import policy.
+func directPeerGroupOwnedPrefixes(group api.SAMPeerGroupSpec) (map[string][]string, error) {
+	nodeRefs := map[string]bool{}
+	seenPrefixes := map[string]string{}
+	out := make(map[string][]string, len(group.Nodes))
+	for _, node := range group.Nodes {
+		nodeRef := strings.TrimSpace(node.NodeRef)
+		if nodeRef == "" {
+			return nil, fmt.Errorf("direct peer-group contains an empty nodeRef")
+		}
+		nodeRefs[nodeRef] = true
+		values := group.OwnedPrefixesByNode[nodeRef]
+		if len(values) == 0 {
+			return nil, fmt.Errorf("direct peer-group node %s has no signed owned IPv4 /32", nodeRef)
+		}
+		seenForNode := map[string]bool{}
+		for _, value := range values {
+			prefix, err := samenrollment.ParsePrefixOrAddress(value)
+			if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+				return nil, fmt.Errorf("direct peer-group node %s has invalid owned prefix %q", nodeRef, value)
+			}
+			key := prefix.String()
+			if seenForNode[key] {
+				return nil, fmt.Errorf("direct peer-group node %s repeats owned prefix %s", nodeRef, key)
+			}
+			if owner := seenPrefixes[key]; owner != "" && owner != nodeRef {
+				return nil, fmt.Errorf("direct peer-group owned prefix %s is assigned to both %s and %s", key, owner, nodeRef)
+			}
+			seenForNode[key] = true
+			seenPrefixes[key] = nodeRef
+			out[nodeRef] = append(out[nodeRef], key)
+		}
+		sort.Strings(out[nodeRef])
+	}
+	for nodeRef := range group.OwnedPrefixesByNode {
+		if !nodeRefs[strings.TrimSpace(nodeRef)] {
+			return nil, fmt.Errorf("direct peer-group ownership refers to unknown node %s", nodeRef)
+		}
+	}
+	return out, nil
+}
+
+// directPeerGroupIdentityCollision protects the required/forbidden community
+// filter emitted for every direct peer. The identity encoding uses a bounded
+// standard-community space; if a direct leaf shares an identity value with the
+// local leaf, an RR, or another direct leaf, its rule would either be
+// self-contradictory or authenticate the wrong node. Reject only the optional
+// accelerator and retain the independently valid RR sources.
+func directPeerGroupIdentityCollision(self string, fallbackTopology []string, nodes []api.SAMNodeSpec) error {
+	directNodes := map[string]bool{}
+	allNodes := append([]string{strings.TrimSpace(self)}, fallbackTopology...)
+	for _, node := range nodes {
+		nodeRef := strings.TrimSpace(node.NodeRef)
+		if nodeRef == "" {
+			continue
+		}
+		directNodes[nodeRef] = true
+		allNodes = append(allNodes, nodeRef)
+	}
+	for _, collision := range bgpstate.MobilityNodeIdentityCollisions(allNodes) {
+		for _, nodeRef := range collision.NodeRefs {
+			if directNodes[nodeRef] {
+				return fmt.Errorf("direct peer-group node identity collision %s for %s", collision.Community, strings.Join(collision.NodeRefs, ", "))
+			}
+		}
+	}
+	return nil
+}
+
 func mergeTransportPolicyStrings(groups ...[]string) []string {
 	var values []string
 	for _, group := range groups {
@@ -299,6 +431,11 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 	topologyIndex := map[string]bool{}
 	statuses := make([]transportPeersFromStatus, 0, len(spec.PeersFrom))
 	pending := []string{}
+	// Direct groups are an optimization of an already usable RR path. Source
+	// order is validated statically, but a fetched RRSet can still be empty or
+	// unresolved at runtime. Keep the readiness key policy-scoped so one
+	// enrollment domain can never bootstrap another domain's direct group.
+	rrFallbackReady := map[string]bool{}
 	addTopology := func(nodeRef string) {
 		nodeRef = strings.TrimSpace(nodeRef)
 		if nodeRef == "" || topologyIndex[nodeRef] {
@@ -311,7 +448,13 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 		nodeRef := strings.TrimSpace(peer.NodeRef)
 		addTopology(nodeRef)
 		if existing, ok := indexByNode[nodeRef]; ok {
-			peers[existing] = peer
+			// A direct group must never replace a fallback peer. The direct
+			// source is an optional accelerator, whereas the RR source is the
+			// only safe recovery path. A later non-direct source can replace an
+			// accidentally staged direct collision as an extra safety belt.
+			if peers[existing].Direct && !peer.Direct {
+				peers[existing] = peer
+			}
 			return
 		}
 		indexByNode[nodeRef] = len(peers)
@@ -334,6 +477,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 			var (
 				nodeSet        api.SAMNodeSetSpec
 				found          bool
+				rrSetPolicyRef string
 				skipped        int
 				skippedReasons []string
 				err            error
@@ -344,6 +488,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 					err = rrErr
 				} else if rrFound {
 					nodeSet.Nodes = rrSet.Nodes
+					rrSetPolicyRef = strings.TrimSpace(rrSet.EnrollmentPolicyRef)
 				}
 				found = rrFound
 			} else if sourceKind == "SAMEnrollmentPolicy" {
@@ -425,6 +570,9 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 				statuses = append(statuses, status)
 				return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
 			}
+			if sourceKind == "SAMRRSet" && !source.Optional && rrSetPolicyRef != "" && status.PeerCount > 0 {
+				rrFallbackReady[rrSetPolicyRef] = true
+			}
 			statuses = append(statuses, status)
 			continue
 		}
@@ -435,19 +583,181 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 			return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
 		}
 		groupName := strings.TrimSpace(sourceName)
-		addGroupPeers := func(group api.SAMPeerGroupSpec) {
-			status.PeerCount = len(group.Peers)
-			for _, peer := range group.Peers {
-				if transportSourceSelectsNode(source, peer.NodeRef) {
+		addGroupNodes := func(group api.SAMPeerGroupSpec) (bool, error) {
+			directOwnedPrefixes := map[string][]string(nil)
+			if source.Direct {
+				policyRef := strings.TrimSpace(group.EnrollmentPolicyRef)
+				if policyRef == "" {
+					status.Phase = "Incompatible"
+					status.Reason = "direct peersFrom requires an enrollment-scoped SAMPeerGroup"
+					return false, nil
+				}
+				want := mobilityconfig.SAMTransportMeshFingerprint(spec)
+				if want == "" || strings.TrimSpace(group.TransportFingerprint) != want {
+					status.Phase = "Incompatible"
+					status.Reason = "direct peer-group transport fingerprint does not match this SAMTransportProfile"
+					return false, nil
+				}
+				if !rrFallbackReady[policyRef] {
+					status.Phase = "Unavailable"
+					status.Reason = "matching RR fallback SAMRRSet has no usable peer"
+					return false, nil
+				}
+				var ownedErr error
+				directOwnedPrefixes, ownedErr = directPeerGroupOwnedPrefixes(group)
+				if ownedErr != nil {
+					status.Phase = "Incompatible"
+					status.Reason = ownedErr.Error()
+					return false, nil
+				}
+				if identityErr := directPeerGroupIdentityCollision(spec.SelfNodeRef, topology, group.Nodes); identityErr != nil {
+					status.Phase = "Incompatible"
+					status.Reason = identityErr.Error()
+					return false, nil
+				}
+			}
+			status.PeerCount = len(group.Nodes)
+			self := strings.TrimSpace(spec.SelfNodeRef)
+			selected := map[string]bool{}
+			// A direct group is all-or-nothing. It is only an optimization, so a
+			// malformed or unresolved later node must not leave an earlier direct
+			// peer in the desired set while the source is reported unavailable.
+			// Generic peer groups retain their established streaming/fail-static
+			// behavior below.
+			stagedTopology := []string{}
+			stagedPeers := []api.SAMTransportPeerSpec{}
+			for _, node := range group.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				if nodeRef == "" {
+					continue
+				}
+				if source.Direct && node.RouteReflector {
+					status.Phase = "Incompatible"
+					status.Reason = "direct peer-group contains a route-reflector node"
+					return false, nil
+				}
+				if source.Direct {
+					stagedTopology = append(stagedTopology, nodeRef)
+				} else {
+					addTopology(nodeRef)
+				}
+				if nodeRef == self || !transportSourceSelectsNode(source, nodeRef) {
+					continue
+				}
+				if source.Direct {
+					if _, exists := indexByNode[nodeRef]; exists {
+						status.Phase = "Incompatible"
+						status.Reason = "direct peer-group overlaps an existing fallback peer: " + nodeRef
+						return false, nil
+					}
+				}
+				selected[nodeRef] = true
+				endpoint, endpointPending, err := c.samNodeEndpointForTransport(spec, node)
+				if err != nil {
+					if source.Direct {
+						status.Phase = "Incompatible"
+						status.Reason = fmt.Sprintf("%s node %s transport endpoint: %v", ref, nodeRef, err)
+						return false, nil
+					}
+					return false, fmt.Errorf("%s node %s transport endpoint: %w", ref, nodeRef, err)
+				}
+				if endpointPending != "" {
+					if source.Direct {
+						status.Phase = "Unavailable"
+						status.Reason = endpointPending + " not resolved"
+						return false, nil
+					}
+					status.Phase = "Pending"
+					status.Reason = endpointPending + " not resolved"
+					pending = append(pending, endpointPending)
+					continue
+				}
+				if endpoint == "" {
+					continue
+				}
+				addr, err := endpointAddress(endpoint)
+				if err != nil {
+					if source.Direct {
+						status.Phase = "Incompatible"
+						status.Reason = fmt.Sprintf("%s node %s transport endpoint %q: %v", ref, nodeRef, endpoint, err)
+						return false, nil
+					}
+					return false, fmt.Errorf("%s node %s transport endpoint %q: %w", ref, nodeRef, endpoint, err)
+				}
+				peer := api.SAMTransportPeerSpec{
+					NodeRef:        nodeRef,
+					RemoteEndpoint: addr.String(),
+					Direct:         source.Direct,
+				}
+				if source.Direct {
+					peer.AllowedPrefixes = append([]string(nil), directOwnedPrefixes[nodeRef]...)
+				}
+				if source.Direct {
+					stagedPeers = append(stagedPeers, peer)
+				} else {
 					addPeer(peer)
 				}
 			}
+			if source.Direct {
+				if len(stagedPeers) == 0 {
+					status.Phase = "Unavailable"
+					status.Reason = "no eligible remote direct peers"
+					return false, nil
+				}
+				for _, nodeRef := range stagedTopology {
+					addTopology(nodeRef)
+				}
+				for _, peer := range stagedPeers {
+					addPeer(peer)
+				}
+			}
+			if !source.Direct {
+				if missing := transportSourceMissingNodes(source, selected); len(missing) > 0 {
+					return false, fmt.Errorf("selected nodeRefs are not members of %s: %s", ref, strings.Join(missing, ", "))
+				}
+			}
+			return true, nil
+		}
+		if source.Direct {
+			local, localFound, localErr := api.LookupSAMPeerGroup(c.Router, ref, "peersFrom")
+			if localErr != nil {
+				// The group is an optional accelerator. Even a malformed runtime
+				// payload must not prevent the independently resolved RR peers
+				// from being reconciled.
+				status.Phase = "Incompatible"
+				status.Reason = localErr.Error()
+				statuses = append(statuses, status)
+				continue
+			}
+			if localFound {
+				usable, err := addGroupNodes(local)
+				if err != nil {
+					status.Phase = "Invalid"
+					status.Reason = err.Error()
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, err
+				}
+				if usable && status.Phase == "Resolved" {
+					status.Phase = "Direct"
+				}
+				statuses = append(statuses, status)
+				continue
+			}
+			status.Phase = "Unavailable"
+			status.Reason = "enrollment direct peer group is not present"
+			statuses = append(statuses, status)
+			continue
 		}
 		if !source.Optional && c.PeerGroupSync != nil {
 			synced, syncedOK, syncErr := c.PeerGroupSync.SyncPeerGroup(ctx, c.Router, spec.UnderlayInterface, groupName)
 			if syncedOK {
 				status.Phase = "Synced"
-				addGroupPeers(synced)
+				if _, err := addGroupNodes(synced); err != nil {
+					status.Phase = "Invalid"
+					status.Reason = err.Error()
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, err
+				}
 				statuses = append(statuses, status)
 				continue
 			}
@@ -470,7 +780,12 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 					status.Reason = "using expired last-known-good peer-group-sync dynamic part"
 					status.Warning = "publisher TTL expired; generated transport artifacts are fail-static until a fresh SAMPeerGroup is observed"
 				}
-				addGroupPeers(cached)
+				if _, err := addGroupNodes(cached); err != nil {
+					status.Phase = "Invalid"
+					status.Reason = err.Error()
+					statuses = append(statuses, status)
+					return nil, nil, statuses, pending, err
+				}
 				statuses = append(statuses, status)
 				continue
 			}

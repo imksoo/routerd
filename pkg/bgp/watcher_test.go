@@ -57,3 +57,25 @@ func TestLimitPrefixes(t *testing.T) {
 		t.Fatalf("LimitPrefixes mutated input: %#v", state)
 	}
 }
+
+func TestMobilityNodeIdentityCollisionsAreDeterministic(t *testing.T) {
+	// These two distinct names intentionally collide in the bounded standard
+	// community encoding. Direct mesh must detect this rather than emit a
+	// required identity that is simultaneously forbidden for another node.
+	collisions := MobilityNodeIdentityCollisions([]string{
+		"direct-audit-node-1004",
+		"rr-a",
+		"direct-audit-node-418",
+		"direct-audit-node-418", // repeated same identity is not another node
+	})
+	if len(collisions) != 1 {
+		t.Fatalf("collisions = %#v, want one", collisions)
+	}
+	got := collisions[0]
+	if got.Community != MobilityNodeIdentityCommunity("direct-audit-node-418") {
+		t.Fatalf("collision community = %q", got.Community)
+	}
+	if len(got.NodeRefs) != 2 || got.NodeRefs[0] != "direct-audit-node-1004" || got.NodeRefs[1] != "direct-audit-node-418" {
+		t.Fatalf("collision nodes = %#v", got.NodeRefs)
+	}
+}

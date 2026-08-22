@@ -1947,6 +1947,368 @@
         "apiVersion": {
           "type": "string"
         },
+        "claim": {
+          "additionalProperties": false,
+          "properties": {
+            "apiVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metadata": {
+              "additionalProperties": false,
+              "properties": {
+                "annotations": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                  "type": "object"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerRefs": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "apiVersion": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "spec": true,
+            "status": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "apiVersion",
+            "kind",
+            "metadata",
+            "spec"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "claim"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "apiVersion": {
+          "type": "string"
+        },
+        "claimRef": {
+          "type": "string"
+        },
+        "dynamicSource": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "accepted",
+        "claimRef",
+        "dynamicSource",
+        "generation",
+        "observedAt",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "claimRef": {
+          "type": "string"
+        },
+        "dynamicSource": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "observedAt": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "revoked",
+        "claimRef",
+        "dynamicSource",
+        "generation",
+        "observedAt",
+        "expiresAt"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "claimRef": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "claimRef"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "peerGroup": {
+          "additionalProperties": false,
+          "properties": {
+            "apiVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metadata": {
+              "additionalProperties": false,
+              "properties": {
+                "annotations": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                  "type": "object"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerRefs": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "apiVersion": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "spec": true,
+            "status": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "apiVersion",
+            "kind",
+            "metadata",
+            "spec"
+          ],
+          "type": "object"
+        },
+        "rrSet": {
+          "additionalProperties": false,
+          "properties": {
+            "apiVersion": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metadata": {
+              "additionalProperties": false,
+              "properties": {
+                "annotations": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Annotations carry non-identifying provenance metadata. They are\nomitempty so resources without annotations serialize identically to\nbefore this field existed. The EventSubscriptionController stamps\nrouterd.net/* provenance keys on dynamic resources it produces.",
+                  "type": "object"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerRefs": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "apiVersion": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            },
+            "spec": true,
+            "status": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "apiVersion",
+            "kind",
+            "metadata",
+            "spec"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "rrSet"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string"
+        },
         "clientID": {
           "type": "string"
         },

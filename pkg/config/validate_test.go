@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -973,7 +974,7 @@ func TestValidateWireGuardInterfacePeersFromOK(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsInvalidWireGuardInterfacePeersFrom(t *testing.T) {
+func TestValidateWireGuardInterfacePeersFromSAMPeerGroup(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -987,9 +988,98 @@ func TestValidateRejectsInvalidWireGuardInterfacePeersFrom(t *testing.T) {
 			},
 		}},
 	}
-	err := Validate(router)
-	if err == nil || !strings.Contains(err.Error(), "spec.peersFrom[0].resource must reference SAMNodeSet/<name>, SAMEnrollmentPolicy/<name>, or SAMRRSet/<name>") {
-		t.Fatalf("Validate WireGuardInterface peersFrom error = %v, want SAMNodeSet ref error", err)
+	if err := Validate(router); err != nil {
+		t.Fatalf("validate WireGuardInterface SAMPeerGroup peersFrom: %v", err)
+	}
+}
+
+func TestValidateWireGuardDirectSAMPeerGroupRequiresRRFallback(t *testing.T) {
+	router := directWireGuardFallbackRouter([]api.WireGuardPeersSourceSpec{{Resource: "SAMRRSet/pve-rrs"}})
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "must include enrollment direct SAMPeerGroup") {
+		t.Fatalf("Validate WireGuard peersFrom without transport direct group = %v, want direct-group membership rejection", err)
+	}
+
+	router = directWireGuardFallbackRouter([]api.WireGuardPeersSourceSpec{{Resource: "SAMPeerGroup/direct-leaves"}})
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "requires a preceding non-optional SAMRRSet") {
+		t.Fatalf("Validate direct-only WireGuard peersFrom = %v, want RR fallback rejection", err)
+	}
+
+	router = directWireGuardFallbackRouter([]api.WireGuardPeersSourceSpec{
+		{Resource: "SAMRRSet/pve-rrs", Optional: true},
+		{Resource: "SAMPeerGroup/direct-leaves"},
+	})
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "requires a preceding non-optional SAMRRSet") {
+		t.Fatalf("Validate optional WireGuard RR fallback = %v, want rejection", err)
+	}
+
+	router = directWireGuardFallbackRouter([]api.WireGuardPeersSourceSpec{
+		{Resource: "SAMRRSet/pve-rrs"},
+		{Resource: "SAMPeerGroup/direct-leaves"},
+	})
+	if err := Validate(router); err != nil {
+		t.Fatalf("Validate WireGuard direct group with RR fallback: %v", err)
+	}
+
+	router = directWireGuardFallbackRouter([]api.WireGuardPeersSourceSpec{
+		{Resource: "SAMRRSet/pve-rrs"},
+		{Resource: "SAMPeerGroup/direct-leaves"},
+		{Resource: "SAMNodeSet/late"},
+	})
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "must be the final peer source") {
+		t.Fatalf("Validate direct WireGuard group followed by another source = %v, want terminal-source rejection", err)
+	}
+}
+
+func directWireGuardFallbackRouter(peersFrom []api.WireGuardPeersSourceSpec) *api.Router {
+	return &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "leaf-a"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
+				Metadata: api.ObjectMeta{Name: "wg-direct"},
+				Spec:     api.WireGuardInterfaceSpec{IfName: "wg-direct", SelfNodeRef: "leaf-a", PeersFrom: peersFrom},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "mobility"},
+				Spec: api.BGPRouterSpec{
+					ASN:      64512,
+					RouterID: "10.255.0.1",
+					Communities: api.BGPCommunitiesSpec{Set: api.BGPCommunitySetSpec{
+						Out: []string{bgpstate.MobilityNodeIdentityCommunity("leaf-a")},
+					}},
+				},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+				Metadata: api.ObjectMeta{Name: "direct"},
+				Spec: api.SAMTransportProfileSpec{
+					SelfNodeRef:       "leaf-a",
+					Mode:              "ipip",
+					Encryption:        "wireguard",
+					AddressingMode:    "pair-stable",
+					InnerPrefix:       "10.255.0.0/24",
+					UnderlayInterface: "wg-direct",
+					LocalEndpoint:     "10.20.0.31",
+					PeersFrom: []api.SAMTransportPeersSourceSpec{
+						{Resource: "SAMRRSet/pve-rrs"},
+						{Resource: "SAMPeerGroup/direct-leaves", Direct: true},
+					},
+					BGP: api.SAMTransportBGPProfileSpec{
+						RouterRef:             "BGPRouter/mobility",
+						PeerASN:               64512,
+						DirectLocalPreference: 200,
+						ImportPolicy: api.BGPImportPolicySpec{
+							LocalPreference:        100,
+							AllowedPrefixes:        []string{"10.77.60.0/24"},
+							AllowedPrefixLengthMin: 32,
+							AllowedPrefixLengthMax: 32,
+						},
+					},
+				},
+			},
+		}},
 	}
 }
 

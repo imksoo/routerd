@@ -19,6 +19,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/lifecycle"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -148,11 +149,18 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 	peers := []api.Resource{}
 	statuses := make([]wireGuardPeersFromStatus, 0, len(spec.PeersFrom))
 	pending := []string{}
+	// Direct groups are policy-scoped accelerators. They are usable only after
+	// this interface has materialized a usable RR peer for the same enrollment
+	// policy, never as an independent WireGuard bootstrap path. Keep the actual
+	// RR peer resources rather than a boolean: a later source or an explicit
+	// WireGuardPeer may otherwise replace that RR peer before final merging.
+	rrFallbackPeers := map[string][]api.Resource{}
+	configuredPeers := wireGuardConfiguredPeerResources(c.Router)
 	self := strings.TrimSpace(spec.SelfNodeRef)
 	if self == "" && c.Router != nil {
 		self = strings.TrimSpace(c.Router.Metadata.Name)
 	}
-	for _, source := range spec.PeersFrom {
+	for sourceIndex, source := range spec.PeersFrom {
 		ref := strings.TrimSpace(source.Resource)
 		status := wireGuardPeersFromStatus{
 			Resource: ref,
@@ -177,13 +185,19 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 				}
 				continue
 			}
+			resolvedRRPeers := []api.Resource{}
 			for _, node := range rrSet.Nodes {
 				peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
 				if !ok {
 					continue
 				}
 				peers = append(peers, peer)
+				resolvedRRPeers = append(resolvedRRPeers, peer)
 				status.PeerCount++
+			}
+			if !source.Optional && strings.TrimSpace(rrSet.EnrollmentPolicyRef) != "" && len(resolvedRRPeers) > 0 {
+				policyRef := strings.TrimSpace(rrSet.EnrollmentPolicyRef)
+				rrFallbackPeers[policyRef] = append(rrFallbackPeers[policyRef], resolvedRRPeers...)
 			}
 			statuses = append(statuses, status)
 			continue
@@ -218,6 +232,138 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 			}
 			statuses = append(statuses, status)
 			_ = c.saveSAMEnrollmentPolicyStatus(ref, status)
+			continue
+		}
+		if sourceOK && sourceKind == "SAMPeerGroup" {
+			// An enrollment direct group is tied to the transport profile that
+			// declares it as direct. It is opportunistic: unlike a generic
+			// peer-group, its absence or incompatibility must not make the
+			// containing WireGuard interface pending and suppress RR peers.
+			directProfile, directSource, directProfileErr := wireGuardDirectTransportProfile(c.Router, iface, spec, ref)
+			group, found, err := api.LookupSAMPeerGroup(c.Router, ref, "peersFrom")
+			if err != nil {
+				if directSource {
+					// A malformed enrollment direct group is still an optional
+					// optimization. Keep the RR peer resources active instead of
+					// failing the enclosing WireGuard interface.
+					status.Phase = "Incompatible"
+					status.Reason = err.Error()
+					statuses = append(statuses, status)
+					continue
+				}
+				status.Phase = "Invalid"
+				status.Reason = err.Error()
+				statuses = append(statuses, status)
+				return peers, statuses, pending, err
+			}
+			if !found {
+				if directSource {
+					if directProfileErr != nil {
+						status.Phase = "Incompatible"
+						status.Reason = directProfileErr.Error()
+					} else {
+						status.Phase = "Unavailable"
+						status.Reason = "enrollment direct peer group is not present"
+					}
+					statuses = append(statuses, status)
+					continue
+				}
+				status.Phase = "Missing"
+				status.Reason = "SAMPeerGroup not found"
+				statuses = append(statuses, status)
+				if !source.Optional {
+					pending = append(pending, ref)
+				}
+				continue
+			}
+			if directSource || strings.TrimSpace(group.EnrollmentPolicyRef) != "" {
+				if directProfileErr != nil {
+					status.Phase = "Incompatible"
+					status.Reason = directProfileErr.Error()
+					statuses = append(statuses, status)
+					continue
+				}
+				if !directSource {
+					status.Phase = "Incompatible"
+					status.Reason = "enrollment direct peer group is not associated with a direct SAMTransportProfile on this WireGuard interface"
+					statuses = append(statuses, status)
+					continue
+				}
+				if reason := validateWireGuardDirectPeerGroup(group, directProfile); reason != "" {
+					status.Phase = "Incompatible"
+					status.Reason = reason
+					statuses = append(statuses, status)
+					continue
+				}
+				if sourceIndex != len(spec.PeersFrom)-1 {
+					status.Phase = "Incompatible"
+					status.Reason = "enrollment direct SAMPeerGroup must be the final peer source so no later source can replace its RR fallback"
+					statuses = append(statuses, status)
+					continue
+				}
+				policyRef := strings.TrimSpace(group.EnrollmentPolicyRef)
+				if !wireGuardRRFallbackUsable(peers, configuredPeers, rrFallbackPeers[policyRef]) {
+					status.Phase = "Unavailable"
+					status.Reason = "matching RR fallback SAMRRSet has no usable WireGuard peer"
+					statuses = append(statuses, status)
+					continue
+				}
+				existingPeers := wireGuardPeerNames(peers)
+				staged := []api.Resource{}
+				stagedPeers := map[string]bool{}
+				collision := ""
+				for _, node := range group.Nodes {
+					nodeRef := strings.TrimSpace(node.NodeRef)
+					peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
+					if !ok {
+						continue
+					}
+					peerName := strings.TrimSpace(peer.Metadata.Name)
+					if existingPeers[peerName] || stagedPeers[peerName] {
+						collision = peerName
+						break
+					}
+					stagedPeers[peerName] = true
+					staged = append(staged, peer)
+					if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+						if addr, err := netip.ParseAddr(ep); err == nil {
+							staged = append(staged, wireGuardSAMEndpointRoute(iface, ref, nodeRef, addr))
+						}
+					}
+				}
+				if collision != "" {
+					status.Phase = "Incompatible"
+					status.Reason = "direct peer-group overlaps an existing fallback WireGuard peer: " + collision
+					statuses = append(statuses, status)
+					continue
+				}
+				if len(stagedPeers) == 0 {
+					status.Phase = "Unavailable"
+					status.Reason = "no eligible remote direct WireGuard peers"
+					statuses = append(statuses, status)
+					continue
+				}
+				peers = append(peers, staged...)
+				status.Phase = "Direct"
+				status.PeerCount = len(stagedPeers)
+				statuses = append(statuses, status)
+				continue
+			}
+			for _, node := range group.Nodes {
+				nodeRef := strings.TrimSpace(node.NodeRef)
+				peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
+				if !ok {
+					continue
+				}
+				peers = append(peers, peer)
+				if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+					if addr, err := netip.ParseAddr(ep); err == nil {
+						peers = append(peers, wireGuardSAMEndpointRoute(iface, ref, nodeRef, addr))
+					}
+				}
+				status.PeerCount++
+			}
+			statuses = append(statuses, status)
 			continue
 		}
 		nodeSet, found, err := api.LookupSAMNodeSet(c.Router, ref, "peersFrom")
@@ -268,6 +414,186 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 	return peers, statuses, pending, nil
 }
 
+func wireGuardPeerNames(resources []api.Resource) map[string]bool {
+	names := map[string]bool{}
+	for _, resource := range resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "WireGuardPeer" {
+			if name := strings.TrimSpace(resource.Metadata.Name); name != "" {
+				names[name] = true
+			}
+		}
+	}
+	return names
+}
+
+// wireGuardConfiguredPeerResources returns the final explicit peer candidates
+// that win over generated peers during the normal effective-config merge. The
+// map intentionally spans interfaces because WireGuardPeer resource names are
+// globally merged by kind/name today; a same-name peer on a different
+// interface would otherwise still replace an RR fallback resource.
+func wireGuardConfiguredPeerResources(router *api.Router) map[string]api.Resource {
+	peers := map[string]api.Resource{}
+	if router == nil {
+		return peers
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" {
+			continue
+		}
+		if name := strings.TrimSpace(resource.Metadata.Name); name != "" {
+			peers[name] = resource
+		}
+	}
+	return peers
+}
+
+func wireGuardPeerResourceMap(resources []api.Resource) map[string]api.Resource {
+	peers := map[string]api.Resource{}
+	for _, resource := range resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "WireGuardPeer" {
+			continue
+		}
+		if name := strings.TrimSpace(resource.Metadata.Name); name != "" {
+			peers[name] = resource
+		}
+	}
+	return peers
+}
+
+// wireGuardRRFallbackUsable proves that at least one RR peer of the matching
+// enrollment policy survives the same last-wins merge used by the controller.
+// Direct leaf connectivity is optional, but it must never be enabled based on
+// an RR peer that an explicit or later source has already replaced.
+func wireGuardRRFallbackUsable(generated []api.Resource, configured map[string]api.Resource, candidates []api.Resource) bool {
+	if len(candidates) == 0 {
+		return false
+	}
+	current := wireGuardPeerResourceMap(generated)
+	for _, candidate := range candidates {
+		name := strings.TrimSpace(candidate.Metadata.Name)
+		if name == "" {
+			continue
+		}
+		actual, found := current[name]
+		if override, exists := configured[name]; exists {
+			actual, found = override, true
+		}
+		if found && wireGuardPeerResourcesEquivalent(candidate, actual) {
+			return true
+		}
+	}
+	return false
+}
+
+func wireGuardPeerResourcesEquivalent(left, right api.Resource) bool {
+	leftSpec, leftErr := left.WireGuardPeerSpec()
+	rightSpec, rightErr := right.WireGuardPeerSpec()
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	if leftSpec.Interface != rightSpec.Interface ||
+		leftSpec.PublicKey != rightSpec.PublicKey ||
+		leftSpec.Endpoint != rightSpec.Endpoint ||
+		leftSpec.PersistentKeepalive != rightSpec.PersistentKeepalive ||
+		len(leftSpec.AllowedIPs) != len(rightSpec.AllowedIPs) {
+		return false
+	}
+	for i := range leftSpec.AllowedIPs {
+		if leftSpec.AllowedIPs[i] != rightSpec.AllowedIPs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func wireGuardSAMEndpointRoute(iface, source, nodeRef string, addr netip.Addr) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
+		Metadata: api.ObjectMeta{
+			Name: "wg-sam-endpoint-" + strings.TrimSpace(nodeRef),
+			Annotations: map[string]string{
+				"routerd.net/generated-from": strings.TrimSpace(source),
+			},
+		},
+		Spec: api.IPv4RouteSpec{
+			Destination: netip.PrefixFrom(addr, 32).String(),
+			Device:      strings.TrimSpace(iface),
+		},
+	}
+}
+
+// wireGuardDirectTransportProfile finds the local SAM transport profile that
+// owns a direct enrollment peer-group source for this WireGuard interface.
+// The group itself is a runtime payload and intentionally does not carry local
+// interface identity; the static transport profile is the binding authority.
+func wireGuardDirectTransportProfile(router *api.Router, iface string, ifaceSpec api.WireGuardInterfaceSpec, ref string) (api.SAMTransportProfileSpec, bool, error) {
+	if router == nil {
+		return api.SAMTransportProfileSpec{}, false, nil
+	}
+	ref = strings.TrimSpace(ref)
+	var matched api.SAMTransportProfileSpec
+	found := false
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" {
+			continue
+		}
+		profile, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			return api.SAMTransportProfileSpec{}, false, fmt.Errorf("%s spec: %w", resource.ID(), err)
+		}
+		if !samTransportUsesWireGuardInterface(router, profile.UnderlayInterface, iface, ifaceSpec.IfName) {
+			continue
+		}
+		for _, source := range profile.PeersFrom {
+			if !source.Direct || strings.TrimSpace(source.Resource) != ref {
+				continue
+			}
+			if found {
+				return api.SAMTransportProfileSpec{}, true, fmt.Errorf("%s is declared as direct by multiple SAMTransportProfiles on WireGuardInterface/%s", ref, iface)
+			}
+			matched = profile
+			found = true
+		}
+	}
+	return matched, found, nil
+}
+
+func samTransportUsesWireGuardInterface(router *api.Router, underlay, iface, ifname string) bool {
+	names := map[string]bool{}
+	for _, name := range []string{iface, ifname, api.ResolveInterfaceIfName(router, iface), api.ResolveInterfaceIfName(router, ifname)} {
+		if name = strings.TrimSpace(name); name != "" {
+			names[name] = true
+		}
+	}
+	underlay = strings.TrimSpace(underlay)
+	if underlay == "" {
+		return false
+	}
+	return names[underlay] || names[api.ResolveInterfaceIfName(router, underlay)]
+}
+
+// validateWireGuardDirectPeerGroup keeps the WireGuard material in lockstep
+// with SAM transport's direct-source gate. Incompatibility is deliberately a
+// soft condition: RR peers remain usable while the direct group is ignored.
+func validateWireGuardDirectPeerGroup(group api.SAMPeerGroupSpec, profile api.SAMTransportProfileSpec) string {
+	if strings.TrimSpace(group.EnrollmentPolicyRef) == "" {
+		return "direct peersFrom requires an enrollment-scoped SAMPeerGroup"
+	}
+	if !strings.EqualFold(strings.TrimSpace(profile.Encryption), "wireguard") {
+		return "direct SAMPeerGroup requires a WireGuard-encrypted SAMTransportProfile"
+	}
+	want := mobilityconfig.SAMTransportMeshFingerprint(profile)
+	if want == "" || strings.TrimSpace(group.TransportFingerprint) != want {
+		return "direct peer-group transport fingerprint does not match this SAMTransportProfile"
+	}
+	for _, node := range group.Nodes {
+		if node.RouteReflector {
+			return "direct peer-group contains a route-reflector node"
+		}
+	}
+	return ""
+}
+
 func (c WireGuardController) samEnrollmentNodeSet(ref, iface string) (api.SAMNodeSetSpec, bool, int, []string, []string, error) {
 	policy, found, err := api.LookupSAMEnrollmentPolicy(c.Router, ref, "peersFrom")
 	if err != nil || !found {
@@ -307,7 +633,7 @@ func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrol
 	return nodeSet, selection.Skipped, selection.SkippedReasons, leafIDs, nil
 }
 
-// resolveWireGuardSAMResources resolves peersFrom SAMNodeSet references on
+// resolveWireGuardSAMResources resolves typed SAM peersFrom references on
 // WireGuardInterface resources, generating WireGuardPeer (peer),
 // IPv4Route (peer samEndpoint), and IPv4StaticAddress (self samEndpoint)
 // resources. Called from effectiveRouterForReconcile so all controllers
@@ -330,11 +656,13 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 			continue
 		}
 		iface := resource.Metadata.Name
+		rrFallbackPeers := map[string][]api.Resource{}
+		configuredPeers := wireGuardConfiguredPeerResources(router)
 		self := strings.TrimSpace(spec.SelfNodeRef)
 		if self == "" {
 			self = strings.TrimSpace(router.Metadata.Name)
 		}
-		for _, source := range spec.PeersFrom {
+		for sourceIndex, source := range spec.PeersFrom {
 			ref := strings.TrimSpace(source.Resource)
 			sourceKind, _, sourceOK := strings.Cut(ref, "/")
 			if sourceOK && sourceKind == "SAMRRSet" {
@@ -348,11 +676,17 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 				if !found {
 					continue
 				}
+				resolvedRRPeers := []api.Resource{}
 				for _, node := range rrSet.Nodes {
 					peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
 					if ok {
 						generated = append(generated, peer)
+						resolvedRRPeers = append(resolvedRRPeers, peer)
 					}
+				}
+				if !source.Optional && strings.TrimSpace(rrSet.EnrollmentPolicyRef) != "" && len(resolvedRRPeers) > 0 {
+					policyRef := strings.TrimSpace(rrSet.EnrollmentPolicyRef)
+					rrFallbackPeers[policyRef] = append(rrFallbackPeers[policyRef], resolvedRRPeers...)
 				}
 				continue
 			}
@@ -402,6 +736,102 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 									Device:      iface,
 								},
 							})
+						}
+					}
+				}
+				continue
+			}
+			if sourceOK && sourceKind == "SAMPeerGroup" {
+				directProfile, directSource, directProfileErr := wireGuardDirectTransportProfile(router, iface, spec, ref)
+				group, found, err := api.LookupSAMPeerGroup(router, ref, "peersFrom")
+				if err != nil {
+					if directSource || source.Optional {
+						continue
+					}
+					return nil, err
+				}
+				if !found {
+					continue
+				}
+				if directSource || strings.TrimSpace(group.EnrollmentPolicyRef) != "" {
+					if !directSource || directProfileErr != nil || validateWireGuardDirectPeerGroup(group, directProfile) != "" {
+						// A direct group is an optional optimization. Its absence,
+						// stale shape, or transport mismatch must never remove the
+						// RR-derived WireGuard resources from the effective router.
+						continue
+					}
+					if sourceIndex != len(spec.PeersFrom)-1 {
+						continue
+					}
+					policyRef := strings.TrimSpace(group.EnrollmentPolicyRef)
+					if !wireGuardRRFallbackUsable(generated, configuredPeers, rrFallbackPeers[policyRef]) {
+						continue
+					}
+					existingPeers := wireGuardPeerNames(generated)
+					staged := []api.Resource{}
+					stagedPeers := map[string]bool{}
+					collision := ""
+					for _, node := range group.Nodes {
+						nodeRef := strings.TrimSpace(node.NodeRef)
+						if nodeRef == "" || nodeRef == self {
+							continue
+						}
+						peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
+						if !ok {
+							continue
+						}
+						peerName := strings.TrimSpace(peer.Metadata.Name)
+						if existingPeers[peerName] || stagedPeers[peerName] {
+							collision = peerName
+							break
+						}
+						stagedPeers[peerName] = true
+						staged = append(staged, peer)
+						if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+							if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+								staged = append(staged, wireGuardSAMEndpointRoute(iface, ref, nodeRef, addr))
+							}
+						}
+					}
+					if collision != "" || len(stagedPeers) == 0 {
+						continue
+					}
+					generated = append(generated, staged...)
+					continue
+				}
+				for _, node := range group.Nodes {
+					nodeRef := strings.TrimSpace(node.NodeRef)
+					if nodeRef == "" {
+						continue
+					}
+					if nodeRef == self {
+						if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+							if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+								generated = append(generated, api.Resource{
+									TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+									Metadata: api.ObjectMeta{
+										Name: "wg-sam-addr-" + iface,
+										Annotations: map[string]string{
+											"routerd.net/generated-from": ref,
+										},
+									},
+									Spec: api.IPv4StaticAddressSpec{
+										Interface: iface,
+										Address:   netip.PrefixFrom(addr, 32).String(),
+									},
+								})
+							}
+						}
+						continue
+					}
+					peer, ok := wireGuardPeerFromSAMNode(iface, self, ref, node)
+					if !ok {
+						continue
+					}
+					generated = append(generated, peer)
+					if ep := strings.TrimSpace(node.SAMEndpoint); ep != "" {
+						if addr, parseErr := netip.ParseAddr(ep); parseErr == nil {
+							generated = append(generated, wireGuardSAMEndpointRoute(iface, ref, nodeRef, addr))
 						}
 					}
 				}

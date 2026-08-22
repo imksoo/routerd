@@ -197,6 +197,19 @@ BGP peer を維持します。一度も見たことのない source だけが `P
 MobilityPool membership は synced dynamic resource ではなく、static な `SAMNodeSet`
 configuration から解決します。
 
+SAM enrollment はこの TCP 19652 sync を使いません。claim が受理されると RR は
+`SAMEnrollmentPolicy.spec.rrNodeSetRef` で選んだ RR node を runtime `SAMRRSet` として
+返します。policy に `directMesh.peerGroupRef` があり、署名済み claim が
+`directMesh: true` の場合だけ、同じ DynamicConfigPart に policy-scoped な direct
+`SAMPeerGroup` も入ります。この group は eligible な remote leaf だけを持ち、通常の
+sync cache には載りません。
+
+direct group は任意です。`SAMTransportProfile` は `SAMRRSet` source を残したまま
+`direct: true` の group を追加し、direct BGP session が生きている間だけ高い local
+preference を使います。group の欠落、期限切れ、transport fingerprint 不一致、または
+underlay の未到達では direct artifact を省き、RR peer をそのまま使います。つまり RR
+を壊してから直接経路へ切り替えるのではなく、常に安全な fallback を残します。
+
 ## capture strategy（クラウド受け口の作り方）
 
 通常のクラウド受け口は `capture.type` で決まります。

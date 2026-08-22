@@ -3292,6 +3292,10 @@
                             },
                             "type": "array"
                           },
+                          "localPreference": {
+                            "description": "LocalPreference is applied on accepted paths before best-path selection.\nA zero value leaves the BGP implementation default unchanged.",
+                            "type": "integer"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -3567,6 +3571,10 @@
                             },
                             "type": "array"
                           },
+                          "localPreference": {
+                            "description": "LocalPreference is applied on accepted paths before best-path selection.\nA zero value leaves the BGP implementation default unchanged.",
+                            "type": "integer"
+                          },
                           "nextHopRewrite": {
                             "enum": [
                               "",
@@ -3773,6 +3781,10 @@
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "localPreference": {
+                            "description": "LocalPreference is applied on accepted paths before best-path selection.\nA zero value leaves the BGP implementation default unchanged.",
+                            "type": "integer"
                           },
                           "nextHopRewrite": {
                             "enum": [
@@ -9309,6 +9321,17 @@
                         },
                         "type": "object"
                       },
+                      "directMesh": {
+                        "additionalProperties": false,
+                        "description": "DirectMesh opts eligible leaves into an opportunistic direct data path.\nRR peers remain the control-plane and forwarding fallback.",
+                        "properties": {
+                          "peerGroupRef": {
+                            "description": "PeerGroupRef names the policy-scoped, runtime-only SAMPeerGroup returned\nto direct-mesh-enabled admitted leaves.",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
                       "endpointPrefixes": {
                         "items": {
                           "type": "string"
@@ -9456,6 +9479,10 @@
                           }
                         },
                         "type": "object"
+                      },
+                      "directMesh": {
+                        "description": "DirectMesh opts this signed claim into the policy's direct-leaf snapshot.\nA false value keeps this leaf on RR peers only.",
+                        "type": "boolean"
                       },
                       "endpoint": {
                         "type": "string"
@@ -9730,6 +9757,10 @@
                             },
                             "type": "object"
                           },
+                          "directLocalPreference": {
+                            "description": "DirectLocalPreference is applied only to peers from a peersFrom entry\nmarked direct. Zero uses the safe direct-mesh default.",
+                            "type": "integer"
+                          },
                           "ebgpMultihop": {
                             "maximum": 255,
                             "minimum": 0,
@@ -9774,6 +9805,10 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "localPreference": {
+                                "description": "LocalPreference is applied on accepted paths before best-path selection.\nA zero value leaves the BGP implementation default unchanged.",
+                                "type": "integer"
                               },
                               "nextHopRewrite": {
                                 "enum": [
@@ -9893,6 +9928,10 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "direct": {
+                              "description": "Direct marks an enrollment-delivered SAMPeerGroup as an opportunistic\nleaf-to-leaf adjacency. A missing, expired, or incompatible direct group\nnever removes peers resolved from the other sources in this profile.\nDirect paths use the peer address as next hop and take deterministic\nprecedence over RR-reflected paths while their BGP session is established.",
+                              "type": "boolean"
+                            },
                             "nodeRefs": {
                               "description": "NodeRefs narrows a static SAMNodeSet (or an RR/enrollment source) to the\ntransport adjacencies this profile should create. The source remains the\nsole owner of endpoint identity and complete topology; this is only a\nlocal adjacency overlay.",
                               "items": {

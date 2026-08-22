@@ -11,6 +11,21 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 追加
+
+- Cloud SAM の leaf は、署名付き claim から動的に導出する leaf 間 BGP mesh を任意で有効化
+  できるようになりました。direct `/32` は local preference 200、既存の route reflector
+  経由は安全なフォールバックとして 100 のまま保持します。direct peer は検証済み RRSet、完全一致する
+  peer identity、pair-stable の tunnel addressing、direct peer group がそろった場合だけ生成します。
+  これは L3 の最短経路ルーティングであり、EVPN/VXLAN や L2 延伸ではありません。
+
+### 変更
+
+- `routerctl mobility leaf-config`、schema、例、Cloud SAM 文書で、任意の direct peer group と
+  direct/RR 間の明示的な local-preference policy を設定できるようにしました。適用済み BGP state は
+  live peer を変える前に direct peer の追加・削除・policy transition を記録するため、daemon の再起動や
+  topology の変化でも stale な direct state を残さず、RR フォールバックを維持します。
+
 ## v20260821.0106
 
 ### 修正

@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -216,7 +217,14 @@ func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.S
 		return nil, fmt.Errorf("listen control socket: %w", err)
 	}
 	mux := http.NewServeMux()
+	// All applied.json access through this control socket is serialized. Path
+	// requests are read-modify-write transactions; without this gate a request
+	// which read state before routerd stored a direct-peer transition fence could
+	// overwrite that fence after it was written.
+	var appliedStateMu sync.Mutex
 	mux.HandleFunc("/v1/applied", func(w http.ResponseWriter, r *http.Request) {
+		appliedStateMu.Lock()
+		defer appliedStateMu.Unlock()
 		switch r.Method {
 		case http.MethodGet:
 			config, _, err := bgpdaemon.ReadApplied(statePath)
@@ -245,6 +253,8 @@ func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.S
 		}
 	})
 	mux.HandleFunc("/v1/paths", func(w http.ResponseWriter, r *http.Request) {
+		appliedStateMu.Lock()
+		defer appliedStateMu.Unlock()
 		switch r.Method {
 		case http.MethodGet:
 			config, _, err := bgpdaemon.ReadApplied(statePath)
@@ -326,7 +336,12 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 	if err := applyAppliedPolicies(ctx, paths, applied); err != nil {
 		return fmt.Errorf("restore BGP policy: %w", err)
 	}
+	withheldDirectPeers := pendingDirectPeerTransitions(applied)
 	for _, peer := range sortedPeers(applied.Peers) {
+		if withheldDirectPeers[peer.Address] {
+			logger.Warn("skip pending direct peer transition during BGP restore", "peer", peer.Address)
+			continue
+		}
 		if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: appliedPeer(peer, applied.Global)}); err != nil {
 			return fmt.Errorf("restore BGP peer %s: %w", peer.Address, err)
 		}
@@ -342,6 +357,33 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 	}
 	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
 	return nil
+}
+
+func pendingDirectPeerTransitions(applied bgpdaemon.AppliedConfig) map[string]bool {
+	out := map[string]bool{}
+	// During an import-policy replacement the persisted peer definitions still
+	// describe the pre-change allowlist. Do not revive a direct high-preference
+	// session from that snapshot; routerd will reinstall the desired policy,
+	// reset inbound state, and then add it again. RR remains the safe path while
+	// that transaction is unfinished.
+	if applied.PendingImportPolicyReset {
+		for address, peer := range applied.Peers {
+			if peer.PreserveImportPrefixes {
+				out[address] = true
+			}
+		}
+	}
+	for _, address := range applied.PendingDirectPeerAdditions {
+		if address = strings.TrimSpace(address); address != "" {
+			out[address] = true
+		}
+	}
+	for _, address := range applied.PendingDirectPeerRemovals {
+		if address = strings.TrimSpace(address); address != "" {
+			out[address] = true
+		}
+	}
+	return out
 }
 
 func applyAppliedPolicies(ctx context.Context, server policyPathServer, applied bgpdaemon.AppliedConfig) error {
@@ -440,7 +482,7 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 		}
 	}
 	applyPolicy := &gobgpapi.ApplyPolicy{}
-	if len(appliedPolicyPrefixes(peer.ImportPolicy)) > 0 && strings.TrimSpace(peer.ImportPolicyName) != "" {
+	if appliedImportPolicyConfigured(peer.ImportPolicy) && strings.TrimSpace(peer.ImportPolicyName) != "" {
 		applyPolicy.ImportPolicy = &gobgpapi.PolicyAssignment{
 			Name:          strings.TrimSpace(peer.Address),
 			Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
@@ -508,7 +550,7 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 	if len(mergeStringSets(globalImportPolicy.AllowedPrefixes)) > 0 {
 		globalImportPolicy.AllowedPrefixes = mergeStringSets(globalImportPolicy.AllowedPrefixes, appliedDynamicPathPrefixes(config.Paths))
 	}
-	if len(appliedPolicyPrefixes(globalImportPolicy)) > 0 {
+	if appliedImportPolicyConfigured(globalImportPolicy) {
 		appendAppliedImportPolicy(req, globalImportName, globalImportName+"-prefixes", globalImportPolicy)
 		if len(peerImportPolicies) == 0 {
 			assignment.DefaultAction = gobgpapi.RouteAction_ROUTE_ACTION_REJECT
@@ -551,16 +593,18 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 
 func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetName string, spec bgpdaemon.AppliedImportPolicy) {
 	prefixes := appliedPolicyPrefixes(spec)
-	if len(prefixes) == 0 || strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
+	if strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
 		return
 	}
 	policyName = strings.TrimSpace(policyName)
 	prefixSetName = strings.TrimSpace(prefixSetName)
-	req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-		DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-		Name:        prefixSetName,
-		Prefixes:    prefixes,
-	})
+	if len(prefixes) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
+	}
 	requiredSetName := policyName + "-required-communities"
 	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
 	if len(requiredCommunities) > 0 {
@@ -590,10 +634,13 @@ func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, pre
 			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
 		})
 	}
-	acceptConditions := &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-		Type: gobgpapi.MatchSet_TYPE_ANY,
-		Name: prefixSetName,
-	}}
+	acceptConditions := &gobgpapi.Conditions{}
+	if len(prefixes) > 0 {
+		acceptConditions.PrefixSet = &gobgpapi.MatchSet{
+			Type: gobgpapi.MatchSet_TYPE_ANY,
+			Name: prefixSetName,
+		}
+	}
 	if len(requiredCommunities) > 0 {
 		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
 			Type: gobgpapi.MatchSet_TYPE_ALL,
@@ -606,6 +653,7 @@ func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, pre
 		Actions: &gobgpapi.Actions{
 			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 			Nexthop:     appliedNextHopAction(spec),
+			LocalPref:   appliedLocalPreferenceAction(spec),
 		},
 	})
 	req.Policies = append(req.Policies, &gobgpapi.Policy{
@@ -643,15 +691,17 @@ func appliedImportPolicies(config bgpdaemon.AppliedConfig) []appliedImportPolicy
 			name = "routerd-restore-import"
 		}
 		spec := peer.ImportPolicy
-		if len(spec.AllowedPrefixes) == 0 {
+		if len(spec.AllowedPrefixes) == 0 && !peer.PreserveImportPrefixes {
 			spec = config.Global.ImportPolicy
 		}
-		spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
-		if len(appliedPolicyPrefixes(spec)) > 0 {
+		if !peer.PreserveImportPrefixes {
+			spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
+		}
+		if appliedImportPolicyConfigured(spec) {
 			byName[name] = spec
 		}
 	}
-	if len(byName) == 0 && len(appliedPolicyPrefixes(config.Global.ImportPolicy)) > 0 {
+	if len(byName) == 0 && appliedImportPolicyConfigured(config.Global.ImportPolicy) {
 		spec := config.Global.ImportPolicy
 		spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
 		byName["routerd-restore-import"] = spec
@@ -743,10 +793,30 @@ func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefi
 			continue
 		}
 		prefix = prefix.Masked()
-		bits := uint32(prefix.Bits())
-		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: bits, MaskLengthMax: appliedPrefixMaxLength(prefix)})
+		minLen, maxLen := appliedImportPolicyLengthBounds(spec, prefix)
+		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: uint32(minLen), MaskLengthMax: uint32(maxLen)})
 	}
 	return out
+}
+
+func appliedImportPolicyConfigured(spec bgpdaemon.AppliedImportPolicy) bool {
+	return len(appliedPolicyPrefixes(spec)) > 0 ||
+		len(cleanCommunityPolicyValues(spec.RequiredCommunities)) > 0 ||
+		len(cleanCommunityPolicyValues(spec.ForbiddenCommunities)) > 0 ||
+		strings.TrimSpace(spec.NextHopRewrite) != "" ||
+		spec.LocalPreference != 0
+}
+
+func appliedImportPolicyLengthBounds(spec bgpdaemon.AppliedImportPolicy, prefix netip.Prefix) (int, int) {
+	minLen := prefix.Bits()
+	maxLen := int(appliedPrefixMaxLength(prefix))
+	if spec.AllowedPrefixLengthMin > 0 {
+		minLen = spec.AllowedPrefixLengthMin
+	}
+	if spec.AllowedPrefixLengthMax > 0 {
+		maxLen = spec.AllowedPrefixLengthMax
+	}
+	return minLen, maxLen
 }
 
 func appliedExportPolicyPrefixes(spec bgpdaemon.AppliedExportPolicy) []*gobgpapi.Prefix {
@@ -765,6 +835,13 @@ func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopA
 		return &gobgpapi.NexthopAction{Unchanged: true}
 	}
 	return &gobgpapi.NexthopAction{PeerAddress: true}
+}
+
+func appliedLocalPreferenceAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.LocalPrefAction {
+	if spec.LocalPreference == 0 {
+		return nil
+	}
+	return &gobgpapi.LocalPrefAction{Value: spec.LocalPreference}
 }
 
 func decodePathRequest(r *http.Request) (bgpdaemon.AppliedPath, error) {
@@ -856,8 +933,14 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-		return bgpdaemon.AppliedConfig{}, nil, err
+	// routerd has already installed a new import policy and is about to reset
+	// inbound peers. applied.json intentionally still contains the old policy
+	// snapshot while that fence is set, so a concurrent mobility-path update
+	// must not roll the live direct /32 policy back by rebuilding it here.
+	if !applied.PendingImportPolicyReset {
+		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+			return bgpdaemon.AppliedConfig{}, nil, err
+		}
 	}
 	for i := range applied.Paths {
 		if bgpdaemon.AppliedPathKey(applied.Paths[i]) == key {
@@ -899,8 +982,10 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 		if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 			return bgpdaemon.AppliedConfig{}, err
 		}
-		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-			return bgpdaemon.AppliedConfig{}, err
+		if !applied.PendingImportPolicyReset {
+			if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+				return bgpdaemon.AppliedConfig{}, err
+			}
 		}
 		return applied, nil
 	}
@@ -932,8 +1017,12 @@ func dynamicExportPolicyPeerAddresses(applied bgpdaemon.AppliedConfig) []string 
 	if len(appliedDynamicPathPrefixes(applied.Paths)) == 0 {
 		return nil
 	}
+	withheld := pendingDirectPeerTransitions(applied)
 	var addresses []string
 	for address, peer := range applied.Peers {
+		if withheld[address] {
+			continue
+		}
 		if strings.TrimSpace(peer.ExportPolicyName) == "" {
 			continue
 		}

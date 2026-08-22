@@ -43,6 +43,16 @@ func JoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
 		"wireGuard.allowedIPs=" + strings.Join(wgAllowed, ","),
 		"wireGuard.persistentKeepalive=" + strconv.Itoa(claim.WireGuard.PersistentKeepalive),
 	}
+	// Keep ordinary (non-direct) claims byte-for-byte compatible with the
+	// canonical payload used before direct mesh existed. Direct opt-in changes
+	// authorization semantics, so only the affirmative form is signed as an
+	// additional field.
+	if claim.DirectMesh {
+		directFields := make([]string, 0, len(fields)+1)
+		directFields = append(directFields, fields[:8]...)
+		directFields = append(directFields, "directMesh=true")
+		fields = append(directFields, fields[8:]...)
+	}
 	return strings.Join(fields, "\n")
 }
 
@@ -145,7 +155,7 @@ func ActiveClaimNodeSet(selection ActiveClaimSelection, policy api.SAMEnrollment
 			endpoint = strings.TrimSpace(claim.Endpoint)
 		}
 		node := api.SAMNodeSpec{NodeRef: strings.TrimSpace(claim.LeafID), Role: "cloud", SAMEndpoint: endpoint}
-		if options.IncludeWireGuard {
+		if options.IncludeWireGuard && strings.TrimSpace(claim.WireGuard.PublicKey) != "" {
 			keepalive := claim.WireGuard.PersistentKeepalive
 			if keepalive == 0 {
 				keepalive = policy.WireGuard.PersistentKeepalive
@@ -157,6 +167,71 @@ func ActiveClaimNodeSet(selection ActiveClaimSelection, policy api.SAMEnrollment
 	}
 	sort.Strings(leafIDs)
 	return api.SAMNodeSetSpec{Nodes: nodes}, leafIDs
+}
+
+// DirectMeshTopology is the runtime projection of signed, admitted leaf claims
+// used by an opportunistic direct peer group. Nodes carry connectivity material;
+// OwnedPrefixesByNode carries the equally important BGP admission boundary.
+// Keeping them in one projection prevents a direct session from becoming a
+// policy-wide /32 shortcut merely because its transport endpoint is reachable.
+type DirectMeshTopology struct {
+	Nodes               api.SAMNodeSetSpec
+	OwnedPrefixesByNode map[string][]string
+}
+
+// ActiveDirectMeshTopology projects the eligible remote leaves for one
+// enrollment client. The RR remains outside this topology: it is already
+// supplied through the accompanying SAMRRSet and is the fallback path when a
+// direct peer is unavailable. Only signed claims that opted into direct mesh
+// and have at least one valid owned IPv4 /32 are included.
+func ActiveDirectMeshTopology(selection ActiveClaimSelection, policy api.SAMEnrollmentPolicySpec, selfLeafID string, includeWireGuard bool) (DirectMeshTopology, []string) {
+	selfLeafID = strings.TrimSpace(selfLeafID)
+	filtered := ActiveClaimSelection{}
+	ownedPrefixesByNode := map[string][]string{}
+	for _, active := range selection.Claims {
+		if !active.Claim.DirectMesh || strings.TrimSpace(active.Claim.LeafID) == selfLeafID {
+			continue
+		}
+		// A WireGuard direct transport needs a complete peer identity. Do not
+		// emit a partial node that validates neither as WireGuard material nor
+		// as an established encrypted underlay; its RR fallback remains intact.
+		if includeWireGuard && strings.TrimSpace(active.Claim.WireGuard.PublicKey) == "" {
+			continue
+		}
+		owned := directMeshOwnedPrefixes(active.Claim.Mobility.OwnedAddresses)
+		if len(owned) == 0 {
+			// There is no direct routing work for a leaf without an admitted /32,
+			// and emitting it would force a broad per-profile import allowlist.
+			// Omit it so the RR remains the safe path.
+			continue
+		}
+		filtered.Claims = append(filtered.Claims, active)
+		ownedPrefixesByNode[strings.TrimSpace(active.Claim.LeafID)] = owned
+	}
+	nodes, leafIDs := ActiveClaimNodeSet(filtered, policy, ActiveClaimNodeSetOptions{
+		UseClaimEndpoint: true,
+		IncludeWireGuard: includeWireGuard,
+	})
+	return DirectMeshTopology{Nodes: nodes, OwnedPrefixesByNode: ownedPrefixesByNode}, leafIDs
+}
+
+func directMeshOwnedPrefixes(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		prefix, err := ParsePrefixOrAddress(value)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			continue
+		}
+		key := prefix.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func ActiveClaims(resources []api.Resource, policyRef string, policy api.SAMEnrollmentPolicySpec, now time.Time) (ActiveClaimSelection, error) {

@@ -2,7 +2,9 @@
 
 This runbook validates the dual-RR enrollment flow before any cloud/PVE
 full-topology test. `SAMRRSet` is the fetched, policy-scoped runtime snapshot
-used by an admitted leaf, not a static topology resource.
+used by an admitted leaf, not a static topology resource. RR remains the
+baseline forwarding path even when an optional direct leaf-to-leaf path is
+enabled.
 
 Primary target: private-underlay SAM transport without mandatory WireGuard.
 The review shape also includes one encrypted public-underlay leaf so the same
@@ -90,6 +92,59 @@ inventory in static YAML.
 when the fetched RRSet is missing, near expiry, or the local claim material
 changes. Failed attempts use exponential backoff and transport or BGP
 degradation does not trigger immediate rejoin loops.
+
+## Optional Direct Leaf Path, With RR Fallback
+
+Use this only when some leaf pairs may have a usable direct underlay. It is safe
+to enable for a mixed network: a leaf that cannot reach another leaf continues
+to forward through rr-a/rr-b.
+
+On the RR policy, name a runtime-only group for direct leaves:
+
+```yaml
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMEnrollmentPolicy
+metadata: { name: pve-fou-leaves }
+spec:
+  rrSetRef: SAMRRSet/pve-rrs
+  rrNodeSetRef: SAMNodeSet/pve-rr-nodes
+  transportProfileRef: SAMTransportProfile/pve-fou-rr
+  directMesh:
+    peerGroupRef: SAMPeerGroup/pve-direct-leaves
+  # other admission fields are unchanged
+```
+
+Generate each participating leaf with `routerctl mobility leaf-config` and add
+`--direct-peer-group pve-direct-leaves`. That sets the signed claim field
+`directMesh: true` and adds this source after a non-optional RRSet source. The
+ordering is required: routerd rejects a direct-only profile because direct
+peering is never a replacement for RR bootstrap or fallback:
+
+```yaml
+peersFrom:
+  - resource: SAMRRSet/pve-rrs
+  - resource: SAMPeerGroup/pve-direct-leaves
+    direct: true
+```
+
+The RR returns the direct group only for an admitted, opted-in claim and stores
+it beside the RRSet in the same `DynamicConfigPart`. A direct group contains
+remote opted-in leaves, never the RR itself. Its transport fingerprint must
+match the leaf profile. Direct mode requires `addressingMode: pair-stable` and
+`bgp.routeReflectorClient: false`; routerd assigns the direct imported route a
+higher local preference (default `200`) than the normal RR import preference.
+Use BGP local preference rather than AS_PATH length or administrative distance:
+the RR is normally an iBGP reflector, so the extra forwarding hop is not a
+reliable AS-path signal. A direct profile must explicitly set the normal RR
+`bgp.importPolicy.localPreference`; set `bgp.directLocalPreference` to a
+greater value. Validation rejects a missing, equal, or lower direct value.
+
+Check the profile status after refresh. Its `peersFrom` rows show the RRSet as
+`Resolved` and the direct group as `Direct`, `Unavailable`, or `Incompatible`.
+`Direct` means routerd generated the candidate direct peer; it does **not**
+claim that the remote network is reachable. BGP session state remains the proof
+of reachability. `Unavailable` and `Incompatible` are expected fallback states:
+the RR tunnels and BGP peers stay rendered, so no manual rollback is needed.
 
 ## Revoke, Rotate, And Re-Enroll
 

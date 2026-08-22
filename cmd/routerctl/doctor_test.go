@@ -335,10 +335,11 @@ func TestDoctorSAMEnrollmentClientPassesWithFetchedRRSet(t *testing.T) {
 	store := openDoctorState(t, statePath)
 	now := time.Date(2026, 6, 29, 4, 0, 0, 0, time.UTC)
 	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "leaf-a", map[string]any{
-		"phase":         "Ready",
-		"claimRef":      "SAMEnrollmentClaim/leaf-a",
-		"observedRRSet": "SAMRRSet/rrs",
-		"lastSuccess":   now.Format(time.RFC3339),
+		"phase":                   "Ready",
+		"claimRef":                "SAMEnrollmentClaim/leaf-a",
+		"observedRRSet":           "SAMRRSet/rrs",
+		"observedDirectPeerGroup": "SAMPeerGroup/direct-leaves",
+		"lastSuccess":             now.Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("save client status: %v", err)
 	}
@@ -363,7 +364,7 @@ func TestDoctorSAMEnrollmentClientPassesWithFetchedRRSet(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal doctor report: %v\n%s", err, out.String())
 	}
-	if check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a status"); check.Status != doctorPass {
+	if check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a status"); check.Status != doctorPass || !strings.Contains(check.Detail, "observedDirectPeerGroup=SAMPeerGroup/direct-leaves") {
 		t.Fatalf("status check = %#v", check)
 	}
 	if check := findDoctorCheck(t, report, "SAMEnrollmentClient/leaf-a fetched RRSet"); check.Status != doctorPass || !strings.Contains(check.Detail, "active=1") {

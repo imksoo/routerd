@@ -92,6 +92,10 @@ internals are in [CloudEdge SAM internals](../reference/cloudedge-sam-internals.
   transport. Enrollment is a separate path: an admitted leaf fetches a
   policy-scoped runtime `SAMRRSet` projected from the RR policy's static
   `SAMNodeSet`; neither runtime payload is a statically authored RR topology.
+  A policy may also return a signed-claim-only direct-leaf `SAMPeerGroup` in
+  the same runtime snapshot. It is an opportunistic faster data path, never a
+  replacement for the RR: the RR peers remain present and take over when a
+  direct tunnel or BGP session cannot be established.
 - **RR admission filter** — on generated RR-client BGP peers, routerd accepts
   only `/32` mobility routes that carry the advertising leaf's own node-identity
   community and rejects routes carrying another topology node's identity. When

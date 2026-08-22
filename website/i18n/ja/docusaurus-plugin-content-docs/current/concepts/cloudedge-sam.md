@@ -86,7 +86,10 @@ routerd 特有の用語が出てきます。最初に押さえるべきものだ
 - **dynamic RR sync** — ルートリフレクターは共有 transport peer group を leaf に
   配布できます。leaf は RR publisher が消えても last-known-good の同期入力を保持し、
   生成済み transport を tear down せず source を `Stale` と表示します。MobilityPool の
-  メンバーシップは `SAMNodeSet` から直接解決します。
+  メンバーシップは `SAMNodeSet` から直接解決します。enrollment policy は、署名済みで
+  opt-in した leaf に限り、任意の leaf 間直接経路も返せます。ただしこれは速い経路を
+  試すための最適化です。RR peer は常に残るので、直接 tunnel や BGP session が確立
+  しなければ RR 経由へ安全に fallback します。
 - **RR admission filter** — generated RR-client BGP peer では、自 leaf の
   node-identity community を持つ `/32` mobility route だけを受け入れ、他 topology node
   の identity を持つ route を拒否します。

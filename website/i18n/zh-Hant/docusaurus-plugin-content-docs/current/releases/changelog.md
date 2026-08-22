@@ -11,6 +11,20 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- Cloud SAM leaf 現在可以選擇啟用由已簽章 claim 動態推導的 leaf 間 BGP mesh。direct `/32`
+  使用 local preference 200，既有 route reflector 路徑繼續以 100 保留為安全回退。只有在已驗證的
+  RRSet、精確的 peer identity、pair-stable tunnel addressing 與 direct peer group 都可用時，才會生成
+  direct peer。這是 L3 最短路徑路由，不是 EVPN/VXLAN 或 L2 延伸功能。
+
+### 變更
+
+- `routerctl mobility leaf-config`、schema、範例與 Cloud SAM 文件現在公開可選的 direct peer group
+  及明確的 direct/RR local-preference policy。已套用的 BGP state 會在變更 live peer 前記錄 direct peer
+  的新增、移除與 policy transition，因此 daemon 重啟或 topology 變化不會遺留 stale direct state，並會
+  保留 RR 回退路徑。
+
 ## v20260821.0106
 
 ### 修正

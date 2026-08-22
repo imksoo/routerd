@@ -69,6 +69,16 @@ type Event struct {
 	Current  string `json:"current,omitempty"`
 }
 
+// MobilityNodeIdentityCollision reports distinct node references that map to
+// the same standard-community identity. The encoding deliberately has a
+// finite 16-bit community space, so callers that make a security or routing
+// decision from identity must reject a collision rather than silently treating
+// two nodes as one.
+type MobilityNodeIdentityCollision struct {
+	Community string
+	NodeRefs  []string
+}
+
 func MobilityNodeIdentityCommunity(nodeRef string) string {
 	nodeRef = strings.TrimSpace(nodeRef)
 	if nodeRef == "" {
@@ -77,6 +87,41 @@ func MobilityNodeIdentityCommunity(nodeRef string) string {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(nodeRef))
 	return "64512:" + strconv.Itoa(20000+int(h.Sum32()%40000))
+}
+
+// MobilityNodeIdentityCollisions returns deterministic collisions among the
+// supplied node references. Repeated spellings of the same trimmed node are
+// not a collision; two different node identities are.
+func MobilityNodeIdentityCollisions(nodeRefs []string) []MobilityNodeIdentityCollision {
+	byCommunity := map[string]map[string]bool{}
+	for _, nodeRef := range nodeRefs {
+		nodeRef = strings.TrimSpace(nodeRef)
+		community := MobilityNodeIdentityCommunity(nodeRef)
+		if nodeRef == "" || community == "" {
+			continue
+		}
+		if byCommunity[community] == nil {
+			byCommunity[community] = map[string]bool{}
+		}
+		byCommunity[community][nodeRef] = true
+	}
+	communities := make([]string, 0, len(byCommunity))
+	for community, nodes := range byCommunity {
+		if len(nodes) > 1 {
+			communities = append(communities, community)
+		}
+	}
+	sort.Strings(communities)
+	out := make([]MobilityNodeIdentityCollision, 0, len(communities))
+	for _, community := range communities {
+		nodes := make([]string, 0, len(byCommunity[community]))
+		for nodeRef := range byCommunity[community] {
+			nodes = append(nodes, nodeRef)
+		}
+		sort.Strings(nodes)
+		out = append(out, MobilityNodeIdentityCollision{Community: community, NodeRefs: nodes})
+	}
+	return out
 }
 
 func IsMobilityNodeIdentityCommunity(value string) bool {

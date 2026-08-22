@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"path/filepath"
 	"testing"
+	"time"
 
 	gobgpapi "github.com/osrg/gobgp/v4/api"
 
@@ -27,9 +29,20 @@ type fakePathServer struct {
 	resetRequests     []*gobgpapi.ResetPeerRequest
 	nextID            byte
 	deleteErr         error
+	addStarted        chan struct{}
+	releaseAdd        <-chan struct{}
 }
 
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
+	if s.addStarted != nil {
+		select {
+		case s.addStarted <- struct{}{}:
+		default:
+		}
+	}
+	if s.releaseAdd != nil {
+		<-s.releaseAdd
+	}
 	s.nextID++
 	uuid := []byte{s.nextID}
 	s.added = append(s.added, req)
@@ -357,6 +370,55 @@ func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {
 	}
 }
 
+func TestPendingDirectPeerTransitionsWithholdOnlyDirectPeers(t *testing.T) {
+	applied := bgpdaemon.AppliedConfig{
+		PendingImportPolicyReset:   true,
+		PendingDirectPeerAdditions: []string{"10.0.0.3"},
+		PendingDirectPeerRemovals:  []string{"10.0.0.4"},
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.0.0.2": {Address: "10.0.0.2", PreserveImportPrefixes: true},
+			"10.0.0.3": {Address: "10.0.0.3", PreserveImportPrefixes: true},
+			"10.0.0.4": {Address: "10.0.0.4", PreserveImportPrefixes: true},
+			"10.0.0.5": {Address: "10.0.0.5"},
+		},
+	}
+	got := pendingDirectPeerTransitions(applied)
+	for _, address := range []string{"10.0.0.2", "10.0.0.3", "10.0.0.4"} {
+		if !got[address] {
+			t.Fatalf("withheld direct peers = %#v, missing %s", got, address)
+		}
+	}
+	if got["10.0.0.5"] {
+		t.Fatalf("withheld direct peers = %#v, regular peer was withheld", got)
+	}
+}
+
+func TestDynamicExportPolicySkipsWithheldDirectPeers(t *testing.T) {
+	applied := bgpdaemon.AppliedConfig{
+		PendingDirectPeerRemovals: []string{"10.0.0.2"},
+		Peers: map[string]bgpdaemon.AppliedPeer{
+			"10.0.0.2": {
+				Address:                "10.0.0.2",
+				PreserveImportPrefixes: true,
+				ExportPolicyName:       "direct-export",
+				ExportPolicy:           bgpdaemon.AppliedExportPolicy{AllowedPrefixes: []string{"10.77.60.22/32"}},
+			},
+			"10.0.0.3": {
+				Address:          "10.0.0.3",
+				ExportPolicyName: "rr-export",
+				ExportPolicy:     bgpdaemon.AppliedExportPolicy{AllowedPrefixes: []string{"10.77.60.22/32"}},
+			},
+		},
+		Paths: []bgpdaemon.AppliedPath{{
+			Source: "MobilityPool/demo/node/leaf-a",
+			Prefix: "10.77.60.22/32",
+		}},
+	}
+	if got := dynamicExportPolicyPeerAddresses(applied); len(got) != 1 || got[0] != "10.0.0.3" {
+		t.Fatalf("dynamic export reset peers = %#v, want only non-transition RR peer", got)
+	}
+}
+
 func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T) {
 	server := &fakePathServer{}
 	applied := bgpdaemon.AppliedConfig{
@@ -427,6 +489,79 @@ func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
 	reset := server.resetRequests[0]
 	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_OUT {
 		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
+	}
+}
+
+func TestControlSocketSerializesAppliedStateTransactions(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+	}); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	paths := &fakePathServer{addStarted: started, releaseAdd: release}
+	socketPath := filepath.Join(dir, "control.sock")
+	server, err := serveControlSocket(socketPath, statePath, paths)
+	if err != nil {
+		t.Fatalf("serve control socket: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+	client := unixHTTPClient(socketPath)
+	defer client.CloseIdleConnections()
+
+	body, err := json.Marshal(bgpdaemon.AppliedPath{
+		Source: "MobilityPool/demo/node/aws-router-a",
+		Prefix: "10.77.60.11/32",
+	})
+	if err != nil {
+		t.Fatalf("marshal path: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, "http://routerd-bgp/v1/paths", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new path request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	postDone := make(chan error, 1)
+	go func() {
+		response, err := client.Do(request)
+		if err != nil {
+			postDone <- err
+			return
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			postDone <- fmt.Errorf("POST status = %d", response.StatusCode)
+			return
+		}
+		postDone <- nil
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("path transaction did not reach AddPath")
+	}
+	getDone := make(chan error, 1)
+	go func() {
+		response, err := client.Get("http://routerd-bgp/v1/applied")
+		if err == nil {
+			response.Body.Close()
+		}
+		getDone <- err
+	}()
+	select {
+	case err := <-getDone:
+		t.Fatalf("GET completed during in-flight state transaction: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	close(release)
+	if err := <-postDone; err != nil {
+		t.Fatalf("POST dynamic path: %v", err)
+	}
+	if err := <-getDone; err != nil {
+		t.Fatalf("GET applied after transaction: %v", err)
 	}
 }
 
@@ -613,6 +748,38 @@ func TestUpsertDynamicPathIgnoresStaleGoBGPUUID(t *testing.T) {
 	}
 	if len(server.deleted) != 1 || len(server.added) != 1 {
 		t.Fatalf("delete/add calls = %d/%d, want stale delete and fresh add", len(server.deleted), len(server.added))
+	}
+}
+
+func TestDynamicPathUpdateDefersPolicyRefreshBehindImportResetFence(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "applied.json")
+	initial := bgpdaemon.AppliedConfig{
+		Version:                  bgpdaemon.AppliedVersion,
+		PendingImportPolicyReset: true,
+		Global:                   bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Peers:                    map[string]bgpdaemon.AppliedPeer{},
+	}
+	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
+		t.Fatalf("write initial applied: %v", err)
+	}
+	server := &fakePathServer{}
+	path := bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"}
+	applied, updated, err := upsertDynamicPath(context.Background(), server, statePath, path)
+	if err != nil || updated == nil {
+		t.Fatalf("upsert behind import reset fence: applied=%#v updated=%#v err=%v", applied, updated, err)
+	}
+	if len(server.policyRequests) != 0 || len(server.resetRequests) != 0 {
+		t.Fatalf("dynamic update refreshed policy behind import reset fence: policy=%d resets=%d", len(server.policyRequests), len(server.resetRequests))
+	}
+	if !applied.PendingImportPolicyReset {
+		t.Fatalf("dynamic update cleared import reset fence: %#v", applied)
+	}
+	if _, err := deleteDynamicPath(context.Background(), server, statePath, path); err != nil {
+		t.Fatalf("delete behind import reset fence: %v", err)
+	}
+	if len(server.policyRequests) != 0 || len(server.resetRequests) != 0 {
+		t.Fatalf("dynamic delete refreshed policy behind import reset fence: policy=%d resets=%d", len(server.policyRequests), len(server.resetRequests))
 	}
 }
 

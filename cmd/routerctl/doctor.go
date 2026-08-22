@@ -579,6 +579,9 @@ func doctorSAMEnrollmentClientStatusCheck(name string, status map[string]any) do
 	if observed := stringStatus(status, "observedRRSet"); observed != "" {
 		detail = appendDoctorDetail(detail, "observedRRSet="+observed)
 	}
+	if observed := stringStatus(status, "observedDirectPeerGroup"); observed != "" {
+		detail = appendDoctorDetail(detail, "observedDirectPeerGroup="+observed)
+	}
 	if lastSuccess := stringStatus(status, "lastSuccess"); lastSuccess != "" {
 		detail = appendDoctorDetail(detail, "lastSuccess="+lastSuccess)
 	}

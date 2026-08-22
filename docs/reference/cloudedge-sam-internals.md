@@ -220,7 +220,17 @@ SAM enrollment does **not** use that peer-group sync path. After an enrollment
 claim is admitted, the RR projects the route-reflector nodes selected by
 `SAMEnrollmentPolicy.spec.rrNodeSetRef` from its static `SAMNodeSet` into a
 policy-scoped runtime `SAMRRSet`. The leaf fetches and persists that snapshot as
-dynamic state; it does not author a local policy, NodeSet, or RRSet. See the
+dynamic state; it does not author a local policy, NodeSet, or RRSet. A policy
+with `directMesh.peerGroupRef` can put a second, policy-scoped `SAMPeerGroup`
+into that **same** fetched dynamic-config part for a signed `directMesh: true`
+claim. That group contains eligible remote leaves only; it is not cached through
+TCP 19652 and must match the local transport fingerprint.
+
+The direct group is deliberately optional. `SAMTransportProfile` keeps the
+`SAMRRSet` source and adds the direct group with `direct: true`. Direct peers
+receive a higher local preference only while their BGP session is alive. If the
+group is missing, expired, incompatible, or its underlay route cannot be built,
+routerd omits those direct artifacts and continues to use the RR peers. See the
 [dynamic RR/leaf enrollment runbook](../operations/dynamic-rr-leaf-enrollment-test.md).
 
 TTL expiry does not mean the data plane should be dismantled. If a leaf has a

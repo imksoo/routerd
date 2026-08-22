@@ -298,9 +298,9 @@ func TestBuildEffectiveConfigKeepsRuntimeSAMPeerGroup(t *testing.T) {
 	peerGroup := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: "rrs"},
-		Spec: api.SAMPeerGroupSpec{Peers: []api.SAMTransportPeerSpec{{
-			NodeRef:        "rr-a",
-			RemoteEndpoint: "192.0.2.10",
+		Spec: api.SAMPeerGroupSpec{Nodes: []api.SAMNodeSpec{{
+			NodeRef:     "rr-a",
+			SAMEndpoint: "192.0.2.10",
 		}}},
 	}
 	part := testPart("SAMTransportProfile/rr/peer-group", 1, now.Add(time.Hour), []api.Resource{peerGroup}, nil)

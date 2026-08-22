@@ -140,9 +140,9 @@ func (c TransportController) upsertTransportPeerGroupPart(owner api.Resource, sp
 				}},
 			},
 			Spec: api.SAMPeerGroupSpec{
-				Peers: []api.SAMTransportPeerSpec{{
-					NodeRef:        strings.TrimSpace(spec.SelfNodeRef),
-					RemoteEndpoint: endpoint,
+				Nodes: []api.SAMNodeSpec{{
+					NodeRef:     strings.TrimSpace(spec.SelfNodeRef),
+					SAMEndpoint: endpoint,
 				}},
 			},
 		})

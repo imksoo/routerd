@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -316,6 +317,58 @@ func TestSAMTransportProfilePairStableCollisionIsDegraded(t *testing.T) {
 	}
 }
 
+func TestSAMTransportProfilePairStableDirectCollisionKeepsRRFallback(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 2, 30, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("svnet1", "pve-rt", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{{
+			NodeRef: "node-03", SAMEndpoint: "203.0.113.20", RouteReflector: true,
+		}}),
+		samDirectPeerGroupResource("cloudedge-direct-leaves", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{{
+			NodeRef: "node-50", SAMEndpoint: "203.0.113.21",
+		}}),
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "pve-rt")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 1; got != want {
+		t.Fatalf("TunnelInterface count = %d, want only RR fallback resources=%#v", got, resources)
+	}
+	_ = findTransportTunnelForPeer(t, resources, "pve-rt", "node-03")
+	for _, resource := range resources {
+		if resource.Metadata.Annotations["mobility.routerd.net/peer-node"] == "node-50" {
+			t.Fatalf("pair-stable collision retained direct peer resource: %#v", resources)
+		}
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	if status["phase"] != "Derived" {
+		t.Fatalf("status phase = %#v, want Derived with RR fallback", status["phase"])
+	}
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	directRow, ok := rows[1].(map[string]any)
+	if !ok || directRow["phase"] != "Incompatible" || directRow["reason"] != "direct peer-group pair-stable address slot collides with fallback topology" {
+		t.Fatalf("direct peersFrom status = %#v, want pair-stable collision fallback", rows[1])
+	}
+}
+
 func TestSAMTransportProfilePairStableCanonicalInnerPrefixSeed(t *testing.T) {
 	now := time.Date(2026, 6, 6, 9, 4, 55, 0, time.UTC)
 	base := transportRouterWithMode("svnet1", "k8s-rt01", "pair-stable", []api.SAMTransportPeerSpec{
@@ -503,6 +556,341 @@ func TestSAMTransportProfileConsumesSAMRRSetWithoutWireGuard(t *testing.T) {
 	}
 	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-a")
 	_ = findTransportBGPPeerForPeer(t, resources, "leaf-pve", "rr-b")
+}
+
+func TestSAMTransportProfileDirectLeafPeerPrefersDirectAndKeepsRRs(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.BGP.ImportPolicy = api.BGPImportPolicySpec{
+		LocalPreference:        100,
+		AllowedPrefixes:        []string{"10.77.60.0/24"},
+		AllowedPrefixLengthMin: 32,
+		AllowedPrefixLengthMax: 32,
+	}
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
+			{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true},
+			{NodeRef: "rr-b", SAMEndpoint: "10.10.0.3", RouteReflector: true},
+		}),
+		samDirectPeerGroupResource("cloudedge-direct-leaves", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{{
+			NodeRef:     "leaf-b",
+			SAMEndpoint: "10.20.0.32",
+		}}),
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 3; got != want {
+		t.Fatalf("TunnelInterface count = %d, want %d resources=%#v", got, want, resources)
+	}
+	for _, peer := range []string{"rr-a", "rr-b"} {
+		if got := findTransportBGPPeerForPeer(t, resources, "leaf-a", peer).ImportPolicy; got.LocalPreference != 100 || got.NextHopRewrite == "peer-address" {
+			t.Fatalf("RR peer %s import policy = %#v, want unchanged RR preference", peer, got)
+		}
+	}
+	direct := findTransportBGPPeerForPeer(t, resources, "leaf-a", "leaf-b").ImportPolicy
+	if direct.LocalPreference != mobilityconfig.DefaultSAMTransportDirectLocalPreference || direct.NextHopRewrite != "peer-address" {
+		t.Fatalf("direct leaf import policy = %#v, want local preference %d and peer-address next hop", direct, mobilityconfig.DefaultSAMTransportDirectLocalPreference)
+	}
+	if got, want := direct.AllowedPrefixes, []string{"10.77.60.200/32"}; !sameStringSetForTest(got, want) {
+		t.Fatalf("direct leaf import prefixes = %#v, want signed peer-owned %#v", got, want)
+	}
+	if got, want := direct.RequiredCommunities, []string{bgpstate.MobilityNodeIdentityCommunity("leaf-b")}; !sameStringSetForTest(got, want) {
+		t.Fatalf("direct required communities = %#v, want %#v", got, want)
+	}
+	forbidden := []string{
+		bgpstate.MobilityNodeIdentityCommunity("leaf-a"),
+		bgpstate.MobilityNodeIdentityCommunity("rr-a"),
+		bgpstate.MobilityNodeIdentityCommunity("rr-b"),
+	}
+	if !sameStringSetForTest(direct.ForbiddenCommunities, forbidden) {
+		t.Fatalf("direct forbidden communities = %#v, want %#v", direct.ForbiddenCommunities, forbidden)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	if directRow, ok := rows[1].(map[string]any); !ok || directRow["phase"] != "Direct" {
+		t.Fatalf("direct peersFrom status = %#v, want Direct", rows[1])
+	}
+}
+
+func TestDirectTransportBGPImportPolicyPreference(t *testing.T) {
+	base := api.BGPImportPolicySpec{LocalPreference: 100}
+	for _, test := range []struct {
+		name       string
+		configured uint32
+		want       uint32
+	}{
+		{name: "default", want: mobilityconfig.DefaultSAMTransportDirectLocalPreference},
+		{name: "configured", configured: 250, want: 250},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := directTransportBGPImportPolicy(base, test.configured)
+			if got.LocalPreference != test.want || got.NextHopRewrite != "peer-address" {
+				t.Fatalf("direct import policy = %#v, want localPreference=%d nextHopRewrite=peer-address", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSAMTransportProfileDirectLeafAbsenceLeavesRRFallbackDerived(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 1, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
+		{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true},
+		{NodeRef: "rr-b", SAMEndpoint: "10.10.0.3", RouteReflector: true},
+	}))
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want only RR fallbacks resources=%#v", got, resources)
+	}
+	if hasTransportResourceForPeer(resources, "leaf-b") {
+		t.Fatalf("direct leaf resources remain despite absent direct group: %#v", resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	if status["phase"] != "Derived" {
+		t.Fatalf("status phase = %#v, want Derived with RR fallback", status["phase"])
+	}
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	if directRow, ok := rows[1].(map[string]any); !ok || directRow["phase"] != "Unavailable" {
+		t.Fatalf("direct peersFrom status = %#v, want Unavailable", rows[1])
+	}
+}
+
+func TestSAMTransportProfileDirectLeafWaitsForUsableRRFallback(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 1, 30, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		// The RRSet exists but has no usable endpoint. It must not be treated
+		// as a valid fallback merely because the direct group arrived.
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{{NodeRef: "rr-a", RouteReflector: true}}),
+		samDirectPeerGroupResource("cloudedge-direct-leaves", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{{
+			NodeRef:     "leaf-b",
+			SAMEndpoint: "10.20.0.32",
+		}}),
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got := countResources(resources, api.HybridAPIVersion, "TunnelInterface"); got != 0 {
+		t.Fatalf("TunnelInterface count = %d, want no direct bootstrap resources=%#v", got, resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	directRow, ok := rows[1].(map[string]any)
+	if !ok || directRow["phase"] != "Unavailable" || directRow["reason"] != "matching RR fallback SAMRRSet has no usable peer" {
+		t.Fatalf("direct peersFrom status = %#v, want unavailable RR-fallback gate", rows[1])
+	}
+}
+
+func TestSAMTransportProfileDirectLeafRequiresMatchingRRFallbackPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 1, 45, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/policy-a-rrs"},
+		{Resource: "SAMRRSet/policy-b-rrs"},
+		{Resource: "SAMPeerGroup/policy-b-direct", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	rrA := samRRSetResource("policy-a-rrs", []api.SAMNodeSpec{{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true}})
+	rrASpec, err := rrA.SAMRRSetSpec()
+	if err != nil {
+		t.Fatalf("policy-a RRSet spec: %v", err)
+	}
+	rrASpec.EnrollmentPolicyRef = "SAMEnrollmentPolicy/policy-a"
+	rrA.Spec = rrASpec
+	rrB := samRRSetResource("policy-b-rrs", []api.SAMNodeSpec{{NodeRef: "rr-b", RouteReflector: true}})
+	rrBSpec, err := rrB.SAMRRSetSpec()
+	if err != nil {
+		t.Fatalf("policy-b RRSet spec: %v", err)
+	}
+	rrBSpec.EnrollmentPolicyRef = "SAMEnrollmentPolicy/policy-b"
+	rrB.Spec = rrBSpec
+	router.Spec.Resources = append(router.Spec.Resources,
+		rrA,
+		rrB,
+		samDirectPeerGroupResource("policy-b-direct", "SAMEnrollmentPolicy/policy-b", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32"}}),
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if hasTransportResourceForPeer(resources, "leaf-b") {
+		t.Fatalf("direct peer used a different policy's RR fallback: %#v", resources)
+	}
+	if got := countResources(resources, api.HybridAPIVersion, "TunnelInterface"); got != 1 {
+		t.Fatalf("TunnelInterface count = %d, want only usable policy-a RR fallback", got)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 3 {
+		t.Fatalf("peersFrom = %#v, want two RRSets and direct source", status["peersFrom"])
+	}
+	if directRow, ok := rows[2].(map[string]any); !ok || directRow["phase"] != "Unavailable" || directRow["reason"] != "matching RR fallback SAMRRSet has no usable peer" {
+		t.Fatalf("direct peersFrom status = %#v, want policy-scoped RR gate", rows[2])
+	}
+}
+
+func TestSAMTransportProfileRejectsDirectGroupCollisionAndKeepsRRFallback(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 2, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
+			{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true},
+			{NodeRef: "rr-b", SAMEndpoint: "10.10.0.3", RouteReflector: true},
+		}),
+		samDirectPeerGroupResource("cloudedge-direct-leaves", "SAMEnrollmentPolicy/cloudedge-leaves", mobilityconfig.SAMTransportMeshFingerprint(spec), []api.SAMNodeSpec{
+			{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32"},
+			// This node masquerades as a leaf (RouteReflector=false) but collides
+			// with the already rendered RR. A valid entry before it proves the
+			// controller neither replaces the RR nor leaks partial direct state.
+			{NodeRef: "rr-a", SAMEndpoint: "10.20.0.33"},
+		}),
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want only RR fallbacks resources=%#v", got, resources)
+	}
+	if hasTransportResourceForPeer(resources, "leaf-b") {
+		t.Fatalf("partial direct peer remained after group rejection: %#v", resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	if status["phase"] != "Derived" {
+		t.Fatalf("status phase = %#v, want Derived with RR fallback", status["phase"])
+	}
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	if directRow, ok := rows[1].(map[string]any); !ok || directRow["phase"] != "Incompatible" {
+		t.Fatalf("direct peersFrom status = %#v, want Incompatible", rows[1])
+	}
+}
+
+func TestSAMTransportProfileMalformedDirectGroupKeepsRRFallback(t *testing.T) {
+	now := time.Date(2026, 8, 22, 10, 3, 0, 0, time.UTC)
+	store := testStore(t, now)
+	router := transportRouterWithMode("leaf-a", "leaf-a", "pair-stable", nil)
+	spec, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+	if err != nil {
+		t.Fatalf("SAMTransportProfile spec: %v", err)
+	}
+	spec.Encryption = "none"
+	spec.LocalEndpoint = "10.20.0.31"
+	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{
+		{Resource: "SAMRRSet/cloudedge-rrs"},
+		{Resource: "SAMPeerGroup/cloudedge-direct-leaves", Direct: true},
+	}
+	router.Spec.Resources[0].Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources,
+		samRRSetResource("cloudedge-rrs", []api.SAMNodeSpec{
+			{NodeRef: "rr-a", SAMEndpoint: "10.10.0.2", RouteReflector: true},
+			{NodeRef: "rr-b", SAMEndpoint: "10.10.0.3", RouteReflector: true},
+		}),
+		api.Resource{
+			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+			Metadata: api.ObjectMeta{Name: "cloudedge-direct-leaves"},
+			Spec:     map[string]any{"nodes": "not-a-node-list"},
+		},
+	)
+
+	controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
+	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
+		t.Fatalf("TunnelInterface count = %d, want only RR fallbacks resources=%#v", got, resources)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
+	rows, ok := status["peersFrom"].([]any)
+	if !ok || len(rows) != 2 {
+		t.Fatalf("peersFrom = %#v, want RR and direct sources", status["peersFrom"])
+	}
+	if directRow, ok := rows[1].(map[string]any); !ok || directRow["phase"] != "Incompatible" {
+		t.Fatalf("direct peersFrom status = %#v, want Incompatible", rows[1])
+	}
 }
 
 func TestSAMTransportProfileConsumesSAMRRSetWithFOUWithoutWireGuard(t *testing.T) {
@@ -1022,21 +1410,42 @@ func seedFetchedCloudEdgeRRSet(t *testing.T, store interface {
 	if err := config.ValidateForOS(hub, platform.OSLinux); err != nil {
 		t.Fatalf("validate RR hub: %v", err)
 	}
+	var policy api.SAMEnrollmentPolicySpec
+	policyFound := false
+	for _, resource := range hub.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentPolicy" || resource.Metadata.Name != policyName {
+			continue
+		}
+		policy, err = resource.SAMEnrollmentPolicySpec()
+		if err != nil {
+			t.Fatalf("SAMEnrollmentPolicy/%s spec: %v", policyName, err)
+		}
+		policyFound = true
+		break
+	}
+	if !policyFound {
+		t.Fatalf("SAMEnrollmentPolicy/%s not found in RR hub", policyName)
+	}
+	_, rrSetName, rrSetOK := strings.Cut(strings.TrimSpace(policy.RRSetRef), "/")
+	_, rrNodeSetName, rrNodeSetOK := strings.Cut(strings.TrimSpace(policy.RRNodeSetRef), "/")
+	if !rrSetOK || rrSetName == "" || !rrNodeSetOK || rrNodeSetName == "" {
+		t.Fatalf("SAMEnrollmentPolicy/%s runtime topology refs = rrSet:%q rrNodeSet:%q", policyName, policy.RRSetRef, policy.RRNodeSetRef)
+	}
 	var nodeSet api.SAMNodeSetSpec
 	found := false
 	for _, resource := range hub.Spec.Resources {
-		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != "cloudedge-rrs" {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMNodeSet" || resource.Metadata.Name != rrNodeSetName {
 			continue
 		}
 		nodeSet, err = resource.SAMNodeSetSpec()
 		if err != nil {
-			t.Fatalf("SAMNodeSet/cloudedge-rrs spec: %v", err)
+			t.Fatalf("SAMNodeSet/%s spec: %v", rrNodeSetName, err)
 		}
 		found = true
 		break
 	}
 	if !found {
-		t.Fatal("SAMNodeSet/cloudedge-rrs not found in RR hub")
+		t.Fatalf("SAMNodeSet/%s not found in RR hub", rrNodeSetName)
 	}
 	nodes := make([]api.SAMNodeSpec, 0, len(nodeSet.Nodes))
 	for _, node := range nodeSet.Nodes {
@@ -1046,14 +1455,14 @@ func seedFetchedCloudEdgeRRSet(t *testing.T, store interface {
 	}
 	snapshot := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
-		Metadata: api.ObjectMeta{Name: "cloudedge-rrs"},
+		Metadata: api.ObjectMeta{Name: rrSetName},
 		Spec: api.SAMRRSetSpec{
 			EnrollmentPolicyRef: "SAMEnrollmentPolicy/" + policyName,
 			Nodes:               nodes,
 		},
 	}
-	record, err := codec.FetchedSAMRRSetRecord(snapshot, now, now.Add(time.Hour), codec.FetchedSAMRRSetRecordOptions{
-		Name:                              "fetched-cloudedge-rrs",
+	record, err := codec.FetchedSAMEnrollmentTopologyRecord(snapshot, nil, now, now.Add(time.Hour), codec.FetchedSAMEnrollmentTopologyRecordOptions{
+		Name:                              "fetched-" + rrSetName,
 		Generation:                        1,
 		DefaultTTL:                        DefaultLeaseTTL,
 		IncludeEmptyDirectivesActionPlans: true,
@@ -1479,8 +1888,8 @@ func TestSAMTransportProfilePublishesSAMPeerGroupDynamicPart(t *testing.T) {
 	if resources[0].Kind != "SAMPeerGroup" || resources[0].Metadata.Name != "svnet1" {
 		t.Fatalf("published resource = %s/%s, want SAMPeerGroup/svnet1", resources[0].Kind, resources[0].Metadata.Name)
 	}
-	if len(group.Peers) != 1 || group.Peers[0].NodeRef != "rr-rt01" || group.Peers[0].RemoteEndpoint != "10.252.0.1" {
-		t.Fatalf("published peers = %#v, want concrete rr endpoint", group.Peers)
+	if len(group.Nodes) != 1 || group.Nodes[0].NodeRef != "rr-rt01" || group.Nodes[0].SAMEndpoint != "10.252.0.1" {
+		t.Fatalf("published nodes = %#v, want concrete rr endpoint", group.Nodes)
 	}
 }
 
@@ -1891,10 +2300,38 @@ func transportRouterWithTopology(profile, self string, topology []string, peers 
 }
 
 func samPeerGroupResource(name string, peers []api.SAMTransportPeerSpec) api.Resource {
+	nodes := make([]api.SAMNodeSpec, 0, len(peers))
+	for _, peer := range peers {
+		nodes = append(nodes, api.SAMNodeSpec{
+			NodeRef:         peer.NodeRef,
+			SAMEndpoint:     peer.RemoteEndpoint,
+			SAMEndpointFrom: peer.RemoteEndpointFrom,
+		})
+	}
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: name},
-		Spec:     api.SAMPeerGroupSpec{Peers: peers},
+		Spec:     api.SAMPeerGroupSpec{Nodes: nodes},
+	}
+}
+
+func samDirectPeerGroupResource(name, policyRef, fingerprint string, nodes []api.SAMNodeSpec) api.Resource {
+	ownedPrefixesByNode := make(map[string][]string, len(nodes))
+	for i, node := range nodes {
+		// Direct peer groups are runtime-only enrollment objects. Give ordinary
+		// unit fixtures a distinct signed /32 per node so tests exercise the
+		// same narrow admission boundary as production topology snapshots.
+		ownedPrefixesByNode[node.NodeRef] = []string{fmt.Sprintf("10.77.60.%d/32", 200+i)}
+	}
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec: api.SAMPeerGroupSpec{
+			EnrollmentPolicyRef:  policyRef,
+			TransportFingerprint: fingerprint,
+			Nodes:                nodes,
+			OwnedPrefixesByNode:  ownedPrefixesByNode,
+		},
 	}
 }
 

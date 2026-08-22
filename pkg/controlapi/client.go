@@ -354,12 +354,12 @@ func (c *Client) RevokeSAMEnrollmentClaim(ctx context.Context, request SAMEnroll
 	return &result, nil
 }
 
-func (c *Client) GetSAMRRSet(ctx context.Context, request SAMRRSetGetRequest) (*SAMRRSetGetResult, error) {
+func (c *Client) GetSAMEnrollmentTopology(ctx context.Context, request SAMEnrollmentTopologyGetRequest) (*SAMEnrollmentTopologyGetResult, error) {
 	values := url.Values{}
 	if strings.TrimSpace(request.ClaimRef) != "" {
 		values.Set("claim", request.ClaimRef)
 	}
-	path := c.baseURL + Prefix + "/sam-rrsets/" + url.PathEscape(strings.TrimSpace(request.Name))
+	path := c.baseURL + Prefix + "/sam-enrollment-topologies/" + url.PathEscape(strings.TrimSpace(request.Name))
 	if encoded := values.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -367,7 +367,7 @@ func (c *Client) GetSAMRRSet(ctx context.Context, request SAMRRSetGetRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	var result SAMRRSetGetResult
+	var result SAMEnrollmentTopologyGetResult
 	if err := c.do(req, &result); err != nil {
 		return nil, err
 	}

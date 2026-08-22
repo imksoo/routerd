@@ -23,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -351,6 +352,7 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	mobilityPrefix := fs.String("mobility-prefix", "", "authorized SAM IPv4 prefix accepted from the RR")
 	ownedAddress := fs.String("owned-address", "", "leaf-owned SAM IPv4 /32")
 	rrSet := fs.String("rr-set", "", "SAMRRSet name fetched from the RR")
+	directPeerGroup := fs.String("direct-peer-group", "", "policy-scoped SAMPeerGroup name for opportunistic direct leaf peers; RR remains the fallback")
 	policy := fs.String("policy", "", "SAMEnrollmentPolicy name")
 	joinAudience := fs.String("join-audience", "", "join audience string")
 	joinNonce := fs.String("join-nonce", "", "claim join nonce; defaults to <leaf-id>-0001")
@@ -362,6 +364,8 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	secretBase64 := fs.Bool("secret-base64", false, "decode selected join secret as base64 before HMAC")
 	bgpASN := fs.Uint("bgp-asn", 64577, "leaf and RR BGP ASN")
 	bgpRouterID := fs.String("bgp-router-id", "", "leaf BGP router ID; defaults to tunnel address host")
+	rrLocalPreference := fs.Uint("rr-local-preference", uint(mobilityconfig.DefaultBGPImportLocalPreference), "BGP local preference for RR-imported paths when --direct-peer-group is used")
+	directLocalPreference := fs.Uint("direct-local-preference", uint(mobilityconfig.DefaultSAMTransportDirectLocalPreference), "BGP local preference for direct leaf paths; must exceed --rr-local-preference")
 	mode := fs.String("mode", "fou", "SAM transport mode: fou, ipip, gre, or gue")
 	encryption := fs.String("encryption", "none", "SAM transport encryption")
 	encapSport := fs.Int("encap-sport", 5555, "FOU/GUE source port")
@@ -390,6 +394,9 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 	if *bgpASN > uint(^uint32(0)) {
 		return errors.New("mobility leaf-config requires --bgp-asn within uint32 range")
 	}
+	if *rrLocalPreference > uint(^uint32(0)) || *directLocalPreference > uint(^uint32(0)) {
+		return errors.New("mobility leaf-config local preference values must be within uint32 range")
+	}
 	router, err := mobilityGeneratedLeafConfig(mobilityLeafConfigOptions{
 		LeafID:                       *leafID,
 		UnderlayName:                 *underlayName,
@@ -402,6 +409,7 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 		MobilityPrefix:               *mobilityPrefix,
 		OwnedAddress:                 *ownedAddress,
 		RRSet:                        *rrSet,
+		DirectPeerGroup:              *directPeerGroup,
 		Policy:                       *policy,
 		JoinAudience:                 *joinAudience,
 		JoinNonce:                    *joinNonce,
@@ -413,6 +421,8 @@ func mobilityLeafConfigCommand(args []string, stdout io.Writer) error {
 		SecretBase64:                 *secretBase64,
 		BGPASN:                       uint32(*bgpASN),
 		BGPRouterID:                  *bgpRouterID,
+		RRLocalPreference:            uint32(*rrLocalPreference),
+		DirectLocalPreference:        uint32(*directLocalPreference),
 		Mode:                         *mode,
 		Encryption:                   *encryption,
 		EncapSport:                   *encapSport,
@@ -450,6 +460,7 @@ type mobilityLeafConfigOptions struct {
 	MobilityPrefix               string
 	OwnedAddress                 string
 	RRSet                        string
+	DirectPeerGroup              string
 	Policy                       string
 	JoinAudience                 string
 	JoinNonce                    string
@@ -461,6 +472,8 @@ type mobilityLeafConfigOptions struct {
 	SecretBase64                 bool
 	BGPASN                       uint32
 	BGPRouterID                  string
+	RRLocalPreference            uint32
+	DirectLocalPreference        uint32
 	Mode                         string
 	Encryption                   string
 	EncapSport                   int
@@ -504,6 +517,9 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 	}
 	if opts.BGPASN == 0 {
 		return nil, errors.New("mobility leaf-config requires --bgp-asn greater than zero")
+	}
+	if strings.TrimSpace(opts.DirectPeerGroup) != "" && mobilityconfig.EffectiveSAMTransportDirectLocalPreference(opts.DirectLocalPreference) <= mobilityconfig.EffectiveBGPImportLocalPreference(opts.RRLocalPreference) {
+		return nil, errors.New("mobility leaf-config requires --direct-local-preference greater than --rr-local-preference when --direct-peer-group is set")
 	}
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
@@ -568,6 +584,9 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{strings.TrimSpace(opts.OwnedAddress)}},
 		BGP:           api.SAMEnrollmentClaimBGPSpec{ASN: opts.BGPASN, RouterID: strings.TrimSpace(opts.BGPRouterID)},
 	}
+	if strings.TrimSpace(opts.DirectPeerGroup) != "" {
+		claim.DirectMesh = true
+	}
 	switch {
 	case strings.TrimSpace(opts.JoinHMAC) != "":
 		claim.JoinHMAC = strings.TrimSpace(opts.JoinHMAC)
@@ -579,6 +598,30 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 		claim.JoinHMAC = samenrollment.JoinHMAC(secret, claim)
 	default:
 		claim.JoinHMAC = "EXAMPLE_HMAC_SHA256_HEX"
+	}
+	peersFrom := []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/" + strings.TrimSpace(opts.RRSet)}}
+	if directPeerGroup := strings.TrimSpace(opts.DirectPeerGroup); directPeerGroup != "" {
+		peersFrom = append(peersFrom, api.SAMTransportPeersSourceSpec{
+			Resource: "SAMPeerGroup/" + directPeerGroup,
+			Direct:   true,
+		})
+	}
+	rrLocalPreference := uint32(0)
+	directLocalPreference := uint32(0)
+	if strings.TrimSpace(opts.DirectPeerGroup) != "" {
+		rrLocalPreference = opts.RRLocalPreference
+		directLocalPreference = opts.DirectLocalPreference
+	}
+	// Direct peers require a signed, deterministic identity community in
+	// addition to their per-leaf /32 allowlist. Tag the generated leaf's local
+	// advertisement at its source so another direct leaf can prove both who
+	// sent the route and which signed address that sender owns.
+	communities := api.BGPCommunitiesSpec{}
+	if strings.TrimSpace(opts.DirectPeerGroup) != "" {
+		communities = api.BGPCommunitiesSpec{
+			Send: "standard",
+			Set:  api.BGPCommunitySetSpec{Out: []string{bgpstate.MobilityNodeIdentityCommunity(opts.LeafID)}},
+		}
 	}
 	controlTokenFrom := api.SecretValueSourceSpec{File: strings.TrimSpace(opts.ControlAPITokenFile), Env: strings.TrimSpace(opts.ControlAPITokenEnv)}
 	router := &api.Router{
@@ -595,6 +638,7 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 				ExportPolicy: api.BGPExportPolicySpec{
 					AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)},
 				},
+				Communities: communities,
 				Redistribute: api.BGPRedistributeSpec{
 					Connected: api.BGPRedistributeRouteSpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
 				},
@@ -611,16 +655,18 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 				LocalEndpoint:     strings.TrimSpace(opts.LocalEndpoint),
 				EncapSport:        opts.EncapSport,
 				EncapDport:        opts.EncapDport,
-				PeersFrom:         []api.SAMTransportPeersSourceSpec{{Resource: "SAMRRSet/" + strings.TrimSpace(opts.RRSet)}},
+				PeersFrom:         peersFrom,
 				BGP: api.SAMTransportBGPProfileSpec{
-					RouterRef:    "BGPRouter/mobility-bgp",
-					PeerASN:      opts.BGPASN,
-					TimersPreset: "fast",
+					RouterRef:             "BGPRouter/mobility-bgp",
+					PeerASN:               opts.BGPASN,
+					TimersPreset:          "fast",
+					DirectLocalPreference: directLocalPreference,
 					ImportPolicy: api.BGPImportPolicySpec{
 						AllowedPrefixes:        []string{strings.TrimSpace(opts.MobilityPrefix)},
 						AllowedPrefixLengthMin: 32,
 						AllowedPrefixLengthMax: 32,
 						NextHopRewrite:         "unchanged",
+						LocalPreference:        rrLocalPreference,
 					},
 					ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{strings.TrimSpace(opts.OwnedAddress)}},
 				},
@@ -918,7 +964,7 @@ func mobilityUsage(w io.Writer) {
 	fmt.Fprintln(w, "  enrollment-hmac --config <path> --claim <name> (--secret-file <path>|--secret-env <name>|--secret <value>) [--secret-base64] [--show-payload]")
 	fmt.Fprintln(w, "  enrollment-submit --config <path> --claim <name> [--socket <path>] [-o table|json|yaml]")
 	fmt.Fprintln(w, "  enrollment-revoke --claim <name> [--rr-socket <path>|--rr-url <url>] [--rr-token-file <path>|--rr-token-env <name>] [--rr-ca-file <path>] [--rr-client-cert-file <path> --rr-client-key-file <path>] [-o table|json|yaml]")
-	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
+	fmt.Fprintln(w, "  leaf-config --leaf-id <name> --underlay-ifname <ifname> --underlay-address <cidr> --local-endpoint <ip> --endpoint-prefix <cidr> --inner-prefix <cidr> --tunnel-address <ipv4/32> --mobility-prefix <cidr> --owned-address <ipv4/32> --rr-set <name> [--direct-peer-group <name> --rr-local-preference 100 --direct-local-preference 200] --policy <name> --join-audience <name> --bootstrap-endpoint <url>")
 }
 
 func mobilityOwnerRows(statuses []routerstate.ObjectStatus, poolFilter, addressFilter string) []mobilityOwnerRow {

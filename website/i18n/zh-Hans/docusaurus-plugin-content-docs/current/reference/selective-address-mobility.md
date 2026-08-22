@@ -40,7 +40,20 @@ WireGuard peer 的 `AllowedIPs` 应只包含 transport endpoint prefix，不应�
 `SAMTransportProfile` 会生成 per-peer `TunnelInterface`、endpoint `/32` `IPv4Route`
 与 `BGPPeer`。所有 profile 通过 `peersFrom` 使用相同的 `SAMNodeSet`，因此每条 node pair
 edge 都能导出相同的 `/31`。`nodeRefs` 可将 peer 限制为实际 adjacency；省略时会选择带
-`samEndpoint` 的所有非 self node。直接 peer 或 topology list 不受支持。
+`samEndpoint` 的所有非 self node。
+
+已签名的 enrollment 可以在同一个 runtime snapshot 中额外返回一个
+`SAMPeerGroup`，并在 `peersFrom` 中标记为 `direct: true`。它只是在可达 leaf 之间尝试
+一条可选的 L3 直连路径；前面的非 optional `SAMRRSet` 仍是启动和故障时的回退路径。
+direct source 必须使用 `addressingMode: pair-stable`，并且不能把 peer 配成 route
+reflector client。
+
+当 direct BGP session 建立后，routerd 会给它导入的路由设置比 RR 更高的 BGP
+`LOCAL_PREF`。这不是根据 AS_PATH 长度或 administrative distance 选择：iBGP 的 RR
+反射不会可靠地把额外的转发 hop 写入 AS_PATH。profile 必须显式设置 RR 的
+`bgp.importPolicy.localPreference`，`bgp.directLocalPreference` 必须更高。每个 direct
+leaf 还只能通告其签名 claim 中列出的 IPv4 `/32`；没有、过期、不兼容或不可达的 direct
+group 会被忽略，RR 路径继续工作。
 
 ## dynamic RR sync fail-static
 

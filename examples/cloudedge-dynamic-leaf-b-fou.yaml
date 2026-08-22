@@ -57,7 +57,7 @@ spec:
         encapSport: 5555
         encapDport: 5555
         peersFrom:
-          - resource: SAMRRSet/cloudedge-rrs
+          - resource: SAMRRSet/cloudedge-private-fou-rrs
         bgp:
           routerRef: BGPRouter/mobility-bgp
           peerASN: 64577
@@ -75,7 +75,7 @@ spec:
       metadata: { name: leaf-b }
       spec:
         policyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-private-fou-rrs
         leafID: leaf-b
         joinAudience: cloudedge-private-underlay
         joinNonce: leaf-b-0001

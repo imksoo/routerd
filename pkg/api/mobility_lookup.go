@@ -84,6 +84,12 @@ func LookupSAMRRSet(router *Router, ref, field string) (SAMRRSetSpec, bool, erro
 	return lookupMobilitySpec(router, ref, "SAMRRSet", field, Resource.SAMRRSetSpec)
 }
 
+// LookupSAMPeerGroup resolves a runtime SAMPeerGroup reference and decodes its
+// typed node topology.
+func LookupSAMPeerGroup(router *Router, ref, field string) (SAMPeerGroupSpec, bool, error) {
+	return lookupMobilitySpec(router, ref, "SAMPeerGroup", field, Resource.SAMPeerGroupSpec)
+}
+
 // LookupSAMEnrollmentPolicy resolves a SAMEnrollmentPolicy reference and decodes its spec.
 func LookupSAMEnrollmentPolicy(router *Router, ref, field string) (SAMEnrollmentPolicySpec, bool, error) {
 	return lookupMobilitySpec(router, ref, "SAMEnrollmentPolicy", field, Resource.SAMEnrollmentPolicySpec)

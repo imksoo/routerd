@@ -12,11 +12,11 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-// FetchedSAMRRSetRecordOptions preserves the local persistence policy of a
-// SAMRRSet fetcher. Different fetchers intentionally have different lease and
-// digest policies, but must construct the same source, owner, and resource
-// shape before persisting the result.
-type FetchedSAMRRSetRecordOptions struct {
+// FetchedSAMEnrollmentTopologyRecordOptions preserves the local persistence
+// policy of an enrollment topology fetcher. Different fetchers intentionally
+// have different lease and digest policies, but must construct the same
+// source, owner, and resource shape before persisting the result.
+type FetchedSAMEnrollmentTopologyRecordOptions struct {
 	Name                              string
 	Generation                        int64
 	DefaultTTL                        time.Duration
@@ -24,16 +24,38 @@ type FetchedSAMRRSetRecordOptions struct {
 	Digest                            func(dynamicconfig.DynamicConfigPart) string
 }
 
-// FetchedSAMRRSetRecord validates and persists one fetched SAMRRSet as a
-// dynamic configuration part. Callers provide their explicit expiry, name,
-// and digest policy so daemon and routerctl fetching retain their existing
-// refresh semantics.
-func FetchedSAMRRSetRecord(resource api.Resource, observedAt, expiresAt time.Time, options FetchedSAMRRSetRecordOptions) (routerstate.DynamicConfigPartRecord, error) {
-	if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMRRSet" || strings.TrimSpace(resource.Metadata.Name) == "" {
+// FetchedSAMEnrollmentTopologyRecord validates and persists one fetched
+// enrollment topology as a single dynamic configuration part. The RR snapshot
+// is always present; a policy-scoped direct peer group is optional. Keeping
+// both resources in one part makes a refreshed direct topology an atomic
+// replacement under the long-lived SAMRRSet/<name> source.
+func FetchedSAMEnrollmentTopologyRecord(rrSet api.Resource, peerGroup *api.Resource, observedAt, expiresAt time.Time, options FetchedSAMEnrollmentTopologyRecordOptions) (routerstate.DynamicConfigPartRecord, error) {
+	if rrSet.APIVersion != api.MobilityAPIVersion || rrSet.Kind != "SAMRRSet" || strings.TrimSpace(rrSet.Metadata.Name) == "" {
 		return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched resource must be %s/SAMRRSet", api.MobilityAPIVersion)
 	}
-	if _, err := resource.SAMRRSetSpec(); err != nil {
+	rrSetSpec, err := rrSet.SAMRRSetSpec()
+	if err != nil {
 		return routerstate.DynamicConfigPartRecord{}, err
+	}
+	resources := []api.Resource{rrSet}
+	if peerGroup != nil {
+		if peerGroup.APIVersion != api.MobilityAPIVersion || peerGroup.Kind != "SAMPeerGroup" || strings.TrimSpace(peerGroup.Metadata.Name) == "" {
+			return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched peer group must be %s/SAMPeerGroup", api.MobilityAPIVersion)
+		}
+		peerGroupSpec, err := peerGroup.SAMPeerGroupSpec()
+		if err != nil {
+			return routerstate.DynamicConfigPartRecord{}, err
+		}
+		if strings.TrimSpace(peerGroupSpec.EnrollmentPolicyRef) == "" {
+			return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched SAMPeerGroup/%s must be enrollment-policy scoped", peerGroup.Metadata.Name)
+		}
+		if strings.TrimSpace(peerGroupSpec.TransportFingerprint) == "" {
+			return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched SAMPeerGroup/%s transportFingerprint is required", peerGroup.Metadata.Name)
+		}
+		if strings.TrimSpace(peerGroupSpec.EnrollmentPolicyRef) != strings.TrimSpace(rrSetSpec.EnrollmentPolicyRef) {
+			return routerstate.DynamicConfigPartRecord{}, fmt.Errorf("fetched SAMPeerGroup/%s enrollmentPolicyRef %q does not match SAMRRSet/%s enrollmentPolicyRef %q", peerGroup.Metadata.Name, peerGroupSpec.EnrollmentPolicyRef, rrSet.Metadata.Name, rrSetSpec.EnrollmentPolicyRef)
+		}
+		resources = append(resources, *peerGroup)
 	}
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
@@ -48,15 +70,15 @@ func FetchedSAMRRSetRecord(resource api.Resource, observedAt, expiresAt time.Tim
 			OwnerRefs: []api.OwnerRef{{
 				APIVersion: api.MobilityAPIVersion,
 				Kind:       "SAMRRSet",
-				Name:       resource.Metadata.Name,
+				Name:       rrSet.Metadata.Name,
 			}},
 		},
 		Spec: dynamicconfig.DynamicConfigPartSpec{
-			Source:     "SAMRRSet/" + resource.Metadata.Name,
+			Source:     "SAMRRSet/" + rrSet.Metadata.Name,
 			Generation: options.Generation,
 			ObservedAt: observedAt.UTC(),
 			ExpiresAt:  expiresAt.UTC(),
-			Resources:  []api.Resource{resource},
+			Resources:  resources,
 		},
 	}
 	if options.IncludeEmptyDirectivesActionPlans {

@@ -29,7 +29,7 @@ spec:
       metadata: { name: leaf-a }
       spec:
         policyRef: SAMEnrollmentPolicy/cloudedge-public-wg-leaves
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-public-wg-rrs
         leafID: leaf-a
         joinAudience: cloudedge-public-underlay
         joinNonce: leaf-a-0001
@@ -52,7 +52,7 @@ spec:
       metadata: { name: leaf-b }
       spec:
         policyRef: SAMEnrollmentPolicy/cloudedge-private-fou-leaves
-        rrSetRef: SAMRRSet/cloudedge-rrs
+        rrSetRef: SAMRRSet/cloudedge-private-fou-rrs
         leafID: leaf-b
         joinAudience: cloudedge-private-underlay
         joinNonce: leaf-b-0001

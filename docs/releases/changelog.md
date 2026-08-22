@@ -12,6 +12,25 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Cloud SAM leaves can now opt in to a dynamically derived, signed-claim
+  leaf-to-leaf BGP mesh. A direct `/32` path uses local preference 200 while
+  the existing route-reflector path remains installed at 100 as a safe
+  fallback. Direct peers are derived only after a verified RRSet, exact
+  peer identities, pair-stable tunnel addressing, and the direct peer group
+  are all available; this is L3 shortest-path routing, not an EVPN/VXLAN or
+  L2-extension feature.
+
+### Changed
+
+- `routerctl mobility leaf-config`, the schema, examples, and Cloud SAM
+  documentation now expose the opt-in direct peer group and explicit
+  direct-versus-RR local-preference policy. Applied BGP state journals
+  direct-peer additions, removals, and policy transitions before changing
+  live peers, so daemon restarts and topology churn preserve the RR fallback
+  rather than leaving stale direct state.
+
 ## v20260821.0106
 
 ### Fixed
