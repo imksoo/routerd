@@ -12,15 +12,19 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Direct profiles with a legacy explicit `nextHopRewrite: unchanged` now start
+  safely and normalize their effective RR import policy to `peer-address`, so
+  their RR fallback cannot depend on another leaf's transport address before
+  the YAML is updated.
+
 ## v20260822.1116
 
 ### Fixed
 
 - Generated Cloud SAM direct-leaf configurations now import reflected RR routes
-  through the reachable immediate RR peer (`nextHopRewrite: peer-address`). A
-  legacy direct profile with explicit `unchanged` now starts safely and
-  normalizes its effective import policy to `peer-address`, so its RR fallback
-  cannot depend on another leaf's transport address before the YAML is updated.
+  through the reachable immediate RR peer (`nextHopRewrite: peer-address`).
 - FIB selection no longer installs a lower-ranked remote path when GoBGP has
   selected a local best path for the same prefix.
 
