@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1944
+
 ### 修正
 
 - Ubuntu Live ISO 現在會在映像檔的初始 systemd 啟動 transaction 中啟用

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1944
+
 ### 修正
 
 - Ubuntu Live ISO では、`routerd.service` をイメージ内の最初の systemd 起動
