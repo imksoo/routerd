@@ -201,13 +201,20 @@ type SAMEnrollmentClaimRevokeResult struct {
 type SAMEnrollmentTopologyGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
+	// ClaimDigest is the caller's identity for its current signed claim. It is
+	// optional for an RR-only compatibility response, but an RR must omit any
+	// direct peer group unless it matches its active accepted claim.
+	ClaimDigest string `json:"claimDigest,omitempty" yaml:"claimDigest,omitempty"`
 }
 
 type SAMEnrollmentTopologyGetResult struct {
-	TypeMeta  `json:",inline" yaml:",inline"`
-	Metadata  ObjectMeta    `json:"metadata" yaml:"metadata"`
-	RRSet     api.Resource  `json:"rrSet" yaml:"rrSet"`
-	PeerGroup *api.Resource `json:"peerGroup,omitempty" yaml:"peerGroup,omitempty"`
+	TypeMeta `json:",inline" yaml:",inline"`
+	Metadata ObjectMeta `json:"metadata" yaml:"metadata"`
+	// ClaimDigest identifies the active claim from which this RR projected the
+	// snapshot. A client uses it to decide whether PeerGroup is usable.
+	ClaimDigest string        `json:"claimDigest" yaml:"claimDigest"`
+	RRSet       api.Resource  `json:"rrSet" yaml:"rrSet"`
+	PeerGroup   *api.Resource `json:"peerGroup,omitempty" yaml:"peerGroup,omitempty"`
 }
 
 type LogLevelRequest struct {
@@ -628,14 +635,15 @@ func NewSAMEnrollmentClaimRevokeResult(claimRef, source string, generation int64
 	}
 }
 
-func NewSAMEnrollmentTopologyGetResult(name string, rrSet api.Resource, peerGroup *api.Resource) SAMEnrollmentTopologyGetResult {
+func NewSAMEnrollmentTopologyGetResult(name, claimDigest string, rrSet api.Resource, peerGroup *api.Resource) SAMEnrollmentTopologyGetResult {
 	return SAMEnrollmentTopologyGetResult{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "SAMEnrollmentTopologyGetResult"},
 		Metadata: ObjectMeta{
 			Name: name,
 		},
-		RRSet:     rrSet,
-		PeerGroup: peerGroup,
+		ClaimDigest: claimDigest,
+		RRSet:       rrSet,
+		PeerGroup:   peerGroup,
 	}
 }
 

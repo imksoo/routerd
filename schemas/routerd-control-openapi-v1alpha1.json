@@ -1931,6 +1931,9 @@
       "SAMEnrollmentTopologyGetRequest": {
         "additionalProperties": false,
         "properties": {
+          "claimDigest": {
+            "type": "string"
+          },
           "claimRef": {
             "type": "string"
           },
@@ -1948,6 +1951,9 @@
         "additionalProperties": false,
         "properties": {
           "apiVersion": {
+            "type": "string"
+          },
+          "claimDigest": {
             "type": "string"
           },
           "kind": {
@@ -2096,6 +2102,7 @@
           "apiVersion",
           "kind",
           "metadata",
+          "claimDigest",
           "rrSet"
         ],
         "type": "object"
@@ -3112,6 +3119,15 @@
             "description": "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.",
             "in": "query",
             "name": "claim",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Digest of the caller's current signed claim. A mismatched or omitted digest returns only the RR fallback topology.",
+            "in": "query",
+            "name": "claimDigest",
             "required": false,
             "schema": {
               "type": "string"

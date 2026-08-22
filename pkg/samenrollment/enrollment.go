@@ -21,6 +21,24 @@ func JoinHMAC(secret []byte, claim api.SAMEnrollmentClaimSpec) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// ClaimDigest is the stable identity of an enrollment claim after admission.
+//
+// Unlike JoinHMAC, this includes the submitted signature and the
+// RR/controller-owned expiry and revocation fields.  Clients use it when
+// asking an RR for a topology snapshot, so an RR can prove that the snapshot
+// was projected from this exact accepted claim rather than an older claim with
+// the same resource name.
+func ClaimDigest(claim api.SAMEnrollmentClaimSpec) string {
+	payload := strings.Join([]string{
+		JoinCanonicalPayload(claim),
+		"joinHMAC=" + strings.TrimSpace(claim.JoinHMAC),
+		"expiresAt=" + strings.TrimSpace(claim.ExpiresAt),
+		"revoked=" + strconv.FormatBool(claim.Revoked),
+	}, "\n")
+	sum := sha256.Sum256([]byte(payload))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func JoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
 	owned := append([]string(nil), claim.Mobility.OwnedAddresses...)
 	sort.Strings(owned)

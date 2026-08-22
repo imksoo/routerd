@@ -209,6 +209,7 @@ func controlOpenAPISchema() map[string]any {
 					"parameters": []any{
 						pathParam("name", "SAMRRSet metadata.name selected by the enrollment policy."),
 						queryParam("claim", "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.", "string", ""),
+						queryParam("claimDigest", "Digest of the caller's current signed claim. A mismatched or omitted digest returns only the RR fallback topology.", "string", ""),
 					},
 					"responses": map[string]any{
 						"200":     responseRef("SAMEnrollmentTopologyGetResult"),

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,13 +196,13 @@ func TestGetSAMEnrollmentTopologyForAcceptedClaimReturnsRRSet(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
 		t.Fatalf("pre-submit getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
 	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
 	}
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now)
 	if err != nil {
 		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
@@ -275,7 +276,8 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 		}
 	}
 
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	oldRequest := submitTestTopologyRequest(t, requester)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now)
 	if err != nil {
 		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
@@ -307,6 +309,43 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	}
 	if got := group.OwnedPrefixesByNode["pve-leaf-c"]; len(got) != 2 || got[0] != "10.77.70.19/32" || got[1] != "10.77.70.23/32" {
 		t.Fatalf("direct node signed owned prefixes = %#v", group.OwnedPrefixesByNode)
+	}
+
+	// A claim rotation retains the same resource name.  A lagging client (or
+	// RR) must still receive its usable RR fallback, but never a direct group
+	// derived from the now-replaced accepted claim.
+	rotated := requesterSpec
+	rotated.JoinNonce = "pve-leaf-a-rotated-0001"
+	rotated.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), rotated)
+	requester.Spec = rotated
+	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: requester}, now); err != nil {
+		t.Fatalf("submit rotated requester: %v", err)
+	}
+	staleResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now)
+	if err != nil {
+		t.Fatalf("get stale claim topology: %v", err)
+	}
+	if staleResult.RRSet.Kind != "SAMRRSet" || staleResult.PeerGroup != nil {
+		t.Fatalf("stale claim topology = %#v, want RR fallback only", staleResult)
+	}
+	if staleResult.ClaimDigest != samenrollment.ClaimDigest(rotated) {
+		t.Fatalf("stale topology claimDigest = %q, want current %q", staleResult.ClaimDigest, samenrollment.ClaimDigest(rotated))
+	}
+	legacyRequest := submitTestTopologyRequest(t, requester)
+	legacyRequest.ClaimDigest = ""
+	legacyResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, legacyRequest, now)
+	if err != nil {
+		t.Fatalf("get legacy claim topology: %v", err)
+	}
+	if legacyResult.RRSet.Kind != "SAMRRSet" || legacyResult.PeerGroup != nil || legacyResult.ClaimDigest != samenrollment.ClaimDigest(rotated) {
+		t.Fatalf("legacy claim topology = %#v, want attested RR fallback only", legacyResult)
+	}
+	currentResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, requester), now)
+	if err != nil {
+		t.Fatalf("get rotated claim topology: %v", err)
+	}
+	if currentResult.PeerGroup == nil {
+		t.Fatalf("current claim topology = %#v, want direct peer group", currentResult)
 	}
 }
 
@@ -368,7 +407,7 @@ func TestGetSAMEnrollmentTopologyPolicyDirectMeshDisableKeepsRRFallback(t *testi
 	// direct claims. New direct submissions remain rejected at submit time,
 	// while existing claims receive their RR topology without a peer group.
 	setSubmitTestDirectMeshPeerGroup(t, router, "pve-wg-leaves", "")
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now)
 	if err != nil {
 		t.Fatalf("get topology after direct disable: %v", err)
 	}
@@ -409,7 +448,7 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || !result.ExpiresAt.Equal(revokeAt) {
 		t.Fatalf("revoke result = %#v", result)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, controlapi.SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"}, revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a not found") {
 		t.Fatalf("post-revoke getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
@@ -418,6 +457,25 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].EffectiveStatus(revokeAt) != "expired" || !strings.Contains(records[0].ResourcesJSON, `"revoked":true`) {
 		t.Fatalf("records = %#v", records)
+	}
+}
+
+func TestActiveSubmittedSAMEnrollmentClaimRequiresSourceClaimName(t *testing.T) {
+	now := time.Date(2026, 6, 28, 0, 1, 0, 0, time.UTC)
+	wrongClaim := loadSubmitTestClaim(t, "pve-leaf-a")
+	wrongClaim.Metadata.Name = "pve-leaf-b"
+	resources, err := json.Marshal([]api.Resource{wrongClaim})
+	if err != nil {
+		t.Fatalf("marshal resources: %v", err)
+	}
+	records := []routerstate.DynamicConfigPartRecord{{
+		Source:        "SAMEnrollmentClaim/pve-leaf-a",
+		ObservedAt:    now,
+		ExpiresAt:     now.Add(time.Hour),
+		ResourcesJSON: string(resources),
+	}}
+	if _, _, ok := activeSubmittedSAMEnrollmentClaimResource(records, "SAMEnrollmentClaim/pve-leaf-a", now); ok {
+		t.Fatal("wrong-name claim in a corrupted source record was accepted")
 	}
 }
 
@@ -432,6 +490,19 @@ func loadSubmitTestRouter(t *testing.T) *api.Router {
 		t.Fatalf("pve-minimal-rr base must not contain seeded claims")
 	}
 	return router
+}
+
+func submitTestTopologyRequest(t *testing.T, claim api.Resource) controlapi.SAMEnrollmentTopologyGetRequest {
+	t.Helper()
+	spec, err := claim.SAMEnrollmentClaimSpec()
+	if err != nil {
+		t.Fatalf("claim spec: %v", err)
+	}
+	return controlapi.SAMEnrollmentTopologyGetRequest{
+		Name:        "pve-rrs",
+		ClaimRef:    "SAMEnrollmentClaim/" + claim.Metadata.Name,
+		ClaimDigest: samenrollment.ClaimDigest(spec),
+	}
 }
 
 func loadSubmitTestClaim(t *testing.T, name string) api.Resource {

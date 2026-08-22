@@ -421,6 +421,512 @@ func TestSAMEnrollmentClientDropsDirectTopologyWhenRRLeaseRefreshFails(t *testin
 	}
 }
 
+func TestSAMEnrollmentClientDropsCachedDirectTopologyWhenOptOutRefreshFails(t *testing.T) {
+	tests := []struct {
+		name        string
+		submitErr   error
+		fetchErr    error
+		wantSubmits int
+		wantFetches int
+	}{
+		{
+			name:        "submit failure",
+			submitErr:   errors.New("rr unavailable"),
+			wantSubmits: 1,
+			wantFetches: 0,
+		},
+		{
+			name:        "topology fetch failure",
+			fetchErr:    errors.New("rr unavailable"),
+			wantSubmits: 1,
+			wantFetches: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+			store := newSAMEnrollmentClientTestStore()
+			client := &fakeSAMEnrollmentJoinClient{now: now, submitErr: tt.submitErr, fetchErr: tt.fetchErr}
+			controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+			oldClaim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+			if err != nil {
+				t.Fatalf("samEnrollmentClientClaim: %v", err)
+			}
+			peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+			expiresAt := now.Add(time.Hour)
+			if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+				t.Fatalf("seed direct topology: %v", err)
+			}
+			setSAMEnrollmentClientDirectMesh(t, controller.Router, false)
+			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+				"claimDigest": samEnrollmentClientClaimDigest(oldClaim),
+				"lastSuccess": now.Format(time.RFC3339),
+			}); err != nil {
+				t.Fatalf("SaveObjectStatus: %v", err)
+			}
+
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if client.submitCount != tt.wantSubmits || client.fetchCount != tt.wantFetches {
+				t.Fatalf("submit/fetch = %d/%d, want %d/%d", client.submitCount, client.fetchCount, tt.wantSubmits, tt.wantFetches)
+			}
+			records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+			if err != nil || len(records) != 1 {
+				t.Fatalf("records = %#v err=%v, want RR fallback", records, err)
+			}
+			if !records[0].ExpiresAt.Equal(expiresAt) {
+				t.Fatalf("RR fallback expiry = %s, want existing RR lease %s", records[0].ExpiresAt, expiresAt)
+			}
+			var resources []api.Resource
+			if err := json.Unmarshal([]byte(records[0].ResourcesJSON), &resources); err != nil {
+				t.Fatalf("decode fallback resources: %v", err)
+			}
+			if len(resources) != 1 || resources[0].Kind != "SAMRRSet" {
+				t.Fatalf("resources = %#v, want RR fallback only", resources)
+			}
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+			if status["phase"] != "Degraded" || status["reason"] == "" {
+				t.Fatalf("status = %#v, want failed opt-out refresh with fallback", status)
+			}
+			if _, found := status["observedDirectPeerGroup"]; found {
+				t.Fatalf("status = %#v, want cached direct group removed", status)
+			}
+		})
+	}
+}
+
+func TestSAMEnrollmentClientDropsCachedDirectTopologyWhenPolicyChangeRefreshFails(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	client := &fakeSAMEnrollmentJoinClient{now: now, submitErr: errors.New("rr unavailable")}
+	controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	oldClaim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	setSAMEnrollmentClientPolicyRef(t, controller.Router, "SAMEnrollmentPolicy/pve-wg-leaves-next")
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(oldClaim),
+		"lastSuccess": now.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if client.submitCount != 1 || client.fetchCount != 0 {
+		t.Fatalf("submit/fetch = %d/%d, want failed policy refresh 1/0", client.submitCount, client.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+	if status["phase"] != "Degraded" || status["reason"] == "" {
+		t.Fatalf("status = %#v, want failed policy refresh with fallback", status)
+	}
+	if _, found := status["observedDirectPeerGroup"]; found {
+		t.Fatalf("status = %#v, want cached direct group removed", status)
+	}
+}
+
+func TestSAMEnrollmentClientRetriesDirectOptOutWhenFallbackPersistenceFails(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	current := now
+	store := newSAMEnrollmentClientTestStore()
+	client := &fakeSAMEnrollmentJoinClient{now: now}
+	controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+	controller.Now = func() time.Time { return current }
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	oldClaim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, false)
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(oldClaim),
+		"lastSuccess": now.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+	store.upsertErr = errors.New("state unavailable")
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if client.submitCount != 0 || client.fetchCount != 0 {
+		t.Fatalf("submit/fetch after failed local withdrawal = %d/%d, want 0/0", client.submitCount, client.fetchCount)
+	}
+	records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+	if err != nil || len(records) != 1 || !strings.Contains(records[0].ResourcesJSON, "pve-direct-leaves") {
+		t.Fatalf("records = %#v err=%v, want retained direct group after failed persistence", records, err)
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+	if status["phase"] != "Degraded" || status["claimDigest"] != samEnrollmentClientClaimDigest(oldClaim) {
+		t.Fatalf("status = %#v, want pending direct opt-out", status)
+	}
+
+	store.upsertErr = nil
+	// The first failed local withdrawal wrote the configured retry backoff.
+	// Reconcile after it expires, just as the one-minute production controller
+	// would, rather than expecting an immediate retry at the same timestamp.
+	current = current.Add(11 * time.Second)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if client.submitCount != 1 || client.fetchCount != 1 {
+		t.Fatalf("submit/fetch after successful retry = %d/%d, want 1/1", client.submitCount, client.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+	status = store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+	if status["phase"] != "Ready" {
+		t.Fatalf("status = %#v, want successful direct opt-out", status)
+	}
+}
+
+func TestSAMEnrollmentClientDropsCachedDirectTopologyForCombinedOptOutAndPolicyChange(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	client := &fakeSAMEnrollmentJoinClient{now: now, submitErr: errors.New("rr unavailable")}
+	controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	oldClaim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, false)
+	setSAMEnrollmentClientPolicyRef(t, controller.Router, "SAMEnrollmentPolicy/pve-wg-leaves-next")
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(oldClaim),
+		"lastSuccess": now.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if client.submitCount != 1 || client.fetchCount != 0 {
+		t.Fatalf("submit/fetch = %d/%d, want failed policy refresh 1/0", client.submitCount, client.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+}
+
+func TestSAMEnrollmentClientRequiresDirectTopologyAgreementAcrossEndpoints(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	peerGroupOther := testSAMEnrollmentDirectPeerGroupResourceFor("pve-leaf-c", "10.30.0.23", "10.77.60.23/32")
+	tests := []struct {
+		name       string
+		second     *api.Resource
+		wantDirect bool
+	}{
+		{name: "matching topology", second: &peerGroup, wantDirect: true},
+		{name: "mismatched topology falls back", second: &peerGroupOther},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newSAMEnrollmentClientTestStore()
+			rrA := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
+			rrB := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: tt.second}
+			controller := SAMEnrollmentClientController{
+				Router: testSAMEnrollmentClientRouter("nonce-a"),
+				Store:  store,
+				Now:    func() time.Time { return now },
+				ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+					return []SAMEnrollmentJoinClient{rrA, rrB}
+				},
+			}
+			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if rrA.submitCount != 1 || rrB.submitCount != 1 || rrA.fetchCount != 1 || rrB.fetchCount != 1 {
+				t.Fatalf("RR A submit/fetch=%d/%d, RR B=%d/%d, want 1/1 each", rrA.submitCount, rrA.fetchCount, rrB.submitCount, rrB.fetchCount)
+			}
+			records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+			if err != nil || len(records) != 1 {
+				t.Fatalf("records = %#v err=%v, want one topology", records, err)
+			}
+			containsDirect := strings.Contains(records[0].ResourcesJSON, "pve-direct-leaves")
+			if containsDirect != tt.wantDirect {
+				t.Fatalf("resources = %s, direct=%t want %t", records[0].ResourcesJSON, containsDirect, tt.wantDirect)
+			}
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+			if tt.wantDirect && status["phase"] != "Ready" {
+				t.Fatalf("status = %#v, want ready direct topology", status)
+			}
+			if !tt.wantDirect && status["phase"] != "Degraded" {
+				t.Fatalf("status = %#v, want disagreement degradation with RR fallback", status)
+			}
+		})
+	}
+}
+
+func TestSAMEnrollmentClientRetriesDirectClaimRotationUntilEveryRRAcceptsIt(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	current := now
+	store := newSAMEnrollmentClientTestStore()
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	rrA := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
+	rrB := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup, submitErr: errors.New("stale RR")}
+	controller := SAMEnrollmentClientController{
+		Router: testSAMEnrollmentClientRouter("nonce-a"),
+		Store:  store,
+		Now:    func() time.Time { return current },
+		ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+			return []SAMEnrollmentJoinClient{rrA, rrB}
+		},
+	}
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	oldClaim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	setSAMEnrollmentClientJoinNonce(t, controller.Router, "nonce-b")
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(oldClaim),
+		"lastSuccess": now.Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+	if status["phase"] != "Degraded" || status["claimDigest"] != samEnrollmentClientClaimDigest(oldClaim) {
+		t.Fatalf("status = %#v, want unconfirmed direct claim rotation", status)
+	}
+
+	current = current.Add(11 * time.Second)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if rrA.submitCount != 2 || rrB.submitCount != 2 || rrA.fetchCount != 2 || rrB.fetchCount != 0 {
+		t.Fatalf("RR A submit/fetch=%d/%d, RR B=%d/%d, want retry against every RR", rrA.submitCount, rrA.fetchCount, rrB.submitCount, rrB.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+}
+
+func TestSAMEnrollmentClientDropsDirectTopologyWhenRRsDisagreeDuringRefresh(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	stalePeerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	rrFresh := &fakeSAMEnrollmentJoinClient{now: now}
+	rrStale := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &stalePeerGroup}
+	controller := SAMEnrollmentClientController{
+		Router: testSAMEnrollmentClientRouter("nonce-a"),
+		Store:  store,
+		Now:    func() time.Time { return now },
+		ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+			return []SAMEnrollmentJoinClient{rrFresh, rrStale}
+		},
+	}
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &stalePeerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(claim),
+		"lastSuccess": now.Add(-defaultSAMEnrollmentDirectTopologyRefresh).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if rrFresh.fetchCount != 1 || rrStale.fetchCount != 1 {
+		t.Fatalf("RR fetch counts = %d/%d, want 1/1", rrFresh.fetchCount, rrStale.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+	if status["phase"] != "Degraded" {
+		t.Fatalf("status = %#v, want RR disagreement to withdraw direct", status)
+	}
+}
+
+func TestSAMEnrollmentClientBoundsHungDirectTopologyRefresh(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	client := &fakeSAMEnrollmentJoinClient{now: now, blockFetch: true}
+	controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+	controller.requestTimeout = time.Millisecond
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	expiresAt := now.Add(time.Hour)
+	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+		t.Fatalf("seed direct topology: %v", err)
+	}
+	claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(claim),
+		"lastSuccess": now.Add(-defaultSAMEnrollmentDirectTopologyRefresh).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	started := time.Now()
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("hung direct refresh elapsed %s, want bounded request timeout", elapsed)
+	}
+	if client.submitCount != 0 || client.fetchCount != 1 {
+		t.Fatalf("submit/fetch = %d/%d, want timed-out GET-only refresh 0/1", client.submitCount, client.fetchCount)
+	}
+	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+}
+
+func TestSAMEnrollmentClientWithholdsDirectTopologyWhenRRDoesNotAttestCurrentClaim(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	tests := []struct {
+		name      string
+		configure func(*fakeSAMEnrollmentJoinClient)
+	}{
+		{
+			name: "same-name stale claim digest",
+			configure: func(client *fakeSAMEnrollmentJoinClient) {
+				client.topologyClaimDigest = "sha256:previous-claim"
+			},
+		},
+		{
+			name: "older RR omits claim digest",
+			configure: func(client *fakeSAMEnrollmentJoinClient) {
+				client.omitTopologyClaimDigest = true
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newSAMEnrollmentClientTestStore()
+			rrA := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
+			rrB := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
+			tt.configure(rrB)
+			controller := SAMEnrollmentClientController{
+				Router: testSAMEnrollmentClientRouter("nonce-a"),
+				Store:  store,
+				Now:    func() time.Time { return now },
+				ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+					return []SAMEnrollmentJoinClient{rrA, rrB}
+				},
+			}
+			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+			expiresAt := now.Add(time.Hour)
+			if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+				t.Fatalf("seed direct topology: %v", err)
+			}
+			claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+			if err != nil {
+				t.Fatalf("samEnrollmentClientClaim: %v", err)
+			}
+			if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+				"claimDigest": samEnrollmentClientClaimDigest(claim),
+				"lastSuccess": now.Add(-defaultSAMEnrollmentDirectTopologyRefresh).Format(time.RFC3339),
+			}); err != nil {
+				t.Fatalf("SaveObjectStatus: %v", err)
+			}
+
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if rrA.fetchCount != 1 || rrB.fetchCount != 1 {
+				t.Fatalf("RR fetch counts = %d/%d, want 1/1", rrA.fetchCount, rrB.fetchCount)
+			}
+			if rrA.lastTopologyRequest.ClaimDigest != samEnrollmentClientClaimDigest(claim) || rrB.lastTopologyRequest.ClaimDigest != samEnrollmentClientClaimDigest(claim) {
+				t.Fatalf("direct refresh did not bind both GETs to current claim: A=%#v B=%#v", rrA.lastTopologyRequest, rrB.lastTopologyRequest)
+			}
+			assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+			if status["phase"] != "Degraded" {
+				t.Fatalf("status = %#v, want RR-only degraded fallback", status)
+			}
+		})
+	}
+}
+
+func TestSAMEnrollmentClientDoesNotCountInvalidSubmitReceiptForDirectTopology(t *testing.T) {
+	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
+	valid := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-a", "SAMEnrollmentClaim/pve-leaf-a", 1, now, now.Add(time.Hour))
+	wrongClaim := valid
+	wrongClaim.ClaimRef = "SAMEnrollmentClaim/other-leaf"
+	wrongSource := valid
+	wrongSource.DynamicSource = "SAMEnrollmentClaim/other-leaf"
+	rejected := valid
+	rejected.Accepted = false
+	tests := []struct {
+		name   string
+		result *controlapi.SAMEnrollmentClaimSubmitResult
+	}{
+		{name: "nil result", result: nil},
+		{name: "not accepted", result: &rejected},
+		{name: "wrong claim ref", result: &wrongClaim},
+		{name: "wrong dynamic source", result: &wrongSource},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newSAMEnrollmentClientTestStore()
+			peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+			rrA := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
+			rrB := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup, submitResultSet: true, submitResult: tt.result}
+			controller := SAMEnrollmentClientController{
+				Router: testSAMEnrollmentClientRouter("nonce-a"),
+				Store:  store,
+				Now:    func() time.Time { return now },
+				ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
+					return []SAMEnrollmentJoinClient{rrA, rrB}
+				},
+			}
+			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			if rrA.submitCount != 1 || rrA.fetchCount != 1 || rrB.submitCount != 1 || rrB.fetchCount != 0 {
+				t.Fatalf("RR A submit/fetch=%d/%d, RR B=%d/%d; invalid receipt must not admit direct topology", rrA.submitCount, rrA.fetchCount, rrB.submitCount, rrB.fetchCount)
+			}
+			assertSAMEnrollmentClientRRSetOnlyRecord(t, store, now.Add(time.Hour))
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+			if status["phase"] != "Degraded" {
+				t.Fatalf("status = %#v, want RR-only degraded fallback", status)
+			}
+		})
+	}
+}
+
 func TestSAMEnrollmentClientSubmitsToAllBootstrapEndpoints(t *testing.T) {
 	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
 	store := newSAMEnrollmentClientTestStore()
@@ -450,29 +956,54 @@ func TestSAMEnrollmentClientSubmitsToAllBootstrapEndpoints(t *testing.T) {
 }
 
 type fakeSAMEnrollmentJoinClient struct {
-	now         time.Time
-	submitErr   error
-	fetchErr    error
-	peerGroup   *api.Resource
-	submitCount int
-	fetchCount  int
+	now                     time.Time
+	submitErr               error
+	fetchErr                error
+	blockSubmit             bool
+	blockFetch              bool
+	peerGroup               *api.Resource
+	submitResultSet         bool
+	submitResult            *controlapi.SAMEnrollmentClaimSubmitResult
+	topologyClaimDigest     string
+	omitTopologyClaimDigest bool
+	lastTopologyRequest     controlapi.SAMEnrollmentTopologyGetRequest
+	submitCount             int
+	fetchCount              int
 }
 
-func (c *fakeSAMEnrollmentJoinClient) SubmitSAMEnrollmentClaim(context.Context, controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
+func (c *fakeSAMEnrollmentJoinClient) SubmitSAMEnrollmentClaim(ctx context.Context, _ controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error) {
 	c.submitCount++
+	if c.blockSubmit {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if c.submitErr != nil {
 		return nil, c.submitErr
+	}
+	if c.submitResultSet {
+		return c.submitResult, nil
 	}
 	result := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-a", "SAMEnrollmentClaim/pve-leaf-a", 1, c.now, c.now.Add(time.Hour))
 	return &result, nil
 }
 
-func (c *fakeSAMEnrollmentJoinClient) GetSAMEnrollmentTopology(context.Context, controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
+func (c *fakeSAMEnrollmentJoinClient) GetSAMEnrollmentTopology(ctx context.Context, request controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
 	c.fetchCount++
+	c.lastTopologyRequest = request
+	if c.blockFetch {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if c.fetchErr != nil {
 		return nil, c.fetchErr
 	}
-	result := controlapi.NewSAMEnrollmentTopologyGetResult("pve-rrs", testSAMEnrollmentRRSetResource(), c.peerGroup)
+	digest := request.ClaimDigest
+	if c.omitTopologyClaimDigest {
+		digest = ""
+	} else if c.topologyClaimDigest != "" {
+		digest = c.topologyClaimDigest
+	}
+	result := controlapi.NewSAMEnrollmentTopologyGetResult("pve-rrs", digest, testSAMEnrollmentRRSetResource(), c.peerGroup)
 	return &result, nil
 }
 
@@ -537,6 +1068,10 @@ func testSAMEnrollmentRRSetResource() api.Resource {
 }
 
 func testSAMEnrollmentDirectPeerGroupResource() api.Resource {
+	return testSAMEnrollmentDirectPeerGroupResourceFor("pve-leaf-b", "10.30.0.22", "10.77.60.22/32")
+}
+
+func testSAMEnrollmentDirectPeerGroupResourceFor(nodeRef, endpoint, ownedPrefix string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: "pve-direct-leaves"},
@@ -544,11 +1079,11 @@ func testSAMEnrollmentDirectPeerGroupResource() api.Resource {
 			EnrollmentPolicyRef:  "SAMEnrollmentPolicy/pve-wg-leaves",
 			TransportFingerprint: "sha256:mesh",
 			Nodes: []api.SAMNodeSpec{{
-				NodeRef:     "pve-leaf-b",
-				SAMEndpoint: "10.30.0.22",
+				NodeRef:     nodeRef,
+				SAMEndpoint: endpoint,
 			}},
 			OwnedPrefixesByNode: map[string][]string{
-				"pve-leaf-b": {"10.77.60.22/32"},
+				nodeRef: {ownedPrefix},
 			},
 		},
 	}
@@ -571,6 +1106,40 @@ func setSAMEnrollmentClientDirectMesh(t *testing.T, router *api.Router, directMe
 	t.Fatalf("SAMEnrollmentClaim/pve-leaf-a not found")
 }
 
+func setSAMEnrollmentClientPolicyRef(t *testing.T, router *api.Router, policyRef string) {
+	t.Helper()
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != "pve-leaf-a" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			t.Fatalf("claim spec: %v", err)
+		}
+		claim.PolicyRef = policyRef
+		router.Spec.Resources[i].Spec = claim
+		return
+	}
+	t.Fatalf("SAMEnrollmentClaim/pve-leaf-a not found")
+}
+
+func setSAMEnrollmentClientJoinNonce(t *testing.T, router *api.Router, nonce string) {
+	t.Helper()
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClaim" || resource.Metadata.Name != "pve-leaf-a" {
+			continue
+		}
+		claim, err := resource.SAMEnrollmentClaimSpec()
+		if err != nil {
+			t.Fatalf("claim spec: %v", err)
+		}
+		claim.JoinNonce = nonce
+		router.Spec.Resources[i].Spec = claim
+		return
+	}
+	t.Fatalf("SAMEnrollmentClaim/pve-leaf-a not found")
+}
+
 func seedSAMEnrollmentClientTopology(store *samEnrollmentClientTestStore, observedAt, expiresAt time.Time, peerGroup *api.Resource) error {
 	resource := testSAMEnrollmentRRSetResource()
 	record, err := codec.FetchedSAMEnrollmentTopologyRecord(resource, peerGroup, observedAt, expiresAt, codec.FetchedSAMEnrollmentTopologyRecordOptions{
@@ -587,8 +1156,9 @@ func seedSAMEnrollmentClientTopology(store *samEnrollmentClientTestStore, observ
 }
 
 type samEnrollmentClientTestStore struct {
-	status map[string]map[string]any
-	parts  map[string][]routerstate.DynamicConfigPartRecord
+	status    map[string]map[string]any
+	parts     map[string][]routerstate.DynamicConfigPartRecord
+	upsertErr error
 }
 
 func newSAMEnrollmentClientTestStore() *samEnrollmentClientTestStore {
@@ -612,6 +1182,9 @@ func (s *samEnrollmentClientTestStore) ObjectStatus(apiVersion, kind, name strin
 }
 
 func (s *samEnrollmentClientTestStore) UpsertDynamicConfigPart(record routerstate.DynamicConfigPartRecord) error {
+	if s.upsertErr != nil {
+		return s.upsertErr
+	}
 	records := s.parts[record.Source]
 	for i, existing := range records {
 		if existing.Generation == record.Generation {
@@ -636,6 +1209,24 @@ func assertSAMEnrollmentClientRecordContains(t *testing.T, record routerstate.Dy
 	}
 	if !strings.Contains(record.ResourcesJSON, want) {
 		t.Fatalf("record resources = %#v, want %q", resources, want)
+	}
+}
+
+func assertSAMEnrollmentClientRRSetOnlyRecord(t *testing.T, store *samEnrollmentClientTestStore, wantExpiry time.Time) {
+	t.Helper()
+	records, err := store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+	if err != nil || len(records) != 1 {
+		t.Fatalf("records = %#v err=%v, want RR fallback", records, err)
+	}
+	if !wantExpiry.IsZero() && !records[0].ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("RR fallback expiry = %s, want %s", records[0].ExpiresAt, wantExpiry)
+	}
+	var resources []api.Resource
+	if err := json.Unmarshal([]byte(records[0].ResourcesJSON), &resources); err != nil {
+		t.Fatalf("decode fallback resources: %v", err)
+	}
+	if len(resources) != 1 || resources[0].Kind != "SAMRRSet" {
+		t.Fatalf("resources = %#v, want RR fallback only", resources)
 	}
 }
 

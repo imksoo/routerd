@@ -110,6 +110,9 @@ The project focuses on a few independent strengths:
   leaf path**. routerd tries that path only for signed, opted-in leaves, gives
   it a higher BGP local preference while it is established, and keeps the RR
   peers as the safe fallback when the direct path is absent or unreachable.
+  Every configured RR must attest the current signed claim before routerd
+  enables that higher-preference path; an older or stale RR still supplies the
+  ordinary RR fallback, never an unverified direct peer.
   Static identity/topology comes from `SAMNodeSet`, while
   each MobilityPool supplies the local `/32` and capture intent. Startup
   fencing is readiness-first but bounded, and

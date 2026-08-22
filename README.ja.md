@@ -108,6 +108,9 @@ routerd は、次の独立した特徴を大切にします。
   BGP local preference を高くしますが、直接経路が欠ける・届かない場合も RR peer を
   安全な fallback として残します。静的な identity/topology は
   `SAMNodeSet` が持ち、各 MobilityPool はローカルの `/32` と capture intent を持ちます。
+  direct 経路を有効にするには、設定したすべての RR が現在の署名済み claim を確認する
+  必要があります。古い・遅れた RR は通常の RR fallback を返せますが、未確認の direct peer
+  は返せません。
   startup fence は readiness 優先ですが上限付きで、明示的な
   allowed prefix がない RR-client import admission は宣言済み MobilityPool prefix
   を既定値にします。
