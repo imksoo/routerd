@@ -27,6 +27,7 @@ import (
 	gobgp "github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	gobgpserver "github.com/osrg/gobgp/v4/pkg/server"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/version"
 )
@@ -482,16 +483,6 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 		}
 	}
 	applyPolicy := &gobgpapi.ApplyPolicy{}
-	if appliedImportPolicyConfigured(peer.ImportPolicy) && strings.TrimSpace(peer.ImportPolicyName) != "" {
-		applyPolicy.ImportPolicy = &gobgpapi.PolicyAssignment{
-			Name:          strings.TrimSpace(peer.Address),
-			Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
-			DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
-			Policies: []*gobgpapi.Policy{{
-				Name: strings.TrimSpace(peer.ImportPolicyName),
-			}},
-		}
-	}
 	if len(appliedExportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
 		applyPolicy.ExportPolicy = &gobgpapi.PolicyAssignment{
 			Name:          strings.TrimSpace(peer.Address),
@@ -502,7 +493,7 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			}},
 		}
 	}
-	if applyPolicy.ImportPolicy != nil || applyPolicy.ExportPolicy != nil {
+	if applyPolicy.ExportPolicy != nil {
 		out.ApplyPolicy = applyPolicy
 	}
 	return out
@@ -537,33 +528,17 @@ func afiSafi(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 }
 
 func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesRequest, *gobgpapi.PolicyAssignment) {
+	config = bgpdaemon.Normalize(config)
 	req := &gobgpapi.SetPoliciesRequest{}
 	assignment := &gobgpapi.PolicyAssignment{
 		Name:          "global",
 		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
 		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
 	}
-	globalImportName := "routerd-restore-import"
-	seenImportPolicies := map[string]bool{}
-	peerImportPolicies := appliedImportPolicies(config)
-	globalImportPolicy := config.Global.ImportPolicy
-	if len(mergeStringSets(globalImportPolicy.AllowedPrefixes)) > 0 {
-		globalImportPolicy.AllowedPrefixes = mergeStringSets(globalImportPolicy.AllowedPrefixes, appliedDynamicPathPrefixes(config.Paths))
-	}
-	if appliedImportPolicyConfigured(globalImportPolicy) {
-		appendAppliedImportPolicy(req, globalImportName, globalImportName+"-prefixes", globalImportPolicy)
-		if len(peerImportPolicies) == 0 {
-			assignment.DefaultAction = gobgpapi.RouteAction_ROUTE_ACTION_REJECT
-			assignment.Policies = append(assignment.Policies, &gobgpapi.Policy{Name: globalImportName})
-		}
-		seenImportPolicies[globalImportName] = true
-	}
-	for _, policy := range peerImportPolicies {
-		if seenImportPolicies[policy.Name] {
-			continue
-		}
-		appendAppliedImportPolicy(req, policy.Name, policy.Name+"-prefixes", policy.Spec)
-		seenImportPolicies[policy.Name] = true
+	if scopes := appliedEffectiveImportPolicyScopes(config); len(scopes) > 0 {
+		name := "routerd-restore-import-effective"
+		appendAppliedEffectiveImportPolicy(req, name, scopes)
+		assignment.Policies = []*gobgpapi.Policy{{Name: name}}
 	}
 	for _, policy := range appliedExportPolicies(config) {
 		prefixes := appliedExportPolicyPrefixes(policy.Spec)
@@ -591,77 +566,6 @@ func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesReque
 	return req, assignment
 }
 
-func appendAppliedImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName, prefixSetName string, spec bgpdaemon.AppliedImportPolicy) {
-	prefixes := appliedPolicyPrefixes(spec)
-	if strings.TrimSpace(policyName) == "" || strings.TrimSpace(prefixSetName) == "" {
-		return
-	}
-	policyName = strings.TrimSpace(policyName)
-	prefixSetName = strings.TrimSpace(prefixSetName)
-	if len(prefixes) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-			Name:        prefixSetName,
-			Prefixes:    prefixes,
-		})
-	}
-	requiredSetName := policyName + "-required-communities"
-	requiredCommunities := cleanCommunityPolicyValues(spec.RequiredCommunities)
-	if len(requiredCommunities) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
-			Name:        requiredSetName,
-			List:        requiredCommunities,
-		})
-	}
-	forbiddenSetName := policyName + "-forbidden-communities"
-	forbiddenCommunities := cleanCommunityPolicyValues(spec.ForbiddenCommunities)
-	if len(forbiddenCommunities) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
-			Name:        forbiddenSetName,
-			List:        forbiddenCommunities,
-		})
-	}
-	statements := []*gobgpapi.Statement{}
-	if len(forbiddenCommunities) > 0 {
-		statements = append(statements, &gobgpapi.Statement{
-			Name: appliedPolicyStatementName(policyName, "reject-forbidden-community"),
-			Conditions: &gobgpapi.Conditions{CommunitySet: &gobgpapi.MatchSet{
-				Type: gobgpapi.MatchSet_TYPE_ANY,
-				Name: forbiddenSetName,
-			}},
-			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
-		})
-	}
-	acceptConditions := &gobgpapi.Conditions{}
-	if len(prefixes) > 0 {
-		acceptConditions.PrefixSet = &gobgpapi.MatchSet{
-			Type: gobgpapi.MatchSet_TYPE_ANY,
-			Name: prefixSetName,
-		}
-	}
-	if len(requiredCommunities) > 0 {
-		acceptConditions.CommunitySet = &gobgpapi.MatchSet{
-			Type: gobgpapi.MatchSet_TYPE_ALL,
-			Name: requiredSetName,
-		}
-	}
-	statements = append(statements, &gobgpapi.Statement{
-		Name:       appliedPolicyStatementName(policyName, "allow-import"),
-		Conditions: acceptConditions,
-		Actions: &gobgpapi.Actions{
-			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
-			Nexthop:     appliedNextHopAction(spec),
-			LocalPref:   appliedLocalPreferenceAction(spec),
-		},
-	})
-	req.Policies = append(req.Policies, &gobgpapi.Policy{
-		Name:       policyName,
-		Statements: statements,
-	})
-}
-
 func cleanCommunityPolicyValues(values []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -677,45 +581,135 @@ func cleanCommunityPolicyValues(values []string) []string {
 	return out
 }
 
-type appliedImportPolicy struct {
-	Name string
-	Spec bgpdaemon.AppliedImportPolicy
+type appliedImportPolicyScope struct {
+	Name      string
+	Neighbors []string
+	Spec      bgpdaemon.AppliedImportPolicy
 }
 
-func appliedImportPolicies(config bgpdaemon.AppliedConfig) []appliedImportPolicy {
-	byName := map[string]bgpdaemon.AppliedImportPolicy{}
+func appliedEffectiveImportPolicyScopes(config bgpdaemon.AppliedConfig) []appliedImportPolicyScope {
 	dynamicPrefixes := appliedDynamicPathPrefixes(config.Paths)
-	for _, peer := range config.Peers {
-		name := strings.TrimSpace(peer.ImportPolicyName)
-		if name == "" {
-			name = "routerd-restore-import"
+	addresses := make([]string, 0, len(config.Peers))
+	for address := range config.Peers {
+		addresses = append(addresses, address)
+	}
+	sort.Strings(addresses)
+	var scopes []appliedImportPolicyScope
+	for _, address := range addresses {
+		peer := config.Peers[address]
+		address = strings.TrimSpace(peer.Address)
+		neighbor := appliedNeighborSetAddress(address)
+		if neighbor == "" {
+			continue
 		}
 		spec := peer.ImportPolicy
-		if len(spec.AllowedPrefixes) == 0 && !peer.PreserveImportPrefixes {
+		// Keep a prefixless per-peer rule such as the direct-mesh
+		// local-preference/next-hop policy.  The controller chooses the global
+		// default only when the peer has no import policy at all.
+		if !appliedImportPolicyConfigured(spec) && !peer.PreserveImportPrefixes {
 			spec = config.Global.ImportPolicy
 		}
 		if !peer.PreserveImportPrefixes {
 			spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
 		}
-		if appliedImportPolicyConfigured(spec) {
-			byName[name] = spec
+		if !appliedImportPolicyConfigured(spec) {
+			continue
 		}
+		scopes = append(scopes, appliedImportPolicyScope{
+			Name:      "routerd-restore-import-effective-peer-" + stringutil.ConservativeName(address, "peer"),
+			Neighbors: []string{neighbor},
+			Spec:      spec,
+		})
 	}
-	if len(byName) == 0 && appliedImportPolicyConfigured(config.Global.ImportPolicy) {
-		spec := config.Global.ImportPolicy
-		spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
-		byName["routerd-restore-import"] = spec
+	return scopes
+}
+
+func appliedNeighborSetAddress(value string) string {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return ""
 	}
-	var out []string
-	for name := range byName {
-		out = append(out, name)
+	return netip.PrefixFrom(address, address.BitLen()).String()
+}
+
+func appendAppliedEffectiveImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName string, scopes []appliedImportPolicyScope) {
+	statements := make([]*gobgpapi.Statement, 0, len(scopes)*3)
+	for _, scope := range scopes {
+		neighborSetName := scope.Name + "-neighbors"
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR,
+			Name:        neighborSetName,
+			List:        append([]string(nil), scope.Neighbors...),
+		})
+		statements = append(statements, appliedEffectiveImportPolicyStatements(req, scope, neighborSetName)...)
 	}
-	sort.Strings(out)
-	policies := make([]appliedImportPolicy, 0, len(out))
-	for _, name := range out {
-		policies = append(policies, appliedImportPolicy{Name: name, Spec: byName[name]})
+	req.Policies = append(req.Policies, &gobgpapi.Policy{Name: policyName, Statements: statements})
+}
+
+func appliedEffectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, scope appliedImportPolicyScope, neighborSetName string) []*gobgpapi.Statement {
+	prefixes := appliedPolicyPrefixes(scope.Spec)
+	prefixSetName := scope.Name + "-prefixes"
+	if len(prefixes) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
+			Name:        prefixSetName,
+			Prefixes:    prefixes,
+		})
 	}
-	return policies
+	requiredSetName := scope.Name + "-required-communities"
+	requiredCommunities := cleanCommunityPolicyValues(scope.Spec.RequiredCommunities)
+	if len(requiredCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
+			Name:        requiredSetName,
+			List:        requiredCommunities,
+		})
+	}
+	forbiddenSetName := scope.Name + "-forbidden-communities"
+	forbiddenCommunities := cleanCommunityPolicyValues(scope.Spec.ForbiddenCommunities)
+	if len(forbiddenCommunities) > 0 {
+		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
+			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
+			Name:        forbiddenSetName,
+			List:        forbiddenCommunities,
+		})
+	}
+	neighborSet := func() *gobgpapi.MatchSet {
+		return &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: neighborSetName}
+	}
+	var statements []*gobgpapi.Statement
+	if len(forbiddenCommunities) > 0 {
+		statements = append(statements, &gobgpapi.Statement{
+			Name: appliedPolicyStatementName(scope.Name, "reject-forbidden-community"),
+			Conditions: &gobgpapi.Conditions{
+				NeighborSet:  neighborSet(),
+				CommunitySet: &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: forbiddenSetName},
+			},
+			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
+		})
+	}
+	acceptConditions := &gobgpapi.Conditions{NeighborSet: neighborSet()}
+	if len(prefixes) > 0 {
+		acceptConditions.PrefixSet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: prefixSetName}
+	}
+	if len(requiredCommunities) > 0 {
+		acceptConditions.CommunitySet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ALL, Name: requiredSetName}
+	}
+	statements = append(statements, &gobgpapi.Statement{
+		Name:       appliedPolicyStatementName(scope.Name, "allow-import"),
+		Conditions: acceptConditions,
+		Actions: &gobgpapi.Actions{
+			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
+			Nexthop:     appliedNextHopAction(scope.Spec),
+			LocalPref:   appliedLocalPreferenceAction(scope.Spec),
+		},
+	})
+	statements = append(statements, &gobgpapi.Statement{
+		Name:       appliedPolicyStatementName(scope.Name, "reject-unmatched-import"),
+		Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
+		Actions:    &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
+	})
+	return statements
 }
 
 func appliedDynamicPathPrefixes(paths []bgpdaemon.AppliedPath) []string {

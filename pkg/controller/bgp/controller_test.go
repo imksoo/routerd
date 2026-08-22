@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/netip"
 	"reflect"
 	"sort"
@@ -423,8 +424,11 @@ func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
 	if got := timersProfile(group.GetTimers().GetConfig()); got != "fast" {
 		t.Fatalf("timers profile = %q, want fast", got)
 	}
-	if group.GetApplyPolicy().GetImportPolicy() == nil || group.GetApplyPolicy().GetExportPolicy() == nil {
-		t.Fatalf("dynamic peer group policy assignments missing: %#v", group.GetApplyPolicy())
+	if group.GetApplyPolicy().GetImportPolicy() != nil || group.GetApplyPolicy().GetExportPolicy() == nil {
+		t.Fatalf("dynamic peer group policy assignments = %#v, want export only", group.GetApplyPolicy())
+	}
+	if !policyPlanHasDefinedSet(server.policyRequest, gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, "routerd-lan-import-effective-dynamic-routerd-dynamic-cloudedge-leaves-neighbors", "10.255.0.0/20") {
+		t.Fatalf("global import policy defined sets = %#v, want dynamic source neighbor set", server.policyRequest.GetDefinedSets())
 	}
 	neighbor := server.dynamicNeighbors["routerd-dynamic-cloudedge-leaves|10.255.0.0/20"]
 	if neighbor == nil {
@@ -498,9 +502,6 @@ func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing
 		},
 	}, nil, nil)
 	peer := peers["routerd-dynamic-leaves"]
-	if peer.ImportPolicyName != bgpPolicyName("lan", "import") {
-		t.Fatalf("import policy name = %q, want inherited router policy", peer.ImportPolicyName)
-	}
 	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
 		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
 		peer.ImportPolicy.AllowedPrefixLengthMax != 32 {
@@ -528,9 +529,6 @@ func TestApplyRouterBGPDynamicDefaultsUsesOwnExactImportPolicyWithNextHopRewrite
 		},
 	}, nil, nil)
 	peer := peers["routerd-dynamic-leaves"]
-	if peer.ImportPolicyName != dynamicPeerImportPolicyName("lan", "routerd-dynamic-leaves") {
-		t.Fatalf("import policy name = %q, want dynamic peer policy", peer.ImportPolicyName)
-	}
 	if !reflect.DeepEqual(peer.ImportPolicy.AllowedPrefixes, []string{"10.77.60.0/24"}) ||
 		peer.ImportPolicy.AllowedPrefixLengthMin != 32 ||
 		peer.ImportPolicy.AllowedPrefixLengthMax != 32 ||
@@ -1338,15 +1336,6 @@ func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 			assigned[policy.GetName()] = true
 		}
 	}
-	for _, peer := range s.peers {
-		assignment := peer.GetApplyPolicy().GetImportPolicy()
-		if assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT {
-			continue
-		}
-		for _, policy := range assignment.GetPolicies() {
-			assigned[policy.GetName()] = true
-		}
-	}
 	for _, policy := range s.policyRequest.GetPolicies() {
 		if !assigned[policy.GetName()] {
 			continue
@@ -1454,16 +1443,13 @@ func TestReconcileStartsGoBGPAndDoesNotReaddUnchangedPeer(t *testing.T) {
 	if got := peer.GetAfiSafis()[0].GetUseMultiplePaths().GetEbgp().GetConfig().GetMaximumPaths(); got < 4 {
 		t.Fatalf("peer eBGP maximum paths = %d, want >= 4", got)
 	}
-	importAssignment := peer.GetApplyPolicy().GetImportPolicy()
-	if importAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		importAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
-		len(importAssignment.GetPolicies()) != 1 ||
-		importAssignment.GetPolicies()[0].GetName() != "routerd-lan-import" {
-		t.Fatalf("peer import policy = %#v, want default import policy assigned to peer", importAssignment)
+	if peer.GetApplyPolicy().GetImportPolicy() != nil {
+		t.Fatalf("peer import policy = %#v, want global-RIB policy only", peer.GetApplyPolicy().GetImportPolicy())
 	}
 	if server.policyAssignment.GetName() != "global" || server.policyAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		server.policyAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT || len(server.policyAssignment.GetPolicies()) != 0 {
-		t.Fatalf("global import policy assignment = %#v, want default accept without routerd policy", server.policyAssignment)
+		server.policyAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT || len(server.policyAssignment.GetPolicies()) != 1 ||
+		server.policyAssignment.GetPolicies()[0].GetName() != "routerd-lan-import-effective" {
+		t.Fatalf("global import policy assignment = %#v, want effective neighbor-scoped policy", server.policyAssignment)
 	}
 	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
 	if status["backend"] != "gobgp" || status["phase"] != "Established" {
@@ -1537,46 +1523,21 @@ func TestGoBGPPeerExportPolicy(t *testing.T) {
 	}
 }
 
-func TestGoBGPPeerImportPolicy(t *testing.T) {
+func TestGoBGPPeerDoesNotAttachIneffectiveImportPolicy(t *testing.T) {
 	peer := goBGPPeer(desiredPeer{
-		Address:          "10.99.0.2",
-		ASN:              64577,
-		ImportPolicyName: "routerd-lan-import-10-99-0-2",
-		ImportPolicy:     api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}},
+		Address:      "10.99.0.2",
+		ASN:          64577,
+		ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.168.123.0/24"}},
 	})
-	assignment := peer.GetApplyPolicy().GetImportPolicy()
-	if assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
-		len(assignment.GetPolicies()) != 1 ||
-		assignment.GetPolicies()[0].GetName() != "routerd-lan-import-10-99-0-2" {
-		t.Fatalf("peer import policy = %#v, want default reject with named import policy", assignment)
-	}
-}
-
-func TestGoBGPPeerImportPolicyWithoutPrefixesStillAttaches(t *testing.T) {
-	peer := goBGPPeer(desiredPeer{
-		Address:          "10.99.0.2",
-		ASN:              64577,
-		ImportPolicyName: "routerd-direct-import-10-99-0-2",
-		ImportPolicy: api.BGPImportPolicySpec{
-			NextHopRewrite:  "peer-address",
-			LocalPreference: 200,
-		},
-	})
-	assignment := peer.GetApplyPolicy().GetImportPolicy()
-	if assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
-		len(assignment.GetPolicies()) != 1 ||
-		assignment.GetPolicies()[0].GetName() != "routerd-direct-import-10-99-0-2" {
-		t.Fatalf("prefixless direct peer import policy = %#v, want named default-reject import policy", assignment)
+	if peer.GetApplyPolicy().GetImportPolicy() != nil {
+		t.Fatalf("peer import policy = %#v, want no ineffective peer assignment", peer.GetApplyPolicy().GetImportPolicy())
 	}
 }
 
 func TestBuildBGPPolicyPlanImportPolicyWithCommunities(t *testing.T) {
 	peer := desiredPeer{
-		Address:          "10.99.0.2",
-		ASN:              64512,
-		ImportPolicyName: "routerd-mobility-import-10-99-0-2",
+		Address: "10.99.0.2",
+		ASN:     64512,
 		ImportPolicy: api.BGPImportPolicySpec{
 			AllowedPrefixes:      []string{"10.77.60.0/24"},
 			RequiredCommunities:  []string{"64512:301"},
@@ -1585,22 +1546,34 @@ func TestBuildBGPPolicyPlanImportPolicyWithCommunities(t *testing.T) {
 		},
 	}
 	plan := buildBGPPolicyPlan("mobility", api.BGPImportPolicySpec{}, map[string]desiredPeer{"10.99.0.2": peer}, nil)
-	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, "routerd-mobility-import-10-99-0-2-required-communities", "64512:301") {
+	scopeName := "routerd-mobility-import-effective-peer-10-99-0-2"
+	if plan.GlobalImportAssignment.GetPolicies()[0].GetName() != "routerd-mobility-import-effective" {
+		t.Fatalf("global import assignment = %#v, want effective policy", plan.GlobalImportAssignment)
+	}
+	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, scopeName+"-neighbors", "10.99.0.2/32") {
+		t.Fatalf("defined sets = %#v, want peer neighbor set", plan.SetPolicies.GetDefinedSets())
+	}
+	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-required-communities", "64512:301") {
 		t.Fatalf("defined sets = %#v, want required community set", plan.SetPolicies.GetDefinedSets())
 	}
-	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, "routerd-mobility-import-10-99-0-2-forbidden-communities", "64512:302") {
+	if !policyPlanHasDefinedSet(plan.SetPolicies, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-forbidden-communities", "64512:302") {
 		t.Fatalf("defined sets = %#v, want forbidden community set", plan.SetPolicies.GetDefinedSets())
 	}
-	if len(plan.SetPolicies.GetPolicies()) != 1 || len(plan.SetPolicies.GetPolicies()[0].GetStatements()) != 2 {
-		t.Fatalf("policies = %#v, want reject and allow statements", plan.SetPolicies.GetPolicies())
+	if len(plan.SetPolicies.GetPolicies()) != 1 || len(plan.SetPolicies.GetPolicies()[0].GetStatements()) != 3 {
+		t.Fatalf("policies = %#v, want reject, allow, and terminal reject statements", plan.SetPolicies.GetPolicies())
 	}
 	allow := plan.SetPolicies.GetPolicies()[0].GetStatements()[1]
-	if allow.GetConditions().GetPrefixSet().GetName() == "" ||
+	if allow.GetConditions().GetNeighborSet().GetName() != scopeName+"-neighbors" ||
+		allow.GetConditions().GetPrefixSet().GetName() == "" ||
 		allow.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_TYPE_ALL {
-		t.Fatalf("allow statement = %#v, want prefix and required-community conditions", allow)
+		t.Fatalf("allow statement = %#v, want neighbor, prefix, and required-community conditions", allow)
 	}
 	if got := allow.GetActions().GetLocalPref().GetValue(); got != 200 {
 		t.Fatalf("allow statement local preference = %d, want 200", got)
+	}
+	terminal := plan.SetPolicies.GetPolicies()[0].GetStatements()[2]
+	if terminal.GetConditions().GetNeighborSet().GetName() != scopeName+"-neighbors" || terminal.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT {
+		t.Fatalf("terminal statement = %#v, want neighbor-scoped reject", terminal)
 	}
 }
 
@@ -1636,7 +1609,7 @@ func TestReconcileAppliesPeerExportPolicy(t *testing.T) {
 	}
 }
 
-func TestReconcileAppliesPeerImportPolicy(t *testing.T) {
+func TestReconcileAppliesNeighborScopedGlobalImportPolicy(t *testing.T) {
 	router := bgpRouter()
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
@@ -1649,22 +1622,18 @@ func TestReconcileAppliesPeerImportPolicy(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	peer := server.peers["10.0.0.21"]
-	assignment := peer.GetApplyPolicy().GetImportPolicy()
-	if assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
-		len(assignment.GetPolicies()) != 1 {
-		t.Fatalf("peer import assignment = %#v, want default reject with one policy", assignment)
+	if server.peers["10.0.0.21"].GetApplyPolicy().GetImportPolicy() != nil {
+		t.Fatalf("peer import assignment = %#v, want no ineffective peer assignment", server.peers["10.0.0.21"].GetApplyPolicy().GetImportPolicy())
 	}
-	policyName := assignment.GetPolicies()[0].GetName()
-	if policyName != "routerd-lan-import-10-0-0-21" {
-		t.Fatalf("peer import policy name = %q", policyName)
+	policyName := "routerd-lan-import-effective"
+	if !policyRequestHasPolicy(server.policyRequest, policyName) ||
+		!policyRequestHasPrefixSet(server.policyRequest, "routerd-lan-import-effective-peer-10-0-0-21-prefixes", "192.168.123.0/24") ||
+		!policyPlanHasDefinedSet(server.policyRequest, gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, "routerd-lan-import-effective-peer-10-0-0-21-neighbors", "10.0.0.21/32") {
+		t.Fatalf("SetPolicies request = %#v, want neighbor-scoped global import policy", server.policyRequest)
 	}
-	if !policyRequestHasPrefixSet(server.policyRequest, policyName+"-prefixes", "192.168.123.0/24") {
-		t.Fatalf("SetPolicies request = %#v, want peer import prefix set for 192.168.123.0/24", server.policyRequest)
-	}
-	if !policyRequestHasPrefixSet(server.policyRequest, "routerd-lan-import-prefixes", "10.250.0.0/24") {
-		t.Fatalf("SetPolicies request = %#v, want global import prefix set for 10.250.0.0/24", server.policyRequest)
+	assignment := server.policyAssignment
+	if assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT || len(assignment.GetPolicies()) != 1 || assignment.GetPolicies()[0].GetName() != policyName {
+		t.Fatalf("global import assignment = %#v, want effective policy", assignment)
 	}
 }
 
@@ -2337,7 +2306,7 @@ func TestReconcileAdoptsRestoredPoliciesAfterControllerRestart(t *testing.T) {
 	}
 }
 
-func TestReconcileRefreshesPoliciesBeforePeerAssignmentAfterRestart(t *testing.T) {
+func TestReconcileRefreshesPoliciesBeforeGlobalAssignmentAfterRestart(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
@@ -2354,8 +2323,7 @@ func TestReconcileRefreshesPoliciesBeforePeerAssignmentAfterRestart(t *testing.T
 	if err := first.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	delete(server.policiesByName, "routerd-lan-import")
-	server.peers["192.168.1.38"].ApplyPolicy.ImportPolicy = nil
+	delete(server.policiesByName, "routerd-lan-import-effective")
 	server.policies = 0
 	server.assigns = 0
 	server.updates = 0
@@ -2371,19 +2339,19 @@ func TestReconcileRefreshesPoliciesBeforePeerAssignmentAfterRestart(t *testing.T
 		t.Fatalf("post-restart reconcile: %v", err)
 	}
 	firstPolicy := indexString(server.callLog, "SetPolicies")
-	firstUpdate := indexStringPrefix(server.callLog, "UpdatePeer:")
+	firstAssignment := indexString(server.callLog, "SetPolicyAssignment")
 	if firstPolicy < 0 {
 		t.Fatalf("call order = %#v, want SetPolicies", server.callLog)
 	}
-	if firstUpdate < 0 || firstPolicy > firstUpdate {
-		t.Fatalf("call order = %#v, policy refresh must precede peer assignment update", server.callLog)
+	if firstAssignment < 0 || firstPolicy > firstAssignment {
+		t.Fatalf("call order = %#v, policy refresh must precede global assignment", server.callLog)
 	}
-	if server.policies == 0 || server.updates == 0 {
-		t.Fatalf("policies/updates = %d/%d, want policy refresh and peer assignment refresh", server.policies, server.updates)
+	if server.policies == 0 || server.assigns == 0 || server.updates != 0 {
+		t.Fatalf("policies/assigns/updates = %d/%d/%d, want global policy refresh without peer update", server.policies, server.assigns, server.updates)
 	}
 }
 
-func TestReconcileRefreshesPoliciesBeforeReaddingDeletedPeerAfterRestart(t *testing.T) {
+func TestReconcileReaddsDeletedPeerWithoutReapplyingConvergedGlobalPolicy(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
@@ -2415,16 +2383,12 @@ func TestReconcileRefreshesPoliciesBeforeReaddingDeletedPeerAfterRestart(t *test
 	if err := second.Reconcile(context.Background()); err != nil {
 		t.Fatalf("post-restart reconcile: %v", err)
 	}
-	firstPolicy := indexString(server.callLog, "SetPolicies")
 	firstAdd := indexStringPrefix(server.callLog, "AddPeer:")
-	if firstPolicy < 0 || firstAdd < 0 {
-		t.Fatalf("call order = %#v, want SetPolicies and AddPeer", server.callLog)
+	if firstAdd < 0 {
+		t.Fatalf("call order = %#v, want AddPeer", server.callLog)
 	}
-	if firstPolicy > firstAdd {
-		t.Fatalf("call order = %#v, policy refresh must precede peer add", server.callLog)
-	}
-	if server.policies == 0 || server.adds == 0 {
-		t.Fatalf("policies/adds = %d/%d, want policy refresh and peer re-add", server.policies, server.adds)
+	if server.policies != 0 || server.adds == 0 {
+		t.Fatalf("policies/adds = %d/%d, want only peer re-add after global policy adoption", server.policies, server.adds)
 	}
 }
 
@@ -2480,7 +2444,7 @@ func TestReconcileRefreshesMissingActualImportPolicy(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	delete(server.policiesByName, "routerd-lan-import")
+	delete(server.policiesByName, "routerd-lan-import-effective")
 	server.policies = 0
 	server.resets = 0
 
@@ -2510,7 +2474,7 @@ func TestReconcileRefreshesMissingActualImportDefinedSet(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	delete(server.definedSets, definedSetKey(gobgpapi.DefinedType_DEFINED_TYPE_PREFIX, "routerd-lan-import-prefixes"))
+	delete(server.definedSets, definedSetKey(gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, "routerd-lan-import-effective-peer-10-0-0-21-neighbors"))
 	server.policies = 0
 	server.resets = 0
 
@@ -2525,7 +2489,7 @@ func TestReconcileRefreshesMissingActualImportDefinedSet(t *testing.T) {
 	}
 }
 
-func TestReconcileRefreshesPeerImportAssignmentDrift(t *testing.T) {
+func TestReconcileRefreshesGlobalImportAssignmentDrift(t *testing.T) {
 	router := bgpRouterWithImportPrefixes("10.250.0.0/24")
 	peerResource := router.Spec.Resources[1]
 	peerSpec := peerResource.Spec.(api.BGPPeerSpec)
@@ -2537,8 +2501,9 @@ func TestReconcileRefreshesPeerImportAssignmentDrift(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
 	}
-	server.peers["192.168.1.38"].ApplyPolicy.ImportPolicy = nil
+	server.policyAssignment.Policies = nil
 	server.policies = 0
+	server.assigns = 0
 	server.updates = 0
 	server.resets = 0
 
@@ -2546,22 +2511,22 @@ func TestReconcileRefreshesPeerImportAssignmentDrift(t *testing.T) {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	if server.policies != 1 {
-		t.Fatalf("SetPolicies calls = %d, want policy reapplied after peer import assignment drift", server.policies)
+		t.Fatalf("SetPolicies calls = %d, want policy reapplied after global assignment drift", server.policies)
 	}
-	if server.updates != 1 {
-		t.Fatalf("UpdatePeer calls = %d, want one peer assignment refresh", server.updates)
+	if server.assigns != 1 || server.updates != 0 {
+		t.Fatalf("SetPolicyAssignment/UpdatePeer calls = %d/%d, want global assignment refresh only", server.assigns, server.updates)
 	}
 	if server.resets != 2 {
 		t.Fatalf("soft inbound resets = %d, want one per peer", server.resets)
 	}
 	server.policies = 0
-	server.updates = 0
+	server.assigns = 0
 	server.resets = 0
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("third reconcile: %v", err)
 	}
-	if server.policies != 0 || server.updates != 0 || server.resets != 0 {
-		t.Fatalf("post-refresh policies/updates/resets = %d/%d/%d, want converged no-op", server.policies, server.updates, server.resets)
+	if server.policies != 0 || server.assigns != 0 || server.updates != 0 || server.resets != 0 {
+		t.Fatalf("post-refresh policies/assigns/updates/resets = %d/%d/%d/%d, want converged no-op", server.policies, server.assigns, server.updates, server.resets)
 	}
 }
 
@@ -3074,7 +3039,7 @@ func TestWatchPeerStateChangeTriggersReObservation(t *testing.T) {
 	}
 }
 
-func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
+func TestGeneratedNeighborScopedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()
 	defer server.Stop()
@@ -3086,12 +3051,13 @@ func TestGeneratedImportPolicyIsAcceptedByGoBGP(t *testing.T) {
 	if prefixSetAllows(prefixes, "10.88.0.1/32") {
 		t.Fatalf("import prefixes = %#v, want unrelated /32 rejected", prefixes)
 	}
-	req := &gobgpapi.SetPoliciesRequest{}
-	appendImportPolicy(req, "routerd-test-import", "routerd-test-import-prefixes", spec)
-	if got := req.GetPolicies()[0].GetStatements()[0].GetActions().GetLocalPref().GetValue(); got != 200 {
+	plan := buildBGPPolicyPlan("test", api.BGPImportPolicySpec{}, map[string]desiredPeer{
+		"10.0.0.2": {Address: "10.0.0.2", ImportPolicy: spec},
+	}, nil)
+	if got := plan.SetPolicies.GetPolicies()[0].GetStatements()[0].GetActions().GetLocalPref().GetValue(); got != 200 {
 		t.Fatalf("generated import policy local preference = %d, want 200", got)
 	}
-	if err := server.SetPolicies(context.Background(), req); err != nil {
+	if err := server.SetPolicies(context.Background(), plan.SetPolicies); err != nil {
 		t.Fatalf("SetPolicies rejected generated import policy: %v", err)
 	}
 }
@@ -3100,21 +3066,205 @@ func TestGeneratedPrefixlessImportPolicyWithDirectPreferenceIsAcceptedByGoBGP(t 
 	server := gobgpserver.NewBgpServer()
 	go server.Serve()
 	defer server.Stop()
-	req := &gobgpapi.SetPoliciesRequest{}
-	appendImportPolicy(req, "routerd-direct-import", "routerd-direct-import-prefixes", api.BGPImportPolicySpec{
-		NextHopRewrite:  "peer-address",
-		LocalPreference: 200,
-	})
-	if len(req.GetDefinedSets()) != 0 || len(req.GetPolicies()) != 1 {
-		t.Fatalf("prefixless direct import policy = %#v, want one policy without prefix set", req)
+	plan := buildBGPPolicyPlan("direct", api.BGPImportPolicySpec{}, map[string]desiredPeer{
+		"10.0.0.2": {Address: "10.0.0.2", ImportPolicy: api.BGPImportPolicySpec{
+			NextHopRewrite:  "peer-address",
+			LocalPreference: 200,
+		}},
+	}, nil)
+	if len(plan.SetPolicies.GetDefinedSets()) != 1 || len(plan.SetPolicies.GetPolicies()) != 1 {
+		t.Fatalf("prefixless direct import policy = %#v, want one policy and only its neighbor set", plan.SetPolicies)
 	}
-	allow := req.GetPolicies()[0].GetStatements()[0]
+	allow := plan.SetPolicies.GetPolicies()[0].GetStatements()[0]
 	if allow.GetConditions().GetPrefixSet() != nil || allow.GetActions().GetLocalPref().GetValue() != 200 {
 		t.Fatalf("prefixless direct allow statement = %#v, want unrestricted local-preference action", allow)
 	}
-	if err := server.SetPolicies(context.Background(), req); err != nil {
+	if allow.GetConditions().GetNeighborSet().GetName() == "" {
+		t.Fatalf("prefixless direct allow statement = %#v, want neighbor condition", allow)
+	}
+	if err := server.SetPolicies(context.Background(), plan.SetPolicies); err != nil {
 		t.Fatalf("SetPolicies rejected prefixless direct import policy: %v", err)
 	}
+}
+
+// TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP exercises the policy on
+// the same normal-peer/global-RIB path used by routerd.  A peer-local import
+// assignment is deliberately not involved: GoBGP only evaluates that form for
+// route-server clients, whereas routerd's BGP and RR peers use the global RIB.
+// All sockets stay inside 127/8; this test does not alter host networking.
+func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
+	ctx := context.Background()
+	const (
+		asn       = 64512
+		centralIP = "127.0.0.1"
+		directIP  = "127.0.0.2"
+		rrIP      = "127.0.0.3"
+		prefix    = "192.0.2.10/32"
+	)
+	port := loopbackTCPPort(t)
+
+	central := &testGoBGPServer{BgpServer: gobgpserver.NewBgpServer()}
+	go central.Serve()
+	defer central.Stop()
+	if err := central.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
+		Asn:              asn,
+		RouterId:         "10.255.0.1",
+		ListenPort:       int32(port),
+		ListenAddresses:  []string{centralIP},
+		Families:         []uint32{0},
+		UseMultiplePaths: true,
+	}}); err != nil {
+		t.Fatalf("start central GoBGP: %v", err)
+	}
+
+	direct := desiredPeer{
+		Address:     directIP,
+		ASN:         asn,
+		LocalASN:    asn,
+		PassiveMode: true,
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes: []string{prefix},
+			NextHopRewrite:  "peer-address",
+			LocalPreference: 200,
+		},
+	}
+	rr := desiredPeer{
+		Address:     rrIP,
+		ASN:         asn,
+		LocalASN:    asn,
+		PassiveMode: true,
+		ImportPolicy: api.BGPImportPolicySpec{
+			AllowedPrefixes: []string{prefix},
+			NextHopRewrite:  "peer-address",
+			LocalPreference: 100,
+		},
+	}
+	desired := map[string]desiredPeer{directIP: direct, rrIP: rr}
+	plan := buildBGPPolicyPlan("mesh", api.BGPImportPolicySpec{}, desired, nil)
+	if err := central.SetPolicies(ctx, plan.SetPolicies); err != nil {
+		t.Fatalf("set global import policies: %v", err)
+	}
+	if err := central.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: plan.GlobalImportAssignment}); err != nil {
+		t.Fatalf("set global import assignment: %v", err)
+	}
+	for _, peer := range []desiredPeer{direct, rr} {
+		if err := central.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peer)}); err != nil {
+			t.Fatalf("add central peer %s: %v", peer.Address, err)
+		}
+	}
+
+	startRemote := func(routerID, localAddress string) *testGoBGPServer {
+		t.Helper()
+		remote := &testGoBGPServer{BgpServer: gobgpserver.NewBgpServer()}
+		go remote.Serve()
+		t.Cleanup(remote.Stop)
+		if err := remote.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: &gobgpapi.Global{
+			Asn:        asn,
+			RouterId:   routerID,
+			ListenPort: -1,
+			Families:   []uint32{0},
+		}}); err != nil {
+			t.Fatalf("start remote %s: %v", localAddress, err)
+		}
+		if err := remote.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: &gobgpapi.Peer{
+			Conf: &gobgpapi.PeerConf{
+				NeighborAddress: centralIP,
+				PeerAsn:         asn,
+				Type:            gobgpapi.PeerType_PEER_TYPE_INTERNAL,
+			},
+			Transport: &gobgpapi.Transport{
+				LocalAddress: localAddress,
+				RemotePort:   uint32(port),
+			},
+			AfiSafis: []*gobgpapi.AfiSafi{goBGPAFISAFI(ipv4Family())},
+			Timers: &gobgpapi.Timers{Config: &gobgpapi.TimersConfig{
+				ConnectRetry:           1,
+				IdleHoldTimeAfterReset: 1,
+			}},
+		}}); err != nil {
+			t.Fatalf("add remote peer %s: %v", localAddress, err)
+		}
+		return remote
+	}
+	directRemote := startRemote("10.255.0.2", directIP)
+	rrRemote := startRemote("10.255.0.3", rrIP)
+
+	established := func(address string) bool {
+		ready := false
+		err := central.BgpServer.ListPeer(ctx, &gobgpapi.ListPeerRequest{Address: address}, func(peer *gobgpapi.Peer) {
+			ready = peer.GetState().GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED
+		})
+		return err == nil && ready
+	}
+	waitForCondition(t, 5*time.Second, func() bool { return established(directIP) && established(rrIP) })
+
+	advertise := func(server *testGoBGPServer, nextHop string) {
+		t.Helper()
+		if _, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: &gobgpapi.Path{
+			Family: ipv4Family(),
+			Nlri:   ipAddressNLRI(netip.MustParsePrefix(prefix)),
+			Pattrs: []*gobgpapi.Attribute{originAttribute(), nextHopAttribute(nextHop)},
+		}}); err != nil {
+			t.Fatalf("advertise %s through %s: %v", prefix, nextHop, err)
+		}
+	}
+	advertise(directRemote, directIP)
+	advertise(rrRemote, rrIP)
+
+	var got *gobgpapi.Destination
+	readDestination := func() *gobgpapi.Destination {
+		var destination *gobgpapi.Destination
+		err := central.ListPath(ctx, &gobgpapi.ListPathRequest{
+			TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL,
+			Family:    ipv4Family(),
+		}, func(candidate *gobgpapi.Destination) {
+			if normalizeRoutePrefix(candidate.GetPrefix()) == prefix {
+				destination = candidate
+			}
+		})
+		if err != nil {
+			return nil
+		}
+		return destination
+	}
+	waitForCondition(t, 5*time.Second, func() bool {
+		got = readDestination()
+		return got != nil && len(got.GetPaths()) == 2
+	})
+
+	var directPath, rrPath *gobgpapi.Path
+	for _, path := range got.GetPaths() {
+		switch pathNextHop(path) {
+		case directIP:
+			directPath = path
+		case rrIP:
+			rrPath = path
+		}
+	}
+	if directPath == nil || rrPath == nil {
+		t.Fatalf("imported paths = %#v, want direct and RR next hops", got.GetPaths())
+	}
+	if !directPath.GetBest() || pathRank(directPath).LocalPref != 200 {
+		t.Fatalf("direct path = %#v, want best local-preference 200", directPath)
+	}
+	if rrPath.GetBest() || pathRank(rrPath).LocalPref != 100 {
+		t.Fatalf("RR path = %#v, want non-best local-preference 100", rrPath)
+	}
+	routes := fibRoutesFromDestination(got, allowedImportPrefixesForTest(direct.ImportPolicy), peerAddressFIBRewritePeers(desired), nil)
+	wantRoutes := []FIBRoute{{Prefix: prefix, NextHops: []string{directIP}}}
+	if !reflect.DeepEqual(routes, wantRoutes) {
+		t.Fatalf("FIB routes = %#v, want %#v", routes, wantRoutes)
+	}
+}
+
+func loopbackTCPPort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback TCP port: %v", err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
@@ -3134,11 +3284,10 @@ func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
 	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}, LocalPreference: 200}
 	peers := map[string]desiredPeer{
 		"10.0.0.21": {
-			Address:          "10.0.0.21",
-			ASN:              64513,
-			LocalASN:         64512,
-			ImportPolicy:     spec,
-			ImportPolicyName: bgpPolicyName("lan", "import"),
+			Address:      "10.0.0.21",
+			ASN:          64513,
+			LocalASN:     64512,
+			ImportPolicy: spec,
 		},
 	}
 	controller := Controller{Server: server}
@@ -3160,17 +3309,18 @@ func TestAppliedImportPolicyConvergesWithGoBGP(t *testing.T) {
 func TestImportPolicyDriftDetectsLocalPreference(t *testing.T) {
 	ctx := context.Background()
 	spec := api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}, LocalPreference: 200}
+	peers := map[string]desiredPeer{"10.0.0.21": {Address: "10.0.0.21", ImportPolicy: spec}}
 	server := &fakeServer{}
 	controller := Controller{Server: server}
-	if err := controller.applyBGPPolicies(ctx, "lan", spec, nil, nil); err != nil {
+	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers, nil); err != nil {
 		t.Fatalf("applyBGPPolicies: %v", err)
 	}
-	policy := server.policiesByName[bgpPolicyName("lan", "import")]
-	if policy == nil || len(policy.GetStatements()) != 1 {
-		t.Fatalf("import policy = %#v, want one allow statement", policy)
+	policy := server.policiesByName[effectiveImportPolicyName("lan")]
+	if policy == nil || len(policy.GetStatements()) != 2 {
+		t.Fatalf("import policy = %#v, want allow and terminal reject statements", policy)
 	}
 	policy.GetStatements()[0].GetActions().LocalPref.Value = 201
-	drift, err := controller.importPolicyDrift(ctx, "lan", spec, nil, nil)
+	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers, nil)
 	if err != nil {
 		t.Fatalf("importPolicyDrift: %v", err)
 	}
@@ -3186,18 +3336,19 @@ func TestImportPolicyDriftDetectsCommunityFilter(t *testing.T) {
 		RequiredCommunities:  []string{"64512:301"},
 		ForbiddenCommunities: []string{"64512:302"},
 	}
+	peers := map[string]desiredPeer{"10.0.0.21": {Address: "10.0.0.21", ImportPolicy: spec}}
 	server := &fakeServer{}
 	controller := Controller{Server: server}
-	if err := controller.applyBGPPolicies(ctx, "lan", spec, nil, nil); err != nil {
+	if err := controller.applyBGPPolicies(ctx, "lan", spec, peers, nil); err != nil {
 		t.Fatalf("applyBGPPolicies: %v", err)
 	}
-	requiredName := bgpPolicyName("lan", "import") + "-required-communities"
+	requiredName := "routerd-lan-import-effective-peer-10-0-0-21-required-communities"
 	required := server.definedSets[definedSetKey(gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, requiredName)]
 	if required == nil || len(required.GetList()) != 1 {
 		t.Fatalf("required community set = %#v", required)
 	}
 	required.List[0] = "64512:999"
-	drift, err := controller.importPolicyDrift(ctx, "lan", spec, nil, nil)
+	drift, err := controller.importPolicyDrift(ctx, "lan", spec, peers, nil)
 	if err != nil {
 		t.Fatalf("importPolicyDrift: %v", err)
 	}
@@ -3218,7 +3369,6 @@ func TestAppliedImportPolicyLocalPreferenceRoundTrip(t *testing.T) {
 	applied := appliedPeer(desiredPeer{
 		Address:                "10.0.0.2",
 		ASN:                    64513,
-		ImportPolicyName:       "routerd-lan-import-10-0-0-2",
 		PreserveImportPrefixes: true,
 		ImportPolicy: api.BGPImportPolicySpec{
 			AllowedPrefixes:        []string{"10.77.60.22/32"},
@@ -3257,19 +3407,23 @@ func TestImportPolicyKeysIncludeLocalPreference(t *testing.T) {
 		t.Fatal("bgpPoliciesKey ignored global local preference")
 	}
 	peer := desiredPeer{
-		Address:          "10.0.0.2",
-		ImportPolicyName: "routerd-lan-import-10-0-0-2",
-		ImportPolicy:     base,
+		Address:      "10.0.0.2",
+		ImportPolicy: base,
 	}
 	preferredPeer := peer
 	preferredPeer.ImportPolicy.LocalPreference = 201
 	if bgpPoliciesKey(base, map[string]desiredPeer{peer.Address: peer}, nil) == bgpPoliciesKey(base, map[string]desiredPeer{preferredPeer.Address: preferredPeer}, nil) {
 		t.Fatal("bgpPoliciesKey ignored peer local preference")
 	}
+	prefixlessPeer := desiredPeer{Address: "10.0.0.3", ImportPolicy: api.BGPImportPolicySpec{LocalPreference: 200}}
+	prefixlessPreferredPeer := prefixlessPeer
+	prefixlessPreferredPeer.ImportPolicy.LocalPreference = 201
+	if bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPeer.Address: prefixlessPeer}, nil) == bgpImportPoliciesKey(base, map[string]desiredPeer{prefixlessPreferredPeer.Address: prefixlessPreferredPeer}, nil) {
+		t.Fatal("bgpImportPoliciesKey ignored prefixless peer local preference")
+	}
 	dynamic := desiredDynamicPeer{
-		PeerGroupName:    "routerd-dynamic-leaves",
-		ImportPolicyName: "routerd-dynamic-leaves-import",
-		ImportPolicy:     base,
+		PeerGroupName: "routerd-dynamic-leaves",
+		ImportPolicy:  base,
 	}
 	preferredDynamic := dynamic
 	preferredDynamic.ImportPolicy.LocalPreference = 202

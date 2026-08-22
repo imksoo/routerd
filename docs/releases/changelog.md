@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Normal GoBGP peers now evaluate Cloud SAM import admission and route
+  preference through a neighbor-scoped global-RIB policy, which is the policy
+  path GoBGP actually applies to those peers. Direct leaf paths therefore use
+  local preference 200 over the RR fallback's 100 instead of becoming an
+  unintended equal-cost set. `routerd-bgp` reconstructs the same policy after
+  restart, including prefixless direct-peer preference rules.
+
 ## v20260822.1359
 
 ### Fixed

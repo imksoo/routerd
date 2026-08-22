@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 一般 GoBGP peer 的 Cloud SAM import admission 與路由優先權，現在透過 GoBGP 實際評估的
+  neighbor-scoped global RIB policy 套用。direct leaf path 的 local preference 因此為 200，
+  高於 RR fallback 的 100，不會意外形成等價成本路徑集合。`routerd-bgp` 重啟後也會重建相同
+  policy，包括沒有 prefix 的 direct peer 優先權規則。
+
 ## v20260822.1359
 
 ### 修正
