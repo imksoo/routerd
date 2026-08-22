@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.2024
+
 ### 修复
 
 - Ubuntu Live ISO 现在会在第一个守护进程启动前渲染依赖配置的

@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.2024
+
 ### Fixed
 
 - The Ubuntu Live ISO now renders the configuration-dependent `routerd.service`

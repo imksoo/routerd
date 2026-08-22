@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.2024
+
 ### 修正
 
 - Ubuntu Live ISO は、最初の daemon process を起動する前に設定依存の

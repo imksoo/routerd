@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.2024
+
 ### 修正
 
 - Ubuntu Live ISO 現在會在第一個守護程序啟動前轉譯依賴設定的
