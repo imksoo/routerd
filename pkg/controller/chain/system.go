@@ -287,6 +287,26 @@ type SystemdUnitController struct {
 	SynthesizeClientDaemonUnits bool
 }
 
+// RenderRouterdServiceSystemdUnit returns the routerd.service content that
+// SystemdUnitController reconciles for the supplied router. Live boot uses it
+// before starting routerd so configuration-dependent process settings are
+// already present on the first daemon process.
+func RenderRouterdServiceSystemdUnit(router *api.Router) ([]byte, error) {
+	telemetryEnv, err := render.TelemetryEnvironment(router)
+	if err != nil {
+		return nil, err
+	}
+	spec := routerdServiceSystemdSpec(router, telemetryEnv)
+	return render.SystemdUnit(render.RouterdUnitName, spec), nil
+}
+
+func routerdServiceSystemdSpec(router *api.Router, telemetryEnv []string) api.SystemdUnitSpec {
+	spec := render.RouterdServiceSystemdSpec()
+	spec = maybeAugmentRouterdServiceAccess(router, render.RouterdUnitName, spec)
+	spec.Environment = mergeStringEnvs(spec.Environment, telemetryEnv)
+	return spec
+}
+
 func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
 	if c.SystemdSystemDir == "" {
@@ -302,9 +322,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	}
 	if features.HasSystemd {
 		explicitUnits := map[string]bool{}
-		routerdSpec := render.RouterdServiceSystemdSpec()
-		routerdSpec = maybeAugmentRouterdServiceAccess(c.Router, render.RouterdUnitName, routerdSpec)
-		routerdSpec.Environment = mergeStringEnvs(routerdSpec.Environment, telemetryEnv)
+		routerdSpec := routerdServiceSystemdSpec(c.Router, telemetryEnv)
 		if err := c.reconcileSyntheticSystemdHelperUnit(ctx, render.RouterdUnitName, "Router/"+c.Router.Metadata.Name, routerdSpec, command); err != nil {
 			return err
 		}

@@ -11,6 +11,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Ubuntu Live ISO 现在会在第一个守护进程启动前渲染依赖配置的
+  `routerd.service`，并把 setup 依赖保留在独立的 systemd drop-in 中。这样可防止
+  ServiceUnit controller 在控制 socket 就绪后安排延迟的自重启；之后真正的 unit
+  变更仍会按原有方式延迟重启。
+
 ## v20260822.1944
 
 ### 修复

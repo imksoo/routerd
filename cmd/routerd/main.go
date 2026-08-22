@@ -102,6 +102,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  validate --config <path>          validate config")
 	fmt.Fprintln(w, "  check --config <path>             run preflight check")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <dir>]  render FreeBSD config files")
+	fmt.Fprintln(w, "  render systemd-service --config <path>            render routerd.service without changing the host")
 	fmt.Fprintln(w, "  version                          print the routerd version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "serve options:")

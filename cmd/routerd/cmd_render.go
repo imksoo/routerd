@@ -11,20 +11,48 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/config"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
 func renderCommand(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("render requires a target: freebsd")
+		return errors.New("render requires a target: freebsd or systemd-service")
 	}
 	switch args[0] {
 	case "freebsd":
 		return renderFreeBSDCommand(args[1:], stdout)
+	case "systemd-service":
+		return renderSystemdServiceCommand(args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown render target %q", args[0])
 	}
+}
+
+// renderSystemdServiceCommand is intentionally read-only.  It lets a Live
+// ISO prepare routerd's config-dependent systemd unit before systemd starts
+// the daemon, avoiding a second bootstrap restart solely to apply that unit.
+func renderSystemdServiceCommand(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("render systemd-service", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config", defaultConfigPath, "config path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	router, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := config.Validate(router); err != nil {
+		return err
+	}
+	data, err := controllerchain.RenderRouterdServiceSystemdUnit(router)
+	if err != nil {
+		return err
+	}
+	_, err = stdout.Write(data)
+	return err
 }
 
 func renderFreeBSDCommand(args []string, stdout io.Writer) error {

@@ -280,6 +280,13 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 		t.Fatal(err)
 	}
 	gotUnit := string(data)
+	preparedUnit, err := RenderRouterdServiceSystemdUnit(router)
+	if err != nil {
+		t.Fatalf("render startup routerd.service: %v", err)
+	}
+	if gotUnit != string(preparedUnit) {
+		t.Fatalf("startup renderer differs from controller-owned routerd.service:\n--- startup ---\n%s\n--- controller ---\n%s", preparedUnit, gotUnit)
+	}
 	for _, want := range []string{
 		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
 		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
@@ -686,6 +693,61 @@ func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 	if !strings.Contains(gotCommands, "systemd-run --unit routerd-self-restart-") ||
 		!strings.Contains(gotCommands, "--on-active=10s --collect systemctl restart routerd.service") {
 		t.Fatalf("self unit restart was not scheduled:\n%s", gotCommands)
+	}
+}
+
+func TestSystemdUnitControllerKeepsPreparedLiveUnitRunningThenRestartsForLaterChange(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "ssh"}, Spec: api.IngressServiceSpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.ObservabilityAPIVersion, Kind: "Telemetry"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.TelemetrySpec{
+			OTLP:             api.TelemetryOTLPSpec{Endpoint: "https://telemetry.example.test:4318", Insecure: true},
+			ServiceNamespace: "live",
+			Signals:          []string{"metrics"},
+		}},
+	}}}
+	prepared, err := RenderRouterdServiceSystemdUnit(router)
+	if err != nil {
+		t.Fatalf("render prepared unit: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, render.RouterdUnitName), prepared, 0644); err != nil {
+		t.Fatalf("write prepared unit: %v", err)
+	}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
+				if args[len(args)-1] != render.RouterdUnitName {
+					return nil, errors.New("inactive")
+				}
+				return []byte("active"), nil
+			}
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(commands, "\n"); strings.Contains(got, "systemd-run") || strings.Contains(got, "systemctl daemon-reload") || commandLineContains(commands, "systemctl restart routerd.service") {
+		t.Fatalf("prepared live unit must not schedule or perform a self restart:\n%s", got)
+	}
+
+	commands = nil
+	telemetry := router.Spec.Resources[1].Spec.(api.TelemetrySpec)
+	telemetry.OTLP.Endpoint = "https://telemetry-next.example.test:4318"
+	router.Spec.Resources[1].Spec = telemetry
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(commands, "\n")
+	if !strings.Contains(got, "systemd-run --unit routerd-self-restart-") || !strings.Contains(got, "systemctl daemon-reload") {
+		t.Fatalf("later routerd.service change must retain the deferred self restart:\n%s", got)
 	}
 }
 

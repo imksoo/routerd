@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Ubuntu Live ISO は、最初の daemon process を起動する前に設定依存の
+  `routerd.service` を生成し、setup 依存関係を別の systemd drop-in として保持するように
+  しました。control socket の準備完了後に ServiceUnit controller が遅延自己再起動を
+  予約することを防ぎつつ、その後の実際の unit 変更では従来どおり遅延再起動を行います。
+
 ## v20260822.1944
 
 ### 修正
