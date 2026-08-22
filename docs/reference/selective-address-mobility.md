@@ -358,10 +358,12 @@ bgp:
 For the RR import, leave `nextHopRewrite` unset (its default is
 `peer-address`) or set it explicitly as above. Do not use `unchanged` on a
 direct profile: an RR-reflected route may have been originated by a third leaf,
-but its reachable next hop is the immediately connected RR tunnel. Validation
-rejects `unchanged` here rather than allowing a direct mesh to depend on an
-unrelated transport-prefix route. It only chooses the forwarding next hop after
-a route is learned; it does not affect whether an optional direct peer is
+but its reachable next hop is the immediately connected RR tunnel. For a
+legacy direct profile, routerd safely normalizes an explicit `unchanged` to
+`peer-address` at runtime so the daemon can start and the YAML can be replaced.
+Update the YAML to the explicit form above; non-direct profiles retain their
+normal `unchanged` behavior. This setting only chooses the forwarding next hop
+after a route is learned; it does not affect whether an optional direct peer is
 admitted.
 
 A missing, expired, incompatible, or unreachable direct group

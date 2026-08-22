@@ -36,6 +36,19 @@ func EffectiveSAMTransportDirectLocalPreference(preference uint32) uint32 {
 	return preference
 }
 
+// SAMTransportHasDirectPeerSource reports whether a transport profile has the
+// optional direct leaf-mesh source. Direct profiles always retain an RR
+// fallback, so their reflected routes must use the reachable adjacent RR as
+// the effective next hop.
+func SAMTransportHasDirectPeerSource(sources []api.SAMTransportPeersSourceSpec) bool {
+	for _, source := range sources {
+		if source.Direct {
+			return true
+		}
+	}
+	return false
+}
+
 // SAMTransportMeshFingerprint identifies the transport properties that both
 // ends of a direct SAM adjacency must agree on. It deliberately excludes local
 // interface names, endpoints, BGP router references, and import/export policy:

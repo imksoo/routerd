@@ -56,9 +56,11 @@ leaf 还只能通告其签名 claim 中列出的 IPv4 `/32`；没有、过期、
 group 会被忽略，RR 路径继续工作。
 
 RR import 的 `nextHopRewrite` 请保持默认的 `peer-address`，或显式写出该值。direct
-profile 不能使用 `unchanged`：RR 反射的路由可能来自另一台 leaf，但真正可达的下一跳是
-直接相连的 RR tunnel。验证会拒绝 `unchanged`，以免 direct mesh 依赖无关的 transport
-prefix route；它只决定学习到路由后的转发下一跳，不会改变是否接纳 direct peer。
+profile 应使用 `peer-address` 而不是 `unchanged`：RR 反射的路由可能来自另一台 leaf，但真正可达的下一跳是
+直接相连的 RR tunnel。若旧的 direct profile 明确保留了 `unchanged`，routerd 会在运行时
+安全地将有效策略规范化为 `peer-address`，以便 daemon 启动后可以替换 YAML。请把 YAML
+更新为显式形式；non-direct profile 原有的 `unchanged` 语义不变。它只决定学习到路由后的
+转发下一跳，不会改变是否接纳 direct peer。
 
 ## dynamic RR sync fail-static
 

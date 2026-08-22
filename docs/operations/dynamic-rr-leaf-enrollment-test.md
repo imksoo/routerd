@@ -158,8 +158,10 @@ greater value. Validation rejects a missing, equal, or lower direct value.
 Keep the RR import `nextHopRewrite` at its `peer-address` default (or set it
 explicitly). A reflected route can retain the address of the leaf that
 originated it, while the RR tunnel is the reachable forwarding next hop.
-`unchanged` is therefore rejected for a direct profile; it is not a way to
-make the optional direct peer more direct.
+If a legacy direct profile explicitly uses `unchanged`, routerd normalizes its
+effective policy to `peer-address` at startup so that the corrective YAML can
+be applied. Update the YAML rather than relying on that migration behavior;
+non-direct profiles retain their ordinary `unchanged` semantics.
 
 Check the profile status after refresh. Its `peersFrom` rows show the RRSet as
 `Resolved` and the direct group as `Direct`, `Unavailable`, or `Incompatible`.
