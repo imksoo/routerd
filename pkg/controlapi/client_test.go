@@ -302,7 +302,7 @@ func TestClientGetSAMEnrollmentTopology(t *testing.T) {
 			TransportFingerprint: "sha256:test",
 		},
 	}
-	want := NewSAMEnrollmentTopologyGetResult("pve-rrs", api.Resource{
+	want := NewSAMEnrollmentTopologyGetResult("pve-rrs", "sha256:claim-a", api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
 		Metadata: api.ObjectMeta{Name: "pve-rrs"},
 	}, &peerGroup)
@@ -310,11 +310,12 @@ func TestClientGetSAMEnrollmentTopology(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var gotPath, gotClaim string
+	var gotPath, gotClaim, gotClaimDigest string
 	client := &Client{
 		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			gotPath = req.URL.Path
 			gotClaim = req.URL.Query().Get("claim")
+			gotClaimDigest = req.URL.Query().Get("claimDigest")
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(string(payload))),
@@ -325,12 +326,12 @@ func TestClientGetSAMEnrollmentTopology(t *testing.T) {
 		retryAttempts: 1,
 		retryDelay:    time.Millisecond,
 	}
-	result, err := client.GetSAMEnrollmentTopology(context.Background(), SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a"})
+	result, err := client.GetSAMEnrollmentTopology(context.Background(), SAMEnrollmentTopologyGetRequest{Name: "pve-rrs", ClaimRef: "SAMEnrollmentClaim/pve-leaf-a", ClaimDigest: "sha256:claim-a"})
 	if err != nil {
 		t.Fatalf("GetSAMEnrollmentTopology: %v", err)
 	}
-	if gotPath != Prefix+"/sam-enrollment-topologies/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" {
-		t.Fatalf("request path/query = %q claim=%q", gotPath, gotClaim)
+	if gotPath != Prefix+"/sam-enrollment-topologies/pve-rrs" || gotClaim != "SAMEnrollmentClaim/pve-leaf-a" || gotClaimDigest != "sha256:claim-a" {
+		t.Fatalf("request path/query = %q claim=%q claimDigest=%q", gotPath, gotClaim, gotClaimDigest)
 	}
 	if result.RRSet.Kind != "SAMRRSet" || result.RRSet.Metadata.Name != "pve-rrs" {
 		t.Fatalf("result = %#v", result)

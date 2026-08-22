@@ -687,8 +687,9 @@ func (h Handler) handleGetSAMEnrollmentTopology(w http.ResponseWriter, r *http.R
 		return
 	}
 	result, err := h.GetSAMEnrollmentTopology(r, SAMEnrollmentTopologyGetRequest{
-		Name:     name,
-		ClaimRef: r.URL.Query().Get("claim"),
+		Name:        name,
+		ClaimRef:    r.URL.Query().Get("claim"),
+		ClaimDigest: r.URL.Query().Get("claimDigest"),
 	})
 	if err != nil {
 		status := http.StatusInternalServerError

@@ -113,9 +113,12 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 	if err != nil {
 		return nil, err
 	}
-	if !hasActiveSubmittedSAMEnrollmentClaim(records, claimSource, now.UTC()) {
+	_, acceptedClaim, ok := activeSubmittedSAMEnrollmentClaimResource(records, claimSource, now.UTC())
+	if !ok {
 		return nil, fmt.Errorf("%w: accepted %s not found", controlapi.ErrBadRequest, claimSource)
 	}
+	acceptedClaimDigest := samenrollment.ClaimDigest(acceptedClaim)
+	claimDigestMatches := strings.TrimSpace(req.ClaimDigest) != "" && strings.TrimSpace(req.ClaimDigest) == acceptedClaimDigest
 	parts, err := samEnrollmentDynamicPartsFromRecords(records, "")
 	if err != nil {
 		return nil, err
@@ -134,6 +137,9 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 	}
 	if !ok {
 		return nil, fmt.Errorf("%w: accepted %s not found in effective config", controlapi.ErrBadRequest, claimSource)
+	}
+	if samenrollment.ClaimDigest(claim) != acceptedClaimDigest {
+		return nil, fmt.Errorf("%w: accepted %s does not match its effective claim", controlapi.ErrBadRequest, claimSource)
 	}
 	wantRRSetRef := "SAMRRSet/" + rrSetName
 	if strings.TrimSpace(claim.RRSetRef) != wantRRSetRef {
@@ -157,7 +163,16 @@ func getSAMEnrollmentTopologyForAcceptedClaim(router *api.Router, store samEnrol
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
-	result := controlapi.NewSAMEnrollmentTopologyGetResult(rrSetName, rrSetResource, peerGroup)
+	// The RR topology is safe as a compatibility fallback, but a direct peer
+	// group must be tied to the exact active signed claim.  Older clients that
+	// do not send a digest and clients talking to a stale RR therefore keep
+	// renewing their RR path without being handed a high-preference direct
+	// path.  The result always echoes the RR's active digest so a new client
+	// can make the same fail-closed decision.
+	if !claimDigestMatches {
+		peerGroup = nil
+	}
+	result := controlapi.NewSAMEnrollmentTopologyGetResult(rrSetName, acceptedClaimDigest, rrSetResource, peerGroup)
 	return &result, nil
 }
 
@@ -257,12 +272,11 @@ func samEnrollmentPolicyNameFromRef(ref string) (string, error) {
 	return strings.TrimSpace(name), nil
 }
 
-func hasActiveSubmittedSAMEnrollmentClaim(records []routerstate.DynamicConfigPartRecord, source string, now time.Time) bool {
-	_, _, ok := activeSubmittedSAMEnrollmentClaimResource(records, source, now)
-	return ok
-}
-
 func activeSubmittedSAMEnrollmentClaimResource(records []routerstate.DynamicConfigPartRecord, source string, now time.Time) (api.Resource, api.SAMEnrollmentClaimSpec, bool) {
+	claimName, err := samEnrollmentClaimNameFromRef(source)
+	if err != nil {
+		return api.Resource{}, api.SAMEnrollmentClaimSpec{}, false
+	}
 	for _, record := range records {
 		if record.Source != source || record.EffectiveStatus(now.UTC()) != "active" {
 			continue
@@ -275,7 +289,7 @@ func activeSubmittedSAMEnrollmentClaimResource(records []routerstate.DynamicConf
 			continue
 		}
 		for _, resource := range resources {
-			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" {
+			if resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMEnrollmentClaim" && strings.TrimSpace(resource.Metadata.Name) == claimName {
 				claim, err := resource.SAMEnrollmentClaimSpec()
 				if err != nil || claim.Revoked {
 					continue

@@ -229,7 +229,7 @@ func TestRevokeSAMEnrollmentClaimHandler(t *testing.T) {
 func TestGetSAMEnrollmentTopologyHandler(t *testing.T) {
 	handler := Handler{
 		GetSAMEnrollmentTopology: func(r *http.Request, req SAMEnrollmentTopologyGetRequest) (*SAMEnrollmentTopologyGetResult, error) {
-			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" {
+			if req.Name != "pve-rrs" || req.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || req.ClaimDigest != "sha256:claim-a" {
 				t.Fatalf("request = %#v", req)
 			}
 			peerGroup := api.Resource{
@@ -240,7 +240,7 @@ func TestGetSAMEnrollmentTopologyHandler(t *testing.T) {
 					TransportFingerprint: "sha256:test",
 				},
 			}
-			result := NewSAMEnrollmentTopologyGetResult("pve-rrs", api.Resource{
+			result := NewSAMEnrollmentTopologyGetResult("pve-rrs", req.ClaimDigest, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMRRSet"},
 				Metadata: api.ObjectMeta{Name: "pve-rrs"},
 				Spec: api.SAMRRSetSpec{
@@ -255,7 +255,7 @@ func TestGetSAMEnrollmentTopologyHandler(t *testing.T) {
 			return &result, nil
 		},
 	}
-	req := httptest.NewRequest(http.MethodGet, Prefix+"/sam-enrollment-topologies/pve-rrs?claim=SAMEnrollmentClaim/pve-leaf-a", nil)
+	req := httptest.NewRequest(http.MethodGet, Prefix+"/sam-enrollment-topologies/pve-rrs?claim=SAMEnrollmentClaim/pve-leaf-a&claimDigest=sha256:claim-a", nil)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

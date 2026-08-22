@@ -88,10 +88,27 @@ The leaf startup config keeps only its bootstrap claim, client, and
 does not author a local `SAMEnrollmentPolicy`, `SAMNodeSet`, or rr-a/rr-b
 inventory in static YAML.
 
-`SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes only
-when the fetched RRSet is missing, near expiry, or the local claim material
-changes. Failed attempts use exponential backoff and transport or BGP
+`SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes when
+the fetched RRSet is missing, near expiry, or the local claim material changes.
+For a claim that opts into direct mesh, it also revalidates the optional direct
+peer snapshot every minute with a GET only: this neither re-submits the claim
+nor extends its RR lease. routerd gives each enrollment request a bounded
+10-second deadline. A direct group is usable only after every configured
+bootstrap RR has accepted the current signed claim and returns the same direct
+topology. If an RR is unreachable, times out, or disagrees, routerd withdraws
+only the higher-preference direct peers and keeps the cached RR topology as the
+safe fallback. Other failed attempts use exponential backoff; transport or BGP
 degradation does not trigger immediate rejoin loops.
+
+Each direct-topology GET carries a digest of the local signed claim. The RR
+echoes the digest of the exact accepted claim from which it projected the
+snapshot. A missing or different digest is never a direct-path authorization:
+the leaf discards any direct group and persists the RRSet only. This also makes
+a rolling RR upgrade safe: an older RR can continue to serve the ordinary RR
+topology, while direct peering stays disabled until every RR supports and
+attests the current claim. Conversely, an older leaf that does not send a
+digest receives an RR-only response from an upgraded RR, rather than losing
+its lease refresh.
 
 ## Optional Direct Leaf Path, With RR Fallback
 

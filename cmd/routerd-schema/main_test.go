@@ -58,7 +58,7 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"required\":[\"apiVersion\",\"kind\",\"name\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"revoked\",\"claimRef\",\"dynamicSource\",\"generation\",\"observedAt\",\"expiresAt\"]",
 		"\"required\":[\"name\",\"claimRef\"]",
-		"\"required\":[\"apiVersion\",\"kind\",\"metadata\",\"rrSet\"]",
+		"\"required\":[\"apiVersion\",\"kind\",\"metadata\",\"claimDigest\",\"rrSet\"]",
 		"\"peerGroup\"",
 	} {
 		if !strings.Contains(string(control), want) {
@@ -79,6 +79,7 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"operationId\":\"revokeSAMEnrollmentClaim\"",
 		"\"operationId\":\"getSAMEnrollmentTopology\"",
 		"\"name\":\"claim\"",
+		"\"name\":\"claimDigest\"",
 		"\"SAMEnrollmentClaimSubmitRequest\"",
 		"\"SAMEnrollmentClaimSubmitResult\"",
 		"\"SAMEnrollmentClaimRevokeRequest\"",

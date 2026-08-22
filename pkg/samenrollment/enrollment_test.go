@@ -225,3 +225,33 @@ func TestJoinHMACExcludesAdminOwnedExpiryAndRevocation(t *testing.T) {
 		t.Fatalf("canonical payload includes admin-owned expiry/revocation fields:\n%s", payload)
 	}
 }
+
+func TestClaimDigestBindsSignedAndAdmissionState(t *testing.T) {
+	claim := api.SAMEnrollmentClaimSpec{
+		PolicyRef:     "SAMEnrollmentPolicy/leaves",
+		RRSetRef:      "SAMRRSet/rrs",
+		LeafID:        "leaf-a",
+		JoinNonce:     "nonce-a",
+		JoinTimestamp: "2026-08-17T11:55:00Z",
+		TunnelAddress: "10.255.0.31/32",
+		DirectMesh:    true,
+		Mobility:      api.SAMEnrollmentClaimMobilitySpec{OwnedAddresses: []string{"10.77.0.32/32", "10.77.0.31/32"}},
+		WireGuard:     api.SAMEnrollmentClaimWireGuardSpec{AllowedIPs: []string{"10.255.0.31/32", "10.20.0.31/32"}},
+		JoinHMAC:      "signature-a",
+	}
+	first := ClaimDigest(claim)
+	claim.Mobility.OwnedAddresses[0], claim.Mobility.OwnedAddresses[1] = claim.Mobility.OwnedAddresses[1], claim.Mobility.OwnedAddresses[0]
+	claim.WireGuard.AllowedIPs[0], claim.WireGuard.AllowedIPs[1] = claim.WireGuard.AllowedIPs[1], claim.WireGuard.AllowedIPs[0]
+	if got := ClaimDigest(claim); got != first {
+		t.Fatalf("ClaimDigest must canonicalize signed lists: %q != %q", got, first)
+	}
+	claim.JoinHMAC = "signature-b"
+	if got := ClaimDigest(claim); got == first {
+		t.Fatal("ClaimDigest did not change with submitted signature")
+	}
+	claim.JoinHMAC = "signature-a"
+	claim.ExpiresAt = "2026-08-17T12:05:00Z"
+	if got := ClaimDigest(claim); got == first {
+		t.Fatal("ClaimDigest did not change with admission expiry")
+	}
+}

@@ -213,6 +213,10 @@ RR topology. The leaf retains its RR peers, and direct imported routes have a
 higher local preference only while their direct BGP session is established.
 Missing, incompatible, or unreachable direct peers therefore fall back to the
 RR path without a special recovery controller or a destructive topology update.
+For direct topology, the leaf sends a digest of its current signed claim and
+requires every configured RR to echo that same accepted-claim digest and the
+same peer group. A stale or older RR can still refresh the RRSet, but cannot
+authorize the higher-preference direct path.
 
 ### 5.4 Daemon contract
 
