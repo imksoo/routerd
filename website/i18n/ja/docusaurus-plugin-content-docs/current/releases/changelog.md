@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1359
+
 ### 修正
 
 - BGP FIB は GoBGP が選択した path 集合をそのまま投影するようにしました。Cloud SAM の

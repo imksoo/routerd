@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1359
+
 ### Fixed
 
 - BGP FIB synchronization now projects GoBGP's selected path set directly.

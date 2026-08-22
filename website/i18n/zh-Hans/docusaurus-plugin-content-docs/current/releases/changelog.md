@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1359
+
 ### 修复
 
 - BGP FIB 现在直接采用 GoBGP 已选中的 path 集合。Cloud SAM 的 direct path 被选为优于
