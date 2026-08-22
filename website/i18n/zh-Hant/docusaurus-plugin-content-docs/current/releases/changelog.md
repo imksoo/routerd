@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1014
+
 ### 修正
 
 - Cloud SAM direct leaf 現在可區分正常、尚未到期的 RR lease 更新排程與失敗請求的 retry backoff。

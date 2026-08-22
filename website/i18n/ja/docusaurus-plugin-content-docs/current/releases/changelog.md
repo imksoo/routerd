@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1014
+
 ### 修正
 
 - Cloud SAM の direct leaf は、通常の将来の RR lease 更新予定と、失敗した要求の retry backoff を

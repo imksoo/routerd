@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1014
+
 ### Fixed
 
 - Cloud SAM direct leaves now distinguish a normal future RR lease renewal
