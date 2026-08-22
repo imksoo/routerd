@@ -2825,6 +2825,56 @@ func TestReconcileInstallsTransportScopedMobilityRouteOnRRWithoutPool(t *testing
 	}
 }
 
+func TestReconcileDoesNotInstallSAMTransportInnerRoutesInFIB(t *testing.T) {
+	const (
+		transportAggregate = "10.255.0.0/16"
+		innerPrefix        = "10.255.1.0/24"
+		mobilityPrefix     = "192.168.123.0/24"
+	)
+	router := bgpRouterWithImportPrefixes(transportAggregate, mobilityPrefix)
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
+		Metadata: api.ObjectMeta{Name: "svnet1-core"},
+		Spec: api.SAMTransportProfileSpec{
+			SelfNodeRef: "pve-rt-07",
+			Mode:        "ipip",
+			InnerPrefix: innerPrefix,
+			BGP: api.SAMTransportBGPProfileSpec{
+				RouterRef: "BGPRouter/lan",
+			},
+		},
+	})
+	server := &fakeServer{routes: []*gobgpapi.Destination{
+		testDestination(transportAggregate, "10.255.1.35", "10.255.1.73"),
+		testDestination(innerPrefix, "10.255.1.35", "10.255.1.73"),
+		testDestination("10.255.1.34/31", "10.255.1.35"),
+		testDestination("192.168.123.111/32", "10.255.1.35"),
+	}}
+	fib := &fakeFIB{}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: fib}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := []FIBRoute{{Prefix: "192.168.123.111/32", NextHops: []string{"10.255.1.35"}}}
+	if !reflect.DeepEqual(fib.routes, want) {
+		t.Fatalf("FIB routes = %#v, want only non-transport route %#v", fib.routes, want)
+	}
+	status := controller.Store.ObjectStatus(api.NetAPIVersion, "BGPRouter", "lan")
+	prefixes, ok := status["prefixes"].([]bgpstate.Prefix)
+	if !ok {
+		t.Fatalf("RIB status prefixes = %#v, want observed prefixes", status["prefixes"])
+	}
+	seen := map[string]bool{}
+	for _, prefix := range prefixes {
+		seen[prefix.Prefix] = true
+	}
+	for _, prefix := range []string{transportAggregate, innerPrefix, "10.255.1.34/31", "192.168.123.111/32"} {
+		if !seen[prefix] {
+			t.Fatalf("RIB status prefixes = %#v, missing %s", prefixes, prefix)
+		}
+	}
+}
+
 func TestExactIPv4TransitPrefixesNormalizesHostBits(t *testing.T) {
 	prefixes, ok := exactIPv4TransitPrefixes(api.BGPImportPolicySpec{
 		AllowedPrefixes:        []string{"192.168.123.111/24"},

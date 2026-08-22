@@ -12,6 +12,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct leaves now distinguish a normal future RR lease renewal
+  from a failed-request retry backoff. A leaf that joins before another leaf
+  therefore performs its scheduled GET-only topology refresh instead of
+  waiting for the whole lease before it can discover the new direct peer.
+- BGP keeps routes that overlap a SAM transport `innerPrefix` observable in
+  RIB status, but never installs them in the kernel FIB. The tunnel interfaces
+  already own that point-to-point address space, so a reflected aggregate can
+  no longer make its own next hops unreachable.
+
 ## v20260822.0915
 
 ### Changed

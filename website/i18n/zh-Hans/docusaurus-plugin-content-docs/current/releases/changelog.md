@@ -11,6 +11,15 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct leaf 现在会区分正常、尚未到期的 RR lease 更新计划和失败请求的 retry backoff。
+  先加入的 leaf 不必等待整个 lease 到期，就会通过计划中的 GET-only topology refresh 发现后加入的
+  direct peer。
+- 与 SAM transport `innerPrefix` 重叠的 BGP 路由仍可在 RIB status 中观察，但不会安装到 kernel FIB。
+  这段 point-to-point 地址空间已由 tunnel interface 拥有，因此 RR 反射的 aggregate 不会再让自己的
+  next hop 不可达。
+
 ## v20260822.0915
 
 ### 变更

@@ -2868,6 +2868,12 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 		}
 	}
 	routes = mergeFIBRoutes(routes)
+	// SAM transport inner prefixes are point-to-point tunnel addressing space.
+	// They are already owned by the tunnel interfaces, so a reflected aggregate
+	// or /31 must never be installed as a BGP kernel route.  Apart from being
+	// redundant, an aggregate can make its own next hops unreachable while the
+	// transport topology is reconciling.
+	routes = c.excludeSAMTransportInnerFIBRoutes(routes)
 	routes = applyMobilityPreferredSources(routes, fibPolicy.PreferredSources())
 	limited, truncated := bgpstate.LimitPrefixes(bgpstate.Normalize(state), c.maxPrefixes())
 	if truncated {
@@ -2882,6 +2888,48 @@ func (c *Controller) observeState(ctx context.Context, allowedImportPrefixes []a
 	c.lastDynamicPeers = dynamicPeers
 	c.lastDynamicAdmission = admissionTracker.Summary()
 	return bgpstate.Normalize(limited), routes, livenessMarkers, nil
+}
+
+func (c *Controller) excludeSAMTransportInnerFIBRoutes(routes []FIBRoute) []FIBRoute {
+	if len(routes) == 0 || c.Router == nil {
+		return routes
+	}
+	inner := map[netip.Prefix]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != routerapi.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(spec.InnerPrefix))
+		if err == nil {
+			inner[prefix.Masked()] = true
+		}
+	}
+	if len(inner) == 0 {
+		return routes
+	}
+	out := make([]FIBRoute, 0, len(routes))
+	for _, route := range routes {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(route.Prefix))
+		if err != nil {
+			out = append(out, route)
+			continue
+		}
+		transportRoute := false
+		for transportPrefix := range inner {
+			if prefix.Masked().Overlaps(transportPrefix) {
+				transportRoute = true
+				break
+			}
+		}
+		if !transportRoute {
+			out = append(out, route)
+		}
+	}
+	return out
 }
 
 func routerHasBGPDynamicPeer(router *routerapi.Router) bool {

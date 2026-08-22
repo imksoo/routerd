@@ -11,6 +11,15 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct leaf は、通常の将来の RR lease 更新予定と、失敗した要求の retry backoff を
+  区別するようになりました。先に参加した leaf も lease 全体の満了を待たず、予定された GET-only の
+  topology refresh で後から参加した direct peer を発見できます。
+- SAM transport の `innerPrefix` と重なる BGP 経路は RIB status で観測できますが、kernel FIB には
+  入れないようにしました。この point-to-point アドレス空間は tunnel interface がすでに所有するため、
+  RR が反射した aggregate により自分の next hop が到達不能になることはありません。
+
 ## v20260822.0915
 
 ### 変更

@@ -169,7 +169,13 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		}, now)
 	}
 	nextAttempt := previous.NextAttempt
-	if !nextAttempt.IsZero() && now.Before(nextAttempt) {
+	// NextAttempt has two meanings: a successful RR lease schedules its normal
+	// renewal at expiry, while a failed request schedules a retry backoff.  A
+	// direct topology refresh must not inherit the former.  Otherwise a leaf
+	// that joined before its peer waits for the whole (often 24 hour) RR lease
+	// before it can discover that peer.  Only an explicit failed-request
+	// backoff suppresses a new refresh or a claim/configuration transition.
+	if !nextAttempt.IsZero() && now.Before(nextAttempt) && (previous.FailureCount > 0 || strings.TrimSpace(previous.Backoff) != "") {
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:                   "Backoff",
 			ClaimRef:                spec.ClaimRef,
