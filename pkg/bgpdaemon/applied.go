@@ -101,7 +101,6 @@ type AppliedPeer struct {
 	RouteReflectorClusterID string              `json:"routeReflectorClusterID,omitempty"`
 	TimersProfile           string              `json:"timersProfile,omitempty"`
 	ConvergenceProfile      string              `json:"convergenceProfile,omitempty"`
-	ImportPolicyName        string              `json:"importPolicyName,omitempty"`
 	ImportPolicy            AppliedImportPolicy `json:"importPolicy,omitempty"`
 	// PreserveImportPrefixes keeps an explicit peer import allowlist from being
 	// widened with router-wide dynamic prefixes during daemon restore. It is
@@ -156,7 +155,6 @@ func Normalize(config AppliedConfig) AppliedConfig {
 			peer.RouteReflectorClusterID = strings.TrimSpace(peer.RouteReflectorClusterID)
 			peer.TimersProfile = strings.TrimSpace(peer.TimersProfile)
 			peer.ConvergenceProfile = strings.TrimSpace(peer.ConvergenceProfile)
-			peer.ImportPolicyName = strings.TrimSpace(peer.ImportPolicyName)
 			peer.ImportPolicy.AllowedPrefixes = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.AllowedPrefixes)
 			peer.ImportPolicy.RequiredCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.RequiredCommunities)
 			peer.ImportPolicy.ForbiddenCommunities = stringutil.UniqueTrimmedSorted(peer.ImportPolicy.ForbiddenCommunities)

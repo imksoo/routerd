@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- 通常の GoBGP peer に対する Cloud SAM の import admission と経路優先度を、GoBGP が実際に
+  評価する neighbor-scoped の global RIB policy で適用するようにしました。これにより direct
+  leaf path は RR fallback の local preference 100 より優先度 200 となり、意図せず等コスト
+  経路集合になることがありません。`routerd-bgp` の再起動後も、prefix を持たない direct peer の
+  優先度規則を含めて同じ policy を復元します。
+
 ## v20260822.1359
 
 ### 修正
