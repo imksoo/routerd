@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -1032,6 +1033,16 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex, allow
 					return fmt.Errorf("%s spec.directMesh.peerGroupRef %q is already used by %s; SAM enrollment direct peer-group refs must be unique per policy", res.ID(), peerGroupRef, previous)
 				}
 				directPeerGroupOwners[peerGroupRef] = res.ID()
+				transport, found, err := lookupSAMEnrollmentTransportProfile(router, spec.TransportProfileRef)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return fmt.Errorf("%s spec.transportProfileRef references missing SAMTransportProfile %q", res.ID(), spec.TransportProfileRef)
+				}
+				if mobilityconfig.NormalizeSAMTransportAddressingMode(transport.AddressingMode) != "pair-stable" {
+					return fmt.Errorf("%s spec.transportProfileRef SAMTransportProfile/%s spec.addressingMode must be pair-stable when spec.directMesh.peerGroupRef is set", res.ID(), name)
+				}
 			}
 			if ref := strings.TrimSpace(spec.RRNodeSetRef); ref != "" {
 				kind, name, ok := strings.Cut(ref, "/")
@@ -1219,6 +1230,24 @@ func validateSAMEnrollmentReferences(router *api.Router, idx *RouterIndex, allow
 		}
 	}
 	return nil
+}
+
+func lookupSAMEnrollmentTransportProfile(router *api.Router, ref string) (api.SAMTransportProfileSpec, bool, error) {
+	kind, name, ok := strings.Cut(strings.TrimSpace(ref), "/")
+	if !ok || kind != "SAMTransportProfile" || strings.TrimSpace(name) == "" {
+		return api.SAMTransportProfileSpec{}, false, nil
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != strings.TrimSpace(name) {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			return api.SAMTransportProfileSpec{}, false, err
+		}
+		return spec, true, nil
+	}
+	return api.SAMTransportProfileSpec{}, false, nil
 }
 func seenSAMEnrollmentValue(seen map[string]string, policyRef, value, resourceID string) string {
 	value = strings.TrimSpace(value)

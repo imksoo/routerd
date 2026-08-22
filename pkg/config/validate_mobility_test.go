@@ -627,6 +627,18 @@ func TestValidateSAMEnrollmentClaimDirectMeshRequiresPolicyOptIn(t *testing.T) {
 			router.Spec.Resources[i].Spec = nodes
 		}
 	}
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "spec.addressingMode must be pair-stable") {
+		t.Fatalf("Validate direct claim with edge-index policy transport = %v, want pair-stable rejection", err)
+	}
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != "aws-rr-a" {
+			continue
+		}
+		transport := resource.Spec.(api.SAMTransportProfileSpec)
+		transport.AddressingMode = "pair-stable"
+		router.Spec.Resources[i].Spec = transport
+		break
+	}
 	if err := Validate(router); err != nil {
 		t.Fatalf("Validate direct claim with policy opt-in = %v", err)
 	}
@@ -655,6 +667,15 @@ func TestValidateSAMEnrollmentPoliciesRequireUniqueRuntimeTopologyRefs(t *testin
 	policy.RRNodeSetRef = "SAMNodeSet/cloudedge-members"
 	policy.DirectMesh.PeerGroupRef = "SAMPeerGroup/cloudedge-direct-leaves"
 	router.Spec.Resources[policyIndex].Spec = policy
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" || resource.Metadata.Name != "aws-rr-a" {
+			continue
+		}
+		transport := resource.Spec.(api.SAMTransportProfileSpec)
+		transport.AddressingMode = "pair-stable"
+		router.Spec.Resources[i].Spec = transport
+		break
+	}
 	claim := router.Spec.Resources[len(router.Spec.Resources)-1].Spec.(api.SAMEnrollmentClaimSpec)
 	claim.RRSetRef = policy.RRSetRef
 	router.Spec.Resources[len(router.Spec.Resources)-1].Spec = claim

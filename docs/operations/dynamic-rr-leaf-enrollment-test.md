@@ -88,9 +88,13 @@ The leaf startup config keeps only its bootstrap claim, client, and
 does not author a local `SAMEnrollmentPolicy`, `SAMNodeSet`, or rr-a/rr-b
 inventory in static YAML.
 
-`SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes only
-when the fetched RRSet is missing, near expiry, or the local claim material
-changes. Failed attempts use exponential backoff and transport or BGP
+`SAMEnrollmentClient` is the sole submit/fetch/persist path. It refreshes when
+the fetched RRSet is missing, near expiry, or the local claim material changes.
+For a claim that opts into direct mesh, it also revalidates the optional direct
+peer snapshot every minute with a GET only: this neither re-submits the claim
+nor extends its RR lease. A failed revalidation withdraws only the
+higher-preference direct peers and keeps the cached RR topology as the safe
+fallback. Other failed attempts use exponential backoff; transport or BGP
 degradation does not trigger immediate rejoin loops.
 
 ## Optional Direct Leaf Path, With RR Fallback
