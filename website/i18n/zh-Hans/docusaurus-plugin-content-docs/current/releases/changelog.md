@@ -11,9 +11,11 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
-## v20260822.1648
-
 ### 修复
+
+- 对于尚未获得 mobility `/32` 的 direct leaf，`routerctl mobility leaf-config` 现在允许省略
+  `--owned-address`。在提供真实 owned address 前，生成的配置不会创建 service address、BGP export
+  或 redistribute route。
 
 - 已签名的 Cloud SAM direct leaf 即使当前 `ownedAddresses` 为空，也会保留在 pair-stable
   direct BGP transport 中。在出现已签名的 owner `/32` 前，该 peer 专属 import policy 会拒绝

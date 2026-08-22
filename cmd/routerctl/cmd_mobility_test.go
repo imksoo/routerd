@@ -242,6 +242,87 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 	}
 }
 
+// A direct-mesh leaf joins before it owns a mobility address in the normal PVE
+// rollout. The generator must preserve that valid empty-ownership claim while
+// emitting neither a local service address nor any BGP export candidate.
+func TestMobilityLeafConfigCommandAllowsDirectLeafWithoutOwnedAddress(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	err := mobilityCommand([]string{
+		"leaf-config",
+		"--leaf-id", "pve-rt01",
+		"--underlay-ifname", "vmbr0",
+		"--underlay-address", "10.20.0.21/24",
+		"--local-endpoint", "10.20.0.21",
+		"--endpoint-prefix", "10.20.0.0/24",
+		"--inner-prefix", "10.255.10.0/24",
+		"--tunnel-address", "10.255.10.21/32",
+		"--mobility-prefix", "10.77.60.0/24",
+		"--rr-set", "svnet1-rrs",
+		"--direct-peer-group", "svnet1-direct-leaves",
+		"--policy", "svnet1-leaves",
+		"--join-audience", "svnet1-underlay",
+		"--join-nonce", "pve-rt01-0001",
+		"--join-timestamp", "2026-08-22T16:00:00Z",
+		"--bootstrap-endpoint", "https://10.20.0.2:65432",
+		"--bootstrap-endpoint", "https://10.20.0.3:65432",
+		"--mode", "ipip",
+		"--secret", "test-join-token",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("mobility leaf-config without owned address: %v stderr=%s", err, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "EXAMPLE_HMAC") {
+		t.Fatalf("leaf-config should compute joinHMAC when --secret is supplied:\n%s", stdout.String())
+	}
+	router, err := config.LoadBytes(stdout.Bytes(), "generated-empty-owner-leaf.yaml")
+	if err != nil {
+		t.Fatalf("LoadBytes generated config: %v\n%s", err, stdout.String())
+	}
+	if err := config.Validate(router); err != nil {
+		t.Fatalf("Validate generated config: %v\n%s", err, stdout.String())
+	}
+	claim, err := mobilityEnrollmentClaim(router, "pve-rt01")
+	if err != nil {
+		t.Fatalf("generated claim: %v", err)
+	}
+	if !claim.DirectMesh || len(claim.Mobility.OwnedAddresses) != 0 {
+		t.Fatalf("empty-owner direct claim = %#v", claim)
+	}
+
+	var foundRouter, foundTransport bool
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPv4StaticAddress" && resource.Metadata.Name == "owned-service-ip" {
+			t.Fatalf("empty-owner leaf must not generate owned-service-ip: %#v", resource)
+		}
+		switch {
+		case resource.APIVersion == api.NetAPIVersion && resource.Kind == "BGPRouter" && resource.Metadata.Name == "mobility-bgp":
+			foundRouter = true
+			spec, err := resource.BGPRouterSpec()
+			if err != nil {
+				t.Fatalf("BGPRouter spec: %v", err)
+			}
+			if len(spec.ExportPolicy.AllowedPrefixes) != 0 || len(spec.Redistribute.Connected.AllowedPrefixes) != 0 {
+				t.Fatalf("empty-owner BGP export = %#v, want no route advertisement", spec)
+			}
+		case resource.APIVersion == api.MobilityAPIVersion && resource.Kind == "SAMTransportProfile" && resource.Metadata.Name == "pve-rt01":
+			foundTransport = true
+			spec, err := resource.SAMTransportProfileSpec()
+			if err != nil {
+				t.Fatalf("SAMTransportProfile spec: %v", err)
+			}
+			if len(spec.BGP.ExportPolicy.AllowedPrefixes) != 0 {
+				t.Fatalf("empty-owner transport export = %#v, want no route advertisement", spec.BGP.ExportPolicy)
+			}
+			if len(spec.PeersFrom) != 2 || spec.PeersFrom[0].Resource != "SAMRRSet/svnet1-rrs" || spec.PeersFrom[1].Resource != "SAMPeerGroup/svnet1-direct-leaves" || !spec.PeersFrom[1].Direct {
+				t.Fatalf("empty-owner direct transport peersFrom = %#v", spec.PeersFrom)
+			}
+		}
+	}
+	if !foundRouter || !foundTransport {
+		t.Fatalf("generated empty-owner leaf missing BGP router or transport: %#v", router.Spec.Resources)
+	}
+}
+
 func TestMobilityLeafConfigCommandRejectsMissingRequiredInput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := mobilityCommand([]string{"leaf-config", "--leaf-id", "leaf-a"}, &stdout, &stderr)

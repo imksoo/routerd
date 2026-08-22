@@ -11,9 +11,11 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
-## v20260822.1648
-
 ### 修正
+
+- `routerctl mobility leaf-config` で、まだ mobility `/32` を取得していない direct leaf は
+  `--owned-address` を省略できるようにしました。実際の所有アドレスが指定されるまで、生成設定は
+  service address、BGP export、redistribute route を作りません。
 
 - 署名済み Cloud SAM direct leaf は、現在の `ownedAddresses` が空でも pair-stable の
   direct BGP transport の対象に残るようにしました。署名済みの所有 `/32` が現れるまで

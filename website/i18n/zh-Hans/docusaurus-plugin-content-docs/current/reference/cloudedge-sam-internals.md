@@ -237,6 +237,10 @@ claim 不会通告 mobility route，也不会从这条 direct link 接收 route�
 时，才只允许该地址并使用 direct preference。这样无需编造 IP，通信在准备期间仍安全地经由
 RR 转发。
 
+`routerctl mobility leaf-config` 也可以省略 `--owned-address` 来生成此状态。此时它不会生成
+local service address，也不会生成任何 BGP export/redistribute prefix，因此生成的配置和已签名
+claim 一样不会通告路由。
+
 ## Capture strategies (how cloud ingress is built)
 
 `capture.type` selects the normal ingress mechanism. `capture.captureStrategy`
