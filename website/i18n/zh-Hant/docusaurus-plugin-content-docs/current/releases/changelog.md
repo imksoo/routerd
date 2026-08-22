@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1505
+
 ### 修正
 
 - 一般 GoBGP peer 的 Cloud SAM import admission 與路由優先權，現在透過 GoBGP 實際評估的

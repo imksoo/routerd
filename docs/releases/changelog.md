@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260822.1505
+
 ### Fixed
 
 - Normal GoBGP peers now evaluate Cloud SAM import admission and route

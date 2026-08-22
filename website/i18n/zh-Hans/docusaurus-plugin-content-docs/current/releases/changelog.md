@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260822.1505
+
 ### 修复
 
 - 普通 GoBGP peer 的 Cloud SAM import admission 和路由优先级现在通过 GoBGP 实际评估的

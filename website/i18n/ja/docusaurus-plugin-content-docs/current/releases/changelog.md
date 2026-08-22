@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260822.1505
+
 ### 修正
 
 - 通常の GoBGP peer に対する Cloud SAM の import admission と経路優先度を、GoBGP が実際に
