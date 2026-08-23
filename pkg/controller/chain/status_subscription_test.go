@@ -78,6 +78,17 @@ func TestSAMControllerIgnoresBGPRouterStatus(t *testing.T) {
 	}
 }
 
+func TestDirectMeshRecoverySubscriptionsFollowEnrollmentToTransportToBGP(t *testing.T) {
+	enrollment := statusChangedEvent("SAMEnrollmentClient", "svnet1")
+	if !subscriptionSetAccepts(samTransportStatusSubscriptions(), enrollment) {
+		t.Fatal("sam-transport did not accept SAMEnrollmentClient topology handoff")
+	}
+	transport := statusChangedEvent("SAMTransportProfile", "svnet1")
+	if !subscriptionSetAccepts(bgpStatusSubscriptions(&api.Router{}), transport) {
+		t.Fatal("bgp did not accept SAMTransportProfile direct-peer handoff")
+	}
+}
+
 func TestSAMRouteControllersSubscribeToDHCPv4ClientStatus(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: "routerd.resource.status.changed",
