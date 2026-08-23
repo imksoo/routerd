@@ -76,6 +76,49 @@ func (c SAMEnrollmentClientController) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// NextReconcileAfter returns the earliest persisted enrollment deadline.
+//
+// A SAMEnrollmentClient stores retry and renewal state in nextAttempt.  The
+// normal controller cadence is deliberately coarse while every RR lease is
+// healthy, but a direct-topology convergence retry must run at the recorded
+// deadline rather than wait for that cadence.  Keep this as a read-only view
+// of the existing typed status: it introduces neither another retry loop nor
+// a second source of enrollment state.
+func (c SAMEnrollmentClientController) NextReconcileAfter() time.Duration {
+	if c.Router == nil || c.Store == nil {
+		return 0
+	}
+	now := controllerNow(c.Now)
+	var earliest time.Time
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" {
+			continue
+		}
+		name := strings.TrimSpace(resource.Metadata.Name)
+		if name == "" {
+			continue
+		}
+		status := decodeStatusValue[samEnrollmentClientStatus](c.Store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", name))
+		if status.NextAttempt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || status.NextAttempt.Before(earliest) {
+			earliest = status.NextAttempt
+		}
+	}
+	if earliest.IsZero() {
+		return 0
+	}
+	if !earliest.After(now) {
+		// A reconciliation that observes an expired deadline must not turn a
+		// stale persisted status into a permanently tight scheduler loop. Let the
+		// framework use its normal adaptive interval instead; a real reconcile
+		// error already selects its fast retry interval.
+		return 0
+	}
+	return earliest.Sub(now)
+}
+
 func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner api.Resource, spec api.SAMEnrollmentClientSpec, now time.Time) error {
 	// The object store exposes JSON-shaped status, but enrollment continuation
 	// is a typed retry state. Decode it once at the controller boundary rather

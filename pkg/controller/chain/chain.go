@@ -2439,7 +2439,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), NextAfter: func() time.Duration {
+			current := mobilityEnrollmentClient
+			current.Router = r.Router
+			return current.NextReconcileAfter()
+		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := mobilityEnrollmentClient
 			current.Router = r.Router
 			return didWorkError(current.Reconcile(ctx))

@@ -11,6 +11,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct leaf 现在会把已保存的 enrollment `nextAttempt` 作为 controller 的
+  调度截止时间。在 RR 间 direct topology 暂时收敛时，已有的仅 GET 重试会在记录的时刻
+  执行，而不再只依赖较粗的周期调度。已验证的仅 RR 回退、claim 再接纳规则，以及恢复
+  direct peer group 前要求所有 RR 一致的安全条件保持不变。
+
 ## v20260823.0222
 
 ### 修复

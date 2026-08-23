@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct leaves now treat the persisted enrollment `nextAttempt` as
+  a controller scheduling deadline. During temporary RR direct-topology
+  convergence, the existing GET-only retry runs at its recorded deadline
+  instead of relying solely on the coarse periodic cadence. The verified
+  RR-only fallback, claim readmission rules, and all-RR agreement required
+  before restoring a direct peer group are unchanged.
+
 ## v20260823.0222
 
 ### Fixed

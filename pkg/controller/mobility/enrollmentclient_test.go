@@ -760,6 +760,9 @@ func TestSAMEnrollmentClientRestoresEightLeafMeshAfterOneRRRestarts(t *testing.T
 			if status["phase"] != "Backoff" || status["failureCount"] != 1 || status["reason"] != "direct topology is converging across enrollment endpoints" || status["directTopologyPending"] != true {
 				t.Fatalf("partial recovery status for %s = %#v, want RR-only direct convergence backoff", runtime.name, status)
 			}
+			if got := runtime.controller.NextReconcileAfter(); got != defaultSAMEnrollmentBackoffMin {
+				t.Fatalf("direct convergence deadline for %s = %s, want %s", runtime.name, got, defaultSAMEnrollmentBackoffMin)
+			}
 			continue
 		}
 		if status["phase"] != "Ready" || status["observedDirectPeerGroup"] != "SAMPeerGroup/pve-direct-leaves" {
@@ -773,6 +776,9 @@ func TestSAMEnrollmentClientRestoresEightLeafMeshAfterOneRRRestarts(t *testing.T
 	now = now.Add(defaultSAMEnrollmentBackoffMin + time.Second)
 	currentRR.now = now
 	restartedRR.now = now
+	if got := runtimes[0].controller.NextReconcileAfter(); got != 0 {
+		t.Fatalf("past direct convergence deadline = %s, want normal scheduler fallback", got)
+	}
 	for _, runtime := range runtimes[:len(runtimes)-1] {
 		if err := runtime.controller.Reconcile(context.Background()); err != nil {
 			t.Fatalf("restore %s: %v", runtime.name, err)
