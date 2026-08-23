@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260823.0952
+
 ### Fixed
 
 - Cloud SAM direct-mesh recovery now starts its bounded retry timer only after

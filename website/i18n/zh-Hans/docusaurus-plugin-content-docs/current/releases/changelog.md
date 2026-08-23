@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0952
+
 ### 修复
 
 - Cloud SAM direct mesh 恢复现在只会在最后一个 RR topology 读取完成后开始有上限的重试

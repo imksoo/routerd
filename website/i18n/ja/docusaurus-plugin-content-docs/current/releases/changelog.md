@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260823.0952
+
 ### 修正
 
 - Cloud SAM の direct mesh 復旧では、最後の RR topology 読み取りが完了してから
