@@ -432,12 +432,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return err
 	}
 	closeStateStore := true
+	// A configuration mutation can be blocked inside SQLite when SIGTERM
+	// arrives.  The signal path must be able to leave without synchronously
+	// waiting for that request's store lock; process exit closes the descriptor.
+	var skipStateStoreClose atomic.Bool
 	defer func() {
 		// Bootstrap can still hold the store mutex after a stop request. The
 		// process is about to exit in this path, so leave descriptor cleanup to
 		// the OS instead of turning a cancelled bootstrap into a synchronous
 		// SQLite Close wait.
-		if closeStateStore {
+		if closeStateStore && !skipStateStoreClose.Load() {
 			_ = stateStore.Close()
 		}
 	}()
@@ -590,25 +594,34 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	// SIGTERM queued behind the bootstrap and eventually reaches systemd's much
 	// longer kill timeout.
 	controllerRuntimeStarted := make(chan struct{})
+	shutdownComplete := make(chan struct{})
 	go func() {
+		defer close(shutdownComplete)
 		sig, ok := <-signalCh
 		if !ok {
 			return
 		}
 		stopping.Store(true)
+		// Stop normal reconcile and begin closing the control APIs before the
+		// best-effort mobility handoff.  They must not extend a host power-down
+		// after a request that already holds applyMu: that request may be blocked
+		// in a provider or daemon call which cannot be interrupted here.
+		cancelControllers()
+		closeStop()
 		select {
 		case <-controllerRuntimeStarted:
 			logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon stopping", map[string]string{"signal": sig.String()})
-			// Serialize shutdown with any request that was already admitted. New
-			// requests see stopping=true and are rejected before they can enter.
-			applyMu.Lock()
-			// Fence the normal controller generation before applying its ephemeral
-			// ForceSelfDrain counterpart.  The BGP daemon is an independent unit,
-			// so it remains available to publish and observe the handoff.
-			cancelControllers()
-			if !*sandbox && *gracefulStopTimeout > 0 {
+			// A shutdown must not wait unboundedly for an admitted mutation.  New
+			// requests already see stopping=true and are rejected.  If one is
+			// still active, skip the optional handoff and let systemd complete the
+			// bounded daemon shutdown instead of timing out the whole guest.
+			ranHandoff, handoffErr := runGracefulStopWhenIdle(applyMu, func() error {
+				if *sandbox || *gracefulStopTimeout <= 0 {
+					return nil
+				}
 				handoffCtx, handoffCancel := context.WithTimeout(context.Background(), *gracefulStopTimeout+5*time.Second)
-				err := runGracefulStopHandoffExclusive(handoffCtx, mutationGate, func(handoffCtx context.Context) error {
+				defer handoffCancel()
+				return runGracefulStopHandoffExclusive(handoffCtx, mutationGate, func(handoffCtx context.Context) error {
 					return runGracefulStopHandoff(handoffCtx, currentRouter(), stateStore, gracefulStopOptions{
 						Timeout:          *gracefulStopTimeout,
 						PollInterval:     time.Second,
@@ -618,16 +631,18 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 						ControllerLogger: controllerOpts.Logger,
 					})
 				})
-				handoffCancel()
-				if err != nil {
-					logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": err.Error()})
-				}
+			})
+			if !ranHandoff {
+				// The active mutation can still own SQLiteStore.mu.  Do not turn
+				// this already-bounded shutdown into an unbounded deferred Close.
+				skipStateStoreClose.Store(true)
+				logger.Emit(eventlog.LevelWarning, "serve", "skipped graceful mobility stop because a configuration mutation is active", nil)
+			} else if handoffErr != nil {
+				logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": handoffErr.Error()})
 			}
-			applyMu.Unlock()
 		default:
 			logger.Emit(eventlog.LevelInfo, "serve", "routerd startup interrupted; stopping without graceful handoff", map[string]string{"signal": sig.String()})
 		}
-		closeStop()
 		cancelSignalCtx()
 		select {
 		case sig := <-signalCh:
@@ -1014,11 +1029,19 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}()
 	}
 	go func() {
-		<-signalCtx.Done()
+		// A SIGTERM closes stop before the optional handoff so the API shutdown
+		// can run in parallel.  A fatal controller error still uses the older
+		// CancelServe path, which cancels signalCtx without closing stop.
+		select {
+		case <-stop:
+		case <-signalCtx.Done():
+		}
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
-		_ = statusServer.Shutdown(shutdownCtx)
+		// Close the main listener first: Serve is waiting on it, while the
+		// read-only status listener can have a slow in-flight request.
 		_ = server.Shutdown(shutdownCtx)
+		_ = statusServer.Shutdown(shutdownCtx)
 		if httpServer != nil {
 			_ = httpServer.Shutdown(shutdownCtx)
 		}
@@ -1034,6 +1057,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err
+	}
+	if stopping.Load() {
+		<-shutdownComplete
 	}
 	return nil
 }
@@ -2398,6 +2424,23 @@ var errServeMutationStopping = errors.New("routerd is stopping; configuration mu
 type serveMutationAdmission struct {
 	mu       *sync.Mutex
 	stopping *atomic.Bool
+}
+
+// runGracefulStopWhenIdle runs the optional mobility handoff only when no
+// admitted configuration transaction is active.  The process must always be
+// able to leave on SIGTERM; a blocked transaction is less harmful than
+// extending host shutdown indefinitely.
+func runGracefulStopWhenIdle(mu *sync.Mutex, handoff func() error) (bool, error) {
+	if handoff == nil {
+		return true, nil
+	}
+	if mu != nil && !mu.TryLock() {
+		return false, nil
+	}
+	if mu != nil {
+		defer mu.Unlock()
+	}
+	return true, handoff()
 }
 
 func (a serveMutationAdmission) lock() (func(), error) {

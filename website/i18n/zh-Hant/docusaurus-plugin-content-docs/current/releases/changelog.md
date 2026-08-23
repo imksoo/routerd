@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `routerd` 收到 SIGTERM 或 SIGINT 後，會先停止 controller reconcile 與 control API，
+  再執行可選的 Cloud SAM make-before-break handoff。它不再無限等待已受理的設定變更。
+  若該變更仍在執行，會略過可選 handoff，且不等待該變更持有的 SQLite lock 就結束；
+  作業系統會關閉程序持有的 descriptor。閒置時仍會執行原有的有時限 handoff。
+
 ## v20260823.0054
 
 ### 修正
