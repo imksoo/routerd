@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM direct leaf 現在會將已儲存的 enrollment `nextAttempt` 視為 controller 的
+  排程期限。當 RR 之間的 direct topology 暫時收斂時，既有的僅 GET 重試會在記錄的時間
+  執行，而不再只依賴較粗的週期排程。已驗證的僅 RR 回退、claim 再接納規則，以及恢復
+  direct peer group 前必須所有 RR 一致的安全條件均維持不變。
+
 ## v20260823.0222
 
 ### 修正

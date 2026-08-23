@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct leaf は、保存済みの enrollment `nextAttempt` を controller の
+  実行期限として扱うようになりました。RR 間で direct topology が一時的に収束中でも、
+  既存の GET のみの再試行を記録時刻に実行し、粗い定期実行だけに依存しません。
+  確認済みの RR-only fallback、claim の再受理条件、direct peer group 復帰前に全 RR の
+  一致を要求する安全条件は変更していません。
+
 ## v20260823.0222
 
 ### 修正
