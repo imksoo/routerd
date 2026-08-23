@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.1251
+
 ### 修正
 
 - Cloud SAM direct mesh 收斂現在將每分鐘 topology 重新驗證作為 controller 的明確 deadline

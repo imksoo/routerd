@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260823.1251
+
 ### Fixed
 
 - Cloud SAM direct-mesh convergence now schedules its one-minute topology

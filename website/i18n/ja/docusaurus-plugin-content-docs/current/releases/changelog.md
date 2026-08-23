@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260823.1251
+
 ### 修正
 
 - Cloud SAM の direct mesh 収束では、1 分ごとの topology 再検証を controller の明示的な
