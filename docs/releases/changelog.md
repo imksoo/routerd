@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260823.0454
+
 ### Fixed
 
 - `routerd` now gives its optional Cloud SAM graceful-stop handoff one hard

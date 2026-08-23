@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0454
+
 ### 修复
 
 - `routerd` 现在为可选的 Cloud SAM graceful-stop handoff 设置了 daemon 退出的
