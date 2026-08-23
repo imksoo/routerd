@@ -111,6 +111,24 @@ the cached RR topology as the safe fallback. Other failed attempts use
 exponential backoff; transport or BGP degradation does not trigger immediate
 rejoin loops.
 
+There is one separate, safe convergence state. When every RR has already
+accepted and attested the same current claim but their otherwise valid direct
+peer snapshots differ (for example, while a restarted RR relearns leaves), the
+client sets `phase: Backoff` and `directTopologyPending: true`. It keeps only
+the RR fallback, never installs a partial direct group, and retries the direct
+**GET** without another claim submit. That retry respects the configured retry
+minimum and maximum; when the configured minimum permits it, its delay is
+bounded to one minute so a complete RR pair can converge promptly. A malformed
+direct payload, a timeout, revocation, or an unattested response is not this
+state: it remains a normal degraded failure with its real diagnostic and
+configured exponential backoff.
+
+For the short-lived v20260822.2333 status shape that overwrote its original
+diagnostic with `direct-topology-refresh`, routerd makes one equivalent
+GET-only recovery probe. That migration probe never submits or re-admits a
+claim: an absent claim, an invalid response, or a transport failure returns to
+the normal diagnosed exponential-backoff path.
+
 Each direct-topology GET carries a digest of the local current claim plus a
 client-identity digest. The RR echoes the digest of the exact accepted claim
 from which it projected the snapshot. A missing or different digest is never a

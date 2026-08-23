@@ -11,6 +11,15 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct leaf は、再起動した RR が8台の leaf topology を再学習中に
+  direct peer 一覧だけが一時的に不一致になる状態を、enrollment 失敗と区別します。
+  leaf は確認済みの RR 経由を維持し、`directTopologyPending` を表示して topology の
+  GET だけを再試行します。部分的な mesh を使わず、claim の再送も繰り返しません。
+  元の refresh 診断を失っていた短期間の v20260822.2333 status には、読み取り専用の
+  回復確認を一度だけ行います。
+
 ## v20260822.2333
 
 ### 修正
