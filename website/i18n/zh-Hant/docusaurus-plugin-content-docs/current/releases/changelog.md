@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0326
+
 ### 修正
 
 - Cloud SAM direct leaf 現在會將已儲存的 enrollment `nextAttempt` 視為 controller 的

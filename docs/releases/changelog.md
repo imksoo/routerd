@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260823.0326
+
 ### Fixed
 
 - Cloud SAM direct leaves now treat the persisted enrollment `nextAttempt` as
