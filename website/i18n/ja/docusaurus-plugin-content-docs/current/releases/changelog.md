@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd` は SIGTERM/SIGINT を受けると、任意の Cloud SAM
+  make-before-break handoff より先に controller reconcile と control API を停止します。
+  すでに受理済みの設定変更を無期限に待つことはありません。その変更がまだ動作中なら
+  handoff を省略し、その SQLite lock を待たずに終了します。process が所有する descriptor は
+  OS が閉じます。idle 時は従来どおり上限時間付きの handoff を実行します。
+
 ## v20260823.0054
 
 ### 修正

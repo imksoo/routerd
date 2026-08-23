@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- On SIGTERM or SIGINT, `routerd` now stops controller reconciliation and its
+  control APIs before the optional Cloud SAM make-before-break handoff. It no
+  longer waits without a bound for an already-admitted configuration mutation.
+  If such a mutation is still active, routerd skips the optional handoff and
+  exits without waiting for that mutation's SQLite lock; the operating system
+  closes the process-owned descriptor. When idle, the existing bounded handoff
+  still runs.
+
 ## v20260823.0054
 
 ### Fixed

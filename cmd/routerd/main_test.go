@@ -1418,6 +1418,50 @@ func TestServeMutationAdmissionRejectsStop(t *testing.T) {
 	}
 }
 
+func TestRunGracefulStopWhenIdleSkipsActiveMutation(t *testing.T) {
+	var mu sync.Mutex
+	mu.Lock()
+	called := false
+	type result struct {
+		ran bool
+		err error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		ran, err := runGracefulStopWhenIdle(&mu, func() error {
+			called = true
+			return nil
+		})
+		resultCh <- result{ran: ran, err: err}
+	}()
+	select {
+	case got := <-resultCh:
+		if got.err != nil {
+			t.Fatalf("runGracefulStopWhenIdle while active = %v", got.err)
+		}
+		if got.ran {
+			t.Fatal("runGracefulStopWhenIdle ran while a mutation held the lock")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runGracefulStopWhenIdle waited for an active mutation")
+	}
+	if called {
+		t.Fatal("runGracefulStopWhenIdle called handoff while a mutation held the lock")
+	}
+	mu.Unlock()
+
+	ran, err := runGracefulStopWhenIdle(&mu, func() error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runGracefulStopWhenIdle when idle = %v", err)
+	}
+	if !ran || !called {
+		t.Fatalf("runGracefulStopWhenIdle when idle = (ran=%t, called=%t), want both true", ran, called)
+	}
+}
+
 func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
 	if err != nil {
