@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct leaves now distinguish a valid, temporary disagreement
+  between RR direct-peer snapshots from an enrollment failure. While a
+  restarted RR relearns the eight-leaf topology, a leaf keeps the verified
+  RR-only path, reports `directTopologyPending`, and retries only the topology
+  GET; it never installs a partial mesh or repeatedly resubmits its claim.
+  The release also repairs the short-lived v20260822.2333 status shape that
+  hid the original refresh diagnostic, using one read-only recovery probe.
+
 ## v20260822.2333
 
 ### Fixed

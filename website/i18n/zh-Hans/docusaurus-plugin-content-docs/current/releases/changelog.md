@@ -11,6 +11,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct leaf 现在能区分“重启后的 RR 正在重新学习 8 个 leaf topology，
+  因而 direct peer 列表暂时不一致”和真正的 enrollment 失败。leaf 保留已经验证的
+  RR 路径，显示 `directTopologyPending`，并且只重试 topology GET；不会安装部分
+  mesh，也不会反复重新提交 claim。对于曾丢失原始 refresh 诊断的短暂
+  v20260822.2333 status，只进行一次只读恢复检查。
+
 ## v20260822.2333
 
 ### 修复

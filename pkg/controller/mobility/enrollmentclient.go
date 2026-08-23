@@ -148,7 +148,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	}
 	refreshBefore := durationDefault(spec.StateTTLRefreshBefore, defaultSAMEnrollmentRefreshBefore)
 	reason := samEnrollmentClientRefreshReason(rrState, claimDigest, previous.ClaimDigest, refreshBefore, now)
-	if reason == "" && claim.DirectMesh && samEnrollmentClientDirectTopologyRefreshDue(previous.LastSuccess, now) {
+	if reason == "" && claim.DirectMesh && (previous.DirectTopologyPending || samEnrollmentClientDirectTopologyRefreshDue(previous.LastSuccess, now)) {
 		reason = "direct-topology-refresh"
 	}
 	if reason == "" {
@@ -171,6 +171,23 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		}, now)
 	}
 	nextAttempt := previous.NextAttempt
+	// v2333 rewrote a failed direct-refresh diagnostic to the generic trigger
+	// on its immediate status-driven reconcile. Recognize only that legacy
+	// shape and shorten it for one GET-only recovery probe. Newer failures keep
+	// their real reason and retain the configured exponential backoff.
+	legacyDirectProbe := reason == "direct-topology-refresh" &&
+		!previous.DirectTopologyPending &&
+		previous.FailureCount > 0 &&
+		strings.TrimSpace(previous.Backoff) != "" &&
+		strings.TrimSpace(previous.Reason) == "direct-topology-refresh"
+	legacyProbeBackoff := time.Duration(0)
+	if legacyDirectProbe && !previous.LastAttempt.IsZero() {
+		legacyProbeBackoff = samEnrollmentClientConvergenceBackoff(spec, previous.FailureCount)
+		retryAt := previous.LastAttempt.Add(legacyProbeBackoff)
+		if nextAttempt.IsZero() || retryAt.Before(nextAttempt) {
+			nextAttempt = retryAt
+		}
+	}
 	// NextAttempt has two meanings: a successful RR lease schedules its normal
 	// renewal at expiry, while a failed request schedules a retry backoff.  A
 	// direct topology refresh must not inherit the former.  Otherwise a leaf
@@ -178,6 +195,18 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	// before it can discover that peer.  Only an explicit failed-request
 	// backoff suppresses a new refresh or a claim/configuration transition.
 	if !nextAttempt.IsZero() && now.Before(nextAttempt) && (previous.FailureCount > 0 || strings.TrimSpace(previous.Backoff) != "") {
+		backoffReason := reason
+		// An immediate status wake-up after a same-claim direct refresh must not
+		// hide the actual endpoint/validation failure behind the generic refresh
+		// trigger. A claim/lease transition, however, is new operator-relevant
+		// information and must replace an older direct-refresh diagnostic.
+		if reason == "direct-topology-refresh" && strings.TrimSpace(previous.Reason) != "" {
+			backoffReason = previous.Reason
+		}
+		backoff := previous.Backoff
+		if legacyProbeBackoff > 0 {
+			backoff = legacyProbeBackoff.String()
+		}
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:                   "Backoff",
 			ClaimRef:                spec.ClaimRef,
@@ -186,14 +215,19 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			LastAttempt:             previous.LastAttempt,
 			LastSuccess:             previous.LastSuccess,
 			NextAttempt:             nextAttempt,
-			Backoff:                 previous.Backoff,
+			Backoff:                 backoff,
 			FailureCount:            previous.FailureCount,
 			ClaimDigest:             previous.ClaimDigest,
-			Reason:                  reason,
+			DirectTopologyPending:   previous.DirectTopologyPending,
+			// Keep the failing endpoint/validation diagnostic visible while the
+			// scheduled retry is waiting. A status-triggered reconcile otherwise
+			// overwrites it immediately with the generic refresh trigger, which
+			// made the v2333 incident impossible to diagnose after the fact.
+			Reason: backoffReason,
 		}, now)
 	}
 	if reason == "direct-topology-refresh" {
-		err = c.refreshDirectTopologyAndPersist(ctx, spec, claimResource, claim, rrSetName, rrState, now)
+		err = c.refreshDirectTopologyAndPersist(ctx, spec, claimResource, claim, rrSetName, rrState, now, !legacyDirectProbe)
 	} else {
 		// A differing active identity may be deliberately replaced only for an
 		// initial admission (no recorded local identity) or a local claim
@@ -206,6 +240,33 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		err = c.joinFetchAndPersist(ctx, spec, claimResource, claim, rrSetName, now, claim.DirectMesh, allowIdentityReplacement)
 	}
 	if err != nil {
+		var converging *samEnrollmentDirectTopologyConvergingError
+		if errors.As(err, &converging) {
+			// A newly admitted or restarted RR can project peers one leaf at a
+			// time. Every RR has attested this claim, but not every projection
+			// matches yet. Retain only the independently valid RRSet and retry
+			// the optional direct view promptly. Never install a subset or a
+			// one-RR-only direct topology.
+			if _, fallbackErr := c.persistCachedRRSetWithoutDirect(rrSetName, now); fallbackErr != nil {
+				err = fmt.Errorf("%w (RR fallback retention failed: %v)", err, fallbackErr)
+			} else {
+				attempts := previous.FailureCount + 1
+				backoff := samEnrollmentClientConvergenceBackoff(spec, attempts)
+				return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+					Phase:                 "Backoff",
+					ClaimRef:              spec.ClaimRef,
+					ObservedRRSet:         source,
+					LastAttempt:           now,
+					LastSuccess:           previous.LastSuccess,
+					NextAttempt:           now.Add(backoff),
+					Backoff:               backoff.String(),
+					FailureCount:          attempts,
+					ClaimDigest:           claimDigest,
+					DirectTopologyPending: true,
+					Reason:                err.Error(),
+				}, now)
+			}
+		}
 		failures := previous.FailureCount + 1
 		backoff := samEnrollmentClientBackoff(spec, failures)
 		if stripped, fallbackErr := c.persistCachedRRSetWithoutDirect(rrSetName, now); fallbackErr != nil {
@@ -233,7 +294,10 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			// a later GET-only direct refresh could re-enable topology from an RR
 			// that never accepted the current client claim.
 			ClaimDigest: previous.ClaimDigest,
-			Reason:      err.Error(),
+			// A malformed, unreachable, revoked, or unattested response is no
+			// longer the narrow all-RRs-valid convergence state.
+			DirectTopologyPending: false,
+			Reason:                err.Error(),
 		}, now)
 	}
 	records, err := c.Store.GetDynamicConfigPartsBySource(source)
@@ -269,6 +333,10 @@ type samEnrollmentSubmittedClient struct {
 type samEnrollmentFetchedTopology struct {
 	rrSet           api.Resource
 	directPeerGroup *api.Resource
+	// directPayloadError is retained when an RR attests the claim but supplies
+	// a malformed optional direct group. It must not be confused with a valid
+	// empty group while a restarted RR is relearning peers.
+	directPayloadError error
 	// directAttested means this endpoint explicitly bound its optional direct
 	// group to the exact locally configured client claim. An RR-only result
 	// remains useful when false, but it must not count toward direct agreement.
@@ -394,6 +462,7 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 	var first samEnrollmentFetchedTopology
 	firstSet := false
 	firstDigest := ""
+	topologyMismatch := false
 	observedAt, expiresAt := now, now.Add(DefaultLeaseTTL)
 	for _, item := range submitted {
 		topology, err := c.fetchSAMEnrollmentTopology(ctx, item.client, claimResource, claim, rrSetName)
@@ -405,6 +474,10 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 		if !topology.directAttested {
 			allAgreed = false
 			lastErr = fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
+		}
+		if topology.directPayloadError != nil {
+			allAgreed = false
+			lastErr = fmt.Errorf("enrollment endpoint returned invalid direct topology: %w", topology.directPayloadError)
 		}
 		if !firstSet {
 			first = topology
@@ -427,7 +500,7 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 		}
 		if digest != firstDigest {
 			allAgreed = false
-			lastErr = fmt.Errorf("direct topology differs across enrollment endpoints")
+			topologyMismatch = true
 		}
 	}
 	if !firstSet {
@@ -446,6 +519,9 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 	if lastErr != nil {
 		return fmt.Errorf("direct topology was not agreed by all enrollment endpoints: %w", lastErr)
 	}
+	if topologyMismatch {
+		return &samEnrollmentDirectTopologyConvergingError{}
+	}
 	return fmt.Errorf("direct topology was not agreed by all enrollment endpoints")
 }
 
@@ -454,8 +530,9 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 // existing RR lease remains the authority for claim lifetime. Its caller
 // removes a high-preference direct group on every enrollment-refresh failure
 // while retaining the independently valid RR fallback from the same dynamic
-// part.
-func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, rrState samEnrollmentRRSetState, now time.Time) error {
+// part. allowReadmission is false for the one-time legacy recovery probe, so
+// that migration path remains strictly GET-only.
+func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, rrState samEnrollmentRRSetState, now time.Time, allowReadmission bool) error {
 	clients, err := c.clients(spec)
 	if err != nil {
 		return err
@@ -471,7 +548,7 @@ func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx conte
 		// project the optional direct topology again. Reuse the normal
 		// all-endpoint admission path rather than retaining a stale direct group
 		// or waiting for the much later RR lease renewal.
-		if samEnrollmentClientReadmissionRequired(err, claimResource) {
+		if allowReadmission && samEnrollmentClientReadmissionRequired(err, claimResource) {
 			// fetchAgreedDirectTopology already queried every RR and established
 			// that no replica holds an explicit revoke, so do not issue a redundant
 			// second GET before re-admitting this unchanged claim.
@@ -571,6 +648,7 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 	var first samEnrollmentFetchedTopology
 	firstSet := false
 	firstDigest := ""
+	topologyMismatch := false
 	var endpointErrors []error
 	for _, client := range clients {
 		topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
@@ -585,6 +663,10 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 		if !topology.directAttested {
 			return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
 		}
+		if topology.directPayloadError != nil {
+			endpointErrors = append(endpointErrors, fmt.Errorf("enrollment endpoint returned invalid direct topology: %w", topology.directPayloadError))
+			continue
+		}
 		digest, err := samEnrollmentDirectTopologyDigest(topology.directPeerGroup)
 		if err != nil {
 			return samEnrollmentFetchedTopology{}, err
@@ -596,13 +678,27 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 			continue
 		}
 		if digest != firstDigest {
-			return samEnrollmentFetchedTopology{}, fmt.Errorf("direct topology differs across enrollment endpoints")
+			topologyMismatch = true
 		}
 	}
 	if len(endpointErrors) > 0 {
 		return samEnrollmentFetchedTopology{}, &samEnrollmentDirectTopologyFetchErrors{Errors: endpointErrors}
 	}
+	if topologyMismatch {
+		return samEnrollmentFetchedTopology{}, &samEnrollmentDirectTopologyConvergingError{}
+	}
 	return first, nil
+}
+
+// samEnrollmentDirectTopologyConvergingError means every reachable RR
+// attested the local claim, but their complete peer-group snapshots have not
+// caught up yet. It is deliberately distinct from a transport, validation, or
+// revocation error: the caller retains RR-only forwarding and retries without
+// admitting a one-RR direct topology.
+type samEnrollmentDirectTopologyConvergingError struct{}
+
+func (*samEnrollmentDirectTopologyConvergingError) Error() string {
+	return "direct topology is converging across enrollment endpoints"
 }
 
 // samEnrollmentDirectTopologyFetchErrors preserves every endpoint response
@@ -676,6 +772,7 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 		// validation or persistence.
 		directPeerGroup = nil
 	}
+	var directPayloadError error
 	if err := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, directPeerGroup); err != nil {
 		if !claim.DirectMesh || directPeerGroup == nil {
 			return samEnrollmentFetchedTopology{}, err
@@ -683,12 +780,13 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 		// Direct peers are opportunistic. Validate their full runtime shape
 		// before persistence, then retain only the independently valid RRSet
 		// when the direct payload is stale, malformed, or incompatible.
+		directPayloadError = err
 		directPeerGroup = nil
 		if fallbackErr := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, nil); fallbackErr != nil {
 			return samEnrollmentFetchedTopology{}, fallbackErr
 		}
 	}
-	return samEnrollmentFetchedTopology{rrSet: topology.RRSet, directPeerGroup: directPeerGroup, directAttested: directAttested}, nil
+	return samEnrollmentFetchedTopology{rrSet: topology.RRSet, directPeerGroup: directPeerGroup, directPayloadError: directPayloadError, directAttested: directAttested}, nil
 }
 
 func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(topology samEnrollmentFetchedTopology, observedAt, expiresAt time.Time) error {
@@ -906,6 +1004,7 @@ type samEnrollmentClientStatus struct {
 	Backoff                 string
 	FailureCount            int
 	ClaimDigest             string
+	DirectTopologyPending   bool
 	Reason                  string
 }
 
@@ -942,6 +1041,9 @@ func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string
 	}
 	if status.Reason != "" {
 		out["reason"] = status.Reason
+	}
+	if status.DirectTopologyPending {
+		out["directTopologyPending"] = true
 	}
 	return c.Store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", name, out)
 }
@@ -1079,6 +1181,15 @@ func samEnrollmentClientBackoff(spec api.SAMEnrollmentClientSpec, failures int) 
 	backoff := time.Duration(float64(minBackoff) * multiplier)
 	if backoff > maxBackoff || backoff < 0 {
 		backoff = maxBackoff
+	}
+	return backoff
+}
+
+func samEnrollmentClientConvergenceBackoff(spec api.SAMEnrollmentClientSpec, attempts int) time.Duration {
+	backoff := samEnrollmentClientBackoff(spec, attempts)
+	minBackoff := durationDefault(spec.RetryBackoff.Min, defaultSAMEnrollmentBackoffMin)
+	if minBackoff <= defaultSAMEnrollmentDirectTopologyRefresh && backoff > defaultSAMEnrollmentDirectTopologyRefresh {
+		return defaultSAMEnrollmentDirectTopologyRefresh
 	}
 	return backoff
 }
