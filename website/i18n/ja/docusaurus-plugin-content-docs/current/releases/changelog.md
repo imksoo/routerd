@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260823.0054
+
 ### 修正
 
 - Cloud SAM の direct leaf は、再起動した RR が8台の leaf topology を再学習中に

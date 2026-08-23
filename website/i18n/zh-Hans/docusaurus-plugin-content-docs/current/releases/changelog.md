@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0054
+
 ### 修复
 
 - Cloud SAM direct leaf 现在能区分“重启后的 RR 正在重新学习 8 个 leaf topology，
