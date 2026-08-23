@@ -472,7 +472,15 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if err != nil {
 		return err
 	}
-	defer closeLogger(logger, "serve", &err)
+	// Log sinks may perform synchronous external I/O. SIGTERM must never wait
+	// for a sink or its Close method after the signal path has committed to
+	// process exit; normal command completion retains the usual final record.
+	var skipLoggerClose atomic.Bool
+	defer func() {
+		if !skipLoggerClose.Load() {
+			closeLogger(logger, "serve", &err)
+		}
+	}()
 	emitServeBootFallbackWarning(stderr, logger, *configPath, bootFallback)
 	logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon starting", map[string]string{
 		"config":        *configPath,
@@ -597,11 +605,15 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	shutdownComplete := make(chan struct{})
 	go func() {
 		defer close(shutdownComplete)
-		sig, ok := <-signalCh
+		_, ok := <-signalCh
 		if !ok {
 			return
 		}
 		stopping.Store(true)
+		// Do not synchronously emit signal-path events. A configured external
+		// log sink can be blocked independently of the daemon's context, and
+		// the host must still be able to complete its shutdown.
+		skipLoggerClose.Store(true)
 		// Stop normal reconcile and begin closing the control APIs before the
 		// best-effort mobility handoff.  They must not extend a host power-down
 		// after a request that already holds applyMu: that request may be blocked
@@ -610,17 +622,21 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		closeStop()
 		select {
 		case <-controllerRuntimeStarted:
-			logger.Emit(eventlog.LevelInfo, "serve", "routerd daemon stopping", map[string]string{"signal": sig.String()})
-			// A shutdown must not wait unboundedly for an admitted mutation.  New
-			// requests already see stopping=true and are rejected.  If one is
-			// still active, skip the optional handoff and let systemd complete the
-			// bounded daemon shutdown instead of timing out the whole guest.
-			ranHandoff, handoffErr := runGracefulStopWhenIdle(applyMu, func() error {
+			// A shutdown must not wait unboundedly for an admitted mutation or an
+			// optional handoff dependency. New requests already see stopping=true
+			// and are rejected. A context does not force every SQLite, provider, or
+			// BGP call to return, so the signal path also owns a wall-clock deadline.
+			// Once it expires the process exits and the OS closes any remaining
+			// descriptors rather than extending a guest power-down indefinitely.
+			handoffDeadline := *gracefulStopTimeout
+			if handoffDeadline <= 0 || *sandbox {
+				handoffDeadline = time.Second
+			}
+			handoffCtx, handoffCancel := context.WithTimeout(context.Background(), handoffDeadline)
+			ranHandoff, handoffFinished, _ := runGracefulStopWhenIdleBounded(applyMu, handoffDeadline, func() error {
 				if *sandbox || *gracefulStopTimeout <= 0 {
 					return nil
 				}
-				handoffCtx, handoffCancel := context.WithTimeout(context.Background(), *gracefulStopTimeout+5*time.Second)
-				defer handoffCancel()
 				return runGracefulStopHandoffExclusive(handoffCtx, mutationGate, func(handoffCtx context.Context) error {
 					return runGracefulStopHandoff(handoffCtx, currentRouter(), stateStore, gracefulStopOptions{
 						Timeout:          *gracefulStopTimeout,
@@ -632,21 +648,23 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 					})
 				})
 			})
+			handoffCancel()
 			if !ranHandoff {
 				// The active mutation can still own SQLiteStore.mu.  Do not turn
-				// this already-bounded shutdown into an unbounded deferred Close.
+				// this bounded shutdown into an unbounded deferred Close.
 				skipStateStoreClose.Store(true)
-				logger.Emit(eventlog.LevelWarning, "serve", "skipped graceful mobility stop because a configuration mutation is active", nil)
-			} else if handoffErr != nil {
-				logger.Emit(eventlog.LevelWarning, "serve", "graceful mobility stop did not complete", map[string]string{"error": handoffErr.Error()})
+			} else if !handoffFinished {
+				// The handoff goroutine may still own a SQLite or network operation
+				// which ignored cancellation. Process exit is the only safe final
+				// boundary here; a synchronous close can otherwise keep the whole
+				// guest alive after systemd requested shutdown.
+				skipStateStoreClose.Store(true)
 			}
 		default:
-			logger.Emit(eventlog.LevelInfo, "serve", "routerd startup interrupted; stopping without graceful handoff", map[string]string{"signal": sig.String()})
 		}
 		cancelSignalCtx()
 		select {
-		case sig := <-signalCh:
-			logger.Emit(eventlog.LevelWarning, "serve", "second stop signal received; forcing shutdown", map[string]string{"signal": sig.String()})
+		case <-signalCh:
 			closeStop()
 			cancelSignalCtx()
 		default:
@@ -2418,6 +2436,8 @@ func startControllerRuntime(ctx context.Context, stop <-chan struct{}, start fun
 
 var errServeMutationStopping = errors.New("routerd is stopping; configuration mutations are unavailable")
 
+var errGracefulStopShutdownDeadline = errors.New("graceful mobility stop exceeded shutdown deadline")
+
 // serveMutationAdmission rejects a request both before and after it waits for
 // the shared transaction lock. The second check closes the shutdown race where
 // a request was queued behind graceful-stop's exclusive mobility handoff.
@@ -2431,16 +2451,39 @@ type serveMutationAdmission struct {
 // able to leave on SIGTERM; a blocked transaction is less harmful than
 // extending host shutdown indefinitely.
 func runGracefulStopWhenIdle(mu *sync.Mutex, handoff func() error) (bool, error) {
+	ran, _, err := runGracefulStopWhenIdleBounded(mu, 0, handoff)
+	return ran, err
+}
+
+// runGracefulStopWhenIdleBounded runs an optional handoff only while no
+// configuration mutation owns mu. A completed=false result means the process
+// must not wait for the handoff or close shared state synchronously: the
+// caller is already on its SIGTERM path and process exit is the final fence.
+func runGracefulStopWhenIdleBounded(mu *sync.Mutex, deadline time.Duration, handoff func() error) (ran, completed bool, err error) {
 	if handoff == nil {
-		return true, nil
+		return true, true, nil
 	}
 	if mu != nil && !mu.TryLock() {
-		return false, nil
+		return false, true, nil
 	}
-	if mu != nil {
-		defer mu.Unlock()
+	result := make(chan error, 1)
+	go func() {
+		if mu != nil {
+			defer mu.Unlock()
+		}
+		result <- handoff()
+	}()
+	if deadline <= 0 {
+		return true, true, <-result
 	}
-	return true, handoff()
+	timer := time.NewTimer(deadline)
+	defer timer.Stop()
+	select {
+	case err := <-result:
+		return true, true, err
+	case <-timer.C:
+		return true, false, errGracefulStopShutdownDeadline
+	}
 }
 
 func (a serveMutationAdmission) lock() (func(), error) {

@@ -1462,6 +1462,41 @@ func TestRunGracefulStopWhenIdleSkipsActiveMutation(t *testing.T) {
 	}
 }
 
+func TestRunGracefulStopWhenIdleBoundedReturnsAtDeadline(t *testing.T) {
+	var mu sync.Mutex
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	started := time.Now()
+	ran, completed, err := runGracefulStopWhenIdleBounded(&mu, 20*time.Millisecond, func() error {
+		close(entered)
+		<-release
+		return nil
+	})
+	if !ran || completed {
+		t.Fatalf("runGracefulStopWhenIdleBounded = (ran=%t, completed=%t), want (true, false)", ran, completed)
+	}
+	if !errors.Is(err, errGracefulStopShutdownDeadline) {
+		t.Fatalf("runGracefulStopWhenIdleBounded error = %v, want deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("runGracefulStopWhenIdleBounded waited %s for blocked handoff", elapsed)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("bounded handoff did not start")
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for !mu.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("bounded handoff did not release mutation lock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	mu.Unlock()
+}
+
 func TestScheduledServeReconcileDoesNotCreateConfigGeneration(t *testing.T) {
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
 	if err != nil {

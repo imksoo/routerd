@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- `routerd` 现在为可选的 Cloud SAM graceful-stop handoff 设置了 daemon 退出的
+  硬性期限。即使 SQLite、provider 或 BGP 依赖忽略取消请求，shutdown 也不会无限等待；
+  进程会退出，操作系统会关闭剩余 descriptor。在原有宽限期内完成的 handoff 行为不变。
+
 ## v20260823.0326
 
 ### 修复

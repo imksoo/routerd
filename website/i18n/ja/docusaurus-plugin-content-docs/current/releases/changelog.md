@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd` の任意の Cloud SAM graceful-stop handoff に、daemon 終了のための
+  ハードな期限を設けました。SQLite、provider、BGP の依存処理が cancellation を
+  無視しても shutdown は無期限に待機せず、process を終了して残った descriptor は
+  OS が閉じます。既存の猶予時間内に完了する handoff の動作は変わりません。
+
 ## v20260823.0326
 
 ### 修正

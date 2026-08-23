@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerd` now gives its optional Cloud SAM graceful-stop handoff one hard
+  daemon-exit deadline. If a SQLite, provider, or BGP dependency ignores
+  cancellation, shutdown no longer waits indefinitely; the process exits and
+  the operating system closes its remaining descriptors. A handoff that
+  completes within its existing grace window is unchanged.
+
 ## v20260823.0326
 
 ### Fixed
