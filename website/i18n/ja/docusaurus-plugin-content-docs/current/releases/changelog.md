@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct leaf は、RR の control endpoint が再起動中に一時的に到達不能に
+  なっても、確認済みの RR-only fallback を維持し、上限付きの収束間隔で optional direct
+  topology の GET を再試行します。revoke、identity mismatch、不正な payload、validation
+  failure など、到達可能な RR からの応答は従来どおり通常の指数バックオフを使います。
+  leaf が一つの RR だけに基づく、または古い direct peer group を復帰させることはありません。
+
 ## v20260823.0454
 
 ### 修正

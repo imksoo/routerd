@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct leaves now keep a verified RR-only fallback and retry an
+  optional direct-topology GET within the bounded convergence cadence when an
+  RR control endpoint is temporarily unreachable during restart. Reachable RR
+  responses such as revocation, identity mismatch, invalid payload, and
+  validation failures retain the normal exponential backoff; a leaf never
+  restores a one-RR or stale direct peer group.
+
 ## v20260823.0454
 
 ### Fixed

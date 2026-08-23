@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -284,12 +286,21 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	}
 	if err != nil {
 		var converging *samEnrollmentDirectTopologyConvergingError
-		if errors.As(err, &converging) {
+		// A verified RRSet makes RR-only forwarding safe while the optional
+		// direct view is rebuilt. Treat a failed direct snapshot GET like the
+		// existing convergence state only when every failing endpoint failed at
+		// the transport layer. A reachable endpoint's revoke, identity, schema,
+		// or payload response remains a normal failure with its configured
+		// exponential backoff.
+		directTransportRetry := reason == "direct-topology-refresh" &&
+			rrState.Found &&
+			samEnrollmentClientDirectTopologyTransportFailure(err)
+		if errors.As(err, &converging) || directTransportRetry {
 			// A newly admitted or restarted RR can project peers one leaf at a
-			// time. Every RR has attested this claim, but not every projection
-			// matches yet. Retain only the independently valid RRSet and retry
-			// the optional direct view promptly. Never install a subset or a
-			// one-RR-only direct topology.
+			// time, or an RR can be temporarily unreachable during a restart.
+			// Retain only the independently valid RRSet and retry the optional
+			// direct view promptly. Never install a subset or a one-RR-only
+			// direct topology.
 			if _, fallbackErr := c.persistCachedRRSetWithoutDirect(rrSetName, now); fallbackErr != nil {
 				err = fmt.Errorf("%w (RR fallback retention failed: %v)", err, fallbackErr)
 			} else {
@@ -772,6 +783,44 @@ func (e *samEnrollmentDirectTopologyFetchErrors) Unwrap() []error {
 		return nil
 	}
 	return e.Errors
+}
+
+// samEnrollmentClientDirectTopologyTransportFailure recognizes the narrow
+// direct-refresh case where every failed RR request reached no HTTP response.
+// The existing RRSet remains the safe forwarding fallback, so this path can
+// use the bounded direct convergence retry. API responses remain deliberately
+// outside this classification: a revoke, identity mismatch, malformed payload,
+// or validation error must retain the ordinary exponential backoff.
+func samEnrollmentClientDirectTopologyTransportFailure(err error) bool {
+	var aggregate *samEnrollmentDirectTopologyFetchErrors
+	if !errors.As(err, &aggregate) || aggregate == nil || len(aggregate.Errors) == 0 {
+		return false
+	}
+	for _, endpointErr := range aggregate.Errors {
+		if !samEnrollmentClientTransportFailure(endpointErr) {
+			return false
+		}
+	}
+	return true
+}
+
+func samEnrollmentClientTransportFailure(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var apiErr *controlapi.APIError
+	if errors.As(err, &apiErr) {
+		return false
+	}
+	var requestErr *url.Error
+	if !errors.As(err, &requestErr) || requestErr == nil || requestErr.Err == nil {
+		return false
+	}
+	if errors.Is(requestErr.Err, context.Canceled) {
+		return false
+	}
+	var networkErr net.Error
+	return errors.As(requestErr.Err, &networkErr) || errors.Is(requestErr.Err, context.DeadlineExceeded)
 }
 
 func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Context, client SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
