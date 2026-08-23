@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0222
+
 ### 修正
 
 - `routerd` 收到 SIGTERM 或 SIGINT 後，會先停止 controller reconcile 與 control API，

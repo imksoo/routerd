@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260823.0222
+
 ### 修正
 
 - `routerd` は SIGTERM/SIGINT を受けると、任意の Cloud SAM

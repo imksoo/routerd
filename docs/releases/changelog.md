@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260823.0222
+
 ### Fixed
 
 - On SIGTERM or SIGINT, `routerd` now stops controller reconciliation and its
