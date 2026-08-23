@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260823.0716
+
 ### 修正
 
 - Cloud SAM の direct leaf は、RR の control endpoint が再起動中に一時的に到達不能に

@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260823.0716
+
 ### 修复
 
 - Cloud SAM direct leaf 现在会在 RR control endpoint 重启期间暂时不可达时保留已验证的
