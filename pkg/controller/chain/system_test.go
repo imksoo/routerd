@@ -1212,6 +1212,167 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitControllerRestartsEventdOnlyForChangedRuntimeConfig(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "state")
+	configPath := filepath.Join(stateDir, "eventd", "edge", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig := func(endpoint string) {
+		t.Helper()
+		data := []byte(`{"nodeName":"home","group":"edge","secretFile":"/run/routerd/eventd.key","statePath":"/var/lib/routerd/routerd.db","peers":[{"nodeName":"cloud-a","endpoint":"` + endpoint + `"}]}` + "\n")
+		if err := os.WriteFile(configPath, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeConfig("http://10.99.0.7:8787")
+
+	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.EventGroupSpec{
+			NodeName: "home",
+			Auth:     api.EventGroupAuth{SecretFile: "/run/routerd/eventd.key"},
+		}},
+	}}}
+	unitName := eventFederationUnitName("edge")
+	active := true
+	restarts := 0
+	var restartErr error
+	restartLeavesInactive := false
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            mapStore{},
+		SystemdSystemDir: filepath.Join(dir, "systemd"),
+		StateDir:         stateDir,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "systemctl" {
+				return []byte("ok"), nil
+			}
+			line := strings.Join(args, " ")
+			switch line {
+			case "is-active --quiet " + unitName:
+				if active {
+					return []byte("active"), nil
+				}
+				return nil, errors.New("inactive")
+			case "restart " + unitName:
+				restarts++
+				if restartErr != nil {
+					return nil, restartErr
+				}
+				active = !restartLeavesInactive
+			case "start " + unitName:
+				active = true
+			}
+			return []byte("ok"), nil
+		},
+	}
+
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	if restarts != 1 {
+		t.Fatalf("initial config handoff restarts = %d, want 1", restarts)
+	}
+	marker := filepath.Join(stateDir, "eventd", "edge", "config.applied.sha256")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("applied config marker: %v", err)
+	}
+
+	// Routine reconciliations preserve the running helper when its config has
+	// already been handed off.
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("unchanged Reconcile: %v", err)
+	}
+	if restarts != 1 {
+		t.Fatalf("unchanged config restarted eventd %d times, want 1 total", restarts)
+	}
+
+	// A peer endpoint change produces a different runtime config digest and
+	// deliberately restarts the active helper exactly once.
+	writeConfig("http://10.99.0.8:8787")
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("changed Reconcile: %v", err)
+	}
+	if restarts != 2 {
+		t.Fatalf("changed config restarts = %d, want 2", restarts)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("post-change unchanged Reconcile: %v", err)
+	}
+	if restarts != 2 {
+		t.Fatalf("post-change unchanged config restarted eventd %d times, want 2 total", restarts)
+	}
+
+	// A failed handoff does not advance the marker, so the next reconcile
+	// retries the same desired config instead of silently treating it as live.
+	restartErr = errors.New("restart failed")
+	writeConfig("http://10.99.0.9:8787")
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("changed config restart failure was not returned")
+	}
+	if restarts != 3 {
+		t.Fatalf("failed config handoff restarts = %d, want 3", restarts)
+	}
+	wanted, found, err := eventFederationConfigDigest(configPath)
+	if err != nil || !found {
+		t.Fatalf("changed config digest = %q found=%t err=%v", wanted, found, err)
+	}
+	marked, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read stale marker: %v", err)
+	}
+	if strings.TrimSpace(string(marked)) == wanted {
+		t.Fatal("failed restart incorrectly advanced applied config marker")
+	}
+	restartErr = nil
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("retry Reconcile: %v", err)
+	}
+	if restarts != 4 {
+		t.Fatalf("retry config handoff restarts = %d, want 4", restarts)
+	}
+
+	// A successful systemctl invocation is not sufficient if the helper
+	// immediately exits. Keep the marker stale and allow the normal helper
+	// start path to complete the handoff on a later reconciliation.
+	restartLeavesInactive = true
+	writeConfig("http://10.99.0.10:8787")
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("inactive eventd after restart was not returned")
+	}
+	if restarts != 5 {
+		t.Fatalf("inactive config handoff restarts = %d, want 5", restarts)
+	}
+	wanted, found, err = eventFederationConfigDigest(configPath)
+	if err != nil || !found {
+		t.Fatalf("inactive config digest = %q found=%t err=%v", wanted, found, err)
+	}
+	marked, err = os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker after inactive restart: %v", err)
+	}
+	if strings.TrimSpace(string(marked)) == wanted {
+		t.Fatal("inactive restart incorrectly advanced applied config marker")
+	}
+
+	restartLeavesInactive = false
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("inactive restart retry Reconcile: %v", err)
+	}
+	if restarts != 5 {
+		t.Fatalf("inactive restart retry restarted eventd %d times, want 5", restarts)
+	}
+	marked, err = os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read marker after inactive restart retry: %v", err)
+	}
+	if strings.TrimSpace(string(marked)) != wanted {
+		t.Fatalf("inactive restart retry marker = %q, want %q", strings.TrimSpace(string(marked)), wanted)
+	}
+}
+
 func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()

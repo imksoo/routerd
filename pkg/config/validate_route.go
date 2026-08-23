@@ -100,6 +100,11 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if err := validateBGPTimerProfile(res.ID(), "spec.timers", spec.Timers); err != nil {
 			return true, err
 		}
+		switch strings.TrimSpace(spec.ConvergenceProfile) {
+		case "", "default", "fast", "stable":
+		default:
+			return true, fmt.Errorf("%s spec.convergenceProfile must be default, fast, or stable", res.ID())
+		}
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
 			return true, err
 		}

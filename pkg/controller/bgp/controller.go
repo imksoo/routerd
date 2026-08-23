@@ -756,6 +756,7 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 				RejectImportAll:         rejectDirectPeerRoutes,
 				ExportPolicy:            spec.ExportPolicy,
 				Timers:                  spec.Timers,
+				ConvergenceProfile:      strings.TrimSpace(spec.ConvergenceProfile),
 			}
 		}
 	}
@@ -804,7 +805,9 @@ func (c *Controller) desiredDynamicPeers(routerName string, localASN uint32) (ma
 func applyRouterBGPDefaults(routerName string, routerSpec routerapi.BGPRouterSpec, peers map[string]desiredPeer, staticExportPrefixes, dynamicExportPrefixes []string) map[string]desiredPeer {
 	globalImportPolicy := effectiveGlobalImportPolicy(routerSpec.ImportPolicy, dynamicExportPrefixes)
 	for address, peer := range peers {
-		peer.ConvergenceProfile = routerSpec.ConvergenceProfile
+		if strings.TrimSpace(peer.ConvergenceProfile) == "" {
+			peer.ConvergenceProfile = routerSpec.ConvergenceProfile
+		}
 		peer.GracefulRestart = canonicalGracefulRestartSpec(routerSpec.GracefulRestart, peer.ConvergenceProfile)
 		if peerHasImportPolicy(peer.ImportPolicy) {
 			if !peer.PreserveImportPrefixes {

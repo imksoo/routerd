@@ -85,7 +85,7 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 		}
 	}
 
-	digest, err := dynamicPayloadDigest(result.Status.Resources, result.Status.Directives)
+	digest, err := dynamicPayloadDigest(result.Status.Resources, result.Status.Directives, result.Status.ActionPlans)
 	if err != nil {
 		return dynamicconfig.DynamicConfigPart{}, err
 	}
@@ -107,13 +107,15 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 	}, nil
 }
 
-func dynamicPayloadDigest(resources []api.Resource, directives []dynamicconfig.DynamicConfigDirective) (string, error) {
+func dynamicPayloadDigest(resources []api.Resource, directives []dynamicconfig.DynamicConfigDirective, actionPlans []ActionPlan) (string, error) {
 	payload := struct {
-		Resources  []api.Resource                         `json:"resources"`
-		Directives []dynamicconfig.DynamicConfigDirective `json:"directives"`
+		Resources   []api.Resource                         `json:"resources"`
+		Directives  []dynamicconfig.DynamicConfigDirective `json:"directives"`
+		ActionPlans []ActionPlan                           `json:"actionPlans"`
 	}{
-		Resources:  resources,
-		Directives: directives,
+		Resources:   resources,
+		Directives:  directives,
+		ActionPlans: actionPlans,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

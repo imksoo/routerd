@@ -148,6 +148,25 @@ spec:
 	}
 }
 
+func TestSAMEnrollmentPolicyRejectsRemovedRevokeAfterInactive(t *testing.T) {
+	var resource Resource
+	err := yaml.Unmarshal([]byte(`
+apiVersion: mobility.routerd.net/v1alpha1
+kind: SAMEnrollmentPolicy
+metadata: {name: leaves}
+spec:
+  transportProfileRef: SAMTransportProfile/leaves
+  tunnelAddressPrefixes: [10.255.0.0/20]
+  revokeAfterInactive: 168h
+`), &resource)
+	if err == nil {
+		t.Fatal("SAMEnrollmentPolicy accepted removed revokeAfterInactive")
+	}
+	if !strings.Contains(err.Error(), "spec.revokeAfterInactive is not supported") {
+		t.Fatalf("unmarshal error = %v", err)
+	}
+}
+
 func TestIPv6PDProfileDefaults(t *testing.T) {
 	tests := []struct {
 		name             string

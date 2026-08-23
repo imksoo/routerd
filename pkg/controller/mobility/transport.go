@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -24,6 +25,7 @@ const samTransportSourceKind = "SAMTransportProfile"
 
 type TransportController struct {
 	Router        *api.Router
+	Bus           *bus.Bus
 	Store         Store
 	PeerGroupSync *PeerGroupSyncClient
 	Now           func() time.Time
@@ -59,30 +61,35 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			source := TransportDynamicSource(res.Metadata.Name, "")
 			desiredSources[source] = true
-			_ = c.upsertTransportDynamicPart(res, source, "sam-transport", nil, now)
+			digest, _ := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
 			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": err.Error(),
+				"phase":         "Degraded",
+				"reason":        err.Error(),
+				"outputDigests": transportOutputDigests(source, digest),
 			})
 			continue
 		}
 		source := TransportDynamicSource(res.Metadata.Name, spec.SelfNodeRef)
 		desiredSources[source] = true
 		degrade := func(cause error) error {
-			if err := c.upsertTransportDynamicPart(res, source, "sam-transport", nil, now); err != nil {
+			digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
+			if err != nil {
 				return err
 			}
 			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
-				"phase":  "Degraded",
-				"reason": cause.Error(),
+				"phase":         "Degraded",
+				"reason":        cause.Error(),
+				"outputDigests": transportOutputDigests(source, digest),
 			})
 			return nil
 		}
 		peerGroupPending := ""
+		peerGroupDigest := ""
+		peerGroupSource := ""
 		if spec.PublishPeerGroup {
-			peerGroupSource := TransportPeerGroupDynamicSource(res.Metadata.Name)
+			peerGroupSource = TransportPeerGroupDynamicSource(res.Metadata.Name)
 			desiredSources[peerGroupSource] = true
-			pending, err := c.upsertTransportPeerGroupPart(res, spec, peerGroupSource, now)
+			pending, digest, err := c.upsertTransportPeerGroupPart(ctx, res, spec, peerGroupSource, now)
 			if err != nil {
 				if err := degrade(err); err != nil {
 					return err
@@ -90,6 +97,7 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			peerGroupPending = pending
+			peerGroupDigest = digest
 		}
 		derived, err := c.deriveTransportResources(ctx, res, spec)
 		if err != nil {
@@ -98,7 +106,8 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := c.upsertTransportDynamicPart(res, source, "sam-transport", derived.Resources, now); err != nil {
+		digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", derived.Resources, now)
+		if err != nil {
 			return err
 		}
 		pendingSources := cleanStrings(append(append([]string(nil), derived.PendingSources...), peerGroupPending))
@@ -110,10 +119,25 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 			"phase":          phase,
 			"pendingSources": pendingSources,
 			"peersFrom":      statusRowMaps(derived.PeersFrom),
+			"outputDigests":  transportOutputDigests(source, digest, peerGroupSource, peerGroupDigest),
 		}
 		_ = c.saveTransportStatus(res.Metadata.Name, status)
 	}
-	return c.deprovisionStaleTransportSources(desiredSources, now)
+	return c.deprovisionStaleTransportSources(ctx, desiredSources, now)
+}
+
+// transportOutputDigests exposes the durable desired-output identities in
+// status so a same-count peer replacement still produces a status event. The
+// status is only a wake-up signal; each consumer reloads the part itself.
+func transportOutputDigests(values ...string) map[string]string {
+	out := map[string]string{}
+	for i := 0; i+1 < len(values); i += 2 {
+		source, digest := strings.TrimSpace(values[i]), strings.TrimSpace(values[i+1])
+		if source != "" && digest != "" {
+			out[source] = digest
+		}
+	}
+	return out
 }
 
 func (c TransportController) deriveTransportResources(ctx context.Context, owner api.Resource, spec api.SAMTransportProfileSpec) (transportDerivation, error) {
@@ -129,6 +153,10 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 	}
 	if len(peers) == 0 {
 		return transportDerivation{PeersFrom: peerSources, PendingSources: pendingSources}, nil
+	}
+	timers, convergenceProfile, err := c.transportBGPDefaults(spec.BGP)
+	if err != nil {
+		return transportDerivation{}, err
 	}
 	edgeIndex, err := transportAddressSlots(spec, peers, topologyNodes, inner)
 	if err != nil {
@@ -218,10 +246,6 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			})
 		}
 		generateBGPPeers := spec.BGP.GeneratePeers == nil || *spec.BGP.GeneratePeers
-		timers := spec.BGP.Timers
-		if strings.TrimSpace(timers.Profile) == "" {
-			timers.Profile = strings.TrimSpace(spec.BGP.TimersPreset)
-		}
 		bfdRef := ""
 		if generateBGPPeers && spec.BGP.BFD.Enabled {
 			bfdName := safeName(bgpPeerName + "-bfd")
@@ -284,6 +308,7 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 					ImportPolicy:            importPolicy,
 					ExportPolicy:            spec.BGP.ExportPolicy,
 					Timers:                  timers,
+					ConvergenceProfile:      convergenceProfile,
 					BFD:                     bfdRef,
 				},
 			})
@@ -302,6 +327,44 @@ func transportFallbackPeers(peers []api.SAMTransportPeerSpec) []api.SAMTransport
 		fallback = append(fallback, peer)
 	}
 	return fallback
+}
+
+// transportBGPDefaults materializes the referenced router's peer defaults in
+// the generated DynamicConfigPart. This keeps generated SAM peers stable and
+// inspectable even before the BGP controller applies them. Profile-local
+// settings always win: timers.profile takes precedence over timersPreset, and
+// an explicit convergenceProfile takes precedence over the router default.
+func (c TransportController) transportBGPDefaults(profile api.SAMTransportBGPProfileSpec) (api.BGPTimersSpec, string, error) {
+	timers := profile.Timers
+	if strings.TrimSpace(timers.Profile) == "" {
+		timers.Profile = strings.TrimSpace(profile.TimersPreset)
+	}
+	convergenceProfile := strings.TrimSpace(profile.ConvergenceProfile)
+
+	if c.Router == nil {
+		return timers, convergenceProfile, nil
+	}
+	kind, routerName, ok := strings.Cut(strings.TrimSpace(profile.RouterRef), "/")
+	if !ok || kind != "BGPRouter" || routerName == "" {
+		return timers, convergenceProfile, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" || strings.TrimSpace(resource.Metadata.Name) != routerName {
+			continue
+		}
+		routerSpec, err := resource.BGPRouterSpec()
+		if err != nil {
+			return api.BGPTimersSpec{}, "", err
+		}
+		if strings.TrimSpace(timers.Profile) == "" {
+			timers = routerSpec.Timers
+		}
+		if convergenceProfile == "" {
+			convergenceProfile = strings.TrimSpace(routerSpec.ConvergenceProfile)
+		}
+		break
+	}
+	return timers, convergenceProfile, nil
 }
 
 func (c TransportController) targetOS() platform.OS {

@@ -5,6 +5,8 @@ package chain
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -280,10 +282,14 @@ type SystemdUnitController struct {
 	Bus            interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store                       Store
-	Command                     outputCommandFunc
-	DryRun                      bool
-	SystemdSystemDir            string
+	Store            Store
+	Command          outputCommandFunc
+	DryRun           bool
+	SystemdSystemDir string
+	// StateDir overrides the platform state directory for eventd runtime
+	// configuration and its applied-config marker. It is primarily useful for
+	// isolated controller tests; normal runtime uses platform.Current().
+	StateDir                    string
 	SynthesizeClientDaemonUnits bool
 }
 
@@ -316,6 +322,10 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	eventdStateDir := strings.TrimRight(c.StateDir, "/")
+	if eventdStateDir == "" {
+		eventdStateDir = defaults.StateDir
+	}
 	telemetryEnv, err := render.TelemetryEnvironment(c.Router)
 	if err != nil {
 		return err
@@ -341,7 +351,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 		if err := c.cleanupStaleDNSResolverUnits(ctx, command); err != nil {
 			return err
 		}
-		if err := c.reconcileEventFederationUnits(ctx, defaults.StateDir, command); err != nil {
+		if err := c.reconcileEventFederationUnits(ctx, eventdStateDir, command); err != nil {
 			return err
 		}
 		if err := c.cleanupStaleEventFederationUnits(ctx, command); err != nil {
@@ -809,11 +819,83 @@ func (c SystemdUnitController) reconcileEventFederationUnits(ctx context.Context
 		group := resource.Metadata.Name
 		unitName := eventFederationUnitName(group)
 		configPath := filepath.Join(stateDir, "eventd", group, "config.json")
+		// Capture the state before reconcile. A newly-started helper reads the
+		// current config itself; only an already-running helper needs an explicit
+		// restart when the digest changes.
+		wasActive := systemdUnitActive(ctx, command, unitName)
 		if err := c.reconcileLongLivedSystemdHelperUnit(ctx, unitName, "Router/"+c.Router.Metadata.Name+"/EventGroup/"+group, render.EventdSystemdSpec(group, "/usr/local/sbin/routerd-eventd", configPath), command); err != nil {
+			return err
+		}
+		if err := c.applyEventFederationConfig(ctx, stateDir, group, unitName, wasActive, command); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// applyEventFederationConfig makes runtime peer changes take effect exactly
+// once. routerd-eventd intentionally loads its runtime configuration at
+// process start, so a running helper must be restarted after a config change.
+// The durable digest marker records the configuration successfully handed to
+// the helper. This keeps ordinary/status-only reconciliations from restarting
+// it repeatedly, while a failed restart leaves the marker stale for retry.
+func (c SystemdUnitController) applyEventFederationConfig(ctx context.Context, stateDir, group, unitName string, wasActive bool, command outputCommandFunc) error {
+	if c.DryRun {
+		return nil
+	}
+	configPath := filepath.Join(stateDir, "eventd", group, "config.json")
+	digest, found, err := eventFederationConfigDigest(configPath)
+	if err != nil {
+		return fmt.Errorf("digest event federation config %s: %w", configPath, err)
+	}
+	// A pending EventGroup deliberately leaves its last valid config alone.
+	// There is nothing to apply until its config renderer has produced one.
+	if !found {
+		return nil
+	}
+	markerPath := filepath.Join(stateDir, "eventd", group, "config.applied.sha256")
+	marker, err := os.ReadFile(markerPath)
+	if err == nil && strings.TrimSpace(string(marker)) == digest {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read event federation config marker %s: %w", markerPath, err)
+	}
+
+	if wasActive {
+		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+			return fmt.Errorf("restart event federation helper %s after config change: %w", unitName, err)
+		}
+		// systemctl restart normally waits for the job, but do not record the
+		// digest merely because the command itself returned successfully. A
+		// helper that immediately failed its restart must retain the stale marker
+		// so the next reconciliation can repair the handoff.
+		if !systemdUnitActive(ctx, command, unitName) {
+			return fmt.Errorf("event federation helper %s is not active after config restart", unitName)
+		}
+	} else if !systemdUnitActive(ctx, command, unitName) {
+		// reconcileLongLivedSystemdHelperUnit has attempted the initial start.
+		// Do not claim this config was applied unless the helper actually came
+		// up; a future reconciliation will retry start and this handoff.
+		return nil
+	}
+
+	if _, err := writeFileIfChanged(markerPath, []byte(digest+"\n"), 0o644, false); err != nil {
+		return fmt.Errorf("record applied event federation config %s: %w", markerPath, err)
+	}
+	return nil
+}
+
+func eventFederationConfigDigest(path string) (string, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	sum := sha256.Sum256(bytes.TrimSpace(data))
+	return hex.EncodeToString(sum[:]), true, nil
 }
 
 func eventFederationUnitName(group string) string {

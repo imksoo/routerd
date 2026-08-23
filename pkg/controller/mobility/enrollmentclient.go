@@ -16,6 +16,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -51,6 +52,9 @@ type SAMEnrollmentClientStore interface {
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 }
 
+// SAMEnrollmentJoinClient represents one bootstrap endpoint. The controller
+// may issue topology GETs concurrently to distinct endpoint instances, but
+// always serializes claim submissions.
 type SAMEnrollmentJoinClient interface {
 	SubmitSAMEnrollmentClaim(context.Context, controlapi.SAMEnrollmentClaimSubmitRequest) (*controlapi.SAMEnrollmentClaimSubmitResult, error)
 	GetSAMEnrollmentTopology(context.Context, controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error)
@@ -86,20 +90,31 @@ func (c SAMEnrollmentClientController) Reconcile(ctx context.Context) error {
 
 // NextReconcileAfter returns the earliest persisted enrollment deadline.
 //
-// A SAMEnrollmentClient stores retry and renewal state in nextAttempt.  The
-// normal controller cadence is deliberately coarse while every RR lease is
-// healthy, but a direct-topology convergence retry must run at the recorded
-// deadline rather than wait for that cadence.  Keep this as a read-only view
-// of the existing typed status: it introduces neither another retry loop nor
-// a second source of enrollment state.
+// A SAMEnrollmentClient stores retry and renewal state in nextAttempt. Direct
+// topology revalidation is instead due at lastSuccess plus its bounded
+// refresh interval. Keep this as a read-only view of the existing typed
+// status: it introduces neither another retry loop nor a second source of
+// enrollment state.
 func (c SAMEnrollmentClientController) NextReconcileAfter() time.Duration {
 	if c.Router == nil || c.Store == nil {
 		return 0
 	}
 	now := controllerNow(c.Now)
 	var earliest time.Time
+	consider := func(deadline time.Time) {
+		if !deadline.After(now) {
+			return
+		}
+		if earliest.IsZero() || deadline.Before(earliest) {
+			earliest = deadline
+		}
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" {
+			continue
+		}
+		spec, err := resource.SAMEnrollmentClientSpec()
+		if err != nil {
 			continue
 		}
 		name := strings.TrimSpace(resource.Metadata.Name)
@@ -107,21 +122,17 @@ func (c SAMEnrollmentClientController) NextReconcileAfter() time.Duration {
 			continue
 		}
 		status := decodeStatusValue[samEnrollmentClientStatus](c.Store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", name))
-		if status.NextAttempt.IsZero() {
+		consider(status.NextAttempt)
+		if status.LastSuccess.IsZero() {
 			continue
 		}
-		if earliest.IsZero() || status.NextAttempt.Before(earliest) {
-			earliest = status.NextAttempt
+		_, claim, err := samEnrollmentClientClaim(c.Router, spec.ClaimRef)
+		if err != nil || !claim.DirectMesh {
+			continue
 		}
+		consider(status.LastSuccess.Add(defaultSAMEnrollmentDirectTopologyRefresh))
 	}
 	if earliest.IsZero() {
-		return 0
-	}
-	if !earliest.After(now) {
-		// A reconciliation that observes an expired deadline must not turn a
-		// stale persisted status into a permanently tight scheduler loop. Let the
-		// framework use its normal adaptive interval instead; a real reconcile
-		// error already selects its fast retry interval.
 		return 0
 	}
 	return earliest.Sub(now)
@@ -197,7 +208,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	if claim.DirectMesh && rrState.PeerGroupName != "" {
 		observedDirectPeerGroup = "SAMPeerGroup/" + rrState.PeerGroupName
 	}
-	refreshBefore := durationDefault(spec.StateTTLRefreshBefore, defaultSAMEnrollmentRefreshBefore)
+	refreshBefore := samEnrollmentClientRefreshBefore(spec, rrState)
 	reason := samEnrollmentClientRefreshReason(rrState, claimDigest, previous.ClaimDigest, refreshBefore, now)
 	if reason == "" && claim.DirectMesh && (previous.DirectTopologyPending || samEnrollmentClientDirectTopologyRefreshDue(previous.LastSuccess, now)) {
 		reason = "direct-topology-refresh"
@@ -312,10 +323,11 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			} else {
 				attempts := previous.FailureCount + 1
 				backoff := samEnrollmentClientConvergenceBackoff(spec, attempts)
-				// Direct topology reads run serially across every RR and may take
-				// longer than the bounded recovery backoff. Anchor the deadline at
-				// completion, not reconcile start, so this status update cannot wake
-				// the controller into an immediate timeout-rate retry loop.
+				// Every direct topology read must complete before we can decide
+				// whether the RRs agree, and may take longer than the bounded
+				// recovery backoff. Anchor the deadline at completion, not reconcile
+				// start, so this status update cannot wake the controller into an
+				// immediate timeout-rate retry loop.
 				retryFrom := controllerNow(c.Now)
 				if retryFrom.Before(now) {
 					retryFrom = now
@@ -373,6 +385,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		return err
 	}
 	refreshed := latestActiveSAMEnrollmentRRSet(records, claim.PolicyRef, now)
+	refreshedRefreshBefore := samEnrollmentClientRefreshBefore(spec, refreshed)
 	if claim.DirectMesh && refreshed.PeerGroupName != "" {
 		observedDirectPeerGroup = "SAMPeerGroup/" + refreshed.PeerGroupName
 	} else {
@@ -385,7 +398,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		ObservedDirectPeerGroup: observedDirectPeerGroup,
 		LastAttempt:             now,
 		LastSuccess:             now,
-		NextAttempt:             refreshed.ExpiresAt.Add(-refreshBefore),
+		NextAttempt:             refreshed.ExpiresAt.Add(-refreshedRefreshBefore),
 		Backoff:                 "",
 		FailureCount:            0,
 		ClaimDigest:             claimDigest,
@@ -713,23 +726,46 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 	if len(clients) == 0 {
 		return samEnrollmentFetchedTopology{}, fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
 	}
+	// This helper is used only by the GET-only direct-topology refresh path.
+	// Each configured RR is independent, so overlap its bounded request with
+	// the others, then evaluate every result in configured order. In
+	// particular, do not return early: a later RR can retain a revoke or a
+	// different topology. Claim submissions remain serial in
+	// joinFetchAndPersist.
+	type fetchResult struct {
+		topology samEnrollmentFetchedTopology
+		err      error
+	}
+	results := make([]fetchResult, len(clients))
+	var reads sync.WaitGroup
+	reads.Add(len(clients))
+	for index, client := range clients {
+		go func(index int, client SAMEnrollmentJoinClient) {
+			defer reads.Done()
+			results[index].topology, results[index].err = c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
+		}(index, client)
+	}
+	reads.Wait()
+
 	var first samEnrollmentFetchedTopology
 	firstSet := false
 	firstDigest := ""
 	topologyMismatch := false
 	var endpointErrors []error
-	for _, client := range clients {
-		topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
-		if err != nil {
+	unattested := false
+	for _, result := range results {
+		if result.err != nil {
 			// Query every configured RR before deciding whether a missing claim
 			// warrants readmission. A later RR can hold an explicit revocation
 			// tombstone; returning at the first missing response would otherwise
 			// allow that tombstone to be overwritten.
-			endpointErrors = append(endpointErrors, err)
+			endpointErrors = append(endpointErrors, result.err)
 			continue
 		}
+		topology := result.topology
 		if !topology.directAttested {
-			return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
+			unattested = true
+			continue
 		}
 		if topology.directPayloadError != nil {
 			endpointErrors = append(endpointErrors, fmt.Errorf("enrollment endpoint returned invalid direct topology: %w", topology.directPayloadError))
@@ -748,6 +784,9 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 		if digest != firstDigest {
 			topologyMismatch = true
 		}
+	}
+	if unattested {
+		return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
 	}
 	if len(endpointErrors) > 0 {
 		return samEnrollmentFetchedTopology{}, &samEnrollmentDirectTopologyFetchErrors{Errors: endpointErrors}
@@ -1224,6 +1263,28 @@ func samEnrollmentTopologyRecordPeerGroupName(record routerstate.DynamicConfigPa
 		}
 	}
 	return validRRSet, peerGroupName
+}
+
+// samEnrollmentClientRefreshBefore returns the requested renewal lead time,
+// constrained only when it is at least as long as the lease observed from an
+// RR response. A policy may legitimately use the server's default five-minute
+// lease while a client leaves its ten-minute refresh-before default in place.
+// Renewing halfway through that observed lease avoids an immediate renewal
+// loop without rejecting an otherwise valid configuration. A shorter explicit
+// refresh-before remains unchanged.
+func samEnrollmentClientRefreshBefore(spec api.SAMEnrollmentClientSpec, rrState samEnrollmentRRSetState) time.Duration {
+	requested := durationDefault(spec.StateTTLRefreshBefore, defaultSAMEnrollmentRefreshBefore)
+	if requested <= 0 || rrState.ObservedAt.IsZero() || rrState.ExpiresAt.IsZero() {
+		return requested
+	}
+	lease := rrState.ExpiresAt.Sub(rrState.ObservedAt)
+	if lease <= 0 || requested < lease {
+		return requested
+	}
+	if safe := lease / 2; safe > 0 {
+		return safe
+	}
+	return requested
 }
 
 func samEnrollmentClientRefreshReason(rrState samEnrollmentRRSetState, claimDigest, previousClaimDigest string, refreshBefore time.Duration, now time.Time) string {

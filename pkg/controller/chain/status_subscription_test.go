@@ -9,6 +9,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
 func TestSAMRouteControllersSubscribeToVirtualAddressStatus(t *testing.T) {
@@ -86,6 +87,36 @@ func TestDirectMeshRecoverySubscriptionsFollowEnrollmentToTransportToBGP(t *test
 	transport := statusChangedEvent("SAMTransportProfile", "svnet1")
 	if !subscriptionSetAccepts(bgpStatusSubscriptions(&api.Router{}), transport) {
 		t.Fatal("bgp did not accept SAMTransportProfile direct-peer handoff")
+	}
+}
+
+func TestDynamicConfigPartChangeWakesSAMConsumers(t *testing.T) {
+	event := daemonapi.DaemonEvent{
+		Type: dynamicconfig.PartChangedEvent,
+		Attributes: map[string]string{
+			"source": "SAMTransportProfile/svnet1/node/pve-rt-01",
+			"digest": "sha256:changed",
+		},
+	}
+	router := &api.Router{}
+	for name, subscriptions := range map[string][]bus.Subscription{
+		"sam-transport": samTransportStatusSubscriptions(),
+		"tunnel":        withDynamicConfigPartSubscriptions(statusSubscriptions("TunnelInterface", "SAMTransportProfile")),
+		"ipv4-route":    ipv4RouteControllerStatusSubscriptions(router),
+		"hybrid-route":  hybridRouteStatusSubscriptions(),
+		"sam":           samStatusSubscriptions(),
+		"bfd":           withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(router, []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")),
+		"bgp":           bgpStatusSubscriptions(router),
+	} {
+		if !subscriptionSetAccepts(subscriptions, event) {
+			t.Fatalf("%s subscriptions did not accept DynamicConfigPart change", name)
+		}
+	}
+
+	invalid := event
+	invalid.Attributes = map[string]string{"source": "SAMTransportProfile/svnet1/node/pve-rt-01"}
+	if subscriptionSetAccepts(samTransportStatusSubscriptions(), invalid) {
+		t.Fatal("sam-transport accepted DynamicConfigPart event without a digest")
 	}
 }
 

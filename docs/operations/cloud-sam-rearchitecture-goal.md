@@ -263,6 +263,110 @@ none of these is a proposal-only milestone.
    checks, and static audits for old APIs and status desired-state paths. Do
    not start a cloud instance before these local gates pass.
 
+## Direct-mesh convergence remediation (2026-08-23)
+
+This is the execution plan for the timer/reconcile audit performed after the
+direct-mesh RR qualification. It is a local-source gate: no PVE, cloud, DHCP,
+RA, routerd daemon, or host-network action is authorized by this section.
+
+The target is not to shorten every periodic controller. The changes below make
+an already-required deadline or durable output observable immediately, and
+isolate a proven head-of-line block. They must retain the following safety
+invariants:
+
+- all configured RRs must attest to the same direct topology before a leaf
+  installs direct peers;
+- RR forwarding remains present while direct topology is missing, disagreeing,
+  or being retried;
+- failed admission remains on its existing exponential backoff; the bounded
+  direct-topology GET retry remains separate and starts only after the previous
+  probe completes;
+- capture/placement fences, provider inventory freshness, and BGP/BFD failure
+  semantics are not tightened without an observed defect.
+
+### Audited items and disposition
+
+1. [x] **Direct topology refresh deadline.** `SAMEnrollmentClient` exposes
+   the earlier of persisted retry/renewal and `lastSuccess + 1m` to the
+   framework scheduler. This eliminates the adaptive-idle ladder's former
+   approximately 117-second healthy refresh gap without increasing steady
+   polling.
+2. [x] **Lease/refresh mismatch.** A server-default five-minute RR lease and
+   a client-default ten-minute renewal lead must not create immediate renewal
+   churn. Clamp only a renewal lead that is at least the observed lease to one
+   half of that lease; preserve a shorter explicit lead.
+3. [x] **All-RR topology fetch latency.** Direct-topology GET requests run
+   concurrently because they are read-only; collect and validate every result
+   in configured order. Claim submission remains serial and all-RR agreement
+   remains mandatory.
+4. [x] **Dynamic output handoff.** A changed `DynamicConfigPart` publishes a
+   typed wake-up only after durable persistence. Consumers reload the part from
+   the store; the event carries no desired configuration. This covers
+   same-count direct-peer replacement and EventSubscription-produced SAM
+   inputs without relying on a 30-second transport fallback.
+5. [x] **eventd runtime configuration.** EventGroup peer configuration is
+   atomically written and an already-active `routerd-eventd` restarted exactly
+   once for a changed durable config digest. A failed restart must leave the
+   marker stale so the next reconciliation retries it.
+6. [x] **eventd delivery isolation.** An unreachable peer no longer serially
+   delays a healthy peer. Concurrent peer drains remain bounded while keeping the event
+   sequence for each peer ordered and retaining the existing durable retry
+   records/metrics.
+7. [x] **SAM BGP convergence inheritance.** Generated transport peers with no
+   local override must materialize the referenced `BGPRouter` timer and
+   convergence profile. An explicit transport timer/convergence setting wins.
+   This does not change unrelated static `BGPPeer` defaults.
+8. [x] **Dead revocation contract.** `revokeAfterInactive` has no runtime
+   reader, activity definition, or safe clock/reset semantics. Do not invent
+   automatic revocation. Remove it from the API/schema/examples and reject it
+   explicitly during YAML decoding; use lease TTL or explicit claim revocation.
+
+The following audit observations are deliberately retained rather than changed
+by guesswork:
+
+- EventSubscription receives eventd's durable inbox through its existing
+  five-second poll+dedup model. A sub-five-second inbox wake-up would require a
+  new authenticated inter-daemon IPC contract; it is not justified by an
+  observed direct-mesh critical path and is not silently approximated by a
+  global faster poll. Polling remains the crash-recovery path.
+- Remote `SAMPeerGroup` pull synchronization, provider inventory freshness,
+  BGP watch/poll fallback, BFD cadence, and provider-action ordering retain
+  their existing safety/availability semantics. The audit found no reproduced
+  defect that warrants changing them. In particular, BFD remains opt-in where
+  sub-hold-time failure detection is required.
+- Potential provider-action queue starvation is a separate follow-up only if
+  reproduced with a bounded action-cap workload; it is not addressed by
+  reordering cloud mutations speculatively.
+
+### Acceptance gate
+
+All eight implementation items must have focused regression coverage. Final
+verification must include race coverage for concurrent eventd/outbox and
+enrollment topology reads, config/schema regeneration after API removal,
+package-level convergence tests, repository build/test checks, and
+`git diff --check`. A passing local gate does not claim live-topology
+qualification; it only makes the next separately authorized qualification
+meaningful.
+
+### Local verification (2026-08-23)
+
+The completion gate passed on the changed tree:
+
+- focused API/config/mobility/BGP/chain/event-federation/event-subscription/
+  eventd/plugin/dynamic-config/state tests;
+- `go test -race -count=1 ./pkg/controller/mobility ./pkg/eventd`;
+- `make check-schema check-website-schemas`, direct builds of `routerd`,
+  `routerctl`, and `routerd-eventd`, and `go vet ./...`;
+- uncached `go test -count=1 ./...`, followed by the repository's complete
+  `make test` target (including its offline release-contract checks);
+- `git diff --check` and a source/schema sweep proving that
+  `revokeAfterInactive` remains only in the explicit rejection test and YAML
+  decoder error.
+
+These checks use unit fixtures, temporary directories, and the offline
+release-contract drivers only. They did not start a routerd daemon, apply a
+configuration, contact PVE/cloud, or emit DHCP/RA traffic.
+
 ## Re-audited execution ledger
 
 This ledger is maintained while the migration is executed.  A checked item is

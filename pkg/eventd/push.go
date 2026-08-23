@@ -111,10 +111,7 @@ func (p *Pusher) PushEvent(ctx context.Context, ev federation.Event) error {
 		return fmt.Errorf("marshal event: %w", err)
 	}
 	for _, peer := range p.peers {
-		if !peerMatches(peer, ev) {
-			continue
-		}
-		if err := p.deliverToPeer(ctx, peer, ev, body); err != nil {
+		if err := p.pushEventToPeer(ctx, peer, ev, body); err != nil {
 			return err
 		}
 	}
@@ -140,11 +137,30 @@ func (p *Pusher) PushEventPending(ctx context.Context, ev federation.Event, isDe
 		if isDelivered != nil && isDelivered(peer.NodeName) {
 			continue
 		}
-		if err := p.deliverToPeer(ctx, peer, ev, body); err != nil {
+		if err := p.pushEventToPeer(ctx, peer, ev, body); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// PushEventToPeer delivers ev to one peer. It is used by Outbox's per-peer
+// drain workers so another peer's retry/backoff cannot delay this peer. The
+// method keeps the same filtering, durable enqueue, retry, and metrics path as
+// PushEvent and PushEventPending.
+func (p *Pusher) PushEventToPeer(ctx context.Context, ev federation.Event, peer PeerConfig) error {
+	body, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("marshal event: %w", err)
+	}
+	return p.pushEventToPeer(ctx, peer, ev, body)
+}
+
+func (p *Pusher) pushEventToPeer(ctx context.Context, peer PeerConfig, ev federation.Event, body []byte) error {
+	if !peerMatches(peer, ev) {
+		return nil
+	}
+	return p.deliverToPeer(ctx, peer, ev, body)
 }
 
 // deliverToPeer enqueues then attempts delivery to a single peer with retries.

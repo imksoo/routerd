@@ -11,6 +11,22 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct mesh 収束では、1 分ごとの topology 再検証を controller の明示的な
+  deadline として扱うようにしました。短い RR lease を観測した場合は client の更新リードを
+  その lease に合わせ、すべての RR topology を並列取得してから direct peer を維持または
+  復帰します。RR-only fallback、全 RR の一致条件、既存の指数バックオフは変わりません。
+- durable な DynamicConfigPart の変更は直ちに consumer を起動します。routerd-eventd は peer
+  設定を原子的に置換し、設定引き渡し失敗を再試行し、到達不能な一つの peer が正常な peer を
+  妨げないようにしました。生成される SAM BGP peer は transport profile で明示しない限り、
+  参照する BGPRouter の timer と convergence の既定値を継承します。
+
+### 削除
+
+- 動作していなかった `SAMEnrollmentPolicy.revokeAfterInactive` を削除しました。この設定を
+  含む構成は明示的に拒否されます。代わりに claim TTL または明示的な claim revoke を使ってください。
+
 ## v20260823.0952
 
 ### 修正

@@ -215,8 +215,47 @@ func TestReconcileWritesConfigWithMatchingPeerOnly(t *testing.T) {
 	if cfg.Peers[0].NodeName != "10.99.0.7" {
 		t.Fatalf("unexpected peer: %+v", cfg.Peers[0])
 	}
-	if status := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["phase"]; status != "Applied" {
-		t.Fatalf("expected Applied phase, got %v", status)
+	status := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")
+	if phase := status["phase"]; phase != "Applied" {
+		t.Fatalf("expected Applied phase, got %v", phase)
+	}
+	if digest, ok := status["configDigest"].(string); !ok || len(digest) != 64 {
+		t.Fatalf("configDigest = %#v, want SHA-256 hex", status["configDigest"])
+	}
+}
+
+func TestReconcileConfigDigestChangesOnlyWhenPeerConfigChanges(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	peer := peerResource("cloud01", "edge", "10.99.0.7")
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{groupResource(), peer}}}
+	c := Controller{Router: router, Store: store, StateDir: filepath.Join(dir, "state")}
+	if err := c.Reconcile(t.Context()); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	first, ok := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["configDigest"].(string)
+	if !ok || first == "" {
+		t.Fatalf("initial configDigest = %#v", store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["configDigest"])
+	}
+	if err := c.Reconcile(t.Context()); err != nil {
+		t.Fatalf("unchanged Reconcile: %v", err)
+	}
+	if got := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["configDigest"]; got != first {
+		t.Fatalf("unchanged configDigest = %#v, want %q", got, first)
+	}
+
+	peerSpec, err := peer.EventPeerSpec()
+	if err != nil {
+		t.Fatalf("EventPeer spec: %v", err)
+	}
+	peerSpec.Endpoint = "http://10.99.0.8:8787"
+	peer.Spec = mustSpec(peerSpec)
+	router.Spec.Resources[1] = peer
+	if err := c.Reconcile(t.Context()); err != nil {
+		t.Fatalf("peer change Reconcile: %v", err)
+	}
+	if got := store.ObjectStatus(api.FederationAPIVersion, "EventGroup", "edge")["configDigest"]; got == first {
+		t.Fatalf("peer config change retained digest %q", first)
 	}
 }
 

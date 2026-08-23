@@ -4,8 +4,12 @@ package eventd_test
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +18,33 @@ import (
 	"github.com/imksoo/routerd/pkg/federation"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+type blockingDoer struct {
+	started chan struct{}
+	release <-chan struct{}
+	active  atomic.Int64
+	max     atomic.Int64
+}
+
+func (d *blockingDoer) Do(_ *http.Request) (*http.Response, error) {
+	active := d.active.Add(1)
+	for {
+		current := d.max.Load()
+		if active <= current || d.max.CompareAndSwap(current, active) {
+			break
+		}
+	}
+	select {
+	case d.started <- struct{}{}:
+	default:
+	}
+	<-d.release
+	d.active.Add(-1)
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Body:       io.NopCloser(strings.NewReader("")),
+	}, nil
+}
 
 // seedEventFrom records a federation event with an explicit SourceNode so tests
 // can distinguish locally-originated events from events received from a peer.
@@ -152,6 +183,181 @@ func TestOutboxIdempotent(t *testing.T) {
 	d2, _ := store.ListDeliveries("local-1", peerName)
 	if len(d2) != 1 || d2[0].Attempts != attemptsAfter1 {
 		t.Fatalf("after run #2 attempts = %+v, want unchanged (%d)", d2, attemptsAfter1)
+	}
+}
+
+// TestOutboxIsolatesUnreachablePeer verifies the peer-isolation property: an
+// unreachable peer may be in its bounded retry loop while another peer receives
+// the full ordered event stream. The old event-first drain blocked cloud-b
+// behind cloud-a's request/retry path.
+func TestOutboxIsolatesUnreachablePeer(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	const group = "cloudedge"
+	const nodeName = "onprem"
+
+	store := openStore(t, "outbox-peer-isolation.db")
+	seedEventFrom(t, store, "first", group, nodeName, "10.88.60.9/32", now.Add(-2*time.Second))
+	seedEventFrom(t, store, "second", group, nodeName, "10.88.60.10/32", now.Add(-time.Second))
+
+	failingStarted := make(chan struct{}, 1)
+	releaseFailingPeer := make(chan struct{})
+	var releaseFailingOnce sync.Once
+	releaseFailing := func() { releaseFailingOnce.Do(func() { close(releaseFailingPeer) }) }
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events" {
+			http.NotFound(w, r)
+			return
+		}
+		select {
+		case failingStarted <- struct{}{}:
+		default:
+		}
+		<-releaseFailingPeer
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer func() {
+		releaseFailing()
+		failing.Close()
+	}()
+
+	var receivedMu sync.Mutex
+	var received []string
+	healthyDelivered := make(chan struct{}, 1)
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events" {
+			http.NotFound(w, r)
+			return
+		}
+		var event federation.Event
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			t.Errorf("decode event: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		receivedMu.Lock()
+		received = append(received, event.ID)
+		if len(received) == 2 {
+			select {
+			case healthyDelivered <- struct{}{}:
+			default:
+			}
+		}
+		receivedMu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer healthy.Close()
+
+	recorder := &eventd.TestRecorder{}
+	metrics := eventd.NewTestMetrics(recorder)
+	pusher := eventd.NewPusher(store, testSecret, []eventd.PeerConfig{
+		{NodeName: "cloud-a", Endpoint: failing.URL},
+		{NodeName: "cloud-b", Endpoint: healthy.URL},
+	}, eventd.PushRetry{MaxAttempts: 2, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond}, failing.Client(), clock, func(time.Duration) {})
+	pusher.SetMetrics(metrics)
+	outbox := eventd.NewOutbox(store, store, pusher, group, nodeName, time.Second, clock)
+	outbox.SetMetrics(metrics)
+	outbox.SetMaxConcurrentPeerDrains(2)
+
+	done := make(chan error, 1)
+	go func() { done <- outbox.RunOnce(context.Background()) }()
+	select {
+	case <-failingStarted:
+	case <-time.After(time.Second):
+		t.Fatal("unreachable peer was not attempted")
+	}
+	select {
+	case <-healthyDelivered:
+		// Healthy peer progressed before the unreachable peer was released.
+	case <-time.After(time.Second):
+		t.Fatal("healthy peer was blocked by unreachable peer")
+	}
+
+	releaseFailing()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunOnce did not finish after unreachable peer was released")
+	}
+
+	receivedMu.Lock()
+	gotOrder := append([]string(nil), received...)
+	receivedMu.Unlock()
+	if got := strings.Join(gotOrder, ","); got != "first,second" {
+		t.Fatalf("healthy peer event order = %q, want first,second", got)
+	}
+	for _, eventID := range []string{"first", "second"} {
+		failed, err := store.ListDeliveries(eventID, "cloud-a")
+		if err != nil || len(failed) != 1 || failed[0].Status != routerstate.DeliveryFailed || failed[0].Attempts != 2 {
+			t.Fatalf("%s failed delivery = %+v, err=%v; want persisted failed after 2 attempts", eventID, failed, err)
+		}
+		delivered, err := store.ListDeliveries(eventID, "cloud-b")
+		if err != nil || len(delivered) != 1 || delivered[0].Status != routerstate.DeliveryDelivered {
+			t.Fatalf("%s healthy delivery = %+v, err=%v; want persisted delivered", eventID, delivered, err)
+		}
+	}
+	if got := recorder.Count("routerd_eventd_outbox_delivery_total", "peer", "cloud-a", "status", "failed"); got != 2 {
+		t.Fatalf("failed delivery metric for cloud-a = %d, want 2", got)
+	}
+	if got := recorder.Count("routerd_eventd_outbox_delivery_total", "peer", "cloud-b", "status", "delivered"); got != 2 {
+		t.Fatalf("delivered metric for cloud-b = %d, want 2", got)
+	}
+}
+
+func TestOutboxBoundsConcurrentPeerDrains(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	clock := fixedClock(now)
+	const group = "cloudedge"
+	const nodeName = "onprem"
+	store := openStore(t, "outbox-peer-bound.db")
+	seedEventFrom(t, store, "only", group, nodeName, "10.88.60.9/32", now)
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWorkers := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseWorkers()
+	doer := &blockingDoer{started: make(chan struct{}, 5), release: release}
+	peers := make([]eventd.PeerConfig, 0, 5)
+	for i := 0; i < 5; i++ {
+		peers = append(peers, eventd.PeerConfig{NodeName: "peer-" + string(rune('a'+i)), Endpoint: "http://peer.invalid"})
+	}
+	pusher := eventd.NewPusher(store, testSecret, peers,
+		eventd.PushRetry{MaxAttempts: 1}, doer, clock, func(time.Duration) {})
+	outbox := eventd.NewOutbox(store, store, pusher, group, nodeName, time.Second, clock)
+	outbox.SetMaxConcurrentPeerDrains(2)
+
+	done := make(chan error, 1)
+	go func() { done <- outbox.RunOnce(context.Background()) }()
+	for range 2 {
+		select {
+		case <-doer.started:
+		case <-time.After(time.Second):
+			t.Fatal("expected bounded worker to start a peer request")
+		}
+	}
+	select {
+	case <-doer.started:
+		t.Fatal("third peer delivery started despite maxConcurrentPeerDrains=2")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := doer.max.Load(); got > 2 {
+		t.Fatalf("concurrent peer drains = %d, want <= 2", got)
+	}
+
+	releaseWorkers()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunOnce did not finish after peer drains were released")
+	}
+	if got := doer.max.Load(); got > 2 {
+		t.Fatalf("maximum concurrent peer drains = %d, want <= 2", got)
 	}
 }
 

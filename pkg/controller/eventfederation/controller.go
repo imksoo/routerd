@@ -12,6 +12,8 @@ package eventfederation
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"sort"
@@ -230,6 +232,11 @@ func (c Controller) resolvePeersFrom(spec api.EventGroupSpec, addPeer func(event
 }
 
 // writeConfig writes config.json idempotently, reporting whether it changed.
+//
+// The eventd helper can be started or restarted concurrently with a
+// reconciliation.  Write through a same-directory temporary file and rename it
+// into place so it always sees either the old complete configuration or the new
+// complete configuration, never a partially-written peer list.
 func (c Controller) writeConfig(configPath string, config eventd.Config) (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return false, err
@@ -242,7 +249,27 @@ func (c Controller) writeConfig(configPath string, config eventd.Config) (bool, 
 	if readErr == nil && string(bytes.TrimSpace(current)) == string(data) {
 		return false, nil
 	}
-	if err := os.WriteFile(configPath, append(data, '\n'), 0o644); err != nil {
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return false, readErr
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(configPath), ".config.json-")
+	if err != nil {
+		return false, err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return false, err
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		_ = temporary.Close()
+		return false, err
+	}
+	if err := temporary.Close(); err != nil {
+		return false, err
+	}
+	if err := os.Rename(temporaryPath, configPath); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -269,6 +296,18 @@ func (c Controller) saveStatus(group string, config eventd.Config, phase, messag
 	}
 	if len(pendingSources) > 0 {
 		status["pendingSources"] = append([]string(nil), pendingSources...)
+	}
+	// configDigest is the handoff token for the systemd lifecycle controller.
+	// Peers are intentionally volatile status elsewhere, so peer endpoint or
+	// filter changes would otherwise not reliably emit a status event.  The
+	// digest is only reported after the exact runtime configuration was written.
+	if phase == "Applied" {
+		data, err := eventd.MarshalConfigJSON(config)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(data)
+		status["configDigest"] = hex.EncodeToString(sum[:])
 	}
 	return c.Store.SaveObjectStatus(api.FederationAPIVersion, "EventGroup", group, status)
 }

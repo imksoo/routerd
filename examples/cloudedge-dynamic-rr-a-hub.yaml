@@ -166,7 +166,6 @@ spec:
         endpointPrefixes: [10.20.0.0/24]
         mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
-        revokeAfterInactive: 168h
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
@@ -187,7 +186,6 @@ spec:
           persistentKeepalive: 25
         mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
-        revokeAfterInactive: 168h
 
     - apiVersion: mobility.routerd.net/v1alpha1
       kind: SAMEnrollmentPolicy
@@ -203,4 +201,3 @@ spec:
         endpointPrefixes: [10.20.0.0/24]
         mobilityPrefixes: [10.77.60.0/24]
         ttl: 24h
-        revokeAfterInactive: 168h

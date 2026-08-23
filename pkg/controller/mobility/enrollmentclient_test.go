@@ -62,6 +62,99 @@ func TestSAMEnrollmentClientSkipsValidNonExpiringRRSet(t *testing.T) {
 	}
 }
 
+func TestSAMEnrollmentClientSchedulesHealthyDirectTopologyRefresh(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	controller := testSAMEnrollmentClientController(store, &fakeSAMEnrollmentJoinClient{now: now}, now, "nonce-a")
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	if err := store.SaveObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a", map[string]any{
+		"claimDigest": samEnrollmentClientClaimDigest(claim),
+		"lastSuccess": now.Format(time.RFC3339),
+		// Lease renewal is intentionally much later than the direct snapshot
+		// refresh. The direct deadline must still win over the idle scheduler.
+		"nextAttempt": now.Add(23 * time.Hour).Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("SaveObjectStatus: %v", err)
+	}
+
+	if got, want := controller.NextReconcileAfter(), defaultSAMEnrollmentDirectTopologyRefresh; got != want {
+		t.Fatalf("NextReconcileAfter = %s, want direct topology deadline %s", got, want)
+	}
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, false)
+	if got, want := controller.NextReconcileAfter(), 23*time.Hour; got != want {
+		t.Fatalf("NextReconcileAfter without direct mesh = %s, want lease renewal %s", got, want)
+	}
+}
+
+func TestSAMEnrollmentClientClampsRefreshBeforeToObservedLease(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name          string
+		refreshBefore string
+		wantNext      time.Duration
+	}{
+		{
+			name:     "default refresh-before",
+			wantNext: DefaultLeaseTTL / 2,
+		},
+		{
+			name:          "explicit longer refresh-before",
+			refreshBefore: "10m",
+			wantNext:      DefaultLeaseTTL / 2,
+		},
+		{
+			name:          "refresh-before equal to observed lease",
+			refreshBefore: DefaultLeaseTTL.String(),
+			wantNext:      DefaultLeaseTTL / 2,
+		},
+		{
+			name:          "explicit shorter refresh-before",
+			refreshBefore: "1m",
+			wantNext:      DefaultLeaseTTL - time.Minute,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newSAMEnrollmentClientTestStore()
+			result := controlapi.NewSAMEnrollmentClaimSubmitResult("SAMEnrollmentClaim/pve-leaf-a", "SAMEnrollmentClaim/pve-leaf-a", 1, now, now.Add(DefaultLeaseTTL))
+			client := &fakeSAMEnrollmentJoinClient{now: now, submitResultSet: true, submitResult: &result}
+			controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
+			for index, resource := range controller.Router.Spec.Resources {
+				if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" {
+					continue
+				}
+				spec, err := resource.SAMEnrollmentClientSpec()
+				if err != nil {
+					t.Fatalf("SAMEnrollmentClientSpec: %v", err)
+				}
+				spec.StateTTLRefreshBefore = tt.refreshBefore
+				controller.Router.Spec.Resources[index].Spec = spec
+			}
+
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("first Reconcile: %v", err)
+			}
+			status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
+			if got, want := status["nextAttempt"], now.Add(tt.wantNext).Format(time.RFC3339); got != want {
+				t.Fatalf("nextAttempt = %v, want %s", got, want)
+			}
+
+			// The cached five-minute RR lease is still current. An immediate
+			// status-driven reconcile must not turn a valid configuration into a
+			// second enrollment request.
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("second Reconcile: %v", err)
+			}
+			if client.submitCount != 1 || client.fetchCount != 1 {
+				t.Fatalf("submit/fetch = %d/%d, want one successful enrollment without a renewal loop", client.submitCount, client.fetchCount)
+			}
+		})
+	}
+}
+
 func TestSAMEnrollmentClientRefreshesNearExpiry(t *testing.T) {
 	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
 	store := newSAMEnrollmentClientTestStore()
@@ -335,6 +428,57 @@ func TestSAMEnrollmentClientRefreshesDirectTopologyBeforeRRLeaseExpiry(t *testin
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
 	if status["reason"] != "direct-topology-refresh" || status["observedDirectPeerGroup"] != "SAMPeerGroup/pve-direct-leaves" {
 		t.Fatalf("status = %#v, want refreshed direct topology", status)
+	}
+}
+
+func TestSAMEnrollmentClientFetchesGETOnlyDirectTopologyFromAllRRsInParallel(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	store := newSAMEnrollmentClientTestStore()
+	controller := testSAMEnrollmentClientController(store, &fakeSAMEnrollmentJoinClient{now: now}, now, "nonce-a")
+	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
+	claimResource, claim, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
+	if err != nil {
+		t.Fatalf("samEnrollmentClientClaim: %v", err)
+	}
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	released := false
+	releaseReads := func() {
+		if !released {
+			close(release)
+			released = true
+		}
+	}
+	defer releaseReads()
+	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
+	peerGroupOther := testSAMEnrollmentDirectPeerGroupResourceFor("pve-leaf-c", "10.30.0.23", "10.77.60.23/32")
+	rrA := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup, fetchStarted: started, fetchRelease: release}
+	rrB := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroupOther, fetchStarted: started, fetchRelease: release}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := controller.fetchAgreedDirectTopology(context.Background(), []SAMEnrollmentJoinClient{rrA, rrB}, claimResource, claim, "pve-rrs")
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("direct topology GETs did not begin concurrently")
+		}
+	}
+	releaseReads()
+	select {
+	case err := <-done:
+		var converging *samEnrollmentDirectTopologyConvergingError
+		if !errors.As(err, &converging) {
+			t.Fatalf("fetchAgreedDirectTopology error = %v, want all-RR topology disagreement", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("parallel direct topology GETs did not finish")
+	}
+	if rrA.fetchCount != 1 || rrB.fetchCount != 1 || rrA.submitCount != 0 || rrB.submitCount != 0 {
+		t.Fatalf("RR A submit/fetch=%d/%d RR B=%d/%d, want parallel GET-only reads and no writes", rrA.submitCount, rrA.fetchCount, rrB.submitCount, rrB.fetchCount)
 	}
 }
 
@@ -1026,6 +1170,7 @@ func TestSAMEnrollmentClientDoesNotReplaceDifferentActiveIdentityOutsideClaimCha
 	for _, tt := range []struct {
 		name           string
 		seedRRSet      bool
+		observedAt     func(time.Time) time.Time
 		expiresAt      func(time.Time) time.Time
 		lastSuccess    func(time.Time) time.Time
 		wantRRFallback bool
@@ -1044,6 +1189,7 @@ func TestSAMEnrollmentClientDoesNotReplaceDifferentActiveIdentityOutsideClaimCha
 		{
 			name:           "RRSet renewal",
 			seedRRSet:      true,
+			observedAt:     func(now time.Time) time.Time { return now.Add(-defaultSAMEnrollmentRefreshBefore) },
 			expiresAt:      func(now time.Time) time.Time { return now.Add(defaultSAMEnrollmentRefreshBefore) },
 			lastSuccess:    func(now time.Time) time.Time { return now },
 			wantRRFallback: true,
@@ -1064,7 +1210,11 @@ func TestSAMEnrollmentClientDoesNotReplaceDifferentActiveIdentityOutsideClaimCha
 			controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
 			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
 			if tt.seedRRSet {
-				if err := seedSAMEnrollmentClientTopology(store, now, tt.expiresAt(now), &peerGroup); err != nil {
+				observedAt := now
+				if tt.observedAt != nil {
+					observedAt = tt.observedAt(now)
+				}
+				if err := seedSAMEnrollmentClientTopology(store, observedAt, tt.expiresAt(now), &peerGroup); err != nil {
 					t.Fatalf("seed direct topology: %v", err)
 				}
 			}
@@ -1099,6 +1249,7 @@ func TestSAMEnrollmentClientDoesNotReadmitWhenAnotherRRTombstonedTheClaim(t *tes
 	for _, tt := range []struct {
 		name           string
 		seedRRSet      bool
+		observedAt     func(time.Time) time.Time
 		expiresAt      func(time.Time) time.Time
 		lastSuccess    func(time.Time) time.Time
 		wantRRFallback bool
@@ -1113,6 +1264,7 @@ func TestSAMEnrollmentClientDoesNotReadmitWhenAnotherRRTombstonedTheClaim(t *tes
 		{
 			name:           "RR lease renewal",
 			seedRRSet:      true,
+			observedAt:     func(now time.Time) time.Time { return now.Add(-defaultSAMEnrollmentRefreshBefore) },
 			expiresAt:      func(now time.Time) time.Time { return now.Add(defaultSAMEnrollmentRefreshBefore) },
 			lastSuccess:    func(now time.Time) time.Time { return now },
 			wantRRFallback: true,
@@ -1148,7 +1300,11 @@ func TestSAMEnrollmentClientDoesNotReadmitWhenAnotherRRTombstonedTheClaim(t *tes
 			setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
 			if tt.seedRRSet {
 				expiresAt := tt.expiresAt(now)
-				if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+				observedAt := now
+				if tt.observedAt != nil {
+					observedAt = tt.observedAt(now)
+				}
+				if err := seedSAMEnrollmentClientTopology(store, observedAt, expiresAt, &peerGroup); err != nil {
 					t.Fatalf("seed direct topology: %v", err)
 				}
 				claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
@@ -1204,7 +1360,7 @@ func TestSAMEnrollmentClientDoesNotReadmitAcrossLegacyRRMixedVersion(t *testing.
 	}
 	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
 	expiresAt := now.Add(defaultSAMEnrollmentRefreshBefore)
-	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+	if err := seedSAMEnrollmentClientTopology(store, now.Add(-defaultSAMEnrollmentRefreshBefore), expiresAt, &peerGroup); err != nil {
 		t.Fatalf("seed direct topology: %v", err)
 	}
 	claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
@@ -1284,7 +1440,9 @@ func TestSAMEnrollmentClientDropsDirectTopologyWhenRRLeaseRefreshFails(t *testin
 	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
 	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
 	expiresAt := now.Add(2 * time.Minute)
-	if err := seedSAMEnrollmentClientTopology(store, now, expiresAt, &peerGroup); err != nil {
+	// The configured refresh-before is longer than this four-minute observed
+	// lease, so the client safely uses a two-minute lead and is due now.
+	if err := seedSAMEnrollmentClientTopology(store, now.Add(-2*time.Minute), expiresAt, &peerGroup); err != nil {
 		t.Fatalf("seed direct topology: %v", err)
 	}
 	claim, _, err := samEnrollmentClientClaim(controller.Router, "SAMEnrollmentClaim/pve-leaf-a")
@@ -1975,6 +2133,8 @@ type fakeSAMEnrollmentJoinClient struct {
 	omitTopologyClaimDigest bool
 	lastTopologyRequest     controlapi.SAMEnrollmentTopologyGetRequest
 	afterFetch              func()
+	fetchStarted            chan<- struct{}
+	fetchRelease            <-chan struct{}
 	submitCount             int
 	fetchCount              int
 }
@@ -2001,6 +2161,16 @@ func (c *fakeSAMEnrollmentJoinClient) SubmitSAMEnrollmentClaim(ctx context.Conte
 func (c *fakeSAMEnrollmentJoinClient) GetSAMEnrollmentTopology(ctx context.Context, request controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
 	c.fetchCount++
 	c.lastTopologyRequest = request
+	if c.fetchStarted != nil {
+		c.fetchStarted <- struct{}{}
+	}
+	if c.fetchRelease != nil {
+		select {
+		case <-c.fetchRelease:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if c.afterFetch != nil {
 		defer c.afterFetch()
 	}

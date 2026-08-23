@@ -12,6 +12,26 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct-mesh convergence now schedules its one-minute topology
+  revalidation as an explicit controller deadline, bounds a client refresh
+  lead against a shorter observed RR lease, and reads every RR topology in
+  parallel before preserving or restoring direct peers. The RR-only fallback,
+  all-RR agreement, and existing exponential retry behavior remain unchanged.
+- A durable DynamicConfigPart change now wakes its consumers immediately;
+  routerd-eventd atomically replaces peer configuration, retries a failed
+  config handoff, and prevents one unreachable peer from blocking healthy
+  peers. Generated SAM BGP peers inherit the referenced BGPRouter timer and
+  convergence defaults unless their transport profile explicitly overrides
+  them.
+
+### Removed
+
+- Removed the non-functional `SAMEnrollmentPolicy.revokeAfterInactive` field.
+  Configurations using it now fail explicitly; use a claim TTL or an explicit
+  claim revocation instead.
+
 ## v20260823.0952
 
 ### Fixed

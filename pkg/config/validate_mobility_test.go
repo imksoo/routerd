@@ -1325,7 +1325,6 @@ func samEnrollmentRouter() *api.Router {
 				WireGuard:             api.SAMEnrollmentWireGuardSpec{Interface: "wg-hybrid", AllowedExtraIPPrefixes: []string{"10.255.0.0/20"}, PersistentKeepalive: 25},
 				MobilityPoolRefs:      []string{"MobilityPool/cloudedge"},
 				TTL:                   "24h",
-				RevokeAfterInactive:   "168h",
 			}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMEnrollmentClaim"}, Metadata: api.ObjectMeta{Name: "leaf-pve"}, Spec: api.SAMEnrollmentClaimSpec{
 				PolicyRef:     "SAMEnrollmentPolicy/cloudedge-leaves",

@@ -15,7 +15,9 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
@@ -100,6 +102,150 @@ func TestSAMTransportProfileDerivesSymmetricSortedEdge31(t *testing.T) {
 	}
 	if aPeer.PassiveMode || !bPeer.PassiveMode {
 		t.Fatalf("BGP active/passive = cloud:%v onprem:%v, want lower /31 endpoint active and upper endpoint passive", aPeer.PassiveMode, bPeer.PassiveMode)
+	}
+}
+
+func TestSAMTransportProfileInheritsAndOverridesReferencedBGPDefaults(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name            string
+		bgp             api.SAMTransportBGPProfileSpec
+		wantTimers      string
+		wantConvergence string
+	}{
+		{
+			name: "inherits router defaults when profile omits them",
+			bgp: api.SAMTransportBGPProfileSpec{
+				RouterRef: "BGPRouter/mobility",
+				PeerASN:   64512,
+			},
+			wantTimers:      "fast",
+			wantConvergence: "fast",
+		},
+		{
+			name: "profile timers preset and convergence override router",
+			bgp: api.SAMTransportBGPProfileSpec{
+				RouterRef:          "BGPRouter/mobility",
+				PeerASN:            64512,
+				TimersPreset:       "slow",
+				ConvergenceProfile: "stable",
+			},
+			wantTimers:      "slow",
+			wantConvergence: "stable",
+		},
+		{
+			name: "timers profile takes precedence over timers preset",
+			bgp: api.SAMTransportBGPProfileSpec{
+				RouterRef:          "BGPRouter/mobility",
+				PeerASN:            64512,
+				Timers:             api.BGPTimersSpec{Profile: "default"},
+				TimersPreset:       "fast",
+				ConvergenceProfile: "default",
+			},
+			wantTimers:      "default",
+			wantConvergence: "default",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			router := transportRouter("defaults", "edge-a", []api.SAMTransportPeerSpec{{
+				NodeRef: "edge-b", RemoteEndpoint: "198.51.100.20",
+			}})
+			profile, err := router.Spec.Resources[0].SAMTransportProfileSpec()
+			if err != nil {
+				t.Fatalf("SAMTransportProfileSpec: %v", err)
+			}
+			profile.BGP = tt.bgp
+			router.Spec.Resources[0].Spec = profile
+			router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"},
+				Metadata: api.ObjectMeta{Name: "mobility"},
+				Spec: api.BGPRouterSpec{
+					ASN:                64512,
+					RouterID:           "192.0.2.1",
+					Timers:             api.BGPTimersSpec{Profile: "fast"},
+					ConvergenceProfile: "fast",
+				},
+			})
+
+			store := testStore(t, now)
+			controller := TransportController{Router: router, Store: store, Now: func() time.Time { return now }}
+			if err := controller.Reconcile(context.Background()); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("defaults", "edge-a")).ResourcesJSON)
+			peer := findTransportBGPPeer(t, resources)
+			if peer.Timers.Profile != tt.wantTimers || peer.ConvergenceProfile != tt.wantConvergence {
+				t.Fatalf("derived BGP defaults = timers=%q convergence=%q, want timers=%q convergence=%q", peer.Timers.Profile, peer.ConvergenceProfile, tt.wantTimers, tt.wantConvergence)
+			}
+		})
+	}
+}
+
+func TestSAMTransportPublishesChangedDynamicPartForSameCountPeerReplacement(t *testing.T) {
+	now := time.Date(2026, 8, 23, 8, 0, 0, 0, time.UTC)
+	store := testStore(t, now)
+	eventsBus := bus.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe := eventsBus.Subscribe(ctx, bus.Subscription{Topics: []string{dynamicconfig.PartChangedEvent}}, 4)
+	defer unsubscribe()
+
+	controller := TransportController{
+		Router: transportRouter("svnet1", "pve-rt-01", []api.SAMTransportPeerSpec{{
+			NodeRef: "pve-rt-02", RemoteEndpoint: "198.51.100.20",
+		}}),
+		Bus:   eventsBus,
+		Store: store,
+		Now:   func() time.Time { return now },
+	}
+	if err := controller.Reconcile(ctx); err != nil {
+		t.Fatalf("initial Reconcile: %v", err)
+	}
+	first := requireTransportPartChangedEvent(t, events)
+	if first.Attributes["source"] != TransportDynamicSource("svnet1", "pve-rt-01") {
+		t.Fatalf("initial source = %#v", first.Attributes)
+	}
+
+	if err := controller.Reconcile(ctx); err != nil {
+		t.Fatalf("unchanged Reconcile: %v", err)
+	}
+	requireNoTransportPartChangedEvent(t, events)
+
+	now = now.Add(time.Second)
+	controller.Router = transportRouter("svnet1", "pve-rt-01", []api.SAMTransportPeerSpec{{
+		NodeRef: "pve-rt-02", RemoteEndpoint: "198.51.100.21",
+	}})
+	if err := controller.Reconcile(ctx); err != nil {
+		t.Fatalf("replacement Reconcile: %v", err)
+	}
+	changed := requireTransportPartChangedEvent(t, events)
+	if changed.Attributes["digest"] == first.Attributes["digest"] {
+		t.Fatalf("same-count peer replacement kept digest %q", changed.Attributes["digest"])
+	}
+	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
+	digests, ok := status["outputDigests"].(map[string]any)
+	if !ok || digests[TransportDynamicSource("svnet1", "pve-rt-01")] != changed.Attributes["digest"] {
+		t.Fatalf("status outputDigests = %#v, want changed digest %q", status["outputDigests"], changed.Attributes["digest"])
+	}
+}
+
+func requireTransportPartChangedEvent(t *testing.T, events <-chan daemonapi.DaemonEvent) daemonapi.DaemonEvent {
+	t.Helper()
+	select {
+	case event := <-events:
+		return event
+	default:
+		t.Fatal("missing DynamicConfigPart changed event")
+		return daemonapi.DaemonEvent{}
+	}
+}
+
+func requireNoTransportPartChangedEvent(t *testing.T, events <-chan daemonapi.DaemonEvent) {
+	t.Helper()
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected DynamicConfigPart changed event: %#v", event)
+	default:
 	}
 }
 

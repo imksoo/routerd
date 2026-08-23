@@ -196,6 +196,10 @@ func (s eventSubscriptionStore) UpsertDynamicConfigPart(part routerstate.Dynamic
 	return s.data.UpsertDynamicConfigPart(part)
 }
 
+func (s eventSubscriptionStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
+	return s.data.GetDynamicConfigPartsBySource(source)
+}
+
 func (s eventSubscriptionStore) RecordPluginRun(run routerstate.PluginRunRecord) (int64, error) {
 	return s.data.RecordPluginRun(run)
 }
@@ -1146,27 +1150,27 @@ func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 }
 
 func ipv4RouteStatusSubscriptions() []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func ipv4StaticAddressStatusSubscriptions() []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface")))
 }
 
 func ipv4RouteControllerStatusSubscriptions(router *api.Router) []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func pathMTUStatusSubscriptions(router *api.Router) []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"VXLANTunnel"}, "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "Bridge", "VXLANTunnel", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"VXLANTunnel"}, "DSLiteTunnel", "PPPoESession", "WireGuardInterface", "TunnelInterface", "Interface", "Bridge", "VXLANTunnel", "FirewallZone", "DHCPv6Server", "IPv6RouterAdvertisement")))
 }
 
 func hybridRouteStatusSubscriptions() []bus.Subscription {
-	return statusSubscriptions("IPv4Route", "IPv4StaticAddress", "BGPPeer", "HealthCheck", "WireGuardInterface", "WireGuardPeer", "TunnelInterface", "Interface", "VirtualAddress")
+	return withDynamicConfigPartSubscriptions(statusSubscriptions("IPv4Route", "IPv4StaticAddress", "BGPPeer", "HealthCheck", "WireGuardInterface", "WireGuardPeer", "TunnelInterface", "Interface", "VirtualAddress", "SAMTransportProfile"))
 }
 
 func samStatusSubscriptions() []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("IPv4Route", "Sysctl", "WireGuardInterface", "TunnelInterface", "Interface", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func mobilityPlanSubscriptions() []bus.Subscription {
@@ -1185,18 +1189,31 @@ func withMobilityPlanSubscriptions(subscriptions []bus.Subscription) []bus.Subsc
 	return append(subscriptions, mobilityPlanSubscriptions()...)
 }
 
+func dynamicConfigPartSubscriptions() []bus.Subscription {
+	return []bus.Subscription{{
+		Topics: []string{dynamicconfig.PartChangedEvent},
+		Filter: func(event daemonapi.DaemonEvent) bool {
+			return strings.TrimSpace(event.Attributes["source"]) != "" && strings.TrimSpace(event.Attributes["digest"]) != ""
+		},
+	}}
+}
+
+func withDynamicConfigPartSubscriptions(subscriptions []bus.Subscription) []bus.Subscription {
+	return append(subscriptions, dynamicConfigPartSubscriptions()...)
+}
+
 func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
 	// SAMTransportProfile status is written only after its DynamicConfigPart is
 	// durable.  Waking BGP here applies a newly agreed direct peer group without
 	// waiting for its ordinary polling interval.
-	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile"))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile")))
 }
 
 func samTransportStatusSubscriptions() []bus.Subscription {
 	// SAMEnrollmentClient saves its status after atomically persisting an RR
 	// snapshot/direct peer group.  Treat that status write as the handoff to the
 	// transport controller so direct recovery is not delayed by its 30s poll.
-	return statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "SAMPeerGroup", "SAMEnrollmentClient", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer")
+	return withDynamicConfigPartSubscriptions(statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "SAMPeerGroup", "SAMEnrollmentClient", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"))
 }
 
 func eventChangedField(event daemonapi.DaemonEvent, field string) bool {
@@ -2262,6 +2279,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}
 		mobilityTransport = mobilitycontroller.TransportController{
 			Router:        r.Router,
+			Bus:           r.Bus,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
 			OS:            platform.CurrentOS(),
@@ -2379,7 +2397,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
-		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, Subs: withDynamicConfigPartSubscriptions(bootstrapSubscriptions()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2467,7 +2485,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: statusSubscriptions("TunnelInterface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("TunnelInterface", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2477,7 +2495,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "SAMPeerGroup", "SAMRRSet", "SAMEnrollmentPolicy", "SAMEnrollmentClaim", "BGPRouter"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "wireguard", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("WireGuardInterface", "WireGuardPeer", "SAMNodeSet", "SAMPeerGroup", "SAMRRSet", "SAMEnrollmentPolicy", "SAMEnrollmentClaim", "BGPRouter")), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2651,7 +2669,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "event-federation", Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "event-federation", Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -2669,7 +2687,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
-		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremARPRequestObservedEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremARPRequestObservedEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -2695,7 +2713,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.ReconcileARPProbeRequests(ctx))
 		}},
-		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}, ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return err
@@ -2712,7 +2730,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "mobility-shard", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "mobility-shard", Every: 30 * time.Second, Subs: dynamicConfigPartSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2749,7 +2767,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"BFD"}, "BGPPeer", "BFD"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.Router, []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err

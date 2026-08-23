@@ -21,6 +21,11 @@ const (
 	ConfigAPIVersion = api.ConfigAPIVersion
 	// HybridAPIVersion is the API group for hybrid cloud/on-prem resources.
 	HybridAPIVersion = api.HybridAPIVersion
+	// PartChangedEvent is emitted after a producer durably changes the desired
+	// contents of a DynamicConfigPart. Consumers treat it strictly as a wake-up
+	// signal and reload the part from the store; the event is never a desired
+	// configuration transport.
+	PartChangedEvent = "routerd.dynamic-config.part.changed"
 
 	// DirectiveOpMask suppresses a matching startup-config resource while the
 	// directive is active.

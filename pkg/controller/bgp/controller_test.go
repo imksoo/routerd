@@ -566,6 +566,43 @@ func TestApplyRouterBGPDefaultsKeepsDirectTransportAllowlistNarrow(t *testing.T)
 	}
 }
 
+func TestApplyRouterBGPDefaultsPreservesExplicitPeerConvergenceProfile(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "sam-inherited"},
+			Spec: api.BGPPeerSpec{
+				RouterRef: "BGPRouter/mobility",
+				PeerASN:   64512,
+				Peers:     []string{"10.255.0.2"},
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},
+			Metadata: api.ObjectMeta{Name: "sam-explicit"},
+			Spec: api.BGPPeerSpec{
+				RouterRef:          "BGPRouter/mobility",
+				PeerASN:            64512,
+				Peers:              []string{"10.255.0.3"},
+				ConvergenceProfile: "stable",
+			},
+		},
+	}}}
+	desired, err := (&Controller{Router: router}).desiredPeers("mobility", 64512)
+	if err != nil {
+		t.Fatalf("desiredPeers: %v", err)
+	}
+	peers := applyRouterBGPDefaults("mobility", api.BGPRouterSpec{
+		ConvergenceProfile: "fast",
+	}, desired, nil, nil)
+	if got := peers["10.255.0.2"]; got.ConvergenceProfile != "fast" || got.GracefulRestart.Enabled == nil || *got.GracefulRestart.Enabled {
+		t.Fatalf("inherited peer convergence = %#v, want fast with graceful restart disabled", got)
+	}
+	if got := peers["10.255.0.3"]; got.ConvergenceProfile != "stable" || got.GracefulRestart.Enabled == nil || !*got.GracefulRestart.Enabled {
+		t.Fatalf("explicit peer convergence = %#v, want stable with graceful restart enabled", got)
+	}
+}
+
 func TestDesiredPeersMarksDirectTransportImportBoundary(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"},

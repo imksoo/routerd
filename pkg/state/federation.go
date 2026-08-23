@@ -167,7 +167,11 @@ func (s *SQLiteStore) ListFederationEvents(group string, includeExpired bool, no
 		}
 		query += clause
 	}
-	query += " ORDER BY observed_at"
+	// Outbox drains events sequentially per peer, so make equal observed_at
+	// timestamps deterministic as well. There is intentionally no global
+	// federation ordering guarantee, but a single peer must not see ties shuffle
+	// between retries/restarts.
+	query += " ORDER BY observed_at, recorded_at, id"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

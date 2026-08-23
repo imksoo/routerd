@@ -11,6 +11,20 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct mesh 收敛现在把每分钟 topology 重新验证作为 controller 的明确 deadline
+  调度。发现较短的 RR lease 时会约束 client 刷新提前量，并且会并行读取所有 RR topology 后才
+  保留或恢复 direct peer。仅 RR 回退、所有 RR 一致确认和既有指数退避保持不变。
+- 持久化 DynamicConfigPart 发生变化后会立即唤醒 consumer。routerd-eventd 原子替换 peer
+  配置、重试失败的配置交接，并隔离不可达 peer，避免其阻塞健康 peer。除非 transport profile
+  明确覆盖，生成的 SAM BGP peer 会继承引用 BGPRouter 的 timer 和 convergence 默认值。
+
+### 移除
+
+- 移除了未实际生效的 `SAMEnrollmentPolicy.revokeAfterInactive` 字段。包含该字段的配置现在会
+  明确失败；请改用 claim TTL 或显式撤销 claim。
+
 ## v20260823.0952
 
 ### 修复

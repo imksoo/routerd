@@ -139,6 +139,29 @@ func TestDynamicConfigPartFromResultCarriesActionPlans(t *testing.T) {
 	}
 }
 
+func TestDynamicConfigPartFromResultDigestIncludesActionPlans(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	withoutPlan, err := DynamicConfigPartFromResult("Plugin/cloud", 1, validPluginResult(now), now)
+	if err != nil {
+		t.Fatalf("without action plan: %v", err)
+	}
+	result := validPluginResult(now)
+	result.Status.ActionPlans = []ActionPlan{{
+		Name:     "claim-secondary",
+		Provider: "oci",
+		Action:   ActionAssignSecondaryIP,
+		Mode:     ActionModeDryRun,
+		Target:   map[string]string{"address": "10.0.0.5", "nicRef": "vnic-abc"},
+	}}
+	withPlan, err := DynamicConfigPartFromResult("Plugin/cloud", 1, result, now)
+	if err != nil {
+		t.Fatalf("with action plan: %v", err)
+	}
+	if withoutPlan.Spec.Digest == withPlan.Spec.Digest {
+		t.Fatalf("action-plan change kept digest %q", withPlan.Spec.Digest)
+	}
+}
+
 func TestDynamicConfigPartFromResultRejectsInvalidActionPlan(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	result := validPluginResult(now)

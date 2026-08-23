@@ -338,6 +338,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		}
 		r.Spec = spec
 	case "SAMEnrollmentPolicy":
+		if hasMappingKey(&raw.Spec, "revokeAfterInactive") {
+			return fmt.Errorf("%s spec.revokeAfterInactive is not supported; use spec.ttl for lease expiry or explicitly revoke accepted claims", r.ID())
+		}
 		var spec SAMEnrollmentPolicySpec
 		if err := raw.Spec.Decode(&spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)

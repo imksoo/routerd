@@ -3,6 +3,7 @@
 package mobility
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -105,7 +106,7 @@ func (c TransportController) remoteEndpoint(peer api.SAMTransportPeerSpec) (stri
 	return value, ""
 }
 
-func (c TransportController) upsertTransportDynamicPart(owner api.Resource, source, namePrefix string, resources []api.Resource, now time.Time) error {
+func (c TransportController) upsertTransportDynamicPart(ctx context.Context, owner api.Resource, source, namePrefix string, resources []api.Resource, now time.Time) (string, error) {
 	part := dynamicconfig.NewPart(safeName(namePrefix+"-"+owner.Metadata.Name), source, []api.OwnerRef{{
 		APIVersion: api.MobilityAPIVersion,
 		Kind:       "SAMTransportProfile",
@@ -116,15 +117,26 @@ func (c TransportController) upsertTransportDynamicPart(owner api.Resource, sour
 	part.Spec.Digest = digestDynamicPart(part)
 	record, err := codec.Encode(part)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return c.Store.UpsertDynamicConfigPart(record)
-}
-
-func (c TransportController) upsertTransportPeerGroupPart(owner api.Resource, spec api.SAMTransportProfileSpec, source string, now time.Time) (string, error) {
-	endpoint, pending, err := c.transportPeerGroupEndpoint(spec)
+	previous, err := c.Store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
 		return "", err
+	}
+	changed := dynamicPartContentChanged(previous, record, now)
+	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
+		return "", err
+	}
+	if changed {
+		publishDynamicConfigPartChanged(ctx, c.Bus, "sam-transport", owner, source, record.Digest, now)
+	}
+	return record.Digest, nil
+}
+
+func (c TransportController) upsertTransportPeerGroupPart(ctx context.Context, owner api.Resource, spec api.SAMTransportProfileSpec, source string, now time.Time) (string, string, error) {
+	endpoint, pending, err := c.transportPeerGroupEndpoint(spec)
+	if err != nil {
+		return "", "", err
 	}
 	resources := []api.Resource(nil)
 	if pending == "" {
@@ -147,10 +159,11 @@ func (c TransportController) upsertTransportPeerGroupPart(owner api.Resource, sp
 			},
 		})
 	}
-	if err := c.upsertTransportDynamicPart(owner, source, "sam-peer-group", resources, now); err != nil {
-		return "", err
+	digest, err := c.upsertTransportDynamicPart(ctx, owner, source, "sam-peer-group", resources, now)
+	if err != nil {
+		return "", "", err
 	}
-	return pending, nil
+	return pending, digest, nil
 }
 
 func (c TransportController) transportPeerGroupEndpoint(spec api.SAMTransportProfileSpec) (string, string, error) {
@@ -175,7 +188,7 @@ func (c TransportController) transportPeerGroupEndpoint(spec api.SAMTransportPro
 	return addr.String(), "", nil
 }
 
-func (c TransportController) deprovisionStaleTransportSources(desired map[string]bool, now time.Time) error {
+func (c TransportController) deprovisionStaleTransportSources(ctx context.Context, desired map[string]bool, now time.Time) error {
 	parts, err := c.Store.ListDynamicConfigParts()
 	if err != nil {
 		return fmt.Errorf("list dynamic config parts for SAM transport GC: %w", err)
@@ -187,7 +200,7 @@ func (c TransportController) deprovisionStaleTransportSources(desired map[string
 		}
 		seen[part.Source] = true
 		if profile, ok := parseTransportPeerGroupSource(part.Source); ok {
-			if err := c.upsertTransportDynamicPart(api.Resource{
+			if _, err := c.upsertTransportDynamicPart(ctx, api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
 				Metadata: api.ObjectMeta{Name: firstNonEmpty(profile, "deleted-peer-group")},
 			}, part.Source, "sam-peer-group", nil, now); err != nil {
@@ -196,7 +209,7 @@ func (c TransportController) deprovisionStaleTransportSources(desired map[string
 			continue
 		}
 		profile, self := parseTransportSource(part.Source)
-		if err := c.upsertTransportDynamicPart(api.Resource{
+		if _, err := c.upsertTransportDynamicPart(ctx, api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMTransportProfile"},
 			Metadata: api.ObjectMeta{Name: firstNonEmpty(profile, "deleted-"+self)},
 		}, part.Source, "sam-transport", nil, now); err != nil {

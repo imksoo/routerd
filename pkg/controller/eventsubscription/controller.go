@@ -54,6 +54,7 @@ type DataStore interface {
 	UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error
 	MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error
 	UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error
+	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	RecordPluginRun(run routerstate.PluginRunRecord) (int64, error)
 	CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error
 }
@@ -308,6 +309,7 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
 		return nil
 	}
+	previous, previousErr := c.Store.GetDynamicConfigPartsBySource(source)
 	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
 		c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, outcome, "failed", err.Error())
@@ -324,6 +326,20 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 	c.saveStatus(subName, "Applied", "", len(batch))
 
 	if c.Bus != nil {
+		if previousErr != nil || dynamicConfigPartChanged(previous, record, now) {
+			changed := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "event-subscription", Kind: "controller"}, dynamicconfig.PartChangedEvent, daemonapi.SeverityInfo)
+			changed.Time = now.UTC()
+			changed.Resource = &daemonapi.ResourceRef{APIVersion: api.FederationAPIVersion, Kind: "EventSubscription", Name: subName}
+			changed.Attributes = map[string]string{
+				"source": source,
+				"digest": record.Digest,
+				"events": fmt.Sprint(len(batch)),
+			}
+			// The desired part is already durable. A bus persistence error does
+			// not roll it back; local delivery is still attempted and the
+			// controllers retain their periodic reconciliation fallback.
+			_ = c.Bus.Publish(ctx, changed)
+		}
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.event.subscription.applied", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.FederationAPIVersion, Kind: "EventSubscription", Name: subName}
 		event.Attributes = map[string]string{
@@ -333,6 +349,21 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 		_ = c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+// dynamicConfigPartChanged ignores observed/updated timestamp renewal so a
+// successful plugin lease refresh does not fan out unnecessary reconciles.
+// A content or effective-lifetime change is a new desired configuration and
+// must wake consumers immediately.
+func dynamicConfigPartChanged(previous []routerstate.DynamicConfigPartRecord, next routerstate.DynamicConfigPartRecord, now time.Time) bool {
+	for _, current := range previous {
+		if current.Generation != next.Generation {
+			continue
+		}
+		return strings.TrimSpace(current.Digest) != strings.TrimSpace(next.Digest) ||
+			current.EffectiveStatus(now.UTC()) != next.EffectiveStatus(now.UTC())
+	}
+	return true
 }
 
 func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec api.EventSubscriptionSpec, batch []routerstate.EventRecord, now time.Time) bool {

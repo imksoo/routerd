@@ -695,9 +695,11 @@ type BGPPeerSpec struct {
 	ImportPolicy            BGPImportPolicySpec   `yaml:"importPolicy,omitempty" json:"importPolicy,omitempty"`
 	ExportPolicy            BGPExportPolicySpec   `yaml:"exportPolicy,omitempty" json:"exportPolicy,omitempty"`
 	Timers                  BGPTimersSpec         `yaml:"timers,omitempty" json:"timers,omitempty"`
-	Communities             BGPCommunitiesSpec    `yaml:"communities,omitempty" json:"communities,omitempty"`
-	BFD                     string                `yaml:"bfd,omitempty" json:"bfd,omitempty"`
-	When                    ResourceWhenSpec      `yaml:"when,omitempty" json:"when,omitempty"`
+	// ConvergenceProfile overrides the referenced BGPRouter's convergence default for this peer.
+	ConvergenceProfile string             `yaml:"convergenceProfile,omitempty" json:"convergenceProfile,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=stable"`
+	Communities        BGPCommunitiesSpec `yaml:"communities,omitempty" json:"communities,omitempty"`
+	BFD                string             `yaml:"bfd,omitempty" json:"bfd,omitempty"`
+	When               ResourceWhenSpec   `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 // BGPDynamicPeer represents an admission/listen rule for dynamic BGP
@@ -813,11 +815,10 @@ type SAMEnrollmentPolicySpec struct {
 	WireGuard             SAMEnrollmentWireGuardSpec    `yaml:"wireGuard,omitempty" json:"wireGuard,omitempty"`
 	// DirectMesh opts eligible leaves into an opportunistic direct data path.
 	// RR peers remain the control-plane and forwarding fallback.
-	DirectMesh          SAMEnrollmentDirectMeshSpec `yaml:"directMesh,omitempty" json:"directMesh,omitempty"`
-	MobilityPoolRefs    []string                    `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
-	MobilityPrefixes    []string                    `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
-	TTL                 string                      `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	RevokeAfterInactive string                      `yaml:"revokeAfterInactive,omitempty" json:"revokeAfterInactive,omitempty"`
+	DirectMesh       SAMEnrollmentDirectMeshSpec `yaml:"directMesh,omitempty" json:"directMesh,omitempty"`
+	MobilityPoolRefs []string                    `yaml:"mobilityPoolRefs,omitempty" json:"mobilityPoolRefs,omitempty"`
+	MobilityPrefixes []string                    `yaml:"mobilityPrefixes,omitempty" json:"mobilityPrefixes,omitempty"`
+	TTL              string                      `yaml:"ttl,omitempty" json:"ttl,omitempty"`
 }
 
 type SAMEnrollmentDirectMeshSpec struct {
@@ -970,11 +971,13 @@ type SAMNodeWireGuardSpec struct {
 }
 
 type SAMTransportBGPProfileSpec struct {
-	RouterRef               string              `yaml:"routerRef" json:"routerRef"`
-	PeerASN                 uint32              `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
-	GeneratePeers           *bool               `yaml:"generatePeers,omitempty" json:"generatePeers,omitempty"`
-	Timers                  BGPTimersSpec       `yaml:"timers,omitempty" json:"timers,omitempty"`
-	TimersPreset            string              `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
+	RouterRef     string        `yaml:"routerRef" json:"routerRef"`
+	PeerASN       uint32        `yaml:"peerASN" json:"peerASN" jsonschema:"minimum=1"`
+	GeneratePeers *bool         `yaml:"generatePeers,omitempty" json:"generatePeers,omitempty"`
+	Timers        BGPTimersSpec `yaml:"timers,omitempty" json:"timers,omitempty"`
+	TimersPreset  string        `yaml:"timersPreset,omitempty" json:"timersPreset,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=slow"`
+	// ConvergenceProfile overrides the referenced BGPRouter for generated peers. Omit it to inherit the router default.
+	ConvergenceProfile      string              `yaml:"convergenceProfile,omitempty" json:"convergenceProfile,omitempty" jsonschema:"enum=,enum=default,enum=fast,enum=stable"`
 	EbgpMultihop            int                 `yaml:"ebgpMultihop,omitempty" json:"ebgpMultihop,omitempty" jsonschema:"minimum=0,maximum=255"`
 	RouteReflectorClient    bool                `yaml:"routeReflectorClient,omitempty" json:"routeReflectorClient,omitempty"`
 	RouteReflectorClusterID string              `yaml:"routeReflectorClusterID,omitempty" json:"routeReflectorClusterID,omitempty"`

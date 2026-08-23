@@ -614,18 +614,9 @@ func validateSAMEnrollmentPolicy(res api.Resource, spec api.SAMEnrollmentPolicyS
 	if _, err := validateBGPPrefixList(res.ID(), "spec.mobilityPrefixes", spec.MobilityPrefixes); err != nil {
 		return err
 	}
-	for _, field := range []struct {
-		path  string
-		value string
-	}{
-		{path: "spec.ttl", value: spec.TTL},
-		{path: "spec.revokeAfterInactive", value: spec.RevokeAfterInactive},
-	} {
-		if strings.TrimSpace(field.value) == "" {
-			continue
-		}
-		if _, err := time.ParseDuration(strings.TrimSpace(field.value)); err != nil {
-			return fmt.Errorf("%s %s must be a duration: %w", res.ID(), field.path, err)
+	if value := strings.TrimSpace(spec.TTL); value != "" {
+		if _, err := time.ParseDuration(value); err != nil {
+			return fmt.Errorf("%s spec.ttl must be a duration: %w", res.ID(), err)
 		}
 	}
 	return nil
@@ -830,10 +821,18 @@ func validateSAMTransportProfile(router *api.Router, res api.Resource, spec api.
 	if spec.BGP.PeerASN == 0 {
 		return fmt.Errorf("%s spec.bgp.peerASN is required", res.ID())
 	}
+	if err := validateBGPTimerProfile(res.ID(), "spec.bgp.timers", spec.BGP.Timers); err != nil {
+		return err
+	}
 	switch strings.TrimSpace(spec.BGP.TimersPreset) {
 	case "", "default", "fast", "slow":
 	default:
 		return fmt.Errorf("%s spec.bgp.timersPreset must be default, fast, or slow", res.ID())
+	}
+	switch strings.TrimSpace(spec.BGP.ConvergenceProfile) {
+	case "", "default", "fast", "stable":
+	default:
+		return fmt.Errorf("%s spec.bgp.convergenceProfile must be default, fast, or stable", res.ID())
 	}
 	if clusterID := strings.TrimSpace(spec.BGP.RouteReflectorClusterID); clusterID != "" {
 		parsed, err := netip.ParseAddr(clusterID)

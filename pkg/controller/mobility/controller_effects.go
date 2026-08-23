@@ -201,7 +201,7 @@ func (c Controller) upsertBGPPlan(ctx context.Context, poolName, selfNode string
 	if err != nil {
 		return err
 	}
-	changed := mobilityPoolPlanChanged(previous, record, now)
+	changed := dynamicPartContentChanged(previous, record, now)
 	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
 		return err
 	}
@@ -315,7 +315,7 @@ func (c Controller) expireMobilityPlanSource(ctx context.Context, source string,
 	if err != nil {
 		return fmt.Errorf("encode stale MobilityPool source %q withdrawal: %w", source, err)
 	}
-	changed := mobilityPoolPlanChanged(previous, record, now)
+	changed := dynamicPartContentChanged(previous, record, now)
 	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
 		return fmt.Errorf("expire stale MobilityPool source %q: %w", source, err)
 	}
@@ -339,7 +339,11 @@ func mobilityPlanSourceAlreadyExpired(parts []routerstate.DynamicConfigPartRecor
 	return true
 }
 
-func mobilityPoolPlanChanged(previous []routerstate.DynamicConfigPartRecord, next routerstate.DynamicConfigPartRecord, now time.Time) bool {
+// dynamicPartContentChanged reports whether a durable DynamicConfigPart has
+// changed desired content or effective lifetime. Observed/updated timestamps
+// deliberately do not count: refreshing an unchanged lease must not create a
+// reconcile storm for its consumers.
+func dynamicPartContentChanged(previous []routerstate.DynamicConfigPartRecord, next routerstate.DynamicConfigPartRecord, now time.Time) bool {
 	for _, current := range previous {
 		if current.Generation != next.Generation {
 			continue

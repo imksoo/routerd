@@ -3529,6 +3529,16 @@
                         },
                         "type": "object"
                       },
+                      "convergenceProfile": {
+                        "description": "ConvergenceProfile overrides the referenced BGPRouter's convergence default for this peer.",
+                        "enum": [
+                          "",
+                          "default",
+                          "fast",
+                          "stable"
+                        ],
+                        "type": "string"
+                      },
                       "ebgpMultihop": {
                         "maximum": 255,
                         "minimum": 0,
@@ -9368,9 +9378,6 @@
                         },
                         "type": "array"
                       },
-                      "revokeAfterInactive": {
-                        "type": "string"
-                      },
                       "rrNodeSetRef": {
                         "description": "RRNodeSetRef is the sole static source for RR identity and topology.\nThe enrollment server selects route-reflector nodes from its local NodeSet\nand returns them as the runtime SAMRRSet named by RRSetRef. It belongs only\nto an enrollment-serving policy; a leaf sends a remote claim through\nSAMEnrollmentClient and does not author a local policy or NodeSet.",
                         "type": "string"
@@ -9756,6 +9763,16 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "convergenceProfile": {
+                            "description": "ConvergenceProfile overrides the referenced BGPRouter for generated peers. Omit it to inherit the router default.",
+                            "enum": [
+                              "",
+                              "default",
+                              "fast",
+                              "stable"
+                            ],
+                            "type": "string"
                           },
                           "directLocalPreference": {
                             "description": "DirectLocalPreference is applied only to peers from a peersFrom entry\nmarked direct. Zero uses the safe direct-mesh default.",
