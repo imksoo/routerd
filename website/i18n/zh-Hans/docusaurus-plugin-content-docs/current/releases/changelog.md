@@ -11,6 +11,13 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct leaf 现在会在 RR control endpoint 重启期间暂时不可达时保留已验证的
+  仅 RR 回退，并按有上限的收敛间隔重试可选 direct topology GET。来自可达 RR 的响应，例如
+  revoke、identity mismatch、无效 payload 和 validation failure，仍使用原有的普通指数退避。
+  leaf 不会仅依据一个 RR 或陈旧数据恢复 direct peer group。
+
 ## v20260823.0454
 
 ### 修复
