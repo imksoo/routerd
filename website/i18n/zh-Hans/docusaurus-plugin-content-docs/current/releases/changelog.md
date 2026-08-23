@@ -11,6 +11,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Cloud SAM direct mesh 恢复现在只会在最后一个 RR topology 读取完成后开始有上限的重试
+  计时。因此，即使串行 RR 请求本身耗尽了重试间隔，也不会形成即时重试循环。Enrollment
+  status 变更会立即唤醒 transport controller，transport status 变更会立即唤醒 BGP；一旦
+  所有 RR 对 direct peer group 达成一致，就无需等待原有的 30 秒和 15 秒轮询。已验证的
+  仅 RR 回退以及恢复 direct peer group 必须由所有 RR 一致确认的要求保持不变。
+
 ## v20260823.0716
 
 ### 修复

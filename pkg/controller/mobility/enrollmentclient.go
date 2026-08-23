@@ -36,6 +36,12 @@ const (
 	// minute schedule so a newly admitted or revoked leaf cannot leave a
 	// stale, higher-preference direct path in place until lease expiry.
 	defaultSAMEnrollmentDirectTopologyRefresh = time.Minute
+	// A direct-topology recovery starts from an already verified RR fallback.
+	// It is not a generic enrollment failure: waiting a full minute after an RR
+	// returns turns the normal 60s + transport/BGP cadence into a roughly
+	// two-minute direct-mesh recovery. Retry at the normal minimum backoff
+	// instead, while retaining the all-RR agreement requirement below.
+	defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax = defaultSAMEnrollmentBackoffMin
 )
 
 type SAMEnrollmentClientStore interface {
@@ -306,13 +312,21 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			} else {
 				attempts := previous.FailureCount + 1
 				backoff := samEnrollmentClientConvergenceBackoff(spec, attempts)
+				// Direct topology reads run serially across every RR and may take
+				// longer than the bounded recovery backoff. Anchor the deadline at
+				// completion, not reconcile start, so this status update cannot wake
+				// the controller into an immediate timeout-rate retry loop.
+				retryFrom := controllerNow(c.Now)
+				if retryFrom.Before(now) {
+					retryFrom = now
+				}
 				return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
 					Phase:                 "Backoff",
 					ClaimRef:              spec.ClaimRef,
 					ObservedRRSet:         source,
 					LastAttempt:           now,
 					LastSuccess:           previous.LastSuccess,
-					NextAttempt:           now.Add(backoff),
+					NextAttempt:           retryFrom.Add(backoff),
 					Backoff:               backoff.String(),
 					FailureCount:          attempts,
 					ClaimDigest:           claimDigest,
@@ -1280,8 +1294,8 @@ func samEnrollmentClientBackoff(spec api.SAMEnrollmentClientSpec, failures int) 
 func samEnrollmentClientConvergenceBackoff(spec api.SAMEnrollmentClientSpec, attempts int) time.Duration {
 	backoff := samEnrollmentClientBackoff(spec, attempts)
 	minBackoff := durationDefault(spec.RetryBackoff.Min, defaultSAMEnrollmentBackoffMin)
-	if minBackoff <= defaultSAMEnrollmentDirectTopologyRefresh && backoff > defaultSAMEnrollmentDirectTopologyRefresh {
-		return defaultSAMEnrollmentDirectTopologyRefresh
+	if minBackoff <= defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax && backoff > defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax {
+		return defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax
 	}
 	return backoff
 }

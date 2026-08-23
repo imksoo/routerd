@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Cloud SAM direct-mesh recovery now starts its bounded retry timer only after
+  the last RR topology read finishes, avoiding immediate retry loops when
+  serial RR requests consume the retry interval. Enrollment status changes now
+  also wake the transport controller, and transport status changes wake BGP,
+  so an all-RR-agreed direct peer group is applied without waiting for the
+  ordinary 30-second and 15-second polling intervals. The verified RR-only
+  fallback and the all-RR agreement requirement are unchanged.
+
 ## v20260823.0716
 
 ### Fixed

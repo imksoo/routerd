@@ -1186,7 +1186,17 @@ func withMobilityPlanSubscriptions(subscriptions []bus.Subscription) []bus.Subsc
 }
 
 func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
-	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer"))
+	// SAMTransportProfile status is written only after its DynamicConfigPart is
+	// durable.  Waking BGP here applies a newly agreed direct peer group without
+	// waiting for its ordinary polling interval.
+	return withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile"))
+}
+
+func samTransportStatusSubscriptions() []bus.Subscription {
+	// SAMEnrollmentClient saves its status after atomically persisting an RR
+	// snapshot/direct peer group.  Treat that status write as the handoff to the
+	// transport controller so direct recovery is not delayed by its 30s poll.
+	return statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "SAMPeerGroup", "SAMEnrollmentClient", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer")
 }
 
 func eventChangedField(event daemonapi.DaemonEvent, field string) bool {
@@ -2448,7 +2458,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = r.Router
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: statusSubscriptions("SAMTransportProfile", "SAMNodeSet", "SAMPeerGroup", "Interface", "IPv4StaticAddress", "DHCPv4Client", "WireGuardInterface", "WireGuardPeer"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: samTransportStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err

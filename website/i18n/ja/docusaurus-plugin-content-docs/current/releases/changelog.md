@@ -11,6 +11,15 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- Cloud SAM の direct mesh 復旧では、最後の RR topology 読み取りが完了してから
+  上限付き再試行の時計を開始するようにしました。RR を直列に読む時間が再試行間隔を
+  消費しても、即時再試行ループにはなりません。Enrollment の status 変更は transport
+  controller を、transport の status 変更は BGP を直ちに起動するため、全 RR が一致した
+  direct peer group は通常の 30 秒・15 秒ポーリングを待たずに適用されます。確認済みの
+  RR-only fallback と、direct peer group の復帰に全 RR の一致を必要とする条件は不変です。
+
 ## v20260823.0716
 
 ### 修正

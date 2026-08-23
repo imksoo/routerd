@@ -394,8 +394,9 @@ func TestSAMEnrollmentClientBoundsDirectRefreshTransportFailureBackoff(t *testin
 	// verified RRSet and direct topology, then one RR's control endpoint is
 	// temporarily unreachable. The high-preference direct group must be
 	// withdrawn, but a large earlier generic failure count must not postpone a
-	// GET-only recovery beyond the bounded direct convergence cadence.
+	// GET-only recovery beyond the bounded direct convergence retry.
 	current := time.Date(2026, 8, 23, 6, 46, 0, 0, time.UTC)
+	refreshCompleted := current.Add(20 * time.Second)
 	store := newSAMEnrollmentClientTestStore()
 	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
 	rrCurrent := &fakeSAMEnrollmentJoinClient{now: current, peerGroup: &peerGroup}
@@ -407,6 +408,7 @@ func TestSAMEnrollmentClientBoundsDirectRefreshTransportFailureBackoff(t *testin
 			URL: "http://192.168.1.38:65432/api/control.routerd.net/v1alpha1/sam-enrollment-topologies/pve-rrs",
 			Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("no route to host")},
 		},
+		afterFetch: func() { current = refreshCompleted },
 	}
 	controller := SAMEnrollmentClientController{
 		Router: testSAMEnrollmentClientRouter("nonce-a"),
@@ -442,20 +444,24 @@ func TestSAMEnrollmentClientBoundsDirectRefreshTransportFailureBackoff(t *testin
 	}
 	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", "pve-leaf-a")
-	if status["phase"] != "Backoff" || status["directTopologyPending"] != true || status["failureCount"] != 8 || status["backoff"] != defaultSAMEnrollmentDirectTopologyRefresh.String() {
+	if status["phase"] != "Backoff" || status["directTopologyPending"] != true || status["failureCount"] != 8 || status["backoff"] != defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax.String() {
 		t.Fatalf("status = %#v, want bounded pending direct recovery", status)
 	}
-	if got := controller.NextReconcileAfter(); got != defaultSAMEnrollmentDirectTopologyRefresh {
-		t.Fatalf("NextReconcileAfter = %s, want %s", got, defaultSAMEnrollmentDirectTopologyRefresh)
+	if got, want := status["nextAttempt"], refreshCompleted.Add(defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax).Format(time.RFC3339); got != want {
+		t.Fatalf("nextAttempt = %v, want retry after fetch completion at %s", got, want)
+	}
+	if got := controller.NextReconcileAfter(); got != defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax {
+		t.Fatalf("NextReconcileAfter = %s, want %s", got, defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax)
 	}
 	if rrCurrent.submitCount != 0 || rrRestarting.submitCount != 0 || rrCurrent.fetchCount != 1 || rrRestarting.fetchCount != 1 {
 		t.Fatalf("first refresh submit/fetch current=%d/%d restarting=%d/%d, want GET-only 0/1 each", rrCurrent.submitCount, rrCurrent.fetchCount, rrRestarting.submitCount, rrRestarting.fetchCount)
 	}
 
-	current = current.Add(defaultSAMEnrollmentDirectTopologyRefresh + time.Second)
+	current = current.Add(defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax + time.Second)
 	rrCurrent.now = current
 	rrRestarting.now = current
 	rrRestarting.fetchErr = nil
+	rrRestarting.afterFetch = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("recovered Reconcile: %v", err)
 	}
@@ -962,8 +968,8 @@ func TestSAMEnrollmentClientShowsClaimChangeWhileBackedOff(t *testing.T) {
 }
 
 func TestSAMEnrollmentClientConvergenceBackoffHonorsConfiguredMinimum(t *testing.T) {
-	if got := samEnrollmentClientConvergenceBackoff(api.SAMEnrollmentClientSpec{}, 9); got != defaultSAMEnrollmentDirectTopologyRefresh {
-		t.Fatalf("default convergence backoff = %s, want %s", got, defaultSAMEnrollmentDirectTopologyRefresh)
+	if got := samEnrollmentClientConvergenceBackoff(api.SAMEnrollmentClientSpec{}, 9); got != defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax {
+		t.Fatalf("default convergence backoff = %s, want %s", got, defaultSAMEnrollmentDirectTopologyRecoveryBackoffMax)
 	}
 	spec := api.SAMEnrollmentClientSpec{RetryBackoff: api.SAMEnrollmentRetryBackoffSpec{Min: "5m", Max: "30m"}}
 	if got := samEnrollmentClientConvergenceBackoff(spec, 1); got != 5*time.Minute {
@@ -1968,6 +1974,7 @@ type fakeSAMEnrollmentJoinClient struct {
 	topologyClaimDigest     string
 	omitTopologyClaimDigest bool
 	lastTopologyRequest     controlapi.SAMEnrollmentTopologyGetRequest
+	afterFetch              func()
 	submitCount             int
 	fetchCount              int
 }
@@ -1994,6 +2001,9 @@ func (c *fakeSAMEnrollmentJoinClient) SubmitSAMEnrollmentClaim(ctx context.Conte
 func (c *fakeSAMEnrollmentJoinClient) GetSAMEnrollmentTopology(ctx context.Context, request controlapi.SAMEnrollmentTopologyGetRequest) (*controlapi.SAMEnrollmentTopologyGetResult, error) {
 	c.fetchCount++
 	c.lastTopologyRequest = request
+	if c.afterFetch != nil {
+		defer c.afterFetch()
+	}
 	if c.blockFetch {
 		<-ctx.Done()
 		return nil, ctx.Err()
