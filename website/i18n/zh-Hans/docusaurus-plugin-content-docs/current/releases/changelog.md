@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260824.1404
+
 ### 修复
 
 - `routerctl get IPv4Route` 及其小写写法 `ipv4route` 现在会查询

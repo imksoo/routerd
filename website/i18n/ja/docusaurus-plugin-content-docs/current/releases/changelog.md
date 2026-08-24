@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260824.1404
+
 ### 修正
 
 - `routerctl get IPv4Route` と小文字の `ipv4route` が、誤って

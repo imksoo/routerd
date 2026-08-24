@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260824.1404
+
 ### Fixed
 
 - `routerctl get IPv4Route` and its lowercase `ipv4route` spelling now query
