@@ -553,7 +553,7 @@ func canonicalShowKind(kind string) string {
 		"orphans":                         "Orphan",
 		"route":                           "EgressRoutePolicy",
 		"routeset":                        "EgressRoutePolicy",
-		"ipv4route":                       "EgressRoutePolicy",
+		"ipv4route":                       "IPv4Route",
 		"ipv4policyrouteset":              "EgressRoutePolicy",
 	}
 	if canonical, ok := aliases[key]; ok {

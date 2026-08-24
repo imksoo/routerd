@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `routerctl get IPv4Route` 與其小寫寫法 `ipv4route` 現在會查詢
+  `IPv4Route`，不再被錯誤改寫為 `EgressRoutePolicy`。具名 IPv4Route 查詢已恢復；
+  既有的 `route`、`routeset` 與 `ipv4policyrouteset` 仍是 EgressRoutePolicy 的別名。
+
 ## v20260823.1251
 
 ### 修正

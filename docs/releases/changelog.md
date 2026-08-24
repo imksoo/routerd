@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerctl get IPv4Route` and its lowercase `ipv4route` spelling now query
+  `IPv4Route` rather than being incorrectly rewritten to `EgressRoutePolicy`.
+  Named IPv4Route lookups work again; the established `route`, `routeset`, and
+  `ipv4policyrouteset` aliases remain EgressRoutePolicy aliases.
+
 ## v20260823.1251
 
 ### Fixed

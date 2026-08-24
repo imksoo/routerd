@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerctl get IPv4Route` と小文字の `ipv4route` が、誤って
+  `EgressRoutePolicy` へ変換されず `IPv4Route` を照会するようにしました。
+  名前付き IPv4Route の照会も再び利用できます。既存の `route`、`routeset`、
+  `ipv4policyrouteset` は引き続き EgressRoutePolicy の別名です。
+
 ## v20260823.1251
 
 ### 修正

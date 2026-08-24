@@ -87,6 +87,41 @@ func TestGetAndDescribeUseInspectionControlAPI(t *testing.T) {
 	}
 }
 
+func TestGetPreservesIPv4RouteKindAndEgressAliases(t *testing.T) {
+	var gotSubject string
+	socketPath := startInspectionTestServer(t, controlapi.Handler{
+		Get: func(r *http.Request, req controlapi.GetRequest) (*controlapi.GetResult, error) {
+			gotSubject = req.Subject
+			result := controlapi.NewGetResult(req.Subject)
+			return &result, nil
+		},
+	})
+
+	tests := []struct {
+		target string
+		want   string
+	}{
+		{target: "IPv4Route", want: "IPv4Route"},
+		{target: "ipv4route", want: "IPv4Route"},
+		{target: "IPv4Route/private-10-blackhole", want: "IPv4Route/private-10-blackhole"},
+		{target: "route", want: "EgressRoutePolicy"},
+		{target: "routeset/ipv4-default", want: "EgressRoutePolicy/ipv4-default"},
+		{target: "ipv4policyrouteset", want: "EgressRoutePolicy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.target, func(t *testing.T) {
+			gotSubject = ""
+			var out bytes.Buffer
+			if err := run([]string{"get", tt.target, "--socket", socketPath, "-o", "json"}, &out, &bytes.Buffer{}); err != nil {
+				t.Fatalf("get %s: %v", tt.target, err)
+			}
+			if gotSubject != tt.want {
+				t.Fatalf("get subject = %q, want %q", gotSubject, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetRuntimeSubjectsAndDoctorProbeUseControlAPI(t *testing.T) {
 	var gotEventsLimit int
 	var gotProbe controlapi.ProbeRequest
