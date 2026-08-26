@@ -105,6 +105,43 @@ func TestKeepalivedConfigRendersWANAndLANFailoverVMACsInOneVRRPTransition(t *tes
 	}
 }
 
+func TestKeepalivedConfigDefersGracefulVRRPAddressUntilRouterdReadiness(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+		Spec: api.VirtualAddressSpec{Family: "ipv4", Interface: "lan", Address: "172.18.0.1/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{
+				VirtualRouterID: 18,
+				Peers:           []string{"172.18.0.3"},
+				FailoverVMAC:    &api.VirtualAddressVRRPFailoverVMACSpec{ParentInterface: "wan", Interface: "wan-vmac", MACAddress: "02:00:5e:00:01:13"},
+				GracefulActivation: &api.VirtualAddressVRRPGracefulActivationSpec{ReadyWhen: api.ResourceWhenSpec{
+					State: map[string]api.StateMatchSpec{"DSLiteTunnel/dslite-a.phase": {Equals: "Up"}},
+				}},
+			},
+		},
+	}}}}
+	data, err := KeepalivedConfig(router, map[string]string{"lan": "ens19", "wan": "ens18"})
+	if err != nil {
+		t.Fatalf("render keepalived config: %v", err)
+	}
+	got := string(data)
+	args := "--resource lan-gw-v4 --deferred-address 172.18.0.1/32 --deferred-interface ens19"
+	for _, state := range []string{"notify_master", "notify_backup", "notify_fault", "notify_stop"} {
+		if !strings.Contains(got, state+" \"/usr/local/sbin/routerd-vrrp-vmac ") || !strings.Contains(got, args) {
+			t.Fatalf("keepalived config missing graceful %s hook:\n%s", state, got)
+		}
+	}
+	if !strings.Contains(got, args+" --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13") {
+		t.Fatalf("graceful hook lost single VMAC arguments:\n%s", got)
+	}
+	if !strings.Contains(got, "  no_virtual_ipaddress\n") {
+		t.Fatalf("graceful activation must keep the VIP out of keepalived:\n%s", got)
+	}
+	if strings.Contains(got, "virtual_ipaddress {") {
+		t.Fatalf("graceful activation must not let keepalived publish the VIP:\n%s", got)
+	}
+}
+
 func TestKeepalivedConfigRendersIPv6VRRPInstance(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

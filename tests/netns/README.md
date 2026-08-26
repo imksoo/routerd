@@ -19,10 +19,12 @@ To run one scenario:
 ```sh
 sudo ./keepalived-vip-failover.sh
 sudo ./keepalived-no-spurious-restart.sh
+sudo ./graceful-vrrp-activation.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./forcefrag-df-forward.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
 sudo ./vxlan-l2-mss-clamp.sh
+sudo ROUTERD_RUN_NETNS=1 ./vrrp-vmac-lan-address-lifecycle.sh
 ./render-compatibility.sh
 ```
 
@@ -34,6 +36,8 @@ The scripts cover:
 | --- | --- |
 | `keepalived-vip-failover.sh` | Two keepalived instances move a VIP to standby within advert/preempt timing. |
 | `keepalived-no-spurious-restart.sh` | Repeated routerd VRRP reconciles do not restart an unchanged keepalived instance for 60 seconds. |
+| `graceful-vrrp-activation.sh` | An elected router withholds its IPv4 VIP until a readiness status matches, sends gratuitous ARP on activation, and removes the VIP again on BACKUP. |
+| `vrrp-vmac-lan-address-lifecycle.sh` | The role hook retains staged delegated IPv6 addresses, records graceful election ownership, removes the deferred VIP before BACKUP, and never publishes it directly on MASTER. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |

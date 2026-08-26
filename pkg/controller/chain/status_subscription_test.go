@@ -46,6 +46,29 @@ func TestVRRPFastTransitionWakesRoleObservation(t *testing.T) {
 	}
 }
 
+func TestVRRPGracefulActivationSubscribesToReadinessDependencies(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+		Spec: api.VirtualAddressSpec{VRRP: api.VirtualAddressVRRPSpec{GracefulActivation: &api.VirtualAddressVRRPGracefulActivationSpec{
+			ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"DHCPv6PrefixDelegation/wan-pd.phase":          {Equals: "Bound"},
+				"DSLiteTunnel/dslite-a.phase":                  {Equals: "Up"},
+				"EgressRoutePolicy/ipv4-default.datapathState": {Equals: "Ready"},
+			}},
+		}}},
+	}}}}
+	subs := vrrpStatusSubscriptions(router)
+	for _, ref := range [][2]string{{"DHCPv6PrefixDelegation", "wan-pd"}, {"DSLiteTunnel", "dslite-a"}, {"EgressRoutePolicy", "ipv4-default"}} {
+		if !subscriptionSetAccepts(subs, statusChangedEvent(ref[0], ref[1])) {
+			t.Fatalf("vrrp graceful activation did not subscribe to %s/%s", ref[0], ref[1])
+		}
+	}
+	if subscriptionSetAccepts(subs, statusChangedEvent("DSLiteTunnel", "unrelated")) {
+		t.Fatal("vrrp graceful activation subscribed to an unrelated DS-Lite tunnel")
+	}
+}
+
 func TestVRRPRoleStatusWakesHADatapathControllers(t *testing.T) {
 	masterWhen := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
 		"VirtualAddress/lan-gw.role": {Equals: "master"},

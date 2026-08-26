@@ -47,6 +47,9 @@ type Controller struct {
 	Command                   CommandFunc
 	Logger                    *slog.Logger
 	KeepalivedActiveTTL       time.Duration
+	VRRPRuntimeDir            string
+	ReadFile                  func(string) ([]byte, error)
+	Now                       func() time.Time
 	trackState                map[string]trackDecision
 	keepalivedActiveCheckedAt time.Time
 	keepalivedActiveCached    bool
@@ -90,7 +93,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if result.VMACRepairError != nil {
 		extra["vmacRepairError"] = result.VMACRepairError.Error()
 	}
-	if err := c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, extra); err != nil {
+	if err := c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, result.GracefulActivations, extra); err != nil {
 		return err
 	}
 	return result.VMACRepairError
@@ -115,14 +118,14 @@ func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
-	saveErr := c.saveStatuses("Error", path, changed, tracks, nil, nil, map[string]any{"reason": reason, "error": err.Error()})
+	saveErr := c.saveStatuses("Error", path, changed, tracks, nil, nil, nil, map[string]any{"reason": reason, "error": err.Error()})
 	if saveErr != nil {
 		return saveErr
 	}
 	return err
 }
 
-func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, roles map[string]string, isolated map[string]bool, extra map[string]any) error {
+func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[string]trackSummary, roles map[string]string, isolated map[string]bool, activations map[string]gracefulActivationStatus, extra map[string]any) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	aliases := interfaceAliases(c.Router)
 	for _, resource := range c.Router.Spec.Resources {
@@ -167,6 +170,23 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 			status["track"] = track.Entries
 			status["role"] = role
 			status["failoverVMACs"] = desiredVMACs
+			if activation, ok := activations[resource.Metadata.Name]; ok {
+				status["activationState"] = activation.State
+				status["vipAdvertised"] = activation.VIPAdvertised
+				status["activationTimeout"] = activation.Timeout.String()
+				if !activation.StartedAt.IsZero() {
+					status["activationStartedAt"] = activation.StartedAt.UTC().Format(time.RFC3339Nano)
+				}
+				if len(activation.WaitingFor) > 0 {
+					status["activationWaitingFor"] = activation.WaitingFor
+				}
+				if activation.Reason != "" {
+					status["activationReason"] = activation.Reason
+				}
+				if activation.Error != "" {
+					status["activationError"] = activation.Error
+				}
+			}
 			carryBackendActionStatus(status, previous, extra)
 			if statusvalue.Field(previous, "role") == role && statusvalue.Field(previous, "lastRoleTransitionAt") != "" {
 				status["lastRoleTransitionAt"] = statusvalue.Field(previous, "lastRoleTransitionAt")
@@ -457,6 +477,7 @@ type virtualVRRPSpec struct {
 	AuthenticationFrom      api.SecretValueSourceSpec
 	FailoverVMAC            *api.VirtualAddressVRRPFailoverVMACSpec
 	AdditionalFailoverVMACs []api.VirtualAddressVRRPFailoverVMACSpec
+	GracefulActivation      *api.VirtualAddressVRRPGracefulActivationSpec
 }
 
 func vrrpResourceSpec(resource api.Resource) (virtualAddressSpec, bool, error) {
@@ -497,6 +518,7 @@ func vrrpSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 		AuthenticationFrom:      spec.AuthenticationFrom,
 		FailoverVMAC:            spec.FailoverVMAC,
 		AdditionalFailoverVMACs: spec.AdditionalFailoverVMACs,
+		GracefulActivation:      spec.GracefulActivation,
 	}
 }
 

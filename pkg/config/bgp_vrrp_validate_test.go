@@ -745,6 +745,51 @@ func TestValidateVirtualAddressIPv4VRRPRequiresPeers(t *testing.T) {
 	}
 }
 
+func TestValidateVirtualAddressGracefulActivation(t *testing.T) {
+	base := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+		Spec: api.VirtualAddressSpec{
+			Family: "ipv4", Interface: "lan", Address: "172.18.0.1/32", Mode: "vrrp",
+			VRRP: api.VirtualAddressVRRPSpec{
+				VirtualRouterID: 18,
+				Peers:           []string{"172.18.0.3"},
+				GracefulActivation: &api.VirtualAddressVRRPGracefulActivationSpec{
+					ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"DSLiteTunnel/dslite-a.phase": {Equals: "Up"}}},
+					Timeout:   "45s",
+				},
+			},
+		},
+	}
+	if err := validateVirtualAddressResource(base, platform.OSLinux); err != nil {
+		t.Fatalf("valid graceful activation: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*api.VirtualAddressSpec)
+		osName platform.OS
+		want   string
+	}{
+		{name: "readyWhen required", osName: platform.OSLinux, mutate: func(spec *api.VirtualAddressSpec) { spec.VRRP.GracefulActivation.ReadyWhen = api.ResourceWhenSpec{} }, want: "readyWhen is required"},
+		{name: "positive timeout", osName: platform.OSLinux, mutate: func(spec *api.VirtualAddressSpec) { spec.VRRP.GracefulActivation.Timeout = "0s" }, want: "timeout must be a positive duration"},
+		{name: "linux only", osName: platform.OSFreeBSD, mutate: func(*api.VirtualAddressSpec) {}, want: "supported only for IPv4 VRRP on Linux"},
+		{name: "ipv4 only", osName: platform.OSLinux, mutate: func(spec *api.VirtualAddressSpec) { spec.Family, spec.Address = "ipv6", "2001:db8::1/128" }, want: "supported only for IPv4 VRRP on Linux"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := base
+			spec := resource.Spec.(api.VirtualAddressSpec)
+			gate := *spec.VRRP.GracefulActivation
+			spec.VRRP.GracefulActivation = &gate
+			tc.mutate(&spec)
+			resource.Spec = spec
+			err := validateVirtualAddressResource(resource, tc.osName)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateVirtualAddressIPv4CARPAllowsEmptyPeers(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},

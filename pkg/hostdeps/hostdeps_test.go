@@ -261,6 +261,19 @@ func TestPackageFeaturesIncludeArpingForStaticVirtualAddressAnnouncement(t *test
 	}
 }
 
+func TestPackageFeaturesIncludeArpingForGracefulVRRPActivation(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"},
+		Metadata: api.ObjectMeta{Name: "lan-gw-v4"},
+		Spec: api.VirtualAddressSpec{Interface: "lan", Address: "172.18.0.1/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{
+			GracefulActivation: &api.VirtualAddressVRRPGracefulActivationSpec{ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"DSLiteTunnel/a.phase": {Equals: "Up"}}}},
+		}},
+	}}}}
+	if features := packageFeatures(router); !features["arping"] {
+		t.Fatalf("features = %#v, want arping for graceful VRRP activation", features)
+	}
+}
+
 func TestDerivedPackagesDoNotManageHostServiceManager(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},

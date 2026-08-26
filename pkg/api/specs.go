@@ -585,6 +585,16 @@ type VirtualAddressVRRPSpec struct {
 	// transition as FailoverVMAC. They are used for a LAN gateway identity
 	// whose MAC and IPv6 link-local address must survive a MASTER change.
 	AdditionalFailoverVMACs []VirtualAddressVRRPFailoverVMACSpec `yaml:"additionalFailoverVMACs,omitempty" json:"additionalFailoverVMACs,omitempty"`
+	// GracefulActivation separates VRRP election from VIP publication. On a
+	// newly elected MASTER, routerd waits for ReadyWhen before adding the VIP.
+	GracefulActivation *VirtualAddressVRRPGracefulActivationSpec `yaml:"gracefulActivation,omitempty" json:"gracefulActivation,omitempty"`
+}
+
+type VirtualAddressVRRPGracefulActivationSpec struct {
+	ReadyWhen ResourceWhenSpec `yaml:"readyWhen" json:"readyWhen"`
+	// Timeout only changes the reported activation state. The VIP remains
+	// withheld and routerd continues retrying when readiness later recovers.
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 }
 
 // VirtualAddressVRRPFailoverVMAC binds a WAN macvlan to this VRRP instance's

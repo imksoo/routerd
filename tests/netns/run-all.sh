@@ -11,6 +11,7 @@ fi
 scripts=(
   keepalived-vip-failover.sh
   keepalived-no-spurious-restart.sh
+  graceful-vrrp-activation.sh
   ingress-conntrack-survive.sh
   forcefrag-df-forward.sh
   arp-observer-ignore-member-mac.sh

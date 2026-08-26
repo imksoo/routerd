@@ -16,7 +16,7 @@ if [[ ${EUID} -ne 0 ]]; then
 fi
 
 helper="${ROUTERD_VRRP_VMAC_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/bin/linux/routerd-vrrp-vmac}"
-for command in unshare mount ip grep; do
+for command in unshare mount ip grep sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'missing required command: %s\n' "$command" >&2
     exit 2
@@ -57,6 +57,9 @@ wait_global_usable() {
 
 mount --make-rprivate /
 mount -t tmpfs tmpfs /run
+if [[ -d /etc/conntrackd ]]; then
+  mount -t tmpfs tmpfs /etc/conntrackd
+fi
 ip link add lan-parent type veth peer name lan-peer
 ip link add wan-parent type veth peer name wan-peer
 ip link set lan-parent addrgenmode none
@@ -123,5 +126,29 @@ assert_master
 deactivate
 assert_backup
 activate
+assert_master
+
+# Graceful VRRP keeps the client VIP outside keepalived. The controller adds
+# it only after readiness; the helper must remove it before staging BACKUP and
+# must not add it on the following election.
+resource='lan-gw-v4'
+vip='172.18.0.1/32'
+ip -4 addr add 172.18.0.2/16 dev lan-parent
+ip -4 addr add "$vip" dev lan-parent
+"$helper" deactivate \
+  --resource "$resource" --deferred-address "$vip" --deferred-interface lan-parent \
+  --vmac "lan-parent,lan-vrrp,02:00:5e:00:01:12,${shared_ll},true" \
+  --vmac "wan-parent,wan-vmac,02:00:5e:00:01:13,${wan_ll},false"
+! ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"
+state_hash="$(printf '%s' "$resource" | sha256sum | cut -c1-16)"
+grep -Fxq backup "/run/routerd/vrrp-election-${state_hash}.role"
+assert_backup
+
+"$helper" activate \
+  --resource "$resource" --deferred-address "$vip" --deferred-interface lan-parent \
+  --vmac "lan-parent,lan-vrrp,02:00:5e:00:01:12,${shared_ll},true" \
+  --vmac "wan-parent,wan-vmac,02:00:5e:00:01:13,${wan_ll},false"
+! ip -4 -o addr show dev lan-parent | grep -Fq "${vip%/*}"
+grep -Fxq master "/run/routerd/vrrp-election-${state_hash}.role"
 assert_master
 INNER

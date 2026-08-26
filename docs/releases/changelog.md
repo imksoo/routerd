@@ -14,6 +14,11 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
+- Opt-in IPv4 VRRP graceful activation now withholds the LAN VIP until the
+  elected router has restored conntrack state and its configured IPv6 PD,
+  delegated-address, DS-Lite, health, and egress-policy readiness conditions
+  are satisfied. Demotion withdraws the VIP before dismantling the data path,
+  and readiness timeout remains fail-closed and retryable.
 - keepalived role hooks now wake routerd through `SIGUSR1` after the VMAC and
   conntrackd transition is durable, avoiding the VRRP polling delay before
   DS-Lite, HealthCheck, and EgressRoutePolicy reconciliation. Applied egress
