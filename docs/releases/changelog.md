@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Bound generated HealthCheck systemd units to `routerd.service`, so
+  role-gated probes stop with the controller instead of continuing to transmit
+  through DS-Lite tunnels after their failover VMAC and delegated IPv6 source
+  addresses have been withdrawn.
+
 ## v20260826.1815
 
 ### Fixed

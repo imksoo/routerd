@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- 生成する HealthCheck の systemd unit を `routerd.service` に連動させました。これにより、
+  役割条件付きの疎通確認がコントローラー停止後も残り、フェールオーバー VMAC と委譲
+  IPv6 送信元アドレスの解除後に DS-Lite トンネルへ送信し続ける問題を防ぎます。
+
 ## v20260826.1815
 
 ### 修正
