@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260826.2108
+
 ### Fixed
 
 - VRRP demotion now lowers direct `ip6tnl` children after the client-facing

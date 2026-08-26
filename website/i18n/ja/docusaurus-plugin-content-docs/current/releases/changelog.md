@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.2108
+
 ### 修正
 
 - VRRP の降格時に、クライアント側 VMAC の停止後、WAN VMAC の停止前に直下の `ip6tnl` を

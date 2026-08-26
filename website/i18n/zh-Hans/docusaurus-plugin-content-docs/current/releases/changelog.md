@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260826.2108
+
 ### 修复
 
 - VRRP 降级时会在关闭面向客户端的 VMAC 后、关闭 WAN VMAC 前，先关闭其直属的 `ip6tnl`。
