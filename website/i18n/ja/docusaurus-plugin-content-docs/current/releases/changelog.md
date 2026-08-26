@@ -11,6 +11,21 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- IPv4 VRRP の graceful activation を有効にした場合、選出されたルーターが conntrack 状態を
+  復元し、設定された IPv6 PD、委譲アドレス、DS-Lite、疎通確認、EgressRoutePolicy の
+  準備条件を満たすまで LAN VIP を広告しないようにしました。降格時はデータパスを停止する
+  前に VIP を撤去します。準備待ちがタイムアウトした場合も、VIPを広告せず再試行できます。
+- keepalived の役割変更フックは、VMAC と conntrackd の切り替えが確定した後に `SIGUSR1` で
+  routerd を起動するようにしました。DS-Lite、HealthCheck、EgressRoutePolicy の再調停で
+  VRRP の定期確認を待ちません。適用済み EgressRoutePolicy の状態には役割変更から準備完了
+  までの時間と、収束中の新規未マークフローが次の利用可能な代替経路を使うことを記録します。
+- `EgressRoutePolicy` の複数経路ハッシュを、固定した256バケットのランデブー割り当てに
+  変更しました。経路の正常性、順序、追加、削除、復旧が変わっても、バケットの割当先が
+  引き続き利用可能な送信元は再配置されません。0以外のconntrack markを持つ既存通信は、
+  引き続き新規フロー向けハッシュ処理を通りません。
+
 ## v20260824.1404
 
 ### 修正

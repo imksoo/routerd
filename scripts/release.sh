@@ -112,6 +112,41 @@ if [ -z "$current_version" ]; then
 	exit 1
 fi
 
+validate_changelog() {
+	file=$1
+	[ -f "$file" ] || return 0
+	if ! perl -0e '
+		use strict;
+		use warnings;
+
+		my $file = $ARGV[0];
+		my $text = do { local $/; <> };
+		if ($text !~ /^(## .*)$/m) {
+			die "$file: missing changelog section heading\n";
+		}
+		if ($1 ne "## Unreleased") {
+			die "$file: first changelog section must be ## Unreleased\n";
+		}
+		if ($text !~ /^## Unreleased\n(.*?)(?=^## |\z)/ms) {
+			die "$file: missing ## Unreleased section\n";
+		}
+		my $body = $1;
+		$body =~ s/\s+//g;
+		if ($body eq "") {
+			die "$file: ## Unreleased section is empty\n";
+		}
+	' "$file"; then
+		exit 1
+	fi
+}
+
+# Validate every changelog before changing version files or promoting any
+# section. A missing translation must leave the repository untouched.
+validate_changelog docs/releases/changelog.md
+validate_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+validate_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md
+validate_changelog website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/releases/changelog.md
+
 replace_version() {
 	file=$1
 	[ -f "$file" ] || return 0

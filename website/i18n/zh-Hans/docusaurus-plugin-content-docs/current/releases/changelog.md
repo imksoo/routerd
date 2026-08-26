@@ -11,6 +11,19 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 启用 IPv4 VRRP graceful activation 时，当选路由器会先恢复 conntrack 状态，并等待配置的
+  IPv6 PD、委派地址、DS-Lite、健康检查和 EgressRoutePolicy 全部就绪，随后才通告 LAN VIP。
+  降级时会在拆除数据路径前撤回 VIP；就绪等待超时时保持不通告，并可再次尝试。
+- keepalived 角色 hook 会在 VMAC 与 conntrackd 切换成为持久状态后，通过 `SIGUSR1` 唤醒
+  routerd，避免 DS-Lite、HealthCheck 和 EgressRoutePolicy 的重新协调等待 VRRP 轮询。
+  已应用的 EgressRoutePolicy 状态会记录从角色切换到就绪所需的时间，并明确显示收敛期间新的
+  未标记流量使用下一个已就绪的替代路径。
+- `EgressRoutePolicy` 多目标哈希改用固定256个 bucket 的 rendezvous 分配。目标健康状态、
+  顺序、添加、删除或恢复发生变化时，只要原 bucket 所有者仍可用，就不会重新映射该来源。
+  已有且 conntrack mark 非零的连接仍会绕过新流量哈希。
+
 ## v20260824.1404
 
 ### 修复
