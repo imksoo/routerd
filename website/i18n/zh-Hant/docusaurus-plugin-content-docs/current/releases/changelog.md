@@ -11,6 +11,11 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- VRRP 降級時會先關閉面向用戶端的 VMAC，再關閉 WAN VMAC，避免外層 IPv6 來源位址失效後
+  轉送封包仍進入 DS-Lite 隧道。升級為主節點時仍維持 WAN 優先的啟動順序。
+
 ## v20260826.1943
 
 ### 修正

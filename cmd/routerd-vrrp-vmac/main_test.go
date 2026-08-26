@@ -85,6 +85,48 @@ func TestGracefulDeactivateWithdrawsVIPBeforeVMACAndConntrack(t *testing.T) {
 	}
 }
 
+func TestVMACActionOrderRaisesWANFirstAndLowersLANFirst(t *testing.T) {
+	args := []string{
+		"--vmac", "wan,wan-vmac,02:00:5e:00:01:13,fe80::5eff:fe00:113,false",
+		"--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}
+	for _, test := range []struct {
+		action string
+		want   []string
+	}{
+		{action: "activate", want: []string{"wan-vmac", "lan-vrrp"}},
+		{action: "deactivate", want: []string{"lan-vrrp", "wan-vmac"}},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			var downOrUp []string
+			linkState := "down"
+			if test.action == "activate" {
+				linkState = "up"
+			}
+			err := runWithHooks(append([]string{test.action}, args...), runHooks{
+				command: func(name string, commandArgs ...string) ([]byte, error) {
+					if name == "ip" && len(commandArgs) == 5 && commandArgs[0] == "link" && commandArgs[1] == "set" && commandArgs[2] == "dev" && commandArgs[4] == linkState {
+						downOrUp = append(downOrUp, commandArgs[3])
+					}
+					return nil, nil
+				},
+				inspectVMAC: func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{}, nil },
+				withdrawRA:  func(string) error { return nil },
+				requestRA:   func(string) error { return nil },
+				conntrackdTransitionNeeded: func(string) (bool, error) {
+					return false, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("%s VMACs: %v", test.action, err)
+			}
+			if !reflect.DeepEqual(downOrUp, test.want) {
+				t.Fatalf("%s VMAC order = %#v, want %#v", test.action, downOrUp, test.want)
+			}
+		})
+	}
+}
+
 func TestGracefulActivatePublishesElectionOnlyAfterVMACAndRA(t *testing.T) {
 	var events []string
 	err := runWithHooks([]string{

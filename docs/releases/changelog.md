@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Lower client-facing VMACs before the WAN VMAC during VRRP demotion so
+  forwarded packets cannot enter DS-Lite tunnels after their outer IPv6
+  source has become unusable. Promotion keeps the WAN-first order.
+
 ## v20260826.1943
 
 ### Fixed
