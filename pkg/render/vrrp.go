@@ -14,19 +14,20 @@ import (
 )
 
 type vrrpInstance struct {
-	Name            string
-	Kind            string
-	Interface       string
-	Address         string
-	Family          string
-	VirtualRouterID int
-	Priority        int
-	Preempt         *bool
-	PreemptDelay    time.Duration
-	Peers           []string
-	AdvertInterval  time.Duration
-	Authentication  string
-	FailoverVMACs   []api.VirtualAddressVRRPFailoverVMACSpec
+	Name               string
+	Kind               string
+	Interface          string
+	Address            string
+	Family             string
+	VirtualRouterID    int
+	Priority           int
+	Preempt            *bool
+	PreemptDelay       time.Duration
+	Peers              []string
+	AdvertInterval     time.Duration
+	Authentication     string
+	FailoverVMACs      []api.VirtualAddressVRRPFailoverVMACSpec
+	GracefulActivation *api.VirtualAddressVRRPGracefulActivationSpec
 }
 
 type KeepalivedOptions struct {
@@ -126,19 +127,20 @@ func vrrpInstances(router *api.Router, aliases map[string]string, opts Keepalive
 			return nil, fmt.Errorf("%s spec.vrrp.authenticationFrom: %w", res.ID(), err)
 		}
 		instances = append(instances, vrrpInstance{
-			Name:            res.Metadata.Name,
-			Kind:            res.Kind,
-			Interface:       ifname,
-			Address:         address,
-			Family:          spec.Family,
-			VirtualRouterID: spec.VRRP.VirtualRouterID,
-			Priority:        priority,
-			Preempt:         spec.VRRP.Preempt,
-			PreemptDelay:    preemptDelay,
-			Peers:           peers,
-			AdvertInterval:  advert,
-			Authentication:  authentication,
-			FailoverVMACs:   failoverVMACs,
+			Name:               res.Metadata.Name,
+			Kind:               res.Kind,
+			Interface:          ifname,
+			Address:            address,
+			Family:             spec.Family,
+			VirtualRouterID:    spec.VRRP.VirtualRouterID,
+			Priority:           priority,
+			Preempt:            spec.VRRP.Preempt,
+			PreemptDelay:       preemptDelay,
+			Peers:              peers,
+			AdvertInterval:     advert,
+			Authentication:     authentication,
+			FailoverVMACs:      failoverVMACs,
+			GracefulActivation: spec.VRRP.GracefulActivation,
 		})
 	}
 	sort.Slice(instances, func(i, j int) bool { return instances[i].Name < instances[j].Name })
@@ -167,6 +169,7 @@ type virtualVRRPSpec struct {
 	AuthenticationFrom      api.SecretValueSourceSpec
 	FailoverVMAC            *api.VirtualAddressVRRPFailoverVMACSpec
 	AdditionalFailoverVMACs []api.VirtualAddressVRRPFailoverVMACSpec
+	GracefulActivation      *api.VirtualAddressVRRPGracefulActivationSpec
 }
 
 func virtualAddressResourceSpec(res api.Resource) (virtualAddressSpec, bool, error) {
@@ -206,6 +209,7 @@ func virtualAddressVRRPSpec(spec api.VirtualAddressVRRPSpec) virtualVRRPSpec {
 		AuthenticationFrom:      spec.AuthenticationFrom,
 		FailoverVMAC:            spec.FailoverVMAC,
 		AdditionalFailoverVMACs: spec.AdditionalFailoverVMACs,
+		GracefulActivation:      spec.GracefulActivation,
 	}
 }
 
@@ -285,12 +289,17 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("    auth_pass " + instance.Authentication + "\n")
 		buf.WriteString("  }\n")
 	}
-	if len(instance.FailoverVMACs) > 0 {
+	if len(instance.FailoverVMACs) > 0 || instance.GracefulActivation != nil {
 		hook := "/usr/local/sbin/routerd-vrrp-vmac"
 		args := ""
+		if instance.GracefulActivation != nil {
+			args += " --resource " + strings.TrimSpace(instance.Name)
+			args += " --deferred-address " + strings.TrimSpace(instance.Address)
+			args += " --deferred-interface " + strings.TrimSpace(instance.Interface)
+		}
 		if len(instance.FailoverVMACs) == 1 && strings.TrimSpace(instance.FailoverVMACs[0].LinkLocalAddress) == "" {
 			vmac := instance.FailoverVMACs[0]
-			args = " --parent " + strings.TrimSpace(vmac.ParentInterface) + " --interface " + strings.TrimSpace(vmac.Interface) + " --mac " + strings.TrimSpace(vmac.MACAddress)
+			args += " --parent " + strings.TrimSpace(vmac.ParentInterface) + " --interface " + strings.TrimSpace(vmac.Interface) + " --mac " + strings.TrimSpace(vmac.MACAddress)
 		} else {
 			for _, vmac := range instance.FailoverVMACs {
 				args += " --vmac " + strings.TrimSpace(vmac.ParentInterface) + "," + strings.TrimSpace(vmac.Interface) + "," + strings.TrimSpace(vmac.MACAddress) + "," + strings.TrimSpace(vmac.LinkLocalAddress) + "," + fmt.Sprintf("%t", vmac.WithdrawRouterAdvertisement)
@@ -301,9 +310,13 @@ func writeKeepalivedInstance(buf *bytes.Buffer, instance vrrpInstance) {
 		buf.WriteString("  notify_fault \"" + hook + " deactivate" + args + "\"\n")
 		buf.WriteString("  notify_stop \"" + hook + " deactivate" + args + "\"\n")
 	}
-	buf.WriteString("  virtual_ipaddress {\n")
-	buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")
-	buf.WriteString("  }\n")
+	if instance.GracefulActivation != nil {
+		buf.WriteString("  no_virtual_ipaddress\n")
+	} else {
+		buf.WriteString("  virtual_ipaddress {\n")
+		buf.WriteString("    " + instance.Address + " dev " + instance.Interface + "\n")
+		buf.WriteString("  }\n")
+	}
 	buf.WriteString("}\n\n")
 }
 

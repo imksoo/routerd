@@ -530,6 +530,18 @@ about missing DNSZone coverage. `routerctl get VirtualAddress` shows role, prior
 peers, and transition age. NixOS remains groundwork until a native
 service-manager module owns the same host artifacts.
 
+On Linux IPv4 VRRP, `spec.vrrp.gracefulActivation` separates election from VIP
+publication. keepalived first invokes the role hook, which commits replicated
+conntrack state, raises the shared WAN/LAN VMAC identities, solicits IPv6 RA,
+and records the elected role. routerd then evaluates `readyWhen` against
+resource status. It adds the IPv4 `/32` and sends gratuitous ARP only after all
+conditions match. A BACKUP, FAULT, or STOP transition removes the VIP before
+RA withdrawal, VMAC shutdown, and conntrack demotion. `timeout` defaults to 45
+seconds; expiry reports `activationState: Failed` while keeping the VIP
+withheld, and later status changes remain eligible to complete activation.
+This feature is opt-in; VRRP resources without `gracefulActivation` retain
+keepalived-managed VIP behavior.
+
 ### VRRP production tuning
 
 Use `preempt: true` only for control-plane VIPs where automatic failback is
@@ -797,7 +809,7 @@ and fields outside the target kind's `provides` set.
 | `VRF` | `ifname` (string), `members` (stringList), `phase` (string), `routeTable` (int) |
 | `VXLANSegment` | `ifname` (string), `phase` (string), `vni` (int) |
 | `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
-| `VirtualAddress` | `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `virtualRouterID` (int) |
+| `VirtualAddress` | `activationReason` (string), `activationStartedAt` (timestamp), `activationState` (string), `activationWaitingFor` (stringList), `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `vipAdvertised` (bool), `virtualRouterID` (int) |
 | `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
 | `WireGuardInterface` | `fwmark` (int), `hostFirewall` (object), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |

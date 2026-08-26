@@ -6,6 +6,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,11 +21,15 @@ import (
 )
 
 type options struct {
-	parent string
-	ifname string
-	mac    string
-	action string
-	vmacs  []vmac
+	parent            string
+	ifname            string
+	mac               string
+	action            string
+	resource          string
+	deferredAddress   string
+	deferredInterface string
+	reconcile         bool
+	vmacs             []vmac
 }
 
 type vmac struct {
@@ -41,6 +46,7 @@ type vmacRuntimeState struct {
 }
 
 const conntrackdRoleStatePath = "/run/routerd/vrrp-vmac-conntrackd-role"
+const vrrpRuntimeDir = "/run/routerd"
 
 type commandRunner func(name string, args ...string) ([]byte, error)
 
@@ -52,6 +58,9 @@ type runHooks struct {
 	conntrackdTransitionNeeded func(string) (bool, error)
 	reconcileConntrackdRole    func(string) error
 	writeConntrackdRole        func(string) error
+	electionTransitionNeeded   func(string, string) (bool, error)
+	writeElectionRole          func(string, string) error
+	withdrawDeferredVIP        func(options) error
 	notifyRouterd              func() error
 	warn                       func(error)
 }
@@ -76,6 +85,11 @@ func productionRunHooks() runHooks {
 		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
 		reconcileConntrackdRole:    reconcileConntrackdRole,
 		writeConntrackdRole:        writeConntrackdRole,
+		electionTransitionNeeded:   electionRoleTransitionNeeded,
+		writeElectionRole:          writeElectionRole,
+		withdrawDeferredVIP: func(opts options) error {
+			return withdrawDeferredVIP(opts, runCommand)
+		},
 		notifyRouterd: func() error {
 			return notifyRouterdVRRPTransition(runCommand)
 		},
@@ -155,6 +169,35 @@ func runWithHooks(args []string, hooks runHooks) error {
 	if err != nil {
 		return err
 	}
+	electionTransition := false
+	if opts.resource != "" {
+		electionTransition, err = hooks.electionTransitionNeeded(opts.resource, opts.action)
+		if err != nil {
+			return err
+		}
+	}
+	notified := false
+	if opts.action == "deactivate" && opts.resource != "" {
+		// Withdraw the client-facing VIP before RA, VMAC and conntrack role
+		// changes. This closes the window in which clients can select a node
+		// whose DS-Lite data path is already being dismantled.
+		withdrawErr := hooks.withdrawDeferredVIP(opts)
+		// Always refresh the BACKUP marker and wake routerd. If the immediate
+		// delete failed, the controller must see BACKUP and retry withdrawal;
+		// conntrack remains primary until that retry can complete.
+		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+			return err
+		}
+		if hooks.notifyRouterd != nil && (electionTransition || !opts.reconcile) {
+			if err := hooks.notifyRouterd(); err != nil && hooks.warn != nil {
+				hooks.warn(fmt.Errorf("notify routerd of VRRP transition: %w", err))
+			}
+			notified = true
+		}
+		if withdrawErr != nil {
+			return withdrawErr
+		}
+	}
 	ready := make([]bool, len(opts.vmacs))
 	if hooks.inspectVMAC != nil {
 		for index, entry := range opts.vmacs {
@@ -232,10 +275,21 @@ func runWithHooks(args []string, hooks runHooks) error {
 			return err
 		}
 	}
+	if opts.action == "activate" && electionTransition {
+		// Election ownership becomes visible to routerd only after conntrack
+		// state, VMAC identity and the initial RA solicitation are complete.
+		// routerd can then reconcile PD-derived addresses and DS-Lite while the
+		// deferred LAN VIP is still absent.
+		if err := hooks.writeElectionRole(opts.resource, opts.action); err != nil {
+			return err
+		}
+	}
 	if conntrackdTransition {
 		if err := hooks.writeConntrackdRole(opts.action); err != nil {
 			return err
 		}
+	}
+	if (conntrackdTransition || electionTransition) && !notified {
 		if hooks.notifyRouterd != nil {
 			if err := hooks.notifyRouterd(); err != nil && hooks.warn != nil {
 				hooks.warn(fmt.Errorf("notify routerd of VRRP transition: %w", err))
@@ -326,6 +380,57 @@ func writeConntrackdRole(action string) error {
 		return err
 	}
 	return os.Rename(temporary, conntrackdRoleStatePath)
+}
+
+func electionStatePath(resource string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(resource)))
+	return fmt.Sprintf("%s/vrrp-election-%x.role", vrrpRuntimeDir, sum[:8])
+}
+
+func electionRoleTransitionNeeded(resource, action string) (bool, error) {
+	want := conntrackdRoleForAction(action)
+	if want == "" || strings.TrimSpace(resource) == "" {
+		return false, nil
+	}
+	data, err := os.ReadFile(electionStatePath(resource))
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(data)) != want, nil
+}
+
+func writeElectionRole(resource, action string) error {
+	role := conntrackdRoleForAction(action)
+	if role == "" || strings.TrimSpace(resource) == "" {
+		return nil
+	}
+	if err := os.MkdirAll(vrrpRuntimeDir, 0755); err != nil {
+		return err
+	}
+	path := electionStatePath(resource)
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, []byte(role+"\n"), 0644); err != nil {
+		return err
+	}
+	return os.Rename(temporary, path)
+}
+
+func withdrawDeferredVIP(opts options, command commandRunner) error {
+	if opts.resource == "" {
+		return nil
+	}
+	output, err := command("ip", "addr", "del", opts.deferredAddress, "dev", opts.deferredInterface)
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(string(output))
+	if strings.Contains(message, "cannot assign requested address") || strings.Contains(message, "not found") {
+		return nil
+	}
+	return fmt.Errorf("ip addr del %s dev %s: %w: %s", opts.deferredAddress, opts.deferredInterface, err, strings.TrimSpace(string(output)))
 }
 
 // reconcileConntrackdRole follows conntrackd's documented primary/backup
@@ -494,6 +599,10 @@ func parseOptions(args []string) (options, error) {
 	fs.StringVar(&opts.parent, "parent", "", "physical parent interface")
 	fs.StringVar(&opts.ifname, "interface", "", "VMAC interface")
 	fs.StringVar(&opts.mac, "mac", "", "VMAC address")
+	fs.StringVar(&opts.resource, "resource", "", "VirtualAddress resource name")
+	fs.StringVar(&opts.deferredAddress, "deferred-address", "", "VIP managed after readiness")
+	fs.StringVar(&opts.deferredInterface, "deferred-interface", "", "interface for the deferred VIP")
+	fs.BoolVar(&opts.reconcile, "reconcile", false, "idempotent routerd reconciliation rather than a keepalived notification")
 	fs.Func("vmac", "parent,interface,mac[,link-local]", func(value string) error {
 		parts := strings.Split(value, ",")
 		if len(parts) < 3 || len(parts) > 5 {
@@ -519,8 +628,23 @@ func parseOptions(args []string) (options, error) {
 	if opts.action != "activate" && opts.action != "deactivate" {
 		return options{}, errors.New("action must be activate or deactivate")
 	}
-	if len(opts.vmacs) == 0 {
+	if len(opts.vmacs) == 0 && (opts.parent != "" || opts.ifname != "" || opts.mac != "") {
 		opts.vmacs = append(opts.vmacs, vmac{parent: opts.parent, ifname: opts.ifname, mac: opts.mac})
+	}
+	if len(opts.vmacs) == 0 && opts.resource == "" {
+		return options{}, errors.New("a VMAC or graceful VirtualAddress resource is required")
+	}
+	if opts.resource != "" {
+		if strings.ContainsAny(opts.resource, "\x00\r\n") {
+			return options{}, errors.New("resource must not contain control characters")
+		}
+		prefix, err := netip.ParsePrefix(opts.deferredAddress)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			return options{}, errors.New("deferred-address must be an IPv4 /32 prefix")
+		}
+		if !validInterface(opts.deferredInterface) {
+			return options{}, errors.New("deferred-interface must be a Linux interface name")
+		}
 	}
 	for _, entry := range opts.vmacs {
 		if !validInterface(entry.parent) || !validInterface(entry.ifname) {

@@ -1092,6 +1092,12 @@ func whenStatusDependencyRefs(router *api.Router, controlledKinds ...string) map
 
 func addResourceWhenStatusDependencyRefs(out map[string]map[string]bool, resource api.Resource) {
 	addWhenStatusDependencyRefs(out, resourcequery.ResourceWhen(resource))
+	if resource.Kind == "VirtualAddress" {
+		spec, err := resource.VirtualAddressSpec()
+		if err == nil && spec.VRRP.GracefulActivation != nil {
+			addWhenStatusDependencyRefs(out, spec.VRRP.GracefulActivation.ReadyWhen)
+		}
+	}
 	if resource.Kind != "EgressRoutePolicy" {
 		return
 	}

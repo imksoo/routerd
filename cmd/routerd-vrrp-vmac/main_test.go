@@ -38,6 +38,151 @@ func TestNotifyRouterdVRRPTransitionSignalsMainProcess(t *testing.T) {
 	}
 }
 
+func TestGracefulDeactivateWithdrawsVIPBeforeVMACAndConntrack(t *testing.T) {
+	var events []string
+	err := runWithHooks([]string{
+		"deactivate",
+		"--resource", "lan-gw-v4",
+		"--deferred-address", "172.18.0.1/32",
+		"--deferred-interface", "ens19",
+		"--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			events = append(events, "command "+name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true, configuredLinkLocalSet: true}, nil
+		},
+		withdrawRA:                 func(string) error { events = append(events, "withdraw-ra"); return nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return true, nil },
+		reconcileConntrackdRole:    func(string) error { events = append(events, "conntrack-backup"); return nil },
+		writeConntrackdRole:        func(string) error { return nil },
+		electionTransitionNeeded: func(string, string) (bool, error) {
+			return true, nil
+		},
+		writeElectionRole:   func(string, string) error { events = append(events, "election-backup"); return nil },
+		withdrawDeferredVIP: func(options) error { events = append(events, "withdraw-vip"); return nil },
+		notifyRouterd:       func() error { events = append(events, "notify-routerd"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("graceful deactivate: %v", err)
+	}
+	wantPrefix := []string{"withdraw-vip", "election-backup", "notify-routerd", "withdraw-ra"}
+	if len(events) < len(wantPrefix) || !reflect.DeepEqual(events[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("events = %#v, want prefix %#v", events, wantPrefix)
+	}
+	conntrack := -1
+	for index, event := range events {
+		if event == "conntrack-backup" {
+			conntrack = index
+			break
+		}
+	}
+	if conntrack < 0 || conntrack <= len(wantPrefix) {
+		t.Fatalf("conntrack demotion must follow VIP/RA/VMAC withdrawal: %#v", events)
+	}
+}
+
+func TestGracefulActivatePublishesElectionOnlyAfterVMACAndRA(t *testing.T) {
+	var events []string
+	err := runWithHooks([]string{
+		"activate",
+		"--resource", "lan-gw-v4",
+		"--deferred-address", "172.18.0.1/32",
+		"--deferred-interface", "ens19",
+		"--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			events = append(events, "command "+name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{}, nil },
+		requestRA:   func(string) error { events = append(events, "request-ra"); return nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) {
+			return true, nil
+		},
+		reconcileConntrackdRole: func(string) error { events = append(events, "conntrack-master"); return nil },
+		writeConntrackdRole:     func(string) error { return nil },
+		electionTransitionNeeded: func(string, string) (bool, error) {
+			return true, nil
+		},
+		writeElectionRole:   func(string, string) error { events = append(events, "election-master"); return nil },
+		withdrawDeferredVIP: func(options) error { return nil },
+		notifyRouterd:       func() error { events = append(events, "notify-routerd"); return nil },
+	})
+	if err != nil {
+		t.Fatalf("graceful activate: %v", err)
+	}
+	position := func(want string) int {
+		for index, event := range events {
+			if event == want {
+				return index
+			}
+		}
+		return -1
+	}
+	if position("conntrack-master") < 0 || position("request-ra") < position("conntrack-master") || position("election-master") < position("request-ra") || position("notify-routerd") < position("election-master") {
+		t.Fatalf("unexpected activation order: %#v", events)
+	}
+}
+
+func TestGracefulDeactivateDeleteFailureStillWakesBackupReconcile(t *testing.T) {
+	var events []string
+	err := runWithHooks([]string{
+		"deactivate", "--resource", "lan-gw-v4", "--deferred-address", "172.18.0.1/32", "--deferred-interface", "ens19",
+		"--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command:                    func(string, ...string) ([]byte, error) { return nil, nil },
+		inspectVMAC:                func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{}, nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return true, nil },
+		reconcileConntrackdRole: func(string) error {
+			events = append(events, "conntrack-backup")
+			return nil
+		},
+		electionTransitionNeeded: func(string, string) (bool, error) { return true, nil },
+		writeElectionRole: func(string, string) error {
+			events = append(events, "election-backup")
+			return nil
+		},
+		withdrawDeferredVIP: func(options) error {
+			events = append(events, "withdraw-vip")
+			return errors.New("netlink failure")
+		},
+		notifyRouterd: func() error { events = append(events, "notify-routerd"); return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "netlink failure") {
+		t.Fatalf("error = %v, want delete failure", err)
+	}
+	want := []string{"withdraw-vip", "election-backup", "notify-routerd"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %#v, want %#v; conntrack must remain primary until withdrawal retries", events, want)
+	}
+}
+
+func TestGracefulSteadyBackupReconcileDoesNotSignalItself(t *testing.T) {
+	notifications := 0
+	err := runWithHooks([]string{
+		"deactivate", "--resource", "lan-gw-v4", "--deferred-address", "172.18.0.1/32", "--deferred-interface", "ens19", "--reconcile",
+	}, runHooks{
+		command:                    func(string, ...string) ([]byte, error) { return nil, nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+		electionTransitionNeeded:   func(string, string) (bool, error) { return false, nil },
+		writeElectionRole:          func(string, string) error { return nil },
+		withdrawDeferredVIP:        func(options) error { return nil },
+		notifyRouterd: func() error {
+			notifications++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("steady backup reconcile: %v", err)
+	}
+	if notifications != 0 {
+		t.Fatalf("routerd reconciliation signalled itself %d times", notifications)
+	}
+}
+
 func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 	wan, err := parseOptions([]string{
 		"activate", "--vmac", "wan,wan-vmac,02:00:5e:00:01:13",

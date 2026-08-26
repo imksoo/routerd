@@ -1613,7 +1613,11 @@ func resourceWhens(res api.Resource) []resourceWhenRef {
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
 	case "VirtualAddress":
 		spec, _ := res.VirtualAddressSpec()
-		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+		items := []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}
+		if spec.VRRP.GracefulActivation != nil {
+			items = append(items, resourceWhenRef{path: res.ID() + " spec.vrrp.gracefulActivation.readyWhen", when: spec.VRRP.GracefulActivation.ReadyWhen})
+		}
+		return items
 	case "BGPRouter":
 		spec, _ := res.BGPRouterSpec()
 		return []resourceWhenRef{{path: res.ID() + " spec.when", when: spec.When}}

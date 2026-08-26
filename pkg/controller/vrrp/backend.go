@@ -5,27 +5,43 @@ package vrrp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type backendResult struct {
-	Path             string
-	Changed          bool
-	Roles            map[string]string
-	ServiceActive    *bool
-	LastReloadAt     string
-	LastRestartAt    string
-	LastChangeReason string
-	VMACRepairError  error
+	Path                string
+	Changed             bool
+	Roles               map[string]string
+	ServiceActive       *bool
+	LastReloadAt        string
+	LastRestartAt       string
+	LastChangeReason    string
+	VMACRepairError     error
+	GracefulActivations map[string]gracefulActivationStatus
+}
+
+type gracefulActivationStatus struct {
+	State         string
+	VIPAdvertised bool
+	StartedAt     time.Time
+	Timeout       time.Duration
+	WaitingFor    []string
+	Reason        string
+	Error         string
 }
 
 type backend interface {
@@ -58,6 +74,9 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		return backendResult{}, err
 	}
 	if changed && !c.DryRun {
+		if err := seedGracefulElectionStates(ctx, c, aliases); err != nil {
+			return backendResult{}, err
+		}
 		if err := writeFile(path, data, 0644); err != nil {
 			return backendResult{}, err
 		}
@@ -74,7 +93,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		serviceActive := c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
-		result.VMACRepairError = syncFailoverVMACs(ctx, c, aliases, result.Roles)
+		completeKeepalivedResult(ctx, c, aliases, &result)
 		if action == "reload" {
 			result.LastReloadAt = now
 		} else {
@@ -93,7 +112,7 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		serviceActive = c.refreshKeepalivedServiceActive(ctx)
 		result := backendResult{Path: path, Changed: changed, Roles: observeKeepalivedRolesAfterChange(ctx, c, aliases), ServiceActive: &serviceActive, LastChangeReason: reason}
-		result.VMACRepairError = syncFailoverVMACs(ctx, c, aliases, result.Roles)
+		completeKeepalivedResult(ctx, c, aliases, &result)
 		if action == "reload" {
 			result.LastReloadAt = now
 		} else {
@@ -101,7 +120,16 @@ func (keepalivedBackend) Apply(ctx context.Context, c *Controller, aliases map[s
 		}
 		return result, nil
 	}
-	return backendResult{Path: path, Changed: changed, Roles: roles, ServiceActive: &serviceActive, VMACRepairError: syncFailoverVMACs(ctx, c, aliases, roles)}, nil
+	result := backendResult{Path: path, Changed: changed, Roles: roles, ServiceActive: &serviceActive}
+	completeKeepalivedResult(ctx, c, aliases, &result)
+	return result, nil
+}
+
+func completeKeepalivedResult(ctx context.Context, c *Controller, aliases map[string]string, result *backendResult) {
+	vmacErr := syncFailoverVMACs(ctx, c, aliases, result.Roles)
+	activations, activationErr := reconcileGracefulActivations(ctx, c, aliases, result.Roles)
+	result.GracefulActivations = activations
+	result.VMACRepairError = errors.Join(vmacErr, activationErr)
 }
 
 // syncFailoverVMACs makes the WAN L2 identity match the one authoritative
@@ -124,7 +152,7 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 		if spec.VRRP.FailoverVMAC != nil {
 			vmacs = append([]api.VirtualAddressVRRPFailoverVMACSpec{*spec.VRRP.FailoverVMAC}, vmacs...)
 		}
-		if len(vmacs) == 0 {
+		if len(vmacs) == 0 && spec.VRRP.GracefulActivation == nil {
 			continue
 		}
 		action := "deactivate"
@@ -132,6 +160,13 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 			action = "activate"
 		}
 		args := []string{action}
+		if spec.VRRP.GracefulActivation != nil {
+			address, renderErr := renderVirtualAddress(c.Router, spec)
+			if renderErr != nil {
+				return renderErr
+			}
+			args = append(args, "--resource", resource.Metadata.Name, "--deferred-address", address, "--deferred-interface", aliases[spec.Interface], "--reconcile")
+		}
 		if len(vmacs) == 1 && strings.TrimSpace(vmacs[0].LinkLocalAddress) == "" {
 			vmac := vmacs[0]
 			parent := aliases[vmac.ParentInterface]
@@ -150,6 +185,224 @@ func syncFailoverVMACs(ctx context.Context, c *Controller, aliases map[string]st
 		}
 		if out, err := c.run(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...); err != nil {
 			return fmt.Errorf("sync failover VMAC for %s: %w: %s", resource.ID(), err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases map[string]string, roles map[string]string) (map[string]gracefulActivationStatus, error) {
+	statuses := map[string]gracefulActivationStatus{}
+	var resultErr error
+	for _, resource := range c.Router.Spec.Resources {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok || spec.Mode != "vrrp" || spec.VRRP.GracefulActivation == nil {
+			if err != nil {
+				resultErr = errors.Join(resultErr, err)
+			}
+			continue
+		}
+		gate := spec.VRRP.GracefulActivation
+		timeout := 45 * time.Second
+		if strings.TrimSpace(gate.Timeout) != "" {
+			parsed, parseErr := time.ParseDuration(gate.Timeout)
+			if parseErr != nil || parsed <= 0 {
+				err := fmt.Errorf("%s spec.vrrp.gracefulActivation.timeout must be a positive duration", resource.ID())
+				statuses[resource.Metadata.Name] = gracefulActivationStatus{State: "Failed", Timeout: timeout, Reason: "InvalidTimeout", Error: err.Error()}
+				resultErr = errors.Join(resultErr, err)
+				continue
+			}
+			timeout = parsed
+		}
+		status := gracefulActivationStatus{State: "Standby", Timeout: timeout}
+		if c.DryRun {
+			status.State = "DryRun"
+			statuses[resource.Metadata.Name] = status
+			continue
+		}
+		ifname := aliases[spec.Interface]
+		address, renderErr := renderVirtualAddress(c.Router, spec)
+		if renderErr != nil || ifname == "" {
+			if renderErr == nil {
+				renderErr = fmt.Errorf("%s references interface with empty ifname %q", resource.ID(), spec.Interface)
+			}
+			status.State, status.Reason, status.Error = "Failed", "AddressUnavailable", renderErr.Error()
+			statuses[resource.Metadata.Name] = status
+			resultErr = errors.Join(resultErr, renderErr)
+			continue
+		}
+		present, observeErr := c.staticIPv4AddressPresent(ctx, ifname, address)
+		if observeErr != nil {
+			status.State, status.Reason, status.Error = "Failed", "VIPObserveFailed", observeErr.Error()
+			statuses[resource.Metadata.Name] = status
+			resultErr = errors.Join(resultErr, observeErr)
+			continue
+		}
+		status.VIPAdvertised = present
+		if roles[resource.Metadata.Name] != "master" {
+			if present {
+				if removeErr := c.removeGracefulVIP(ctx, ifname, address); removeErr != nil {
+					status.State, status.Reason, status.Error = "Failed", "VIPWithdrawFailed", removeErr.Error()
+					resultErr = errors.Join(resultErr, removeErr)
+				} else {
+					status.VIPAdvertised = false
+				}
+			}
+			statuses[resource.Metadata.Name] = status
+			continue
+		}
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
+		startedAt := gracefulActivationStartedAt(previous, controllerNow(c))
+		status.StartedAt = startedAt
+		ready := resourcequery.ResourceWhenPresent(gate.ReadyWhen) && resourcequery.ResourceWhenMatches(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+		if !ready {
+			if present {
+				if removeErr := c.removeGracefulVIP(ctx, ifname, address); removeErr != nil {
+					status.State, status.Reason, status.Error = "Failed", "VIPWithdrawFailed", removeErr.Error()
+					statuses[resource.Metadata.Name] = status
+					resultErr = errors.Join(resultErr, removeErr)
+					continue
+				}
+				status.VIPAdvertised = false
+			}
+			status.State = "Preparing"
+			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+			if controllerNow(c).Sub(startedAt) >= timeout {
+				status.State = "Failed"
+				status.Reason = "ReadinessTimeout"
+			}
+			statuses[resource.Metadata.Name] = status
+			continue
+		}
+		if !present {
+			if applyErr := c.replaceStaticAddress(ctx, ifname, address); applyErr != nil {
+				status.State, status.Reason, status.Error = "Failed", "VIPApplyFailed", applyErr.Error()
+				statuses[resource.Metadata.Name] = status
+				resultErr = errors.Join(resultErr, applyErr)
+				continue
+			}
+			status.VIPAdvertised = true
+			if announceErr := c.announceStaticIPv4Address(ctx, ifname, address); announceErr != nil {
+				rollbackErr := c.removeGracefulVIP(ctx, ifname, address)
+				status.VIPAdvertised = rollbackErr != nil
+				activationErr := errors.Join(announceErr, rollbackErr)
+				status.State, status.Reason, status.Error = "Failed", "VIPGratuitousARPFailed", activationErr.Error()
+				statuses[resource.Metadata.Name] = status
+				resultErr = errors.Join(resultErr, activationErr)
+				continue
+			}
+		}
+		status.State = "Ready"
+		status.VIPAdvertised = true
+		statuses[resource.Metadata.Name] = status
+	}
+	return statuses, resultErr
+}
+
+func (c *Controller) removeGracefulVIP(ctx context.Context, ifname, address string) error {
+	ip := stringutil.FirstNonEmpty(c.IP, "ip")
+	if out, err := c.run(ctx, ip, "addr", "del", address, "dev", ifname); err != nil {
+		return fmt.Errorf("%s addr del %s dev %s: %w: %s", ip, address, ifname, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func gracefulActivationStartedAt(previous map[string]any, now time.Time) time.Time {
+	if statusvalue.Field(previous, "role") == "master" {
+		if parsed, err := time.Parse(time.RFC3339Nano, statusvalue.Field(previous, "activationStartedAt")); err == nil {
+			return parsed
+		}
+	}
+	return now
+}
+
+func gracefulActivationWaitingFor(when api.ResourceWhenSpec, store resourcequery.StateStore) []string {
+	waiting := map[string]bool{}
+	var walk func(api.ResourceWhenSpec)
+	walk = func(current api.ResourceWhenSpec) {
+		for ref, match := range current.State {
+			if !resourcequery.StateMatch(store, ref, match) {
+				waiting[ref] = true
+			}
+		}
+		for _, child := range current.All {
+			walk(child)
+		}
+		for _, child := range current.Any {
+			walk(child)
+		}
+	}
+	walk(when)
+	out := make([]string, 0, len(waiting))
+	for ref := range waiting {
+		out = append(out, ref)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func controllerNow(c *Controller) time.Time {
+	if c.Now != nil {
+		return c.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func gracefulElectionStatePath(c *Controller, resource string) string {
+	dir := strings.TrimSpace(c.VRRPRuntimeDir)
+	if dir == "" {
+		dir = "/run/routerd"
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(resource)))
+	return fmt.Sprintf("%s/vrrp-election-%x.role", dir, sum[:8])
+}
+
+func gracefulElectionRole(c *Controller, resource string) string {
+	readFile := os.ReadFile
+	if c.ReadFile != nil {
+		readFile = c.ReadFile
+	}
+	data, err := readFile(gracefulElectionStatePath(c, resource))
+	if err != nil {
+		return ""
+	}
+	role := strings.TrimSpace(string(data))
+	if role == "master" || role == "backup" {
+		return role
+	}
+	return ""
+}
+
+func seedGracefulElectionStates(ctx context.Context, c *Controller, aliases map[string]string) error {
+	for _, resource := range c.Router.Spec.Resources {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil || !ok || spec.Mode != "vrrp" || spec.VRRP.GracefulActivation == nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if gracefulElectionRole(c, resource.Metadata.Name) != "" {
+			continue
+		}
+		address, err := renderVirtualAddress(c.Router, spec)
+		if err != nil {
+			return err
+		}
+		ifname := aliases[spec.Interface]
+		present, err := c.staticIPv4AddressPresent(ctx, ifname, address)
+		if err != nil {
+			return err
+		}
+		role := "backup"
+		if present {
+			role = "master"
+		}
+		path := gracefulElectionStatePath(c, resource.Metadata.Name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return err
+		}
+		if err := writeFile(path, []byte(role+"\n"), 0644); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -193,6 +446,16 @@ func observeKeepalivedRolesWithWait(ctx context.Context, c *Controller, aliases 
 		}
 		if err != nil || spec.Mode != "vrrp" {
 			continue
+		}
+		if spec.VRRP.GracefulActivation != nil {
+			role := gracefulElectionRole(c, resource.Metadata.Name)
+			if role == "master" || role == "backup" {
+				if !c.refreshKeepalivedServiceActive(ctx) {
+					role = "inactive"
+				}
+				roles[resource.Metadata.Name] = role
+				continue
+			}
 		}
 		ifname := aliases[spec.Interface]
 		address, err := renderVirtualAddress(c.Router, spec)

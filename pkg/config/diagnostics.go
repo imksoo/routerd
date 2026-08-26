@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func validIAID(value string) bool {
@@ -332,6 +333,20 @@ func validateVirtualAddressResource(res api.Resource, targetOS platform.OS) erro
 		}
 		if spec.VRRP.AdvertInterval != "" || spec.VRRP.PreemptDelay != "" {
 			return fmt.Errorf("%s spec.vrrp.advertInterval and spec.vrrp.preemptDelay are not supported; routerd derives VRRP/CARP timing from profile defaults", res.ID())
+		}
+		if gate := spec.VRRP.GracefulActivation; gate != nil {
+			if targetOS != platform.OSLinux || spec.Family != "ipv4" {
+				return fmt.Errorf("%s spec.vrrp.gracefulActivation is supported only for IPv4 VRRP on Linux", res.ID())
+			}
+			if !resourcequery.ResourceWhenPresent(gate.ReadyWhen) {
+				return fmt.Errorf("%s spec.vrrp.gracefulActivation.readyWhen is required", res.ID())
+			}
+			if strings.TrimSpace(gate.Timeout) != "" {
+				timeout, err := time.ParseDuration(gate.Timeout)
+				if err != nil || timeout <= 0 {
+					return fmt.Errorf("%s spec.vrrp.gracefulActivation.timeout must be a positive duration", res.ID())
+				}
+			}
 		}
 		if vmac := spec.VRRP.FailoverVMAC; vmac != nil {
 			if targetOS == platform.OSFreeBSD {
