@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260826.1859
+
 ### Fixed
 
 - Bound generated HealthCheck systemd units to `routerd.service`, so

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.1859
+
 ### 修正
 
 - 生成する HealthCheck の systemd unit を `routerd.service` に連動させました。これにより、

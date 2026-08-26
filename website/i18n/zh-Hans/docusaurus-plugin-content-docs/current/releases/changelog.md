@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260826.1859
+
 ### 修复
 
 - 将生成的 HealthCheck systemd unit 绑定到 `routerd.service`。这样，受角色条件控制的探测
