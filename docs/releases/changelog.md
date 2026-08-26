@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- VRRP demotion now lowers direct `ip6tnl` children after the client-facing
+  VMAC and before the WAN VMAC. This stops local health probes from entering a
+  DS-Lite tunnel after its outer IPv6 source becomes unavailable while BACKUP
+  reconciliation is still deleting role-gated tunnels.
+
 ## v20260826.2026
 
 ### Fixed

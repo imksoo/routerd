@@ -57,6 +57,7 @@ type runHooks struct {
 	inspectVMAC                func(vmac) (vmacRuntimeState, error)
 	withdrawRA                 func(string) error
 	requestRA                  func(string) error
+	quiesceUpperTunnels        func(string) error
 	conntrackdTransitionNeeded func(string) (bool, error)
 	reconcileConntrackdRole    func(string) error
 	writeConntrackdRole        func(string) error
@@ -82,10 +83,13 @@ func run(args []string) error {
 
 func productionRunHooks() runHooks {
 	return runHooks{
-		command:                    runCommand,
-		inspectVMAC:                inspectVMACRuntimeState,
-		withdrawRA:                 withdrawRouterAdvertisement,
-		requestRA:                  requestRouterAdvertisement,
+		command:     runCommand,
+		inspectVMAC: inspectVMACRuntimeState,
+		withdrawRA:  withdrawRouterAdvertisement,
+		requestRA:   requestRouterAdvertisement,
+		quiesceUpperTunnels: func(ifname string) error {
+			return quiesceUpperIP6Tunnels(ifname, runCommand)
+		},
 		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
 		reconcileConntrackdRole:    reconcileConntrackdRole,
 		writeConntrackdRole:        writeConntrackdRole,
@@ -262,6 +266,16 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 	}
 	for _, index := range vmacActionOrder(opts.action, opts.vmacs) {
 		entry := opts.vmacs[index]
+		if opts.action == "deactivate" && !entry.withdraw && hooks.quiesceUpperTunnels != nil {
+			// The client-facing VMAC has already been lowered by the action
+			// ordering above. Stop locally generated traffic on DS-Lite-style
+			// upper tunnels before removing their outer WAN identity. Routerd
+			// will delete role-gated tunnels as it reconciles BACKUP; this fast
+			// path closes the interval before that controller pass completes.
+			if err := hooks.quiesceUpperTunnels(entry.ifname); err != nil && hooks.warn != nil {
+				hooks.warn(fmt.Errorf("quiesce upper IPv6 tunnels on %s: %w", entry.ifname, err))
+			}
+		}
 		single := opts
 		single.vmacs = []vmac{entry}
 		commands := commandsFor(single)
@@ -332,6 +346,52 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		}
 	}
 	return nil
+}
+
+// quiesceUpperIP6Tunnels lowers direct ip6tnl children before their outer
+// failover VMAC goes down. A disappearing child is expected because routerd's
+// BACKUP reconciliation deletes role-gated DS-Lite tunnels concurrently.
+// Discovery and individual link failures are returned to the caller as a
+// best-effort warning; they must never prevent the WAN VMAC from being lowered.
+func quiesceUpperIP6Tunnels(parent string, command commandRunner) error {
+	output, err := command("ip", "-d", "-o", "link", "show")
+	if err != nil {
+		return fmt.Errorf("list detailed links: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	var result error
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		identity := strings.TrimSuffix(fields[1], ":")
+		ifname, lower, found := strings.Cut(identity, "@")
+		if !found || lower != parent || !containsField(fields, "ip6tnl") {
+			continue
+		}
+		linkOutput, linkErr := command("ip", "link", "set", "dev", ifname, "down")
+		if linkErr == nil || isMissingNetworkInterfaceOutput(linkOutput) {
+			continue
+		}
+		result = errors.Join(result, fmt.Errorf("ip link set dev %s down: %w: %s", ifname, linkErr, strings.TrimSpace(string(linkOutput))))
+	}
+	return result
+}
+
+func containsField(fields []string, want string) bool {
+	for _, field := range fields {
+		if field == want {
+			return true
+		}
+	}
+	return false
+}
+
+func isMissingNetworkInterfaceOutput(output []byte) bool {
+	message := strings.ToLower(string(output))
+	return strings.Contains(message, "cannot find device") ||
+		strings.Contains(message, "no such device") ||
+		strings.Contains(message, "does not exist")
 }
 
 func vmacActionOrder(action string, entries []vmac) []int {
