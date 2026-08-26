@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `EgressRoutePolicy` multi-target hashing now uses a fixed 256-bucket
+  rendezvous assignment, so target health, order, addition, removal, and
+  recovery do not remap sources whose bucket owner remains available. Existing
+  non-zero conntrack marks continue to bypass new-flow hashing.
+
 ## v20260824.1404
 
 ### Fixed

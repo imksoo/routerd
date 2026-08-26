@@ -2268,6 +2268,10 @@ type EgressRoutePolicyTarget struct {
 	RouteMetric   int                   `yaml:"routeMetric,omitempty" json:"routeMetric,omitempty" jsonschema:"minimum=0"`
 	Metric        int                   `yaml:"metric,omitempty" json:"metric,omitempty" jsonschema:"minimum=0"`
 	HealthCheck   string                `yaml:"healthCheck,omitempty" json:"healthCheck,omitempty"`
+	// RuntimeReady is populated only on the controller's in-memory render copy.
+	// nil means that no runtime filtering was requested (for example, a static
+	// render); it is deliberately excluded from the public resource format.
+	RuntimeReady *bool `yaml:"-" json:"-"`
 }
 
 func (c EgressRoutePolicyCandidate) EffectiveInterface() string {
