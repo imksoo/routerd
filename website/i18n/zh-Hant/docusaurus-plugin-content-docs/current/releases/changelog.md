@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260826.1815
+
 ### 修正
 
 - 將 keepalived 的 VRRP 通知與容錯移轉 VMAC 定期協調改為依序執行。等待角色切換完成的

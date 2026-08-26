@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.1815
+
 ### 修正
 
 - keepalived の VRRP 通知とフェールオーバー VMAC の定期調整を直列化しました。役割変更の
