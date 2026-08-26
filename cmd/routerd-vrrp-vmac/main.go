@@ -27,6 +27,7 @@ type options struct {
 	mac               string
 	action            string
 	resource          string
+	guardResource     string
 	deferredAddress   string
 	deferredInterface string
 	reconcile         bool
@@ -170,19 +171,23 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 	if err != nil {
 		return err
 	}
-	if opts.resource != "" && hooks.lockElection != nil {
-		unlock, lockErr := hooks.lockElection(opts.resource)
+	guardResource := opts.resource
+	if guardResource == "" {
+		guardResource = opts.guardResource
+	}
+	if guardResource != "" && hooks.lockElection != nil {
+		unlock, lockErr := hooks.lockElection(guardResource)
 		if lockErr != nil {
-			return fmt.Errorf("lock VRRP election for %s: %w", opts.resource, lockErr)
+			return fmt.Errorf("lock VRRP election for %s: %w", guardResource, lockErr)
 		}
 		defer func() {
 			if unlockErr := unlock(); unlockErr != nil {
-				runErr = errors.Join(runErr, fmt.Errorf("unlock VRRP election for %s: %w", opts.resource, unlockErr))
+				runErr = errors.Join(runErr, fmt.Errorf("unlock VRRP election for %s: %w", guardResource, unlockErr))
 			}
 		}()
 	}
-	if opts.reconcile && opts.resource != "" && hooks.readElectionRole != nil {
-		role, readErr := hooks.readElectionRole(opts.resource)
+	if opts.reconcile && guardResource != "" && hooks.readElectionRole != nil {
+		role, readErr := hooks.readElectionRole(guardResource)
 		if readErr != nil {
 			return readErr
 		}
@@ -663,6 +668,7 @@ func parseOptions(args []string) (options, error) {
 	fs.StringVar(&opts.ifname, "interface", "", "VMAC interface")
 	fs.StringVar(&opts.mac, "mac", "", "VMAC address")
 	fs.StringVar(&opts.resource, "resource", "", "VirtualAddress resource name")
+	fs.StringVar(&opts.guardResource, "guard-resource", "", "VirtualAddress election role guarding an idempotent VMAC repair")
 	fs.StringVar(&opts.deferredAddress, "deferred-address", "", "VIP managed after readiness")
 	fs.StringVar(&opts.deferredInterface, "deferred-interface", "", "interface for the deferred VIP")
 	fs.BoolVar(&opts.reconcile, "reconcile", false, "idempotent routerd reconciliation rather than a keepalived notification")
@@ -707,6 +713,17 @@ func parseOptions(args []string) (options, error) {
 		}
 		if !validInterface(opts.deferredInterface) {
 			return options{}, errors.New("deferred-interface must be a Linux interface name")
+		}
+	}
+	if opts.guardResource != "" {
+		if strings.ContainsAny(opts.guardResource, "\x00\r\n") {
+			return options{}, errors.New("guard-resource must not contain control characters")
+		}
+		if !opts.reconcile {
+			return options{}, errors.New("guard-resource requires --reconcile")
+		}
+		if opts.resource != "" && opts.resource != opts.guardResource {
+			return options{}, errors.New("resource and guard-resource must match when both are set")
 		}
 	}
 	for _, entry := range opts.vmacs {

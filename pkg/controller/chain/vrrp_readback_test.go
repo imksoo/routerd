@@ -132,7 +132,7 @@ func TestLANAddressControllerEnsureStagingVMACResolvesParentInterfaceAlias(t *te
 	if err := controller.ensureStagingVMAC(t.Context(), "lan-vmac"); err != nil {
 		t.Fatalf("ensure staging VMAC: %v", err)
 	}
-	want := []string{"/usr/local/sbin/routerd-vrrp-vmac", "deactivate", "--vmac", "ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true"}
+	want := []string{"/usr/local/sbin/routerd-vrrp-vmac", "deactivate", "--vmac", "ens19,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true", "--guard-resource", "lan-gw-v4", "--reconcile"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("helper invocation = %#v, want %#v", got, want)
 	}

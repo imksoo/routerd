@@ -184,6 +184,42 @@ func TestGracefulSteadyBackupReconcileDoesNotSignalItself(t *testing.T) {
 	}
 }
 
+func TestStagingReconcileGuardDiscardsDeactivateAfterMasterElection(t *testing.T) {
+	locked := false
+	unlocked := false
+	commands := 0
+	err := runWithHooks([]string{
+		"deactivate",
+		"--guard-resource", "lan-gw-v4",
+		"--reconcile",
+		"--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		lockElection: func(resource string) (func() error, error) {
+			if resource != "lan-gw-v4" {
+				t.Fatalf("lock resource = %q", resource)
+			}
+			locked = true
+			return func() error { unlocked = true; return nil }, nil
+		},
+		readElectionRole: func(resource string) (string, error) {
+			return "master", nil
+		},
+		command: func(string, ...string) ([]byte, error) {
+			commands++
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("guarded staging reconcile: %v", err)
+	}
+	if !locked || !unlocked {
+		t.Fatalf("election lock lifecycle locked=%t unlocked=%t", locked, unlocked)
+	}
+	if commands != 0 {
+		t.Fatalf("stale staging reconcile ran %d VMAC commands", commands)
+	}
+}
+
 func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T) {
 	var transitionLock sync.Mutex
 	role := "backup"

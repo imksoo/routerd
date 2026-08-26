@@ -1679,14 +1679,16 @@ func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.
 		"currentPrefix": "2409:10:3d60:1270::/60",
 	})
 	var got []string
+	present := false
 	controller := LANAddressController{
 		Router: router,
 		Store:  store,
 		AddressPresent: func(context.Context, string, string) bool {
-			return false
+			return present
 		},
 		Command: func(ctx context.Context, name string, args ...string) error {
 			got = append([]string{name}, args...)
+			present = true
 			return nil
 		},
 	}
@@ -1755,6 +1757,9 @@ func TestLANAddressControllerAppliesActiveEffectiveResourceWithoutFreshStageEvid
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base"); status["staged"] == true {
 		t.Fatalf("active status must not be staged: %#v", status)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base"); status["phase"] != "Pending" || status["reason"] != "AddressNotReady" {
+		t.Fatalf("tentative active address status = %#v", status)
 	}
 }
 
@@ -2611,14 +2616,16 @@ func TestLANAddressControllerUsesObservedPrefixDelegationStatus(t *testing.T) {
 		},
 	})
 	var got []string
+	present := false
 	controller := LANAddressController{
 		Router: router,
 		Store:  store,
 		AddressPresent: func(context.Context, string, string) bool {
-			return false
+			return present
 		},
 		Command: func(ctx context.Context, name string, args ...string) error {
 			got = append([]string{name}, args...)
+			present = true
 			return nil
 		},
 	}
