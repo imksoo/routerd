@@ -52,6 +52,8 @@ type runHooks struct {
 	conntrackdTransitionNeeded func(string) (bool, error)
 	reconcileConntrackdRole    func(string) error
 	writeConntrackdRole        func(string) error
+	notifyRouterd              func() error
+	warn                       func(error)
 }
 
 func main() {
@@ -74,6 +76,12 @@ func productionRunHooks() runHooks {
 		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
 		reconcileConntrackdRole:    reconcileConntrackdRole,
 		writeConntrackdRole:        writeConntrackdRole,
+		notifyRouterd: func() error {
+			return notifyRouterdVRRPTransition(runCommand)
+		},
+		warn: func(err error) {
+			fmt.Fprintln(os.Stderr, err)
+		},
 	}
 }
 
@@ -228,6 +236,22 @@ func runWithHooks(args []string, hooks runHooks) error {
 		if err := hooks.writeConntrackdRole(opts.action); err != nil {
 			return err
 		}
+		if hooks.notifyRouterd != nil {
+			if err := hooks.notifyRouterd(); err != nil && hooks.warn != nil {
+				hooks.warn(fmt.Errorf("notify routerd of VRRP transition: %w", err))
+			}
+		}
+	}
+	return nil
+}
+
+// notifyRouterdVRRPTransition is a best-effort fast path. routerd retains its
+// periodic kernel role observation, so a missing or restarting service cannot
+// make keepalived's transition fail.
+func notifyRouterdVRRPTransition(command commandRunner) error {
+	output, err := command("systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service")
+	if err != nil {
+		return fmt.Errorf("systemctl kill routerd.service: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }

@@ -72,6 +72,22 @@ The selected values are exposed as:
 - `status.selectedTargets`
 - `status.destinationCIDRs`
 
+When a candidate is gated by `VirtualAddress/<name>.role: master`, applied
+`mode: priority` status also reports HA data-path convergence:
+
+- `status.datapathState` (`Standby`, `Converging`, or `Ready`)
+- `status.datapathRoleTransitionAt`
+- `status.datapathReadyAt`
+- `status.datapathReadyDuration` and `status.datapathReadyDurationMillis`
+- `status.newFlowBehavior`
+
+During `Converging`, routerd deliberately selects the next ready candidate for
+new unmarked flows (`datapathFallbackBehavior: select-next-ready-candidate`).
+It does not silently drop those flows. Existing flows with a replicated,
+non-zero conntrack mark keep that mark and do not enter new-flow selection.
+The keepalived transition hook wakes routerd immediately; the periodic VRRP
+observation remains as a recovery path if the notification cannot be delivered.
+
 At startup, the policy chooses the first ready candidate instead of waiting for
 the highest-weight path forever. If a higher-weight candidate becomes ready
 later, routerd updates `IPv4Route` and `NAT44Rule` through

@@ -528,6 +528,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	signalCh := make(chan os.Signal, 2)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
+	vrrpSignalCh := make(chan os.Signal, 1)
+	signal.Notify(vrrpSignalCh, syscall.SIGUSR1)
+	defer signal.Stop(vrrpSignalCh)
 	stop := make(chan struct{})
 	var stopOnce sync.Once
 	closeStop := func() {
@@ -554,6 +557,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	controllerBus = bus.NewWithStore(stateStore)
 	controllerBus.SetLogger(slog.Default())
+	go publishVRRPTransitionSignals(ctx, vrrpSignalCh, controllerBus)
 	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
 	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
 	if !*once && !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
@@ -1080,6 +1084,24 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		<-shutdownComplete
 	}
 	return nil
+}
+
+func publishVRRPTransitionSignals(ctx context.Context, signals <-chan os.Signal, eventBus *bus.Bus) {
+	if eventBus == nil {
+		return
+	}
+	for {
+		select {
+		case _, ok := <-signals:
+			if !ok {
+				return
+			}
+			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "keepalived", Kind: "keepalived", Instance: "notify"}, daemonapi.EventVRRPRoleTransition, daemonapi.SeverityInfo)
+			_ = eventBus.Publish(ctx, event)
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func bgpServeDefaultPaths(defaults platform.Defaults) (socket, controlSocket, state string) {

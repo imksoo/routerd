@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- keepalived role hooks now wake routerd through `SIGUSR1` after the VMAC and
+  conntrackd transition is durable, avoiding the VRRP polling delay before
+  DS-Lite, HealthCheck, and EgressRoutePolicy reconciliation. Applied egress
+  policy status records the role-to-ready duration and explicitly reports that
+  new unmarked flows use the next ready fallback candidate while converging.
+
 ## v20260824.1404
 
 ### Fixed

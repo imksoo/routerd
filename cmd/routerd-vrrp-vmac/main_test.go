@@ -23,6 +23,21 @@ func TestParseOptions(t *testing.T) {
 	}
 }
 
+func TestNotifyRouterdVRRPTransitionSignalsMainProcess(t *testing.T) {
+	var got []string
+	err := notifyRouterdVRRPTransition(func(name string, args ...string) ([]byte, error) {
+		got = append([]string{name}, args...)
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("notify routerd: %v", err)
+	}
+	want := []string{"systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("command = %#v, want %#v", got, want)
+	}
+}
+
 func TestWANFailoverVMACKeepsDelegatedAddressesAcrossDown(t *testing.T) {
 	wan, err := parseOptions([]string{
 		"activate", "--vmac", "wan,wan-vmac,02:00:5e:00:01:13",
@@ -469,6 +484,68 @@ func TestConntrackdRoleForAction(t *testing.T) {
 		if got := conntrackdRoleForAction(action); got != want {
 			t.Fatalf("role for %q = %q, want %q", action, got, want)
 		}
+	}
+}
+
+func TestRoleTransitionNotifiesRouterdOnlyAfterDurableRoleWrite(t *testing.T) {
+	var steps []string
+	err := runWithHooks([]string{
+		"activate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			if line == "ip -6 route show default dev wan-vmac" {
+				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
+			}
+			if line == "ip -6 -o addr show dev wan-vmac scope global" {
+				return []byte("7: wan-vmac inet6 2001:db8::13/64 scope global dynamic valid_lft 100sec preferred_lft 50sec\n"), nil
+			}
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true}, nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return true, nil },
+		reconcileConntrackdRole: func(string) error {
+			steps = append(steps, "conntrackd")
+			return nil
+		},
+		writeConntrackdRole: func(string) error {
+			steps = append(steps, "role-written")
+			return nil
+		},
+		notifyRouterd: func() error {
+			steps = append(steps, "routerd-notified")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"conntrackd", "role-written", "routerd-notified"}
+	if !reflect.DeepEqual(steps, want) {
+		t.Fatalf("transition steps = %#v, want %#v", steps, want)
+	}
+}
+
+func TestSteadyRoleDoesNotNotifyRouterd(t *testing.T) {
+	notifications := 0
+	err := runWithHooks([]string{
+		"deactivate", "--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}, runHooks{
+		command:                    func(string, ...string) ([]byte, error) { return nil, nil },
+		inspectVMAC:                func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{exists: true, macMatches: true}, nil },
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+		notifyRouterd: func() error {
+			notifications++
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 0 {
+		t.Fatalf("steady role notifications = %d, want 0", notifications)
 	}
 }
 

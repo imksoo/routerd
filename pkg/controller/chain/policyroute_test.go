@@ -1024,6 +1024,54 @@ func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T
 	}
 }
 
+func TestIPv4PolicyRoutePublishesHADatapathConvergence(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	now := time.Now().UTC()
+	transitionAt := now.Add(-2500 * time.Millisecond).Format(time.RFC3339Nano)
+	store := mapStore{
+		api.NetAPIVersion + "/VirtualAddress/lan-gw":  {"phase": "Applied", "role": "master", "lastRoleTransitionAt": transitionAt},
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a": {"phase": "Up"},
+		api.NetAPIVersion + "/HealthCheck/internet-a": {"phase": "Unhealthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "lan-gw"}, Spec: api.VirtualAddressSpec{Mode: "vrrp"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-a"}, Spec: api.HealthCheckSpec{Interval: "3s", Timeout: "2s", UnhealthyThreshold: 1}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{
+				{Name: "dslite", Weight: 120, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}, Targets: []api.EgressRoutePolicyTarget{{Name: "a", Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110, HealthCheck: "internet-a"}}},
+				{Name: "fallback", Weight: 60, Interface: "lo", GatewaySource: "none", Table: 114, Priority: 10114, Mark: 0x114},
+			},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{Router: router, DeclaredRouter: router, Store: store, DryRun: true, OperatingSystem: platform.OSLinux, Now: func() time.Time { return now }}
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "fallback" || status["datapathReady"] != false || status["datapathState"] != "Converging" || status["newFlowBehavior"] != "fallback" || status["datapathFallbackBehavior"] != "select-next-ready-candidate" {
+		t.Fatalf("converging datapath status = %#v", status)
+	}
+
+	store[api.NetAPIVersion+"/HealthCheck/internet-a"] = map[string]any{"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)}
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "ready.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["selectedCandidate"] != "dslite" || status["datapathReady"] != true || status["datapathState"] != "Ready" || status["datapathReadyDurationMillis"] != int64(2500) || status["datapathRoleResource"] != "VirtualAddress/lan-gw" {
+		t.Fatalf("ready datapath status = %#v", status)
+	}
+	readyAt := status["datapathReadyAt"]
+	controller.Now = func() time.Time { return now.Add(5 * time.Second) }
+	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "stable.nft")); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
+	if status["datapathReadyAt"] != readyAt || status["datapathReadyDurationMillis"] != int64(2500) {
+		t.Fatalf("stable reconcile changed first-ready measurement: %#v", status)
+	}
+}
+
 func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	now := time.Now().UTC().Format(time.RFC3339Nano)

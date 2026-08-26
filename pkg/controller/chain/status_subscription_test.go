@@ -39,6 +39,36 @@ func TestSAMRouteControllersSubscribeToVirtualAddressStatus(t *testing.T) {
 	}
 }
 
+func TestVRRPFastTransitionWakesRoleObservation(t *testing.T) {
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "keepalived", Kind: "keepalived"}, daemonapi.EventVRRPRoleTransition, daemonapi.SeverityInfo)
+	if !subscriptionSetAccepts(vrrpStatusSubscriptions(&api.Router{}), event) {
+		t.Fatal("vrrp controller did not subscribe to the keepalived transition fast path")
+	}
+}
+
+func TestVRRPRoleStatusWakesHADatapathControllers(t *testing.T) {
+	masterWhen := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"VirtualAddress/lan-gw.role": {Equals: "master"},
+	}}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "dslite"}, Spec: api.DSLiteTunnelSpec{When: masterWhen}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{When: masterWhen}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{{Name: "dslite", When: masterWhen}}}},
+	}}}
+	event := statusChangedEvent("VirtualAddress", "lan-gw")
+	tests := map[string][]bus.Subscription{
+		"dslite":              statusSubscriptionsWithWhen(router, []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"),
+		"healthcheck":         serviceUnitStatusSubscriptions(router),
+		"egress-route-policy": statusSubscriptionsWithWhen(router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"),
+		"ipv4-policy-route":   statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface", "VirtualAddress"),
+	}
+	for name, subscriptions := range tests {
+		if !subscriptionSetAccepts(subscriptions, event) {
+			t.Fatalf("%s did not accept the VRRP role status transition", name)
+		}
+	}
+}
+
 func TestLocalMobilityEffectorsSubscribeToTypedMobilityPoolPlan(t *testing.T) {
 	event := daemonapi.DaemonEvent{
 		Type: mobilitycontroller.PoolPlanChangedEvent,
