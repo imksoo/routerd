@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.2026
+
 ### 修正
 
 - VRRP の降格時は、WAN VMAC より先にクライアント側 VMAC を停止するようにしました。

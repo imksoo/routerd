@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260826.2026
+
 ### Fixed
 
 - Lower client-facing VMACs before the WAN VMAC during VRRP demotion so
