@@ -596,19 +596,8 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		noNewPrivileges := false
 		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
-		unit := api.SystemdUnitSpec{
-			Description: "routerd conntrackd state replication " + resource.Metadata.Name,
-			// -n is conntrackd client mode (request a peer resync), not daemon
-			// mode.  Starting it with -n exits immediately when no daemon is
-			// running.  Do not claim /run/routerd either: it is owned by routerd
-			// itself, and systemd removes a RuntimeDirectory when this unit stops.
-			Type: "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-C", configPath},
-			After: []string{"network-online.target"}, Wants: []string{"network-online.target"}, Conflicts: []string{"conntrackd.service"},
-			Restart: "on-failure", RestartSec: "2s",
-			NoNewPrivileges: &noNewPrivileges,
-		}
+		unit := conntrackdSystemdSpec(resource.Metadata.Name, configPath)
 		unitPath := filepath.Join(c.SystemdSystemDir, unitName)
 		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, command)
 		if err != nil {
@@ -627,6 +616,30 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		}
 	}
 	return nil
+}
+
+func conntrackdSystemdSpec(resourceName, configPath string) api.SystemdUnitSpec {
+	noNewPrivileges := false
+	return api.SystemdUnitSpec{
+		Description: "routerd conntrackd state replication " + resourceName,
+		// -n is conntrackd client mode (request a peer resync), not daemon
+		// mode. Starting it with -n exits immediately when no daemon is
+		// running. Do not claim /run/routerd either: it is owned by routerd
+		// itself, and systemd removes a RuntimeDirectory when this unit stops.
+		// conntrackd can leave its lock and control socket behind after an
+		// abnormal exit. systemd starts ExecStartPre only after the tracked
+		// process has exited, so removing these unit-owned artifacts here lets
+		// Restart=on-failure recover without a permanent stale-lock loop.
+		Type:            "notify",
+		ExecStartPre:    []string{"/bin/rm", "-f", "/run/routerd/conntrackd.lock", "/run/routerd/conntrackd.ctl"},
+		ExecStart:       []string{"/usr/sbin/conntrackd", "-C", configPath},
+		After:           []string{"network-online.target"},
+		Wants:           []string{"network-online.target"},
+		Conflicts:       []string{"conntrackd.service"},
+		Restart:         "on-failure",
+		RestartSec:      "2s",
+		NoNewPrivileges: &noNewPrivileges,
+	}
 }
 
 func (c SystemdUnitController) reconcileDisabledPPPoESessions() error {
