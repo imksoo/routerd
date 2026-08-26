@@ -5636,8 +5636,16 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
-			if stagingVMAC && !addressPresentFn(ctx, ifname, addr) {
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AddressReadbackFailed"})
+			if !addressPresentFn(ctx, ifname, addr) {
+				reason := "AddressNotReady"
+				if stagingVMAC {
+					reason = "AddressReadbackFailed"
+				}
+				// A cold BACKUP can retain a tentative address as staged state, but
+				// an active VMAC must not publish Applied until DAD has completed.
+				// DS-Lite and its health checks consume this phase as a readiness
+				// boundary and would otherwise transmit with an unusable outer source.
+				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason})
 				continue
 			}
 		}
@@ -5892,7 +5900,7 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 	if c.stagingVMACPresent(logical) {
 		return nil
 	}
-	entry, ok := c.vrrpVMAC(logical)
+	entry, owner, ok := c.vrrpVMACOwner(logical)
 	if !ok {
 		return fmt.Errorf("no VRRP VMAC configured for %s", logical)
 	}
@@ -5912,6 +5920,14 @@ func (c LANAddressController) ensureStagingVMAC(ctx context.Context, logical str
 	}
 	command := c.Command
 	args := []string{"deactivate", "--vmac", parent + "," + entry.Interface + "," + entry.MACAddress + "," + entry.LinkLocalAddress + "," + fmt.Sprintf("%t", entry.WithdrawRouterAdvertisement)}
+	if owner != "" {
+		// A fresh PD snapshot is reconciled both while the VMAC is a cold
+		// BACKUP and during the first MASTER pass before the active PD client is
+		// Bound.  Guard the staging repair with the same durable election role
+		// used by the authoritative keepalived and VRRP reconciliation paths.
+		// Otherwise this call can turn a newly activated MASTER VMAC back DOWN.
+		args = append(args, "--guard-resource", owner, "--reconcile")
+	}
 	if command != nil {
 		return command(ctx, "/usr/local/sbin/routerd-vrrp-vmac", args...)
 	}
@@ -5931,12 +5947,17 @@ func vmacHelperCommandError(args []string, err error, output []byte) error {
 }
 
 func (c LANAddressController) vrrpVMAC(logical string) (api.VirtualAddressVRRPFailoverVMACSpec, bool) {
+	entry, _, ok := c.vrrpVMACOwner(logical)
+	return entry, ok
+}
+
+func (c LANAddressController) vrrpVMACOwner(logical string) (api.VirtualAddressVRRPFailoverVMACSpec, string, bool) {
 	router := c.DeclaredRouter
 	if router == nil {
 		router = c.Router
 	}
 	if router == nil {
-		return api.VirtualAddressVRRPFailoverVMACSpec{}, false
+		return api.VirtualAddressVRRPFailoverVMACSpec{}, "", false
 	}
 	ifname := interfaceIfName(router, logical)
 	for _, resource := range router.Spec.Resources {
@@ -5953,11 +5974,11 @@ func (c LANAddressController) vrrpVMAC(logical string) (api.VirtualAddressVRRPFa
 		}
 		for _, entry := range entries {
 			if entry.Interface == ifname {
-				return entry, true
+				return entry, resource.Metadata.Name, true
 			}
 		}
 	}
-	return api.VirtualAddressVRRPFailoverVMACSpec{}, false
+	return api.VirtualAddressVRRPFailoverVMACSpec{}, "", false
 }
 
 func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Snapshot, bool) {

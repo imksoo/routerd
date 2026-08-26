@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 待機節點從 PD 快照預先配置 VMAC 時也會檢查已持久化的 VRRP 選舉角色，避免過期的待機協調
+  再次關閉新當選 MASTER 的 VMAC。作用中節點的委派 IPv6 位址及 DS-Lite 隧道會維持準備中，
+  直到 DAD 確認每個外層來源位址可用。
+
 ## v20260826.1859
 
 ### 修正

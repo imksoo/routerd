@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Guarded standby PD-snapshot VMAC staging with the durable VRRP election
+  role, preventing a stale staging reconciliation from taking a newly elected
+  MASTER's VMAC back down. Active delegated IPv6 addresses and DS-Lite tunnels
+  now remain pending until DAD has made each outer source usable.
+
 ## v20260826.1859
 
 ### Fixed

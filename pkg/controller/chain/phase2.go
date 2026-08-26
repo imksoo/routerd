@@ -278,6 +278,13 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
 					continue
 				}
+				if delegatedSource && !waitForIPv6AddressReady(ctx, localIfName, local+"/128", 3*time.Second, ipv6AddressPresentWithPrefix) {
+					// A delegated /128 staged on a DOWN VMAC becomes tentative when
+					// the new MASTER raises that link.  Do not create an UP tunnel or
+					// start its health check until the outer source is usable.
+					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "LocalIPv6NotReady", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "dryRun": c.DryRun})
+					continue
+				}
 			}
 			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local, innerLocal)
 			if err != nil {
@@ -1890,6 +1897,28 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string, deprec
 	}
 	args := linuxIPv6LocalEndpointArgs(ifname, address, deprecated)
 	return exec.CommandContext(ctx, "ip", args...).Run()
+}
+
+func waitForIPv6AddressReady(ctx context.Context, ifname, address string, timeout time.Duration, ready func(context.Context, string, string) bool) bool {
+	if ready(ctx, ifname, address) {
+		return true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+			if ready(ctx, ifname, address) {
+				return true
+			}
+		}
+	}
 }
 
 func linuxIPv6LocalEndpointArgs(ifname, address string, deprecated bool) []string {
