@@ -1688,6 +1688,69 @@ func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 			t.Fatalf("nftables output missing sampled accept log %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "chain dpi_observe") {
+		t.Fatalf("firewall logging alone must not enable traffic-flow DPI observation:\n%s", got)
+	}
+}
+
+func TestNftablesObservesInitialPacketsForTrafficFlowDPI(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.InterfaceSpec{IfName: "ens19"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.InterfaceSpec{IfName: "ens18"},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "lan"},
+			Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+			Metadata: api.ObjectMeta{Name: "wan"},
+			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TrafficFlowLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.TrafficFlowLogSpec{
+				Enabled:                 true,
+				IncludeApplicationLayer: true,
+				IncludeTLSSNI:           true,
+			},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"},
+			Metadata: api.ObjectMeta{Name: "default"},
+			Spec: api.FirewallLogSpec{
+				Enabled:    true,
+				NFLogGroup: 7,
+				Log:        api.FirewallLogPolicySpec{AcceptSampleRate: 0, CopyRange: 512},
+			},
+		},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"chain dpi_observe",
+		"type filter hook forward priority filter + 1; policy accept;",
+		`ct state { new, established } ct packets < 10 log prefix "routerd dpi observe accept " group 7 snaplen 2048`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing DPI observation rule %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "routerd firewall forward accept") {
+		t.Fatalf("acceptSampleRate=0 must keep accepted-event sampling disabled:\n%s", got)
+	}
 }
 
 func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
