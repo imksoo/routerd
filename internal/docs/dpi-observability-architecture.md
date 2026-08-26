@@ -119,9 +119,13 @@ stable enough to expose:
     requestTimeout: 200ms
 ```
 
-`FirewallLog.spec.log.acceptSampleRate` still controls how much accepted traffic
-is copied into NFLOG. The DPI policy controls what happens after the packet copy
-reaches routerd.
+`FirewallLog.spec.log.acceptSampleRate` controls accepted-event sampling. When an
+enabled `TrafficFlowLog` requests application-layer or TLS SNI enrichment,
+routerd independently copies only the first 10 conntrack packets of accepted
+flows into the same NFLOG group. The dedicated observation chain runs after the
+firewall filter, uses a 2048-byte minimum copy range, and therefore does not
+restore continuous accepted-packet logging. An enabled `FirewallEventLog` still
+provides the NFLOG group and firewall-logger data path.
 
 ## Data model backlog
 
