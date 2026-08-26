@@ -260,7 +260,8 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			return err
 		}
 	}
-	for index, entry := range opts.vmacs {
+	for _, index := range vmacActionOrder(opts.action, opts.vmacs) {
+		entry := opts.vmacs[index]
 		single := opts
 		single.vmacs = []vmac{entry}
 		commands := commandsFor(single)
@@ -331,6 +332,32 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		}
 	}
 	return nil
+}
+
+func vmacActionOrder(action string, entries []vmac) []int {
+	order := make([]int, 0, len(entries))
+	if action == "deactivate" {
+		// Stop client-facing VMACs before the WAN VMAC. Otherwise forwarded
+		// packets can still arrive from the LAN after the WAN IPv6 identity has
+		// gone down and make an attached DS-Lite tunnel transmit with an unusable
+		// local address. Activation retains declaration order so the WAN is ready
+		// before the client-facing link is raised.
+		for index, entry := range entries {
+			if entry.withdraw {
+				order = append(order, index)
+			}
+		}
+		for index, entry := range entries {
+			if !entry.withdraw {
+				order = append(order, index)
+			}
+		}
+		return order
+	}
+	for index := range entries {
+		order = append(order, index)
+	}
+	return order
 }
 
 // notifyRouterdVRRPTransition is a best-effort fast path. routerd retains its
