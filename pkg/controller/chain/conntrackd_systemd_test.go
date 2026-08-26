@@ -4,16 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
 func TestConntrackdUnitStartsDaemonWithoutOwningRouterdRuntimeDirectory(t *testing.T) {
-	unit := string(render.SystemdUnit("routerd-conntrackd@test.service", api.SystemdUnitSpec{
-		Type: "notify", ExecStart: []string{"/usr/sbin/conntrackd", "-C", "/etc/conntrackd/routerd-test.conf"},
-		Conflicts: []string{"conntrackd.service"}, Restart: "on-failure", RestartSec: "2s",
-	}))
+	unit := string(render.SystemdUnit("routerd-conntrackd@test.service", conntrackdSystemdSpec("test", "/etc/conntrackd/routerd-test.conf")))
 	for _, want := range []string{
+		"ExecStartPre=/bin/rm -f /run/routerd/conntrackd.lock /run/routerd/conntrackd.ctl",
 		"ExecStart=/usr/sbin/conntrackd -C /etc/conntrackd/routerd-test.conf",
 		"Conflicts=conntrackd.service",
 	} {

@@ -688,6 +688,51 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 	}
 }
 
+func TestNftablesTCPMSSClampUsesLowestMTUForDuplicateLogicalInterface(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite-a", RemoteAddress: "2001:db8::1", MTU: 1454},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.InterfaceSpec{IfName: "ds-lite-a", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}},
+			},
+		}},
+	}
+
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing lower tunnel MTU clamp %q:\n%s", want, got)
+	}
+	if strings.Contains(got, `oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1460`) {
+		t.Fatalf("nftables output used the duplicate Interface default MTU instead of the tunnel MTU:\n%s", got)
+	}
+}
+
 func TestNftablesTCPMSSClampOnlyLowersMSS(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
