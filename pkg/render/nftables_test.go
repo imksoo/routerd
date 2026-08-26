@@ -586,7 +586,7 @@ func TestNftablesEgressRoutePolicyHash(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 map { 0 : 0x100, 1 : 0x101 }",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 seed 0xf643cafe map { 0 : 0x100, 1 : 0x101 }",
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
 	} {
 		if !strings.Contains(got, want) {
@@ -624,7 +624,7 @@ func TestNftablesEgressRoutePolicyHashExcludesDestinations(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := "ip saddr 172.18.0.0/16 ip daddr 0.0.0.0/0 ip daddr !=192.168.1.0/24 ip daddr !=192.168.123.0/24 ct mark 0x0 meta mark set jhash ip saddr mod 2 map { 0 : 0x110, 1 : 0x111 }"
+	want := "ip saddr 172.18.0.0/16 ip daddr 0.0.0.0/0 ip daddr !=192.168.1.0/24 ip daddr !=192.168.123.0/24 ct mark 0x0 meta mark set jhash ip saddr mod 2 seed 0xf643cafe map { 0 : 0x110, 1 : 0x111 }"
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing excluded destination match %q:\n%s", want, got)
 	}
