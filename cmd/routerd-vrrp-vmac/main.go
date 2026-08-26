@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/ipv6"
+	"golang.org/x/sys/unix"
 )
 
 type options struct {
@@ -58,6 +59,8 @@ type runHooks struct {
 	conntrackdTransitionNeeded func(string) (bool, error)
 	reconcileConntrackdRole    func(string) error
 	writeConntrackdRole        func(string) error
+	lockElection               func(string) (func() error, error)
+	readElectionRole           func(string) (string, error)
 	electionTransitionNeeded   func(string, string) (bool, error)
 	writeElectionRole          func(string, string) error
 	withdrawDeferredVIP        func(options) error
@@ -85,6 +88,8 @@ func productionRunHooks() runHooks {
 		conntrackdTransitionNeeded: conntrackdRoleTransitionNeeded,
 		reconcileConntrackdRole:    reconcileConntrackdRole,
 		writeConntrackdRole:        writeConntrackdRole,
+		lockElection:               lockElection,
+		readElectionRole:           readElectionRole,
 		electionTransitionNeeded:   electionRoleTransitionNeeded,
 		writeElectionRole:          writeElectionRole,
 		withdrawDeferredVIP: func(opts options) error {
@@ -160,10 +165,34 @@ func vmacStateReadyForAction(action string, entry vmac, state vmacRuntimeState) 
 	}
 }
 
-func runWithHooks(args []string, hooks runHooks) error {
+func runWithHooks(args []string, hooks runHooks) (runErr error) {
 	opts, err := parseOptions(args)
 	if err != nil {
 		return err
+	}
+	if opts.resource != "" && hooks.lockElection != nil {
+		unlock, lockErr := hooks.lockElection(opts.resource)
+		if lockErr != nil {
+			return fmt.Errorf("lock VRRP election for %s: %w", opts.resource, lockErr)
+		}
+		defer func() {
+			if unlockErr := unlock(); unlockErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("unlock VRRP election for %s: %w", opts.resource, unlockErr))
+			}
+		}()
+	}
+	if opts.reconcile && opts.resource != "" && hooks.readElectionRole != nil {
+		role, readErr := hooks.readElectionRole(opts.resource)
+		if readErr != nil {
+			return readErr
+		}
+		// The controller may have observed a role immediately before a
+		// keepalived notification acquired the transition lock. Re-read the
+		// durable marker after acquiring that lock and discard the stale repair
+		// rather than undoing the completed MASTER/BACKUP transition.
+		if want := conntrackdRoleForAction(opts.action); role != "" && role != want {
+			return nil
+		}
 	}
 	conntrackdTransition, err := hooks.conntrackdTransitionNeeded(opts.action)
 	if err != nil {
@@ -387,19 +416,53 @@ func electionStatePath(resource string) string {
 	return fmt.Sprintf("%s/vrrp-election-%x.role", vrrpRuntimeDir, sum[:8])
 }
 
+func electionLockPath(resource string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(resource)))
+	return fmt.Sprintf("%s/vrrp-election-%x.lock", vrrpRuntimeDir, sum[:8])
+}
+
+func lockElection(resource string) (func() error, error) {
+	if err := os.MkdirAll(vrrpRuntimeDir, 0755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(electionLockPath(resource), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return func() error {
+		return errors.Join(unix.Flock(int(file.Fd()), unix.LOCK_UN), file.Close())
+	}, nil
+}
+
+func readElectionRole(resource string) (string, error) {
+	data, err := os.ReadFile(electionStatePath(resource))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	role := strings.TrimSpace(string(data))
+	if role != "master" && role != "backup" {
+		return "", nil
+	}
+	return role, nil
+}
+
 func electionRoleTransitionNeeded(resource, action string) (bool, error) {
 	want := conntrackdRoleForAction(action)
 	if want == "" || strings.TrimSpace(resource) == "" {
 		return false, nil
 	}
-	data, err := os.ReadFile(electionStatePath(resource))
-	if errors.Is(err, os.ErrNotExist) {
-		return true, nil
-	}
+	role, err := readElectionRole(resource)
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(string(data)) != want, nil
+	return role != want, nil
 }
 
 func writeElectionRole(resource, action string) error {

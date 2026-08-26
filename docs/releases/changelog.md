@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Serialized keepalived VRRP notifications with periodic failover-VMAC
+  reconciliation. A reconciliation that waited behind a completed role
+  transition now re-reads the durable election marker and discards its stale
+  action, preventing a newly elected MASTER's VMAC from being taken down
+  before graceful activation can start.
+
 ## v20260826.1729
 
 ### Fixed
