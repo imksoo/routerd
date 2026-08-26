@@ -623,7 +623,7 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 		t.Fatalf("render policy routes: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{"mod 1 map { 0 : 0x110 }", "ct mark 0x0"} {
+	for _, want := range []string{"mod 256 seed 0x73d6bcca map { 0 : 0x110", "ct mark 0x0"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
 		}
@@ -794,8 +794,8 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Candidates) != 1 || len(spec.Candidates[0].Targets) != 1 || spec.Candidates[0].Targets[0].Name != "up" {
-		t.Fatalf("effective targets = %#v, want only ready target", spec.Candidates)
+	if len(spec.Candidates) != 1 || len(spec.Candidates[0].Targets) != 2 || spec.Candidates[0].Targets[0].RuntimeReady == nil || !*spec.Candidates[0].Targets[0].RuntimeReady || spec.Candidates[0].Targets[1].RuntimeReady == nil || *spec.Candidates[0].Targets[1].RuntimeReady {
+		t.Fatalf("effective targets = %#v, want declared targets with runtime readiness", spec.Candidates)
 	}
 	original, err := router.Spec.Resources[2].EgressRoutePolicySpec()
 	if err != nil {

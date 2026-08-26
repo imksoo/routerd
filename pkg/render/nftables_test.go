@@ -586,7 +586,7 @@ func TestNftablesEgressRoutePolicyHash(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 2 map { 0 : 0x100, 1 : 0x101 }",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set jhash ip saddr . ip daddr mod 256 seed 0xf643cafe map {",
 		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
 	} {
 		if !strings.Contains(got, want) {
@@ -624,10 +624,112 @@ func TestNftablesEgressRoutePolicyHashExcludesDestinations(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := "ip saddr 172.18.0.0/16 ip daddr 0.0.0.0/0 ip daddr !=192.168.1.0/24 ip daddr !=192.168.123.0/24 ct mark 0x0 meta mark set jhash ip saddr mod 2 map { 0 : 0x110, 1 : 0x111 }"
+	want := "ip saddr 172.18.0.0/16 ip daddr 0.0.0.0/0 ip daddr !=192.168.1.0/24 ip daddr !=192.168.123.0/24 ct mark 0x0 meta mark set jhash ip saddr mod 256 seed 0xf643cafe map {"
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing excluded destination match %q:\n%s", want, got)
 	}
+}
+
+func TestEgressRoutePolicyRendezvousHashKeepsUnaffectedBucketsStable(t *testing.T) {
+	targets := []api.EgressRoutePolicyTarget{
+		{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110},
+		{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111},
+		{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112},
+	}
+	all := egressHashBucketMarks(targets)
+	reordered := egressHashBucketMarks([]api.EgressRoutePolicyTarget{targets[2], targets[0], targets[1]})
+	if !reflect.DeepEqual(all, reordered) {
+		t.Fatal("target order changed rendezvous bucket ownership")
+	}
+
+	withoutB := egressHashBucketMarks([]api.EgressRoutePolicyTarget{targets[0], targets[2]})
+	bucketsOwnedByB := 0
+	for bucket, mark := range all {
+		if mark == targets[1].Mark {
+			bucketsOwnedByB++
+			continue
+		}
+		if withoutB[bucket] != mark {
+			t.Fatalf("removing b changed unaffected bucket %d from %#x to %#x", bucket, mark, withoutB[bucket])
+		}
+	}
+	if bucketsOwnedByB == 0 {
+		t.Fatal("test fixture assigned no buckets to b")
+	}
+	if recovered := egressHashBucketMarks(targets); !reflect.DeepEqual(all, recovered) {
+		t.Fatal("target recovery did not restore the original bucket assignment")
+	}
+
+	withoutC := egressHashBucketMarks(targets[:2])
+	for bucket, mark := range all {
+		if mark != targets[2].Mark && withoutC[bucket] != mark {
+			t.Fatalf("adding c changed unaffected bucket %d from %#x to %#x", bucket, withoutC[bucket], mark)
+		}
+	}
+}
+
+func TestEgressRoutePolicyRendezvousHashUsesOnlyRuntimeReadyTargets(t *testing.T) {
+	ready := true
+	unready := false
+	candidate := api.EgressRoutePolicyCandidate{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
+		{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110, RuntimeReady: &ready},
+		{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111, RuntimeReady: &unready},
+		{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112, RuntimeReady: &ready},
+	}}
+	markMap, err := nftEgressRoutePolicyTargetMarkMap("EgressRoutePolicy/ipv4-default", 0, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(markMap, nftMark(0x111)) {
+		t.Fatalf("runtime-unready target was present in mark map: %s", markMap)
+	}
+	for _, want := range []string{nftMark(0x110), nftMark(0x112)} {
+		if !strings.Contains(markMap, want) {
+			t.Fatalf("ready target %s was absent from mark map", want)
+		}
+	}
+}
+
+func TestEgressRoutePolicyRendezvousHashSyntaxSmoke(t *testing.T) {
+	if os.Getenv("ROUTERD_NFT_SYNTAX") != "1" {
+		t.Skip("set ROUTERD_NFT_SYNTAX=1 to run nft syntax smoke")
+	}
+	if _, err := exec.LookPath("unshare"); err != nil {
+		t.Skip("unshare is not installed")
+	}
+	if _, err := exec.LookPath("nft"); err != nil {
+		t.Skip("nft is not installed")
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+		Metadata: api.ObjectMeta{Name: "ipv4-default"},
+		Spec: api.EgressRoutePolicySpec{Mode: "hash", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{{
+			Name: "dslite",
+			Targets: []api.EgressRoutePolicyTarget{
+				{Name: "a", Interface: "ds-lite-a", Table: 110, Mark: 0x110},
+				{Name: "b", Interface: "ds-lite-b", Table: 111, Mark: 0x111},
+				{Name: "c", Interface: "ds-lite-c", Table: 112, Mark: 0x112},
+			},
+		}}},
+	}}}}
+	data, err := NftablesIPv4PolicyRoutes(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("unshare", "-Urn", "nft", "-c", "-f", "-")
+	cmd.Stdin = strings.NewReader(string(data))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("nft syntax check failed: %v\n%s\n%s", err, output, data)
+	}
+}
+
+func egressHashBucketMarks(targets []api.EgressRoutePolicyTarget) []int {
+	candidate := api.EgressRoutePolicyCandidate{Name: "dslite", Targets: targets}
+	marks := make([]int, nftEgressRoutePolicyHashBuckets)
+	for bucket := range marks {
+		marks[bucket] = rendezvousEgressTarget("EgressRoutePolicy/ipv4-default", 0, candidate, targets, bucket).Mark
+	}
+	return marks
 }
 
 func TestNftablesTCPMSSClamp(t *testing.T) {
@@ -685,6 +787,51 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestNftablesTCPMSSClampUsesLowestMTUForDuplicateLogicalInterface(t *testing.T) {
+	router := &api.Router{
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.InterfaceSpec{IfName: "ens19", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-lite-a", RemoteAddress: "2001:db8::1", MTU: 1454},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
+				Metadata: api.ObjectMeta{Name: "ds-lite-a"},
+				Spec:     api.InterfaceSpec{IfName: "ds-lite-a", Managed: false, Owner: "external"},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "lan"},
+				Spec:     api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}},
+			},
+			{
+				TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
+				Metadata: api.ObjectMeta{Name: "wan"},
+				Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite-a"}},
+			},
+		}},
+	}
+
+	data, err := NftablesNAT44Rule(router)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	want := `iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`
+	if !strings.Contains(got, want) {
+		t.Fatalf("nftables output missing lower tunnel MTU clamp %q:\n%s", want, got)
+	}
+	if strings.Contains(got, `oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1460`) {
+		t.Fatalf("nftables output used the duplicate Interface default MTU instead of the tunnel MTU:\n%s", got)
 	}
 }
 

@@ -125,7 +125,13 @@ func resourceMTUs(router *api.Router) (map[string]int, error) {
 func resourceMTUsWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]int, error) {
 	mtus := map[string]int{}
 	for _, iface := range pathMTUResourceInterfaces(router) {
-		mtus[iface.Name] = iface.MTU
+		// A logical interface can be declared both as Interface (the observed
+		// kernel device) and as a tunnel resource such as DSLiteTunnel. The
+		// effective path ceiling is the lower declaration, independent of the
+		// order in which equal-name resources happen to be sorted.
+		if current, ok := mtus[iface.Name]; !ok || iface.MTU < current {
+			mtus[iface.Name] = iface.MTU
+		}
 	}
 	for _, iface := range pathMTUForwardedPathInterfacesWithLocalCaptureIntents(router, intents) {
 		if mtus[iface] == 0 {
