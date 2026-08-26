@@ -237,11 +237,14 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 			resultErr = errors.Join(resultErr, observeErr)
 			continue
 		}
+		status.VIPAdvertised = present
 		if roles[resource.Metadata.Name] != "master" {
 			if present {
 				if removeErr := c.removeGracefulVIP(ctx, ifname, address); removeErr != nil {
 					status.State, status.Reason, status.Error = "Failed", "VIPWithdrawFailed", removeErr.Error()
 					resultErr = errors.Join(resultErr, removeErr)
+				} else {
+					status.VIPAdvertised = false
 				}
 			}
 			statuses[resource.Metadata.Name] = status
@@ -259,6 +262,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 					resultErr = errors.Join(resultErr, removeErr)
 					continue
 				}
+				status.VIPAdvertised = false
 			}
 			status.State = "Preparing"
 			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
@@ -276,10 +280,14 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 				resultErr = errors.Join(resultErr, applyErr)
 				continue
 			}
+			status.VIPAdvertised = true
 			if announceErr := c.announceStaticIPv4Address(ctx, ifname, address); announceErr != nil {
-				status.State, status.Reason, status.Error = "Failed", "VIPGratuitousARPFailed", announceErr.Error()
+				rollbackErr := c.removeGracefulVIP(ctx, ifname, address)
+				status.VIPAdvertised = rollbackErr != nil
+				activationErr := errors.Join(announceErr, rollbackErr)
+				status.State, status.Reason, status.Error = "Failed", "VIPGratuitousARPFailed", activationErr.Error()
 				statuses[resource.Metadata.Name] = status
-				resultErr = errors.Join(resultErr, announceErr)
+				resultErr = errors.Join(resultErr, activationErr)
 				continue
 			}
 		}

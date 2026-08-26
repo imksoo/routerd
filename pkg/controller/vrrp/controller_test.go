@@ -758,6 +758,65 @@ func TestGracefulActivationWithholdsVIPUntilReadinessThenAnnounces(t *testing.T)
 	}
 }
 
+func TestGracefulActivationWithdrawsVIPWhenAnnouncementFails(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.VRRP.GracefulActivation = &api.VirtualAddressVRRPGracefulActivationSpec{
+		ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"DSLiteTunnel/dslite-a.phase": {Equals: "Up"}}},
+		Timeout:   "45s",
+	}
+	router.Spec.Resources[1].Spec = spec
+	now := time.Date(2026, 8, 26, 16, 0, 0, 0, time.UTC)
+	store := statefulMapStore{
+		mapStore: mapStore{},
+		values: map[string]routerstate.Value{
+			"DSLiteTunnel/dslite-a.phase": {Status: routerstate.StatusSet, Value: "Up", Since: now, UpdatedAt: now},
+		},
+		now: now,
+	}
+	present := false
+	var calls []string
+	controller := &Controller{
+		Router: router, Store: store, IP: "ip", Arping: "arping", OperatingSystem: platform.OSLinux, Now: func() time.Time { return now },
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			calls = append(calls, line)
+			switch line {
+			case "ip -4 -o addr show dev ens18":
+				if present {
+					return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+				}
+			case "ip addr replace 10.240.70.10/32 dev ens18":
+				present = true
+			case "arping -U -c 3 -I ens18 10.240.70.10":
+				return []byte("send failed"), errors.New("exit 1")
+			case "ip addr del 10.240.70.10/32 dev ens18":
+				present = false
+			}
+			return nil, nil
+		},
+	}
+	statuses, err := reconcileGracefulActivations(context.Background(), controller, map[string]string{"lan": "ens18"}, map[string]string{"vip": "master"})
+	if err == nil || !strings.Contains(err.Error(), "exit 1") {
+		t.Fatalf("activation error = %v, want announcement failure", err)
+	}
+	if got := statuses["vip"]; got.State != "Failed" || got.Reason != "VIPGratuitousARPFailed" || got.VIPAdvertised {
+		t.Fatalf("failed activation status = %#v", got)
+	}
+	if present {
+		t.Fatal("VIP remained configured after gratuitous ARP failure")
+	}
+	want := []string{
+		"ip -4 -o addr show dev ens18",
+		"ip addr replace 10.240.70.10/32 dev ens18",
+		"arping -U -c 3 -I ens18 10.240.70.10",
+		"ip addr del 10.240.70.10/32 dev ens18",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("activation calls = %#v, want %#v", calls, want)
+	}
+}
+
 func TestGracefulActivationTimeoutKeepsVIPWithheldAndRetryable(t *testing.T) {
 	router := vrrpRouter("vrrp")
 	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
