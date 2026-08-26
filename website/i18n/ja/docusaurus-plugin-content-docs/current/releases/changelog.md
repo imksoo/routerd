@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- keepalived の VRRP 通知とフェールオーバー VMAC の定期調整を直列化しました。役割変更の
+  完了を待った定期調整は、永続化された選出マーカーを再確認して古い操作を破棄します。
+  これにより、新たに選出された MASTER の VMAC が graceful activation の開始前に
+  再び停止される問題を防ぎます。
+
 ## v20260826.1729
 
 ### 修正

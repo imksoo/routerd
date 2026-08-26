@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -180,6 +181,83 @@ func TestGracefulSteadyBackupReconcileDoesNotSignalItself(t *testing.T) {
 	}
 	if notifications != 0 {
 		t.Fatalf("routerd reconciliation signalled itself %d times", notifications)
+	}
+}
+
+func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T) {
+	var transitionLock sync.Mutex
+	role := "backup"
+	activationStarted := make(chan struct{})
+	continueActivation := make(chan struct{})
+	deactivateCalls := 0
+	hooks := runHooks{
+		lockElection: func(string) (func() error, error) {
+			transitionLock.Lock()
+			return func() error { transitionLock.Unlock(); return nil }, nil
+		},
+		readElectionRole: func(string) (string, error) { return role, nil },
+		command: func(name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			switch line {
+			case "ip -6 route show default dev wan-vmac":
+				return []byte("default via fe80::1 dev wan-vmac metric 50 src 2001:db8::13\n"), nil
+			case "ip -6 -o addr show dev wan-vmac scope global":
+				return []byte("7: wan-vmac inet6 2001:db8::13/64 scope global dynamic\n"), nil
+			default:
+				return nil, nil
+			}
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) {
+			return vmacRuntimeState{exists: true, up: true, macMatches: true, hasLinkLocal: true}, nil
+		},
+		conntrackdTransitionNeeded: func(action string) (bool, error) {
+			return action == "activate", nil
+		},
+		reconcileConntrackdRole: func(action string) error {
+			if action == "activate" {
+				close(activationStarted)
+				<-continueActivation
+			} else {
+				deactivateCalls++
+			}
+			return nil
+		},
+		writeConntrackdRole: func(string) error { return nil },
+		electionTransitionNeeded: func(_ string, action string) (bool, error) {
+			return role != conntrackdRoleForAction(action), nil
+		},
+		writeElectionRole: func(_ string, action string) error {
+			role = conntrackdRoleForAction(action)
+			return nil
+		},
+		withdrawDeferredVIP: func(options) error { return nil },
+		notifyRouterd:       func() error { return nil },
+	}
+	args := []string{
+		"activate", "--resource", "lan-gw-v4", "--deferred-address", "172.18.0.1/32", "--deferred-interface", "ens19",
+		"--parent", "wan", "--interface", "wan-vmac", "--mac", "02:00:5e:00:01:13",
+	}
+	activateResult := make(chan error, 1)
+	go func() { activateResult <- runWithHooks(args, hooks) }()
+	<-activationStarted
+
+	reconcileResult := make(chan error, 1)
+	staleArgs := append([]string{"deactivate"}, args[1:]...)
+	staleArgs = append(staleArgs, "--reconcile")
+	go func() { reconcileResult <- runWithHooks(staleArgs, hooks) }()
+	close(continueActivation)
+
+	if err := <-activateResult; err != nil {
+		t.Fatalf("activate notification: %v", err)
+	}
+	if err := <-reconcileResult; err != nil {
+		t.Fatalf("stale backup reconcile: %v", err)
+	}
+	if role != "master" {
+		t.Fatalf("election role = %q, want master", role)
+	}
+	if deactivateCalls != 0 {
+		t.Fatalf("stale reconcile performed %d deactivations", deactivateCalls)
 	}
 }
 
