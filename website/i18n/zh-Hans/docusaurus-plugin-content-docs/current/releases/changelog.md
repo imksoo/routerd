@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260826.1729
+
 ### 修复
 
 - 启用 IPv4 VRRP graceful activation 时，当选路由器会先恢复 conntrack 状态，并等待配置的

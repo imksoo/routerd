@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.1729
+
 ### 修正
 
 - IPv4 VRRP の graceful activation を有効にした場合、選出されたルーターが conntrack 状態を
