@@ -623,7 +623,7 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 		t.Fatalf("render policy routes: %v", err)
 	}
 	got := string(data)
-	for _, want := range []string{"mod 1 map { 0 : 0x110 }", "ct mark 0x0"} {
+	for _, want := range []string{"mod 1 seed 0x73d6bcca map { 0 : 0x110 }", "ct mark 0x0"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing %q:\n%s", want, got)
 		}

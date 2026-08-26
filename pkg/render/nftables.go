@@ -2557,11 +2557,12 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addre
 				if err != nil {
 					return err
 				}
+				hashSeed := nftEgressRoutePolicyHashSeed(res.ID())
 				markMap := nftEgressRoutePolicyTargetMarkMap(candidate.Targets)
 				for _, match := range matches {
 					buf.WriteString("    " + match + " ct mark != 0x0 meta mark set ct mark\n")
 					prefix := strings.TrimSpace(match + " ct mark 0x0")
-					buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(len(candidate.Targets)) + " map { " + markMap + " }\n")
+					buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(len(candidate.Targets)) + " seed " + hashSeed + " map { " + markMap + " }\n")
 					buf.WriteString("    " + prefix + " ct mark set meta mark\n")
 				}
 				continue
@@ -2711,6 +2712,11 @@ func nftEgressRoutePolicyHash(resourceID string, spec api.EgressRoutePolicySpec)
 		return "", fmt.Errorf("%s requires at least one hash field", resourceID)
 	}
 	return "jhash " + strings.Join(fields, " . "), nil
+}
+
+func nftEgressRoutePolicyHashSeed(resourceID string) string {
+	digest := sha256.Sum256([]byte(resourceID))
+	return fmt.Sprintf("0x%x", digest[:4])
 }
 
 func nftEgressRoutePolicyTargetMarkMap(targets []api.EgressRoutePolicyTarget) string {
