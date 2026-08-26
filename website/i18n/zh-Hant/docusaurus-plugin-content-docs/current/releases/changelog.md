@@ -11,6 +11,11 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 將產生的 HealthCheck systemd unit 綁定至 `routerd.service`。如此一來，受角色條件控制的探測
+  會隨控制器停止，不會在容錯移轉 VMAC 與委派 IPv6 來源位址撤除後繼續透過 DS-Lite 隧道傳送。
+
 ## v20260826.1815
 
 ### 修正

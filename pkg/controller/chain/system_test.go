@@ -962,6 +962,8 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}
 	unit := string(data)
 	for _, want := range []string{
+		"BindsTo=routerd.service",
+		"After=routerd.service network-online.target",
 		`ExecStart=/usr/local/sbin/routerd-healthcheck --resource "internet-via-dslite-a" --target "1.1.1.1" --protocol "tcp" --fwmark 0x110 --require-dslite-binding --source-interface "ds-lite-a" --source-address "172.18.0.1" --port 443 --interval "30s" --timeout "3s" --healthy-threshold 1 --unhealthy-threshold 3`,
 		`--socket "/run/routerd/healthcheck/internet-via-dslite-a.sock"`,
 		"RuntimeDirectory=routerd/healthcheck",

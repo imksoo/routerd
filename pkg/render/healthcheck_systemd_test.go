@@ -35,6 +35,8 @@ func TestHealthCheckSystemdUnit(t *testing.T) {
 	}))
 	for _, want := range []string{
 		"Description=routerd healthcheck internet-icmp",
+		"BindsTo=routerd.service",
+		"After=routerd.service network-online.target",
 		"ExecStart=/usr/local/sbin/routerd-healthcheck --resource \"internet-icmp\" --target \"1.1.1.1\" --protocol \"icmp\"",
 		"--fwmark 0x116",
 		"--source-interface \"ds-routerd-test\"",
