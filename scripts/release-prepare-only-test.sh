@@ -35,6 +35,24 @@ if [ "$(git rev-parse HEAD)" != "$initial_commit" ] || [ -n "$(git status --shor
 	exit 1
 fi
 
+printf '## Unreleased\n' >website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+git add website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+git commit --quiet -m "test empty translated changelog fixture"
+preflight_commit=$(git rev-parse HEAD)
+if scripts/release.sh --date 20991231 --timezone UTC --skip-checks --prepare-only >/dev/null 2>&1; then
+	echo "expected empty translated changelog to fail" >&2
+	exit 1
+fi
+if [ "$(git rev-parse HEAD)" != "$preflight_commit" ] || [ -n "$(git status --short)" ]; then
+	echo "changelog preflight failure changed the repository" >&2
+	git status --short >&2
+	exit 1
+fi
+printf '## Unreleased\n\nrelease prepare-only fixture\n' >website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+git add website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
+git commit --quiet -m "test restore translated changelog fixture"
+initial_commit=$(git rev-parse HEAD)
+
 output=$(scripts/release.sh \
 	--date 20991231 \
 	--timezone UTC \
