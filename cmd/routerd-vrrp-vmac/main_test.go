@@ -127,6 +127,74 @@ func TestVMACActionOrderRaisesWANFirstAndLowersLANFirst(t *testing.T) {
 	}
 }
 
+func TestDeactivateQuiescesUpperTunnelsBetweenLANAndWAN(t *testing.T) {
+	var events []string
+	err := runWithHooks([]string{
+		"deactivate",
+		"--vmac", "wan,wan-vmac,02:00:5e:00:01:13,fe80::5eff:fe00:113,false",
+		"--vmac", "lan,lan-vrrp,02:00:5e:00:01:12,fe80::5eff:fe00:112,true",
+	}, runHooks{
+		command: func(name string, args ...string) ([]byte, error) {
+			if name == "ip" && len(args) == 5 && args[0] == "link" && args[1] == "set" && args[2] == "dev" && args[4] == "down" {
+				events = append(events, "down "+args[3])
+			}
+			return nil, nil
+		},
+		inspectVMAC: func(vmac) (vmacRuntimeState, error) { return vmacRuntimeState{}, nil },
+		withdrawRA:  func(string) error { return nil },
+		quiesceUpperTunnels: func(ifname string) error {
+			events = append(events, "quiesce "+ifname)
+			return nil
+		},
+		conntrackdTransitionNeeded: func(string) (bool, error) { return false, nil },
+	})
+	if err != nil {
+		t.Fatalf("deactivate VMACs: %v", err)
+	}
+	want := []string{"down lan-vrrp", "quiesce wan-vmac", "down wan-vmac"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("deactivation events = %#v, want %#v", events, want)
+	}
+}
+
+func TestQuiesceUpperIP6TunnelsOnlyLowersDirectChildren(t *testing.T) {
+	listing := strings.Join([]string{
+		`5: wan-vmac@eth0: <BROADCAST,MULTICAST,UP> mtu 1500 macvlan mode private`,
+		`87: ds-lite-a@wan-vmac: <POINTOPOINT,NOARP,UP> mtu 1454 ip6tnl ipip6 remote 2001:db8::1 local 2001:db8::2 dev wan-vmac`,
+		`88: ds-lite-other@other-wan: <POINTOPOINT,NOARP,UP> mtu 1454 ip6tnl ipip6 remote 2001:db8::1 local 2001:db8::3 dev other-wan`,
+		`89: vlan100@wan-vmac: <BROADCAST,MULTICAST,UP> mtu 1500 vlan protocol 802.1Q id 100`,
+	}, "\n")
+	var commands []string
+	err := quiesceUpperIP6Tunnels("wan-vmac", func(name string, args ...string) ([]byte, error) {
+		line := name + " " + strings.Join(args, " ")
+		commands = append(commands, line)
+		if line == "ip -d -o link show" {
+			return []byte(listing), nil
+		}
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("quiesce upper tunnels: %v", err)
+	}
+	want := []string{"ip -d -o link show", "ip link set dev ds-lite-a down"}
+	if !reflect.DeepEqual(commands, want) {
+		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestQuiesceUpperIP6TunnelsIgnoresConcurrentDelete(t *testing.T) {
+	listing := `87: ds-lite-a@wan-vmac: <POINTOPOINT,NOARP,UP> mtu 1454 ip6tnl ipip6 remote 2001:db8::1 local 2001:db8::2 dev wan-vmac`
+	err := quiesceUpperIP6Tunnels("wan-vmac", func(name string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "-d" {
+			return []byte(listing), nil
+		}
+		return []byte(`Cannot find device "ds-lite-a"`), errors.New("exit status 1")
+	})
+	if err != nil {
+		t.Fatalf("concurrent tunnel deletion must be a no-op: %v", err)
+	}
+}
+
 func TestGracefulActivatePublishesElectionOnlyAfterVMACAndRA(t *testing.T) {
 	var events []string
 	err := runWithHooks([]string{
