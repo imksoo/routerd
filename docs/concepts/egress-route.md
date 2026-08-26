@@ -79,6 +79,16 @@ later, routerd updates `IPv4Route` and `NAT44Rule` through
 the kernel state they already have, while new flows use the new route and NAT
 direction.
 
+For candidates with multiple `targets`, routerd hashes new flows into 256 fixed
+buckets and assigns those buckets with rendezvous hashing. The seed and target
+identity are stable across reconciliation and restart. If a target becomes
+unhealthy, only buckets owned by that target move to the next-ready target; a
+recovered target takes back the same buckets. Adding or removing a target also
+changes only the buckets whose rendezvous winner changes. Existing flows keep
+their non-zero conntrack mark and are not rehashed. The fixed bucket table is a
+small nftables rule-size cost in exchange for bounded remapping and stable
+source-address affinity.
+
 `IPv4Route` can use those status fields:
 
 ```yaml

@@ -5,6 +5,7 @@ package render
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -20,6 +21,7 @@ import (
 
 const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
 const NftablesL2MSSPrivateProofMarker = "rd.p="
+const nftEgressRoutePolicyHashBuckets = 256
 
 func NftablesNAT44(router *api.Router) ([]byte, error) {
 	aliases, err := nftOutboundAliases(router)
@@ -2551,18 +2553,21 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addre
 		if err != nil {
 			return err
 		}
-		for _, candidate := range spec.Candidates {
+		for candidateIndex, candidate := range spec.Candidates {
 			if len(candidate.Targets) > 0 {
 				hashExpr, err := nftEgressRoutePolicyHash(res.ID(), spec)
 				if err != nil {
 					return err
 				}
 				hashSeed := nftEgressRoutePolicyHashSeed(res.ID())
-				markMap := nftEgressRoutePolicyTargetMarkMap(candidate.Targets)
+				markMap, err := nftEgressRoutePolicyTargetMarkMap(res.ID(), candidateIndex, candidate)
+				if err != nil {
+					return err
+				}
 				for _, match := range matches {
 					buf.WriteString("    " + match + " ct mark != 0x0 meta mark set ct mark\n")
 					prefix := strings.TrimSpace(match + " ct mark 0x0")
-					buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(len(candidate.Targets)) + " seed " + hashSeed + " map { " + markMap + " }\n")
+					buf.WriteString("    " + prefix + " meta mark set " + hashExpr + " mod " + strconv.Itoa(nftEgressRoutePolicyHashBuckets) + " seed " + hashSeed + " map { " + markMap + " }\n")
 					buf.WriteString("    " + prefix + " ct mark set meta mark\n")
 				}
 				continue
@@ -2719,12 +2724,60 @@ func nftEgressRoutePolicyHashSeed(resourceID string) string {
 	return fmt.Sprintf("0x%x", digest[:4])
 }
 
-func nftEgressRoutePolicyTargetMarkMap(targets []api.EgressRoutePolicyTarget) string {
-	parts := make([]string, 0, len(targets))
-	for i, target := range targets {
-		parts = append(parts, strconv.Itoa(i)+" : "+nftMark(target.Mark))
+func nftEgressRoutePolicyTargetMarkMap(resourceID string, candidateIndex int, candidate api.EgressRoutePolicyCandidate) (string, error) {
+	ready := make([]api.EgressRoutePolicyTarget, 0, len(candidate.Targets))
+	for _, target := range candidate.Targets {
+		if target.RuntimeReady == nil || *target.RuntimeReady {
+			ready = append(ready, target)
+		}
 	}
-	return strings.Join(parts, ", ")
+	if len(ready) == 0 {
+		return "", fmt.Errorf("%s candidate %q has no ready hash target", resourceID, egressHashCandidateIdentity(candidateIndex, candidate))
+	}
+	parts := make([]string, 0, nftEgressRoutePolicyHashBuckets)
+	for bucket := 0; bucket < nftEgressRoutePolicyHashBuckets; bucket++ {
+		target := rendezvousEgressTarget(resourceID, candidateIndex, candidate, ready, bucket)
+		parts = append(parts, strconv.Itoa(bucket)+" : "+nftMark(target.Mark))
+	}
+	return strings.Join(parts, ", "), nil
+}
+
+func rendezvousEgressTarget(resourceID string, candidateIndex int, candidate api.EgressRoutePolicyCandidate, targets []api.EgressRoutePolicyTarget, bucket int) api.EgressRoutePolicyTarget {
+	selected := targets[0]
+	selectedScore := rendezvousEgressScore(resourceID, candidateIndex, candidate, selected, bucket)
+	selectedIdentity := egressHashTargetIdentity(selected)
+	for _, target := range targets[1:] {
+		score := rendezvousEgressScore(resourceID, candidateIndex, candidate, target, bucket)
+		identity := egressHashTargetIdentity(target)
+		if score > selectedScore || (score == selectedScore && identity < selectedIdentity) {
+			selected = target
+			selectedScore = score
+			selectedIdentity = identity
+		}
+	}
+	return selected
+}
+
+func rendezvousEgressScore(resourceID string, candidateIndex int, candidate api.EgressRoutePolicyCandidate, target api.EgressRoutePolicyTarget, bucket int) uint64 {
+	key := resourceID + "\x00" + egressHashCandidateIdentity(candidateIndex, candidate) + "\x00" + egressHashTargetIdentity(target) + "\x00" + strconv.Itoa(bucket)
+	digest := sha256.Sum256([]byte(key))
+	return binary.BigEndian.Uint64(digest[:8])
+}
+
+func egressHashCandidateIdentity(index int, candidate api.EgressRoutePolicyCandidate) string {
+	if candidate.Name != "" {
+		return candidate.Name
+	}
+	return "candidate-" + strconv.Itoa(index)
+}
+
+func egressHashTargetIdentity(target api.EgressRoutePolicyTarget) string {
+	return strings.Join([]string{
+		target.Name,
+		target.EffectiveInterface(),
+		fmt.Sprintf("mark-%08x", target.Mark),
+		strconv.Itoa(target.EffectiveTable()),
+	}, "\x1f")
 }
 
 func egressPolicyRendersPolicyMarks(spec api.EgressRoutePolicySpec) bool {

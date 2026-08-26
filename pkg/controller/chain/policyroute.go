@@ -1030,13 +1030,8 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 				if egressRoutePolicyCandidateDisabled(candidate) || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
-				targets := make([]api.EgressRoutePolicyTarget, 0, len(candidate.Targets))
-				for _, target := range candidate.Targets {
-					if c.targetHealthy(target.HealthCheck) && (!c.dsliteResourceReference(target.EffectiveInterface()) || c.egressTargetAvailable(context.Background(), aliases, target)) {
-						targets = append(targets, target)
-					}
-				}
-				if len(targets) == 0 {
+				targets, ready := c.targetsWithRuntimeReadiness(context.Background(), aliases, candidate.Targets)
+				if !ready {
 					continue
 				}
 				candidate.Targets = targets
@@ -1062,13 +1057,8 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 				continue
 			}
 			if len(candidate.Targets) > 0 {
-				targets := make([]api.EgressRoutePolicyTarget, 0, len(candidate.Targets))
-				for _, target := range candidate.Targets {
-					if c.targetHealthy(target.HealthCheck) && (!c.dsliteResourceReference(target.EffectiveInterface()) || c.egressTargetAvailable(context.Background(), aliases, target)) {
-						targets = append(targets, target)
-					}
-				}
-				if len(targets) == 0 {
+				targets, ready := c.targetsWithRuntimeReadiness(context.Background(), aliases, candidate.Targets)
+				if !ready {
 					continue
 				}
 				candidate.Targets = targets
@@ -1083,6 +1073,20 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		out.Spec.Resources = append(out.Spec.Resources, res)
 	}
 	return &out
+}
+
+func (c IPv4PolicyRouteController) targetsWithRuntimeReadiness(ctx context.Context, aliases map[string]string, declared []api.EgressRoutePolicyTarget) ([]api.EgressRoutePolicyTarget, bool) {
+	targets := append([]api.EgressRoutePolicyTarget(nil), declared...)
+	readyCount := 0
+	for i := range targets {
+		ready := c.targetHealthy(targets[i].HealthCheck) && (!c.dsliteResourceReference(targets[i].EffectiveInterface()) || c.egressTargetAvailable(ctx, aliases, targets[i]))
+		targets[i].RuntimeReady = new(bool)
+		*targets[i].RuntimeReady = ready
+		if ready {
+			readyCount++
+		}
+	}
+	return targets, readyCount > 0
 }
 
 func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
