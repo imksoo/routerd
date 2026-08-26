@@ -31,6 +31,7 @@ import (
 
 type IPv4PolicyRouteController struct {
 	Router              *api.Router
+	DeclaredRouter      *api.Router
 	Bus                 *bus.Bus
 	Store               Store
 	DryRun              bool
@@ -42,6 +43,7 @@ type IPv4PolicyRouteController struct {
 	CommandOutput       func(context.Context, string, ...string) ([]byte, error)
 	Logger              *slog.Logger
 	OperatingSystem     platform.OS
+	Now                 func() time.Time
 }
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
@@ -862,6 +864,8 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		chunks = append(chunks, data)
+		now := c.now()
+		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
 		status := map[string]any{
 			"phase":             "Applied",
 			"family":            firstNonEmpty(spec.Family, "ipv4"),
@@ -871,7 +875,7 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			"selectedSource":    active.Source,
 			"selectedWeight":    active.Weight,
 			"dryRun":            c.DryRun,
-			"updatedAt":         time.Now().UTC().Format(time.RFC3339Nano),
+			"updatedAt":         now.Format(time.RFC3339Nano),
 			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
 		}
 		if len(active.Targets) == 0 {
@@ -881,9 +885,152 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			status["selectedRouteTable"] = active.EffectiveTable()
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
+		c.addHADatapathStatus(res.Metadata.Name, active, previous, status, now)
 		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, status)
 	}
 	return c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+}
+
+func (c IPv4PolicyRouteController) now() time.Time {
+	if c.Now != nil {
+		return c.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+type egressVRRPMasterGate struct {
+	Kind string
+	Name string
+}
+
+func (g egressVRRPMasterGate) reference() string {
+	return g.Kind + "/" + g.Name
+}
+
+func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time) {
+	spec, ok := c.declaredEgressRoutePolicySpec(policyName)
+	if !ok {
+		return
+	}
+	gate, ok := egressPolicyVRRPMasterGate(spec)
+	if !ok {
+		return
+	}
+	roleStatus := c.Store.ObjectStatus(api.NetAPIVersion, gate.Kind, gate.Name)
+	role := strings.TrimSpace(fmt.Sprint(roleStatus["role"]))
+	transitionAt := strings.TrimSpace(fmt.Sprint(roleStatus["lastRoleTransitionAt"]))
+	status["datapathRoleResource"] = gate.reference()
+	status["datapathRole"] = role
+	status["datapathRoleTransitionAt"] = transitionAt
+	status["datapathFallbackBehavior"] = "select-next-ready-candidate"
+
+	ready := role == "master" && (whenHasVRRPMasterGate(spec.When, gate) || whenHasVRRPMasterGate(active.When, gate))
+	status["datapathReady"] = ready
+	switch {
+	case role != "master":
+		status["datapathState"] = "Standby"
+		status["newFlowBehavior"] = "fallback"
+	case !ready:
+		status["datapathState"] = "Converging"
+		status["newFlowBehavior"] = "fallback"
+	default:
+		status["datapathState"] = "Ready"
+		status["newFlowBehavior"] = "selected-ha-candidate"
+	}
+
+	if transitionAt != "" && transitionAt == strings.TrimSpace(fmt.Sprint(previous["datapathRoleTransitionAt"])) {
+		for _, key := range []string{"datapathReadyAt", "datapathReadyDuration", "datapathReadyDurationMillis"} {
+			if value, exists := previous[key]; exists {
+				status[key] = value
+			}
+		}
+	}
+	if !ready || status["datapathReadyAt"] != nil {
+		return
+	}
+	status["datapathReadyAt"] = now.Format(time.RFC3339Nano)
+	if started, err := time.Parse(time.RFC3339Nano, transitionAt); err == nil && !started.After(now) {
+		duration := now.Sub(started)
+		status["datapathReadyDuration"] = duration.Round(time.Millisecond).String()
+		status["datapathReadyDurationMillis"] = duration.Milliseconds()
+	}
+}
+
+func (c IPv4PolicyRouteController) declaredEgressRoutePolicySpec(name string) (api.EgressRoutePolicySpec, bool) {
+	router := c.DeclaredRouter
+	if router == nil {
+		router = c.Router
+	}
+	if router == nil {
+		return api.EgressRoutePolicySpec{}, false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "EgressRoutePolicy" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.EgressRoutePolicySpec()
+		return spec, err == nil
+	}
+	return api.EgressRoutePolicySpec{}, false
+}
+
+func egressPolicyVRRPMasterGate(spec api.EgressRoutePolicySpec) (egressVRRPMasterGate, bool) {
+	if gate, ok := firstVRRPMasterGate(spec.When); ok {
+		return gate, true
+	}
+	for _, candidate := range spec.Candidates {
+		if gate, ok := firstVRRPMasterGate(candidate.When); ok {
+			return gate, true
+		}
+	}
+	return egressVRRPMasterGate{}, false
+}
+
+func firstVRRPMasterGate(when api.ResourceWhenSpec) (egressVRRPMasterGate, bool) {
+	for reference, match := range when.State {
+		if !stateMatchIncludesMaster(match) {
+			continue
+		}
+		kind, name, ok := whenStatusDependencyRef(reference)
+		if ok && kind == "VirtualAddress" && whenStateReferenceField(reference) == "role" {
+			return egressVRRPMasterGate{Kind: kind, Name: name}, true
+		}
+	}
+	for _, child := range append(append([]api.ResourceWhenSpec(nil), when.All...), when.Any...) {
+		if gate, ok := firstVRRPMasterGate(child); ok {
+			return gate, true
+		}
+	}
+	return egressVRRPMasterGate{}, false
+}
+
+func whenHasVRRPMasterGate(when api.ResourceWhenSpec, want egressVRRPMasterGate) bool {
+	gate, ok := firstVRRPMasterGate(when)
+	return ok && gate == want
+}
+
+func stateMatchIncludesMaster(match api.StateMatchSpec) bool {
+	if strings.EqualFold(strings.TrimSpace(match.Equals), "master") {
+		return true
+	}
+	for _, value := range match.In {
+		if strings.EqualFold(strings.TrimSpace(value), "master") {
+			return true
+		}
+	}
+	return false
+}
+
+func whenStateReferenceField(reference string) string {
+	reference = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(reference, "${"), "}"))
+	if _, field, ok := strings.Cut(reference, ".status."); ok {
+		return field
+	}
+	index := strings.LastIndex(reference, ".")
+	if index < 0 {
+		return ""
+	}
+	return reference[index+1:]
 }
 
 func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.EgressRoutePolicySpec) []api.EgressRoutePolicyCandidate {

@@ -1027,6 +1027,12 @@ func whenStatusSubscriptions(router *api.Router, controlledKinds ...string) []bu
 	return statusSubscriptionsWithWhen(router, controlledKinds)
 }
 
+func vrrpStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return append(statusSubscriptionsWithWhen(router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), bus.Subscription{
+		Topics: []string{daemonapi.EventVRRPRoleTransition},
+	})
+}
+
 func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
 	allowed := map[string]bool{
 		"ServiceUnit":             true,
@@ -2212,7 +2218,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
 	samController := SAMController{Router: r.Router, Store: store, DryRun: opts.DryRunRoute}
-	policyRoute := IPv4PolicyRouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
+	policyRoute := IPv4PolicyRouteController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
 	pathMTU := PathMTUController{Router: r.Router, OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Path: opts.PathMTUPath, ForceFragmentPath: opts.ForceFragmentPath}
 	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
 	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
@@ -2555,7 +2561,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface", "VirtualAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2784,7 +2790,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			bgp.Router = effective
 			return didWorkError(bgp.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VirtualAddress"}, "BGPRouter", "BGPPeer", "IngressService"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err

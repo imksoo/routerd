@@ -73,6 +73,9 @@ const (
 	EventCommandExecuted = "routerd.daemon.command.executed"
 	EventCommandRejected = "routerd.daemon.command.rejected"
 	EventHealthChanged   = "routerd.daemon.health.changed"
+	// EventVRRPRoleTransition is emitted when keepalived's notify hook asks
+	// routerd to observe a role change without waiting for its polling fallback.
+	EventVRRPRoleTransition = "routerd.vrrp.role.transition"
 
 	EventDHCPv6SolicitSent       = "routerd.dhcpv6.client.solicit.sent"
 	EventDHCPv6AdvertiseReceived = "routerd.dhcpv6.client.advertise.received"

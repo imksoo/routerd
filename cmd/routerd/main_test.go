@@ -29,6 +29,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -3994,6 +3995,35 @@ func TestRenderEgressRoutePolicyDefaultMarksTargetCandidateActive(t *testing.T) 
 	}
 	if strings.Contains(got, "ct mark 0x0 meta mark set 0x") {
 		t.Fatalf("target candidate should leave new flows unmarked for EgressRoutePolicy hashing:\n%s", got)
+	}
+}
+
+func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
+	eventBus := bus.New()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events, unsubscribe := eventBus.Subscribe(ctx, bus.Subscription{Topics: []string{daemonapi.EventVRRPRoleTransition}}, 1)
+	defer unsubscribe()
+	signals := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	go func() {
+		publishVRRPTransitionSignals(ctx, signals, eventBus)
+		close(done)
+	}()
+	signals <- syscall.SIGUSR1
+	select {
+	case event := <-events:
+		if event.Type != daemonapi.EventVRRPRoleTransition || event.Daemon.Name != "keepalived" {
+			t.Fatalf("VRRP transition event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("VRRP transition signal did not reach controller bus")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("VRRP signal forwarder did not stop")
 	}
 }
 
