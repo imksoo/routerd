@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260826.1943
+
 ### Fixed
 
 - Guarded standby PD-snapshot VMAC staging with the durable VRRP election

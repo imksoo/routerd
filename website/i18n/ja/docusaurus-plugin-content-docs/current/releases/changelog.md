@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260826.1943
+
 ### 修正
 
 - 待機系の PD スナップショットを VMAC へ反映する処理でも、永続化された VRRP の選出役割を

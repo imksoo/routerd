@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260826.1943
+
 ### 修正
 
 - 待機節點從 PD 快照預先配置 VMAC 時也會檢查已持久化的 VRRP 選舉角色，避免過期的待機協調
