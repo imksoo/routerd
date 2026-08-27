@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The NetworkAdoption controller now removes orphaned routerd-owned
+  systemd-resolved drop-ins and restarts the resolver when host DNS adoption is
+  no longer declared. Administrator-owned drop-ins without the routerd marker
+  remain untouched.
+
 ## v20260827.0444
 
 ### Fixed

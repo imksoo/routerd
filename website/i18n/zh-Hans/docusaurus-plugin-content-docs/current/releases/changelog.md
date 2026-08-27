@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 当主机 DNS 接管已不再声明时，NetworkAdoptionController 现在会移除孤立且由 routerd
+  所有的 systemd-resolved 附加配置，并重启解析服务。没有 routerd 所有权标记的管理员配置
+  会保持不变。
+
 ## v20260827.0444
 
 ### 修复

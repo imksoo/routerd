@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 當主機 DNS 採用已不再宣告時，NetworkAdoptionController 現在會移除孤立且由 routerd
+  擁有的 systemd-resolved 附加設定，並重新啟動解析服務。沒有 routerd 所有權標記的管理員
+  設定會保留不變。
+
 ## v20260827.0444
 
 ### 修正
