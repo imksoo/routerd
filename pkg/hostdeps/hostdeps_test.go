@@ -151,6 +151,82 @@ func TestNetworkAdoptionsKeepServerFacingLANOutOfDHCPv6AndRAClientMode(t *testin
 	}
 }
 
+func TestNetworkAdoptionsDoNotReplaceHostDNSForConditionalResolver(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+			Metadata: api.ObjectMeta{Name: "conditional"},
+			Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{
+				Addresses: []string{"127.0.0.1"},
+				Port:      53,
+				Sources:   []string{"private-zone"},
+			}}},
+		},
+		{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+			Metadata: api.ObjectMeta{Name: "private-zone"},
+			Spec: api.DNSForwarderSpec{
+				Resolver: "DNSResolver/conditional",
+				Match:    []string{"apps.example.internal"},
+				ZoneRefs: []string{"DNSZone/apps"},
+			},
+		},
+	}}}
+
+	if got := NetworkAdoptions(router); len(got) != 0 {
+		t.Fatalf("NetworkAdoptions() = %#v, want no systemd-resolved adoption for a conditional-only resolver", got)
+	}
+}
+
+func TestNetworkAdoptionsUseDefaultLoopbackResolverForHostDNS(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		listenSources []string
+		wantAdoption  bool
+	}{
+		{name: "default-source-exposed", listenSources: []string{"private-zone", "default"}, wantAdoption: true},
+		{name: "all-sources-exposed", wantAdoption: true},
+		{name: "default-source-filtered", listenSources: []string{"private-zone"}, wantAdoption: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
+					Metadata: api.ObjectMeta{Name: "local"},
+					Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{
+						Addresses: []string{"127.0.0.1"},
+						Port:      53,
+						Sources:   tc.listenSources,
+					}}},
+				},
+				{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"},
+					Metadata: api.ObjectMeta{Name: "default"},
+					Spec: api.DNSForwarderSpec{
+						Resolver:  "DNSResolver/local",
+						Match:     []string{"."},
+						Upstreams: []string{"DNSUpstream/public"},
+					},
+				},
+			}}}
+
+			adoptions := NetworkAdoptions(router)
+			if !tc.wantAdoption {
+				if len(adoptions) != 0 {
+					t.Fatalf("NetworkAdoptions() = %#v, want none", adoptions)
+				}
+				return
+			}
+			if len(adoptions) != 1 {
+				t.Fatalf("NetworkAdoptions() = %#v, want one systemd-resolved adoption", adoptions)
+			}
+			if got := adoptions[0].Spec.SystemdResolved.DNSServers; !reflect.DeepEqual(got, []string{"127.0.0.1"}) {
+				t.Fatalf("systemd-resolved DNS servers = %#v, want loopback", got)
+			}
+		})
+	}
+}
+
 func TestLANDistributionInterfaceNamesResolveAliases(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},

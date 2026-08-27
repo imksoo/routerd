@@ -665,7 +665,7 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		}
 		return item
 	}
-	resolved := false
+	resolved := providesDefaultLoopbackDNS(router)
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "DHCPv4Client":
@@ -719,8 +719,6 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 					item.disableIPv6RA = true
 				}
 			}
-		case "DNSResolver":
-			resolved = true
 		}
 	}
 
@@ -758,6 +756,87 @@ func NetworkAdoptions(router *api.Router) []NetworkAdoptionResource {
 		})
 	}
 	return out
+}
+
+func providesDefaultLoopbackDNS(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	defaultSources := map[string]map[string]bool{}
+	ensureDefaultSources := func(resolver string) map[string]bool {
+		resolver = strings.TrimPrefix(strings.TrimSpace(resolver), "DNSResolver/")
+		if resolver == "" {
+			return nil
+		}
+		sources := defaultSources[resolver]
+		if sources == nil {
+			sources = map[string]bool{}
+			defaultSources[resolver] = sources
+		}
+		return sources
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DNSForwarder" {
+			continue
+		}
+		spec, err := res.DNSForwarderSpec()
+		if err != nil || len(spec.Upstreams) == 0 || !dnsMatchIncludesDefault(spec.Match) {
+			continue
+		}
+		if sources := ensureDefaultSources(spec.Resolver); sources != nil {
+			sources[res.Metadata.Name] = true
+		}
+	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "DNSResolver" {
+			continue
+		}
+		spec, err := res.DNSResolverSpec()
+		if err != nil {
+			continue
+		}
+		sources := ensureDefaultSources(res.Metadata.Name)
+		for _, source := range spec.Sources {
+			if len(source.Upstreams) > 0 && dnsMatchIncludesDefault(source.Match) {
+				sources[source.Name] = true
+			}
+		}
+		if len(sources) == 0 {
+			continue
+		}
+		for _, listen := range spec.Listen {
+			if (listen.Port != 0 && listen.Port != 53) || !containsString(listen.Addresses, "127.0.0.1") {
+				continue
+			}
+			if len(listen.Sources) == 0 {
+				return true
+			}
+			for _, source := range listen.Sources {
+				if sources[source] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func dnsMatchIncludesDefault(matches []string) bool {
+	for _, match := range matches {
+		if strings.TrimSpace(match) == "." {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func interfaceSpecForRouterAdvertisement(res api.Resource) (string, error) {
