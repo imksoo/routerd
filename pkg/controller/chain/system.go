@@ -38,6 +38,8 @@ type NetworkAdoptionController struct {
 	OSName             string
 }
 
+const networkAdoptionResolvedOwnershipHeader = "# Managed by routerd. Do not edit by hand.\n[Resolve]\n"
+
 func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	defaults, features := platform.Current()
 	if c.NetworkdDropinBase == "" {
@@ -55,10 +57,15 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	for _, ifname := range lanInterfaceNames {
 		lanInterfaces[ifname] = true
 	}
+	desiredResolvedDropins := map[string]bool{}
 	for _, resource := range networkAdoptionControllerResources(c.Router) {
 		spec, err := resource.NetworkAdoptionSpec()
 		if err != nil {
 			return err
+		}
+		if firstNonEmpty(spec.State, "present") != "absent" && resolvedAdoptionConfigured(spec.SystemdResolved) {
+			path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
+			desiredResolvedDropins[filepath.Clean(path)] = true
 		}
 		osName := c.OSName
 		if osName == "" {
@@ -122,7 +129,54 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	if features.HasSystemd {
+		if _, _, err := c.cleanupStaleResolvedAdoptionDropins(ctx, desiredResolvedDropins, command); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
+	entries, err := os.ReadDir(c.ResolvedDropinDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	var paths []string
+	changed := false
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+		path := filepath.Join(c.ResolvedDropinDir, entry.Name())
+		if desired[filepath.Clean(path)] {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return paths, changed, err
+		}
+		if !bytes.HasPrefix(data, []byte(networkAdoptionResolvedOwnershipHeader)) {
+			continue
+		}
+		removed, err := removeFileIfExists(path, c.DryRun)
+		if err != nil {
+			return paths, changed, err
+		}
+		if removed {
+			paths = append(paths, path)
+			changed = true
+		}
+	}
+	if changed && !c.DryRun {
+		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
+			return paths, changed, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
+		}
+	}
+	return paths, changed, nil
 }
 
 func flushLANIPv6RADefaultRoute(ctx context.Context, command outputCommandFunc, ifname string) error {
@@ -259,7 +313,7 @@ func resolvedAdoptionConfigured(spec api.NetworkAdoptionResolvedSpec) bool {
 
 func resolvedAdoptionDropin(spec api.NetworkAdoptionResolvedSpec) []byte {
 	var b strings.Builder
-	b.WriteString("# Managed by routerd. Do not edit by hand.\n[Resolve]\n")
+	b.WriteString(networkAdoptionResolvedOwnershipHeader)
 	if spec.DisableDNSStubListener {
 		b.WriteString("DNSStubListener=no\n")
 	}
