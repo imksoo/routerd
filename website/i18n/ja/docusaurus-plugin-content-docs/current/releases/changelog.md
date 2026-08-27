@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260827.0444
+
 ### 修正
 
 - アップグレード時に予約された routerd の自己再起動が完了するまで installer が待機し、

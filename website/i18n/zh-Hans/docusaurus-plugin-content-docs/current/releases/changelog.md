@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260827.0444
+
 ### 修复
 
 - 升级安装程序现在会等待已计划的 routerd 自行重启完成，并重新检查状态 socket 与应用时间

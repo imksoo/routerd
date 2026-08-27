@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260827.0444
+
 ### Fixed
 
 - The upgrade installer now waits for a scheduled routerd self-restart to
