@@ -761,6 +761,47 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
     done
 }
 
+routerd_scheduled_self_restart_pending()
+{
+    systemctl list-units --all --plain --no-legend \
+        'routerd-self-restart-*.timer' 'routerd-self-restart-*.service' 2>/dev/null |
+        awk '$3 == "active" || $3 == "activating" || $4 == "waiting" || $4 == "running" { found = 1 } END { exit(found ? 0 : 1) }'
+}
+
+wait_for_routerd_scheduled_self_restart_after_upgrade()
+{
+    [ "${mode}" = "upgrade" ] || return 0
+    [ "${restart_service}" -eq 1 ] || return 0
+    [ "${manage_host_service}" -eq 1 ] || return 0
+    [ "${service_touched}" -eq 1 ] || return 0
+    command -v systemctl >/dev/null 2>&1 || return 0
+    routerd_scheduled_self_restart_pending || return 0
+
+    timeout_seconds=${ROUTERD_INSTALL_SELF_RESTART_TIMEOUT_SECONDS:-90}
+    case "${timeout_seconds}" in
+        ""|*[!0-9]*) timeout_seconds=90 ;;
+    esac
+
+    echo "waiting for scheduled routerd.service restart after managed unit update"
+    elapsed=0
+    while routerd_scheduled_self_restart_pending; do
+        if [ "${elapsed}" -ge "${timeout_seconds}" ]; then
+            echo "warning: scheduled routerd.service restart did not finish within ${timeout_seconds}s" >&2
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if ! wait_for_routerd_status_socket "${status_socket}"; then
+        echo "warning: routerd status socket did not recover after scheduled service restart" >&2
+        return 0
+    fi
+    if ! wait_for_routerd_status_apply "${status_socket}"; then
+        echo "warning: routerctl get status apply state was not observed after scheduled service restart" >&2
+    fi
+}
+
 routerd_proc_cmdline()
 {
     proc=$1
@@ -1885,6 +1926,11 @@ bindir="${prefix}/sbin"
 sysconfdir="${prefix}/etc/routerd"
 systemd_system_dir=${ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}
 rcd_dir=${ROUTERD_INSTALL_RCD_DIR:-${prefix}/etc/rc.d}
+case "${os}" in
+    Linux) status_socket=${ROUTERD_INSTALL_STATUS_SOCKET:-/run/routerd/routerd-status.sock} ;;
+    FreeBSD) status_socket=${ROUTERD_INSTALL_STATUS_SOCKET:-/var/run/routerd/routerd-status.sock} ;;
+    *) status_socket= ;;
+esac
 
 routerd_service_has_ownership_marker()
 {
@@ -2074,6 +2120,7 @@ case "${os}" in
                 fi
                 if [ "${dry_run}" -eq 0 ]; then
                     restart_stale_routerd_helper_systemd_units_after_upgrade
+                    wait_for_routerd_scheduled_self_restart_after_upgrade
                 fi
             fi
         fi        ;;
@@ -2128,11 +2175,6 @@ case "${os}" in
 esac
 
 if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
-    case "${os}" in
-        Linux) status_socket=/run/routerd/routerd-status.sock ;;
-        FreeBSD) status_socket=/var/run/routerd/routerd-status.sock ;;
-        *) status_socket= ;;
-    esac
     if [ "${service_touched}" -eq 1 ] && [ -n "${status_socket}" ]; then
         wait_for_routerd_status_socket "${status_socket}" || true
     fi
