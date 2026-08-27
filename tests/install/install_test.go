@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,6 +89,81 @@ func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	}
 	if !strings.Contains(text, `wait_for_routerd_status_socket "${status_socket}" || true`) {
 		t.Fatalf("install.sh should wait for the status socket before final post-upgrade status output")
+	}
+}
+
+func TestInstallWaitsForScheduledSelfRestartAfterUpgrade(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	systemdDir := filepath.Join(dir, "systemd")
+	binDir := filepath.Join(dir, "bin")
+	commandLog := filepath.Join(dir, "commands.log")
+	selfRestartState := filepath.Join(dir, "self-restart-state")
+	statusSocket := filepath.Join(dir, "routerd-status.sock")
+
+	listener, err := net.Listen("unix", statusSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-new; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerctl"), fmt.Sprintf(`#!/bin/sh
+echo "routerctl $@" >> %q
+echo '{"status":{"lastApplyTime":"2026-08-27T00:00:00Z"}}'
+`, commandLog))
+	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-old; exit 0; fi
+exit 0
+`)
+	if err := os.MkdirAll(filepath.Join(pkg, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte("# routerd-managed-service: v1\n[Service]\nExecStart=/usr/local/sbin/routerd serve\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
+echo "systemctl $@" >> %q
+case "$*" in
+  "is-active --quiet routerd.service") exit 0 ;;
+  *"routerd-self-restart-"*)
+    if [ ! -f %q ]; then
+      : > %q
+      echo "routerd-self-restart-test.timer loaded active waiting Restart routerd"
+    fi
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+`, commandLog, selfRestartState, selfRestartState))
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + systemdDir,
+		"ROUTERD_INSTALL_STATUS_SOCKET=" + statusSocket,
+	}, "--no-install-deps", "--no-config-update")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "waiting for scheduled routerd.service restart") {
+		t.Fatalf("installer did not wait for scheduled self restart:\n%s", out)
+	}
+	logData, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	if strings.Count(logText, "routerd-self-restart-") < 2 {
+		t.Fatalf("scheduled self restart was not polled through completion:\n%s", logText)
+	}
+	if !strings.Contains(logText, "routerctl get status -o json --socket "+statusSocket) {
+		t.Fatalf("status API was not checked after scheduled self restart:\n%s", logText)
 	}
 }
 
