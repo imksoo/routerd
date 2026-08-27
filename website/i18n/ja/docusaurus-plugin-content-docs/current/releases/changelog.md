@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260827.0838
+
 ### 修正
 
 - ホスト DNS の採用が不要になった場合、NetworkAdoptionController が routerd 所有の孤立した

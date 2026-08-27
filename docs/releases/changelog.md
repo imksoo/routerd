@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260827.0838
+
 ### Fixed
 
 - The NetworkAdoption controller now removes orphaned routerd-owned

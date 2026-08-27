@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260827.0838
+
 ### 修正
 
 - 當主機 DNS 採用已不再宣告時，NetworkAdoptionController 現在會移除孤立且由 routerd
