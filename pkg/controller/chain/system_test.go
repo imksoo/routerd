@@ -137,6 +137,80 @@ func TestNetworkAdoptionControllerCanKeepDHCPv4ClientWithoutRoutes(t *testing.T)
 	}
 }
 
+func TestNetworkAdoptionControllerRemovesStaleResolvedDropin(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	resolvedDir := filepath.Join(dir, "resolved.conf.d")
+	if err := os.MkdirAll(resolvedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stalePath := filepath.Join(resolvedDir, "90-routerd-adoption.conf")
+	if err := os.WriteFile(stalePath, []byte(networkAdoptionResolvedOwnershipHeader+"DNSStubListener=no\nDNS=127.0.0.1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	foreignPath := filepath.Join(resolvedDir, "50-admin.conf")
+	if err := os.WriteFile(foreignPath, []byte("[Resolve]\nDNS=192.0.2.53\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	controller := NetworkAdoptionController{
+		Router:            &api.Router{},
+		Store:             mapStore{},
+		ResolvedDropinDir: resolvedDir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stalePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale routerd resolved drop-in still exists: %v", err)
+	}
+	if data, err := os.ReadFile(foreignPath); err != nil || string(data) != "[Resolve]\nDNS=192.0.2.53\n" {
+		t.Fatalf("foreign resolved drop-in changed: data=%q err=%v", data, err)
+	}
+	if got := strings.Join(commands, "\n"); got != "systemctl restart systemd-resolved.service" {
+		t.Fatalf("commands = %q", got)
+	}
+}
+
+func TestNetworkAdoptionControllerPreservesUnownedResolvedDropin(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	resolvedDir := filepath.Join(dir, "resolved.conf.d")
+	if err := os.MkdirAll(resolvedDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(resolvedDir, "90-routerd-adoption.conf")
+	want := "[Resolve]\nDNS=192.0.2.53\n"
+	if err := os.WriteFile(path, []byte(want), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	controller := NetworkAdoptionController{
+		Router:            &api.Router{},
+		Store:             mapStore{},
+		ResolvedDropinDir: resolvedDir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+			return []byte("ok"), nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != want {
+		t.Fatalf("unowned resolved drop-in changed: data=%q err=%v", data, err)
+	}
+	if len(commands) != 0 {
+		t.Fatalf("commands = %v, want none", commands)
+	}
+}
+
 func TestNetworkAdoptionControllerDisablesServerLANClientsAndFlushesRADefault(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
