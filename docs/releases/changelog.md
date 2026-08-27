@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- The upgrade installer now waits for a scheduled routerd self-restart to
+  finish, then rechecks the status socket and apply timestamp before reporting
+  success.
+- Derived host DNS adoption now points systemd-resolved at `127.0.0.1` only
+  when a loopback port 53 listen profile can use a default (`.`) upstream
+  source. Conditional-only resolvers no longer replace working host DNS.
+
 ## v20260826.2108
 
 ### Fixed

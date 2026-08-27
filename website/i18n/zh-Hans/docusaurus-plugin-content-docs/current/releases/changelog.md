@@ -11,6 +11,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 升级安装程序现在会等待已计划的 routerd 自行重启完成，并重新检查状态 socket 与应用时间
+  后才报告成功。
+- 只有在 loopback 的 53 端口监听配置可使用默认 (`.`) upstream source 时，派生的主机 DNS
+  接管才会将 systemd-resolved 指向 `127.0.0.1`。仅含条件区域的 resolver 不再替换正常的
+  主机 DNS。
+
 ## v20260826.2108
 
 ### 修复

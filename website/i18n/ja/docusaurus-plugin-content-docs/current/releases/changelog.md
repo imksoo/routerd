@@ -11,6 +11,14 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- アップグレード時に予約された routerd の自己再起動が完了するまで installer が待機し、
+  status socket と適用時刻を再確認してから成功を返すようにしました。
+- loopback の53番ポートで既定 (`.`) upstream source を利用できる場合だけ、派生したホスト
+  DNS 設定で systemd-resolved を `127.0.0.1` へ向けるようにしました。条件付きゾーンだけの
+  resolver が正常なホスト DNS を置き換えることはありません。
+
 ## v20260826.2108
 
 ### 修正
