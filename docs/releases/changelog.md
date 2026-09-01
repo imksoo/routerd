@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260901.1516
+
 ### Fixed
 
 - `routerd-dns-resolver` now exits successfully after an intentional SIGINT or

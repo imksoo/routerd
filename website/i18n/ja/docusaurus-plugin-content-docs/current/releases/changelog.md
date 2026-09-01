@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260901.1516
+
 ### 修正
 
 - `routerd-dns-resolver` が意図した SIGINT / SIGTERM による停止後、キャンセル済みの
