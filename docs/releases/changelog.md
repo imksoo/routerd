@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- `routerd-dns-resolver` now exits successfully after an intentional SIGINT or
+  SIGTERM shutdown instead of reporting the canceled run context as a process
+  failure to the service manager.
+
 ## v20260901.1428
 
 ### Fixed

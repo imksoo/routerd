@@ -41,6 +41,33 @@ func TestSelftest(t *testing.T) {
 	}
 }
 
+func TestNormalizeDaemonExit(t *testing.T) {
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runtimeErr := errors.New("listen failed")
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		err     error
+		wantErr error
+	}{
+		{name: "canceled context", ctx: canceledCtx, err: context.Canceled},
+		{name: "wrapped canceled context", ctx: canceledCtx, err: fmt.Errorf("run: %w", context.Canceled)},
+		{name: "runtime error after cancellation", ctx: canceledCtx, err: runtimeErr, wantErr: runtimeErr},
+		{name: "unexpected cancellation", ctx: context.Background(), err: context.Canceled, wantErr: context.Canceled},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeDaemonExit(tt.ctx, tt.err)
+			if !errors.Is(got, tt.wantErr) || (got == nil) != (tt.wantErr == nil) {
+				t.Fatalf("normalizeDaemonExit() error = %v, want %v", got, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestReloadAddsListenAddressWithoutRebindingExisting(t *testing.T) {
 	port1 := freeTCPPort(t)
 	port2 := freeTCPPort(t)

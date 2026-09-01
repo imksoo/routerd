@@ -214,7 +214,14 @@ func daemonCommand(args []string) error {
 			}
 		}
 	}()
-	return d.Run(ctx)
+	return normalizeDaemonExit(ctx, d.Run(ctx))
+}
+
+func normalizeDaemonExit(ctx context.Context, err error) error {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+		return nil
+	}
+	return err
 }
 
 func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
