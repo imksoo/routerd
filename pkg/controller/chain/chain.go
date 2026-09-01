@@ -1533,7 +1533,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			continue
 		}
 		current := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-		if statusIsPendingWhenFalse(current) {
+		if statusIsWhenFalse(current) {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, next) || changed
@@ -1751,8 +1751,8 @@ func healthCheckStatusHasDaemonEvidence(status map[string]any) bool {
 	return false
 }
 
-func statusIsPendingWhenFalse(status map[string]any) bool {
-	return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Pending" && strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
+func statusIsWhenFalse(status map[string]any) bool {
+	return strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
 }
 
 func healthCheckStatusFreshness(res api.Resource) time.Duration {

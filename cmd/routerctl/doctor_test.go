@@ -1572,6 +1572,20 @@ func TestDoctorDSLiteDownStatusIsNotOverriddenBySelectedPolicy(t *testing.T) {
 	}
 }
 
+func TestDoctorDSLiteWhenFalseSkipsInactiveTunnelAndHostProbes(t *testing.T) {
+	configPath, statePath := writeDoctorDSLiteFixture(t)
+	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Disabled", "reason": "WhenFalse"}, "", map[string]any{}, map[string]any{})
+	installDoctorDSLiteHostCommands(t, false, false)
+
+	report := runDoctorDSLiteJSON(t, configPath, statePath)
+	resourceCheck := findDoctorCheck(t, report, "DSLiteTunnel/ds-lite")
+	if resourceCheck.Status != doctorSkip || !strings.Contains(resourceCheck.Detail, "WhenFalse") {
+		t.Fatalf("DSLiteTunnel check = %#v, want WhenFalse skip", resourceCheck)
+	}
+	assertDoctorCheckAbsent(t, report, "dig AFTR aftr.example.net")
+	assertDoctorCheckAbsent(t, report, "ip link show ds-routerd")
+}
+
 func TestDoctorHybridHealthyNoHost(t *testing.T) {
 	configPath, statePath := writeDoctorHybridFixture(t, false)
 	var out bytes.Buffer

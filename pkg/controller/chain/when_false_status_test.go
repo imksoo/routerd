@@ -123,6 +123,39 @@ func TestSaveWhenFalseStatusesStillMarksNonDaemonResourceWhenFalse(t *testing.T)
 	}
 }
 
+func TestSaveWhenFalseStatusesPreservesControllerSpecificWhenFalsePhase(t *testing.T) {
+	resource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+		Metadata: api.ObjectMeta{Name: "ds-lite"},
+		Spec: api.DSLiteTunnelSpec{
+			TunnelName: "ds-lite",
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+				"VirtualAddress/lan.role": {Equals: "master"},
+			}},
+		},
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
+	store := mapStore{
+		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {
+			"phase":     PhaseDisabled,
+			"reason":    "WhenFalse",
+			"interface": "ds-lite",
+		},
+	}
+
+	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
+		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
+	}
+
+	status := store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds-lite")
+	if status["phase"] != PhaseDisabled || status["reason"] != "WhenFalse" {
+		t.Fatalf("status = %#v, want controller-specific Disabled/WhenFalse preserved", status)
+	}
+	if status["interface"] != "ds-lite" {
+		t.Fatalf("status = %#v, want controller-specific cleanup details preserved", status)
+	}
+}
+
 func TestSaveWhenFalseStatusesRetainsStaticVirtualAddressCleanupMetadata(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

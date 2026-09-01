@@ -2126,6 +2126,15 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 	var checks []doctorCheck
 	for _, res := range tunnels {
 		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		if strings.EqualFold(stringStatus(status, "reason"), "WhenFalse") {
+			checks = append(checks, doctorCheck{
+				Area:   "dslite",
+				Name:   res.Kind + "/" + res.Metadata.Name,
+				Status: doctorSkip,
+				Detail: doctorStatusDetail(status),
+			})
+			continue
+		}
 		resourceCheck := doctorResourceCheck("dslite", res, status, healthyPhases("Applied", "Active", "Ready", "Up"))
 		checks = append(checks, resourceCheck)
 		spec, _ := res.DSLiteTunnelSpec()

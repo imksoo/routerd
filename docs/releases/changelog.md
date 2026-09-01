@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Generic `WhenFalse` status handling now preserves controller-specific terminal
+  phases such as `Disabled`, preventing DS-Lite status oscillation and repeated
+  resource-change events on HA standby nodes. `routerctl doctor dslite` now
+  skips tunnels that are intentionally inactive because their condition is false.
+
 ## v20260827.0838
 
 ### Fixed
