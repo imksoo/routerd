@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `routerd-dns-resolver` が意図した SIGINT / SIGTERM による停止後、キャンセル済みの
+  実行コンテキストをサービスマネージャーへプロセス障害として返さず、正常終了するように
+  しました。
+
 ## v20260901.1428
 
 ### 修正

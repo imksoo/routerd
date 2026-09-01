@@ -11,6 +11,11 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- `routerd-dns-resolver` 現在會在刻意以 SIGINT 或 SIGTERM 停止後正常結束，不再將已取消的
+  執行內容回報給服務管理程式並誤判為程序失敗。
+
 ## v20260901.1428
 
 ### 修正
