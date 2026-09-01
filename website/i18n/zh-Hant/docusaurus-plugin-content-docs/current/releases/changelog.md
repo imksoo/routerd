@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 共用的 `WhenFalse` 狀態處理現在會保留 `Disabled` 等控制器專用的終止狀態，避免 HA
+  備援節點上的 DS-Lite 狀態來回切換及重複產生資源變更事件。`routerctl doctor dslite`
+  現在會略過因條件為 false 而刻意停用的通道。
+
 ## v20260827.0838
 
 ### 修正

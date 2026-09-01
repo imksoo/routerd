@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- 共通の `WhenFalse` ステータス処理が `Disabled` などのコントローラー固有の終端状態を
+  保持するようにし、HA 待機系での DS-Lite ステータス往復とリソース変更イベントの
+  繰り返しを防ぎました。`routerctl doctor dslite` は、条件が false のため意図的に
+  非稼働となっているトンネルをスキップするようになりました。
+
 ## v20260827.0838
 
 ### 修正
