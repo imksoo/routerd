@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260901.1428
+
 ### 修正
 
 - 共用的 `WhenFalse` 狀態處理現在會保留 `Disabled` 等控制器專用的終止狀態，避免 HA

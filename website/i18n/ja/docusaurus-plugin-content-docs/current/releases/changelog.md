@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260901.1428
+
 ### 修正
 
 - 共通の `WhenFalse` ステータス処理が `Disabled` などのコントローラー固有の終端状態を

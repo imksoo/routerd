@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260901.1428
+
 ### Fixed
 
 - Generic `WhenFalse` status handling now preserves controller-specific terminal
