@@ -195,6 +195,9 @@ cloudedge-full-topology-minimal-offline-test:
 
 cloudedge-representative-redundancy-offline-test:
 	bash ./tests/e2e/cloudedge/scripts/sam-representative-redundancy-offline-test.sh
+	bash ./tests/e2e/cloudedge/scripts/sam-edge-qualification-offline-test.sh
+	bash ./tests/e2e/cloudedge/scripts/sam-e2e-reuse-topology-offline-test.sh
+	bash ./tools/release-qa-labs/tests/qualification-deadline-offline-test.sh
 
 webconsole-build:
 	cd webconsole && npm ci && npm run build

@@ -23,6 +23,11 @@ type Store interface {
 // Drain processes stored events in cursor order. The cursor advances only
 // after process succeeds, so a store or consumer failure is retried on the
 // next wake-up or periodic poll.
+// Processing is at least once: successful processing followed by a cursor
+// write failure repeats the same event on retry, including after restart.
+// Side effects must use durable idempotency/observation; cursor persistence is
+// not atomic with an external operation. A newly initialized consumer starts
+// at the current journal tip, rather than replaying preexisting history.
 func Drain(ctx context.Context, store Store, consumer string, process func(context.Context, daemonapi.DaemonEvent) error) error {
 	cursor, err := store.LoadOrInitializeEventConsumerCursor(consumer)
 	if err != nil {

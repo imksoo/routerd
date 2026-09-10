@@ -17,6 +17,10 @@ Release automation for maintainers is documented in
 routerd is a pre-release declarative router control plane for people who want a
 general-purpose host to behave like an understandable router.
 
+Apply errors report partial progress through configuration replacement, runtime
+activation and generation persistence. See [apply failure semantics](docs/concepts/apply-and-render.md#interpreting-a-partial-apply-failure)
+before treating a failed request as an unchanged router.
+
 ## Start safely
 
 If you are new to routing, begin with an isolated Ubuntu Server VM or a spare

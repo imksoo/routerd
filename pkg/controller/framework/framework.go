@@ -362,7 +362,28 @@ func runLocked(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLo
 	return runLockedObservedInterval(ctx, logger, locker, observer, key, name, trigger, resourceKind, resourceName, interval, nil, fn)
 }
 
-func runLockedObservedInterval(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, observedInterval func(error) time.Duration, fn func(context.Context) error) error {
+// PanicError identifies a recovered reconcile or framework callback panic.
+// The panic payload is deliberately neither retained nor wrapped: it may contain
+// configuration or credentials and must not escape through errors or telemetry.
+type PanicError struct {
+	Controller string
+	Stage      string
+}
+
+func (e *PanicError) Error() string {
+	return fmt.Sprintf("controller %q panic recovered during %s", e.Controller, e.Stage)
+}
+
+func recoverControllerCall(ctx context.Context, name string, fn func(context.Context) error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = &PanicError{Controller: name, Stage: "reconcile"}
+		}
+	}()
+	return fn(ctx)
+}
+
+func runLockedObservedInterval(ctx context.Context, logger *slog.Logger, locker *lock.ResourceLocker, observer Observer, key, name, trigger, resourceKind, resourceName string, interval time.Duration, observedInterval func(error) time.Duration, fn func(context.Context) error) (err error) {
 	unlock, err := locker.Lock(ctx, key)
 	if err != nil {
 		logger.Warn("controller lock skipped", "controller", name, "error", err)
@@ -370,12 +391,17 @@ func runLockedObservedInterval(ctx context.Context, logger *slog.Logger, locker 
 	}
 	defer unlock()
 	defer func() {
-		if recovered := recover(); recovered != nil {
-			logger.Error("controller panic recovered", "controller", name, "panic", recovered)
+		if recover() != nil {
+			// An observer or framework callback failed after reconcile. Preserve
+			// any controller error, but do not notify the broken observer again.
+			err = errors.Join(err, &PanicError{Controller: name, Stage: "framework"})
+			logger.Error("controller framework panic recovered", "controller", name, "error", err)
 		}
 	}()
 	start := time.Now()
-	err = routerotel.Reconcile(ctx, name, trigger, interval, fn)
+	err = routerotel.Reconcile(ctx, name, trigger, interval, func(runCtx context.Context) error {
+		return recoverControllerCall(runCtx, name, fn)
+	})
 	duration := time.Since(start)
 	reportInterval := interval
 	if observedInterval != nil {

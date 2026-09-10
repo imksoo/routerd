@@ -21,8 +21,8 @@ class GuardError(RuntimeError):
     pass
 
 
-POLICY_MAX_TTL_SECONDS = 55 * 60
-POLICY_MAX_PAID_LIFECYCLE_SECONDS = 85 * 60
+POLICY_MAX_TTL_SECONDS = 115 * 60
+POLICY_MAX_PAID_LIFECYCLE_SECONDS = 145 * 60
 POLICY_MAX_CLEANUP_SECONDS = 10 * 60
 POLICY_MAX_INVENTORY_SECONDS = 5 * 60
 POLICY_MAX_CLEANUP_ATTEMPTS = 2
@@ -31,7 +31,7 @@ PVE_CERTIFICATION_ONLY_SCOPE = "pve-certification-only"
 FULL_REPRESENTATIVE_SCOPE = "full-representative"
 QUALIFICATION_RUN_SCOPES = {PVE_CERTIFICATION_ONLY_SCOPE, FULL_REPRESENTATIVE_SCOPE}
 MAX_PROVISIONING_BUDGET_SECONDS = 18 * 60
-MAX_QUALIFICATION_BUDGET_SECONDS = 32 * 60
+MAX_QUALIFICATION_BUDGET_SECONDS = 90 * 60
 MIN_SUPERVISOR_RESERVE_SECONDS = 5 * 60
 REQUIRED_QUALIFICATION_SCRIPT_BLOBS = {
     "tests/e2e/cloudedge/configs/sam-e2e-generate.sh",
@@ -51,7 +51,7 @@ REQUIRED_POST_ZERO_CLEANUP_BLOBS = {
     "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh",
 }
 RUNS_ROOT = Path("/var/lib/routerd-release-qa")
-POLICY_MAX_COST_USD = 1.00
+POLICY_MAX_COST_USD = 1.60
 APPROVED_EXECUTION_HOSTS = {"chatty", "chatty.lain.local"}
 PRODUCTION_MODE = "production"
 STAGING_MODE = "staging-no-mutation"
@@ -925,11 +925,24 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     elif run_id.startswith("relqa-staging-") or environment != PRODUCTION_ENVIRONMENT:
         raise GuardError("production mode requires the production environment and non-staging runId")
     expected_host = require(execution, "host", str)
-    if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
-        raise GuardError("execution must require an approved remote host")
+    host_policy = execution.get("hostPolicy", "approved-remote")
+    if host_policy == "approved-remote":
+        if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
+            raise GuardError("execution must require an approved remote host")
+    elif host_policy == "local-supervised":
+        if execution.get("requireRemote") is not False:
+            raise GuardError("local-supervised execution must set requireRemote to false")
+        if not expected_host.strip() or expected_host != expected_host.strip():
+            raise GuardError("local-supervised execution host must be nonempty without surrounding whitespace")
+    else:
+        raise GuardError("execution host policy is invalid")
     host = actual_host or socket.getfqdn()
-    aliases = {host, host.split(".", 1)[0]}
-    if expected_host not in aliases and expected_host.split(".", 1)[0] not in aliases:
+    if host_policy == "local-supervised":
+        host_matches = expected_host == host
+    else:
+        aliases = {host, host.split(".", 1)[0]}
+        host_matches = expected_host in aliases or expected_host.split(".", 1)[0] in aliases
+    if not host_matches:
         raise GuardError(f"wrong execution host: actual={host} expected={expected_host}")
 
     limits = require(contract, "limits", dict)

@@ -22,15 +22,31 @@ It listens only on the run's explicit `http://127.0.0.1:<high-port>` endpoint
 and resolves and connects upstream with IPv4 sockets only. It changes no host
 DNS, route, interface, DHCP, or routerd setting. The proxy is started before
 baseline inventory, remains available through post/failure inventory, and is
-stopped only after final inventory. Its independent `RuntimeMaxSec` bounds it
-when the operator disconnects; a port collision fails readiness instead of
+stopped only after final inventory. Its independent `RuntimeMaxSec=9600`
+(160 minutes) includes the planned 145-minute paid cleanup envelope plus the
+existing 15-minute allowance for outer preflight/final inventory. This proxy
+lifetime is separate from the paid-resource budget and does not extend the
+qualification window. It also bounds the proxy when the operator disconnects;
+a port collision fails readiness instead of
 falling back to an untracked or externally reachable proxy.
 
-It must run under the tracked boot-enabled supervisor unit on the remote
-execution host named by the contract. Never run the paid lifecycle from a
-shared development host, a Codex process, or an interactive transport.
+It must run under the tracked boot-enabled supervisor unit on the execution
+host named by the contract. The default `execution.hostPolicy` is
+`approved-remote`: it requires `execution.requireRemote: true` and an approved
+remote host. An explicitly authorized local coordinator instead sets
+`execution.hostPolicy: local-supervised`, `execution.requireRemote: false`,
+and `execution.host` to the exact result of `socket.getfqdn()` on that machine.
+Local policy accepts no short-name/FQDN aliases; missing or unknown policy
+values do not enable local execution. Omitting the field retains the remote
+default. Keep environment-specific hostnames in private runtime inputs.
 
-The remote QA coordinator never starts `routerd`, including sandbox mode.
+Local execution still requires the same service account, tracked units,
+provider tools/mirror, canonical-source and artifact checks, staging proof,
+budgets, and durable cleanup. It does not authorize running the paid lifecycle
+inside a Codex process or an interactive transport, changing host networking,
+or bypassing a precheck.
+
+The QA coordinator never starts `routerd`, including sandbox mode.
 Generated-config validation copies the artifact and inputs over the
 QGA-pinned guest SSH path and runs the sandbox process only as an unprivileged
 process on a disposable PVE client. That sandbox has every network mutator,
@@ -176,10 +192,12 @@ The contract must bind:
   SHA-256;
 - SHA-256 identities for every release and QA script used by the run;
 - the canonical tracked QA commit and origin;
-- the approved remote execution host and provider mirror versions;
-- mutation TTL no greater than 55 minutes and heartbeat-stale less than TTL;
+- the authorized execution host, its explicit local policy if applicable,
+  and provider mirror versions;
+- mutation TTL no greater than 115 minutes (6900 seconds) and heartbeat-stale
+  less than TTL;
 - exact regions, instance types, provider counts and a cost ceiling no greater
-  than USD 1.00.
+  than USD 1.60 under the admission estimate policy, not an actual-bill cap.
 - `safety.pveManagementControlPlane: none`, `safety.pveTLS: pinned-ca`, and
   `pve.managementAddressSource: qga-dhcp`. The PVE management bridge is a
   shared underlay whose existing DHCP service assigns the six guest addresses.
@@ -312,17 +330,47 @@ The release contract has one permitted final Cloud SAM profile:
 provider, 56 directed client flows, and 42 cloud-ingress flows), then proves
 `A -> B-only -> AB` with ordered RR BGP-membership evidence, all-leaf
 control/provider gates, and four cross-site hostname canaries. It deliberately
-does not repeat the symmetric B outage.
+does not repeat a B-side outage. It then runs four independent edge-A
+stop/rejoin scenarios in AWS, Azure, OCI, and PVE order. Each invokes the
+harness with one `--failover-node`, reuses the initial configs, skips deployment
+and initial validation, and retains the staged-RR membership checks. After
+both stop and rejoin it requires all 56 directed client flows and all 42
+cloud-ingress flows, plus all surviving-leaf control/dataplane and
+provider/ownership gates; edge scenarios never use the four-flow RR canary
+as a substitute. A is
+restored before the next site. Stops affect guest routerd/BGP services, not
+VM power or a PVE host. RR and edge scenarios require explicit successful
+stop/inactive and start/active acknowledgements; passing traffic alone cannot
+prove that the failure injection occurred. This replaces the former RR-only
+profile scope.
+
+Only default PVE `single-router` is in scope; CARP's unequal A/B priorities
+are not. Shared A/B source templates do not establish equal deployed state,
+bootstrap histories, provider identities, or fault domains. B-side stop/rejoin
+remains unverified even when B participates successfully in A's scenario.
 It neither provisions nor destroys resources.
 
 The contract binds at most 18 minutes for cloud/PVE provision and
-certification, at most 32 minutes for the profile, and at least five minutes
-of supervisor reserve inside a 55-minute mutation TTL. Each stage is
+certification, at most 90 minutes (5400 seconds) for the entire five-invocation
+profile (including evidence checks), and at least five minutes of supervisor reserve
+inside a 115-minute (6900-second) mutation TTL. The minimum allocation is
+113 minutes (`18 + 90 + 5`), leaving two minutes of headroom. Each stage is
 hard-bounded; a timeout fails and transfers control to the existing quiesce,
 run-scoped cleanup, and exhaustive zero-inventory path. Two cleanup attempts
-can extend the recovery envelope to 85 minutes; that is a recovery ceiling,
-not a permitted test duration. The USD ceiling and topology allowlist do not
-change. The exact artifact contract pins both the profile wrapper and its
+retain their 10-minute cleanup and 5-minute inventory bounds, giving a planned
+paid cleanup envelope of 145 minutes (8700 seconds): `115 + 2 × (10 + 5)`.
+That allowance is not permitted test time or a reason to abandon recovery
+before authoritative zero inventory. The topology allowlist is unchanged.
+The approved policy estimate is USD 1.55 and its admission ceiling is USD 1.60;
+neither is a current provider price quote or an actual-bill cap. This source
+budget change supersedes the old 32/55/85-minute policy. It is not live
+admission or evidence of a push or live PASS; a fresh approved contract and
+the required canonical-source and execution prechecks still apply.
+The expanded profile has not been timed to completion in a live run; each
+invocation receives only the remaining shared 5400-second budget. Offline PASS
+does not establish live PASS or guarantee duration/cost. A timeout must fail,
+not silently reduce the matrices or extend the paid window.
+The exact artifact contract pins both the profile wrapper and its
 `sam-e2e.sh` harness dependency.
 
 Use the durable supervisor as the only paid entry point. For the exact profile
@@ -331,7 +379,15 @@ command, evidence contract, and local offline test, see
 
 ## Offline validation
 
-No test contacts or mutates a provider, PVE, host network, systemd, or routerd.
+For host-safe source checks, use the selected fake-harness tests documented
+in the linked Cloud SAM profile pages. Those tests use no live endpoint or
+daemon; their success does not authorize host or cloud operations.
+
+The complete Python suite below is **not** a host-safe preflight. Some cases
+deliberately exercise `sudo`, systemd/service-manager, socket, or namespace
+contracts when their prerequisites are available. Run that suite only in a
+separately authorized, isolated release-QA environment, not on a shared
+development host under a source-only testing authorization.
 
 ```sh
 python3 -m unittest discover -s tools/release-qa-labs/tests -v
@@ -356,7 +412,7 @@ with bounded individual attempts and service-manager backoff for as long as
 necessary; stopping recovery at the admission estimate could leave a much
 larger leak. Review the final bill only after exhaustive zero cleanup.
 
-## Exact pre-paid staging procedure on chatty
+## Exact pre-paid staging procedure on the selected coordinator
 
 Do this only with a fresh canonical run root whose exhaustive baseline inventory
 is already zero. It performs authenticated read-only provider/PVE prechecks and
@@ -380,9 +436,10 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    sequence unchanged after that: authoritative baseline zero, first prepare,
    pinned metadata/digest capture, second prepare/restart and byte comparison,
    then main-unit start without blocking on the controller connection.
-   Disconnect the SSH client immediately;
-   the service does not depend on that session.
-3. Reconnect and inspect
+   Disconnect the controlling SSH client (or exit the launching session for
+   an explicitly authorized local coordinator) immediately; the service must
+   not depend on that session.
+3. Reconnect or open a new local session and inspect
    `runtime/evidence/lifecycle/supervisor-state.json`. Its history must contain
    `PRECHECK -> STAGING_ARMED -> STOPPING -> CLEANING -> VERIFYING_ZERO ->
    REVOKING_TOKEN -> STAGING_DONE`. A missing unit restart, failed cleanup,
