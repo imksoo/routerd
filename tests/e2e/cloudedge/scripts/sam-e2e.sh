@@ -13,6 +13,11 @@ Options:
   --pve-known-hosts FILE  Pinned known_hosts used exclusively for root@PVE SSH
   --configs-dir DIR       Use existing generated configs instead of generating into evidence/config-gen
   --skip-deploy           Do not install routerd/configs; useful for diagnostics-only reruns
+  --reuse-deployed-topology
+                          Reuse previously validated/deployed topology without resetting
+                          PVE capture addresses, validating again, or rewriting client
+                          keys, hostnames, and routes; requires --skip-deploy and an
+                          existing --configs-dir
   --skip-initial-validation
                           Continue from a separately recorded PASS and start with failover;
                           only the full-suite resume path should normally use this
@@ -23,6 +28,8 @@ Options:
   --transition-canary     For post-transition validation, retain all-leaf control/provider
                           gates but run four fixed cross-site hostname canaries instead of a
                           second full client/cloud-ingress matrix
+  --full-cloud-ingress    Keep every cloud-origin destination during leaf failover,
+                          rather than limiting ingress checks to the failed leaf's site
   --load-balance-report   Capture MobilityPool owner-table snapshots after each matrix run
   --skip-load-balance-report
                           Explicitly suppress owner-table snapshots; conflicts with --load-balance-report
@@ -49,6 +56,7 @@ pve_ssh_key=
 pve_known_hosts=
 configs_dir=
 skip_deploy=0
+reuse_deployed_topology=0
 skip_initial_validation=0
 staged_rr_pair=()
 failover_nodes=()
@@ -64,6 +72,7 @@ failover_transfer_required=0
 failover_transfer_smoke=0
 success_evidence_minimal=0
 transition_canary=0
+full_cloud_ingress=0
 destroy_cmd=
 overall=0
 validation_started=0
@@ -79,11 +88,13 @@ while [ "$#" -gt 0 ]; do
     --pve-known-hosts) pve_known_hosts="$2"; shift 2 ;;
     --configs-dir) configs_dir="$2"; shift 2 ;;
     --skip-deploy) skip_deploy=1; shift ;;
+    --reuse-deployed-topology) reuse_deployed_topology=1; shift ;;
     --skip-initial-validation) skip_initial_validation=1; shift ;;
     --staged-rr-pair) staged_rr_pair=("${2:?missing RR A}" "${3:?missing RR B}"); shift 3 ;;
     --failover-node) failover_nodes+=("$2"); shift 2 ;;
     --rejoin-after-failover) rejoin_after_failover=1; shift ;;
     --transition-canary) transition_canary=1; shift ;;
+    --full-cloud-ingress) full_cloud_ingress=1; shift ;;
     --load-balance-report) load_balance_report=1; shift ;;
     --skip-load-balance-report) skip_load_balance_report=1; shift ;;
     --skip-matrix) skip_matrix=1; shift ;;
@@ -98,6 +109,17 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [ "$reuse_deployed_topology" -eq 1 ]; then
+  [ "$skip_deploy" -eq 1 ] || {
+    echo "--reuse-deployed-topology requires --skip-deploy" >&2
+    exit 2
+  }
+  if [ -z "$configs_dir" ] || [ ! -d "$configs_dir" ]; then
+    echo "--reuse-deployed-topology requires an existing --configs-dir" >&2
+    exit 2
+  fi
+fi
 
 if [ "$load_balance_report" -eq 1 ] && [ "$skip_load_balance_report" -eq 1 ]; then
   echo "--load-balance-report cannot be combined with --skip-load-balance-report" >&2
@@ -610,7 +632,12 @@ preflight() {
     fi
     scan_host_key "$node" "$host" || return 1
   done
-  quiesce_existing_routerd_units || return 1
+  # Only installation may quiesce the complete topology. Transition-only
+  # invocations reuse the deployed configuration and must keep every other
+  # router running until the explicitly selected fault is injected.
+  if [ "$skip_deploy" -eq 0 ]; then
+    quiesce_existing_routerd_units || return 1
+  fi
   for node in "${routers[@]}" "${clients[@]}"; do
     run_preflight_probe "$node" || {
       echo "$node preflight failed" >&2
@@ -839,6 +866,7 @@ reject_pve_control_plane_resources() {
 }
 
 validate_generated_configs() {
+  [ "${reuse_deployed_topology:-0}" -eq 0 ] || return 0
   local cfg_dir="$1"
   local out_dir="$evidence_dir/config-validate"
   local validation_node input_archive remote_artifact remote_input remote_evidence
@@ -1162,6 +1190,7 @@ REMOTE_DEPLOY
 }
 
 setup_pve_dataplane() {
+  [ "${reuse_deployed_topology:-0}" -eq 0 ] || return 0
   local node ip
   # MobilityPool owns a leaf capture.sourceAddress as a /32.  Do not seed it
   # as a /24: that makes the applied-effect ledger mistake an external subnet
@@ -1411,7 +1440,7 @@ cloud_ingress_matrix() {
   case "$label" in
     after-failover-*)
       failed_node="${label#after-failover-}"
-      if jq -e --arg node "$failed_node" '.[$node]? | .role == "leaf"' "$nodes_json" >/dev/null; then
+      if [ "$full_cloud_ingress" -eq 0 ] && jq -e --arg node "$failed_node" '.[$node]? | .role == "leaf"' "$nodes_json" >/dev/null; then
         failed_site="$(node_field "$failed_node" site)"
         is_cloud_site "$failed_site" && target_filter_site="$failed_site"
       fi
@@ -1459,6 +1488,7 @@ cloud_ingress_matrix() {
 }
 
 setup_client_ssh() {
+  [ "${reuse_deployed_topology:-0}" -eq 0 ] || return 0
   local client_known_hosts="$evidence_dir/ssh/client_known_hosts"
   local dst dst_ip dst_public dst_site client client_name client_site remote_client_ips_text local_leaf_ips_text
   : >"$client_known_hosts"
@@ -2236,8 +2266,23 @@ run_failover() {
       read -r transfer_src transfer_pid < <(start_failover_transfer "during-failover-${failover_node}" "$failover_node") || status=1
       sleep 3
     fi
-    ssh_node "$failover_node" 'sudo systemctl stop routerd.service; if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q "^routerd-bgp\\.service"; then sudo systemctl stop routerd-bgp.service; fi' >"$evidence_dir/convergence/failover-stop-${failover_node}.txt" 2>&1
+    # Failed SSH acknowledgement may still mean the remote service stopped.
+    # Keep attempted nodes for recovery, never infer a stop from traffic PASS.
     stopped_routers+=("$failover_node")
+    # Command substitutions must run on the guest, not the QA host.
+    # shellcheck disable=SC2016
+    if ! ssh_node "$failover_node" 'set -e
+sudo systemctl stop routerd.service
+test "$(systemctl show routerd.service -p ActiveState --value)" = inactive
+bgp_load_state="$(systemctl show routerd-bgp.service -p LoadState --value)"
+if [ "$bgp_load_state" != not-found ]; then
+  sudo systemctl stop routerd-bgp.service
+  test "$(systemctl show routerd-bgp.service -p ActiveState --value)" = inactive
+fi' >"$evidence_dir/convergence/failover-stop-${failover_node}.txt" 2>&1; then
+      printf 'failover-stop-%s\tFAIL\t0\n' "$failover_node" >>"$evidence_dir/convergence/summary.tsv"
+      return 1
+    fi
+    printf 'failover-stop-%s\tPASS\t0\n' "$failover_node" >>"$evidence_dir/convergence/summary.tsv"
     validation_rc=0
     run_validation_set "after-failover-${failover_node}" || validation_rc=$?
     status="$(merge_validation_status "$status" "$validation_rc")"
@@ -2263,11 +2308,25 @@ run_failover() {
 run_rejoin() {
   local status=0 failover_node validation_rc
   [ "$rejoin_after_failover" -eq 1 ] || return 0
-  [ "${#failover_nodes[@]}" -gt 0 ] || return 0
-  for failover_node in "${failover_nodes[@]}"; do
+  [ "${#stopped_routers[@]}" -gt 0 ] || return 0
+  for failover_node in "${stopped_routers[@]}"; do
     collect_success_optional_diagnostics "before-rejoin-${failover_node}"
     collect_success_optional_provider_inventory "before-rejoin-${failover_node}" || status=1
-    ssh_node "$failover_node" 'if systemctl list-unit-files routerd-bgp.service --no-legend 2>/dev/null | grep -q "^routerd-bgp\\.service"; then sudo systemctl start routerd-bgp.service; sudo systemctl is-active routerd-bgp.service; fi; sudo systemctl start routerd.service; sudo systemctl is-active routerd.service' >"$evidence_dir/convergence/rejoin-start-${failover_node}.txt" 2>&1 || status=1
+    # Command substitutions must run on the guest, not the QA host.
+    # shellcheck disable=SC2016
+    if ! ssh_node "$failover_node" 'set -e
+bgp_load_state="$(systemctl show routerd-bgp.service -p LoadState --value)"
+if [ "$bgp_load_state" != not-found ]; then
+  sudo systemctl start routerd-bgp.service
+  sudo systemctl is-active --quiet routerd-bgp.service
+fi
+sudo systemctl start routerd.service
+sudo systemctl is-active --quiet routerd.service' >"$evidence_dir/convergence/rejoin-start-${failover_node}.txt" 2>&1; then
+      printf 'rejoin-start-%s\tFAIL\t0\n' "$failover_node" >>"$evidence_dir/convergence/summary.tsv"
+      status=1
+      continue
+    fi
+    printf 'rejoin-start-%s\tPASS\t0\n' "$failover_node" >>"$evidence_dir/convergence/summary.tsv"
     mark_node_running "$failover_node"
     validation_rc=0
     run_validation_set "after-rejoin-${failover_node}" || validation_rc=$?

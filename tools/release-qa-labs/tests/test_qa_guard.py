@@ -141,7 +141,7 @@ class ContractGuardTests(unittest.TestCase):
                 "profile": "representative-redundancy",
                 "runScope": "full-representative",
                 "provisioningBudgetSeconds": 1080,
-                "qualificationBudgetSeconds": 1920,
+                "qualificationBudgetSeconds": 5400,
                 "minimumSupervisorReserveSeconds": 300,
             },
             "safety": {
@@ -149,9 +149,9 @@ class ContractGuardTests(unittest.TestCase):
                 "pveTLS": "pinned-ca",
             },
             "lifecycle": {
-                "ttl": "55m", "heartbeatStale": "5m", "cleanupScope": "run-id",
+                "ttl": "115m", "heartbeatStale": "5m", "cleanupScope": "run-id",
                 "cleanupTimeout": "10m", "inventoryTimeout": "5m",
-                "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 5100,
+                "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 8700,
             },
             "execution": {
                 "mode": "production",
@@ -203,7 +203,7 @@ class ContractGuardTests(unittest.TestCase):
                 },
             },
             "limits": {
-                "maxEstimatedCostUsd": 1.0,
+                "maxEstimatedCostUsd": 1.60,
                 "providerCounts": qa_guard.APPROVED_COUNTS,
                 "instanceTypes": qa_guard.APPROVED_TYPES,
                 "regions": qa_guard.APPROVED_REGIONS,
@@ -953,11 +953,27 @@ class ContractGuardTests(unittest.TestCase):
             self.verify(self.fake_git())
 
     def test_paid_envelope_overrun_and_one_cent_over_ceiling_are_rejected(self):
-        self.contract["lifecycle"]["ttl"] = "56m"
-        with self.assertRaisesRegex(qa_guard.GuardError, "lifecycle"):
+        self.verify(self.fake_git())  # All approved caps, including USD 1.60.
+        for key, value in (
+            ("ttl", "6901s"),
+            ("maxPaidLifecycleSeconds", 8701),
+            ("cleanupTimeout", "601s"),
+            ("inventoryTimeout", "301s"),
+            ("maxCleanupAttempts", 3),
+            ("maxPaidLifecycleSeconds", 8699),
+        ):
+            with self.subTest(key=key, value=value):
+                previous = self.contract["lifecycle"][key]
+                self.contract["lifecycle"][key] = value
+                with self.assertRaisesRegex(qa_guard.GuardError, "lifecycle"):
+                    self.verify(self.fake_git())
+                self.contract["lifecycle"][key] = previous
+        self.contract["limits"]["maxEstimatedCostUsd"] = 1.61
+        with self.assertRaisesRegex(qa_guard.GuardError, "monetary ceiling"):
             self.verify(self.fake_git())
-        self.contract["lifecycle"]["ttl"] = "55m"
-        self.contract["limits"]["maxEstimatedCostUsd"] = 0.84
+        # Cost is estimated across the paid cleanup envelope, not just mutation.
+        self.assertEqual(qa_guard.estimated_cost(8700), 1.55)
+        self.contract["limits"]["maxEstimatedCostUsd"] = 1.54
         with self.assertRaisesRegex(qa_guard.GuardError, "estimated cost"):
             self.verify(self.fake_git())
 
@@ -974,9 +990,15 @@ class ContractGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(qa_guard.GuardError, "supervisor reserve"):
             self.verify(self.fake_git())
         self.contract["qualification"]["minimumSupervisorReserveSeconds"] = 300
-        self.contract["qualification"]["qualificationBudgetSeconds"] = 1921
+        self.contract["qualification"]["qualificationBudgetSeconds"] = 5401
         with self.assertRaisesRegex(qa_guard.GuardError, "qualification budget"):
             self.verify(self.fake_git())
+        self.contract["qualification"]["qualificationBudgetSeconds"] = 5400
+        self.contract["lifecycle"]["ttl"] = "6779s"
+        with self.assertRaisesRegex(qa_guard.GuardError, "budgets exceed lifecycle TTL"):
+            self.verify(self.fake_git())
+        self.contract["lifecycle"]["ttl"] = "6780s"
+        self.verify(self.fake_git())  # 18 + 90 + 5 minutes; reserve is unchanged.
 
     def test_qualification_run_scope_is_explicit_and_closed(self):
         self.contract["qualification"].pop("runScope")
@@ -1007,7 +1029,7 @@ class PlanGuardTests(unittest.TestCase):
             "resource_changes": actions or [],
         }
 
-    def assert_rejected(self, value, phase="cloud", ceiling=1.0):
+    def assert_rejected(self, value, phase="cloud", ceiling=1.60):
         write_json(self.path, value)
         with self.assertRaises(qa_guard.GuardError):
             qa_guard.verify_plan(self.path, phase, ceiling)
@@ -1027,11 +1049,11 @@ class PlanGuardTests(unittest.TestCase):
                 resource["values"] = {fields[kind]: flavors[kind][offsets[kind]]}
                 offsets[kind] += 1
         write_json(self.path, value)
-        qa_guard.verify_plan(self.path, "cloud", 1.0)
+        qa_guard.verify_plan(self.path, "cloud", 1.60)
 
     def test_exact_pve_plan_passes(self):
         write_json(self.path, self.plan(qa_guard.PLAN_COUNTS["pve"]))
-        qa_guard.verify_plan(self.path, "pve", 1.0)
+        qa_guard.verify_plan(self.path, "pve", 1.60)
 
     def test_legacy_aws_rr_plan_shape_is_rejected(self):
         counts = dict(qa_guard.PLAN_COUNTS["cloud"])

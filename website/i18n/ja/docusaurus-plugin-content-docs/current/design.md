@@ -8,6 +8,9 @@ title: アーキテクチャ概要
 個別機能の使い方は [チュートリアル](./tutorials/getting-started.md) と [How-to](./how-to/multi-wan.md) を、
 リソース定義は [API リファレンス](./api-v1alpha1.md) を参照してください。
 
+設定の置換、runtime の切替、世代保存、応答の出力は別々の結果として扱います。
+失敗とキャンセル時の契約は [適用と生成](./concepts/apply-and-render.md#適用途中で失敗した場合) に記載しています。
+
 ![router YAML と routerctl から validation、effective config、controller、SQLite state、renderer、所有 host artifact へ流れる routerd architecture 図](/img/diagrams/routerd-architecture.png)
 
 ---

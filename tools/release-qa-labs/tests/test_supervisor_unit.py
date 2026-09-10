@@ -46,7 +46,8 @@ class SupervisorUnitTests(unittest.TestCase):
         for hardcoded in (
             "--ttl-seconds 2700", "--stale-seconds 300", "--cleanup-timeout-seconds 600",
             "--inventory-timeout-seconds 300", "--max-cleanup-attempts 2",
-            "--max-paid-lifecycle-seconds 5100",
+            "--max-paid-lifecycle-seconds 5100", "--ttl-seconds 6900",
+            "--max-paid-lifecycle-seconds 8700",
         ):
             self.assertNotIn(hardcoded, launcher)
         self.assertIn("pinned", launcher.lower())
@@ -63,6 +64,18 @@ class SupervisorUnitTests(unittest.TestCase):
         self.assertEqual(example["stateMode"], "fresh-fabric-fresh-state")
         self.assertEqual(example["safety"]["pveManagementControlPlane"], "none")
         self.assertEqual(example["safety"]["pveTLS"], "pinned-ca")
+        self.assertEqual(example["qualification"], {
+            "profile": "representative-redundancy", "runScope": "full-representative",
+            "provisioningBudgetSeconds": 1080, "qualificationBudgetSeconds": 5400,
+            "minimumSupervisorReserveSeconds": 300,
+        })
+        self.assertEqual(example["lifecycle"], {
+            "ttl": "115m", "heartbeatStale": "5m", "cleanupScope": "run-id",
+            "cleanupTimeout": "10m", "inventoryTimeout": "5m",
+            "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 8700,
+        })
+        self.assertEqual(example["limits"]["maxEstimatedCostUsd"], 1.60)
+        self.assertEqual(example["limits"]["providerCounts"], {"aws": 4, "azure": 4, "oci": 4, "pve": 7})
         for relative in example["qaImplementation"]["scriptBlobs"]:
             self.assertTrue((repo / relative).is_file(), relative)
             self.assertFalse((ROOT / relative).exists(), "flattened QA copy must not masquerade as repo root")
@@ -219,7 +232,7 @@ class SupervisorUnitTests(unittest.TestCase):
         ):
             self.assertIn(placeholder, tfvars)
 
-    def test_qualification_driver_requires_the_current_rr_evidence_contract(self):
+    def test_qualification_driver_requires_rr_and_all_edge_a_evidence(self):
         qualification = (ROOT / "drivers" / "qualification-driver.sh").read_text(encoding="utf-8")
         self.assertIn('safety.pveManagementControlPlane', qualification)
         self.assertIn('[ "$safety_pve_management_control_plane" = "none" ]', qualification)
@@ -231,8 +244,14 @@ class SupervisorUnitTests(unittest.TestCase):
             "rrPairReady",
             "rrBControlPlaneContinuity",
             "rrBContinuityCanary",
+            "edgeAFailover",
+            "edgeARejoin",
+            "edgeAClientMatrix",
+            "edgeACloudIngressMatrix",
         ):
             self.assertIn(f"{gate}:true", qualification)
+        for node in ("aws-leaf-a", "azure-leaf-a", "oci-leaf-a", "pve-leaf-a"):
+            self.assertIn(node, qualification)
 
     def test_oci_search_uses_explicit_complete_pagination(self):
         inventory = (ROOT / "drivers/inventory-driver.sh").read_text(encoding="utf-8")

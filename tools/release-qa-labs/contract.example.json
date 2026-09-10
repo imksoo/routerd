@@ -7,7 +7,7 @@
     "profile": "representative-redundancy",
     "runScope": "full-representative",
     "provisioningBudgetSeconds": 1080,
-    "qualificationBudgetSeconds": 1920,
+    "qualificationBudgetSeconds": 5400,
     "minimumSupervisorReserveSeconds": 300
   },
   "safety": {
@@ -61,7 +61,7 @@
     "publicKey": "ssh-ed25519 AAAA..."
   },
   "limits": {
-    "maxEstimatedCostUsd": 1.0,
+    "maxEstimatedCostUsd": 1.60,
     "providerCounts": {"aws": 4, "azure": 4, "oci": 4, "pve": 7},
     "instanceTypes": {
       "aws": {"t3.large": 2, "t3.micro": 2},
@@ -124,12 +124,12 @@
     }
   },
   "lifecycle": {
-    "ttl": "55m",
+    "ttl": "115m",
     "heartbeatStale": "5m",
     "cleanupTimeout": "10m",
     "inventoryTimeout": "5m",
     "maxCleanupAttempts": 2,
-    "maxPaidLifecycleSeconds": 5100,
+    "maxPaidLifecycleSeconds": 8700,
     "cleanupScope": "run-id"
   }
 }

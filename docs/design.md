@@ -8,6 +8,10 @@ This document is an introduction to routerd for operators and contributors. It c
 For day-to-day usage, start with the [tutorials](./tutorials/getting-started.md) and the [how-to guides](./how-to/multi-wan.md).
 For resource definitions, see the [API reference](./api-v1alpha1.md).
 
+Configuration replacement, runtime activation, generation persistence and response
+delivery are separate outcomes. Their failure and cancellation contracts are
+described in [Apply and render](./concepts/apply-and-render.md#interpreting-a-partial-apply-failure).
+
 ![routerd architecture diagram showing router YAML and routerctl flowing through validation, effective config, controllers, SQLite state, renderers, and owned host artifacts](/img/diagrams/routerd-architecture.png)
 
 ---
