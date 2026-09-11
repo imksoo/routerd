@@ -456,6 +456,12 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	routerMu := &sync.RWMutex{}
 	var chainRunner *controllerchain.Runner
 	currentRouter := func() *api.Router {
+		if chainRunner != nil {
+			active := chainRunner.ActiveRuntimeSnapshot()
+			if active.Known && active.Available && active.Router != nil {
+				return active.Router
+			}
+		}
 		routerMu.RLock()
 		defer routerMu.RUnlock()
 		return router
@@ -464,9 +470,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		routerMu.Lock()
 		defer routerMu.Unlock()
 		router = next
-		if chainRunner != nil {
-			chainRunner.Router = next
-		}
 	}
 	logger, err := eventlog.New(router)
 	if err != nil {
@@ -590,11 +593,14 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
 	}
 	chainRunner = &controllerchain.Runner{
-		Router:      router,
-		Bus:         controllerBus,
-		Store:       stateStore,
-		Opts:        controllerOpts,
-		CancelServe: cancelSignalCtx,
+		Router: router,
+		Bus:    controllerBus,
+		Store:  stateStore,
+		Opts:   controllerOpts,
+		CancelServe: func() {
+			stopping.Store(true)
+			cancelSignalCtx()
+		},
 	}
 	if *once {
 		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)
@@ -683,17 +689,20 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return nil
 	}
 	mutator := serveConfigMutator{
-		configPath: *configPath,
-		statePath:  *statePath,
-		baseOpts:   applyOpts,
-		cache:      cache,
-		logger:     logger,
-		getRouter:  currentRouter,
-		setRouter:  setCurrentRouter,
-		reload:     chainRunner.ReloadRuntime,
-		stopping:   stopping.Load,
+		configPath:           *configPath,
+		statePath:            *statePath,
+		baseOpts:             applyOpts,
+		cache:                cache,
+		logger:               logger,
+		getRouter:            currentRouter,
+		setRouter:            setCurrentRouter,
+		reloadWithOutcome:    chainRunner.ReloadRuntimeWithOutcome,
+		activeRuntime:        chainRunner.ActiveRuntimeSnapshot,
+		updateRuntime:        chainRunner.UpdateRuntimeRouter,
+		runtimeMutationError: chainRunner.RuntimeMutationError,
+		stopping:             stopping.Load,
 	}
-	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping}
+	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping, runtimeMutationError: chainRunner.RuntimeMutationError}
 	if *applyInterval > 0 {
 		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu, &stopping)
 	}
@@ -733,6 +742,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	statusHandler := func(r *http.Request) (*controlapi.Status, error) {
 		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
 		status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
+		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
 		status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
 		controllers := controllerRuntime.Snapshot()
 		if stateStore != nil {
@@ -2170,36 +2180,80 @@ func webConsoleLinks(links []api.WebConsoleLinkSpec) []webconsole.ConsoleLink {
 }
 
 type resultCache struct {
-	mu     sync.RWMutex
-	result *apply.Result
+	mu               sync.RWMutex
+	result           *apply.Result
+	lastAttempt      *applyAttemptOutcome
+	lastAttemptError string
 }
 
 func (c *resultCache) Store(result *apply.Result) {
+	if c == nil {
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Scheduled dataplane health cannot acknowledge an earlier failed config
+	// transaction. Only a subsequent configuration attempt may clear it.
+	if c.lastAttemptError != "" || (c.lastAttempt != nil && c.lastAttempt.Result != nil && c.lastAttempt.Result.Phase == "Committed") {
+		return
+	}
+	if result != nil && result.Generation == 0 && c.result != nil {
+		observed := *result
+		observed.Generation = c.result.Generation
+		result = &observed
+	}
 	c.result = result
 }
 
+func (c *resultCache) StoreAttempt(outcome applyAttemptOutcome, err error) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastAttempt = &outcome
+	c.lastAttemptError = ""
+	if err != nil {
+		c.lastAttemptError = (&applyAttemptError{Outcome: outcome, Cause: err}).Error()
+		// Never relabel the previous success with this attempt's generation.
+		c.result = &apply.Result{Generation: outcome.Generation, Phase: "Error", Warnings: []string{c.lastAttemptError}}
+		return
+	}
+	c.result = outcome.Result
+}
+
+func (c *resultCache) LastAttempt() (applyAttemptOutcome, string, bool) {
+	if c == nil {
+		return applyAttemptOutcome{}, "", false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.lastAttempt == nil {
+		return applyAttemptOutcome{}, "", false
+	}
+	return *c.lastAttempt, c.lastAttemptError, true
+}
+
 func (c *resultCache) Load() *apply.Result {
+	if c == nil {
+		return nil
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.result
 }
 
 func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteStore) *apply.Result {
-	if store == nil {
+	// An observation belongs to the attempt that produced it. A newer failed
+	// or commit-only generation cannot turn an old observation into its success.
+	if store == nil || result != nil {
 		return result
 	}
 	generation := store.LatestGeneration()
 	if generation == 0 {
 		return result
 	}
-	if result == nil {
-		return &apply.Result{Generation: generation}
-	}
-	next := *result
-	next.Generation = generation
-	return &next
+	return &apply.Result{Generation: generation, Phase: "Unknown"}
 }
 
 func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) string {
@@ -2225,6 +2279,16 @@ func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) stri
 		}
 	}
 	return phase
+}
+
+func statusPhaseForRuntime(base string, active controllerchain.RuntimeSnapshot, stopped error) string {
+	if stopped != nil || (active.Known && !active.Available) {
+		return "Error"
+	}
+	if !active.Known && base != "Error" {
+		return "Unknown"
+	}
+	return base
 }
 
 func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.ResourcePhaseIssue {
@@ -2464,8 +2528,9 @@ var errGracefulStopShutdownDeadline = errors.New("graceful mobility stop exceede
 // the shared transaction lock. The second check closes the shutdown race where
 // a request was queued behind graceful-stop's exclusive mobility handoff.
 type serveMutationAdmission struct {
-	mu       *sync.Mutex
-	stopping *atomic.Bool
+	mu                   *sync.Mutex
+	stopping             *atomic.Bool
+	runtimeMutationError func() error
 }
 
 // runGracefulStopWhenIdle runs the optional mobility handoff only when no
@@ -2512,6 +2577,11 @@ func (a serveMutationAdmission) lock() (func(), error) {
 	if a.stopping != nil && a.stopping.Load() {
 		return nil, errServeMutationStopping
 	}
+	if a.runtimeMutationError != nil {
+		if err := a.runtimeMutationError(); err != nil {
+			return nil, err
+		}
+	}
 	if a.mu == nil {
 		return func() {}, nil
 	}
@@ -2519,6 +2589,12 @@ func (a serveMutationAdmission) lock() (func(), error) {
 	if a.stopping != nil && a.stopping.Load() {
 		a.mu.Unlock()
 		return nil, errServeMutationStopping
+	}
+	if a.runtimeMutationError != nil {
+		if err := a.runtimeMutationError(); err != nil {
+			a.mu.Unlock()
+			return nil, err
+		}
 	}
 	return a.mu.Unlock, nil
 }
@@ -2540,16 +2616,22 @@ func runApplySchedule(ctx context.Context, stop <-chan struct{}, interval time.D
 				return
 			}
 			chainRunner := runner()
-			if chainRunner != nil {
-				chainRunner.Router = router()
+			if chainRunner != nil && chainRunner.RuntimeMutationError() != nil {
+				applyMu.Unlock()
+				return
 			}
 			result, err := runServeChainScheduledOnce(ctx, chainRunner, router(), opts, store, io.Discard, logger)
-			applyMu.Unlock()
 			if err != nil {
+				var attemptErr *applyAttemptError
+				if errors.As(err, &attemptErr) {
+					cache.StoreAttempt(attemptErr.Outcome, err)
+				}
+				applyMu.Unlock()
 				logger.Emit(eventlog.LevelError, "serve", "scheduled apply failed", map[string]string{"error": err.Error()})
 				continue
 			}
 			cache.Store(result)
+			applyMu.Unlock()
 		}
 	}
 }
@@ -2562,16 +2644,24 @@ func runServeChainScheduledOnce(ctx context.Context, runner *controllerchain.Run
 	return runServeChainOnceWith(ctx, runner, router, opts, store, stdout, logger, true)
 }
 
-func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger, scheduled bool) (*apply.Result, error) {
+func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, router *api.Router, opts applyOptions, store *routerstate.SQLiteStore, stdout io.Writer, logger *eventlog.Logger, scheduled bool) (result *apply.Result, err error) {
+	outcome := applyAttemptOutcome{Stage: "prepare", Canonical: canonicalNotRequested}
+	defer func() {
+		outcome.Result = result
+		if runner != nil {
+			outcome.Runtime.Active = runner.ActiveRuntimeSnapshot()
+		}
+		outcome.wrapError(&err, logger)
+	}()
 	if runner == nil {
 		return nil, errors.New("controller chain runner is nil")
 	}
 	var generation int64
 	generationCreated := false
-	generationFinished := false
 	// Scheduled reconciliation repairs already-applied state. It must not create
 	// another identical configuration snapshot on every interval.
 	if !opts.DryRun && store != nil && !scheduled {
+		outcome.Stage = "begin-generation"
 		configYAML, err := routerConfigYAML(router, opts)
 		if err != nil {
 			return nil, err
@@ -2580,16 +2670,15 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			if generationCreated && !generationFinished {
-				_ = store.FinishGeneration(generation, "Errored", nil)
-			}
-		}()
+		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
+		defer outcome.finishEarlyFailure(store, opts, &err)
+		outcome.Stage = "inventory"
 		if err := recordHostInventoryState(store); err != nil {
 			return nil, err
 		}
 	}
 	var reconcileErr error
+	outcome.Stage = "reconcile"
 	if scheduled {
 		reconcileErr = runner.ReconcileScheduled(ctx)
 	} else {
@@ -2598,19 +2687,21 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	if reconcileErr != nil {
 		return nil, reconcileErr
 	}
-	result, err := apply.New().Observe(router)
+	outcome.Stage = "observe"
+	result, err = apply.New().Observe(router)
 	if err != nil {
 		return nil, err
 	}
 	if generation != 0 {
 		result.Generation = generation
 	}
-	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
-		return nil, err
+	outcome.Stage = "finish-generation"
+	if err := outcome.finish(store, opts, result.Phase, result.Warnings); err != nil {
+		return result, err
 	}
-	if !opts.DryRun && store != nil && generationCreated {
-		_ = store.FinishGeneration(generation, result.Phase, result.Warnings)
-		generationFinished = true
+	outcome.Stage = "output"
+	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+		return result, err
 	}
 	if logger != nil {
 		logger.Emit(eventlog.LevelInfo, "serve", "routerd serve once completed", map[string]string{
@@ -2618,6 +2709,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 			"generation": strconv.FormatInt(result.Generation, 10),
 		})
 	}
+	outcome.Stage = "complete"
 	return result, nil
 }
 

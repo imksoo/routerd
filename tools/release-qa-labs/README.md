@@ -22,15 +22,31 @@ It listens only on the run's explicit `http://127.0.0.1:<high-port>` endpoint
 and resolves and connects upstream with IPv4 sockets only. It changes no host
 DNS, route, interface, DHCP, or routerd setting. The proxy is started before
 baseline inventory, remains available through post/failure inventory, and is
-stopped only after final inventory. Its independent `RuntimeMaxSec` bounds it
-when the operator disconnects; a port collision fails readiness instead of
+stopped only after final inventory. Its independent `RuntimeMaxSec=9600`
+(160 minutes) includes the planned 145-minute paid cleanup envelope plus the
+existing 15-minute allowance for outer preflight/final inventory. This proxy
+lifetime is separate from the paid-resource budget and does not extend the
+qualification window. It also bounds the proxy when the operator disconnects;
+a port collision fails readiness instead of
 falling back to an untracked or externally reachable proxy.
 
-It must run under the tracked boot-enabled supervisor unit on the remote
-execution host named by the contract. Never run the paid lifecycle from a
-shared development host, a Codex process, or an interactive transport.
+It must run under the tracked boot-enabled supervisor unit on the execution
+host named by the contract. The default `execution.hostPolicy` is
+`approved-remote`: it requires `execution.requireRemote: true` and an approved
+remote host. An explicitly authorized local coordinator instead sets
+`execution.hostPolicy: local-supervised`, `execution.requireRemote: false`,
+and `execution.host` to the exact result of `socket.getfqdn()` on that machine.
+Local policy accepts no short-name/FQDN aliases; missing or unknown policy
+values do not enable local execution. Omitting the field retains the remote
+default. Keep environment-specific hostnames in private runtime inputs.
 
-The remote QA coordinator never starts `routerd`, including sandbox mode.
+Local execution still requires the same service account, tracked units,
+provider tools/mirror, canonical-source and artifact checks, staging proof,
+budgets, and durable cleanup. It does not authorize running the paid lifecycle
+inside a Codex process or an interactive transport, changing host networking,
+or bypassing a precheck.
+
+The QA coordinator never starts `routerd`, including sandbox mode.
 Generated-config validation copies the artifact and inputs over the
 QGA-pinned guest SSH path and runs the sandbox process only as an unprivileged
 process on a disposable PVE client. That sandbox has every network mutator,
@@ -96,13 +112,20 @@ runtime inputs must be mode 0600:
 - `runtime/secrets/pve-ca.pem`
 
 `runtime/run.env.json` must point `azureAuthSource` at the exact
-`runtime/secrets/azure-auth-source` directory.  Before the unit is started,
-copy only the Azure CLI authentication/configuration files required by the
-selected account into that directory, with mode 0700 on directories and 0600
-on files.  Symlinks are rejected.  The unit mounts this source read-only; the
-launcher digest-pins it and creates the writable CLI working copy at
-`runtime/provider-state/azure`.  Every driver receives that working copy via
-`AZURE_CONFIG_DIR`, so Azure command logs and token-cache updates cannot target
+`runtime/secrets/azure-auth-source` directory. Stage only the reviewed Azure
+CLI files and entries needed by the selected account, not the operator's
+entire Azure directory. A selected service principal needs its matching
+`service_principal_entries.json` entry; `azureProfile.json` or MSAL caches
+alone do not supply that credential. Use mode 0700 on directories and 0600
+on files, owned by the service UID/GID; symlinks are rejected.
+
+Before the first baseline inventory, prepare the initial writable copy at
+`runtime/provider-state/azure` from those selected inputs with the same private
+modes and ownership. Drivers already require this directory before the main
+unit starts. The root preparation unit subsequently seals the source; on
+every service start the launcher verifies that snapshot and reconstructs the
+working copy. The unit mounts the source read-only. Every driver receives the
+working copy via `AZURE_CONFIG_DIR`, so Azure command logs and token-cache updates cannot target
 the service user's global home.
 
 The same file must set `httpsProxy` to a run-unique unprivileged endpoint of
@@ -115,9 +138,23 @@ use their read-only credential/config sources, while PVE credentials remain
 run-confined inputs.  Provider writes are permitted only below the exact run's
 `runtime` directory.
 
+Verify readiness as `routerd-release-qa`, with the run's provider configuration
+and proxy environment, not merely as the operator. An existing profile or
+cached `az account show` output is not authentication evidence: require a
+successful authenticated read-only API request, such as the baseline Azure
+resource-group query. Ensure `tofu`, `aws`, `az`, `oci`, and their interpreters
+are executable in the service environment. In particular, an OCI CLI under a
+private operator home is not service-ready; use an approved service-accessible
+installation rather than opening that home or widening unit write access.
+
 Credentials, artifacts, provider mirrors, state, plans and evidence are never
 committed. `tofu.rc` expects the reviewed provider mirror at
-`/var/lib/routerd-release-qa/provider-mirror` on the execution host.
+`/var/lib/routerd-release-qa/provider-mirror` on the execution host. Verify each
+provider ZIP's SHA-256 against a `zh:` entry in the exact RC's committed
+`.terraform.lock.hcl`, then install its unpacked executable under
+`registry.opentofu.org/<namespace>/<provider>/<version>/linux_amd64` in that
+mirror. A ZIP-only mirror or matching version name is insufficient. Keep the
+mirror read-only to the service and retain the reviewed lock file unchanged.
 
 The PVE token source is exactly `runtime/secrets/pve-token.tfvars`; it is
 copied to `runtime/pinned/pve-token.tfvars` with the other supervisor inputs
@@ -143,6 +180,21 @@ history. `root@pam` is rejected. The precheck rejects a reusable, differently
 named, or differently owned token. This lets the reviewed post-zero hook
 identify and delete that one token without ever printing, logging, or sending
 its secret to the PVE host; it never deletes PVE users or ACLs.
+
+The creation response can encode `info.privsep` as numeric `0` or string
+`"0"`. Validate semantic zero and the exact returned token identity before
+writing the token input; reject missing or other values. Capture the original
+response only in protected mode-0600 storage, never print it, and do not
+repeat token creation if parsing fails: the token may already exist. Stop
+setup, inspect that exact identity read-only, and recover the original result
+or follow the reviewed recovery procedure.
+
+An existing `/`-level `PVEAdmin` grant is neither run-ID-scoped nor evidence of
+least privilege, even when the requested operations target only fresh lab IDs.
+Record the actual permission boundary and any explicitly approved lab exception;
+do not broaden ACLs or claim a least-privilege PASS. Authorization for a scoped
+lab campaign, including this lifecycle's `production` mode, does not authorize
+changes to production infrastructure.
 
 PVE hypervisor host keys are likewise a run input: `pveSshKnownHosts` must
 name exactly `runtime/secrets/pve-known_hosts`, with ordinary (not hashed or
@@ -176,10 +228,12 @@ The contract must bind:
   SHA-256;
 - SHA-256 identities for every release and QA script used by the run;
 - the canonical tracked QA commit and origin;
-- the approved remote execution host and provider mirror versions;
-- mutation TTL no greater than 55 minutes and heartbeat-stale less than TTL;
+- the authorized execution host, its explicit local policy if applicable,
+  and provider mirror versions;
+- mutation TTL no greater than 115 minutes (6900 seconds) and heartbeat-stale
+  less than TTL;
 - exact regions, instance types, provider counts and a cost ceiling no greater
-  than USD 1.00.
+  than USD 1.60 under the admission estimate policy, not an actual-bill cap.
 - `safety.pveManagementControlPlane: none`, `safety.pveTLS: pinned-ca`, and
   `pve.managementAddressSource: qga-dhcp`. The PVE management bridge is a
   shared underlay whose existing DHCP service assigns the six guest addresses.
@@ -188,7 +242,7 @@ The contract must bind:
   containing DHCP (v4 or v6) or IPv6 RA resources before it deploys `routerd`.
 - `stateMode: fresh-fabric-fresh-state`; release qualification never imports,
   moves, or updates a legacy AWS-RR state. Baseline inventory and OpenTofu
-  state must both be zero before any provider operation.
+  state must both be zero before `MUTATING` begins.
 - separate PVE identities: `pve.sshHost` is a DNS FQDN used by every PVE
   DNS/TCP/SSH consumer, while `pve.node` is the short Proxmox cluster node ID
   used by `pvesh /nodes/...` and Terraform `pve_node_name`. The FQDN's first
@@ -233,6 +287,33 @@ The contract must bind:
   handshakes. A new certified VMID range therefore needs no static IPAM
   reservation, source edit, or auto-assigned VM ID.
 
+The closed Ubuntu/PVE template profile explicitly uses these guest NIC names:
+
+| Role | Management (`net0`) | Capture (`net1`) |
+| --- | --- | --- |
+| RR | `eth0` | not attached |
+| Leaf | `eth0` | `ens19` |
+| Client | `eth0` | `eth1` |
+
+PVE emits `name: ethN` for a NIC with `ipconfigN`, and cloud-init applies that
+rename by MAC. Every management NIC has DHCP configuration. Only clients have
+capture-IP initialization; leaves intentionally omit it so MobilityPool owns
+their capture addresses. The certification driver therefore explicitly selects
+`eth0`/`ens19` for QGA, and the qualification driver sets
+`PVE_MANAGEMENT_INTERFACE=eth0`, `PVE_CAPTURE_INTERFACE=ens19`, and
+`PVE_CLIENT_CAPTURE_INTERFACE=eth1` for generation and client setup. Generic
+standalone script defaults remain unchanged. Do not guess a DHCP failure just
+because an `ens18` lookup returns zero: inspect the retained QGA interface
+evidence, including names, addresses, and MACs. A different image or provisioning
+model needs its own certified mapping; no interface or address check is skipped.
+
+The source image must contain the guest `qemu-guest-agent` daemon. Hypervisor
+`agent.enabled=true` only enables the device; it does not install that package.
+Prepare a disposable derivative during environment certification if necessary,
+clean its cloud-init instance/seed and host identities before template creation,
+and prove the resulting clones' QGA, SSH keys, addresses, and hostnames. Do not
+repair an image or override its per-VM IP configuration during qualification.
+
 `contract.example.json` and `terraform.tfvars.example` are parseable templates,
 not runnable lab inputs. Their PVE hosts, bridges, routes and API endpoints use
 `<certified-...>` placeholders. The contract keeps `0` only as a type-preserving
@@ -246,7 +327,7 @@ plans against a closed resource-type/count/type allowlist before apply.
 
 ## Precheck and cleanup
 
-Before any mutation, the remote-host precheck verifies DNS, TCP, TLS,
+Before any mutation, the execution-host precheck verifies DNS, TCP, TLS,
 authenticated read-only provider/PVE access and the provider mirror. It then
 requires exhaustive zero inventory.
 
@@ -261,6 +342,16 @@ Inventory queries are fail-closed and cover:
 
 Missing, duplicate, partial, unknown or failed queries are not zero. The same
 inventory gate runs after unconditional destroy.
+
+Full seven-scope zero is a boundary check: before `MUTATING`, and after cleanup,
+not between successful provisioning phases. In a `full-representative` run,
+PVE certification intentionally leaves its stage template, six guests, capture
+bridge, and OpenTofu state present for cloud certification and qualification.
+Retain that successful PVE result and apply the cloud saved-plan closed
+resource-type, count, and create-action guards. Do not rerun all-scope zero or
+destroy PVE at this handoff; neither a new cloud-only inventory gate nor relaxed
+plan rules are implied. Final cleanup still requires all seven scopes zero.
+This inventory baseline is separate from the profile's later traffic baseline.
 
 After every successful cleanup and final zero inventory, the supervisor enters
 `REVOKING_TOKEN` and automatically invokes the reviewed run checkout's
@@ -312,17 +403,47 @@ The release contract has one permitted final Cloud SAM profile:
 provider, 56 directed client flows, and 42 cloud-ingress flows), then proves
 `A -> B-only -> AB` with ordered RR BGP-membership evidence, all-leaf
 control/provider gates, and four cross-site hostname canaries. It deliberately
-does not repeat the symmetric B outage.
+does not repeat a B-side outage. It then runs four independent edge-A
+stop/rejoin scenarios in AWS, Azure, OCI, and PVE order. Each invokes the
+harness with one `--failover-node`, reuses the initial configs, skips deployment
+and initial validation, and retains the staged-RR membership checks. After
+both stop and rejoin it requires all 56 directed client flows and all 42
+cloud-ingress flows, plus all surviving-leaf control/dataplane and
+provider/ownership gates; edge scenarios never use the four-flow RR canary
+as a substitute. A is
+restored before the next site. Stops affect guest routerd/BGP services, not
+VM power or a PVE host. RR and edge scenarios require explicit successful
+stop/inactive and start/active acknowledgements; passing traffic alone cannot
+prove that the failure injection occurred. This replaces the former RR-only
+profile scope.
+
+Only default PVE `single-router` is in scope; CARP's unequal A/B priorities
+are not. Shared A/B source templates do not establish equal deployed state,
+bootstrap histories, provider identities, or fault domains. B-side stop/rejoin
+remains unverified even when B participates successfully in A's scenario.
 It neither provisions nor destroys resources.
 
 The contract binds at most 18 minutes for cloud/PVE provision and
-certification, at most 32 minutes for the profile, and at least five minutes
-of supervisor reserve inside a 55-minute mutation TTL. Each stage is
+certification, at most 90 minutes (5400 seconds) for the entire five-invocation
+profile (including evidence checks), and at least five minutes of supervisor reserve
+inside a 115-minute (6900-second) mutation TTL. The minimum allocation is
+113 minutes (`18 + 90 + 5`), leaving two minutes of headroom. Each stage is
 hard-bounded; a timeout fails and transfers control to the existing quiesce,
 run-scoped cleanup, and exhaustive zero-inventory path. Two cleanup attempts
-can extend the recovery envelope to 85 minutes; that is a recovery ceiling,
-not a permitted test duration. The USD ceiling and topology allowlist do not
-change. The exact artifact contract pins both the profile wrapper and its
+retain their 10-minute cleanup and 5-minute inventory bounds, giving a planned
+paid cleanup envelope of 145 minutes (8700 seconds): `115 + 2 × (10 + 5)`.
+That allowance is not permitted test time or a reason to abandon recovery
+before authoritative zero inventory. The topology allowlist is unchanged.
+The approved policy estimate is USD 1.55 and its admission ceiling is USD 1.60;
+neither is a current provider price quote or an actual-bill cap. This source
+budget change supersedes the old 32/55/85-minute policy. It is not live
+admission or evidence of a push or live PASS; a fresh approved contract and
+the required canonical-source and execution prechecks still apply.
+The expanded profile has not been timed to completion in a live run; each
+invocation receives only the remaining shared 5400-second budget. Offline PASS
+does not establish live PASS or guarantee duration/cost. A timeout must fail,
+not silently reduce the matrices or extend the paid window.
+The exact artifact contract pins both the profile wrapper and its
 `sam-e2e.sh` harness dependency.
 
 Use the durable supervisor as the only paid entry point. For the exact profile
@@ -331,7 +452,15 @@ command, evidence contract, and local offline test, see
 
 ## Offline validation
 
-No test contacts or mutates a provider, PVE, host network, systemd, or routerd.
+For host-safe source checks, use the selected fake-harness tests documented
+in the linked Cloud SAM profile pages. Those tests use no live endpoint or
+daemon; their success does not authorize host or cloud operations.
+
+The complete Python suite below is **not** a host-safe preflight. Some cases
+deliberately exercise `sudo`, systemd/service-manager, socket, or namespace
+contracts when their prerequisites are available. Run that suite only in a
+separately authorized, isolated release-QA environment, not on a shared
+development host under a source-only testing authorization.
 
 ```sh
 python3 -m unittest discover -s tools/release-qa-labs/tests -v
@@ -356,11 +485,11 @@ with bounded individual attempts and service-manager backoff for as long as
 necessary; stopping recovery at the admission estimate could leave a much
 larger leak. Review the final bill only after exhaustive zero cleanup.
 
-## Exact pre-paid staging procedure on chatty
+## Exact pre-paid staging procedure on the selected coordinator
 
-Do this only with a fresh canonical run root whose exhaustive baseline inventory
-is already zero. It performs authenticated read-only provider/PVE prechecks and
-the normal cleanup/inventory commands, but it cannot invoke the mutation driver.
+Use a fresh canonical run root and prove exhaustive baseline zero before
+starting the main unit. Staging performs authenticated read-only provider/PVE
+prechecks and the normal cleanup/inventory commands, but it cannot invoke the mutation driver.
 Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
 
 1. Copy the exact clean release checkout to
@@ -369,20 +498,26 @@ Do not alter host DNS, routes, network configuration, routerd services, or DHCP.
    `execution.mode: staging-no-mutation`, `runId: relqa-staging-...`, and
    `environment: routerd-release-qa-staging`. Keep every other contract field,
    provenance digest, credential, TTL and cleanup scope identical to the reviewed
-   production contract.
+   production contract. Complete the selected-account credentials, initial
+   Azure working copy, service-user tool checks, and verified unpacked
+   provider mirror described above before attempting baseline inventory.
 2. Install the tracked `supervisor/routerd-release-qa-egress-proxy@.service`,
    `supervisor/routerd-release-qa-prepare@.service`, and
-   `supervisor/routerd-release-qa@.service` unchanged and run
+   `supervisor/routerd-release-qa@.service` unchanged from the exact reviewed
+   checkout; compare installed contents and effective unit configuration,
+   including drop-ins, rather than trusting an older same-named unit. Run
    `systemctl daemon-reload`. Before baseline inventory, run tracked
    `drivers/manage-egress-proxy.sh start "$RUN_ID"` as root. It selects or
    validates a collision-free run port, creates the status directory, starts
-   the proxy, and waits for systemd readiness. Keep the existing reviewed
+   the proxy, and waits for systemd readiness. Run the authenticated checks and
+   inventory as the service user with that run's environment. Keep the reviewed
    sequence unchanged after that: authoritative baseline zero, first prepare,
    pinned metadata/digest capture, second prepare/restart and byte comparison,
    then main-unit start without blocking on the controller connection.
-   Disconnect the SSH client immediately;
-   the service does not depend on that session.
-3. Reconnect and inspect
+   Disconnect the controlling SSH client (or exit the launching session for
+   an explicitly authorized local coordinator) immediately; the service must
+   not depend on that session.
+3. Reconnect or open a new local session and inspect
    `runtime/evidence/lifecycle/supervisor-state.json`. Its history must contain
    `PRECHECK -> STAGING_ARMED -> STOPPING -> CLEANING -> VERIFYING_ZERO ->
    REVOKING_TOKEN -> STAGING_DONE`. A missing unit restart, failed cleanup,

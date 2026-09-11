@@ -44,6 +44,10 @@ cat >"$fake_bin/ssh" <<'SH'
 set -euo pipefail
 echo "$*" >>"$QGA_SSH_LOG"
 case "$*" in
+  *"pveversion && qm list"*) echo 'offline PVE inventory' ;;
+  *"pvesh get /nodes/pve01/qemu/140/config"*)
+    echo '{"template":1,"scsi0":"qnap:fixture-stage-disk"}'
+    ;;
   *"qm config"*)
     [ "${QGA_TRANSPORT_FAIL:-0}" = 1 ] && { echo "permission denied" >&2; exit 255; }
     printf '%s\n' "${QGA_AGENT_MODE:-1}"
@@ -72,9 +76,9 @@ case "$*" in
       capture_mac=$QGA_CAPTURE_MAC_OVERRIDE
     fi
     if [ -n "$capture_ip" ]; then
-      printf '[{"name":"ens18","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]},{"name":"ens19","hardware-address":"%s","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "$ip" "$capture_mac" "$capture_ip"
+      printf '[{"name":"%s","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]},{"name":"%s","hardware-address":"%s","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "${QGA_MANAGEMENT_IFNAME:-ens18}" "$ip" "${QGA_CAPTURE_IFNAME:-ens19}" "$capture_mac" "$capture_ip"
     else
-      printf '[{"name":"ens18","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "$ip"
+      printf '[{"name":"%s","hardware-address":"02:00:00:00:18:00","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"%s"}]}]\n' "${QGA_MANAGEMENT_IFNAME:-ens18}" "$ip"
     fi
     ;;
   *"qm guest exec"*)
@@ -205,5 +209,115 @@ grep -q 'root@pve06.example.test' "$tmp/ssh.log" || die "RR B QGA did not use it
 grep -q 'StrictHostKeyChecking=yes' "$tmp/ssh.log" || die "QGA SSH did not require a known PVE host key"
 grep -Fq "UserKnownHostsFile=$pve_known_hosts" "$tmp/ssh.log" || die "QGA SSH did not use the supplied PVE known_hosts"
 grep -Fq 'GlobalKnownHostsFile=/dev/null' "$tmp/ssh.log" || die "QGA SSH consulted ambient global known_hosts"
+
+# Exercise the closed release driver with the real QGA script, not a copied
+# argument list. Only provisioning/common.sh boundaries are fake, and the
+# bridge audit deliberately stops immediately after QGA's successful handoff.
+# The existing standalone cases above retain their ens18/ens19 defaults.
+repo_root="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+driver_root="$tmp/release-driver"
+mkdir -p "$driver_root/drivers" "$driver_root/tf"
+cp "$repo_root/tools/release-qa-labs/drivers/pve-certification-driver.sh" "$driver_root/drivers/"
+write_multi_output
+cp "$tmp/in.json" "$driver_root/pve-output.json"
+jq -n '{pve:{sshHost:"pve01.example.test",templateStage:{sourceNode:"pve01",vmid:140,datastore:"qnap"},
+  rrNodes:{"pve-rr-a":{sshHost:"pve05.example.test"},"pve-rr-b":{sshHost:"pve06.example.test"}}},
+  limits:{maxEstimatedCostUsd:1.60}}' >"$driver_root/contract.json"
+cat >"$driver_root/drivers/common.sh" <<'COMMON'
+set -euo pipefail
+contract_path="$QGA_DRIVER_ROOT/contract.json"
+framework_root="$QGA_DRIVER_ROOT"
+evidence_root="$QGA_DRIVER_CASE/evidence"
+plan_root="$QGA_DRIVER_CASE/plans"
+tf_dir="$QGA_DRIVER_ROOT/tf"
+tofu_state_path="$QGA_DRIVER_CASE/state"
+tfvars_path="$QGA_DRIVER_ROOT/unused.tfvars"
+pve_ssh_private_key="$QGA_DRIVER_KEY"
+pve_ssh_known_hosts="$QGA_DRIVER_KNOWN_HOSTS"
+pve_ssh_host=pve01.example.test
+parse_driver_args() { out_arg="$QGA_DRIVER_CASE/result.json"; }
+reset_checks() { :; }
+record_check() { :; }
+write_driver_result() { printf '%s\n' "$3" >"$1"; }
+require_command() { command -v "$1" >/dev/null; }
+require_supervisor_mutating() { :; }
+touch_heartbeat() { :; }
+run_with_progress() {
+  local label="$1"
+  shift
+  if [ "$label" = pve-qga-addresses ]; then
+    printf '%s\n' "$@" >"$QGA_DRIVER_CASE/qga-argv"
+  fi
+  "$@"
+}
+routerd_script() {
+  case "$1" in
+    */sam-pve-qga-addresses.sh) printf '%s\n' "$QGA_DRIVER_SCRIPT" ;;
+    */sam-pve-bridge-audit.sh) printf '%s\n' "$QGA_DRIVER_ROOT/stop-after-qga" ;;
+    *) return 97 ;;
+  esac
+}
+COMMON
+cat >"$driver_root/drivers/pve-capture-bridge.sh" <<'BRIDGE'
+#!/bin/sh
+exit 0
+BRIDGE
+cat >"$driver_root/stop-after-qga" <<'STOP'
+#!/bin/sh
+touch "$QGA_DRIVER_CASE/qga-completed"
+exit 42
+STOP
+cat >"$driver_root/qa_guard.py" <<'GUARD'
+# Pure fixture provisioning boundary. The real QGA identity guard is not mocked.
+raise SystemExit(0)
+GUARD
+cat >"$fake_bin/tofu" <<'TOFU'
+#!/bin/sh
+set -eu
+case " $* " in
+  *" show -json "*)
+    echo '{"planned_values":{"root_module":{"resources":[{"type":"proxmox_virtual_environment_vm","name":"pve_shared_template_stage"}]}},"resource_changes":[{"type":"proxmox_virtual_environment_vm","name":"pve_shared_template_stage","change":{"actions":["create"]}}]}' ;;
+  *" output -json pve_nodes "*) jq '.nodes.value' "$QGA_DRIVER_ROOT/pve-output.json" ;;
+  *" output -json pve_fabric "*) jq '.fabric.value.pve' "$QGA_DRIVER_ROOT/pve-output.json" ;;
+  *" init "*|*" plan "*|*" apply "*) : ;;
+  *) echo 'unexpected fake tofu invocation' >&2; exit 97 ;;
+esac
+TOFU
+chmod +x "$driver_root/drivers/pve-capture-bridge.sh" "$driver_root/stop-after-qga" "$fake_bin/tofu"
+
+run_release_driver_case() {
+  local name="$1" management="$2" capture="$3" expected="$4" diagnostic="${5:-}"
+  local case_dir="$driver_root/$name" rc=0
+  mkdir -p "$case_dir/evidence" "$case_dir/plans"
+  PATH="$fake_bin:$PATH" QGA_SSH_LOG="$case_dir/ssh.log" \
+    QGA_MANAGEMENT_IFNAME="$management" QGA_CAPTURE_IFNAME="$capture" \
+    QGA_DRIVER_ROOT="$driver_root" QGA_DRIVER_CASE="$case_dir" QGA_DRIVER_SCRIPT="$SCRIPT" \
+    QGA_DRIVER_KEY="$ssh_key" QGA_DRIVER_KNOWN_HOSTS="$pve_known_hosts" \
+    timeout 20s bash "$driver_root/drivers/pve-certification-driver.sh" \
+      >"$case_dir/driver.log" 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || die "unexpected release-driver fixture exit=$rc ($name)"
+  if [ "$expected" = pass ]; then
+    if [ ! -e "$case_dir/qga-completed" ]; then
+      cat "$case_dir/driver.log" >&2
+      die "release driver did not attest PVE cloud-init eth0 management / ens19 leaf capture"
+    fi
+    [ "$(awk 'previous == "--management-ifname" {print} {previous=$0}' "$case_dir/qga-argv")" = eth0 ] ||
+      die "release driver must explicitly select eth0 management"
+    [ "$(awk 'previous == "--capture-ifname" {print} {previous=$0}' "$case_dir/qga-argv")" = ens19 ] ||
+      die "release driver must explicitly select ens19 leaf capture"
+    jq -e '[.nodes.value[] | select(.pve_management_source == "qga-dhcp" and .ssh_host_key_source == "qga")] | length == 6' \
+      "$case_dir/evidence/certification/pve/tofu-output-pve-qga.json" >/dev/null ||
+      die "release driver lost six-guest QGA/IP/host-key attestation"
+    [ "$(wc -l <"$case_dir/evidence/certification/pve/guest-known_hosts")" -eq 6 ] ||
+      die "release driver lost guest known-host bindings"
+  else
+    [ ! -e "$case_dir/qga-completed" ] || die "release driver accepted wrong $name interface identity"
+    grep -Fq "$diagnostic" "$case_dir/driver.log" || die "release driver lost strict $name diagnostic"
+  fi
+}
+
+run_release_driver_case cloud-init eth0 ens19 pass
+run_release_driver_case wrong-management ens18 ens19 fail 'exactly one usable DHCP IPv4'
+run_release_driver_case wrong-capture eth0 eth1 fail PVEQGACaptureMACUnavailable
 
 echo "sam PVE QGA offline OK"

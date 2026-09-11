@@ -211,23 +211,46 @@ func DeleteResourceYAML(currentYAML []byte, target MutationTarget) ([]byte, *api
 }
 
 func AtomicWriteFile(path string, data []byte) error {
+	_, err := AtomicWriteFileWithOutcome(path, data)
+	return err
+}
+
+// AtomicWriteOutcome distinguishes visible replacement from confirmed file
+// and directory synchronization. An error after rename does not undo it.
+type AtomicWriteOutcome struct {
+	Replaced            bool
+	DurabilityConfirmed bool
+}
+
+func AtomicWriteFileWithOutcome(path string, data []byte) (AtomicWriteOutcome, error) {
+	return atomicWriteFile(path, data, atomicFileOps{rename: os.Rename, chmod: os.Chmod, syncDir: syncDir})
+}
+
+// Per-call operations keep fault injection local to one writer/test.
+type atomicFileOps struct {
+	rename  func(string, string) error
+	chmod   func(string, os.FileMode) error
+	syncDir func(string) error
+}
+
+func atomicWriteFile(path string, data []byte, ops atomicFileOps) (outcome AtomicWriteOutcome, err error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return errors.New("atomic write path is empty")
+		return outcome, errors.New("atomic write path is empty")
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+		return outcome, err
 	}
 	mode := os.FileMode(0644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+		return outcome, err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return err
+		return outcome, err
 	}
 	tmpPath := tmp.Name()
 	cleanup := true
@@ -238,30 +261,32 @@ func AtomicWriteFile(path string, data []byte) error {
 	}()
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
-		return err
+		return outcome, err
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return err
+		return outcome, err
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return outcome, err
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return outcome, err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return err
+	if err := ops.rename(tmpPath, path); err != nil {
+		return outcome, err
 	}
-	if err := os.Chmod(path, mode); err != nil {
-		return err
-	}
+	outcome.Replaced = true
 	cleanup = false
-	if err := syncDir(dir); err != nil {
-		return err
+	if err := ops.chmod(path, mode); err != nil {
+		return outcome, err
 	}
-	return nil
+	if err := ops.syncDir(dir); err != nil {
+		return outcome, err
+	}
+	outcome.DurabilityConfirmed = true
+	return outcome, nil
 }
 
 type resourceNodeID struct {
