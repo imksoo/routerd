@@ -24,7 +24,7 @@ Options:
                            Write QGA-pinned PVE guest known_hosts (default: OUT.guest-known_hosts).
   --management-ifname NAME Management interface reported by QGA (default: ens18).
   --capture-ifname NAME    PVE leaf capture interface reported by QGA (default: ens19).
-  --retries N              QGA retry attempts per VM (default: 90).
+  --retries N              QGA/management-IPv4 readiness attempts per VM (default: 90).
   --retry-sleep SEC        Delay between QGA retries (default: 20).
   --evidence FILE          Write discovery evidence (default: OUT.qga-addresses.txt).
 USAGE
@@ -282,37 +282,65 @@ for entry in "${pve_nodes[@]}"; do
 
   raw=
   for attempt in $(seq 1 "$retries"); do
+    network_state=transport-unavailable
+    management_link_count=0
+    ips=()
+    : >"$tmp.ssh-stderr"
     # shellcheck disable=SC2029 # the redirect is part of the remote QGA readiness check.
     if raw="$("${ssh_qga[@]}" "root@$pve_node_ssh_host" "qm agent $vmid ping >/dev/null && qm agent $vmid network-get-interfaces" 2>>"$tmp.ssh-stderr")"; then
-      break
+      network_state=invalid-response
+      if management_links="$(jq -ce --arg ifname "$management_ifname" '
+        (if type == "object" and has("result") then .result else . end)
+        | if type == "array" and all(.[]; type == "object" and (.name | type) == "string")
+          then map(select(.name == $ifname)) else error("invalid QGA interface response") end
+        | if all(.[]; ((if has("ip-addresses") then ."ip-addresses" else [] end) | type == "array" and all(.[];
+            type == "object" and (."ip-address" | type) == "string" and
+            (."ip-address-type" == "ipv4" or ."ip-address-type" == "ipv6"))))
+          then . else error("invalid QGA management address response") end
+      ' <<<"$raw" 2>>"$tmp.ssh-stderr")"; then
+        management_link_count="$(jq 'length' <<<"$management_links")"
+        network_state=invalid-management-interface
+        if [ "$management_link_count" -eq 1 ]; then
+          mapfile -t ips < <(jq -r '
+            .[]."ip-addresses"[]? | select(."ip-address-type" == "ipv4") | ."ip-address"
+          ' <<<"$management_links")
+          network_state=invalid-management-ipv4
+          if [ "${#ips[@]}" -eq 0 ]; then
+            # QGA readiness precedes DHCP readiness. Retry only this precise
+            # initial state; never hide a wrong NIC or bad/ambiguous address
+            # behind a later successful observation.
+            network_state=waiting-management-ipv4
+          elif [ "${#ips[@]}" -eq 1 ] && valid_unicast_ipv4 "${ips[0]}"; then
+            ip="${ips[0]}"
+            network_state=ready
+          fi
+        fi
+      fi
     fi
+    {
+      printf 'network_attempt=%s state=%s ifname=%s management_link_count=%s reported_ipv4_count=%s\n' \
+        "$attempt" "$network_state" "$management_ifname" "$management_link_count" "${#ips[@]}"
+      [ -z "$raw" ] || printf '%s\n' "$raw"
+      [ ! -s "$tmp.ssh-stderr" ] || cat "$tmp.ssh-stderr"
+    } >>"$evidence"
+    case "$network_state" in
+      ready) break ;;
+      waiting-management-ipv4|transport-unavailable) ;;
+      *)
+        echo "QGA must report exactly one usable DHCP IPv4 for $node on $management_ifname ($network_state)" >&2
+        exit 1 ;;
+    esac
     if [ "$attempt" -eq "$retries" ]; then
-      echo "QGA did not become ready for $node vmid=$vmid after $retries attempts" >&2
+      if [ "$network_state" = waiting-management-ipv4 ]; then
+        echo "QGA must report exactly one usable DHCP IPv4 for $node on $management_ifname after $retries attempts" >&2
+      else
+        echo "QGA did not become ready for $node vmid=$vmid after $retries attempts" >&2
+      fi
       exit 1
     fi
+    printf 'QGA readiness pending node=%s attempt=%s/%s state=%s\n' "$node" "$attempt" "$retries" "$network_state"
     sleep "$retry_sleep"
   done
-  mapfile -t ips < <(jq -r --arg ifname "$management_ifname" '
-    (if type == "object" and has("result") then .result else . end)[]?
-    | select(.name == $ifname)
-    | ."ip-addresses"[]?
-    | select(."ip-address-type" == "ipv4")
-    | ."ip-address"
-  ' <<<"$raw")
-  valid_ips=()
-  for ip in "${ips[@]}"; do
-    valid_unicast_ipv4 "$ip" && valid_ips+=("$ip")
-  done
-  if [ "${#valid_ips[@]}" -ne 1 ]; then
-    {
-      echo "FAIL node=$node vmid=$vmid ifname=$management_ifname valid_ipv4_count=${#valid_ips[@]}"
-      printf 'reported_ipv4=%s\n' "${ips[*]:-<empty>}"
-      echo "$raw"
-    } >>"$evidence"
-    echo "QGA must report exactly one usable DHCP IPv4 for $node on $management_ifname" >&2
-    exit 1
-  fi
-  ip="${valid_ips[0]}"
   if [ "$expected_management_source" = "qga-dhcp" ] && [ "$ip" != "$expected_management_ip" ]; then
     {
       printf 'FAIL node=%s vmid=%s expected_management_ip=%s observed_management_ip=%s\n' "$node" "$vmid" "$expected_management_ip" "$ip"

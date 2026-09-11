@@ -162,9 +162,12 @@ fi
 pve_output_path="$pve_dir/tofu-output-pve-qga.json"
 qga="$(routerd_script tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh)"
 pve_guest_known_hosts="$pve_dir/guest-known_hosts"
+# This closed PVE cloud-init profile names ipconfig0 management eth0. Leaf
+# capture has no ipconfig1 and retains ens19; attest those exact interfaces.
 if ! run_with_progress pve-qga-addresses "$qga" \
   --tofu-output "$pve_raw_output" \
   --out "$pve_output_path" \
+  --management-ifname eth0 --capture-ifname ens19 \
   --pve-ssh-key "$pve_ssh_private_key" \
   --pve-known-hosts "$pve_ssh_known_hosts" \
   --guest-known-hosts-out "$pve_guest_known_hosts" \

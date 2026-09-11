@@ -71,6 +71,46 @@ sudo routerctl plan -f /usr/local/etc/routerd/router.yaml --replace
 one-shot host command, and neither `routerctl plan` nor a repeated plan is a
 dry-run apply.
 
+## Interpreting a partial apply failure
+
+An apply error can occur after the canonical configuration has been replaced.
+The error and daemon log include `stage`, `generation`, `canonical`,
+`durabilityConfirmed`, terminal-record flags, and the confirmed runtime epoch.
+`Healthy` describes a dataplane observation; it does not confirm persistence.
+
+| Failure point | Canonical configuration | Runtime and completion |
+| --- | --- | --- |
+| Before replacement | Previous configuration | A changed runtime is restored if possible; a failed restoration reports the actual fallback or unavailable state. |
+| After rename, during chmod/directory sync | New configuration is visible | New runtime is retained; durability is unconfirmed. |
+| Terminal generation UPDATE | New configuration | New runtime is retained; the command/API fails without emitting a normal success result. |
+| Result/status output | New configuration | The completed generation remains completed; output failure is returned. |
+
+The daemon retains failed configuration-attempt diagnostics in memory, including
+when SQLite cannot record them. A successful scheduled observation does not clear
+those diagnostics; a subsequent configuration operation must resolve the failure.
+This memory does not survive a process restart. Inspect the error, canonical YAML,
+generation history and controller status before retrying. These contracts do not
+promise rollback of all OS changes or power-loss durability on every filesystem.
+
+A runtime reload accepted by the supervisor retains exclusive mutation ownership
+until its completion acknowledgement, even if the request context expires. If
+preparation does not cooperate with cancellation, new mutations are fenced and
+serve is asked to stop. There is no hard completion-time guarantee for a stuck
+builder. A confirmed generation belongs to serve, not to the HTTP request context.
+
+`--no-reconcile` deliberately commits configuration without changing the running
+generation. Standby keeps the existing HA behavior and skips canonical commit and
+host mutation. Dry-run creates no production generation or canonical change.
+
+Dry-run snapshots copy object statuses, state variables and dynamic desired parts
+from one SQLite read transaction, preserving timestamps, expiry, source,
+generation, digest and withdrawal intent. Debug logs contain an input manifest
+with the candidate hash and evaluation time, without payloads. Jobs, event cursors,
+event/action journals, federation history and generation history are excluded.
+Host observations and controller evaluation are not frozen; execution still checks
+TTL and ownership. The manifest is an account of acquired inputs, not authorization
+to apply them later.
+
 ## Render
 
 When this documentation says "render", it means routerd produces host-side

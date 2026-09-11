@@ -225,7 +225,11 @@ func writeResult(stdout io.Writer, statusFile string, result *apply.Result) erro
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, string(data))
+	if n, err := fmt.Fprintln(stdout, string(data)); err != nil {
+		return err
+	} else if n != len(data)+1 {
+		return io.ErrShortWrite
+	}
 	if statusFile != "" {
 		if err := statuswriter.Write(statusFile, result); err != nil {
 			return err

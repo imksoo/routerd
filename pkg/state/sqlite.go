@@ -1488,6 +1488,12 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 	if s.closed {
 		return "", nil
 	}
+	return recordBusEvent(s.db, s.generation, s.now().UTC(), event)
+}
+
+func recordBusEvent(executor interface {
+	Exec(string, ...any) (sql.Result, error)
+}, generation int64, now time.Time, event daemonapi.DaemonEvent) (string, error) {
 	apiVersion := event.APIVersion
 	kind := event.Kind
 	name := event.Daemon.Name
@@ -1503,9 +1509,9 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 		resourceName = event.Resource.Name
 	}
 	attrs, _ := json.Marshal(event.Attributes)
-	result, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
+	result, err := executor.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano),
+		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(generation), now.UTC().Format(time.RFC3339Nano),
 		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, string(attrs))
 	if err != nil {
 		return "", err

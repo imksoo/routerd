@@ -10,7 +10,9 @@
 # --- Run metadata ---
 run_id     = "relqa-<rc8>-<UTC timestamp>"
 commit     = "<exact untagged release commit>"
-expires_at = "<absolute UTC deadline, no more than 75 minutes after start>"
+# Derive a fresh UTC expiry from the reviewed run start and paid deadline.
+# The paid cleanup envelope is at most 145 minutes; mutation TTL remains 115m.
+expires_at = "<absolute UTC deadline, no more than 145 minutes after reviewed run start>"
 
 # Release qualification only permits the reviewed full topology. The saved
 # plan guard rejects different counts or instance types before apply.

@@ -38,24 +38,50 @@ returns success; an incomplete matrix is a failure, not a skipped check.
 The standalone wrapper retains its 20-minute cap so it remains a bounded
 baseline tool. The final release contract does **not** select this profile by
 itself: it selects `representative-redundancy`, which adds a staged PVE RR
-`A -> AB -> B-only -> AB` transition without repeating the complete traffic
-matrix after each transition. Its current contract budget is:
+`A -> AB -> B-only -> AB` transition using the existing four cross-site
+canaries, followed by four independent edge-A stop/rejoin scenarios, one each
+at AWS, Azure, OCI, and PVE. Each edge scenario requires all 56 client flows
+and all 42 cloud-ingress flows after both stop and rejoin, with mandatory
+surviving-leaf control/dataplane, provider/ownership, and RR membership gates. Each selected
+A is restored before the next site's scenario. B-side stop/rejoin is outside
+scope and remains unverified; default PVE `single-router` is required, not
+the priority-asymmetric CARP mode. These are guest routerd/BGP service
+transitions, not VM or physical-host power-off tests. Its approved source
+budget, superseding the former 32-minute qualification window, is:
 
 ```json
 "qualification": {
   "profile": "representative-redundancy",
   "runScope": "full-representative",
   "provisioningBudgetSeconds": 1080,
-  "qualificationBudgetSeconds": 1920,
+  "qualificationBudgetSeconds": 5400,
   "minimumSupervisorReserveSeconds": 300
 }
 ```
 
 The guard rejects another final profile, a provision/certification budget over
-18 minutes, a representative qualification budget over 32 minutes, a reserve
-below five minutes, or a sum that exceeds the 55-minute mutation TTL. The
+18 minutes, a representative qualification budget over 90 minutes, a reserve
+below five minutes, or a sum that exceeds the 115-minute mutation TTL. The
 artifact contract pins the representative wrapper and its `sam-e2e.sh` harness
 dependency.
+
+The unchanged five-minute minimum reserve gives `18 + 90 + 5 = 113` minutes,
+within the 115-minute (6900-second) TTL with two minutes of headroom. Two
+unchanged cleanup/inventory attempts of `10 + 5` minutes yield a planned paid
+cleanup envelope of 145 minutes (8700 seconds), not extra test time.
+
+The 5400 seconds cover the entire representative wrapper, including the
+initial RR invocation, all four edge invocations, and evidence verification;
+each later invocation receives only the remaining time. The approved cost
+policy estimate is USD 1.55, with a USD 1.60 admission ceiling. These are not
+current provider price quotes or a cap on the actual bill. The expanded
+sequence has not completed a measured live run. Neither offline PASS nor this
+source budget approval establishes live admission or guarantees live PASS,
+elapsed time, or actual cost. A fresh approved contract and all source and
+execution prechecks are still required; no push or live result is implied. Do not
+extend the TTL or omit required matrix rows to obtain a pass. See the
+[representative profile's A/B coverage boundary](cloud-sam-representative-redundancy.md#ab-coverage-boundary)
+for the limits of its static template comparison.
 
 The release-QA mutation driver spends the first bounded budget across cloud and
 PVE provision/certification. It then invokes the profile with the second
@@ -75,8 +101,8 @@ supervisor. It is evidence for proceeding to a new fresh
 `full-representative` run, not a release pass.
 
 This makes provisioning/certification, qualification, and cleanup distinct
-contracts. It avoids treating a multi-hour fault-injection suite as if it fit a
-55-minute paid mutation deadline.
+contracts. The 115-minute paid mutation deadline does not authorize the
+exhaustive engineering suite or a longer qualification run.
 
 ## Execution
 

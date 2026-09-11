@@ -21,8 +21,8 @@ class GuardError(RuntimeError):
     pass
 
 
-POLICY_MAX_TTL_SECONDS = 55 * 60
-POLICY_MAX_PAID_LIFECYCLE_SECONDS = 85 * 60
+POLICY_MAX_TTL_SECONDS = 115 * 60
+POLICY_MAX_PAID_LIFECYCLE_SECONDS = 145 * 60
 POLICY_MAX_CLEANUP_SECONDS = 10 * 60
 POLICY_MAX_INVENTORY_SECONDS = 5 * 60
 POLICY_MAX_CLEANUP_ATTEMPTS = 2
@@ -31,7 +31,7 @@ PVE_CERTIFICATION_ONLY_SCOPE = "pve-certification-only"
 FULL_REPRESENTATIVE_SCOPE = "full-representative"
 QUALIFICATION_RUN_SCOPES = {PVE_CERTIFICATION_ONLY_SCOPE, FULL_REPRESENTATIVE_SCOPE}
 MAX_PROVISIONING_BUDGET_SECONDS = 18 * 60
-MAX_QUALIFICATION_BUDGET_SECONDS = 32 * 60
+MAX_QUALIFICATION_BUDGET_SECONDS = 90 * 60
 MIN_SUPERVISOR_RESERVE_SECONDS = 5 * 60
 REQUIRED_QUALIFICATION_SCRIPT_BLOBS = {
     "tests/e2e/cloudedge/configs/sam-e2e-generate.sh",
@@ -51,7 +51,7 @@ REQUIRED_POST_ZERO_CLEANUP_BLOBS = {
     "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh",
 }
 RUNS_ROOT = Path("/var/lib/routerd-release-qa")
-POLICY_MAX_COST_USD = 1.00
+POLICY_MAX_COST_USD = 1.60
 APPROVED_EXECUTION_HOSTS = {"chatty", "chatty.lain.local"}
 PRODUCTION_MODE = "production"
 STAGING_MODE = "staging-no-mutation"
@@ -925,11 +925,24 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     elif run_id.startswith("relqa-staging-") or environment != PRODUCTION_ENVIRONMENT:
         raise GuardError("production mode requires the production environment and non-staging runId")
     expected_host = require(execution, "host", str)
-    if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
-        raise GuardError("execution must require an approved remote host")
+    host_policy = execution.get("hostPolicy", "approved-remote")
+    if host_policy == "approved-remote":
+        if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
+            raise GuardError("execution must require an approved remote host")
+    elif host_policy == "local-supervised":
+        if execution.get("requireRemote") is not False:
+            raise GuardError("local-supervised execution must set requireRemote to false")
+        if not expected_host.strip() or expected_host != expected_host.strip():
+            raise GuardError("local-supervised execution host must be nonempty without surrounding whitespace")
+    else:
+        raise GuardError("execution host policy is invalid")
     host = actual_host or socket.getfqdn()
-    aliases = {host, host.split(".", 1)[0]}
-    if expected_host not in aliases and expected_host.split(".", 1)[0] not in aliases:
+    if host_policy == "local-supervised":
+        host_matches = expected_host == host
+    else:
+        aliases = {host, host.split(".", 1)[0]}
+        host_matches = expected_host in aliases or expected_host.split(".", 1)[0] in aliases
+    if not host_matches:
         raise GuardError(f"wrong execution host: actual={host} expected={expected_host}")
 
     limits = require(contract, "limits", dict)
@@ -1004,10 +1017,51 @@ def walk_modules(module: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield from walk_modules(child)
 
 
+def verify_plan_reads(resources: list[dict[str, Any]], changes: list[dict[str, Any]], phase: str) -> None:
+    # The pinned OCI module reads the VNIC attachment for each of its four
+    # instances after creation. These are required inputs, not managed resources
+    # or a general permission to execute arbitrary Terraform data sources.
+    read_type = "oci_core_vnic_attachments"
+    bindings = {
+        f'module.oci_leaf.data.{read_type}.node["{key}"]':
+        f'module.oci_leaf.oci_core_instance.node["{key}"]'
+        for key in ("client", "oci-client-b", "oci-leaf-b", "router")
+    } if phase == "cloud" else {}
+    for label, records in (("planned_values", resources), ("resource_changes", changes)):
+        if not isinstance(records, list) or any(
+            not isinstance(record, dict) or record.get("mode") not in ("managed", "data")
+            for record in records
+        ):
+            raise GuardError(f"{label} contains an invalid resource mode")
+        if any(record.get("type") == read_type and record["mode"] != "data" for record in records):
+            raise GuardError(f"{label} OCI VNIC attachment queries must have data mode")
+        reads = [record for record in records if record["mode"] == "data"]
+        addresses = [record.get("address") for record in reads]
+        if (any(not isinstance(address, str) for address in addresses)
+                or len(addresses) != len(bindings) or set(addresses) != set(bindings)):
+            raise GuardError(f"{label} must contain exactly the closed {phase} data-read addresses")
+        if any(record.get("type") != read_type for record in reads):
+            raise GuardError(f"{label} contains a data type outside the closed allowlist")
+        if label == "resource_changes" and any(
+            not isinstance(record.get("change"), dict) or record["change"].get("actions") != ["read"]
+            for record in reads
+        ):
+            raise GuardError("OCI VNIC attachment data actions must be exactly ['read']")
+        if bindings:
+            instances = [record.get("address") for record in records
+                         if record["mode"] == "managed" and record.get("type") == "oci_core_instance"]
+            if (any(not isinstance(address, str) for address in instances)
+                    or len(instances) != len(bindings) or set(instances) != set(bindings.values())):
+                raise GuardError(f"{label} data reads must bind to the same four managed OCI instance keys")
+
+
 def verify_plan(path: Path, phase: str, ceiling: float) -> None:
     plan = load_json(path)
     root = plan.get("planned_values", {}).get("root_module", {})
     resources = list(walk_modules(root))
+    changes = plan.get("resource_changes", [])
+    verify_plan_reads(resources, changes, phase)
+    resources = [resource for resource in resources if resource["mode"] == "managed"]
     wanted = PLAN_COUNTS[phase]
     present_types = {str(r.get("type")) for r in resources}
     unknown = present_types - set(wanted)
@@ -1031,7 +1085,6 @@ def verify_plan(path: Path, phase: str, ceiling: float) -> None:
                 observed[value] = observed.get(value, 0) + 1
         if observed != expected:
             raise GuardError(f"plan instance type mismatch for {kind}: {observed}")
-    changes = plan.get("resource_changes", [])
     forbidden = [c.get("address") for c in changes if set(c.get("change", {}).get("actions", [])) - {"create", "read", "no-op"}]
     if forbidden:
         raise GuardError(f"fresh plan has non-create actions: {forbidden}")
