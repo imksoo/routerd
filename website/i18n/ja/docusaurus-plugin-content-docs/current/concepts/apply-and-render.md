@@ -92,6 +92,42 @@ sudo routerctl plan -f candidate.yaml --replace
 
 この 2 つは host の状態を変えませんが、稼働中の daemon が必要です。
 
+## 適用途中で失敗した場合
+
+エラーが返っても、canonical 設定ファイルは既に置換されている場合があります。
+エラーと daemon ログの `stage`、`generation`、`canonical`、
+`durabilityConfirmed`、世代完了記録の試行・成功フラグ、確定した runtime epoch を確認します。
+`Healthy` はデータプレーンの観測結果であり、設定保存の完了を証明しません。
+
+| 失敗箇所 | canonical 設定 | runtime と完了記録 |
+| --- | --- | --- |
+| 置換前 | 旧設定 | 切替済みなら復元を試みます。復元失敗時は実際の fallback または稼働世代なしを記録します。 |
+| rename 後の chmod／directory sync | 新設定が可視 | 新 runtime を維持し、耐久性は未確認として返します。 |
+| 世代完了の UPDATE | 新設定 | 新 runtime を維持し、通常の成功結果を出力せず失敗を返します。 |
+| 結果や status の出力 | 新設定 | 完了済み世代は完了のまま、出力の失敗を返します。 |
+
+SQLite に保存できない間も、daemon は今回の失敗診断をメモリーに保持します。
+定期実行で正常な状態を観測しただけでは診断を消さず、次の設定操作で確認します。
+このメモリーは再起動を跨ぎません。再試行前にエラー、canonical YAML、世代履歴、
+controller status を照合してください。OS 全体の巻戻しや全ファイルシステムでの
+電源断耐久性を保証するものではありません。
+
+supervisor が runtime 切替要求を受け付けた後は、要求の context が期限切れになっても
+完了の確認応答まで mutation の排他責任を維持します。準備処理がキャンセルに応じない
+場合は新しい変更を拒否して serve の停止を通知します。停止しない builder の完了時間に
+厳密な上限はありません。確定した稼働世代は serve に属し、HTTP 要求終了だけでは停止しません。
+
+`--no-reconcile` は設定だけを commit して稼働世代を変更しません。
+Standby の既存 HA 動作は維持し、canonical commit とホスト変更を行いません。
+dry-run は本番の世代記録や canonical を変更しません。
+
+dry-run は object status、状態変数、dynamic desired part を一つの SQLite read transaction
+からコピーし、観測時刻・期限・source・世代・digest・撤去意図を保持します。
+debug ログの入力 manifest には候補の hash と評価時刻を含め、payload は含めません。
+job、event cursor、event／action journal、federation 履歴、世代履歴はコピー対象外です。
+ホスト観測と controller の評価全体を凍結する仕組みではなく、実行時には TTL と ownership を
+再評価します。manifest 自体は将来の apply を許可する証拠にはなりません。
+
 ## 生成とは
 
 「生成」は、routerd が dnsmasq の設定、nftables の設定、systemd の unit など、

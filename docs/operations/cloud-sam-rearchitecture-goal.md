@@ -8,6 +8,14 @@ controller-refactor plan. Do not use cloud infrastructure until every listed
 implementation change and local verification are complete. Cloud is a final
 integration gate, never a substitute for completing the migration.
 
+The execution snapshots below retain the earlier RR-only profile and its
+32-minute qualification / 55-minute mutation budget as historical source
+decisions. They are superseded for current qualification scope and budget by
+the [representative redundancy contract](cloud-sam-representative-redundancy.md#approved-budget),
+including the four edge-A scenarios and the approved 90/115/145-minute
+qualification/mutation/planned-cleanup policy. This reference does not change
+past evidence or authorize live admission.
+
 ## Diagnosis to preserve
 
 The problem at the baseline was not an excessive number of files. Cloud SAM

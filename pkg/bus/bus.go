@@ -4,7 +4,9 @@ package bus
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +85,27 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 			event.Cursor = cursor
 		}
 	}
+	return b.publishLocal(ctx, event, storeErr)
+}
+
+// PersistsTo reports whether local notifications and a transactional producer
+// use the same journal. Non-comparable custom stores cannot establish identity.
+func (b *Bus) PersistsTo(store EventStore) bool {
+	return store != nil && reflect.TypeOf(store).Comparable() && b.store == store
+}
+
+// PublishRecorded delivers an event already committed to this bus's journal.
+// The caller must establish journal identity with PersistsTo before its commit.
+// A crash before local delivery is recovered by journal consumers' periodic
+// drains; this method never inserts the event into the journal a second time.
+func (b *Bus) PublishRecorded(ctx context.Context, event Event) error {
+	if event.Cursor == "" {
+		return fmt.Errorf("recorded event requires a persisted cursor")
+	}
+	return b.publishLocal(ctx, event, nil)
+}
+
+func (b *Bus) publishLocal(ctx context.Context, event Event, storeErr error) error {
 	b.mu.Lock()
 	if event.Cursor == "" {
 		b.nextCursor++
