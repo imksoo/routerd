@@ -42,6 +42,14 @@ converges them during controller reconcile. This keeps one-shot apply bounded to
 config validation and artifact rendering while the long-running controller owns
 daemon and runtime kernel lifecycle.
 
+A panic in a controller's synchronous reconcile call is recorded as a failed
+reconcile, including the existing OpenTelemetry count, duration and error event.
+The panic payload is omitted from the error and logs. The runner releases its
+locks and continues with subsequent controllers; periodic retries return to the
+shortest configured interval. Bootstrap still records reconcile failures and
+returns only context cancellation or deadline errors. Panics in separate
+goroutines and process termination are outside this recovery boundary.
+
 ## Drift checks
 
 routerd does not treat the status database as the only source of truth. The

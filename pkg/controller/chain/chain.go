@@ -213,6 +213,9 @@ func (s eventedStore) SaveObjectStatus(apiVersion, kind, name string, status map
 		return nil
 	}
 	status = s.statusWithLifecycle(apiVersion, kind, name, status)
+	if statusEventHistoryRequired(s.Router) {
+		return s.saveStatusWithHistory(apiVersion, kind, name, status, false)
+	}
 	current := s.Store.ObjectStatus(apiVersion, kind, name)
 	if newerStatus(current, status) {
 		return nil
@@ -240,6 +243,9 @@ func (s eventedStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 		return nil
 	}
 	status := s.statusWithLifecycle(apiVersion, kind, name, copyStatusMap(updates))
+	if statusEventHistoryRequired(s.Router) {
+		return s.saveStatusWithHistory(apiVersion, kind, name, status, true)
+	}
 	current := s.Store.ObjectStatus(apiVersion, kind, name)
 	next := copyStatusMap(current)
 	for key, value := range status {
@@ -680,47 +686,7 @@ func suppressStatusChangedEvent(apiVersion, kind string, current, next map[strin
 	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
 		return false
 	}
-	return mobilityPoolObservationRefreshOnly(current, next, fields)
-}
-
-func mobilityPoolObservationRefreshOnly(current, next map[string]any, fields []string) bool {
-	if len(fields) == 0 {
-		return false
-	}
-	allowed := mobilityPoolObservationRefreshFields()
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if field == "phase" {
-			if !mobilityPoolRoutineObservationPhaseTransition(fmt.Sprint(current["phase"]), fmt.Sprint(next["phase"])) {
-				return false
-			}
-			continue
-		}
-		if !allowed[field] {
-			return false
-		}
-	}
-	return true
-}
-
-func mobilityPoolRoutineObservationPhaseTransition(previousPhase, phase string) bool {
-	if routinePhaseTransition("MobilityPool", previousPhase, phase) {
-		return true
-	}
-	return (previousPhase == "Pending" && phase == "Watching") || (previousPhase == "Watching" && phase == "Pending")
-}
-
-func mobilityPoolObservationRefreshFields() map[string]bool {
-	fields := map[string]bool{}
-	for _, field := range []string{
-		"discoveryCompletedAt",
-		"discoveryFreshUntil",
-		"discoveryLastScanAt",
-		"discoveryObserved",
-	} {
-		fields[field] = true
-	}
-	return fields
+	return mobilitycontroller.PoolObservationRefreshOnly(current, next, fields)
 }
 
 func statusChangedEventSeverity(apiVersion, kind string, current, next map[string]any, fields []string) string {
@@ -810,14 +776,7 @@ func statusForEvent(apiVersion, kind string, status map[string]any) map[string]a
 	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
 		return stable
 	}
-	out := make(map[string]any, len(stable))
-	for key, value := range stable {
-		if mobilityStatusEventVolatileField(key) {
-			continue
-		}
-		out[key] = value
-	}
-	return out
+	return mobilitycontroller.PoolStatusEventProjection(stable)
 }
 
 func volatileStatusEventField(apiVersion, kind, key string) bool {
@@ -843,19 +802,6 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 	}
 	_ = apiVersion
 	return false
-}
-
-func mobilityStatusEventVolatileField(key string) bool {
-	switch key {
-	case "bgpCaptureTransitionCompleted":
-		return true
-	case "discoveryLastScanAt", "lastEventAt", "lastPacketAt", "lastScanAt":
-		return true
-	case "packetsSeen", "scanCount", "probeCount", "probeHitCount", "proactiveCount":
-		return true
-	default:
-		return false
-	}
 }
 
 func stableStatus(status map[string]any) map[string]any {
@@ -1314,15 +1260,24 @@ type Runner struct {
 	CancelServe         context.CancelFunc
 	ARPObserverCommands arpObserverCommandPusher
 
-	supervisedMu         sync.Mutex
-	clientDaemonStates   map[string]supervisedDaemonState
-	daemonSourcesStarted map[string]bool
-	arpObserverReadySet  map[string]bool
-	generationBuilder    func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
-	reloadMu             sync.Mutex
-	reloadCh             chan generationReload
-	startedMu            sync.Mutex
-	processStartedAt     time.Time
+	supervisedMu           sync.Mutex
+	clientDaemonStates     map[string]supervisedDaemonState
+	daemonSourcesStarted   map[string]bool
+	arpObserverReadySet    map[string]bool
+	generationBuilder      func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
+	reloadMu               sync.Mutex
+	reloadCh               chan generationReload
+	routerMu               sync.RWMutex
+	runtimeSnapshot        RuntimeSnapshot
+	runtimeOperation       uint64
+	runtimeReady           chan struct{}
+	runtimeReadyClosed     bool
+	runtimeStop            chan struct{}
+	runtimeFenced          bool
+	runtimeCancelRequested bool
+	reloadCancelGrace      time.Duration
+	startedMu              sync.Mutex
+	processStartedAt       time.Time
 }
 
 func (r *Runner) startedAt() time.Time {
@@ -1332,39 +1287,6 @@ func (r *Runner) startedAt() time.Time {
 		r.processStartedAt = time.Now().UTC()
 	}
 	return r.processStartedAt
-}
-
-type generationReload struct {
-	router *api.Router
-	done   chan error
-}
-
-func (r *Runner) ReloadRuntime(ctx context.Context, router *api.Router) error {
-	if router == nil {
-		return fmt.Errorf("reload router is required")
-	}
-	ch := r.runtimeReloadChannel()
-	request := generationReload{router: router, done: make(chan error, 1)}
-	select {
-	case ch <- request:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	select {
-	case err := <-request.done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (r *Runner) runtimeReloadChannel() chan generationReload {
-	r.reloadMu.Lock()
-	defer r.reloadMu.Unlock()
-	if r.reloadCh == nil {
-		r.reloadCh = make(chan generationReload)
-	}
-	return r.reloadCh
 }
 
 type supervisedDaemonSpec struct {
@@ -1377,6 +1299,9 @@ type supervisedDaemonSpec struct {
 type supervisedDaemonState struct {
 	Spec   supervisedDaemonSpec
 	Cancel context.CancelFunc
+	// Done acknowledges supervisor exit, including ownership-marker writes.
+	// Cancel remains asynchronous and does not wait for this acknowledgement.
+	Done <-chan struct{}
 }
 
 // supervisedDaemonMarker is runtime-scoped supervisor provenance. It
@@ -1501,15 +1426,15 @@ type arpObserverCommandPusher interface {
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
-	return resourcequery.FilterRouterByWhen(r.Router, store)
+	return resourcequery.FilterRouterByWhen(r.currentRouter(), store)
 }
 
 func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
-	if r.Router == nil {
+	if r.currentRouter() == nil {
 		return nil
 	}
 	now := time.Now().UTC()
-	for _, res := range r.Router.Spec.Resources {
+	for _, res := range r.currentRouter().Spec.Resources {
 		when := resourcequery.ResourceWhen(res)
 		if !resourcequery.ResourceWhenPresent(when) {
 			continue
@@ -1536,7 +1461,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if statusIsWhenFalse(current) {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
-			changed = preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, next) || changed
+			changed = preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
 			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
@@ -1552,7 +1477,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			"observedAt": now.Format(time.RFC3339Nano),
 		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
-		preserveIPv4StaticAddressCleanupStatus(r.Router, res, current, status)
+		preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
 		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
@@ -1806,15 +1731,15 @@ func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time
 }
 
 func (r *Runner) Start(ctx context.Context) error {
-	if r.Router == nil || r.Bus == nil || r.Store == nil {
+	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
 	logger := r.Opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
-	for _, resource := range r.Router.Spec.Resources {
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
+	for _, resource := range r.currentRouter().Spec.Resources {
 		if resource.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
@@ -1840,7 +1765,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.Router.Spec.Resources {
+	for _, resource := range r.currentRouter().Spec.Resources {
 		if resource.Kind != "DHCPv4Client" {
 			continue
 		}
@@ -1861,7 +1786,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.Router.Spec.Resources {
+	for _, resource := range r.currentRouter().Spec.Resources {
 		if resource.Kind != "HealthCheck" {
 			continue
 		}
@@ -1883,7 +1808,7 @@ func (r *Runner) Start(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, resource := range r.Router.Spec.Resources {
+	for _, resource := range r.currentRouter().Spec.Resources {
 		if resource.Kind != "PPPoESession" {
 			continue
 		}
@@ -1918,15 +1843,19 @@ func (r *Runner) Start(ctx context.Context) error {
 			// A running routerd without its controller generation is unsafe.
 			// Cancel the serve runtime so the service manager can restart it.
 			logger.Error("controller generation supervisor stopped; fencing serve runtime", "error", err)
-			if r.CancelServe != nil {
-				r.CancelServe()
-			}
+			r.fenceRuntime(true)
 		}
 	}()
-	return nil
+	select {
+	case <-r.runtimeReadyChannel():
+		return r.RuntimeMutationError()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type controllerGeneration struct {
+	router           *api.Router
 	ctx              context.Context
 	cancel           context.CancelFunc
 	decision         ha.Decision
@@ -1940,17 +1869,34 @@ func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.L
 }
 
 func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
+	return r.prepareControllerGenerationForRequest(ctx, nil, logger, store, gate)
+}
+
+func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
 	r.startedAt()
-	decision, err := acquireClusterLease(ctx, r.Router, store)
+	generationCtx, cancel := context.WithCancel(ctx)
+	// The request may cancel preparation, but a confirmed generation belongs
+	// to serve. Detach this callback before publishing a successful generation.
+	stopRequestCancel := func() bool { return true }
+	requestCanceled := make(chan struct{})
+	if requestCtx != nil {
+		stopRequestCancel = context.AfterFunc(requestCtx, func() { cancel(); close(requestCanceled) })
+	}
+	defer stopRequestCancel()
+	router := r.currentRouter()
+	decision, err := acquireClusterLease(generationCtx, router, store)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-	generationCtx, cancel := context.WithCancel(ctx)
 	builder := r.frameworkControllers
 	if r.generationBuilder != nil {
 		builder = r.generationBuilder
 	}
 	controllers, daemonStatusSync, err := builder(generationCtx, logger, store, true, decision)
+	if err == nil {
+		err = generationCtx.Err()
+	}
 	if err != nil {
 		cancel()
 		if decision.Lease != nil {
@@ -1967,8 +1913,22 @@ func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger
 		})
 	}
 	bootstrap := framework.Runner{Bus: r.Bus, MutationGate: gate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-	_ = bootstrap.Bootstrap(generationCtx, controllers...)
+	err = bootstrap.Bootstrap(generationCtx, controllers...)
+	if !stopRequestCancel() {
+		<-requestCanceled
+	}
+	if err == nil {
+		err = generationCtx.Err()
+	}
+	if err != nil {
+		cancel()
+		if decision.Lease != nil {
+			_ = decision.Lease.Close()
+		}
+		return nil, err
+	}
 	return &controllerGeneration{
+		router:           router,
 		ctx:              generationCtx,
 		cancel:           cancel,
 		decision:         decision,
@@ -1978,62 +1938,111 @@ func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger
 	}, nil
 }
 
-func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logger, store eventedStore, generation *controllerGeneration) error {
+func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logger, store eventedStore, generation *controllerGeneration) (err error) {
 	reloads := r.runtimeReloadChannel()
+	stopAdmission := context.AfterFunc(ctx, func() { r.fenceRuntime(false) })
+	defer stopAdmission()
+	var pending *generationReload
+	var reloadErr error
+	var restored bool
+	defer func() {
+		closeControllerGeneration(generation)
+		r.clearRuntimeGeneration(true)
+		r.fenceRuntime(err != nil && ctx.Err() == nil)
+		r.markRuntimeReady()
+		if pending != nil {
+			r.acknowledgeRuntimeReload(*pending, restored, errors.Join(reloadErr, runtimeStoppedError(err)))
+		}
+	}()
 	for ctx.Err() == nil {
 		if generation == nil {
 			select {
 			case request := <-reloads:
-				var reloadErr error
-				generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
-				request.done <- reloadErr
+				pending = &request
+				generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 				if generation == nil {
-					return reloadErr
+					return runtimeStoppedError(reloadErr)
 				}
-				continue
 			default:
+				generation, err = r.prepareControllerGeneration(ctx, logger, store.withRouter(r.currentRouter()))
+				if err != nil {
+					return err
+				}
 			}
-			var err error
-			generation, err = r.prepareControllerGeneration(ctx, logger, store)
-			if err != nil {
-				return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if r.RuntimeMutationError() != nil {
+			return ErrRuntimeMutationStopped
+		}
+		if generation.ctx.Err() != nil {
+			closeControllerGeneration(generation)
+			generation = nil
+			r.clearRuntimeGeneration(false)
+			if pending != nil {
+				return context.Canceled
 			}
+			continue
 		}
 		if r.controllerEnabled("daemon-status") {
 			r.warmDaemonStatuses(generation.ctx, generation.daemonStatusSync, logger)
 		}
 		if generation.decision.Enabled && generation.decision.Leader && generation.decision.Lease != nil && !generation.heartbeatStarted {
-			go generation.decision.Lease.Heartbeat(generation.ctx, func(err error) {
+			current := generation
+			go current.decision.Lease.Heartbeat(current.ctx, func(err error) {
 				logger.Error("routerd cluster lease heartbeat failed; fencing controller generation", "error", err)
-				generation.cancel()
+				current.cancel()
 			})
 		} else if generation.decision.Enabled && !generation.decision.Leader {
-			time.AfterFunc(clusterRetryInterval(r.Router), generation.cancel)
+			time.AfterFunc(clusterRetryInterval(r.currentRouter()), generation.cancel)
 		}
 		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
 		loopDone := make(chan error, 1)
 		go func(current *controllerGeneration) {
 			loopDone <- loop.Run(current.ctx, current.controllers...)
 		}(generation)
-		select {
-		case <-ctx.Done():
+		if !r.publishRuntimeGeneration(generation) {
 			generation.cancel()
-			<-loopDone
-			closeControllerGeneration(generation)
-			return ctx.Err()
-		case <-generation.ctx.Done():
 			<-loopDone
 			closeControllerGeneration(generation)
 			generation = nil
-		case request := <-reloads:
+			return runtimeStoppedError(ctx.Err())
+		}
+		r.markRuntimeReady()
+		if pending != nil {
+			r.acknowledgeRuntimeReload(*pending, restored, reloadErr)
+			pending = nil
+		}
+	waitForGeneration:
+		select {
+		case <-ctx.Done():
+			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
 			closeControllerGeneration(generation)
-			var reloadErr error
-			generation, reloadErr = r.prepareReloadedControllerGeneration(ctx, logger, store, request.router)
-			request.done <- reloadErr
+			generation = nil
+			return ctx.Err()
+		case <-generation.ctx.Done():
+			r.clearRuntimeGeneration(false)
+			<-loopDone
+			closeControllerGeneration(generation)
+			generation = nil
+			r.clearRuntimeGeneration(false)
+		case request := <-reloads:
+			if request.ctx != nil && request.ctx.Err() != nil {
+				r.acknowledgeRuntimeReload(request, false, request.ctx.Err())
+				goto waitForGeneration
+			}
+			pending = &request
+			r.clearRuntimeGeneration(false)
+			generation.cancel()
+			<-loopDone
+			closeControllerGeneration(generation)
+			r.clearRuntimeGeneration(false)
+			generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 			if generation == nil {
-				return reloadErr
+				return runtimeStoppedError(reloadErr)
 			}
 		}
 	}
@@ -2041,18 +2050,32 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 }
 
 func (r *Runner) prepareReloadedControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore, router *api.Router) (*controllerGeneration, error) {
-	previous := r.Router
-	r.Router = router
-	next, err := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(router), nil)
-	if err == nil {
-		return next, nil
+	generation, _, err := r.prepareRuntimeReload(ctx, logger, store, generationReload{router: router})
+	return generation, err
+}
+
+func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, store eventedStore, request generationReload) (*controllerGeneration, bool, error) {
+	previous := r.currentRouter()
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
 	}
-	r.Router = previous
+	if err := r.RuntimeMutationError(); err != nil {
+		return nil, false, err
+	}
+	r.setRuntimeRouter(request.router)
+	next, err := r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withRouter(request.router), nil)
+	if err == nil {
+		return next, false, nil
+	}
+	if ctx.Err() != nil || r.RuntimeMutationError() != nil {
+		return nil, false, errors.Join(err, ctx.Err(), r.RuntimeMutationError())
+	}
+	r.setRuntimeRouter(previous)
 	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
 	if rollbackErr != nil {
-		return nil, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
+		return nil, false, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
 	}
-	return rollback, err
+	return rollback, true, err
 }
 
 func closeControllerGeneration(generation *controllerGeneration) {
@@ -2082,14 +2105,14 @@ func clusterRetryInterval(router *api.Router) time.Duration {
 }
 
 func (r *Runner) ReconcileOnce(ctx context.Context) error {
-	if r.Router == nil || r.Bus == nil || r.Store == nil {
+	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
 	logger := r.Opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -2104,14 +2127,14 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 }
 
 func (r *Runner) ReconcileScheduled(ctx context.Context) error {
-	if r.Router == nil || r.Bus == nil || r.Store == nil {
+	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
 	logger := r.Opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.Router}
+	store := eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()}
 	decision, closeLease, err := r.oneShotHADecision(ctx, store)
 	if err != nil {
 		return err
@@ -2161,7 +2184,7 @@ func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.
 	if r.HADecision != nil {
 		return *r.HADecision, func() {}, nil
 	}
-	decision, err := acquireClusterLease(ctx, r.Router, store)
+	decision, err := acquireClusterLease(ctx, r.currentRouter(), store)
 	if err != nil {
 		return decision, func() {}, err
 	}
@@ -2204,36 +2227,36 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// effective only for this generation and must not poison a later leader
 	// generation after lease acquisition. Keep the options local rather than
 	// copying Runner: Runner owns synchronization and runtime state.
-	packages := PackageController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
-	sysctl := SysctlController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
-	kernelModules := KernelModuleController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
-	adoption := NetworkAdoptionController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
-	bridge := BridgeController{Router: r.Router, Store: store, DryRun: opts.DryRunBridge}
-	vxlanTunnel := VXLANTunnelController{Router: r.Router, DeclaredRouter: r.Router, Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
-	serviceUnits := SystemdUnitController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits}
-	logRetention := LogRetentionController{Router: r.Router, Bus: r.Bus, Store: store}
-	ntpClient := NTPClientController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
-	ntpServer := NTPServerController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store}
-	info := DHCPv6InformationController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	link := LinkController{Router: r.Router, Store: store, Logger: logger}
-	tunnel := TunnelInterfaceController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
-	wireGuard := WireGuardController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
-	ipv4Static := IPv4StaticAddressController{Router: r.Router, DeclaredRouter: r.Router, WhenRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
-	lan := LANAddressController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
-	dslite := DSLiteTunnelController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
-	hybridRoute := HybridRouteController{Router: r.Router, EffectiveRouter: r.Router, Store: store}
-	samController := SAMController{Router: r.Router, Store: store, DryRun: opts.DryRunRoute}
-	policyRoute := IPv4PolicyRouteController{Router: r.Router, DeclaredRouter: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
-	pathMTU := PathMTUController{Router: r.Router, OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Path: opts.PathMTUPath, ForceFragmentPath: opts.ForceFragmentPath}
-	dhcpv6 := DHCPv6ServerController{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
-	dhcp4Client := dhcpv4client.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
-	pppoeSession := pppoesession.Controller{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunPPPoESession, Logger: logger}
+	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
+	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
+	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
+	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
+	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
+	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
+	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits}
+	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store}
+	ntpClient := NTPClientController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store}
+	ntpServer := NTPServerController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store}
+	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
+	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger}
+	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
+	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
+	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
+	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
+	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
+	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, LedgerPath: opts.LedgerPath, Logger: logger}
+	pathMTU := PathMTUController{Router: r.currentRouter(), OS: platform.CurrentOS(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Path: opts.PathMTUPath, ForceFragmentPath: opts.ForceFragmentPath}
+	dhcpv6 := DHCPv6ServerController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
+	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
+	pppoeSession := pppoesession.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunPPPoESession, Logger: logger}
 	defaults, features := platform.Current()
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
-	eventFederation := eventfederationcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
-	leaseSync := FileSyncController{Router: r.Router, Store: store, DryRun: opts.DryRunLeaseSync}
-	nat44SessionSync := NAT44SessionSyncController{Router: r.Router, Store: store, DryRun: opts.DryRunNAT44SessionSync}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync}
+	nat44SessionSync := NAT44SessionSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunNAT44SessionSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
 	if strings.TrimSpace(opts.BGPSocketPath) != "" {
 		bgpDaemon.SocketPath = strings.TrimSpace(opts.BGPSocketPath)
@@ -2254,7 +2277,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	var eventSubscription eventsubscriptioncontroller.Controller
 	if rawStore, ok := r.Store.(eventsubscriptioncontroller.DataStore); ok {
 		eventSubscription = eventsubscriptioncontroller.Controller{
-			Router:     r.Router,
+			Router:     r.currentRouter(),
 			Bus:        r.Bus,
 			Store:      eventSubscriptionStore{evented: store, data: rawStore},
 			DryRun:     opts.DryRunEventSubscription,
@@ -2274,7 +2297,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			peerGroupSync = mobilitycontroller.NewPeerGroupSyncClient(rawStore)
 		}
 		mobilityDiscovery = mobilitycontroller.DiscoveryController{
-			Router:           r.Router,
+			Router:           r.currentRouter(),
 			Bus:              r.Bus,
 			Store:            mobilityData,
 			Runner:           opts.ProviderInventoryRunner,
@@ -2283,25 +2306,25 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			StartedAt:        r.startedAt(),
 		}
 		mobility = mobilitycontroller.Controller{
-			Router:    r.Router,
+			Router:    r.currentRouter(),
 			Bus:       r.Bus,
 			Store:     mobilityData,
 			BGPPaths:  bgpdaemon.NewControlClient(bgpDaemon.ControlSocketPath),
 			StartedAt: r.startedAt(),
 		}
 		mobilityTransport = mobilitycontroller.TransportController{
-			Router:        r.Router,
+			Router:        r.currentRouter(),
 			Bus:           r.Bus,
 			Store:         mobilityData,
 			PeerGroupSync: peerGroupSync,
 			OS:            platform.CurrentOS(),
 		}
 		mobilityEnrollmentClient = mobilitycontroller.SAMEnrollmentClientController{
-			Router: r.Router,
+			Router: r.currentRouter(),
 			Store:  mobilityData,
 		}
 		mobilityShard = mobilitycontroller.ShardController{
-			Router: r.Router,
+			Router: r.currentRouter(),
 			Bus:    r.Bus,
 			Store:  mobilityData,
 		}
@@ -2309,7 +2332,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	var providerAction provideractioncontroller.Controller
 	if rawStore, ok := r.Store.(provideractioncontroller.Store); ok {
 		providerAction = provideractioncontroller.Controller{
-			Router: r.Router,
+			Router: r.currentRouter(),
 			Bus:    r.Bus,
 			Store:  rawStore,
 			Runner: opts.ProviderActionRunner,
@@ -2317,21 +2340,21 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			Logger: logger,
 		}
 	}
-	daemonStatusSync := DaemonStatusController{Router: r.Router, Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
-	wan := egressroute.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
+	daemonStatusSync := DaemonStatusController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
+	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	durableEvents, _ := r.Store.(eventconsumer.Store)
-	rules := eventrule.Controller{Router: r.Router, Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
-	derivedEvents := derived.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
-	observabilityPipeline := observabilitypipeline.Controller{Router: r.Router, Bus: r.Bus, Store: store, Events: durableEvents}
-	health := healthcheck.Controller{Router: r.Router, Bus: r.Bus, Store: store, Logger: logger}
-	nat := nat44.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand, Logger: logger}
-	ingressService := ingressservicecontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.Router, store), Logger: logger}
-	bfd := bfdcontroller.Controller{Router: r.Router, Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
-	bgp := bgpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
-	vrrp := vrrpcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
-	ipAddressSet := IPAddressSetController{Router: r.Router, Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
-	firewall := firewallcontroller.Controller{Router: r.Router, Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
-	conntrackObs := conntrackobserver.Controller{Router: r.Router, Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: opts.ConntrackInterval, Logger: logger}
+	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
+	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
+	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
+	health := healthcheck.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
+	nat := nat44.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand, Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.currentRouter(), store), Logger: logger}
+	bfd := bfdcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
+	bgp := bgpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
+	vrrp := vrrpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
+	ipAddressSet := IPAddressSetController{Router: r.currentRouter(), Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
+	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
+	conntrackObs := conntrackobserver.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: opts.ConntrackInterval, Logger: logger}
 	if features.HasPF && !features.HasIproute2 {
 		conntrackObs.SnapshotSource = "pf"
 		conntrackObs.Snapshot = func() (conntrack.Snapshot, error) {
@@ -2381,7 +2404,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}
 	}
 	controllers := []framework.Controller{
-		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, Subs: observabilityPipelineStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, Subs: observabilityPipelineStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2390,7 +2413,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
-		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2399,7 +2422,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2430,18 +2453,18 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
 			current := vxlanTunnel
 			current.Router = effective
-			current.DeclaredRouter = r.Router
+			current.DeclaredRouter = r.currentRouter()
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: serviceUnitStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: serviceUnitStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2460,7 +2483,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptionsWithWhen(r.Router, []string{"NTPServer"}, "DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NTPServer"}, "DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2481,11 +2504,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 		framework.FuncController{ControllerName: "sam-enrollment-client", Every: time.Minute, Subs: statusSubscriptions("SAMEnrollmentClient", "SAMEnrollmentClaim"), NextAfter: func() time.Duration {
 			current := mobilityEnrollmentClient
-			current.Router = r.Router
+			current.Router = r.currentRouter()
 			return current.NextReconcileAfter()
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := mobilityEnrollmentClient
-			current.Router = r.Router
+			current.Router = r.currentRouter()
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: samTransportStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2528,14 +2551,14 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := ipv4Static
 			current.Router = view.RouteRouter
 			current.DeclaredRouter = view.RouteRouter
-			current.WhenRouter = r.Router
+			current.WhenRouter = r.currentRouter()
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			request := event.Type == "routerd.controller.bootstrap" || becamePhase(event, daemonapi.ResourcePhaseBound)
-			for _, resource := range r.Router.Spec.Resources {
+			for _, resource := range r.currentRouter().Spec.Resources {
 				if resource.Kind == "DHCPv6PrefixDelegation" {
 					if err := info.reconcile(ctx, resource.Metadata.Name, request); err != nil {
 						return err
@@ -2544,21 +2567,21 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
 			}
 			current := lan
 			current.Router = effective
-			for _, name := range declaredPrefixDelegationNames(effective, r.Router) {
+			for _, name := range declaredPrefixDelegationNames(effective, r.currentRouter()) {
 				if err := current.reconcile(ctx, name); err != nil {
 					return err
 				}
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2576,7 +2599,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2630,7 +2653,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			routeTeardown.MobilityDataplane = view.MobilityDataplane
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
-		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2655,7 +2678,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return dhcp4Client.ReconcileAll(ctx)
 		}, PeriodicFunc: didWorkPeriodic(dhcp4Client.ReconcileAll)},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			for _, resource := range r.Router.Spec.Resources {
+			for _, resource := range r.currentRouter().Spec.Resources {
 				if resource.Kind == "PPPoESession" {
 					if err := pppoeSession.Reconcile(ctx, resource.Metadata.Name); err != nil {
 						return err
@@ -2664,7 +2687,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "dns-resolver", Subs: dnsResolverStatusSubscriptions(r.Router), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "dns-resolver", Subs: dnsResolverStatusSubscriptions(r.currentRouter()), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return err
@@ -2752,7 +2775,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(providerAction.Reconcile)},
-		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2761,7 +2784,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IngressService"}), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IngressService"}), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2770,7 +2793,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptionsWithWhen(r.Router, []string{"NAT44Rule", "NAT44FlowDNATPinhole", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44Rule", "NAT44FlowDNATPinhole", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2779,7 +2802,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.Router, []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2788,7 +2811,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.Router), Subs: bgpStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
@@ -2796,7 +2819,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			bgp.Router = effective
 			return didWorkError(bgp.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2807,11 +2830,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		// Client daemons with a VRRP role condition must be supervised only
 		// after this generation has observed the kernel-owned VIP.  A persisted
 		// role from the previous process is not authoritative during startup.
-		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.Router, "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
 			return false, nil
 		}},
-		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.Router, []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -2822,7 +2845,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}},
 	}
 	if !opts.FirewallDisabled {
-		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.Router), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
@@ -3047,7 +3070,7 @@ func (r *Runner) warmDaemonStatuses(ctx context.Context, controller DaemonStatus
 }
 
 func (r *Runner) superviseClientDaemons(ctx context.Context, logger *slog.Logger) {
-	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(r.Router))
+	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(r.currentRouter()))
 }
 
 func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *api.Router, logger *slog.Logger) {
@@ -3058,7 +3081,7 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 }
 
 func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
-	return resourcequery.FilterRouterByResolvedWhen(r.Router, store)
+	return resourcequery.FilterRouterByResolvedWhen(r.currentRouter(), store)
 }
 
 func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
@@ -3283,8 +3306,8 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			continue
 		}
 		childCtx, cancel := context.WithCancel(ctx)
-		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel}
-		r.startSupervisedDaemonSpec(childCtx, logger, spec)
+		done := r.startSupervisedDaemonSpec(childCtx, logger, spec)
+		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel, Done: done}
 	}
 	r.supervisedMu.Unlock()
 
@@ -3480,9 +3503,11 @@ func arpObserverDaemonArgs(spec mobilityARPObserverDaemonSpec) []string {
 	return args
 }
 
-func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Logger, spec supervisedDaemonSpec) {
+func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Logger, spec supervisedDaemonSpec) <-chan struct{} {
 	resourceName, binary, args := spec.ResourceName, spec.Binary, append([]string(nil), spec.Args...)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		for ctx.Err() == nil {
 			if supervisedDaemonSocketReady(defaultClientSocket(binary, resourceName)) {
 				if !supervisedDaemonOwnedProcessRunning(spec) {
@@ -3547,6 +3572,7 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 			}
 		}
 	}()
+	return done
 }
 
 func routerdClientBinary(name string) string {

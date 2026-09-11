@@ -117,7 +117,7 @@ func TestRuntimeReloadQueuedBetweenGenerationsPreemptsGatedPrepare(t *testing.T)
 			ReconcileFunc:  func(context.Context, daemonapi.DaemonEvent) error { return nil },
 		}}, DaemonStatusController{}, nil
 	}
-	request := generationReload{router: newRouter, done: make(chan error, 1)}
+	request := generationReload{router: newRouter, done: make(chan generationReloadResult, 1)}
 	runner.reloadCh <- request
 
 	gate.Lock()
@@ -128,9 +128,9 @@ func TestRuntimeReloadQueuedBetweenGenerationsPreemptsGatedPrepare(t *testing.T)
 		supervisorDone <- runner.runControllerGenerations(ctx, slog.Default(), store, nil)
 	}()
 	select {
-	case err := <-request.done:
-		if err != nil {
-			t.Fatalf("queued reload failed: %v", err)
+	case result := <-request.done:
+		if result.err != nil {
+			t.Fatalf("queued reload failed: %v", result.err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("queued reload deadlocked behind the mutation gate")

@@ -32,6 +32,71 @@ class FakeChild:
         return 0
 
 
+class ApprovedBudgetTests(unittest.TestCase):
+    """Pure contract/argument tests: never launch a lifecycle or subprocess."""
+
+    def test_pinned_contract_accepts_approved_caps_and_rejects_one_over(self):
+        approved = {
+            "ttl": "115m", "heartbeatStale": "5m", "cleanupTimeout": "10m",
+            "inventoryTimeout": "5m", "maxCleanupAttempts": 2,
+            "maxPaidLifecycleSeconds": 8700,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.json"
+            supervisor = lifecycle.Supervisor.__new__(lifecycle.Supervisor)
+
+            def effective(values):
+                contract.write_text(json.dumps({
+                    "execution": {"mode": lifecycle.PAID_MODE}, "lifecycle": values,
+                }), encoding="utf-8")
+                return supervisor.effective_lifecycle({"contract": {
+                    "pinned": str(contract), "sha256": supervisor.digest(contract),
+                }})
+
+            result = effective(approved)
+            self.assertEqual(result["ttlSeconds"], 6900)
+            self.assertEqual(result["plannedPaidLifecycleSeconds"], 8700)
+            self.assertEqual(result["plannedCleanupAttempts"], 2)
+            self.assertEqual(result["cleanupTimeoutSeconds"], 600)
+            self.assertEqual(result["inventoryTimeoutSeconds"], 300)
+            self.assertEqual(result["contractSha256"], supervisor.digest(contract))
+            for key, value in (
+                ("ttl", "6901s"), ("maxPaidLifecycleSeconds", 8701),
+                ("cleanupTimeout", "601s"), ("inventoryTimeout", "301s"),
+                ("maxCleanupAttempts", 3), ("maxPaidLifecycleSeconds", 8699),
+            ):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(lifecycle.SupervisorError, "lifecycle exceeds policy"):
+                        effective({**approved, key: value})
+
+    def test_cli_defaults_and_explicit_caps_remain_bounded(self):
+        argv = [
+            "--run-id", "fixture", "--state", "/unused/state", "--heartbeat", "/unused/heartbeat",
+            "--precheck-command", "precheck", "--mutation-command", "mutation",
+            "--cleanup-command", "cleanup", "--inventory-command", "inventory",
+        ]
+        with mock.patch.object(lifecycle, "Supervisor") as supervisor:
+            supervisor.return_value.run.return_value = 0
+            for options in ([], ["--ttl-seconds", "6900", "--max-paid-lifecycle-seconds", "8700"]):
+                with self.subTest(options=options):
+                    self.assertEqual(lifecycle.main(argv + options + ["--post-zero-command", "post-zero"]), 0)
+                    args = supervisor.call_args.args[0]
+                    self.assertEqual(args.ttl_seconds, 6900)
+                    self.assertEqual(args.max_paid_lifecycle_seconds, 8700)
+                    self.assertEqual(args.max_cleanup_attempts, 2)
+            for options, message in (
+                (["--ttl-seconds", "6901"], "TTL"),
+                (["--max-paid-lifecycle-seconds", "8701"], "paid lifecycle"),
+                (["--max-cleanup-attempts", "3"], "cleanup attempts"),
+                (["--max-paid-lifecycle-seconds", "8699"], "paid lifecycle"),
+            ):
+                with self.subTest(options=options):
+                    supervisor.reset_mock()
+                    with self.assertRaisesRegex(lifecycle.SupervisorError, message):
+                        lifecycle.main(argv + options + ["--post-zero-command", "post-zero"])
+                    supervisor.assert_not_called()
+
+
 class SupervisorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

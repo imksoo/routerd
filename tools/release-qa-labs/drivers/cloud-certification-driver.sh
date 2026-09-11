@@ -85,12 +85,10 @@ if ! run_with_progress tofu-oci-auth-plan \
 fi
 record_check tooling oci "OCI provider API authentication" pass "oracle/oci read availability domains using the declared profile"
 
-pre_inventory="$evidence_root/certification/pre-apply-inventory"
-if ! "$script_dir/inventory-driver.sh" \
-  --run-id "$run_id" --evidence-dir "$pre_inventory"; then
-  fail_driver "pre-apply inventory is not zero"
-fi
-record_check tooling "" "fresh run inventory" pass "OpenTofu, cloud run-id, and exact PVE VM inventory are zero"
+# The supervisor's precheck already proved exhaustive zero before mutation.
+# The successful PVE phase now owns seven VMs, its capture bridge, and shared
+# OpenTofu state; requiring global zero here would reject that authorized work.
+# Exhaustive zero is required again after supervisor-owned cleanup, unchanged.
 
 plan="$plan_root/cloud.tfplan"
 cloud_state_backup="$preflight_dir/tofu-cloud-pre-apply.tfstate"
