@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260912.2138
+
 ### Fixed
 
 - Normalized `/tmp` and `/var/tmp` to root-owned mode 1777 in Live ISO builds,

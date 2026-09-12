@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260912.2138
+
 ### 修正
 
 - Live ISO建置現在會將 `/tmp` 與 `/var/tmp` 正規化為root擁有的1777模式，包含從

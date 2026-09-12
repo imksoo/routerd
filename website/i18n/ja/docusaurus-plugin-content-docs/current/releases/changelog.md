@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260912.2138
+
 ### 修正
 
 - rootfsキャッシュを使う場合も含め、Live ISO生成時の `/tmp` と `/var/tmp` を
