@@ -35,15 +35,22 @@ const (
 )
 
 type SQLiteStore struct {
-	path              string
-	db                *sql.DB
-	now               func() time.Time
-	generation        int64
-	statusWriteCount  uint64
-	statusSkipCount   uint64
-	statusKindCounter map[string]StatusKindWriteStats
-	closed            bool
-	mu                sync.RWMutex
+	path                     string
+	db                       *sql.DB
+	now                      func() time.Time
+	generation               int64
+	eventJournalRows         int64
+	eventJournalPayloadBytes int64
+	eventJournalMaxRows      int64
+	eventJournalMaxBytes     int64
+	eventJournalLastAgePrune time.Time
+	storageAlert             *StorageAlert
+	storageAlertHandler      func(StorageAlert)
+	statusWriteCount         uint64
+	statusSkipCount          uint64
+	statusKindCounter        map[string]StatusKindWriteStats
+	closed                   bool
+	mu                       sync.RWMutex
 }
 
 type StatusKindWriteStats struct {
@@ -71,6 +78,7 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`
 PRAGMA busy_timeout = 5000;
+PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA wal_autocheckpoint = 4096;
 PRAGMA journal_size_limit = 67108864;
@@ -79,12 +87,20 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		_ = db.Close()
 		return nil, err
 	}
-	store := &SQLiteStore{path: path, db: db, now: time.Now}
+	store := &SQLiteStore{
+		path: path, db: db, now: time.Now,
+		eventJournalMaxRows:  defaultEventJournalMaxRows,
+		eventJournalMaxBytes: defaultEventJournalMaxPayloadBytes,
+	}
 	if err := store.init(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	if err := store.migrateLegacyJSON(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.loadEventJournalUsage(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -698,7 +714,7 @@ VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
 	if err != nil {
-		return err
+		return s.noteStorageWriteErrorLocked(err)
 	}
 	s.statusWriteCount++
 	s.incrementStatusKindWriteLocked(ref.Kind)
@@ -1464,11 +1480,31 @@ func (s *SQLiteStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
 	if s.closed {
 		return 0, nil
 	}
-	result, err := s.db.Exec(`DELETE FROM events WHERE created_at < ?`, cutoff.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return 0, err
+	formattedCutoff := cutoff.UTC().Format(time.RFC3339Nano)
+	var deleted int64
+	for {
+		result, err := s.db.Exec(`DELETE FROM events WHERE id IN (
+SELECT id FROM events WHERE created_at < ? ORDER BY id LIMIT ?)`, formattedCutoff, eventJournalPruneBatchRows)
+		if err != nil {
+			return deleted, s.noteStorageWriteErrorLocked(err)
+		}
+		batch, err := result.RowsAffected()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += batch
+		if batch > 0 {
+			_, _ = s.db.Exec(`PRAGMA incremental_vacuum(4096)`)
+			_, _ = s.db.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+		}
+		if batch < eventJournalPruneBatchRows {
+			break
+		}
 	}
-	return result.RowsAffected()
+	if err := s.loadEventJournalUsage(); err != nil {
+		return deleted, err
+	}
+	return deleted, nil
 }
 
 func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, message string) error {
@@ -1477,9 +1513,19 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 	if s.closed {
 		return nil
 	}
+	message = boundedJournalText(message, maxJournalMessageBytes)
+	payloadBytes := journalPayloadBytes(apiVersion, kind, name, eventType, reason, message)
+	if err := s.ensureEventJournalCapacityLocked(payloadBytes); err != nil {
+		return s.noteStorageWriteErrorLocked(err)
+	}
 	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return s.noteStorageWriteErrorLocked(err)
+	}
+	s.eventJournalRows++
+	s.eventJournalPayloadBytes += payloadBytes
+	return nil
 }
 
 func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEvent) (string, error) {
@@ -1488,12 +1534,24 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 	if s.closed {
 		return "", nil
 	}
-	return recordBusEvent(s.db, s.generation, s.now().UTC(), event)
+	bounded, attrs := boundedJournalEvent(event)
+	payloadBytes := busEventJournalPayloadBytes(bounded, attrs)
+	if err := s.ensureEventJournalCapacityLocked(payloadBytes); err != nil {
+		return "", s.noteStorageWriteErrorLocked(err)
+	}
+	cursor, payloadBytes, err := recordBusEvent(s.db, s.generation, s.now().UTC(), bounded)
+	if err != nil {
+		return "", s.noteStorageWriteErrorLocked(err)
+	}
+	s.eventJournalRows++
+	s.eventJournalPayloadBytes += payloadBytes
+	return cursor, nil
 }
 
 func recordBusEvent(executor interface {
 	Exec(string, ...any) (sql.Result, error)
-}, generation int64, now time.Time, event daemonapi.DaemonEvent) (string, error) {
+}, generation int64, now time.Time, event daemonapi.DaemonEvent) (string, int64, error) {
+	event, attrs := boundedJournalEvent(event)
 	apiVersion := event.APIVersion
 	kind := event.Kind
 	name := event.Daemon.Name
@@ -1508,19 +1566,29 @@ func recordBusEvent(executor interface {
 		resourceKind = event.Resource.Kind
 		resourceName = event.Resource.Name
 	}
-	attrs, _ := json.Marshal(event.Attributes)
+	payloadBytes := journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 	result, err := executor.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(generation), now.UTC().Format(time.RFC3339Nano),
-		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, string(attrs))
+		event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return fmt.Sprintf("%d", id), nil
+	return fmt.Sprintf("%d", id), payloadBytes, nil
+}
+
+func busEventJournalPayloadBytes(event daemonapi.DaemonEvent, attrs string) int64 {
+	apiVersion, kind, name := event.APIVersion, event.Kind, event.Daemon.Name
+	resourceAPI, resourceKind, resourceName := "", "", ""
+	if event.Resource != nil {
+		apiVersion, kind, name = event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name
+		resourceAPI, resourceKind, resourceName = event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name
+	}
+	return journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 }
 
 func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {

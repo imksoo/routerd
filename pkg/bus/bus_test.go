@@ -16,6 +16,10 @@ import (
 
 type failingEventStore struct{ err error }
 
+type nonFatalStoreError struct{ error }
+
+func (nonFatalStoreError) NonFatalPersistence() bool { return true }
+
 func (s failingEventStore) RecordBusEvent(context.Context, Event) (string, error) {
 	return "", s.err
 }
@@ -42,6 +46,20 @@ func TestPersistenceFailureStillDeliversLocally(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "persistence failed; delivered locally") {
 		t.Fatalf("persistence failure was not logged: %s", logs.String())
+	}
+}
+
+func TestNonFatalPersistenceFailureKeepsRuntimeEventFlowing(t *testing.T) {
+	b := NewWithStore(failingEventStore{err: nonFatalStoreError{errors.New("database or disk is full")}})
+	ch, cancel := b.Subscribe(context.Background(), Subscription{}, 1)
+	defer cancel()
+	if err := b.Publish(context.Background(), daemonapi.DaemonEvent{Type: "routerd.test.event"}); err != nil {
+		t.Fatalf("Publish returned a fatal error: %v", err)
+	}
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("storage pressure suppressed local event delivery")
 	}
 }
 

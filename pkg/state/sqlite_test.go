@@ -388,6 +388,10 @@ func TestSQLiteStoreMaintenance(t *testing.T) {
 		t.Fatalf("record old event: %v", err)
 	}
 	store.now = func() time.Time { return newTime }
+	// This maintenance test exercises the explicit prune command. The default
+	// journal guard is covered separately and would otherwise prune this row on
+	// the next insert.
+	store.eventJournalLastAgePrune = newTime
 	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "NewEvent", "new event"); err != nil {
 		t.Fatalf("record new event: %v", err)
 	}

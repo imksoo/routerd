@@ -429,8 +429,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	var stateStore *routerstate.SQLiteStore
 	stateStore, err = routerstate.OpenSQLite(*statePath)
 	if err != nil {
+		if routerstate.IsStorageFullError(err) {
+			mirrorStorageAlert(routerstate.NewStorageAlert(*statePath, time.Now()))
+		}
 		return err
 	}
+	stateStore.SetStorageAlertHandler(mirrorStorageAlert)
+	clearStorageAlert()
 	closeStateStore := true
 	// A configuration mutation can be blocked inside SQLite when SIGTERM
 	// arrives.  The signal path must be able to leave without synchronously
@@ -749,6 +754,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			controllers = augmentControllerStatusesFromState(controllers, stateStore)
 		}
 		status.Status.Controllers = controllers
+		if stateStore.StorageAlert() != nil {
+			status.Status.Phase = "Degraded"
+		}
 		return &status, nil
 	}
 	controllersHandler := func(r *http.Request) (*controlapi.Controllers, error) {
@@ -764,6 +772,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		if stateStore != nil {
 			stats.StateStatusWriteCount, stats.StateStatusSkipCount = stateStore.StatusWriteStats()
 			stats.StateStatusKindStats = stateStore.StatusKindWriteStats()
+			journal := stateStore.EventJournalStats()
+			stats.EventJournal = &journal
 		}
 		return &stats, nil
 	}
@@ -1086,6 +1096,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			scheme = "https"
 		}
 		fmt.Fprintf(stdout, "routerd serving control API on %s://%s\n", scheme, httpControl.Listen)
+	}
+	if err := notifySystemd("READY=1\nSTATUS=routerd control APIs ready"); err != nil {
+		slog.Debug("cannot notify systemd that routerd is ready", "error", err)
 	}
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		return err

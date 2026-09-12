@@ -30,6 +30,21 @@ routerctl get events --topic routerd.resource.status.changed
 routerctl get events --resource DNSResolver/lan-resolver -o json
 ```
 
+Even without a `LogRetention` resource, the local event journal is bounded to
+24 hours, 100,000 rows, and 64 MiB of logical payload. Use a `LogSink` before
+increasing local forensic retention; router operation must not depend on an
+unbounded event table.
+
+### Storage-full recovery
+
+Check `routerctl doctor disk`, `systemctl status routerd`, and
+`/run/routerd/storage-critical.json`. For a volatile Live ISO COW filesystem,
+reboot the router OS and then verify its persistent configuration contains the
+intended `LogRetention`. For persistent storage, stop routerd, run
+`routerctl ledger prune-events --older-than 24h`, and only run
+`routerctl ledger vacuum` after enough working space is available. A reboot by
+itself does not reclaim persistent storage.
+
 ### Mobility holder transitions
 
 CloudEdge SAM failover emits `routerd.mobility.holder.transition` events with
@@ -62,7 +77,7 @@ handover completion events are not yet proven in a real environment.
 
 The state database holds **observed** state — it is not a substitute for the configuration. The authoritative description of intent lives in the YAML configuration, version-controlled in git. If a host is rebuilt, restoring the configuration and letting routerd reconcile is preferred over restoring the SQLite database.
 
-If you want history of operational events for forensic purposes, take periodic snapshots of `events.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db` instead. Those are append-only by nature and do not need point-in-time backups of `routerd.db`.
+If you want history of operational events for forensic purposes, export or take periodic snapshots of `routerd.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db`. The controller event journal currently lives in `routerd.db`; preserve the complete database when event history is required.
 
 ## See also
 

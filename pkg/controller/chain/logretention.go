@@ -84,6 +84,16 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	// The event journal is part of the router's safety envelope, not an
+	// opt-in observability feature. Enforce its age bound even when no
+	// LogRetention resource is declared and when the journal is otherwise idle.
+	if store, ok := c.Store.(interface {
+		PruneEventsOlderThan(time.Time) (int64, error)
+	}); ok {
+		if _, err := store.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

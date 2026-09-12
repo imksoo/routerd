@@ -39,6 +39,13 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if s.closed {
 		return nil, sql.ErrConnDone
 	}
+	// Reserve enough journal capacity before entering the atomic status/event
+	// transaction. SQLite maintenance cannot run through the single DB
+	// connection while that transaction is open.
+	const maxStatusEventPayload = maxJournalMessageBytes + maxJournalAttributesBytes + 4096
+	if err := s.ensureEventJournalCapacityLocked(maxStatusEventPayload); err != nil {
+		return nil, s.noteStorageWriteErrorLocked(err)
+	}
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, err
@@ -103,25 +110,28 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_versi
 		return nil, err
 	}
 	var cursor string
+	var eventPayloadBytes int64
 	if event != nil {
 		prepared := *event
 		if prepared.Time.IsZero() {
 			prepared.Time = now
 		}
 		event = &prepared
-		cursor, err = recordBusEvent(tx, s.generation, now, *event)
+		cursor, eventPayloadBytes, err = recordBusEvent(tx, s.generation, now, *event)
 		if err != nil {
-			return nil, err
+			return nil, s.noteStorageWriteErrorLocked(err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, s.noteStorageWriteErrorLocked(err)
 	}
 	s.statusWriteCount++
 	s.incrementStatusKindWriteLocked(kind)
 	if event == nil {
 		return nil, nil
 	}
+	s.eventJournalRows++
+	s.eventJournalPayloadBytes += eventPayloadBytes
 	committed := *event
 	committed.Cursor = cursor
 	return &committed, nil
