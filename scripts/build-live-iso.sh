@@ -141,6 +141,11 @@ fi
 
 fi
 
+# Debian rootfs caches do not guarantee the standard sticky permissions for
+# temporary directories. Normalize them immediately before further image
+# customization so both cached and fresh Live ISO builds are safe.
+run_root install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"
+
 if [ "${rootfs_only}" = true ]; then
     echo "rootfs-only mode: done"
     exit 0

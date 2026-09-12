@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- rootfsキャッシュを使う場合も含め、Live ISO生成時の `/tmp` と `/var/tmp` を
+  root所有の1777へ正規化しました。起動直後から標準の一時ファイル利用と
+  `routerctl doctor disk` が正常に動作します（#1230）。
+
 ## v20260912.2100
 
 ### 修正
