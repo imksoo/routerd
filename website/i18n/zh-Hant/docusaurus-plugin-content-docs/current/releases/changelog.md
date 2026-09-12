@@ -11,6 +11,14 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 即使未設定 `LogRetention`，SQLite 事件日誌現在也會限制在24小時、100,000列及
+  64 MiB邏輯負載以內，且不會清除操作狀態資料表。儲存空間已滿時的日誌寫入失敗不再
+  中斷本機執行階段事件傳遞。`EventJournalReadOnly` 可透過執行階段狀態、
+  `routerctl doctor`、資料庫外的執行階段警示檔案及systemd服務狀態觀測，並會分別為
+  揮發性Live ISO與持久性磁碟提供復原指引（#1223）。
+
 ## v20260901.1516
 
 ### 修正
