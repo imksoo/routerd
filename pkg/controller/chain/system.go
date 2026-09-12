@@ -1864,6 +1864,13 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 			}
 			return true, nil
 		}
+		// Reaching this controller proves that routerd.service is already
+		// running. With Type=notify, systemd reports it as "activating" until
+		// bootstrap completes, so `systemctl is-active` would return false and
+		// a direct self-restart here would prevent READY from ever being sent.
+		if unitName == "routerd.service" {
+			return changed, nil
+		}
 		active := true
 		if !fileChanged {
 			if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {

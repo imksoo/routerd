@@ -800,7 +800,10 @@ func TestSystemdUnitControllerKeepsPreparedLiveUnitRunningThenRestartsForLaterCh
 				if args[len(args)-1] != render.RouterdUnitName {
 					return nil, errors.New("inactive")
 				}
-				return []byte("active"), nil
+				if args[0] == "is-active" {
+					return []byte("activating"), errors.New("activating is not active")
+				}
+				return []byte("enabled"), nil
 			}
 			return []byte("ok"), nil
 		},
@@ -810,6 +813,9 @@ func TestSystemdUnitControllerKeepsPreparedLiveUnitRunningThenRestartsForLaterCh
 	}
 	if got := strings.Join(commands, "\n"); strings.Contains(got, "systemd-run") || strings.Contains(got, "systemctl daemon-reload") || commandLineContains(commands, "systemctl restart routerd.service") {
 		t.Fatalf("prepared live unit must not schedule or perform a self restart:\n%s", got)
+	}
+	if got := strings.Join(commands, "\n"); strings.Contains(got, "systemctl is-active --quiet routerd.service") {
+		t.Fatalf("running routerd must not probe its own active state during notify bootstrap:\n%s", got)
 	}
 
 	commands = nil

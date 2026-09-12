@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 防止 `service-unit` 控制器在 `Type=notify` 仍处于启动阶段时重启
+  `routerd.service`。守护进程现在可以完成启动、发送 READY，并启动 BGP 等受管理服务
+  （#1228）。
+
 ## v20260912.2028
 
 ### 修复

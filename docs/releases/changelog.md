@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Prevented the `service-unit` controller from restarting `routerd.service`
+  while a `Type=notify` startup is still activating. The daemon can now finish
+  bootstrap, emit READY, and start managed services such as BGP (#1228).
+
 ## v20260912.2028
 
 ### Fixed
