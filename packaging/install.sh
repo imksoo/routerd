@@ -977,9 +977,9 @@ run_dependency_install()
                 echo "dry-run: apt-get update"
                 echo "dry-run: apt-get install -y ${packages}"
             else
-                apt-get update
+                apt-get -o DPkg::Lock::Timeout=300 update
                 # shellcheck disable=SC2086
-                apt-get install -y ${packages}
+                apt-get -o DPkg::Lock::Timeout=300 install -y ${packages}
             fi
             ;;
         dnf)

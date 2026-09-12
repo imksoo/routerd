@@ -18,20 +18,25 @@ import (
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type serveConfigMutator struct {
-	configPath string
-	statePath  string
-	baseOpts   applyOptions
-	cache      *resultCache
-	logger     *eventlog.Logger
-	getRouter  func() *api.Router
-	setRouter  func(*api.Router)
-	reload     func(context.Context, *api.Router) error
-	stopping   func() bool
+	configPath           string
+	statePath            string
+	baseOpts             applyOptions
+	cache                *resultCache
+	logger               *eventlog.Logger
+	getRouter            func() *api.Router
+	setRouter            func(*api.Router)
+	reload               func(context.Context, *api.Router) error
+	reloadWithOutcome    func(context.Context, *api.Router) (controllerchain.RuntimeReloadOutcome, error)
+	activeRuntime        func() controllerchain.RuntimeSnapshot
+	updateRuntime        func(*api.Router) error
+	runtimeMutationError func() error
+	stopping             func() bool
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
@@ -45,7 +50,6 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
 	}
-	shapeChanged, _ := runtimeShapeChanged(m.getRouter(), nextRouter)
 	if req.DryRun {
 		result, err := m.planRouter(nextRouter, nextYAML)
 		if err != nil {
@@ -55,9 +59,11 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		return &apiResult, nil
 	}
 	if req.NoReconcile {
-		if err := m.rejectIfStopping(); err != nil {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
 			return nil, err
 		}
+		defer unlock()
 		result, err := m.commitOnly(nextRouter, nextYAML)
 		if err != nil {
 			return nil, err
@@ -70,28 +76,10 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		return nil, err
 	}
 	defer unlock()
-	previous := m.getRouter()
-	if shapeChanged {
-		if m.reload == nil {
-			return nil, fmt.Errorf("runtime generation reload is unavailable")
-		}
-		if err := m.reloadRuntime(nextRouter); err != nil {
-			return nil, err
-		}
-		m.setRouter(nextRouter)
-	}
-	result, err := m.reconcile(nextRouter, nextYAML)
+	result, err := m.mutateRuntime(nextRouter, nextYAML)
 	if err != nil {
-		if shapeChanged {
-			_ = m.reloadRuntime(previous)
-			m.setRouter(previous)
-		}
 		return nil, err
 	}
-	if !shapeChanged {
-		m.setRouter(nextRouter)
-	}
-	m.cache.Store(result)
 	apiResult := controlapi.NewApplyResult(result)
 	return &apiResult, nil
 }
@@ -163,7 +151,6 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if !removed {
 		return nil, fmt.Errorf("%w: %s/%s not found in canonical config", controlapi.ErrBadRequest, target.Kind, target.Name)
 	}
-	shapeChanged, _ := runtimeShapeChanged(m.getRouter(), nextRouter)
 	result := controlapi.DeleteResult{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
 		Deleted:  []string{target.APIVersion + "/" + target.Kind + "/" + target.Name},
@@ -178,9 +165,11 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		return &result, nil
 	}
 	if req.NoReconcile {
-		if err := m.rejectIfStopping(); err != nil {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
 			return nil, err
 		}
+		defer unlock()
 		committed, err := m.commitOnly(nextRouter, string(nextYAML))
 		if err != nil {
 			return nil, err
@@ -193,28 +182,10 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		return nil, err
 	}
 	defer unlock()
-	previous := m.getRouter()
-	if shapeChanged {
-		if m.reload == nil {
-			return nil, fmt.Errorf("runtime generation reload is unavailable")
-		}
-		if err := m.reloadRuntime(nextRouter); err != nil {
-			return nil, err
-		}
-		m.setRouter(nextRouter)
-	}
-	applied, err := m.reconcile(nextRouter, string(nextYAML))
+	applied, err := m.mutateRuntime(nextRouter, string(nextYAML))
 	if err != nil {
-		if shapeChanged {
-			_ = m.reloadRuntime(previous)
-			m.setRouter(previous)
-		}
 		return nil, err
 	}
-	if !shapeChanged {
-		m.setRouter(nextRouter)
-	}
-	m.cache.Store(applied)
 	result.Result = applied
 	return &result, nil
 }
@@ -321,13 +292,19 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 }
 
 func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*apply.Result, error) {
+	outcome, err := m.reconcileWithOutcome(router, configYAML)
+	return outcome.Result, err
+}
+
+func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML string) (applyAttemptOutcome, error) {
+	outcome := applyAttemptOutcome{Stage: "admission", Canonical: canonicalNotRequested}
 	if err := m.rejectIfStopping(); err != nil {
-		return nil, err
+		return outcome, err
 	}
 	if m.baseOpts.Sandbox {
-		committed, err := m.commitOnly(router, configYAML)
+		committed, err := m.commitOnlyWithOutcome(router, configYAML)
 		if err != nil {
-			return nil, err
+			return committed, err
 		}
 		// The caller owns the exclusive mutation gate for the whole live-apply
 		// transaction. Avoid recursively taking it in the sandbox plan runner.
@@ -335,10 +312,13 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 		planner.baseOpts.MutationGate = nil
 		result, err := planner.planRouter(router, configYAML)
 		if err != nil {
-			return nil, err
+			committed.Stage = "sandbox-plan"
+			return committed, err
 		}
 		result.Generation = committed.Generation
-		return result, nil
+		committed.Result = result
+		committed.Stage = "complete"
+		return committed, nil
 	}
 	opts := m.baseOpts
 	opts.DryRun = false
@@ -347,7 +327,7 @@ func (m serveConfigMutator) reconcile(router *api.Router, configYAML string) (*a
 	// This transaction owns the exclusive gate through config commit and the
 	// Router pointer swap. Do not recursively lock it inside RunOnce.
 	opts.MutationGate = nil
-	return runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
+	return runApplyChainOnceWithOutcome(context.Background(), router, opts, io.Discard, m.logger)
 }
 
 func (m serveConfigMutator) lockMutationTransaction() (func(), error) {
@@ -369,55 +349,82 @@ func (m serveConfigMutator) rejectIfStopping() error {
 	if m.stopping != nil && m.stopping() {
 		return errServeMutationStopping
 	}
+	if m.runtimeMutationError != nil {
+		return m.runtimeMutationError()
+	}
 	return nil
 }
 
 func (m serveConfigMutator) reloadRuntime(router *api.Router) error {
+	_, err := m.reloadRuntimeOutcome(router)
+	return err
+}
+
+func (m serveConfigMutator) reloadRuntimeOutcome(router *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+	outcome := controllerchain.RuntimeReloadOutcome{}
 	if err := m.rejectIfStopping(); err != nil {
-		return err
+		return outcome, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	return m.reload(ctx, router)
+	if m.reloadWithOutcome != nil {
+		return m.reloadWithOutcome(ctx, router)
+	}
+	if m.reload == nil {
+		return outcome, errors.New("runtime generation reload is unavailable")
+	}
+	err := m.reload(ctx, router)
+	if err == nil {
+		outcome.Active = controllerchain.RuntimeSnapshot{Router: router, Known: true, Available: true}
+	}
+	return outcome, err
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {
-	if err := m.rejectIfStopping(); err != nil {
-		return nil, err
+	outcome, err := m.commitOnlyWithOutcome(router, configYAML)
+	m.cache.StoreAttempt(outcome, err)
+	return outcome.Result, err
+}
+
+func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML string) (outcome applyAttemptOutcome, err error) {
+	outcome = applyAttemptOutcome{Stage: "admission", Canonical: canonicalNotRequested}
+	if m.activeRuntime != nil {
+		outcome.Runtime.Active = m.activeRuntime()
 	}
+	defer outcome.wrapError(&err, m.logger)
+	if err := m.rejectIfStopping(); err != nil {
+		return outcome, err
+	}
+	outcome.Stage = "open-state"
 	store, err := routerstate.OpenSQLite(m.statePath)
 	if err != nil {
-		return nil, err
+		return outcome, err
 	}
 	defer func() { _ = store.Close() }()
+	outcome.Stage = "begin-generation"
 	generation, generationCreated, err := beginConfigGeneration(store, configYAML, router)
 	if err != nil {
-		return nil, err
+		return outcome, err
 	}
-	finished := false
-	defer func() {
-		if generationCreated && !finished {
-			_ = store.FinishGeneration(generation, "Errored", nil)
-		}
-	}()
-	if err := config.AtomicWriteFile(m.configPath, []byte(configYAML)); err != nil {
-		return nil, err
+	outcome.Generation, outcome.GenerationCreated = generation, generationCreated
+	defer outcome.finishEarlyFailure(store, m.baseOpts, &err)
+	opts := m.baseOpts
+	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
+	if err := outcome.commit(opts, configYAML); err != nil {
+		return outcome, err
 	}
+	outcome.Stage = "record-applied-path"
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {
-		return nil, err
+		return outcome, err
 	}
-	if generationCreated {
-		if err := store.FinishGeneration(generation, "Committed", nil); err != nil {
-			return nil, err
-		}
+	outcome.Result = &apply.Result{Generation: generation, Timestamp: time.Now().UTC(), Phase: "Committed"}
+	outcome.Stage = "finish-generation"
+	if err := outcome.finish(store, opts, "Committed", nil); err != nil {
+		return outcome, err
 	}
-	finished = true
 	if m.logger != nil {
 		m.logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config without reconcile", map[string]string{"config": m.configPath})
 	}
-	return &apply.Result{
-		Generation: generation,
-		Timestamp:  time.Now().UTC(),
-		Phase:      "Committed",
-	}, nil
+	outcome.Stage = "complete"
+	return outcome, nil
 }

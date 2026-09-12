@@ -75,6 +75,22 @@ func TestInstallDoesNotExcludeBGPOrDNSResolverHelpersFromStaleRestart(t *testing
 	}
 }
 
+func TestInstallWaitsForConcurrentAptAndDpkgOwners(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, want := range []string{
+		"apt-get -o DPkg::Lock::Timeout=300 update",
+		"apt-get -o DPkg::Lock::Timeout=300 install -y ${packages}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("install.sh must tolerate bounded apt/dpkg lock contention via %q", want)
+		}
+	}
+}
+
 func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
 	if err != nil {

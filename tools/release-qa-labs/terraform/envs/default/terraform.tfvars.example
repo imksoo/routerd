@@ -10,11 +10,14 @@
 # --- Run metadata ---
 run_id     = "relqa-<rc8>-<UTC timestamp>"
 commit     = "<exact untagged release commit>"
-expires_at = "<absolute UTC deadline, no more than 75 minutes after start>"
+# Derive a fresh UTC expiry from the reviewed run start and paid deadline.
+# The paid cleanup envelope is at most 145 minutes; mutation TTL remains 115m.
+expires_at = "<absolute UTC deadline, no more than 145 minutes after reviewed run start>"
 
 # Release qualification only permits the reviewed full topology. The saved
 # plan guard rejects different counts or instance types before apply.
 topology_scale = "full"
+clients_per_site = 1 # Keep both leaves; only the extra traffic client is omitted.
 
 # --- SSH ---
 # Public key for the operator identity used across all providers.
@@ -42,7 +45,9 @@ oci_region              = "ap-tokyo-1"
 oci_compartment_id      = "ocid1.compartment.oc1..<unique>" # MUST NOT be ManagedCompartmentForPaaS
 oci_availability_domain = "xxxx:AP-TOKYO-1-AD-1"
 oci_image_id            = "ocid1.image.oc1.ap-tokyo-1.<unique>"
-oci_shape               = "VM.Standard.E2.1"
+oci_shape               = "VM.Standard.E4.Flex"
+oci_shape_ocpus         = 1
+oci_shape_memory_in_gbs = 1
 
 # --- Proxmox VE ---
 # PVE API token is sensitive. Set via env var instead of this file:
@@ -59,7 +64,7 @@ pve_boot_source     = "template"        # "iso" to boot from ISO instead
 # Template-backed release qualification first makes an unstarted full-copy
 # template on the shared qnap datastore, then clones every PVE workload from
 # that stage. `pve_template_source_node` must be the leaf/source PVE node;
-# the stage VMID is a seventh, disposable ID and must not overlap the six
+# the stage VMID is a sixth, disposable ID and must not overlap the five
 # workload VMIDs below. The preflight rejects a non-shared datastore or a
 # linked-clone configuration before any mutation.
 # pve_template_vm_id       = <certified-pve-template-vmid>
@@ -81,12 +86,12 @@ pve_username        = "ubuntu"
 # Pin every workload VMID.  The release contract's keyed `pve.vmids` object
 # must name these same values, plus both RRs below; no PVE VMID is inferred or
 # auto-assigned during full qualification. Keep these lines commented until
-# the certified six-ID range is reserved; `<certified-...>` is intentionally
+# the certified five-workload-ID range is reserved; `<certified-...>` is intentionally
 # not valid HCL when uncommented.
 # pve_router_vm_id        = <certified-pve-leaf-a-vmid>
 # pve_client_vm_id        = <certified-pve-client-a-vmid>
 # pve_leaf_b_router_vm_id = <certified-pve-leaf-b-vmid>
-# pve_leaf_b_client_vm_id = <certified-pve-client-b-vmid>
+# pve_leaf_b_client_vm_id = <certified-pve-client-b-vmid> # Only for clients_per_site=2.
 
 # Route reflectors run on PVE, not AWS.  `pve_rr_*_host` values are Proxmox
 # cluster node IDs. The matching `*_ssh_host` values are the FQDNs used for

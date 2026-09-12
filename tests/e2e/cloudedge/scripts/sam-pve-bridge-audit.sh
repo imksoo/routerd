@@ -133,6 +133,7 @@ done <"$tmp_dir/expected.txt"
 
 audit_pve_rr_nics() {
   local rr_expected="$tmp_dir/rr-expected.tsv"
+  local rr_verified="$tmp_dir/rr-verified.tsv"
   local node rr_host rr_vmid rr_underlay rr_config rr_stderr
   local net_count has_underlay has_capture result net_config
 
@@ -186,6 +187,7 @@ audit_pve_rr_nics() {
     echo "## pve_rr_nic_audit"
     printf 'node\tpve_ssh_host\tvmid\texpected_underlay_bridge\tcapture_bridge\tnet_count\tresult\tnet_config\n'
   } >>"${evidence:-/dev/stdout}"
+  : >"$rr_verified"
 
   while IFS=$'\t' read -r node rr_host rr_vmid rr_underlay; do
     [ -n "$node" ] || continue
@@ -208,7 +210,9 @@ audit_pve_rr_nics() {
 
     rr_config="$tmp_dir/${node}-qm-config.txt"
     rr_stderr="$tmp_dir/${node}-qm-config.stderr"
-    if ! "${pve_ssh[@]}" "root@$rr_host" "qm config $(printf '%q' "$rr_vmid")" >"$rr_config" 2>"$rr_stderr"; then
+    # Unlike the earlier bash -s query, qm config has no stdin payload. Keep
+    # SSH from consuming the next RR row from this while-read loop's input.
+    if ! "${pve_ssh[@]}" "root@$rr_host" "qm config $(printf '%q' "$rr_vmid")" </dev/null >"$rr_config" 2>"$rr_stderr"; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$node" "$rr_host" "$rr_vmid" "$rr_underlay" "$capture_bridge" \
         "0" "FAIL_SSH_OR_QM" "$(tr '\n' ' ' <"$rr_stderr")" >>"${evidence:-/dev/stdout}"
@@ -237,8 +241,30 @@ audit_pve_rr_nics() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$node" "$rr_host" "$rr_vmid" "$rr_underlay" "$capture_bridge" \
       "$net_count" "$result" "${net_config:-missing}" >>"${evidence:-/dev/stdout}"
-    [ "$result" = PASS ] || status=1
+    if [ "$result" = PASS ]; then
+      printf '%s\t%s\t%s\t%s\n' "$node" "$rr_host" "$rr_vmid" "$rr_underlay" >>"$rr_verified"
+    else
+      status=1
+    fi
   done <"$rr_expected"
+
+  {
+    echo
+    echo "## pve_rr_nic_coverage"
+    printf 'expected_rr_count=%s verified_rr_count=%s\n' "$(wc -l <"$rr_expected")" "$(wc -l <"$rr_verified")"
+  } >>"${evidence:-/dev/stdout}"
+  # Check completed successful inspections, not just the initial inventory.
+  # Both files follow the same sorted expected order; exact comparison also
+  # rejects missing, repeated, or substituted RR identities.
+  if ! cmp -s "$rr_expected" "$rr_verified"; then
+    {
+      echo "FAIL_RR_COVERAGE: successful RR inspections do not match the declared pair"
+      echo "missing_or_failed_rrs:"
+      comm -23 "$rr_expected" "$rr_verified"
+    } >>"${evidence:-/dev/stdout}"
+    echo "FAIL: not all declared PVE RRs have successful individual NIC inspections" >&2
+    status=1
+  fi
 }
 
 audit_pve_rr_nics

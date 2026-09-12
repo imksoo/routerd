@@ -56,6 +56,13 @@ The manifest is produced by the generic certification scripts in this
 repository together with private routerd-labs drivers, then consumed by release
 preflight and qualification smoke scripts.
 
+The embedded named PVE VMID map requires the five current nodes: leaf A/B,
+client A, and RR A/B. Optional `pve-client-b` remains readable only for
+historical six-guest manifests; the current release-QA `qa_guard.py` still
+rejects it at live admission. Unknown node names and invalid VMIDs remain
+invalid. The full embedded execution object preserves `sourcePolicy`, so an
+unpublished `local-pinned` result must not be presented as a published RC.
+
 Minimum example:
 
 ```json

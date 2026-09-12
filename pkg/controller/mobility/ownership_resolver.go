@@ -303,8 +303,15 @@ func routeTableRouterSelfRule(ctx ownershipRuleContext, address string, decision
 }
 
 func providerLocalHomeRule(ctx ownershipRuleContext, address string, decision *ownershipDecision) ownershipRuleOutcome {
-	fact, ok := ctx.remoteHomeFacts[address]
-	if !ok || strings.TrimSpace(fact.NodeRef) != ctx.self.NodeRef || strings.TrimSpace(fact.ProviderRef) == "" {
+	// The selected representative may be a newer observation from a redundant
+	// peer of the same provider resource. Prefer this node's coalesced fact so
+	// that observer timing alone cannot create a false remote/local conflict.
+	eventOwner, advertised := ctx.eventOwned[address]
+	if !advertised || strings.TrimSpace(eventOwner.AdvertiseOwnerNode) != ctx.self.NodeRef || strings.TrimSpace(eventOwner.SourceType) != providerDiscoverySource {
+		return ownershipRuleContinue
+	}
+	fact, ok := providerInventoryOwnerFactForNode(ctx.providerHomeFactSets[address], ctx.self.NodeRef)
+	if !ok || strings.TrimSpace(fact.ProviderRef) == "" {
 		return ownershipRuleContinue
 	}
 	applyProviderHomeOwnerFact(decision, fact)

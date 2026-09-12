@@ -23,21 +23,54 @@ cat >"$scripts/sam-e2e.sh" <<'SCRIPT'
 set -euo pipefail
 
 evidence_dir=
-printf '%s\n' "$@" >"${SAM_REPRESENTATIVE_FAKE_INVOCATION:?}"
+tofu_output=
+failover_node=
+failover_count=0
+args=("$@")
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --evidence-dir) evidence_dir="$2"; shift 2 ;;
+    --tofu-output) tofu_output="$2"; shift 2 ;;
+    --failover-node) failover_node="$2"; failover_count=$((failover_count + 1)); shift 2 ;;
     *) shift ;;
   esac
 done
 [ -n "$evidence_dir" ]
+[ "${SAM_E2E_MAX_SECONDARY_IPS:-}" = 3 ] || { echo 'expected the reviewed three-secondary-IP capacity' >&2; exit 96; }
+[ "$failover_count" -eq 1 ] || { echo 'cumulative failover is forbidden' >&2; exit 97; }
+case "$failover_node" in pve-rr-a|aws-leaf-a|azure-leaf-a|oci-leaf-a|pve-leaf-a) ;; *) exit 98 ;; esac
+printf '%s\n' "${args[@]}" >"${SAM_REPRESENTATIVE_FAKE_INVOCATION:?}.$failover_node"
+if [ "$failover_node" = pve-rr-a ]; then
+  printf '%s\n' "${args[@]}" >"$SAM_REPRESENTATIVE_FAKE_INVOCATION"
+fi
+printf 'begin\t%s\n' "$failover_node" >>"$SAM_REPRESENTATIVE_FAKE_INVOCATION.timeline"
+sleep "${SAM_REPRESENTATIVE_FAKE_DELAY:-0}"
+[ "${SAM_REPRESENTATIVE_FAKE_FAIL_NODE:-}" != "$failover_node" ] || exit 42
 mkdir -p "$evidence_dir/deploy" "$evidence_dir/matrix/initial" \
   "$evidence_dir/matrix/after-failover-pve-rr-a" \
   "$evidence_dir/matrix/after-rejoin-pve-rr-a" "$evidence_dir/convergence"
 printf 'stage\tnode\tstatus\telapsed_seconds\nrr-a-started\tpve-rr-a\tPASS\t1\nrr-a-joined\tpve-rr-a\tPASS\t1\nrr-b-started\tpve-rr-b\tPASS\t1\nrr-b-joined\tpve-rr-b\tPASS\t1\nrr-pair-ready\tpve-rr-a,pve-rr-b\tPASS\t1\n' \
   >"$evidence_dir/deploy/rr-stage.tsv"
-for _ in $(seq 1 56); do printf 'client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/summary.tsv"
-for _ in $(seq 1 42); do printf 'cloud-client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+write_matrix() {
+  local label="$1" cloud="$2" path="$3"
+  jq -r --argjson cloud "$cloud" '
+    .nodes.value | to_entries | map(select(.value.role == "client")) as $clients
+    | $clients[] as $src | $clients[] as $dst
+    | select($src.key != $dst.key)
+    | select(($cloud | not) or $src.value.site != "pve")
+    | [$src.key, $dst.key, "PASS"] | @tsv
+  ' "$tofu_output" >"$path"
+  if [ "${SAM_REPRESENTATIVE_FAKE_BAD_LABEL:-}" = "$label" ] && \
+    { [ "${SAM_REPRESENTATIVE_FAKE_BAD_CLOUD:-both}" = both ] || [ "${SAM_REPRESENTATIVE_FAKE_BAD_CLOUD:-both}" = "$cloud" ]; }; then
+    case "${SAM_REPRESENTATIVE_FAKE_BAD_MATRIX:-missing}" in
+      missing) sed -i '$d' "$path" ;;
+      duplicate) first="$(head -n 1 "$path")"; sed -i "\$c\\$first" "$path" ;;
+      failed) sed -i '1s/PASS/FAIL/' "$path" ;;
+    esac
+  fi
+}
+write_matrix initial false "$evidence_dir/matrix/initial/summary.tsv"
+write_matrix initial true "$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
 canary_rows=4
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_CANARY:-0}" = 1 ] && canary_rows=3
 for label in after-failover-pve-rr-a after-rejoin-pve-rr-a; do
@@ -47,6 +80,24 @@ rr_status=PASS
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_RR:-0}" = 1 ] && rr_status=TIMEOUT
 printf 'label\tstatus\telapsed_seconds\ninitial-rr-pve-rr-a\t%s\t1\ninitial-rr-pve-rr-b\t%s\t1\ninitial-dataplane\tPASS\t1\ninitial-provider\tPASS\t1\nafter-failover-pve-rr-a-rr-pve-rr-b\t%s\t1\nafter-failover-pve-rr-a-dataplane\tPASS\t1\nafter-failover-pve-rr-a-provider\tPASS\t1\nafter-rejoin-pve-rr-a-rr-pve-rr-a\t%s\t1\nafter-rejoin-pve-rr-a-rr-pve-rr-b\t%s\t1\nafter-rejoin-pve-rr-a-dataplane\tPASS\t1\nafter-rejoin-pve-rr-a-provider\tPASS\t1\n' "$rr_status" "$rr_status" "$rr_status" "$rr_status" "$rr_status" \
   >"$evidence_dir/convergence/summary.tsv"
+if [ "$failover_node" != pve-rr-a ]; then
+  for label in "after-failover-$failover_node" "after-rejoin-$failover_node"; do
+    mkdir -p "$evidence_dir/matrix/$label"
+    write_matrix "$label" false "$evidence_dir/matrix/$label/summary.tsv"
+    write_matrix "$label" true "$evidence_dir/matrix/$label/cloud-ingress-summary.tsv"
+    for gate in dataplane provider rr-pve-rr-a rr-pve-rr-b; do
+      [ "${SAM_REPRESENTATIVE_FAKE_MISSING_GATE:-}" != "$label-$gate" ] || continue
+      printf '%s-%s\tPASS\t1\n' "$label" "$gate" >>"$evidence_dir/convergence/summary.tsv"
+    done
+  done
+fi
+for ack in "failover-stop-$failover_node" "rejoin-start-$failover_node"; do
+  [ "${SAM_REPRESENTATIVE_FAKE_MISSING_GATE:-}" != "$ack" ] || continue
+  ack_status=PASS
+  [ "${SAM_REPRESENTATIVE_FAKE_FAILED_ACK:-}" != "$ack" ] || ack_status=FAIL
+  printf '%s\t%s\t1\n' "$ack" "$ack_status" >>"$evidence_dir/convergence/summary.tsv"
+done
+printf 'end\t%s\n' "$failover_node" >>"$SAM_REPRESENTATIVE_FAKE_INVOCATION.timeline"
 SCRIPT
 chmod +x "$scripts/sam-e2e.sh"
 
@@ -59,13 +110,14 @@ jq -n '{
     "azure-leaf-a":{role:"leaf",site:"azure"}, "azure-leaf-b":{role:"leaf",site:"azure"},
     "oci-leaf-a":{role:"leaf",site:"oci"}, "oci-leaf-b":{role:"leaf",site:"oci"},
     "pve-leaf-a":{role:"leaf",site:"pve"}, "pve-leaf-b":{role:"leaf",site:"pve"},
-    "aws-client-a":{role:"client",site:"aws"}, "aws-client-b":{role:"client",site:"aws"},
-    "azure-client-a":{role:"client",site:"azure"}, "azure-client-b":{role:"client",site:"azure"},
-    "oci-client-a":{role:"client",site:"oci"}, "oci-client-b":{role:"client",site:"oci"},
-    "pve-client-a":{role:"client",site:"pve"}, "pve-client-b":{role:"client",site:"pve"}
+    "aws-client-a":{role:"client",site:"aws"},
+    "azure-client-a":{role:"client",site:"azure"},
+    "oci-client-a":{role:"client",site:"oci"},
+    "pve-client-a":{role:"client",site:"pve"}
   }},
   fabric:{value:{
     topology_scale:"full",
+    clients_per_site:1,
     pve:{
       rr_fault_domain:"host-redundant",
       rr_nodes:["pve-rr-a","pve-rr-b"],
@@ -97,12 +149,13 @@ SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" \
   --pve-ssh-key "$pve_ssh_key" \
   --pve-known-hosts "$pve_known_hosts" \
   --evidence-root "$evidence" \
-  --max-runtime-seconds 1920 >/dev/null
+  --max-runtime-seconds 5400 >/dev/null
 
 jq -e '
   .profile == "representative-redundancy"
   and .result == "pass"
-  and .topology == {routerCount:10,clientCount:8,cloudClientCount:6,rrFaultDomain:"host-redundant"}
+  and .limits.maxRuntimeSeconds == 5400
+  and .topology == {routerCount:10,clientCount:4,cloudClientCount:3,rrFaultDomain:"host-redundant"}
   and .gates == {
     rrAStaged:true,
     rrAJoined:true,
@@ -117,6 +170,10 @@ jq -e '
     rrBControlPlaneContinuity:true,
     rrBContinuityCanary:true,
     rrARejoin:true,
+    edgeAFailover:true,
+    edgeARejoin:true,
+    edgeAClientMatrix:true,
+    edgeACloudIngressMatrix:true,
     legacyProtocols:false,
     performance:false,
     symmetricBFailover:false,
@@ -124,6 +181,53 @@ jq -e '
     destruction:false
   }
 ' "$evidence/profile-result.json" >/dev/null
+[ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/summary.tsv")" -eq 12 ]
+[ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/cloud-ingress-summary.tsv")" -eq 9 ]
+# After A stops, B must fit all remote client addresses plus its primary IP
+# on one t3.small ENI (four total IPv4 slots). This is a fixture capacity proof,
+# not evidence that a provider accepted the actual assignments.
+jq -e '.nodes.value | to_entries as $nodes
+  | ["aws","azure","oci","pve"] | all(. as $site
+    | ([$nodes[] | select(.value.role == "client" and .value.site != $site)] | length) == 3)
+' "$tofu_output" >/dev/null
+# Reject both excess client cost and a missing B router before the E2E entrypoint.
+for invalid in extra-client missing-leaf-b wrong-client-count; do
+  case "$invalid" in
+    extra-client) filter='.nodes.value["azure-client-b"]={role:"client",site:"azure"}' ;;
+    missing-leaf-b) filter='del(.nodes.value["azure-leaf-b"])' ;;
+    wrong-client-count) filter='.fabric.value.clients_per_site=2' ;;
+  esac
+  jq "$filter" "$tofu_output" >"$work/$invalid.json"
+  if SAM_REPRESENTATIVE_FAKE_INVOCATION="$work/$invalid-invocation" \
+    "$scripts/sam-representative-redundancy.sh" \
+    --tofu-output "$work/$invalid.json" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
+    --pve-ssh-key "$pve_ssh_key" --pve-known-hosts "$pve_known_hosts" \
+    --evidence-root "$work/$invalid-evidence" >/dev/null 2>&1; then
+    echo "representative profile accepted invalid one-client topology: $invalid" >&2
+    exit 1
+  fi
+  [ ! -e "$work/$invalid-invocation.timeline" ]
+done
+jq -e '
+  (.edgeScenarios | keys) == ["aws-leaf-a","azure-leaf-a","oci-leaf-a","pve-leaf-a"]
+  and (.edgeScenarios | all(.result == "pass" and .e2eExit == 0 and .failoverEvidenceExit == 0 and .rejoinEvidenceExit == 0))
+  and .symmetry == {testedSides:["a"], bSideEquivalent:"unproven"}
+' "$evidence/profile-result.json" >/dev/null
+expected_timeline="$work/expected-timeline"
+for node in pve-rr-a aws-leaf-a azure-leaf-a oci-leaf-a pve-leaf-a; do
+  printf 'begin\t%s\nend\t%s\n' "$node" "$node"
+done >"$expected_timeline"
+diff -u "$expected_timeline" "$invocation.timeline"
+for node in aws-leaf-a azure-leaf-a oci-leaf-a pve-leaf-a; do
+  for arg in --skip-deploy --skip-initial-validation --reuse-deployed-topology --staged-rr-pair --full-cloud-ingress \
+    --rejoin-after-failover --skip-legacy-protocols; do
+    grep -Fx -- "$arg" "$invocation.$node" >/dev/null
+  done
+  if grep -Eq -- '--transition-canary|--performance-tests|--destroy-cmd|--skip-matrix' "$invocation.$node"; then
+    echo "edge transition did not request complete non-performance matrices" >&2
+    exit 1
+  fi
+done
 for arg in --staged-rr-pair --failover-node --rejoin-after-failover --transition-canary \
   --skip-legacy-protocols --skip-load-balance-report --success-evidence-minimal; do
   grep -Fx -- "$arg" "$invocation" >/dev/null
@@ -205,21 +309,32 @@ for kind in DHCPv4Client DHCPv4Server DHCPv6Client DHCPv6PrefixDelegation DHCPv6
   fi
 done
 
-if SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" "$scripts/sam-representative-redundancy.sh" \
+if SAM_REPRESENTATIVE_FAKE_INVOCATION="$work/too-long-invocation" "$scripts/sam-representative-redundancy.sh" \
   --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
   --pve-ssh-key "$pve_ssh_key" \
   --pve-known-hosts "$pve_known_hosts" \
-  --evidence-root "$work/too-long" --max-runtime-seconds 1921 >/dev/null 2>&1; then
+  --evidence-root "$work/too-long" --max-runtime-seconds 5401 >/dev/null 2>&1; then
   echo "representative profile accepted a runtime budget above its hard cap" >&2
   exit 1
 fi
+if [ -e "$work/too-long-invocation.timeline" ] || [ -e "$work/too-long" ]; then
+  echo "over-budget profile reached its harness or evidence setup" >&2
+  exit 1
+fi
+
+SAM_REPRESENTATIVE_FAKE_INVOCATION="$work/default-invocation" "$scripts/sam-representative-redundancy.sh" \
+  --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
+  --pve-ssh-key "$pve_ssh_key" --pve-known-hosts "$pve_known_hosts" \
+  --evidence-root "$work/default-budget" >/dev/null
+jq -e '.result == "pass" and .limits.maxRuntimeSeconds == 5400' \
+  "$work/default-budget/profile-result.json" >/dev/null
 
 if SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" SAM_REPRESENTATIVE_FAKE_INCOMPLETE_CANARY=1 \
   "$scripts/sam-representative-redundancy.sh" \
     --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
     --pve-ssh-key "$pve_ssh_key" \
     --pve-known-hosts "$pve_known_hosts" \
-    --evidence-root "$work/incomplete" --max-runtime-seconds 1920 >/dev/null 2>&1; then
+    --evidence-root "$work/incomplete" --max-runtime-seconds 5400 >/dev/null 2>&1; then
   echo "representative profile accepted an incomplete transition canary" >&2
   exit 1
 fi
@@ -231,12 +346,130 @@ if SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" SAM_REPRESENTATIVE_FAKE_INCO
     --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
     --pve-ssh-key "$pve_ssh_key" \
     --pve-known-hosts "$pve_known_hosts" \
-    --evidence-root "$work/incomplete-rr" --max-runtime-seconds 1920 >/dev/null 2>&1; then
+    --evidence-root "$work/incomplete-rr" --max-runtime-seconds 5400 >/dev/null 2>&1; then
   echo "representative profile accepted RR-B continuity without RR membership evidence" >&2
   exit 1
 fi
 jq -e '.result == "fail" and .outcomes.failoverEvidenceExit == 1' \
   "$work/incomplete-rr/profile-result.json" >/dev/null
+
+run_edge_fault() {
+  local label="$1"; shift
+  local fault_invocation="$work/fault-$label"
+  : >"$fault_invocation.timeline"
+  if env SAM_REPRESENTATIVE_FAKE_INVOCATION="$fault_invocation" "$@" \
+    "${fault_profile:-$scripts/sam-representative-redundancy.sh}" \
+    --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
+    --pve-ssh-key "$pve_ssh_key" --pve-known-hosts "$pve_known_hosts" \
+    --evidence-root "$work/fault-evidence-$label" --max-runtime-seconds "${fault_budget:-5400}" >/dev/null 2>&1; then
+    echo "representative profile accepted edge fault: $label" >&2
+    exit 1
+  fi
+  jq -e '.result == "fail"' "$work/fault-evidence-$label/profile-result.json" >/dev/null
+  if grep -q $'begin\tazure-leaf-a' "$fault_invocation.timeline"; then
+    echo "representative profile proceeded after failed AWS edge scenario: $label" >&2
+    exit 1
+  fi
+}
+run_edge_fault e2e SAM_REPRESENTATIVE_FAKE_FAIL_NODE=aws-leaf-a
+for node in pve-rr-a aws-leaf-a; do
+  for phase in failover-stop rejoin-start; do
+    run_edge_fault "missing-ack-$phase-$node" SAM_REPRESENTATIVE_FAKE_MISSING_GATE="$phase-$node"
+    run_edge_fault "failed-ack-$phase-$node" SAM_REPRESENTATIVE_FAKE_FAILED_ACK="$phase-$node"
+    if [ "$node" = pve-rr-a ]; then
+      for kind in missing failed; do
+        if grep -q $'begin\taws-leaf-a' "$work/fault-$kind-ack-$phase-$node.timeline"; then
+          echo "profile started edge scenario without the preceding RR service ACK" >&2
+          exit 1
+        fi
+      done
+    fi
+  done
+done
+for phase in after-failover after-rejoin; do
+  for bad in missing duplicate failed; do
+    for cloud in true false; do
+      run_edge_fault "$phase-$bad-$cloud" SAM_REPRESENTATIVE_FAKE_BAD_LABEL="$phase-aws-leaf-a" \
+        SAM_REPRESENTATIVE_FAKE_BAD_MATRIX="$bad" SAM_REPRESENTATIVE_FAKE_BAD_CLOUD="$cloud"
+    done
+  done
+  for gate in dataplane provider rr-pve-rr-a rr-pve-rr-b; do
+    run_edge_fault "$phase-$gate" SAM_REPRESENTATIVE_FAKE_MISSING_GATE="$phase-aws-leaf-a-$gate"
+  done
+done
+
+# Replace clock reads in a test-only copy, never the production source. This
+# exercises the real remaining-budget arithmetic without relying on the host
+# completing all topology/jq checks inside a one-second scheduling margin.
+clock_scripts="$work/clock-scripts"
+mkdir -p "$clock_scripts" "$work/clock-bin"
+# The replacement must be evaluated by the copied wrapper, not this test.
+# shellcheck disable=SC2016
+sed 's/\$SECONDS/$(cat "$SAM_REPRESENTATIVE_FAKE_CLOCK")/g;s/max_runtime_seconds - SECONDS/max_runtime_seconds - $(cat "$SAM_REPRESENTATIVE_FAKE_CLOCK")/g' \
+  "$scripts/sam-representative-redundancy.sh" >"$clock_scripts/sam-representative-redundancy.sh"
+cp "$scripts/sam-e2e.sh" "$clock_scripts/sam-e2e.sh"
+chmod +x "$clock_scripts/sam-representative-redundancy.sh"
+cat >"$work/clock-bin/timeout" <<'CLOCK_TIMEOUT'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = --foreground ]; shift
+[ "$1" = --kill-after=30s ]; shift
+budget="${1%s}"; shift
+printf '%s\n' "$budget" >>"${SAM_REPRESENTATIVE_FAKE_TIMEOUT_BUDGETS:?}"
+now="$(cat "${SAM_REPRESENTATIVE_FAKE_CLOCK:?}")"
+# Each successful harness call costs six virtual seconds. A second call
+# with only four seconds remaining times out instead of receiving a reset.
+if [ "$budget" -le 6 ]; then
+  printf '%s\n' "$((now + budget))" >"$SAM_REPRESENTATIVE_FAKE_CLOCK"
+  exit 124
+fi
+"$@"
+printf '%s\n' "$((now + 6))" >"$SAM_REPRESENTATIVE_FAKE_CLOCK"
+CLOCK_TIMEOUT
+chmod +x "$work/clock-bin/timeout"
+fake_clock="$work/fake-clock"
+fake_budgets="$work/fake-budgets"
+printf '0\n' >"$fake_clock"
+: >"$fake_budgets"
+fault_profile="$clock_scripts/sam-representative-redundancy.sh"
+fault_budget=10
+run_edge_fault absolute-budget PATH="$work/clock-bin:$PATH" \
+  SAM_REPRESENTATIVE_FAKE_CLOCK="$fake_clock" SAM_REPRESENTATIVE_FAKE_TIMEOUT_BUDGETS="$fake_budgets"
+printf '10\n4\n' >"$work/expected-budgets"
+diff -u "$work/expected-budgets" "$fake_budgets"
+grep -q $'end\tpve-rr-a' "$work/fault-absolute-budget.timeline"
+if grep -q $'end\taws-leaf-a' "$work/fault-absolute-budget.timeline"; then
+  echo "edge scenario received a fresh timeout instead of the remaining budget" >&2
+  exit 1
+fi
+jq -e '.outcomes.samE2EExit == 124 and .limits.maxRuntimeSeconds == 10 and .elapsedSeconds == 10' \
+  "$work/fault-evidence-absolute-budget/profile-result.json" >/dev/null
+printf '0\n' >"$fake_clock"
+: >"$fake_budgets"
+fault_budget=1
+run_edge_fault first-timeout PATH="$work/clock-bin:$PATH" \
+  SAM_REPRESENTATIVE_FAKE_CLOCK="$fake_clock" SAM_REPRESENTATIVE_FAKE_TIMEOUT_BUDGETS="$fake_budgets"
+if grep -q $'begin\taws-leaf-a' "$work/fault-first-timeout.timeline"; then
+  echo "profile started edge fault after baseline timeout" >&2
+  exit 1
+fi
+unset fault_budget fault_profile
+
+for ownership_gate in carp unknown; do
+  ownership_invocation="$work/ownership-$ownership_gate"
+  if SAM_REPRESENTATIVE_FAKE_INVOCATION="$ownership_invocation" PVE_OWNERSHIP_GATE="$ownership_gate" \
+    "$scripts/sam-representative-redundancy.sh" \
+      --tofu-output "$tofu_output" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
+      --pve-ssh-key "$pve_ssh_key" --pve-known-hosts "$pve_known_hosts" \
+      --evidence-root "$work/ownership-evidence-$ownership_gate" >/dev/null 2>&1; then
+    echo "A-only profile accepted an unqualified ownership gate: $ownership_gate" >&2
+    exit 1
+  fi
+  [ ! -e "$ownership_invocation.timeline" ] || {
+    echo "ownership-mode rejection occurred after invoking the mutating harness" >&2
+    exit 1
+  }
+done
 
 mismatched_topology="$work/mismatched-topology.json"
 jq '.nodes.value["pve-rr-b"].pve_host = "pve02"' "$tofu_output" >"$mismatched_topology"
@@ -244,7 +477,7 @@ if SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" "$scripts/sam-representative
   --tofu-output "$mismatched_topology" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
   --pve-ssh-key "$pve_ssh_key" \
   --pve-known-hosts "$pve_known_hosts" \
-  --evidence-root "$work/mismatched" --max-runtime-seconds 1920 >/dev/null 2>&1; then
+  --evidence-root "$work/mismatched" --max-runtime-seconds 5400 >/dev/null 2>&1; then
   echo "representative profile accepted node/fabric PVE RR host mismatch" >&2
   exit 1
 fi
@@ -255,7 +488,7 @@ if SAM_REPRESENTATIVE_FAKE_INVOCATION="$invocation" "$scripts/sam-representative
   --tofu-output "$capture_nic_topology" --artifact "$artifact" --ssh-key "$guest_ssh_key" \
   --pve-ssh-key "$pve_ssh_key" \
   --pve-known-hosts "$pve_known_hosts" \
-  --evidence-root "$work/capture-nic" --max-runtime-seconds 1920 >/dev/null 2>&1; then
+  --evidence-root "$work/capture-nic" --max-runtime-seconds 5400 >/dev/null 2>&1; then
   echo "representative profile accepted a PVE RR capture-bridge NIC" >&2
   exit 1
 fi

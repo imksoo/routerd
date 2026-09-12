@@ -71,8 +71,8 @@ output "clients" {
       }
     },
     {
-      for name, instance in aws_instance.extra_client : var.extra_leaf_nodes[name].client_name => {
-        name         = var.extra_leaf_nodes[name].client_name
+      for name, instance in aws_instance.extra_client : var.extra_client_nodes[name].client_name => {
+        name         = var.extra_client_nodes[name].client_name
         role         = "client"
         site         = "aws"
         ssh_user     = "ubuntu"

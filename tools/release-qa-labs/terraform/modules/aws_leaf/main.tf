@@ -111,7 +111,7 @@ resource "aws_instance" "extra_router" {
 }
 
 resource "aws_instance" "extra_client" {
-  for_each                    = var.extra_leaf_nodes
+  for_each                    = var.extra_client_nodes
   ami                         = var.ami_id
   instance_type               = var.client_instance_type
   key_name                    = var.key_name

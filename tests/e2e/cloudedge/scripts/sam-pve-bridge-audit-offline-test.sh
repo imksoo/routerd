@@ -39,16 +39,26 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'printf "%s\n" "$*" >>"$BRIDGE_AUDIT_SSH_LOG"' \
+  'for arg; do if [ "$arg" = -n ]; then exec </dev/null; fi; done' \
   'case "$*" in' \
   '  *root@pve01.local*)' \
+  '    payload="$(cat)"' \
+  '    grep -q "qm list" <<<"$payload" || { echo "bridge query lost its stdin script" >&2; exit 2; }' \
   '    printf "%b\n" "131\tpve-leaf-a\tnet1: virtio=aa:bb:cc:00:00:01,bridge=rsamabc123" "141\tpve-client-a\tnet1: virtio=aa:bb:cc:00:00:02,bridge=rsamabc123" "181\tpve-leaf-b\tnet1: virtio=aa:bb:cc:00:00:03,bridge=rsamabc123" "182\tpve-client-b\tnet1: virtio=aa:bb:cc:00:00:04,bridge=rsamabc123"' \
   '    ;;' \
   '  *root@pve02.local*)' \
+  '    cat >/dev/null # SSH reads stdin even when qm config does not need it.' \
   '    printf "%s\n" "name: routerd-run-pve-rr-a" "net0: virtio=aa:bb:cc:00:01:71,bridge=svnet1,firewall=1"' \
   '    if [ "${BRIDGE_AUDIT_RR_A_EXTRA_NIC:-0}" = 1 ]; then printf "%s\n" "net1: virtio=aa:bb:cc:00:11:71,bridge=rsamabc123"; fi' \
   '    ;;' \
   '  *root@pve03.local*)' \
+  '    cat >/dev/null' \
+  '    case "${BRIDGE_AUDIT_RR_B_MODE:-pass}" in' \
+  '      missing) exit 0 ;;' \
+  '      ssh-fail) echo "fixture RR B query failed" >&2; exit 255 ;;' \
+  '    esac' \
   '    printf "%s\n" "name: routerd-run-pve-rr-b" "net0: virtio=aa:bb:cc:00:01:72,bridge=svnet1,firewall=1"' \
+  '    if [ "${BRIDGE_AUDIT_RR_B_MODE:-pass}" = extra-nic ]; then printf "%s\n" "net1: virtio=aa:bb:cc:00:11:72,bridge=rsamabc123"; fi' \
   '    ;;' \
   '  *) echo "unexpected fake SSH invocation: $*" >&2; exit 2 ;;' \
   'esac' >"$fake_bin/ssh"
@@ -66,6 +76,7 @@ grep -q $'pve-rr-a\tpve02.local\t171\tsvnet1\trsamabc123\t1\tPASS' "$tmp/pass-ev
 grep -q $'pve-rr-b\tpve03.local\t172\tsvnet1\trsamabc123\t1\tPASS' "$tmp/pass-evidence.txt" || die "RR B was not verified"
 grep -q 'qm config 171' "$tmp/ssh.log" || die "RR A qm config was not inspected"
 grep -q 'qm config 172' "$tmp/ssh.log" || die "RR B qm config was not inspected"
+grep -q 'expected_rr_count=2 verified_rr_count=2' "$tmp/pass-evidence.txt" || die "exact RR verification coverage was not recorded"
 grep -q 'BatchMode=yes' "$tmp/ssh.log" || die "PVE audit SSH was not non-interactive"
 grep -q 'StrictHostKeyChecking=yes' "$tmp/ssh.log" || die "PVE audit SSH did not require pinned PVE host keys"
 grep -Fq "UserKnownHostsFile=$pve_known_hosts" "$tmp/ssh.log" || die "PVE audit SSH did not use the supplied PVE known_hosts"
@@ -78,5 +89,37 @@ if PATH="$fake_bin:$PATH" BRIDGE_AUDIT_SSH_LOG="$tmp/ssh.log" BRIDGE_AUDIT_RR_A_
   die "RR capture NIC unexpectedly passed"
 fi
 grep -q 'FAIL_NIC_COUNT' "$tmp/fail-evidence.txt" || die "RR NIC-count failure was not recorded"
+
+for rr_b_mode in missing ssh-fail extra-nic; do
+  evidence="$tmp/rr-b-$rr_b_mode-evidence.txt"
+  if PATH="$fake_bin:$PATH" BRIDGE_AUDIT_SSH_LOG="$tmp/ssh.log" BRIDGE_AUDIT_RR_B_MODE="$rr_b_mode" \
+    "$script" --tofu-output "$tmp/tofu-output.json" --pve-node-ssh-host pve01.local \
+    --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --evidence "$evidence" >/dev/null 2>&1; then
+    die "RR B $rr_b_mode unexpectedly passed"
+  fi
+  grep -q $'pve-rr-b\tpve03.local\t172\tsvnet1\trsamabc123\t.*\tFAIL_' "$evidence" || die "RR B $rr_b_mode failure was not recorded"
+  grep -q 'expected_rr_count=2 verified_rr_count=1' "$evidence" || die "RR B $rr_b_mode verification gap was not recorded"
+  if grep -q '^PASS:.*both PVE RR' "$evidence"; then die "RR B $rr_b_mode retained an overall PASS"; fi
+done
+
+# Independently exercise the completeness check: remove only the RR stdin
+# isolation in a temporary fixture copy. The consuming SSH mock must then omit
+# RR B, and the coverage check must reject RR A's otherwise successful audit.
+# shellcheck disable=SC2016 # Match the literal variable in the script under test.
+sed 's@ </dev/null >"$rr_config"@ >"$rr_config"@' "$script" >"$tmp/without-rr-stdin-isolation.sh"
+if cmp -s "$script" "$tmp/without-rr-stdin-isolation.sh"; then
+  die "could not construct the independent missing-RR regression fixture"
+fi
+: >"$tmp/incomplete-ssh.log"
+if PATH="$fake_bin:$PATH" BRIDGE_AUDIT_SSH_LOG="$tmp/incomplete-ssh.log" \
+  bash "$tmp/without-rr-stdin-isolation.sh" --tofu-output "$tmp/tofu-output.json" --pve-node-ssh-host pve01.local \
+  --pve-ssh-key "$ssh_key" --pve-known-hosts "$pve_known_hosts" --evidence "$tmp/incomplete-evidence.txt" >"$tmp/incomplete.log" 2>&1; then
+  die "incomplete RR audit unexpectedly passed"
+fi
+grep -q 'qm config 171' "$tmp/incomplete-ssh.log" || die "incomplete fixture did not inspect RR A"
+if grep -q 'qm config 172' "$tmp/incomplete-ssh.log"; then die "incomplete fixture did not consume RR B's input row"; fi
+grep -q 'FAIL_RR_COVERAGE' "$tmp/incomplete-evidence.txt" || die "missing RR verification was not rejected by the completeness check"
+grep -q 'expected_rr_count=2 verified_rr_count=1' "$tmp/incomplete-evidence.txt" || die "missing RR verification count was not recorded"
+if grep -q '^PASS:.*both PVE RR' "$tmp/incomplete-evidence.txt"; then die "incomplete RR audit retained an overall PASS"; fi
 
 echo "sam PVE bridge-audit offline OK"

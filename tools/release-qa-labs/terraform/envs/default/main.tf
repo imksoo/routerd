@@ -4,17 +4,16 @@ locals {
   # capture bridge value.
   effective_pve_capture_bridge = coalesce(var.pve_capture_bridge, "rsam${substr(md5(var.run_id), 0, 6)}")
 
-  # A reviewed full topology always names each of these six VMs explicitly.
+  # A reviewed full topology always names each provisioned VM explicitly.
   # Keep the list in one place so the plan rejects an accidental VMID collision
   # even when it is invoked outside the release-contract guard.
-  pve_full_vm_ids = [
+  pve_full_vm_ids = concat([
     var.pve_router_vm_id,
     var.pve_client_vm_id,
     var.pve_leaf_b_router_vm_id,
-    var.pve_leaf_b_client_vm_id,
     var.pve_rr_a_vm_id,
     var.pve_rr_b_vm_id,
-  ]
+  ], var.clients_per_site == 2 ? [var.pve_leaf_b_client_vm_id] : [])
 
   # Every template-backed PVE workload is cloned from this run-scoped,
   # full-copy template. The original template may remain on local storage; the
@@ -31,6 +30,7 @@ locals {
         vm_id           = var.pve_rr_a_vm_id
         underlay_bridge = var.pve_rr_a_underlay_bridge != null ? var.pve_rr_a_underlay_bridge : var.pve_underlay_bridge
         vlan_id         = var.pve_rr_a_vlan_id != null ? var.pve_rr_a_vlan_id : var.pve_vlan_id
+        management_mac  = lookup(var.pve_management_macs, "pve-rr-a", null)
       }
     },
     var.pve_rr_b_host == null ? {} : {
@@ -40,6 +40,7 @@ locals {
         vm_id           = var.pve_rr_b_vm_id
         underlay_bridge = var.pve_rr_b_underlay_bridge != null ? var.pve_rr_b_underlay_bridge : var.pve_underlay_bridge
         vlan_id         = var.pve_rr_b_vlan_id != null ? var.pve_rr_b_vlan_id : var.pve_vlan_id
+        management_mac  = lookup(var.pve_management_macs, "pve-rr-b", null)
       }
     }
   )
@@ -47,6 +48,10 @@ locals {
   aws_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
     aws-leaf-b = {
       router_private_ip = "10.77.60.5"
+    }
+  }
+  aws_extra_client_nodes = var.clients_per_site == 1 ? {} : {
+    aws-client-b = {
       client_name       = "aws-client-b"
       client_private_ip = "10.77.60.16"
     }
@@ -55,6 +60,10 @@ locals {
   azure_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
     azure-leaf-b = {
       router_private_ip = "10.77.60.21"
+    }
+  }
+  azure_extra_client_nodes = var.clients_per_site == 1 ? {} : {
+    azure-client-b = {
       client_name       = "azure-client-b"
       client_private_ip = "10.77.60.17"
     }
@@ -63,6 +72,10 @@ locals {
   oci_extra_leaf_nodes = var.topology_scale == "single" ? {} : {
     oci-leaf-b = {
       router_private_ip = "10.77.60.25"
+    }
+  }
+  oci_extra_client_nodes = var.clients_per_site == 1 ? {} : {
+    oci-client-b = {
       client_name       = "oci-client-b"
       client_private_ip = "10.77.60.18"
     }
@@ -72,6 +85,10 @@ locals {
     pve-leaf-b = {
       router_vm_id     = var.pve_leaf_b_router_vm_id
       router_ipv4_cidr = "10.77.60.35/24"
+    }
+  }
+  pve_extra_client_nodes = var.clients_per_site == 1 ? {} : {
+    pve-client-b = {
       client_name      = "pve-client-b"
       client_vm_id     = var.pve_leaf_b_client_vm_id
       client_ipv4_cidr = "10.77.60.19/24"
@@ -115,15 +132,19 @@ resource "terraform_data" "pve_rr_topology" {
       condition = var.topology_scale != "full" || (
         var.pve_router_vm_id != null &&
         var.pve_client_vm_id != null &&
-        var.pve_leaf_b_router_vm_id != null &&
-        var.pve_leaf_b_client_vm_id != null
+        var.pve_leaf_b_router_vm_id != null
       )
-      error_message = "topology_scale=full requires explicit VM IDs for both PVE leaf/client pairs."
+      error_message = "topology_scale=full requires explicit VM IDs for both PVE leaves and client A."
+    }
+
+    precondition {
+      condition     = var.clients_per_site == 1 || var.pve_leaf_b_client_vm_id != null
+      error_message = "clients_per_site=2 requires an explicit PVE client B VM ID."
     }
 
     precondition {
       condition     = var.topology_scale != "full" || length(distinct(local.pve_full_vm_ids)) == length(local.pve_full_vm_ids)
-      error_message = "topology_scale=full requires six distinct PVE VM IDs across both leaf/client pairs and the two route reflectors."
+      error_message = "topology_scale=full requires distinct PVE VM IDs for all provisioned leaves, clients, and route reflectors."
     }
 
     precondition {
@@ -246,8 +267,9 @@ module "aws_leaf" {
   router_private_ip    = "10.77.60.4"
   client_private_ip    = "10.77.60.11"
   extra_leaf_nodes     = local.aws_extra_leaf_nodes
+  extra_client_nodes   = local.aws_extra_client_nodes
   ami_id               = var.aws_ami_id
-  instance_type        = "t3.large"
+  instance_type        = "t3.small"
   client_instance_type = "t3.micro"
   key_name             = var.aws_key_name
 }
@@ -255,22 +277,23 @@ module "aws_leaf" {
 module "azure_leaf" {
   source = "../../modules/azure_leaf"
 
-  location          = var.azure_location
-  run_id            = var.run_id
-  purpose           = var.purpose
-  commit            = var.commit
-  expires_at        = var.expires_at
-  address_space     = "10.77.60.0/24"
-  subnet_cidr       = "10.77.60.0/24"
-  router_name       = "azure-leaf-a"
-  client_name       = "azure-client-a"
-  router_private_ip = "10.77.60.14"
-  client_private_ip = "10.77.60.12"
-  extra_leaf_nodes  = local.azure_extra_leaf_nodes
-  admin_username    = var.azure_admin_username
-  ssh_public_key    = var.ssh_public_key
-  vm_size           = "Standard_B1s"
-  ssh_cidr_blocks   = var.ssh_cidr_blocks
+  location           = var.azure_location
+  run_id             = var.run_id
+  purpose            = var.purpose
+  commit             = var.commit
+  expires_at         = var.expires_at
+  address_space      = "10.77.60.0/24"
+  subnet_cidr        = "10.77.60.0/24"
+  router_name        = "azure-leaf-a"
+  client_name        = "azure-client-a"
+  router_private_ip  = "10.77.60.14"
+  client_private_ip  = "10.77.60.12"
+  extra_leaf_nodes   = local.azure_extra_leaf_nodes
+  extra_client_nodes = local.azure_extra_client_nodes
+  admin_username     = var.azure_admin_username
+  ssh_public_key     = var.ssh_public_key
+  vm_size            = "Standard_B1s"
+  ssh_cidr_blocks    = var.ssh_cidr_blocks
 }
 
 module "oci_leaf" {
@@ -293,6 +316,7 @@ module "oci_leaf" {
   router_private_ip   = "10.77.60.24"
   client_private_ip   = "10.77.60.13"
   extra_leaf_nodes    = local.oci_extra_leaf_nodes
+  extra_client_nodes  = local.oci_extra_client_nodes
   image_id            = var.oci_image_id
   shape               = var.oci_shape
   shape_ocpus         = var.oci_shape_ocpus
@@ -333,9 +357,11 @@ module "pve_leaf" {
   router_ipv4_cidr     = "10.77.60.34/24"
   client_ipv4_cidr     = "10.77.60.15/24"
   extra_leaf_nodes     = local.pve_extra_leaf_nodes
+  extra_client_nodes   = local.pve_extra_client_nodes
   ssh_public_key       = var.ssh_public_key
   pve_ssh_host         = var.pve_ssh_host
   username             = var.pve_username
+  management_macs      = var.pve_management_macs
   router_vm_id         = var.pve_router_vm_id
   client_vm_id         = var.pve_client_vm_id
 }

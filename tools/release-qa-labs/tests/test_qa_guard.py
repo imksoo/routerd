@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -37,6 +39,8 @@ class ContractGuardTests(unittest.TestCase):
         self.pve_capture_bridge.write_text("bridge boundary\n", encoding="utf-8")
         self.pve_orphan_cleanup = self.framework / "drivers/pve-orphan-cleanup.sh"
         self.pve_orphan_cleanup.write_text("orphan recovery boundary\n", encoding="utf-8")
+        for relative in ("azure_capacity.py", "inventory_resources.py", "drivers/precheck-driver.sh"):
+            (self.framework / relative).write_text("reviewed boundary\n", encoding="utf-8")
         (self.release / "reviewed.sh").write_text("release script\n", encoding="utf-8")
         self.representative_profile = self.release / "tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh"
         self.e2e_harness = self.release / "tests/e2e/cloudedge/scripts/sam-e2e.sh"
@@ -61,6 +65,7 @@ class ContractGuardTests(unittest.TestCase):
         self.tf_dir.mkdir(parents=True)
         self.tfvars = self.runtime / "terraform.tfvars"
         self.tfvars_values = {
+            "clients_per_site": 1,
             "pve_node_name": "pve01",
             "pve_ssh_host": "pve01.lain.local",
             "pve_endpoint": "https://pve01.lain.local:8006/",
@@ -75,7 +80,6 @@ class ContractGuardTests(unittest.TestCase):
             "pve_router_vm_id": 131,
             "pve_client_vm_id": 141,
             "pve_leaf_b_router_vm_id": 181,
-            "pve_leaf_b_client_vm_id": 182,
             "pve_rr_fault_domain": "host-redundant",
             "pve_rr_a_host": "pve02",
             "pve_rr_a_ssh_host": "pve02.local",
@@ -141,7 +145,7 @@ class ContractGuardTests(unittest.TestCase):
                 "profile": "representative-redundancy",
                 "runScope": "full-representative",
                 "provisioningBudgetSeconds": 1080,
-                "qualificationBudgetSeconds": 1920,
+                "qualificationBudgetSeconds": 5400,
                 "minimumSupervisorReserveSeconds": 300,
             },
             "safety": {
@@ -149,9 +153,9 @@ class ContractGuardTests(unittest.TestCase):
                 "pveTLS": "pinned-ca",
             },
             "lifecycle": {
-                "ttl": "55m", "heartbeatStale": "5m", "cleanupScope": "run-id",
+                "ttl": "115m", "heartbeatStale": "5m", "cleanupScope": "run-id",
                 "cleanupTimeout": "10m", "inventoryTimeout": "5m",
-                "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 5100,
+                "maxCleanupAttempts": 2, "maxPaidLifecycleSeconds": 8700,
             },
             "execution": {
                 "mode": "production",
@@ -182,7 +186,6 @@ class ContractGuardTests(unittest.TestCase):
                     "pve-leaf-a": 131,
                     "pve-client-a": 141,
                     "pve-leaf-b": 181,
-                    "pve-client-b": 182,
                     "pve-rr-a": 171,
                     "pve-rr-b": 172,
                 },
@@ -203,7 +206,7 @@ class ContractGuardTests(unittest.TestCase):
                 },
             },
             "limits": {
-                "maxEstimatedCostUsd": 1.0,
+                "maxEstimatedCostUsd": 1.60,
                 "providerCounts": qa_guard.APPROVED_COUNTS,
                 "instanceTypes": qa_guard.APPROVED_TYPES,
                 "regions": qa_guard.APPROVED_REGIONS,
@@ -233,6 +236,9 @@ class ContractGuardTests(unittest.TestCase):
                     "tools/release-qa-labs/drivers/revoke-pve-run-token.sh": __import__("hashlib").sha256(b"revoker\n").hexdigest(),
                     "tools/release-qa-labs/drivers/pve-capture-bridge.sh": __import__("hashlib").sha256(b"bridge boundary\n").hexdigest(),
                     "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh": __import__("hashlib").sha256(b"orphan recovery boundary\n").hexdigest(),
+                    "tools/release-qa-labs/azure_capacity.py": __import__("hashlib").sha256(b"reviewed boundary\n").hexdigest(),
+                    "tools/release-qa-labs/inventory_resources.py": __import__("hashlib").sha256(b"reviewed boundary\n").hexdigest(),
+                    "tools/release-qa-labs/drivers/precheck-driver.sh": __import__("hashlib").sha256(b"reviewed boundary\n").hexdigest(),
                 },
             },
         }
@@ -299,7 +305,7 @@ class ContractGuardTests(unittest.TestCase):
 
         return invoke
 
-    def verify(self, git_impl):
+    def verify(self, git_impl, actual_host="chatty"):
         write_json(self.contract_path, self.contract)
         real_run = subprocess.run
 
@@ -313,15 +319,110 @@ class ContractGuardTests(unittest.TestCase):
         with mock.patch.object(qa_guard, "RUNS_ROOT", self.runs_root), \
              mock.patch.object(qa_guard, "git", side_effect=git_impl), \
              mock.patch.object(qa_guard.subprocess, "run", side_effect=show):
-            qa_guard.verify_contract(self.contract_path, self.release, self.framework, "chatty")
+            qa_guard.verify_contract(self.contract_path, self.release, self.framework, actual_host)
 
     def test_exact_artifact_and_clean_provenance_pass(self):
         self.verify(self.fake_git())
+
+    def test_single_client_closed_profile_and_pve_identity_are_exact(self):
+        self.assertEqual(qa_guard.APPROVED_COUNTS, {"aws": 3, "azure": 3, "oci": 3, "pve": 6})
+        self.assertEqual(set(self.contract["pve"]["vmids"]), {
+            "pve-leaf-a", "pve-leaf-b", "pve-client-a", "pve-rr-a", "pve-rr-b"})
+        self.contract["pve"]["vmids"]["pve-client-b"] = 182
+        with self.assertRaisesRegex(qa_guard.GuardError, "exactly the five named"):
+            self.verify(self.fake_git())
+
+    def test_clients_per_site_requires_one_explicit_literal(self):
+        for value in (2, 0, "1", False):
+            with self.subTest(value=value):
+                self.write_tfvars(clients_per_site=value)
+                with self.assertRaisesRegex(qa_guard.GuardError, "clients_per_site"):
+                    self.verify(self.fake_git())
+        self.write_tfvars()
+        original = self.tfvars.read_text()
+        for appended in ('clients_per_site = 1\n', 'clients_per_site = var.other\n'):
+            self.tfvars.write_text(original + appended)
+            with self.assertRaisesRegex(qa_guard.GuardError, "clients_per_site"):
+                self.verify(self.fake_git())
+
+    def use_local_pinned(self):
+        self.contract["execution"].update({
+            "sourcePolicy": "local-pinned", "hostPolicy": "local-supervised",
+            "host": "qa-local.example.test", "requireRemote": False,
+        })
+
+    def test_local_pinned_source_needs_no_remote_rc_advertisement(self):
+        self.use_local_pinned()
+        calls = []
+        original = self.fake_git(remote_missing=True)
+
+        def local_git(repo, *args, **kwargs):
+            calls.append(args)
+            if args[:2] in (("branch", "-r"), ("ls-remote", "--heads")):
+                raise AssertionError("local-pinned must not claim or require published RC refs")
+            return original(repo, *args, **kwargs)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.verify(local_git, actual_host="qa-local.example.test")
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["sourcePolicy"], "local-pinned")
+        self.assertEqual(result["sourceClaim"], "local-test-only")
+        for command in (("tag", "--points-at", "HEAD"), ("rev-parse", "HEAD^"),
+                        ("merge-base", "--is-ancestor", "main-commit", "origin/main")):
+            self.assertIn(command, calls)
+
+    def test_local_pinned_is_rejected_on_approved_remote_and_unknown_policies_fail(self):
+        self.contract["execution"]["sourcePolicy"] = "local-pinned"
+        with self.assertRaisesRegex(qa_guard.GuardError, "local-supervised"):
+            self.verify(self.fake_git())
+        self.use_local_pinned()
+        for value in (None, False, "", "local", "unknown", [], {}):
+            with self.subTest(value=value):
+                self.contract["execution"]["sourcePolicy"] = value
+                with self.assertRaisesRegex(qa_guard.GuardError, "source policy"):
+                    self.verify(self.fake_git(), actual_host="qa-local.example.test")
+
+    def test_local_pinned_preserves_clean_head_origin_parent_tag_and_blob_checks(self):
+        self.use_local_pinned()
+        with self.assertRaisesRegex(qa_guard.GuardError, "not clean"):
+            self.verify(self.fake_git(self.release), actual_host="qa-local.example.test")
+        bad_git = (
+            (("rev-parse", "HEAD"), "other-commit", "HEAD mismatch"),
+            (("remote", "get-url", "origin"), "https://example.test/other", "canonical origin"),
+            (("rev-parse", "HEAD^"), "other-main", "frozen main"),
+            (("tag", "--points-at", "HEAD"), "v1", "untagged"),
+        )
+        for command, value, reason in bad_git:
+            original = self.fake_git()
+            def git_value(repo, *args, **kwargs):
+                return value if args == command else original(repo, *args, **kwargs)
+            with self.subTest(command=command), self.assertRaisesRegex(qa_guard.GuardError, reason):
+                self.verify(git_value, actual_host="qa-local.example.test")
+        self.contract["routerdArtifact"]["scriptBlobs"]["reviewed.sh"] = "0" * 64
+        with self.assertRaisesRegex(qa_guard.GuardError, "blob identity mismatch"):
+            self.verify(self.fake_git(), actual_host="qa-local.example.test")
+        self.artifact.write_bytes(b"tampered")
+        with self.assertRaisesRegex(qa_guard.GuardError, "SHA-256 mismatch"):
+            self.verify(self.fake_git(), actual_host="qa-local.example.test")
 
     def test_public_contract_example_pve_placeholders_fail_closed(self):
         example = json.loads((ROOT / "contract.example.json").read_text(encoding="utf-8"))
         with self.assertRaisesRegex(qa_guard.GuardError, "cluster node ID"):
             qa_guard.verify_pve_identities(example, self.tfvars)
+
+    def test_public_contract_example_declares_all_required_script_pins(self):
+        example = json.loads((ROOT / "contract.example.json").read_text(encoding="utf-8"))
+        for section, required in (
+            ("routerdArtifact", qa_guard.REQUIRED_QUALIFICATION_SCRIPT_BLOBS),
+            ("qaImplementation", qa_guard.REQUIRED_POST_ZERO_CLEANUP_BLOBS),
+            ("qaImplementation", qa_guard.REQUIRED_PRECHECK_SCRIPT_BLOBS),
+        ):
+            with self.subTest(section=section):
+                declared = example[section]["scriptBlobs"]
+                self.assertFalse(required - declared.keys(), "public template omits mandatory source pins")
+                for relative in declared:
+                    self.assertTrue((ROOT.parents[1] / relative).is_file(), relative)
 
     def test_pve_short_cluster_id_and_fqdn_pair_are_mandatory(self):
         del self.contract["pve"]["sshHost"]
@@ -539,7 +640,6 @@ class ContractGuardTests(unittest.TestCase):
             "pve_router_vm_id",
             "pve_client_vm_id",
             "pve_leaf_b_router_vm_id",
-            "pve_leaf_b_client_vm_id",
         ):
             with self.subTest(tfvars_name=tfvars_name):
                 self.write_tfvars(**{tfvars_name: 999})
@@ -547,17 +647,17 @@ class ContractGuardTests(unittest.TestCase):
                     self.verify(self.fake_git())
 
     def test_pve_vmids_are_named_complete_distinct_and_match_rr_nodes(self):
-        del self.contract["pve"]["vmids"]["pve-client-b"]
-        with self.assertRaisesRegex(qa_guard.GuardError, "exactly the six named"):
+        del self.contract["pve"]["vmids"]["pve-client-a"]
+        with self.assertRaisesRegex(qa_guard.GuardError, "exactly the five named"):
             self.verify(self.fake_git())
-        self.contract["pve"]["vmids"]["pve-client-b"] = 182
-        self.contract["pve"]["vmids"]["pve-client-b"] = 181
-        with self.assertRaisesRegex(qa_guard.GuardError, "exactly six unique"):
+        self.contract["pve"]["vmids"]["pve-client-a"] = 141
+        self.contract["pve"]["vmids"]["pve-client-a"] = 181
+        with self.assertRaisesRegex(qa_guard.GuardError, "exactly five unique"):
             self.verify(self.fake_git())
-        self.contract["pve"]["vmids"]["pve-client-b"] = 0
-        with self.assertRaisesRegex(qa_guard.GuardError, "exactly six unique positive"):
+        self.contract["pve"]["vmids"]["pve-client-a"] = 0
+        with self.assertRaisesRegex(qa_guard.GuardError, "exactly five unique positive"):
             self.verify(self.fake_git())
-        self.contract["pve"]["vmids"]["pve-client-b"] = 182
+        self.contract["pve"]["vmids"]["pve-client-a"] = 141
         self.contract["pve"]["vmids"]["pve-rr-a"] = 173
         with self.assertRaisesRegex(qa_guard.GuardError, "must equal pve.rrNodes"):
             self.verify(self.fake_git())
@@ -600,6 +700,79 @@ class ContractGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(qa_guard.GuardError, "production environment"):
             self.verify(self.fake_git())
 
+    def test_execution_host_policy_preserves_the_approved_remote_default(self):
+        self.verify(self.fake_git())
+        self.contract["execution"]["hostPolicy"] = "approved-remote"
+        self.verify(self.fake_git(), actual_host="chatty.lain.local")
+        for policy in (None, "approved-remote"):
+            with self.subTest(policy=policy):
+                if policy is None:
+                    self.contract["execution"].pop("hostPolicy", None)
+                else:
+                    self.contract["execution"]["hostPolicy"] = policy
+                self.contract["execution"]["requireRemote"] = False
+                with self.assertRaisesRegex(qa_guard.GuardError, "approved remote host"):
+                    self.verify(self.fake_git())
+                self.contract["execution"]["requireRemote"] = True
+                self.contract["execution"]["host"] = "qa-local.example.test"
+                with self.assertRaisesRegex(qa_guard.GuardError, "approved remote host"):
+                    self.verify(self.fake_git(), actual_host="qa-local.example.test")
+                self.contract["execution"]["host"] = "chatty"
+        with self.assertRaisesRegex(qa_guard.GuardError, "wrong execution host"):
+            self.verify(self.fake_git(), actual_host="other.example.test")
+
+    def test_execution_host_policy_rejects_unknown_or_ambiguous_values(self):
+        for policy in ("", "local", "unknown", None, False):
+            with self.subTest(policy=policy):
+                self.contract["execution"]["hostPolicy"] = policy
+                with self.assertRaisesRegex(qa_guard.GuardError, "host policy"):
+                    self.verify(self.fake_git())
+
+    def test_local_supervised_host_is_explicit_and_matches_the_actual_fqdn(self):
+        self.contract["execution"].update({
+            "hostPolicy": "local-supervised", "host": "qa-local.example.test",
+            "requireRemote": False,
+        })
+        with mock.patch.object(qa_guard.socket, "getfqdn", return_value="qa-local.example.test") as actual:
+            self.verify(self.fake_git(), actual_host=None)
+            actual.assert_called_once_with()
+            for host in ("qa-local", "qa-local.other.test", "other.example.test", "", " "):
+                with self.subTest(host=host):
+                    self.contract["execution"]["host"] = host
+                    with self.assertRaisesRegex(qa_guard.GuardError, "host"):
+                        self.verify(self.fake_git(), actual_host=None)
+            self.contract["execution"]["host"] = "qa-local.example.test"
+            for remote in (True, None, 0, "false"):
+                with self.subTest(requireRemote=remote):
+                    if remote is None:
+                        self.contract["execution"].pop("requireRemote", None)
+                    else:
+                        self.contract["execution"]["requireRemote"] = remote
+                    with self.assertRaisesRegex(qa_guard.GuardError, "requireRemote"):
+                        self.verify(self.fake_git(), actual_host=None)
+
+    def test_local_supervised_host_does_not_bypass_budget_mode_or_provenance(self):
+        self.contract["execution"].update({
+            "hostPolicy": "local-supervised", "host": "qa-local.example.test",
+            "requireRemote": False,
+        })
+        with mock.patch.object(qa_guard.socket, "getfqdn", return_value="qa-local.example.test"):
+            with self.assertRaisesRegex(qa_guard.GuardError, "repository is not clean"):
+                self.verify(self.fake_git(self.release), actual_host=None)
+            with self.assertRaisesRegex(qa_guard.GuardError, "freshly reachable from canonical origin"):
+                self.verify(self.fake_git(remote_missing=True), actual_host=None)
+            self.contract["limits"]["maxEstimatedCostUsd"] = 1.61
+            with self.assertRaisesRegex(qa_guard.GuardError, "monetary ceiling"):
+                self.verify(self.fake_git(), actual_host=None)
+            self.contract["limits"]["maxEstimatedCostUsd"] = 1.60
+            self.contract["execution"]["mode"] = "unknown"
+            with self.assertRaisesRegex(qa_guard.GuardError, "mode"):
+                self.verify(self.fake_git(), actual_host=None)
+            self.contract["execution"]["mode"] = qa_guard.PRODUCTION_MODE
+            self.artifact.write_bytes(b"tampered")
+            with self.assertRaisesRegex(qa_guard.GuardError, "SHA-256 mismatch"):
+                self.verify(self.fake_git(), actual_host=None)
+
     def test_staging_identity_and_contract_mode_pass_together(self):
         old_root = self.run_root
         new_root = self.runs_root / "relqa-staging-fixture"
@@ -630,6 +803,13 @@ class ContractGuardTests(unittest.TestCase):
         )
         self.write_run_env()
         self.verify(self.fake_git())
+
+        self.contract["execution"].update({
+            "hostPolicy": "local-supervised", "host": "qa-local.example.test",
+            "requireRemote": False,
+        })
+        with mock.patch.object(qa_guard.socket, "getfqdn", return_value="qa-local.example.test"):
+            self.verify(self.fake_git(), actual_host=None)
 
     def test_artifact_tamper_is_rejected(self):
         self.artifact.write_bytes(b"tampered")
@@ -886,6 +1066,17 @@ class ContractGuardTests(unittest.TestCase):
                     self.verify(self.fake_git())
                 blobs[path] = expected
 
+    def test_capacity_precheck_and_inventory_parser_blobs_are_required(self):
+        blobs = self.contract["qaImplementation"]["scriptBlobs"]
+        for path in ("tools/release-qa-labs/azure_capacity.py",
+                     "tools/release-qa-labs/drivers/precheck-driver.sh",
+                     "tools/release-qa-labs/inventory_resources.py"):
+            with self.subTest(path=path):
+                expected = blobs.pop(path)
+                with self.assertRaisesRegex(qa_guard.GuardError, "missing required"):
+                    self.verify(self.fake_git())
+                blobs[path] = expected
+
     def test_v2_contract_rejects_retired_labs_commit_at_precheck(self):
         self.contract["labsCommit"] = "repo-commit"
         with self.assertRaisesRegex(qa_guard.GuardError, "qaImplementation.commit"):
@@ -953,11 +1144,27 @@ class ContractGuardTests(unittest.TestCase):
             self.verify(self.fake_git())
 
     def test_paid_envelope_overrun_and_one_cent_over_ceiling_are_rejected(self):
-        self.contract["lifecycle"]["ttl"] = "56m"
-        with self.assertRaisesRegex(qa_guard.GuardError, "lifecycle"):
+        self.verify(self.fake_git())  # All approved caps, including USD 1.60.
+        for key, value in (
+            ("ttl", "6901s"),
+            ("maxPaidLifecycleSeconds", 8701),
+            ("cleanupTimeout", "601s"),
+            ("inventoryTimeout", "301s"),
+            ("maxCleanupAttempts", 3),
+            ("maxPaidLifecycleSeconds", 8699),
+        ):
+            with self.subTest(key=key, value=value):
+                previous = self.contract["lifecycle"][key]
+                self.contract["lifecycle"][key] = value
+                with self.assertRaisesRegex(qa_guard.GuardError, "lifecycle"):
+                    self.verify(self.fake_git())
+                self.contract["lifecycle"][key] = previous
+        self.contract["limits"]["maxEstimatedCostUsd"] = 1.61
+        with self.assertRaisesRegex(qa_guard.GuardError, "monetary ceiling"):
             self.verify(self.fake_git())
-        self.contract["lifecycle"]["ttl"] = "55m"
-        self.contract["limits"]["maxEstimatedCostUsd"] = 0.84
+        # Cost is estimated across the paid cleanup envelope, not just mutation.
+        self.assertAlmostEqual(qa_guard.estimated_cost(8700), 0.31 * 8700 / 3600 + 0.30)
+        self.contract["limits"]["maxEstimatedCostUsd"] = 1.04
         with self.assertRaisesRegex(qa_guard.GuardError, "estimated cost"):
             self.verify(self.fake_git())
 
@@ -974,9 +1181,15 @@ class ContractGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(qa_guard.GuardError, "supervisor reserve"):
             self.verify(self.fake_git())
         self.contract["qualification"]["minimumSupervisorReserveSeconds"] = 300
-        self.contract["qualification"]["qualificationBudgetSeconds"] = 1921
+        self.contract["qualification"]["qualificationBudgetSeconds"] = 5401
         with self.assertRaisesRegex(qa_guard.GuardError, "qualification budget"):
             self.verify(self.fake_git())
+        self.contract["qualification"]["qualificationBudgetSeconds"] = 5400
+        self.contract["lifecycle"]["ttl"] = "6779s"
+        with self.assertRaisesRegex(qa_guard.GuardError, "budgets exceed lifecycle TTL"):
+            self.verify(self.fake_git())
+        self.contract["lifecycle"]["ttl"] = "6780s"
+        self.verify(self.fake_git())  # 18 + 90 + 5 minutes; reserve is unchanged.
 
     def test_qualification_run_scope_is_explicit_and_closed(self):
         self.contract["qualification"].pop("runScope")
@@ -1000,38 +1213,27 @@ class PlanGuardTests(unittest.TestCase):
     def plan(self, counts, extra_resources=None, actions=None):
         resources = []
         for kind, count in counts.items():
-            resources.extend({"type": kind} for _ in range(count))
+            resources.extend({"mode": "managed", "type": kind} for _ in range(count))
         resources.extend(extra_resources or [])
         return {
             "planned_values": {"root_module": {"resources": resources}},
             "resource_changes": actions or [],
         }
 
-    def assert_rejected(self, value, phase="cloud", ceiling=1.0):
+    def assert_rejected(self, value, phase="cloud", ceiling=1.60):
         write_json(self.path, value)
         with self.assertRaises(qa_guard.GuardError):
             qa_guard.verify_plan(self.path, phase, ceiling)
 
     def test_exact_cloud_plan_passes(self):
-        value = self.plan(qa_guard.PLAN_COUNTS["cloud"])
-        flavors = {
-            "aws_instance": ["t3.large"] * 2 + ["t3.micro"] * 2,
-            "azurerm_linux_virtual_machine": ["Standard_B1s"] * 4,
-            "oci_core_instance": ["VM.Standard.E2.1"] * 4,
-        }
-        fields = {"aws_instance": "instance_type", "azurerm_linux_virtual_machine": "size", "oci_core_instance": "shape"}
-        offsets = {kind: 0 for kind in flavors}
-        for resource in value["planned_values"]["root_module"]["resources"]:
-            kind = resource["type"]
-            if kind in flavors:
-                resource["values"] = {fields[kind]: flavors[kind][offsets[kind]]}
-                offsets[kind] += 1
+        # The cost-bounded profile includes three deferred OCI VNIC reads.
+        value = json.loads((Path(__file__).parent / "fixtures/cloud-plan-one-client-per-site.json").read_text())
         write_json(self.path, value)
-        qa_guard.verify_plan(self.path, "cloud", 1.0)
+        qa_guard.verify_plan(self.path, "cloud", 1.60)
 
     def test_exact_pve_plan_passes(self):
-        write_json(self.path, self.plan(qa_guard.PLAN_COUNTS["pve"]))
-        qa_guard.verify_plan(self.path, "pve", 1.0)
+        write_json(self.path, json.loads((Path(__file__).parent / "fixtures/pve-plan-one-client-per-site.json").read_text()))
+        qa_guard.verify_plan(self.path, "pve", 1.60)
 
     def test_legacy_aws_rr_plan_shape_is_rejected(self):
         counts = dict(qa_guard.PLAN_COUNTS["cloud"])

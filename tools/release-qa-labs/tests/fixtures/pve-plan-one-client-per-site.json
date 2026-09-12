@@ -1,0 +1,182 @@
+{
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "terraform_data.pve_rr_topology",
+          "mode": "managed",
+          "type": "terraform_data",
+          "values": {}
+        },
+        {
+          "address": "proxmox_virtual_environment_vm.pve_shared_template_stage[0]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {}
+        },
+        {
+          "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"router\"]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {
+            "cpu": [
+              {
+                "cores": 1,
+                "sockets": 1
+              }
+            ],
+            "memory": [
+              {
+                "dedicated": 1024
+              }
+            ]
+          }
+        },
+        {
+          "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"client\"]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {
+            "cpu": [
+              {
+                "cores": 1,
+                "sockets": 1
+              }
+            ],
+            "memory": [
+              {
+                "dedicated": 1024
+              }
+            ]
+          }
+        },
+        {
+          "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"pve-leaf-b\"]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {
+            "cpu": [
+              {
+                "cores": 1,
+                "sockets": 1
+              }
+            ],
+            "memory": [
+              {
+                "dedicated": 1024
+              }
+            ]
+          }
+        },
+        {
+          "address": "module.pve_rr.proxmox_virtual_environment_vm.rr[\"pve-rr-a\"]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {
+            "cpu": [
+              {
+                "cores": 1,
+                "sockets": 1
+              }
+            ],
+            "memory": [
+              {
+                "dedicated": 1024
+              }
+            ]
+          }
+        },
+        {
+          "address": "module.pve_rr.proxmox_virtual_environment_vm.rr[\"pve-rr-b\"]",
+          "mode": "managed",
+          "type": "proxmox_virtual_environment_vm",
+          "values": {
+            "cpu": [
+              {
+                "cores": 1,
+                "sockets": 1
+              }
+            ],
+            "memory": [
+              {
+                "dedicated": 1024
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "resource_changes": [
+    {
+      "address": "terraform_data.pve_rr_topology",
+      "mode": "managed",
+      "type": "terraform_data",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "proxmox_virtual_environment_vm.pve_shared_template_stage[0]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"router\"]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"client\"]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "module.pve_leaf.proxmox_virtual_environment_vm.node[\"pve-leaf-b\"]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "module.pve_rr.proxmox_virtual_environment_vm.rr[\"pve-rr-a\"]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    },
+    {
+      "address": "module.pve_rr.proxmox_virtual_environment_vm.rr[\"pve-rr-b\"]",
+      "mode": "managed",
+      "type": "proxmox_virtual_environment_vm",
+      "change": {
+        "actions": [
+          "create"
+        ]
+      }
+    }
+  ]
+}
