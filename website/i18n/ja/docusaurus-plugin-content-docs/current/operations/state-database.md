@@ -31,6 +31,19 @@ routerctl get events --topic routerd.resource.status.changed
 routerctl get events --resource DNSResolver/lan-resolver -o json
 ```
 
+`LogRetention`リソースがなくても、ローカルイベント履歴には24時間、10万行、論理
+ペイロード64MiBの安全上限が適用されます。ローカル保持を延ばす前に`LogSink`へ
+退避してください。ルーター稼働を無制限なイベントテーブルへ依存させません。
+
+### ディスク満杯からの復旧
+
+`routerctl doctor disk`、`systemctl status routerd`、
+`/run/routerd/storage-critical.json`を確認します。揮発性Live ISOのCOW領域なら
+ルーターOSを再起動し、永続設定に意図した`LogRetention`があることを確認します。
+永続ディスクではrouterdを停止して`routerctl ledger prune-events --older-than 24h`
+を実行し、作業用空き容量を確保してから`routerctl ledger vacuum`を実行します。
+再起動だけでは永続領域は空きません。
+
 ### Mobility holder transitions
 
 CloudEdge SAM の failover は、`transitionKind`、`address`、`timestamp`、
@@ -64,7 +77,7 @@ completion event は実環境ではまだ未実証です。
 意図の正本は YAML 設定ファイルなので、git で管理してください。
 ホストを再構築するときは、SQLite を復元するよりも、設定ファイルを当てて routerd に調整（リコンサイル）させる方が確実です。
 
-事後調査の用途で操作イベントの履歴を残したい場合は、`events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` のスナップショットを定期的に取ってください。これらは追記専用なので、`routerd.db` のような特定時点のバックアップは不要です。
+事後調査のために履歴を残す場合は、`routerd.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db`を外部へ退避するか、定期的にスナップショットしてください。コントローラーのイベント履歴は現在`routerd.db`内にあるため、必要ならDB全体を保全します。
 
 ## 関連項目
 

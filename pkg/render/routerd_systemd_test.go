@@ -11,6 +11,9 @@ import (
 
 func TestRouterdServiceSystemdSpecDoesNotConstrainWritePaths(t *testing.T) {
 	unit := string(SystemdUnit(RouterdUnitName, RouterdServiceSystemdSpec()))
+	if !strings.Contains(unit, "Type=notify") {
+		t.Fatalf("routerd.service must expose runtime status through systemd:\n%s", unit)
+	}
 	for _, notWant := range []string{"ExecStartPre=/usr/local/sbin/routerd check", "ProtectSystem=", "ProtectHome=", "PrivateTmp=", "ReadWritePaths=", "RestrictAddressFamilies="} {
 		if strings.Contains(unit, notWant) {
 			t.Fatalf("routerd.service must not contain %q:\n%s", notWant, unit)
