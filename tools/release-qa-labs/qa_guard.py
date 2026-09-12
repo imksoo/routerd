@@ -21,8 +21,8 @@ class GuardError(RuntimeError):
     pass
 
 
-POLICY_MAX_TTL_SECONDS = 55 * 60
-POLICY_MAX_PAID_LIFECYCLE_SECONDS = 85 * 60
+POLICY_MAX_TTL_SECONDS = 115 * 60
+POLICY_MAX_PAID_LIFECYCLE_SECONDS = 145 * 60
 POLICY_MAX_CLEANUP_SECONDS = 10 * 60
 POLICY_MAX_INVENTORY_SECONDS = 5 * 60
 POLICY_MAX_CLEANUP_ATTEMPTS = 2
@@ -31,7 +31,7 @@ PVE_CERTIFICATION_ONLY_SCOPE = "pve-certification-only"
 FULL_REPRESENTATIVE_SCOPE = "full-representative"
 QUALIFICATION_RUN_SCOPES = {PVE_CERTIFICATION_ONLY_SCOPE, FULL_REPRESENTATIVE_SCOPE}
 MAX_PROVISIONING_BUDGET_SECONDS = 18 * 60
-MAX_QUALIFICATION_BUDGET_SECONDS = 32 * 60
+MAX_QUALIFICATION_BUDGET_SECONDS = 90 * 60
 MIN_SUPERVISOR_RESERVE_SECONDS = 5 * 60
 REQUIRED_QUALIFICATION_SCRIPT_BLOBS = {
     "tests/e2e/cloudedge/configs/sam-e2e-generate.sh",
@@ -49,9 +49,14 @@ REQUIRED_POST_ZERO_CLEANUP_BLOBS = {
     "tools/release-qa-labs/drivers/revoke-pve-run-token.sh",
     "tools/release-qa-labs/drivers/pve-capture-bridge.sh",
     "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh",
+    "tools/release-qa-labs/inventory_resources.py",
+}
+REQUIRED_PRECHECK_SCRIPT_BLOBS = {
+    "tools/release-qa-labs/drivers/precheck-driver.sh",
+    "tools/release-qa-labs/azure_capacity.py",
 }
 RUNS_ROOT = Path("/var/lib/routerd-release-qa")
-POLICY_MAX_COST_USD = 1.00
+POLICY_MAX_COST_USD = 1.60
 APPROVED_EXECUTION_HOSTS = {"chatty", "chatty.lain.local"}
 PRODUCTION_MODE = "production"
 STAGING_MODE = "staging-no-mutation"
@@ -60,23 +65,23 @@ FRESH_STATE_MODE = "fresh-fabric-fresh-state"
 PRODUCTION_ENVIRONMENT = "routerd-release-qualification"
 STAGING_ENVIRONMENT = "routerd-release-qa-staging"
 APPROVED_REGIONS = {"aws": "ap-northeast-1", "azure": "japaneast", "oci": "ap-tokyo-1", "pve": "local"}
-APPROVED_COUNTS = {"aws": 4, "azure": 4, "oci": 4, "pve": 7}
+APPROVED_COUNTS = {"aws": 3, "azure": 3, "oci": 3, "pve": 6}
 APPROVED_TYPES = {
-    "aws": {"t3.large": 2, "t3.micro": 2},
-    "azure": {"Standard_B1s": 4},
-    "oci": {"VM.Standard.E2.1": 4},
-    "pve": {"template-stage": 1, "template-clone": 6},
+    "aws": {"t3.small": 2, "t3.micro": 1},
+    "azure": {"Standard_B1s": 3},
+    "oci": {"VM.Standard.E4.Flex": 3},
+    "pve": {"template-stage": 1, "template-clone": 5},
 }
 # Deliberately conservative review rates. They are policy inputs, not a billing quote.
 HOURLY_USD = {
-    ("aws", "t3.large"): 0.12,
+    ("aws", "t3.small"): 0.04,
     ("aws", "t3.micro"): 0.02,
     ("azure", "Standard_B1s"): 0.03,
-    ("oci", "VM.Standard.E2.1"): 0.05,
+    ("oci", "VM.Standard.E4.Flex"): 0.04,
     ("pve", "template-stage"): 0.0,
     ("pve", "template-clone"): 0.0,
 }
-STORAGE_AND_IPV4_ALLOWANCE_USD = 0.10
+STORAGE_AND_IPV4_ALLOWANCE_USD = 0.30
 REQUIRED_ZERO_SCOPES = {
     "tofu-state",
     "aws-tagged-resources",
@@ -92,21 +97,21 @@ PLAN_COUNTS = {
         "aws_route_table": 1, "aws_route_table_association": 1,
         "aws_security_group": 1, "aws_iam_role": 1,
         "aws_iam_role_policy": 1, "aws_iam_instance_profile": 1,
-        "aws_instance": 4,
+        "aws_instance": 3,
         "azurerm_resource_group": 1, "azurerm_virtual_network": 1,
         "azurerm_subnet": 1, "azurerm_network_security_group": 1,
         "azurerm_route_table": 1,
         "azurerm_subnet_network_security_group_association": 1,
         "azurerm_subnet_route_table_association": 1,
-        "azurerm_public_ip": 4, "azurerm_network_interface": 4,
-        "azurerm_linux_virtual_machine": 4, "azurerm_role_assignment": 2,
+        "azurerm_public_ip": 3, "azurerm_network_interface": 3,
+        "azurerm_linux_virtual_machine": 3, "azurerm_role_assignment": 2,
         "oci_core_vcn": 1, "oci_core_internet_gateway": 1,
         "oci_core_route_table": 1, "oci_core_security_list": 1,
-        "oci_core_subnet": 1, "oci_core_instance": 4,
+        "oci_core_subnet": 1, "oci_core_instance": 3,
     },
     "pve": {
         "terraform_data": 1,
-        "proxmox_virtual_environment_vm": 7,
+        "proxmox_virtual_environment_vm": 6,
     },
 }
 
@@ -153,7 +158,10 @@ def normalized_remote(url: str) -> str:
     return value
 
 
-def verify_repo(checkout_root: Path, commit: str, remote: str, *, tracked_path: Path | None = None) -> None:
+def verify_repo(checkout_root: Path, commit: str, remote: str, *, tracked_path: Path | None = None,
+                source_policy: str = "canonical-remote") -> None:
+    if not isinstance(source_policy, str) or source_policy not in {"canonical-remote", "local-pinned"}:
+        raise GuardError("execution source policy is invalid")
     if git(checkout_root, "rev-parse", "HEAD") != commit:
         raise GuardError(f"HEAD mismatch in {checkout_root}")
     if git(checkout_root, "status", "--porcelain", "--untracked-files=all"):
@@ -161,14 +169,16 @@ def verify_repo(checkout_root: Path, commit: str, remote: str, *, tracked_path: 
     origin = normalized_remote(git(checkout_root, "remote", "get-url", "origin"))
     if origin != normalized_remote(remote):
         raise GuardError(f"canonical origin mismatch: {origin}")
-    refs = git(checkout_root, "branch", "-r", "--contains", commit)
-    if not refs:
-        raise GuardError(f"commit is not reachable from a remote-tracking ref: {commit}")
-    # Remote-tracking refs can be stale. Require a fresh canonical-origin
-    # advertisement containing the exact reviewed commit before provisioning.
-    advertised = git(checkout_root, "ls-remote", "--heads", "--tags", "origin")
-    if commit not in {line.split()[0] for line in advertised.splitlines() if line.split()}:
-        raise GuardError(f"commit is not freshly reachable from canonical origin: {commit}")
+    if source_policy == "canonical-remote":
+        refs = git(checkout_root, "branch", "-r", "--contains", commit)
+        if not refs:
+            raise GuardError(f"commit is not reachable from a remote-tracking ref: {commit}")
+        # Remote-tracking refs can be stale. Public RC provenance still needs
+        # a fresh advertisement of this exact reviewed commit. Local-pinned
+        # testing makes no publication claim and retains all local identity gates.
+        advertised = git(checkout_root, "ls-remote", "--heads", "--tags", "origin")
+        if commit not in {line.split()[0] for line in advertised.splitlines() if line.split()}:
+            raise GuardError(f"commit is not freshly reachable from canonical origin: {commit}")
     if tracked_path is not None:
         relative = tracked_path.resolve().relative_to(checkout_root.resolve())
         git(checkout_root, "ls-files", "--error-unmatch", str(relative))
@@ -229,13 +239,12 @@ _PVE_KNOWN_HOST_KEY_TYPES = frozenset({
     "ecdsa-sha2-nistp521",
     "sk-ssh-ed25519@openssh.com",
 })
-_PVE_WORKLOAD_NAMES = ("pve-leaf-a", "pve-client-a", "pve-leaf-b", "pve-client-b")
+_PVE_WORKLOAD_NAMES = ("pve-leaf-a", "pve-client-a", "pve-leaf-b")
 _PVE_VM_NAMES = (*_PVE_WORKLOAD_NAMES, *_PVE_RR_NAMES)
 _PVE_TFVARS_VM_IDS = {
     "pve-leaf-a": "pve_router_vm_id",
     "pve-client-a": "pve_client_vm_id",
     "pve-leaf-b": "pve_leaf_b_router_vm_id",
-    "pve-client-b": "pve_leaf_b_client_vm_id",
     "pve-rr-a": "pve_rr_a_vm_id",
     "pve-rr-b": "pve_rr_b_vm_id",
 }
@@ -259,7 +268,7 @@ _PVE_STATIC_MANAGEMENT_TFVARS = frozenset({
 def verify_pve_management_safety(contract: dict[str, Any]) -> None:
     """Require the release profile to leave the shared PVE management L2 passive.
 
-    The six test VMs acquire management IPv4 only from the existing PVE
+    The five test VMs acquire management IPv4 only from the existing PVE
     underlay DHCP service. routerd must neither acquire an address nor
     advertise service on that shared underlay. QGA discovery occurs before
     generated routerd configuration is accepted; placing both constraints in
@@ -610,6 +619,12 @@ def verify_pve_identities(contract: dict[str, Any], tfvars_path: Path) -> str:
     if set(rr_nodes) != set(_PVE_RR_NAMES):
         raise GuardError("pve.rrNodes must contain exactly pve-rr-a and pve-rr-b")
 
+    client_assignments = re.findall(
+        r"(?m)^\s*clients_per_site\s*=([^\n]*)$", tfvars_path.read_text(encoding="utf-8")
+    )
+    if len(client_assignments) != 1 or re.fullmatch(r"\s*1\s*(?:(?:#|//).*)?", client_assignments[0]) is None:
+        raise GuardError("OpenTofu clients_per_site must be explicitly 1 exactly once for the closed profile")
+
     expected: dict[str, str | int] = {
         "pve_node_name": node,
         "pve_ssh_host": ssh_host,
@@ -673,14 +688,14 @@ def verify_pve_identities(contract: dict[str, Any], tfvars_path: Path) -> str:
 
     vmids = require(pve, "vmids", dict)
     if set(vmids) != set(_PVE_VM_NAMES):
-        raise GuardError("pve.vmids must map exactly the six named PVE topology nodes to VMIDs")
+        raise GuardError("pve.vmids must map exactly the five named PVE topology nodes to VMIDs")
     if (
         any(isinstance(vmid, bool) or not isinstance(vmid, int) or vmid <= 0 for vmid in vmids.values())
         or len(set(vmids.values())) != len(vmids)
     ):
-        raise GuardError("pve.vmids must contain exactly six unique positive VMIDs")
+        raise GuardError("pve.vmids must contain exactly five unique positive VMIDs")
     if stage_source_vmid in vmids.values() or stage_vmid in vmids.values():
-        raise GuardError("pve.templateStage VMIDs must not overlap any of the six workload VMIDs")
+        raise GuardError("pve.templateStage VMIDs must not overlap any of the five workload VMIDs")
     for rr_name in _PVE_RR_NAMES:
         if vmids[rr_name] != rr_nodes[rr_name]["vmid"]:
             raise GuardError(f"pve.vmids.{rr_name} must equal pve.rrNodes.{rr_name}.vmid")
@@ -925,11 +940,29 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     elif run_id.startswith("relqa-staging-") or environment != PRODUCTION_ENVIRONMENT:
         raise GuardError("production mode requires the production environment and non-staging runId")
     expected_host = require(execution, "host", str)
-    if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
-        raise GuardError("execution must require an approved remote host")
+    host_policy = execution.get("hostPolicy", "approved-remote")
+    if host_policy == "approved-remote":
+        if expected_host not in APPROVED_EXECUTION_HOSTS or execution.get("requireRemote") is not True:
+            raise GuardError("execution must require an approved remote host")
+    elif host_policy == "local-supervised":
+        if execution.get("requireRemote") is not False:
+            raise GuardError("local-supervised execution must set requireRemote to false")
+        if not expected_host.strip() or expected_host != expected_host.strip():
+            raise GuardError("local-supervised execution host must be nonempty without surrounding whitespace")
+    else:
+        raise GuardError("execution host policy is invalid")
+    source_policy = execution.get("sourcePolicy", "canonical-remote")
+    if not isinstance(source_policy, str) or source_policy not in {"canonical-remote", "local-pinned"}:
+        raise GuardError("execution source policy is invalid")
+    if source_policy == "local-pinned" and host_policy != "local-supervised":
+        raise GuardError("local-pinned source requires local-supervised execution")
     host = actual_host or socket.getfqdn()
-    aliases = {host, host.split(".", 1)[0]}
-    if expected_host not in aliases and expected_host.split(".", 1)[0] not in aliases:
+    if host_policy == "local-supervised":
+        host_matches = expected_host == host
+    else:
+        aliases = {host, host.split(".", 1)[0]}
+        host_matches = expected_host in aliases or expected_host.split(".", 1)[0] in aliases
+    if not host_matches:
         raise GuardError(f"wrong execution host: actual={host} expected={expected_host}")
 
     limits = require(contract, "limits", dict)
@@ -954,7 +987,7 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         raise GuardError("artifact SHA-256 mismatch")
     release_commit = require(artifact, "commit", str)
     release_remote = require(artifact, "canonicalRemote", str)
-    verify_repo(checkout_root, release_commit, release_remote)
+    verify_repo(checkout_root, release_commit, release_remote, source_policy=source_policy)
     artifact_script_blobs = require(artifact, "scriptBlobs", dict)
     missing_qualification_blobs = REQUIRED_QUALIFICATION_SCRIPT_BLOBS - set(artifact_script_blobs)
     if missing_qualification_blobs:
@@ -979,8 +1012,15 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
         require(qa, "commit", str),
         require(qa, "canonicalRemote", str),
         tracked_path=framework / "qa_guard.py",
+        source_policy=source_policy,
     )
     qa_script_blobs = require(qa, "scriptBlobs", dict)
+    missing_precheck_blobs = REQUIRED_PRECHECK_SCRIPT_BLOBS - set(qa_script_blobs)
+    if missing_precheck_blobs:
+        raise GuardError(
+            "qaImplementation.scriptBlobs is missing required precheck scripts: "
+            f"{sorted(missing_precheck_blobs)}"
+        )
     missing_post_zero_blobs = REQUIRED_POST_ZERO_CLEANUP_BLOBS - set(qa_script_blobs)
     if missing_post_zero_blobs:
         raise GuardError(
@@ -995,6 +1035,8 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     print(json.dumps({
         "status": "pass", "executionMode": mode,
         "estimatedCostUsd": round(cost, 2), "executionHost": host,
+        "sourcePolicy": source_policy,
+        "sourceClaim": "local-test-only" if source_policy == "local-pinned" else "canonical-remote-rc",
     }))
 
 
@@ -1004,10 +1046,51 @@ def walk_modules(module: dict[str, Any]) -> Iterable[dict[str, Any]]:
         yield from walk_modules(child)
 
 
+def verify_plan_reads(resources: list[dict[str, Any]], changes: list[dict[str, Any]], phase: str) -> None:
+    # The pinned OCI module reads the VNIC attachment for each of its three
+    # instances after creation. These are required inputs, not managed resources
+    # or a general permission to execute arbitrary Terraform data sources.
+    read_type = "oci_core_vnic_attachments"
+    bindings = {
+        f'module.oci_leaf.data.{read_type}.node["{key}"]':
+        f'module.oci_leaf.oci_core_instance.node["{key}"]'
+        for key in ("client", "oci-leaf-b", "router")
+    } if phase == "cloud" else {}
+    for label, records in (("planned_values", resources), ("resource_changes", changes)):
+        if not isinstance(records, list) or any(
+            not isinstance(record, dict) or record.get("mode") not in ("managed", "data")
+            for record in records
+        ):
+            raise GuardError(f"{label} contains an invalid resource mode")
+        if any(record.get("type") == read_type and record["mode"] != "data" for record in records):
+            raise GuardError(f"{label} OCI VNIC attachment queries must have data mode")
+        reads = [record for record in records if record["mode"] == "data"]
+        addresses = [record.get("address") for record in reads]
+        if (any(not isinstance(address, str) for address in addresses)
+                or len(addresses) != len(bindings) or set(addresses) != set(bindings)):
+            raise GuardError(f"{label} must contain exactly the closed {phase} data-read addresses")
+        if any(record.get("type") != read_type for record in reads):
+            raise GuardError(f"{label} contains a data type outside the closed allowlist")
+        if label == "resource_changes" and any(
+            not isinstance(record.get("change"), dict) or record["change"].get("actions") != ["read"]
+            for record in reads
+        ):
+            raise GuardError("OCI VNIC attachment data actions must be exactly ['read']")
+        if bindings:
+            instances = [record.get("address") for record in records
+                         if record["mode"] == "managed" and record.get("type") == "oci_core_instance"]
+            if (any(not isinstance(address, str) for address in instances)
+                    or len(instances) != len(bindings) or set(instances) != set(bindings.values())):
+                raise GuardError(f"{label} data reads must bind to the same three managed OCI instance keys")
+
+
 def verify_plan(path: Path, phase: str, ceiling: float) -> None:
     plan = load_json(path)
     root = plan.get("planned_values", {}).get("root_module", {})
     resources = list(walk_modules(root))
+    changes = plan.get("resource_changes", [])
+    verify_plan_reads(resources, changes, phase)
+    resources = [resource for resource in resources if resource["mode"] == "managed"]
     wanted = PLAN_COUNTS[phase]
     present_types = {str(r.get("type")) for r in resources}
     unknown = present_types - set(wanted)
@@ -1017,9 +1100,9 @@ def verify_plan(path: Path, phase: str, ceiling: float) -> None:
     if actual != wanted:
         raise GuardError(f"plan resource count mismatch: actual={actual} expected={wanted}")
     flavor_fields = {
-        "aws_instance": ("instance_type", {"t3.large": 2, "t3.micro": 2}),
-        "azurerm_linux_virtual_machine": ("size", {"Standard_B1s": 4}),
-        "oci_core_instance": ("shape", {"VM.Standard.E2.1": 4}),
+        "aws_instance": ("instance_type", {"t3.small": 2, "t3.micro": 1}),
+        "azurerm_linux_virtual_machine": ("size", {"Standard_B1s": 3}),
+        "oci_core_instance": ("shape", {"VM.Standard.E4.Flex": 3}),
     }
     for kind, (field, expected) in flavor_fields.items():
         if kind not in wanted:
@@ -1031,13 +1114,43 @@ def verify_plan(path: Path, phase: str, ceiling: float) -> None:
                 observed[value] = observed.get(value, 0) + 1
         if observed != expected:
             raise GuardError(f"plan instance type mismatch for {kind}: {observed}")
-    changes = plan.get("resource_changes", [])
+    for resource in resources:
+        if resource.get("type") == "oci_core_instance":
+            verify_plan_size_block(resource, "shape_config", {"ocpus": 1, "memory_in_gbs": 1})
+    if phase == "pve":
+        stage_address = "proxmox_virtual_environment_vm.pve_shared_template_stage[0]"
+        workload_addresses = {
+            f'module.pve_leaf.proxmox_virtual_environment_vm.node["{key}"]'
+            for key in ("router", "client", "pve-leaf-b")
+        } | {
+            f'module.pve_rr.proxmox_virtual_environment_vm.rr["{key}"]'
+            for key in ("pve-rr-a", "pve-rr-b")
+        }
+        vms = [resource for resource in resources if resource.get("type") == "proxmox_virtual_environment_vm"]
+        if {resource.get("address") for resource in vms} != workload_addresses | {stage_address}:
+            raise GuardError("PVE plan must contain exactly five workload addresses and the separate template stage")
+        for resource in vms:
+            if resource["address"] in workload_addresses:
+                verify_plan_size_block(resource, "cpu", {"cores": 1, "sockets": 1})
+                verify_plan_size_block(resource, "memory", {"dedicated": 1024})
     forbidden = [c.get("address") for c in changes if set(c.get("change", {}).get("actions", [])) - {"create", "read", "no-op"}]
     if forbidden:
         raise GuardError(f"fresh plan has non-create actions: {forbidden}")
     if estimated_cost(POLICY_MAX_PAID_LIFECYCLE_SECONDS) > ceiling:
         raise GuardError("plan exceeds monetary ceiling")
     print(json.dumps({"status": "pass", "phase": phase, "resourceCounts": actual}))
+
+
+def verify_plan_size_block(resource: dict[str, Any], block: str, expected: dict[str, int]) -> None:
+    """Reject absent, unknown or oversized VM dimensions in the saved plan."""
+    values = resource.get("values")
+    items = values.get(block) if isinstance(values, dict) else None
+    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+        raise GuardError(f"plan requires one explicit {block} block for {resource.get('address')}")
+    for key, wanted in expected.items():
+        actual = items[0].get(key)
+        if type(actual) not in (int, float) or actual != wanted:
+            raise GuardError(f"plan {block}.{key} must be exactly {wanted} for {resource.get('address')}")
 
 
 def verify_inventory(path: Path) -> None:

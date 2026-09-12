@@ -125,7 +125,7 @@ fi
 # The capture bridge is intentionally outside the API-token Terraform
 # surface.  It is removed only after destroy has completed; the root-PVE
 # helper independently refuses deletion until the cluster inventory confirms
-# all six workloads and the disposable shared template stage are absent.
+# all five workloads and the disposable shared template stage are absent.
 capture_bridge_driver="$script_dir/pve-capture-bridge.sh"
 if run_with_progress pve-capture-bridge-remove "$capture_bridge_driver" \
   --remove --evidence "$cleanup_evidence/pve-capture-bridge-remove.json"; then

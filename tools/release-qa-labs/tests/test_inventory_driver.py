@@ -24,6 +24,7 @@ class InventoryDriverTests(unittest.TestCase):
         for name in ("common.sh", "inventory-driver.sh"):
             shutil.copy2(ROOT / "drivers" / name, self.drivers / name)
         shutil.copy2(ROOT / "qa_guard.py", self.framework / "qa_guard.py")
+        shutil.copy2(ROOT / "inventory_resources.py", self.framework / "inventory_resources.py")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.calls = self.root / "calls"
@@ -98,10 +99,16 @@ exit 0''')
                                   azure_exists="false", azure_resources="[]",
                                   oci_tagged='{"data":{"items":[]}}', pve_bridge="[]",
                                   pve_live_bridge="[]", oci_pages=None, pve_vm=False,
-                                  qm_transient=False, fail=""):
+                                  qm_transient=False, fail="",
+                                  aws_lookup='{"Reservations":[]}',
+                                  aws_active='{"Reservations":[]}', oci_instances='{"data":[]}'):
         self.make("aws", f'''echo "$*" >>"$CALLS/aws"
 [ "{fail}" = aws ] && exit 7
-case " $* " in *" ec2 describe-instances "*) echo '{{"Reservations":[]}}';; *) printf '%s\\n' '{aws_tagged}';; esac''')
+case " $* " in
+ *" --instance-ids "*) [ "{fail}" = aws_lookup ] && exit 7; printf '%s\\n' '{aws_lookup}';;
+ *" ec2 describe-instances "*) printf '%s\\n' '{aws_active}';;
+ *) printf '%s\\n' '{aws_tagged}';;
+esac''')
         self.make("az", f'''echo "$*" >>"$CALLS/az"
 [ "{fail}" = az ] && exit 7
 case " $* " in *" group exists "*) echo '{azure_exists}';; *) printf '%s\\n' '{azure_resources}';; esac''')
@@ -115,7 +122,7 @@ case " $* " in *" group exists "*) echo '{azure_exists}';; *) printf '%s\\n' '{a
 [ "{fail}" = oci ] && exit 7
 [ "{fail}" = oci_page_2 ] && case " $* " in *" --page "*) exit 7;; esac
 case " $* " in
- *" compute instance list "*) echo '{{"data":[]}}';;
+ *" compute instance list "*) printf '%s' '{oci_instances}';;
  {page_cases_text}
  *" search resource structured-search "*) printf '%s\\n' '{pages[0]}';;
 esac''')
@@ -174,8 +181,8 @@ esac''')
 
     def test_aws_oci_and_pve_leftovers_are_nonzero(self):
         self.install_provider_fixtures(
-            aws_tagged='{"ResourceTagMappingList":[{"ResourceARN":"arn:fixture"}]}',
-            oci_tagged='{"data":{"items":[{"identifier":"ocid.fixture"}]}}',
+            aws_tagged='{"ResourceTagMappingList":[{"ResourceARN":"arn:fixture","Tags":[{"Key":"routerd-run-id","Value":"run-1"}]}]}',
+            oci_tagged=json.dumps({"data": {"items": [self.oci_network_resource()]}}),
             pve_bridge='[{"iface":"vmbr999"}]',
             pve_live_bridge='[{"ifname":"vmbr999","linkinfo":{"info_kind":"bridge"}}]',
             pve_vm=True,
@@ -235,13 +242,38 @@ esac''')
     def test_oci_later_page_nonzero_is_not_zero(self):
         pages = [
             '{"data":{"items":[]},"opc-next-page":"page-2"}',
-            '{"data":{"items":[{"identifier":"ocid.later"}]}}',
+            json.dumps({"data": {"items": [self.oci_network_resource()]}}),
         ]
         self.install_provider_fixtures(oci_pages=pages)
         result, evidence = self.run_driver()
         self.assertNotEqual(result.returncode, 0)
         scopes = {x["name"]: x for x in json.loads((evidence / "inventory.json").read_text())["scopes"]}
         self.assertEqual(scopes["oci-tagged-resources"]["count"], 1)
+
+    @staticmethod
+    def oci_network_resource():
+        return {"identifier": "ocid1.vcn.fixture", "resource-type": "Vcn",
+                "compartment-id": "ocid.fixture", "freeform-tags": {"RouterdRunId": "run-1"}}
+
+    def test_retry_with_fewer_pages_ignores_but_preserves_old_raw_pages(self):
+        pages = [
+            '{"data":{"items":[]},"opc-next-page":"page-2"}',
+            json.dumps({"data": {"items": [self.oci_network_resource()]}}),
+        ]
+        self.install_provider_fixtures(oci_pages=pages)
+        result, evidence = self.run_driver()
+        self.assertNotEqual(result.returncode, 0)
+        saved = {path: path.read_bytes() for path in
+                 (evidence / "oci-tagged-resource-pages").rglob("page-*.json")}
+        self.assertEqual(len(saved), 2)
+        self.install_provider_fixtures()
+        result, evidence = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        aggregate = json.loads((evidence / "oci-tagged-resources.json").read_text())
+        self.assertEqual(aggregate["pagination"], {"status": "complete", "pages": 1})
+        self.assertEqual(aggregate["data"]["items"], [])
+        for path, raw in saved.items():
+            self.assertEqual(path.read_bytes(), raw)
 
     def test_oci_repeated_token_malformed_and_later_transport_fail_closed(self):
         cases = (
@@ -261,6 +293,63 @@ esac''')
                 self.install_provider_fixtures(oci_pages=pages, fail=failure)
                 result, _ = self.run_driver()
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_confirmed_terminated_instances_do_not_block_zero_inventory(self):
+        instance = "i-0123456789abcdef0"
+        tags = [{"Key": "routerd-run-id", "Value": "run-1"}]
+        aws_tagged = {"ResourceTagMappingList": [{
+            "ResourceARN": "arn:aws:ec2:ap-northeast-1:123456789012:instance/" + instance,
+            "Tags": tags,
+        }]}
+        aws_lookup = {"Reservations": [{"OwnerId": "123456789012", "Instances": [{
+            "InstanceId": instance, "State": {"Name": "terminated"}, "Tags": tags,
+        }]}]}
+        compute = {"id": "ocid1.instance.fixture", "compartment-id": "ocid.fixture",
+                   "lifecycle-state": "TERMINATED", "freeform-tags": {"RouterdRunId": "run-1"}}
+        search = {"identifier": compute["id"], "resource-type": "Instance",
+                  "compartment-id": "ocid.fixture", "lifecycle-state": "TERMINATED",
+                  "freeform-tags": {"RouterdRunId": "run-1"}}
+        self.install_provider_fixtures(
+            aws_tagged=json.dumps(aws_tagged), aws_lookup=json.dumps(aws_lookup),
+            oci_pages=['{"data":{"items":[]},"opc-next-page":"page-2"}',
+                       json.dumps({"data": {"items": [search]}})],
+            oci_instances=json.dumps({"data": [compute]}),
+        )
+        result, evidence = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--instance-ids " + instance, (self.calls / "aws").read_text())
+        counts = {item["name"]: item["count"] for item in json.loads((evidence / "inventory.json").read_text())["scopes"]}
+        self.assertEqual(counts["aws-tagged-resources"], 0)
+        self.assertEqual(counts["oci-tagged-resources"], 0)
+        for provider in ("aws", "oci"):
+            detail = json.loads((evidence / (provider + "-resource-counts.json")).read_text())
+            self.assertEqual(detail["rawTaggedCount"], 1)
+            self.assertEqual(detail["confirmedTerminatedCount"], 1)
+            self.assertEqual(detail["count"], 0)
+        self.assertEqual(json.loads((evidence / "aws-tagged-resources.json").read_text()), aws_tagged)
+        self.assertEqual(json.loads((evidence / "oci-instances.json").read_text()), {"data": [compute]})
+
+    def test_oci_successful_empty_stdout_keeps_raw_response(self):
+        self.install_provider_fixtures(oci_instances="")
+        result, evidence = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        raw = evidence / "oci-instances.raw.json"
+        self.assertEqual(raw.read_bytes(), b"")
+        self.assertEqual(json.loads((evidence / "oci-instances.json").read_text()), {"data": []})
+        self.install_provider_fixtures(oci_instances=" ")
+        result, evidence = self.run_driver()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(raw.read_bytes(), b" ")
+
+    def test_exact_aws_lookup_failure_is_not_absence(self):
+        self.install_provider_fixtures(aws_tagged=json.dumps({"ResourceTagMappingList": [{
+            "ResourceARN": "arn:aws:ec2:ap-northeast-1:123456789012:instance/i-0123456789abcdef0",
+            "Tags": [{"Key": "routerd-run-id", "Value": "run-1"}],
+        }]}), fail="aws_lookup")
+        result, evidence = self.run_driver()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--instance-ids", (self.calls / "aws").read_text())
+        self.assertFalse((evidence / "inventory.json").exists())
 
 
 if __name__ == "__main__":

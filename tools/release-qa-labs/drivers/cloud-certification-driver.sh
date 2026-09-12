@@ -85,12 +85,10 @@ if ! run_with_progress tofu-oci-auth-plan \
 fi
 record_check tooling oci "OCI provider API authentication" pass "oracle/oci read availability domains using the declared profile"
 
-pre_inventory="$evidence_root/certification/pre-apply-inventory"
-if ! "$script_dir/inventory-driver.sh" \
-  --run-id "$run_id" --evidence-dir "$pre_inventory"; then
-  fail_driver "pre-apply inventory is not zero"
-fi
-record_check tooling "" "fresh run inventory" pass "OpenTofu, cloud run-id, and exact PVE VM inventory are zero"
+# The supervisor's precheck already proved exhaustive zero before mutation.
+# The successful PVE phase now owns six VMs, its capture bridge, and shared
+# OpenTofu state; requiring global zero here would reject that authorized work.
+# Exhaustive zero is required again after supervisor-owned cleanup, unchanged.
 
 plan="$plan_root/cloud.tfplan"
 cloud_state_backup="$preflight_dir/tofu-cloud-pre-apply.tfstate"
@@ -115,11 +113,42 @@ if ! run_with_progress tofu-cloud-apply \
   fail_driver "targeted cloud OpenTofu apply failed"
 fi
 
+# Module targeting intentionally excludes unrelated PVE resources, but also
+# omits composite root outputs from state.  Materialize those outputs with a
+# second immutable plan that performs no provider refresh and is rejected if
+# it proposes any managed-resource mutation.  Applying this checked plan only
+# records the complete nodes/fabric projection required by the handoff below.
+output_plan="$plan_root/cloud-outputs.tfplan"
+output_plan_json="$preflight_dir/cloud-outputs-plan.json"
+output_state_backup="$preflight_dir/tofu-cloud-pre-output-apply.tfstate"
+if ! run_with_progress tofu-cloud-output-plan \
+  tofu -chdir="$tf_dir" plan -input=false -refresh=false -out="$output_plan" \
+    -var-file="$tfvars_path"; then
+  fail_driver "complete cloud output plan failed"
+fi
+tofu -chdir="$tf_dir" show -json "$output_plan" >"$output_plan_json"
+if ! jq -e '
+  ([.resource_changes[]? |
+    select(.mode == "managed" and .change.actions != ["no-op"])] | length == 0) and
+  ((.output_changes | keys | sort) == ["fabric", "nodes", "pve_fabric", "pve_nodes"]) and
+  (.output_changes.fabric.actions == ["create"]) and
+  (.output_changes.nodes.actions == ["create"]) and
+  (.output_changes.pve_fabric.actions == ["no-op"]) and
+  (.output_changes.pve_nodes.actions == ["no-op"])
+' "$output_plan_json" >/dev/null; then
+  fail_driver "complete cloud output plan contains a managed mutation or wrong output set"
+fi
+if ! run_with_progress tofu-cloud-output-apply \
+  tofu -chdir="$tf_dir" apply -input=false -auto-approve \
+    -backup="$output_state_backup" "$output_plan"; then
+  fail_driver "complete cloud output apply failed"
+fi
+
 cloud_dir="$evidence_root/certification/cloud"
 tofu -chdir="$tf_dir" show -json >"$cloud_dir/tofu-state-after-cloud.json"
 
 # The PVE phase owns QGA discovery and guest-host-key pinning.  After cloud
-# apply, rebuild the full output from Terraform and replace only its six PVE
+# apply, rebuild the full output from Terraform and replace only its five PVE
 # entries with that already-attested PVE projection.  This preserves the one
 # authoritative QGA observation without refreshing cloud providers during the
 # PVE phase or reinterpreting PVE addresses from status-like side channels.
@@ -138,7 +167,7 @@ if ! jq -n --slurpfile raw "$raw_output" --slurpfile pve "$pve_qga_output" '
   ([ $full.nodes.value | to_entries[] | select(.value.site == "pve") | .key ] | sort) as $rawPVEKeys |
   ([ $pveNodes | to_entries[] | .key ] | sort) as $qgaPVEKeys |
   if (
-    ($rawPVEKeys | length == 6) and
+    ($rawPVEKeys | length == 5) and
     ($qgaPVEKeys == $rawPVEKeys) and
     ([ $full.nodes.value | to_entries[] | select(.value.site == "pve") |
        (.value.management_ip == null and .value.public_ip == null and .value.pve_management_source == "pending-qga-dhcp") ] | all) and
@@ -161,17 +190,17 @@ if ! jq -n --slurpfile raw "$raw_output" --slurpfile pve "$pve_qga_output" '
         }
         | if $entry.value.role == "leaf" then .capture_mac = $entry.value.capture_mac else . end
       ))
-  else error("full output and PVE QGA handoff do not describe the same six pending PVE nodes") end
+  else error("full output and PVE QGA handoff do not describe the same five pending PVE nodes") end
 ' >"$merged_output"; then
   rm -f "$merged_output"
   fail_driver "full OpenTofu/PVE QGA output handoff is invalid"
 fi
 if ! jq -e '
   (.nodes.value | type == "object") and
-  ([.nodes.value | to_entries[] | select(.value.site == "pve")] | length == 6) and
-  ([.nodes.value | to_entries[] | select(.value.site == "aws")] | length == 4) and
-  ([.nodes.value | to_entries[] | select(.value.site == "azure")] | length == 4) and
-  ([.nodes.value | to_entries[] | select(.value.site == "oci")] | length == 4) and
+  ([.nodes.value | to_entries[] | select(.value.site == "pve")] | length == 5) and
+  ([.nodes.value | to_entries[] | select(.value.site == "aws")] | length == 3) and
+  ([.nodes.value | to_entries[] | select(.value.site == "azure")] | length == 3) and
+  ([.nodes.value | to_entries[] | select(.value.site == "oci")] | length == 3) and
   ([.nodes.value | to_entries[] | select(.value.site == "pve") |
     (.value.management_ip != null and .value.public_ip != null and
      .value.pve_management_source == "qga-dhcp" and (.value.ssh_host_keys | length > 0))] | all)
@@ -192,24 +221,24 @@ if ! jq -e '
 fi
 install -m 0600 "$merged_output" "$tofu_output_path"
 rm -f "$merged_output"
-record_check cross-substrate "" "full topology output handoff" pass "full cloud output carries the six once-attested PVE QGA identities and PVE-leaf capture MACs without a cloud refresh in the PVE phase"
+record_check cross-substrate "" "full topology output handoff" pass "full cloud output carries the five once-attested PVE QGA identities and PVE-leaf capture MACs without a cloud refresh in the PVE phase"
 touch_heartbeat
 
 aws --profile "$aws_profile" --region "$aws_region" ec2 describe-instances \
   --filters "Name=tag:routerd-run-id,Values=$run_id" \
   >"$evidence_root/certification/cloud/aws-instances.json"
 aws_running="$(jq '[.Reservations[].Instances[] | select(.State.Name == "running")] | length' "$evidence_root/certification/cloud/aws-instances.json")"
-[ "$aws_running" -eq 4 ] ||
+[ "$aws_running" -eq 3 ] ||
   fail_driver "not all AWS nodes are running"
-record_check cloud aws "AWS full substrate inventory" pass "four exact AWS leaf/client instances are running; route reflectors run on PVE"
+record_check cloud aws "AWS full substrate inventory" pass "three exact AWS leaf/client instances are running; route reflectors run on PVE"
 
 azure_rg="rg-routerd-${run_id}-azure"
 az vm list --resource-group "$azure_rg" --show-details --output json \
   >"$evidence_root/certification/cloud/azure-vms.json"
 azure_running="$(jq '[.[] | select(.powerState == "VM running")] | length' "$evidence_root/certification/cloud/azure-vms.json")"
-[ "$azure_running" -eq 4 ] ||
-  fail_driver "not all four Azure nodes are running"
-record_check cloud azure "Azure full substrate inventory" pass "four exact run VMs are running"
+[ "$azure_running" -eq 3 ] ||
+  fail_driver "not all three Azure nodes are running"
+record_check cloud azure "Azure full substrate inventory" pass "three exact run VMs are running"
 
 oci --profile "$oci_profile" --region "$oci_region" compute instance list \
   --compartment-id "$oci_compartment_id" --all \
@@ -219,10 +248,10 @@ oci_running="$(
     '[.data[] | select(."freeform-tags".RouterdRunId == $runId and ."lifecycle-state" == "RUNNING")] | length' \
     "$evidence_root/certification/cloud/oci-instances.json"
 )"
-[ "$oci_running" -eq 4 ] ||
-  fail_driver "not all four OCI nodes are running"
-record_check cloud oci "OCI full substrate inventory" pass "four exact run instances are running"
+[ "$oci_running" -eq 3 ] ||
+  fail_driver "not all three OCI nodes are running"
+record_check cloud oci "OCI full substrate inventory" pass "three exact run instances are running"
 
-record_check cross-substrate "" "cloud provider inventory convergence" pass "all twelve fresh cloud leaf/client nodes are running in the declared provider contexts; RR compute is excluded from AWS"
+record_check cross-substrate "" "cloud provider inventory convergence" pass "all nine fresh cloud leaf/client nodes are running in the declared provider contexts; RR compute is excluded from AWS"
 write_driver_result "$out_arg" pass "Fresh AWS/Azure/OCI substrate applied from the pinned OpenTofu source without repair."
 echo "cloud certification driver: pass"

@@ -57,7 +57,7 @@ fi
 
 # The source image is an immutable local template.  Stage it alone first as a
 # full-copy template on qnap, prove the resulting PVE config is a template
-# backed by that shared datastore, then and only then permit six leaf/RR
+# backed by that shared datastore, then and only then permit five leaf/RR
 # clones to be planned.  This is intentionally two applies: a graph edge
 # prevents a race, while this intervening inspection proves the cross-host
 # clone precondition rather than merely assuming it.
@@ -153,7 +153,7 @@ if ! jq -n --slurpfile nodes "$pve_nodes_output" --slurpfile fabric "$pve_fabric
   | if (
       (.nodes.value | type == "object") and
       ([.nodes.value | to_entries[] | select(.value.site != "pve")] | length == 0) and
-      ([.nodes.value | to_entries[] | select(.value.site == "pve")] | length == 6) and
+      ([.nodes.value | to_entries[] | select(.value.site == "pve")] | length == 5) and
       (.fabric.value.pve.boot_source | type == "string")
     ) then . else error("PVE output is incomplete or contains a cloud node") end
 ' >"$pve_raw_output"; then
@@ -162,13 +162,21 @@ fi
 pve_output_path="$pve_dir/tofu-output-pve-qga.json"
 qga="$(routerd_script tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh)"
 pve_guest_known_hosts="$pve_dir/guest-known_hosts"
+# This closed PVE cloud-init profile names ipconfig0 management eth0. Leaf
+# capture has no ipconfig1 and retains ens19; attest those exact interfaces.
+# QGA commonly becomes available before systemd-networkd has completed its
+# DHCPv4 retry cycle.  A live run observed a healthy eth0/QGA/cloud-init guest
+# still waiting at the old 120-second boundary; keep this bounded but allow
+# four minutes before failing the PVE-only gate.  This remains inside the
+# 18-minute provisioning budget and occurs before any cloud VM exists.
 if ! run_with_progress pve-qga-addresses "$qga" \
   --tofu-output "$pve_raw_output" \
   --out "$pve_output_path" \
+  --management-ifname eth0 --capture-ifname ens19 \
   --pve-ssh-key "$pve_ssh_private_key" \
   --pve-known-hosts "$pve_ssh_known_hosts" \
   --guest-known-hosts-out "$pve_guest_known_hosts" \
-  --retries 24 --retry-sleep 5 \
+  --retries 48 --retry-sleep 5 \
   --evidence "$pve_dir/qga-addresses.txt"; then
   fail_driver "PVE management-address discovery failed"
 fi
@@ -187,7 +195,7 @@ capture_vmids="$(jq -c '[.nodes.value | to_entries[] | select(.value.site == "pv
 contract_capture_vmids="$(jq -c '[.pve.vmids | to_entries[] | select(.key != "pve-rr-a" and .key != "pve-rr-b") | .value] | sort' "$contract_path")"
 [ "$capture_vmids" = "$contract_capture_vmids" ] ||
   fail_driver "PVE capture bridge VMIDs do not equal the non-RR contract VMIDs"
-record_check pve pve "PVE capture bridge isolation" pass "capture bridge contains only the four exact non-RR contract VMIDs; PVE RRs have no capture NIC"
+record_check pve pve "PVE capture bridge isolation" pass "capture bridge contains only the three exact non-RR contract VMIDs; PVE RRs have no capture NIC"
 
 actual_vmids="$(jq -c '[.nodes.value | to_entries[] | select(.value.site == "pve") | .value.vm_id] | sort' "$pve_output_path")"
 contract_vmids="$(jq -c '[.pve.vmids[]] | sort' "$contract_path")"
@@ -195,7 +203,7 @@ contract_vmids="$(jq -c '[.pve.vmids[]] | sort' "$contract_path")"
   fail_driver "PVE output VMIDs do not equal contract VMIDs"
 
 # PVE root SSH is constrained to hypervisor inspection above.  Verify only
-# the six PVE guests here; cloud guests do not exist until the subsequent
+# the five PVE guests here; cloud guests do not exist until the subsequent
 # cloud phase and are exercised by the real full-topology qualification.
 ssh_key="$guest_ssh_private_key"
 ssh_results="$pve_dir/ssh-hostnames.tsv"
@@ -234,6 +242,6 @@ done < <(
 [ "$ssh_failures" -eq 0 ] ||
   fail_driver "PVE guest SSH hostname readiness failed for $ssh_failures nodes"
 
-record_check pve pve "PVE substrate inventory" pass "six dedicated PVE VMs, including two host-redundant RRs, exist at the exact contract VMIDs and are SSH-ready"
+record_check pve pve "PVE substrate inventory" pass "five dedicated PVE VMs, including two host-redundant RRs, exist at the exact contract VMIDs and are SSH-ready"
 write_driver_result "$out_arg" pass "Fresh PVE substrate applied from pinned OpenTofu source without repair."
 echo "PVE certification driver: pass"

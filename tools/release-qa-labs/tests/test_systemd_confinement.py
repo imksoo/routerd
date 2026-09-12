@@ -13,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SystemdConfinementTests(unittest.TestCase):
+    def setUp(self):
+        if os.environ.get("ROUTERD_RELEASE_QA_ISOLATED_TESTS") != "1":
+            self.skipTest("requires an isolated environment and ROUTERD_RELEASE_QA_ISOLATED_TESTS=1")
+
     def require_systemd_sudo(self):
         if shutil.which("systemd-run") is None or shutil.which("sudo") is None:
             self.skipTest("systemd-run and sudo are required")

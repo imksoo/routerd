@@ -7,7 +7,7 @@
     "profile": "representative-redundancy",
     "runScope": "full-representative",
     "provisioningBudgetSeconds": 1080,
-    "qualificationBudgetSeconds": 1920,
+    "qualificationBudgetSeconds": 5400,
     "minimumSupervisorReserveSeconds": 300
   },
   "safety": {
@@ -26,6 +26,7 @@
     "scriptBlobs": {
       "scripts/certify-cloud-substrate.sh": "<committed blob SHA-256>",
       "scripts/certify-pve-substrate.sh": "<committed blob SHA-256>",
+      "tests/e2e/cloudedge/configs/sam-e2e-generate.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-representative-redundancy.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-e2e.sh": "<committed blob SHA-256>",
       "tests/e2e/cloudedge/scripts/sam-pve-qga-addresses.sh": "<committed blob SHA-256>",
@@ -39,6 +40,9 @@
     "scriptBlobs": {
       "tools/release-qa-labs/qa_guard.py": "<committed blob SHA-256>",
       "tools/release-qa-labs/lifecycle_supervisor.py": "<committed blob SHA-256>",
+      "tools/release-qa-labs/azure_capacity.py": "<committed blob SHA-256>",
+      "tools/release-qa-labs/inventory_resources.py": "<committed blob SHA-256>",
+      "tools/release-qa-labs/drivers/precheck-driver.sh": "<committed blob SHA-256>",
       "tools/release-qa-labs/drivers/start-supervised-release-qa.sh": "<committed blob SHA-256>",
       "tools/release-qa-labs/drivers/pve-capture-bridge.sh": "<committed blob SHA-256>",
       "tools/release-qa-labs/drivers/pve-orphan-cleanup.sh": "<committed blob SHA-256>",
@@ -47,6 +51,7 @@
   },
   "execution": {
     "mode": "production",
+    "hostPolicy": "approved-remote",
     "host": "chatty.lain.local",
     "requireRemote": true,
     "providerMirror": "/var/lib/routerd-release-qa/provider-mirror",
@@ -61,13 +66,13 @@
     "publicKey": "ssh-ed25519 AAAA..."
   },
   "limits": {
-    "maxEstimatedCostUsd": 1.0,
-    "providerCounts": {"aws": 4, "azure": 4, "oci": 4, "pve": 7},
+    "maxEstimatedCostUsd": 1.60,
+    "providerCounts": {"aws": 3, "azure": 3, "oci": 3, "pve": 6},
     "instanceTypes": {
-      "aws": {"t3.large": 2, "t3.micro": 2},
-      "azure": {"Standard_B1s": 4},
-      "oci": {"VM.Standard.E2.1": 4},
-      "pve": {"template-stage": 1, "template-clone": 6}
+      "aws": {"t3.small": 2, "t3.micro": 1},
+      "azure": {"Standard_B1s": 3},
+      "oci": {"VM.Standard.E4.Flex": 3},
+      "pve": {"template-stage": 1, "template-clone": 5}
     },
     "regions": {"aws": "ap-northeast-1", "azure": "japaneast", "oci": "ap-tokyo-1", "pve": "local"}
   },
@@ -103,7 +108,6 @@
       "pve-leaf-a": 0,
       "pve-client-a": 0,
       "pve-leaf-b": 0,
-      "pve-client-b": 0,
       "pve-rr-a": 0,
       "pve-rr-b": 0
     },
@@ -124,12 +128,12 @@
     }
   },
   "lifecycle": {
-    "ttl": "55m",
+    "ttl": "115m",
     "heartbeatStale": "5m",
     "cleanupTimeout": "10m",
     "inventoryTimeout": "5m",
     "maxCleanupAttempts": 2,
-    "maxPaidLifecycleSeconds": 5100,
+    "maxPaidLifecycleSeconds": 8700,
     "cleanupScope": "run-id"
   }
 }

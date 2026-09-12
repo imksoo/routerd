@@ -8,6 +8,7 @@ set -euo pipefail
 readonly profile_name="full-topology-minimal"
 readonly default_max_runtime_seconds=1200
 readonly max_allowed_runtime_seconds=1200
+export SAM_E2E_MAX_SECONDARY_IPS=3
 
 usage() {
   cat <<'USAGE'
@@ -108,10 +109,12 @@ require_node() {
   }
 }
 
-# The release topology keeps its redundant RR pair on PVE and has two
-# client-bearing leaves at each of the four sites. Checking all eighteen nodes
-# prevents a reduced fixture from silently passing a smaller directed matrix
-# while claiming full topology.
+# Router redundancy and traffic-client count are independent. Require both
+# leaves and one client at every site, with the separate PVE RR pair retained.
+jq -e '.clients_per_site == 1' "$fabric_json" >/dev/null || {
+  echo "$profile_name requires fabric.clients_per_site=1" >&2
+  exit 2
+}
 require_node pve-rr-a rr pve
 require_node pve-rr-b rr pve
 require_node aws-leaf-a leaf aws
@@ -123,20 +126,16 @@ require_node oci-leaf-b leaf oci
 require_node pve-leaf-a leaf pve
 require_node pve-leaf-b leaf pve
 require_node aws-client-a client aws
-require_node aws-client-b client aws
 require_node azure-client-a client azure
-require_node azure-client-b client azure
 require_node oci-client-a client oci
-require_node oci-client-b client oci
 require_node pve-client-a client pve
-require_node pve-client-b client pve
 
 router_count="$(jq '[to_entries[] | select(.value.role == "rr" or .value.role == "leaf")] | length' "$nodes_json")"
 client_count="$(jq '[to_entries[] | select(.value.role == "client")] | length' "$nodes_json")"
 cloud_client_count="$(jq '[to_entries[] | select(.value.role == "client" and (.value.site == "aws" or .value.site == "azure" or .value.site == "oci"))] | length' "$nodes_json")"
 [ "$router_count" -eq 10 ] || { echo "expected exactly 10 router nodes, got $router_count" >&2; exit 2; }
-[ "$client_count" -eq 8 ] || { echo "expected exactly 8 client nodes, got $client_count" >&2; exit 2; }
-[ "$cloud_client_count" -eq 6 ] || { echo "expected exactly 6 cloud client nodes, got $cloud_client_count" >&2; exit 2; }
+[ "$client_count" -eq 4 ] || { echo "expected exactly 4 client nodes, got $client_count" >&2; exit 2; }
+[ "$cloud_client_count" -eq 3 ] || { echo "expected exactly 3 cloud client nodes, got $cloud_client_count" >&2; exit 2; }
 
 qualification_dir="$evidence_root/$profile_name"
 mkdir -p "$qualification_dir"

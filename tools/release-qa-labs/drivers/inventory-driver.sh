@@ -39,6 +39,8 @@ require_command aws
 require_command az
 require_command oci
 require_command ssh
+require_command python3
+resource_classifier="$framework_root/inventory_resources.py"
 
 if [ -f "$tofu_state_path" ]; then
   tofu -chdir="$tf_dir" state list >"$inventory_evidence/tofu-state-list.txt"
@@ -60,26 +62,41 @@ aws --profile "$aws_profile" ec2 describe-instances \
   --region "$aws_region" \
   --filters "Name=tag:routerd-run-id,Values=$run_id" \
   "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped" \
-  >"$aws_active"
-aws_count="$(jq '[.Reservations[].Instances[]] | length' "$aws_active")"
-if [ "$aws_count" -eq 0 ]; then
-  record aws-run-resources PASS "active instance count=0"
-else
-  record aws-run-resources FAIL "active instance count=$aws_count"
-fi
+  --output json >"$aws_active" 2>"$inventory_evidence/aws-active-instances.stderr"
 
 aws_tagged="$inventory_evidence/aws-tagged-resources.json"
 aws resourcegroupstaggingapi get-resources \
   --profile "$aws_profile" --region "$aws_region" \
   --tag-filters "Key=routerd-run-id,Values=$run_id" \
-  --output json >"$aws_tagged"
-jq -e '((.PaginationToken // .NextToken // "") == "")' "$aws_tagged" >/dev/null ||
-  die "AWS tagged-resource inventory is partial"
-aws_tagged_count="$(jq '[.ResourceTagMappingList[]] | length' "$aws_tagged")"
-if [ "$aws_tagged_count" -eq 0 ]; then
-  record aws-tagged-resources PASS "all paginated run-tagged resources=0"
+  --output json >"$aws_tagged" 2>"$inventory_evidence/aws-tagged-resources.stderr"
+# The tagging index can retain terminated instances. Absence from the active
+# query is not proof: look up every exact tagged instance ID and validate its
+# account, region, run tag and lifecycle before excluding a tombstone.
+python3 "$resource_classifier" aws-ids --tagged "$aws_tagged" \
+  --run-id "$run_id" --region "$aws_region" >"$inventory_evidence/aws-tagged-instance-ids.json"
+mapfile -t aws_instance_ids < <(jq -r '.[]' "$inventory_evidence/aws-tagged-instance-ids.json")
+aws_lookup="$inventory_evidence/aws-tagged-instance-states.json"
+if [ "${#aws_instance_ids[@]}" -gt 0 ]; then
+  aws --profile "$aws_profile" ec2 describe-instances --region "$aws_region" \
+    --instance-ids "${aws_instance_ids[@]}" --output json \
+    >"$aws_lookup" 2>"$inventory_evidence/aws-tagged-instance-states.stderr"
 else
-  record aws-tagged-resources FAIL "run-tagged resource count=$aws_tagged_count"
+  printf '{"Reservations":[]}\n' >"$aws_lookup"
+fi
+python3 "$resource_classifier" aws-counts --tagged "$aws_tagged" \
+  --lookup "$aws_lookup" --active "$aws_active" --run-id "$run_id" --region "$aws_region" \
+  >"$inventory_evidence/aws-resource-counts.json"
+aws_count="$(jq '.activeInstanceCount' "$inventory_evidence/aws-resource-counts.json")"
+aws_tagged_count="$(jq '.count' "$inventory_evidence/aws-resource-counts.json")"
+if [ "$aws_count" -eq 0 ]; then
+  record aws-run-resources PASS "active instance count=0"
+else
+  record aws-run-resources FAIL "active instance count=$aws_count"
+fi
+if [ "$aws_tagged_count" -eq 0 ]; then
+  record aws-tagged-resources PASS "actionable run residue=0; raw and confirmed terminated counts retained"
+else
+  record aws-tagged-resources FAIL "actionable run residue=$aws_tagged_count"
 fi
 
 azure_rg="rg-routerd-${run_id}-azure"
@@ -108,43 +125,34 @@ oci_compartment_id="$(extract_tfvars_string "$tfvars_path" oci_compartment_id)"
 oci_profile="${oci_profile:-DEFAULT}"
 oci --profile "$oci_profile" --region "$oci_region" compute instance list \
   --compartment-id "$oci_compartment_id" --all \
-  >"$inventory_evidence/oci-instances.json"
+  >"$inventory_evidence/oci-instances.raw.json" 2>"$inventory_evidence/oci-instances.stderr"
+cp "$inventory_evidence/oci-instances.raw.json" "$inventory_evidence/oci-instances.json"
 # OCI CLI 3.84 emits an empty stdout stream (with exit 0) for an empty list.
 # Normalize that successful empty response so jq can evaluate the zero inventory.
 if [ ! -s "$inventory_evidence/oci-instances.json" ]; then
   printf '{"data":[]}\n' >"$inventory_evidence/oci-instances.json"
 fi
-oci_active="$(
-  jq --arg runId "$run_id" \
-    '[.data[] | select(."freeform-tags".RouterdRunId == $runId and ."lifecycle-state" != "TERMINATED")] | length' \
-    "$inventory_evidence/oci-instances.json"
-)"
-if [ "$oci_active" -eq 0 ]; then
-  record oci-run-resources PASS "non-terminated run-tagged instances=0"
-else
-  record oci-run-resources FAIL "non-terminated run-tagged instances=$oci_active"
-fi
-
 oci_tagged="$inventory_evidence/oci-tagged-resources.json"
 oci_pages_dir="$inventory_evidence/oci-tagged-resource-pages"
 mkdir -p "$oci_pages_dir"
-seen_tokens="$oci_pages_dir/seen-next-page-tokens.txt"
+# A later retry may have fewer pages. Retain previous raw pages, but aggregate
+# only this query's explicit list; never glob an earlier attempt into the result.
+oci_query_dir="$(mktemp -d "$oci_pages_dir/query.XXXXXXXX")"
+oci_pages=()
+seen_tokens="$oci_query_dir/seen-next-page-tokens.txt"
 : >"$seen_tokens"
 page_token=
 page_number=1
 while :; do
-  page="$oci_pages_dir/page-${page_number}.json"
+  page="$oci_query_dir/page-${page_number}.json"
   oci_args=(--profile "$oci_profile" --region "$oci_region" search resource structured-search
     --query-text "query all resources where (freeformTags.key = 'RouterdRunId' && freeformTags.value = '$run_id')")
   if [ -n "$page_token" ]; then
     oci_args+=(--page "$page_token")
   fi
-  oci "${oci_args[@]}" >"$page"
-  jq -e '
-    (.data | type == "object") and (.data.items | type == "array") and
-    ((has("opc-next-page") | not) or (."opc-next-page" == null) or (."opc-next-page" | type == "string")) and
-    (has("next-page") | not)
-  ' "$page" >/dev/null || die "OCI tagged-resource inventory page is malformed or has ambiguous pagination metadata"
+  oci "${oci_args[@]}" >"$page" 2>"$oci_query_dir/page-${page_number}.stderr"
+  python3 "$resource_classifier" oci-page "$page"
+  oci_pages+=("$page")
   next_token="$(jq -r '."opc-next-page" // empty' "$page")"
   if [ -z "$next_token" ]; then
     break
@@ -157,17 +165,26 @@ while :; do
   page_number=$((page_number + 1))
 done
 jq -s '{data:{items:[.[].data.items[]]}, pagination:{status:"complete", pages:length}}' \
-  "$oci_pages_dir"/page-*.json >"$oci_tagged"
-oci_tagged_count="$(jq '[.data.items[]] | length' "$oci_tagged")"
-if [ "$oci_tagged_count" -eq 0 ]; then
-  record oci-tagged-resources PASS "all paginated run-tagged resources=0"
+  "${oci_pages[@]}" >"$oci_tagged"
+python3 "$resource_classifier" oci-counts --tagged "$oci_tagged" \
+  --compute "$inventory_evidence/oci-instances.json" --run-id "$run_id" \
+  --compartment "$oci_compartment_id" >"$inventory_evidence/oci-resource-counts.json"
+oci_active="$(jq '.activeInstanceCount' "$inventory_evidence/oci-resource-counts.json")"
+oci_tagged_count="$(jq '.count' "$inventory_evidence/oci-resource-counts.json")"
+if [ "$oci_active" -eq 0 ]; then
+  record oci-run-resources PASS "non-terminated run-tagged instances=0"
 else
-  record oci-tagged-resources FAIL "run-tagged resource count=$oci_tagged_count"
+  record oci-run-resources FAIL "non-terminated run-tagged instances=$oci_active"
+fi
+if [ "$oci_tagged_count" -eq 0 ]; then
+  record oci-tagged-resources PASS "actionable run residue=0; raw and confirmed terminated counts retained"
+else
+  record oci-tagged-resources FAIL "actionable run residue=$oci_tagged_count"
 fi
 
 pve_host="$pve_ssh_host"
 # The disposable qnap template stage is a real PVE VM/template resource and
-# must be zeroed with the six workload VMs before cleanup can claim success.
+# must be zeroed with the five workload VMs before cleanup can claim success.
 pve_vmids="$(jq -ec '[.pve.templateStage.vmid] + [.pve.vmids[]] | unique' "$contract_path")"
 pve_ssh=(ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$pve_ssh_known_hosts" -o GlobalKnownHostsFile=/dev/null \

@@ -918,6 +918,40 @@ func TestOwnershipResolverCoalescesDuplicateProviderObserversForSameOwner(t *tes
 	}
 }
 
+func TestOwnershipResolverKeepsLocalProviderOwnerWhenPeerObservedSameResourceLater(t *testing.T) {
+	now := time.Date(2026, 9, 12, 12, 40, 0, 0, time.UTC)
+	spec := awsFailoverPoolSpec()
+	address := "10.88.60.11/32"
+	local := providerRuntimeAddressEvent(t, "aws-router-a", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-2*time.Second), time.Hour)
+	peer := providerRuntimeAddressEvent(t, "aws-router-b", address, "aws", "aws-provider", providerinventory.PrivateIPRecord{
+		Address:      "10.88.60.11",
+		NICRef:       "eni-client",
+		SubnetRef:    "subnet-aws",
+		ResourceRef:  "i-aws-client",
+		ResourceType: "instance-nic",
+	}, now.Add(-time.Second), time.Hour)
+	pool := ownershipPoolFixture("cloudedge", "aws-router-a", spec)
+	events := []routerstate.EventRecord{local, peer}
+	facts := ownershipFactsWithProviderRuntime(ownershipFactsFixture(spec, ownershipFactsFixtureInput{}), pool, events, now)
+	decisions, err := resolveAddressOwnership(ownershipResolverSnapshot(pool, now, facts, withOwnershipEvents(events)))
+	if err != nil {
+		t.Fatalf("resolveAddressOwnership: %v", err)
+	}
+	decision := ownershipDecisionByAddress(t, decisions, address)
+	if decision.Class != ownershipClassLocalHomeOwned || decision.HomeOwnerNode != "aws-router-a" || decision.AdvertiseOwnerNode != "aws-router-a" {
+		t.Fatalf("decision = %#v, want active local observer to advertise the coalesced provider owner", decision)
+	}
+	if decision.ConflictReason != "" {
+		t.Fatalf("decision = %#v, same provider resource observed by its peer must not conflict", decision)
+	}
+}
+
 func TestOwnershipResolverIgnoresExpiredDuplicateProviderHomeOwner(t *testing.T) {
 	now := time.Date(2026, 6, 10, 16, 5, 0, 0, time.UTC)
 	spec := awsFailoverPoolSpec()

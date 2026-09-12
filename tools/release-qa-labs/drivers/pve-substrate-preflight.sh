@@ -190,11 +190,11 @@ jq -e '(.data | type) == "array"' "$api_inventory" >/dev/null ||
 planned_vmids="$(jq -ec '[.pve.vmids[]] | sort' "$contract_path")"
 if ! jq -e '
   (.pve.vmids | type) == "object" and
-  ([.pve.vmids[]] | length == 6 and
+  ([.pve.vmids[]] | length == 5 and
     all(.[]; type == "number" and floor == . and . > 0) and
-    (unique | length == 6))
+    (unique | length == 5))
 ' "$contract_path" >/dev/null; then
-  die "contract must pin six distinct positive PVE VMIDs"
+  die "contract must pin five distinct positive PVE VMIDs"
 fi
 stage_vmid=
 template_vmid=
@@ -326,7 +326,7 @@ case "$contract_boot_source" in
       --arg datastore "$stage_datastore" --argjson templateVMID "$template_vmid" \
       --argjson stageVMID "$stage_vmid" \
       --arg verification "source-template-on-leaf-and-shared-datastore-on-all-targets" \
-      --arg crossHostClone "stage-only full qnap copy is applied and inspected before six target clones" \
+      --arg crossHostClone "stage-only full qnap copy is applied and inspected before five target clones" \
       '{mode:$mode,sourceNode:$sourceNode,templateVMID:$templateVMID,stageVMID:$stageVMID,
         sharedDatastore:$datastore,verification:$verification,crossHostClone:$crossHostClone}' \
       >"$boot_evidence"

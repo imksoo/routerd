@@ -51,13 +51,12 @@ mapfile -t targets < <(jq -er '
     ["pve-leaf-a", $p.sshHost, $p.node, $p.vmids["pve-leaf-a"], "leaf"],
     ["pve-client-a", $p.sshHost, $p.node, $p.vmids["pve-client-a"], "client"],
     ["pve-leaf-b", $p.sshHost, $p.node, $p.vmids["pve-leaf-b"], "leaf"],
-    ["pve-client-b", $p.sshHost, $p.node, $p.vmids["pve-client-b"], "client"],
     ["pve-rr-a", $p.rrNodes["pve-rr-a"].sshHost, $p.rrNodes["pve-rr-a"].node, $p.vmids["pve-rr-a"], "rr"],
     ["pve-rr-b", $p.rrNodes["pve-rr-b"].sshHost, $p.rrNodes["pve-rr-b"].node, $p.vmids["pve-rr-b"], "rr"],
     ["pve-template-stage", $p.sshHost, $p.templateStage.sourceNode, $p.templateStage.vmid, "template-stage"]
   ] | .[] | @tsv
 ' "$contract_path")
-[ "${#targets[@]}" -eq 7 ] || die "pinned contract must define exactly seven disposable PVE targets"
+[ "${#targets[@]}" -eq 6 ] || die "pinned contract must define exactly six disposable PVE targets"
 
 pve_ssh=(ssh -n -i "$pve_ssh_private_key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
   -o UserKnownHostsFile="$pve_ssh_known_hosts" -o GlobalKnownHostsFile=/dev/null \

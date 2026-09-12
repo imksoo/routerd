@@ -26,8 +26,8 @@ PHASES = (
     "REVOKING_TOKEN", "DONE", "STAGING_DONE", "FAILED",
 )
 TERMINAL = {"DONE", "STAGING_DONE", "FAILED"}
-MAX_MUTATION_TTL_SECONDS = 55 * 60
-MAX_PAID_LIFECYCLE_SECONDS = 85 * 60
+MAX_MUTATION_TTL_SECONDS = 115 * 60
+MAX_PAID_LIFECYCLE_SECONDS = 145 * 60
 
 
 class SupervisorError(RuntimeError):
@@ -547,7 +547,9 @@ class Supervisor:
         self.state["mutationExit"] = mutation_exit
         atomic_json(self.state_path, self.state)
         result = self.cleanup_and_verify(reason)
-        if mutation_exit not in (None, 0):
+        # Recovery or token revocation may still need retry (2). Do not turn
+        # that into terminal failure (1), which systemd will not restart.
+        if result == 0 and mutation_exit not in (None, 0):
             return 1
         return result
 

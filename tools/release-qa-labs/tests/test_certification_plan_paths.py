@@ -27,12 +27,38 @@ class CertificationPlanPathTests(unittest.TestCase):
         self.assertIn('show -json "$plan"', script)
         self.assertIn(f'-backup="{backup_variable}" "$plan"', script)
         literals = re.findall(r'[A-Za-z0-9_-]+\.tfplan', script)
-        self.assertEqual(literals, [*extra_plan_names, f"{plan_name}.tfplan"])
+        self.assertCountEqual(literals, [f"{plan_name}.tfplan", *extra_plan_names])
 
     def test_cloud_saved_plan_is_runtime_only_and_single_source(self):
         self.assert_runtime_plan_pipeline(
-            "cloud-certification-driver.sh", "cloud", "$cloud_state_backup"
+            "cloud-certification-driver.sh", "cloud", "$cloud_state_backup",
+            extra_plan_names=("cloud-outputs.tfplan",)
         )
+
+    def test_cloud_targeted_plan_recomputes_complete_root_outputs(self):
+        cloud = (ROOT / "drivers/cloud-certification-driver.sh").read_text(
+            encoding="utf-8"
+        )
+
+        # A module-targeted apply leaves composite root outputs absent, and
+        # OpenTofu accepts output.* target syntax without materializing them.
+        # Follow it with one saved, refresh-free plan whose managed resources
+        # must all be no-op and whose only output changes are nodes/fabric.
+        self.assertNotIn('-target=output.nodes', cloud)
+        self.assertNotIn('-target=output.fabric', cloud)
+        self.assertIn('output_plan="$plan_root/cloud-outputs.tfplan"', cloud)
+        self.assertIn('plan -input=false -refresh=false -out="$output_plan"', cloud)
+        self.assertIn('show -json "$output_plan"', cloud)
+        self.assertIn('select(.mode == "managed" and .change.actions != ["no-op"])', cloud)
+        self.assertIn(
+            '(.output_changes | keys | sort) == ["fabric", "nodes", "pve_fabric", "pve_nodes"]',
+            cloud,
+        )
+        self.assertIn('.output_changes.fabric.actions == ["create"]', cloud)
+        self.assertIn('.output_changes.nodes.actions == ["create"]', cloud)
+        self.assertIn('.output_changes.pve_fabric.actions == ["no-op"]', cloud)
+        self.assertIn('.output_changes.pve_nodes.actions == ["no-op"]', cloud)
+        self.assertIn('-backup="$output_state_backup" "$output_plan"', cloud)
 
     def test_pve_saved_plan_is_runtime_only_and_single_source(self):
         self.assert_runtime_plan_pipeline(
@@ -117,6 +143,18 @@ class CertificationPlanPathTests(unittest.TestCase):
         self.assertLess(bridge, stage_plan)
         self.assertIn('tofu -chdir="$tf_dir" init -input=false -lockfile=readonly', pve)
         self.assertIn('-backend-config="path=$tofu_state_path"', pve)
+
+    def test_pve_management_macs_can_be_pinned_and_are_reported(self):
+        env = ROOT / "terraform/envs/default"
+        leaf = ROOT / "terraform/modules/pve_leaf"
+        rr = ROOT / "terraform/modules/pve_rr"
+
+        self.assertIn('variable "pve_management_macs"', (env / "variables.tf").read_text())
+        self.assertIn('management_macs      = var.pve_management_macs', (env / "main.tf").read_text())
+        self.assertIn('mac_address = lookup(var.management_macs, each.value.name, null)', (leaf / "main.tf").read_text())
+        self.assertIn('mac_address = each.value.management_mac', (rr / "main.tf").read_text())
+        self.assertIn('management_mac', (leaf / "outputs.tf").read_text())
+        self.assertIn('management_mac', (rr / "outputs.tf").read_text())
 
     def test_mutating_tofu_commands_keep_state_backups_in_runtime_evidence(self):
         pve = (ROOT / "drivers/pve-certification-driver.sh").read_text(encoding="utf-8")

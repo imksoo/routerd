@@ -11,6 +11,7 @@ variable "rr_nodes" {
     vm_id           = number
     underlay_bridge = string
     vlan_id         = number
+    management_mac  = optional(string)
   }))
 }
 
@@ -56,11 +57,11 @@ variable "username" {
 }
 variable "cpu_cores" {
   type    = number
-  default = 2
+  default = 1
 }
 variable "memory_mb" {
   type    = number
-  default = 2048
+  default = 1024
 }
 variable "disk_gb" {
   type    = number

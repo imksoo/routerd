@@ -12,6 +12,7 @@ output "nodes" {
       private_ip            = null
       public_ip             = null
       pve_management_source = "pending-qga-dhcp"
+      management_mac        = node.management_mac
       underlay_bridge       = node.underlay_bridge
       underlay_vlan_id      = node.vlan_id
     }

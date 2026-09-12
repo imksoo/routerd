@@ -77,6 +77,7 @@ output "fabric" {
   value = {
     run_id              = var.run_id
     topology_scale      = var.topology_scale
+    clients_per_site    = var.clients_per_site
     mobility_prefix     = "10.77.60.0/24"
     tunnel_inner_prefix = "10.255.0.0/20"
     wg_port             = 51820
