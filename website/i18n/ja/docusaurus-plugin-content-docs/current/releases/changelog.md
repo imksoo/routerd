@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- `Type=notify` の起動処理中に `service-unit` コントローラが
+  `routerd.service` を再起動しないようにしました。起動処理を完了して READY を通知し、
+  BGP などの管理対象サービスを起動できるようになりました（#1228）。
+
 ## v20260912.2028
 
 ### 修正
