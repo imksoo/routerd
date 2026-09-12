@@ -111,3 +111,28 @@ func TestFaultStatusEventRefreshesGenerationWithoutRepeatedHistory(t *testing.T)
 		t.Fatalf("generation refresh repeated transition: %d %v", len(events), err)
 	}
 }
+
+func TestTransactionalStatusEventsHonorJournalRowBound(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.eventJournalMaxRows = 20
+	store.eventJournalMaxBytes = 1 << 20
+	ref := daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "Interface", Name: "uplink"}
+	for i := 0; i < 50; i++ {
+		event := daemonapi.NewEvent(daemonapi.DaemonRef{Kind: "routerd"}, "routerd.resource.status.changed", daemonapi.SeverityInfo)
+		event.Resource = &ref
+		status := map[string]any{"sequence": i}
+		if _, err := store.SaveObjectStatusAndEvent(ref.APIVersion, ref.Kind, ref.Name, status, statusEventTestBuilder(event)); err != nil {
+			t.Fatalf("status event %d: %v", i, err)
+		}
+	}
+	if stats := store.EventJournalStats(); stats.Rows > store.eventJournalMaxRows {
+		t.Fatalf("transactional status journal escaped row bound: %#v", stats)
+	}
+	if got := store.ObjectStatus(ref.APIVersion, ref.Kind, ref.Name)["sequence"]; got != float64(49) {
+		t.Fatalf("journal pruning changed operational state: sequence=%v", got)
+	}
+}
