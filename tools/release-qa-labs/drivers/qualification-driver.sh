@@ -57,8 +57,11 @@ log="$evidence_root/commands/$qualification_profile-qualification.log"
 # The production profile requires the generator's QGA-DHCP management safety
 # policy. The representative wrapper validates generated PVE configs before
 # deployment; routerd never owns DHCP, DHCPv6, or RA on that shared underlay.
-# The representative wrapper validates generated PVE configs before deploy.
-"$representative_validation" \
+# PVE cloud-init names ipconfig0 management eth0 and client ipconfig1 eth1;
+# leaf capture has no ipconfig1 and retains ens19. Pin this closed profile.
+qualification_deadline=$((SECONDS + qualification_budget_seconds))
+PVE_MANAGEMENT_INTERFACE=eth0 PVE_CAPTURE_INTERFACE=ens19 PVE_CLIENT_CAPTURE_INTERFACE=eth1 \
+  "$representative_validation" \
   --tofu-output "$tofu_output_path" \
   --artifact "$artifact_path" \
   --tfvars "$tfvars_path" \
@@ -70,28 +73,42 @@ log="$evidence_root/commands/$qualification_profile-qualification.log"
   >"$log" 2>&1 &
 pid=$!
 printf '%s\n' "$pid" >"$active_pid_file"
-previous_signature=
 while kill -0 "$pid" 2>/dev/null; do
-  signature="$(
-    find "$qualification_dir" "$log" -type f -printf '%T@:%s:%p\n' 2>/dev/null |
-      sort | tail -n 1
-  )"
-  if [ -n "$signature" ] && [ "$signature" != "$previous_signature" ]; then
-    touch "$heartbeat"
-    previous_signature="$signature"
+  remaining=$((qualification_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  # A valid convergence gate can be silent for longer than heartbeatStale.
+  # Process liveness is sufficient here because the fixed qualification
+  # deadline remains the independent upper bound for a hung profile.
+  touch "$heartbeat"
+  # Never give the progress poll a fresh five seconds past the fixed deadline.
+  remaining=$((qualification_deadline - SECONDS))
+  [ "$remaining" -gt 0 ] || break
+  if [ "$remaining" -lt 5 ]; then
+    sleep "$remaining"
+  else
+    sleep 5
   fi
-  sleep 5
 done
-set +e
-wait "$pid"
-driver_rc=$?
-set -e
-rm -f "$active_pid_file"
+if [ "$SECONDS" -ge "$qualification_deadline" ]; then
+  # --foreground timeout in the wrapper can leave an SSH descendant holding
+  # its log pipe open. Do not wait indefinitely, kill a nested process group,
+  # or start cleanup here. Return failure to mutation-driver (errexit), then
+  # the durable supervisor quiesces the entire mutation PGID before cleanup.
+  # Retain the active PID as evidence until that supervisor-owned recovery.
+  driver_rc=124
+else
+  set +e
+  wait "$pid"
+  driver_rc=$?
+  set -e
+  rm -f "$active_pid_file"
+fi
 touch "$heartbeat"
 
 profile_result="$qualification_dir/profile-result.json"
 
-if [ "$driver_rc" -eq 0 ] && jq -e \
+verify_profile_result() {
+  jq -e \
   --arg profile "$qualification_profile" \
   --argjson budget "$qualification_budget_seconds" \
   '.profile == $profile and .result == "pass" and .gates == {
@@ -108,24 +125,38 @@ if [ "$driver_rc" -eq 0 ] && jq -e \
     rrBControlPlaneContinuity:true,
     rrBContinuityCanary:true,
     rrARejoin:true,
+    edgeAFailover:true,
+    edgeARejoin:true,
+    edgeAClientMatrix:true,
+    edgeACloudIngressMatrix:true,
     legacyProtocols:false,
     performance:false,
     symmetricBFailover:false,
     provisioning:false,
     destruction:false
   } and .limits.maxRuntimeSeconds == $budget
-    and .topology == {routerCount:10,clientCount:8,cloudClientCount:6,rrFaultDomain:"host-redundant"}' \
-  "$profile_result" >/dev/null 2>&1; then
+    and .topology == {routerCount:10,clientCount:4,cloudClientCount:3,rrFaultDomain:"host-redundant"}
+    and (.edgeScenarios | type == "object"
+      and (keys == ["aws-leaf-a","azure-leaf-a","oci-leaf-a","pve-leaf-a"])
+      and all(.[]; .result == "pass" and .failoverEvidenceExit == 0
+        and .rejoinEvidenceExit == 0 and .e2eExit == 0))' \
+    "$profile_result" >/dev/null 2>&1
+}
+
+if [ "$driver_rc" -eq 0 ] && verify_profile_result; then
   status=pass
   classification=none
   result=pass
-  summary="representative PVE-RR A/AB/B-only/AB full-topology qualification passed without repair"
+  summary="representative RR-A and AWS/Azure/OCI/PVE edge-A failure/rejoin qualification passed without repair"
   rc=0
 else
   status=fail
   classification=product_failure
   result=fail
   summary="$qualification_profile validation exit=$driver_rc; inspect $profile_result"
+  if [ "$driver_rc" -eq 124 ]; then
+    summary="$qualification_profile qualification deadline exhausted (${qualification_budget_seconds}s); supervisor must quiesce the mutation process group before cleanup"
+  fi
   rc=1
 fi
 

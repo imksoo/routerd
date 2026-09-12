@@ -89,6 +89,7 @@ type applyOptions struct {
 	ConfigYAMLOverride  string
 	Sandbox             bool
 	MutationGate        *sync.RWMutex
+	attemptHooks        *applyAttemptHooks
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -580,9 +581,21 @@ func objectStatusID(status routerstate.ObjectStatus) string {
 }
 
 func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (*apply.Result, error) {
+	outcome, err := runApplyChainOnceWithOutcome(ctx, router, opts, stdout, logger)
+	return outcome.Result, err
+}
+
+func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (outcome applyAttemptOutcome, err error) {
+	outcome = applyAttemptOutcome{Stage: "prepare", Canonical: canonicalNotRequested}
+	defer outcome.wrapError(&err, logger)
+	_, err = runApplyChainOnceAttempt(ctx, router, opts, stdout, logger, &outcome)
+	return outcome, err
+}
+
+func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, outcome *applyAttemptOutcome) (_ *apply.Result, err error) {
+	candidate := router
 	var optionWarnings []string
 	var configYAML string
-	var err error
 	if !opts.DryRun {
 		configYAML, err = routerConfigYAML(router, opts)
 		if err != nil {
@@ -616,30 +629,44 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	}
 
 	statePath := defaultString(opts.StatePath, defaultStatePath)
+	outcome.Stage = "open-state"
 	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
+	if opts.DryRun {
+		outcome.Stage = "snapshot"
+		manifest, err := describeApplySnapshot(candidate, stateStore, time.Now().UTC(), platformDefaults.OS)
+		if err != nil {
+			return nil, err
+		}
+		if logger != nil {
+			data, err := json.Marshal(manifest)
+			if err != nil {
+				return nil, err
+			}
+			logger.Emit(eventlog.LevelDebug, "apply", "dry-run evaluation inputs acquired", map[string]string{"manifest": string(data)})
+		}
+	}
 
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	var generation int64
 	generationCreated := false
-	generationFinished := false
 	if !opts.DryRun {
+		outcome.Stage = "begin-generation"
 		generation, generationCreated, err = beginConfigGeneration(stateStore, configYAML, router)
 		if err != nil {
 			return nil, err
 		}
-		defer func() {
-			if generationCreated && !generationFinished {
-				_ = stateStore.FinishGeneration(generation, "Errored", nil)
-			}
-		}()
+		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
+		defer outcome.finishEarlyFailure(stateStore, opts, &err)
+		outcome.Stage = "inventory"
 		if err := recordHostInventoryState(stateStore); err != nil {
 			return nil, err
 		}
 	}
+	outcome.Stage = "plan"
 	_, err = recordObservedPrefixDelegationState(router, stateStore)
 	if err != nil {
 		return nil, err
@@ -648,6 +675,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	if err != nil {
 		return nil, err
 	}
+	outcome.Result = result
 	if generation != 0 {
 		result.Generation = generation
 	}
@@ -658,6 +686,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 	}
 	decision := ha.Decision{Leader: true}
 	if !opts.DryRun {
+		outcome.Stage = "ha-admission"
 		var clusterName string
 		decision, clusterName, err = acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
 		if err != nil {
@@ -669,28 +698,32 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		if decision.Enabled && !decision.Leader {
 			result.Phase = "Standby"
 			result.Warnings = append(result.Warnings, fmt.Sprintf("RouterdCluster/%s lease is held by %s; apply skipped on standby", clusterName, decision.Holder))
-			if err := writeResult(stdout, opts.StatusFile, result); err != nil {
-				return nil, err
+			outcome.Stage = "finish-generation"
+			if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
+				return result, err
 			}
-			if generationCreated {
-				_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
-				generationFinished = true
+			outcome.Stage = "output"
+			if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+				return result, err
 			}
 			if logger != nil {
 				logger.Emit(eventlog.LevelInfo, "apply", "routerd apply skipped on standby", map[string]string{"cluster": clusterName, "holder": decision.Holder})
 			}
+			outcome.Stage = "complete"
 			return result, nil
 		}
 		recordWarningEvents(router, stateStore, result.Warnings)
 		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
-	eventBus := bus.New()
-	if !opts.DryRun {
-		eventBus = bus.NewWithStore(stateStore)
-	}
+	// Dry-run has its own temporary SQLite store. Give transactional status
+	// producers the same journal there without recording into production state.
+	eventBus := bus.NewWithStore(stateStore)
 	eventBus.SetLogger(slog.Default())
 	controllerOpts := applyChainControllerOptions(opts)
+	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
+		opts.attemptHooks.configureControllers(&controllerOpts)
+	}
 	runner := &controllerchain.Runner{
 		Router:     router,
 		Bus:        eventBus,
@@ -698,6 +731,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		Opts:       controllerOpts,
 		HADecision: &decision,
 	}
+	outcome.Stage = "reconcile"
 	if err := runner.ReconcileOnce(ctx); err != nil {
 		return nil, err
 	}
@@ -707,15 +741,18 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		}
 	}
 	if !opts.DryRun {
+		outcome.Stage = "record-applied-path"
 		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
 			return nil, err
 		}
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
+	outcome.Stage = "observe"
 	result, err = apply.New().ObserveEffective(effectiveRouter, router)
 	if err != nil {
 		return nil, err
 	}
+	outcome.Result = result
 	if generation != 0 {
 		result.Generation = generation
 	}
@@ -724,19 +761,25 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 		return nil, err
 	}
 	if !opts.DryRun && configCommitPhase(result.Phase) {
-		if err := commitConfigAfterSuccessfulApply(opts, configYAML, logger); err != nil {
+		if err := outcome.commit(opts, configYAML); err != nil {
 			return result, err
 		}
 	}
+	outcome.Stage = "finish-generation"
+	if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
+		return result, err
+	}
+	outcome.Stage = "output"
 	if opts.DryRun && opts.AnnounceDryRunToCLI {
-		fmt.Fprintf(stdout, "dry-run apply plan for %s\n", opts.ConfigPath)
+		announcement := fmt.Sprintf("dry-run apply plan for %s\n", opts.ConfigPath)
+		if n, err := io.WriteString(stdout, announcement); err != nil {
+			return result, err
+		} else if n != len(announcement) {
+			return result, io.ErrShortWrite
+		}
 	}
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
-	}
-	if !opts.DryRun && generationCreated {
-		_ = stateStore.FinishGeneration(generation, result.Phase, result.Warnings)
-		generationFinished = true
 	}
 	if logger != nil {
 		logger.Emit(eventlog.LevelInfo, "apply", "routerd apply chain once completed", map[string]string{
@@ -745,6 +788,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 			"dryRun":     fmt.Sprintf("%t", opts.DryRun),
 		})
 	}
+	outcome.Stage = "complete"
 	return result, nil
 }
 
@@ -814,6 +858,9 @@ func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
 	}
 	if closer, ok := src.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
+	}
+	if sqlite, ok := src.(*routerstate.SQLiteStore); ok {
+		return sqlite.CopyEvaluationStateTo(dst)
 	}
 	for key, value := range src.Variables() {
 		switch value.Status {

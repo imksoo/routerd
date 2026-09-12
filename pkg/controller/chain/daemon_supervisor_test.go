@@ -23,10 +23,11 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 	binDir := filepath.Join(dir, "bin")
 	logPath := filepath.Join(dir, "dns.args")
 	pidPath := filepath.Join(dir, "dns.pid")
+	readyPath := filepath.Join(dir, "dns.ready")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(logPath) + "\nprintf '%s\\n' \"$$\" > " + shellQuote(pidPath) + "\nexec sleep 30\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(logPath) + "\nprintf '%s\\n' \"$$\" > " + shellQuote(pidPath) + "\nprintf 'ready\\n' > " + shellQuote(readyPath) + "\nexec sleep 30\n"
 	if err := os.WriteFile(filepath.Join(binDir, "routerd-dns-resolver"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -45,11 +46,31 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 		Opts:   Options{SuperviseDNSResolvers: true},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// This cleanup runs before PATH, marker-root and temporary-file cleanup.
+	// Child process disappearance alone does not acknowledge the Go supervisor:
+	// it can still be writing the ownership marker after cancellation.
+	t.Cleanup(func() {
+		cancel()
+		runner.supervisedMu.Lock()
+		state, started := runner.clientDaemonStates[supervisedDaemonKey("routerd-dns-resolver", "lan-resolver")]
+		runner.supervisedMu.Unlock()
+		if started {
+			select {
+			case <-state.Done:
+			case <-time.After(3 * time.Second):
+				t.Error("supervised daemon goroutine did not finish after cancellation")
+			}
+		}
+	})
 	runner.superviseClientDaemons(ctx, nil)
 
 	var data []byte
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		// A created args file does not mean the following PID write completed.
+		// Wait for the fixture to acknowledge both before canceling its process.
+		if ready, err := os.ReadFile(readyPath); err != nil || string(ready) != "ready\n" {
+			continue
+		}
 		if got, err := os.ReadFile(logPath); err == nil {
 			data = got
 			break
@@ -87,6 +108,17 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 		if !stringSliceContains(got, want) {
 			t.Fatalf("routerd-dns-resolver args missing %q: %v", want, got)
 		}
+	}
+}
+
+func TestSupervisedDaemonAlreadyCanceledReportsCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := (&Runner{}).startSupervisedDaemonSpec(ctx, nil, supervisedDaemonSpec{})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("already-canceled supervisor did not report completion")
 	}
 }
 

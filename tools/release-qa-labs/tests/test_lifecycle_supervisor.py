@@ -32,6 +32,71 @@ class FakeChild:
         return 0
 
 
+class ApprovedBudgetTests(unittest.TestCase):
+    """Pure contract/argument tests: never launch a lifecycle or subprocess."""
+
+    def test_pinned_contract_accepts_approved_caps_and_rejects_one_over(self):
+        approved = {
+            "ttl": "115m", "heartbeatStale": "5m", "cleanupTimeout": "10m",
+            "inventoryTimeout": "5m", "maxCleanupAttempts": 2,
+            "maxPaidLifecycleSeconds": 8700,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            contract = Path(directory) / "contract.json"
+            supervisor = lifecycle.Supervisor.__new__(lifecycle.Supervisor)
+
+            def effective(values):
+                contract.write_text(json.dumps({
+                    "execution": {"mode": lifecycle.PAID_MODE}, "lifecycle": values,
+                }), encoding="utf-8")
+                return supervisor.effective_lifecycle({"contract": {
+                    "pinned": str(contract), "sha256": supervisor.digest(contract),
+                }})
+
+            result = effective(approved)
+            self.assertEqual(result["ttlSeconds"], 6900)
+            self.assertEqual(result["plannedPaidLifecycleSeconds"], 8700)
+            self.assertEqual(result["plannedCleanupAttempts"], 2)
+            self.assertEqual(result["cleanupTimeoutSeconds"], 600)
+            self.assertEqual(result["inventoryTimeoutSeconds"], 300)
+            self.assertEqual(result["contractSha256"], supervisor.digest(contract))
+            for key, value in (
+                ("ttl", "6901s"), ("maxPaidLifecycleSeconds", 8701),
+                ("cleanupTimeout", "601s"), ("inventoryTimeout", "301s"),
+                ("maxCleanupAttempts", 3), ("maxPaidLifecycleSeconds", 8699),
+            ):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(lifecycle.SupervisorError, "lifecycle exceeds policy"):
+                        effective({**approved, key: value})
+
+    def test_cli_defaults_and_explicit_caps_remain_bounded(self):
+        argv = [
+            "--run-id", "fixture", "--state", "/unused/state", "--heartbeat", "/unused/heartbeat",
+            "--precheck-command", "precheck", "--mutation-command", "mutation",
+            "--cleanup-command", "cleanup", "--inventory-command", "inventory",
+        ]
+        with mock.patch.object(lifecycle, "Supervisor") as supervisor:
+            supervisor.return_value.run.return_value = 0
+            for options in ([], ["--ttl-seconds", "6900", "--max-paid-lifecycle-seconds", "8700"]):
+                with self.subTest(options=options):
+                    self.assertEqual(lifecycle.main(argv + options + ["--post-zero-command", "post-zero"]), 0)
+                    args = supervisor.call_args.args[0]
+                    self.assertEqual(args.ttl_seconds, 6900)
+                    self.assertEqual(args.max_paid_lifecycle_seconds, 8700)
+                    self.assertEqual(args.max_cleanup_attempts, 2)
+            for options, message in (
+                (["--ttl-seconds", "6901"], "TTL"),
+                (["--max-paid-lifecycle-seconds", "8701"], "paid lifecycle"),
+                (["--max-cleanup-attempts", "3"], "cleanup attempts"),
+                (["--max-paid-lifecycle-seconds", "8699"], "paid lifecycle"),
+            ):
+                with self.subTest(options=options):
+                    supervisor.reset_mock()
+                    with self.assertRaisesRegex(lifecycle.SupervisorError, message):
+                        lifecycle.main(argv + options + ["--post-zero-command", "post-zero"])
+                    supervisor.assert_not_called()
+
+
 class SupervisorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -267,6 +332,66 @@ class SupervisorTests(unittest.TestCase):
         final = json.loads(self.state.read_text())
         self.assertEqual(final["phase"], "FAILED")
         self.assertEqual(final["inventoryExit"], 0)
+
+    def test_failed_mutation_preserves_cleanup_retry_until_zero_without_remutation(self):
+        for mutation_exit, cleanup_exit, inventory_exit in (
+            (7, 1, 0), (7, 0, 2), (7, 1, 2), (-signal.SIGKILL, 0, 2),
+        ):
+            with self.subTest(mutation_exit=mutation_exit, cleanup_exit=cleanup_exit,
+                              inventory_exit=inventory_exit):
+                self.state.unlink(missing_ok=True)
+                rc, events = self.run_with_commands(
+                    mutation_exit=mutation_exit, cleanup_exit=cleanup_exit,
+                    inventory_exit=inventory_exit,
+                )
+                self.assertEqual(rc, 2)
+                self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory"])
+                pending = json.loads(self.state.read_text())
+                self.assertEqual(pending["phase"], "VERIFYING_ZERO")
+                self.assertEqual(pending["mutationExit"], mutation_exit)
+                self.assertEqual(pending["cleanupExit"], cleanup_exit)
+                self.assertEqual(pending["inventoryExit"], inventory_exit)
+                self.assertIsNone(pending["mutationPgid"])
+                self.assertNotIn("tokenRevocationExit", pending)
+
+                # A fresh supervisor loads the actual persisted state. Recovery
+                # must not repeat precheck/mutation or erase the original failure.
+                rc, events = self.run_with_commands()
+                self.assertEqual(rc, 1)
+                self.assertEqual(events, ["cleanup", "inventory", "post-zero"])
+                final = json.loads(self.state.read_text())
+                self.assertEqual(final["phase"], "FAILED")
+                self.assertEqual(final["mutationExit"], mutation_exit)
+                self.assertEqual(final["cleanupAttempts"], 2)
+                self.assertFalse(final["postZeroMutationSucceeded"])
+                for field in ("cleanupExit", "inventoryExit", "tokenRevocationExit"):
+                    self.assertEqual(final[field], 0)
+                self.assertEqual(self.phases().count("MUTATING"), 1)
+                self.assertNotIn("DONE", self.phases())
+                self.assertEqual(self.run_with_commands(), (1, []))
+
+    def test_failed_mutation_preserves_token_retry_without_repeating_cleanup(self):
+        rc, events = self.run_with_commands(mutation_exit=7, post_zero_exit=9)
+        self.assertEqual(rc, 2)
+        self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory", "post-zero"])
+        pending = json.loads(self.state.read_text())
+        self.assertEqual(pending["phase"], "REVOKING_TOKEN")
+        self.assertEqual(pending["mutationExit"], 7)
+        self.assertEqual(pending["tokenRevocationExit"], 9)
+        self.assertFalse(pending["postZeroMutationSucceeded"])
+
+        self.assertEqual(self.run_with_commands(post_zero_exit=9), (2, ["post-zero"]))
+        self.assertEqual(self.run_with_commands(), (1, ["post-zero"]))
+        final = json.loads(self.state.read_text())
+        self.assertEqual(final["phase"], "FAILED")
+        self.assertEqual(final["mutationExit"], 7)
+        self.assertEqual(final["tokenRevocationExit"], 0)
+        self.assertEqual(final["cleanupAttempts"], 1)
+        self.assertFalse(final["postZeroMutationSucceeded"])
+        self.assertEqual(self.phases().count("MUTATING"), 1)
+        self.assertEqual(self.phases().count("CLEANING"), 1)
+        self.assertNotIn("DONE", self.phases())
+        self.assertEqual(self.run_with_commands(), (1, []))
 
     def test_cleanup_or_inventory_failure_never_reaches_done(self):
         for cleanup_exit, inventory_exit in ((1, 0), (0, 1)):

@@ -193,7 +193,7 @@ esac''')
                 "managementAddressSource": "qga-dhcp",
                 "vmids": {
                     "pve-leaf-a": 9600, "pve-client-a": 9601,
-                    "pve-leaf-b": 9602, "pve-client-b": 9603,
+                    "pve-leaf-b": 9602,
                     "pve-rr-a": 9604, "pve-rr-b": 9605,
                 },
                 "rrNodes": {

@@ -27,6 +27,16 @@ variable "topology_scale" {
   }
 }
 
+variable "clients_per_site" {
+  description = "Traffic clients per site, independent of leaf redundancy. Representative qualification requires 1; use 2 only for a separately scoped same-site client matrix."
+  type        = number
+  default     = 1
+  validation {
+    condition     = contains([1, 2], var.clients_per_site)
+    error_message = "clients_per_site must be 1 or 2."
+  }
+}
+
 # --- SSH ---
 
 variable "ssh_public_key" {
@@ -99,15 +109,15 @@ variable "oci_image_id" {
 }
 variable "oci_shape" {
   type    = string
-  default = "VM.Standard.E2.1"
+  default = "VM.Standard.E4.Flex"
 }
 variable "oci_shape_ocpus" {
   type    = number
-  default = null
+  default = 1
 }
 variable "oci_shape_memory_in_gbs" {
   type    = number
-  default = null
+  default = 1
 }
 
 # --- Proxmox VE ---
@@ -290,6 +300,19 @@ variable "pve_username" {
   type    = string
   default = "ubuntu"
 }
+
+variable "pve_management_macs" {
+  description = "Optional role-keyed stable management MACs for a bounded DHCP lab. A fresh provider-generated MAC remains the default outside that lab."
+  type        = map(string)
+  default     = {}
+  validation {
+    condition = alltrue([
+      for mac in values(var.pve_management_macs) :
+      can(regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$", mac))
+    ])
+    error_message = "pve_management_macs values must be canonical six-octet MAC addresses."
+  }
+}
 variable "pve_router_vm_id" {
   type    = number
   default = null
@@ -316,7 +339,7 @@ variable "pve_leaf_b_router_vm_id" {
   }
 }
 variable "pve_leaf_b_client_vm_id" {
-  description = "Explicit VM ID for pve-client-b. Required for topology_scale=full."
+  description = "Explicit VM ID for pve-client-b. Required only when clients_per_site=2."
   type        = number
   default     = null
   validation {

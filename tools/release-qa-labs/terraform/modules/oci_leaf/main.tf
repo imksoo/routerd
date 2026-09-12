@@ -48,7 +48,7 @@ locals {
   }
 
   extra_client_nodes = {
-    for _, node in var.extra_leaf_nodes : node.client_name => {
+    for _, node in var.extra_client_nodes : node.client_name => {
       name                   = node.client_name
       display_name           = "routerd-${var.run_id}-${node.client_name}"
       private_ip             = node.client_private_ip

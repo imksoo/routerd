@@ -14,6 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class LauncherRestartTests(unittest.TestCase):
+    def setUp(self):
+        if os.environ.get("ROUTERD_RELEASE_QA_ISOLATED_TESTS") != "1":
+            self.skipTest("requires an isolated environment and ROUTERD_RELEASE_QA_ISOLATED_TESTS=1")
+
     def test_azure_source_rejects_broad_entry_modes_before_supervisor(self):
         for kind in ("directory", "file", "source-change-during-copy"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:

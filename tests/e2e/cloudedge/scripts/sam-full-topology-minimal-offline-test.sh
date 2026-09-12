@@ -35,11 +35,12 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$evidence_dir" ]
+[ "${SAM_E2E_MAX_SECONDARY_IPS:-}" = 3 ]
 mkdir -p "$evidence_dir/matrix/initial" "$evidence_dir/convergence"
-matrix_rows=56
-[ "${SAM_MINIMAL_FAKE_INCOMPLETE:-0}" = 1 ] && matrix_rows=55
+matrix_rows=12
+[ "${SAM_MINIMAL_FAKE_INCOMPLETE:-0}" = 1 ] && matrix_rows=11
 for _ in $(seq 1 "$matrix_rows"); do printf 'client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/summary.tsv"
-for _ in $(seq 1 42); do printf 'cloud-client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+for _ in $(seq 1 9); do printf 'cloud-client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
 printf 'label\tstatus\telapsed_seconds\ninitial-dataplane\tPASS\t1\ninitial-provider\tPASS\t1\n' >"$evidence_dir/convergence/summary.tsv"
 SCRIPT
 chmod +x "$scripts/sam-e2e.sh"
@@ -53,12 +54,12 @@ jq -n '{
     "azure-leaf-a":{role:"leaf",site:"azure"}, "azure-leaf-b":{role:"leaf",site:"azure"},
     "oci-leaf-a":{role:"leaf",site:"oci"}, "oci-leaf-b":{role:"leaf",site:"oci"},
     "pve-leaf-a":{role:"leaf",site:"pve"}, "pve-leaf-b":{role:"leaf",site:"pve"},
-    "aws-client-a":{role:"client",site:"aws"}, "aws-client-b":{role:"client",site:"aws"},
-    "azure-client-a":{role:"client",site:"azure"}, "azure-client-b":{role:"client",site:"azure"},
-    "oci-client-a":{role:"client",site:"oci"}, "oci-client-b":{role:"client",site:"oci"},
-    "pve-client-a":{role:"client",site:"pve"}, "pve-client-b":{role:"client",site:"pve"}
+    "aws-client-a":{role:"client",site:"aws"},
+    "azure-client-a":{role:"client",site:"azure"},
+    "oci-client-a":{role:"client",site:"oci"},
+    "pve-client-a":{role:"client",site:"pve"}
   }},
-  fabric:{value:{topology_scale:"full"}}
+  fabric:{value:{topology_scale:"full",clients_per_site:1}}
 }' >"$nodes_json"
 
 artifact="$work/routerd.tar.gz"
@@ -83,7 +84,7 @@ SAM_MINIMAL_FAKE_INVOCATION="$invocation" "$scripts/sam-full-topology-minimal.sh
 jq -e '
   .profile == "full-topology-minimal"
   and .result == "pass"
-  and .topology == {routerCount:10,clientCount:8,cloudClientCount:6}
+  and .topology == {routerCount:10,clientCount:4,cloudClientCount:3}
   and .gates == {
     controlDataplane:true,
     directedClientMatrix:true,

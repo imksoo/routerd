@@ -61,6 +61,11 @@ variable "extra_leaf_nodes" {
   type = map(object({
     router_vm_id     = number
     router_ipv4_cidr = string
+  }))
+  default = {}
+}
+variable "extra_client_nodes" {
+  type = map(object({
     client_name      = string
     client_vm_id     = number
     client_ipv4_cidr = string
@@ -80,6 +85,10 @@ variable "username" {
   type    = string
   default = "ubuntu"
 }
+variable "management_macs" {
+  type    = map(string)
+  default = {}
+}
 variable "router_vm_id" {
   type    = number
   default = null
@@ -90,11 +99,11 @@ variable "client_vm_id" {
 }
 variable "cpu_cores" {
   type    = number
-  default = 2
+  default = 1
 }
 variable "memory_mb" {
   type    = number
-  default = 2048
+  default = 1024
 }
 variable "disk_gb" {
   type    = number

@@ -73,7 +73,7 @@ class PVEOrphanCleanupTests(unittest.TestCase):
                 "node": "pve01", "sshHost": "pve01.lain.local",
                 "templateStage": {"sourceNode": "pve01", "vmid": 9599},
                 "vmids": {"pve-leaf-a": 9600, "pve-client-a": 9601,
-                            "pve-leaf-b": 9602, "pve-client-b": 9603,
+                            "pve-leaf-b": 9602,
                             "pve-rr-a": 9604, "pve-rr-b": 9605},
                 "rrNodes": {"pve-rr-a": {"node": "pve05", "sshHost": "pve05.lain.local"},
                             "pve-rr-b": {"node": "pve06", "sshHost": "pve06.lain.local"}},
@@ -167,7 +167,7 @@ FAKE_REMOTE_HOST="$host" PATH="$REMOTE_BIN:$PATH" bash -c "$command"
         result, evidence, calls = self.run_cleanup({})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("qm destroy", calls)
-        self.assertEqual(len(json.loads(evidence.read_text())["targets"]), 7)
+        self.assertEqual(len(json.loads(evidence.read_text())["targets"]), 6)
 
     def test_exact_identity_is_destroyed(self):
         result, evidence, calls = self.run_cleanup({"pve05.lain.local:9604": "exact"})
@@ -210,14 +210,13 @@ FAKE_REMOTE_HOST="$host" PATH="$REMOTE_BIN:$PATH" bash -c "$command"
             "pve01.lain.local:9600": "exact",
             "pve01.lain.local:9601": "exact",
             "pve01.lain.local:9602": "exact",
-            "pve01.lain.local:9603": "exact",
             "pve05.lain.local:9604": "exact",
             "pve06.lain.local:9605": "exact",
             "pve01.lain.local:9599": "exact",
         }
         result, _, calls = self.run_cleanup(state)
         self.assertEqual(result.returncode, 0, result.stderr)
-        positions = [calls.index(f"qm destroy {vmid} --purge 1") for vmid in (9600, 9601, 9602, 9603, 9604, 9605, 9599)]
+        positions = [calls.index(f"qm destroy {vmid} --purge 1") for vmid in (9600, 9601, 9602, 9604, 9605, 9599)]
         self.assertEqual(positions, sorted(positions))
 
     def test_destroy_rechecks_identity_after_admission(self):

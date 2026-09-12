@@ -15,6 +15,7 @@ output "router" {
     management_ip         = null
     public_ip             = null
     pve_management_source = "pending-qga-dhcp"
+    management_mac        = lookup(var.management_macs, var.router_name, null)
     capture_bridge        = local.capture_bridge
   }
 }
@@ -32,6 +33,7 @@ output "client" {
     management_ip         = null
     public_ip             = null
     pve_management_source = "pending-qga-dhcp"
+    management_mac        = lookup(var.management_macs, var.client_name, null)
     capture_bridge        = local.capture_bridge
   }
 }
@@ -50,6 +52,7 @@ output "routers" {
       management_ip         = null
       public_ip             = null
       pve_management_source = "pending-qga-dhcp"
+      management_mac        = lookup(var.management_macs, node.name, null)
       capture_bridge        = local.capture_bridge
     } if node.role == "leaf"
   }
@@ -69,6 +72,7 @@ output "clients" {
       management_ip         = null
       public_ip             = null
       pve_management_source = "pending-qga-dhcp"
+      management_mac        = lookup(var.management_macs, node.name, null)
       capture_bridge        = local.capture_bridge
     } if node.role == "client"
   }

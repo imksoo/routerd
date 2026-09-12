@@ -35,7 +35,7 @@ locals {
   }
 
   extra_client_nodes = {
-    for _, node in var.extra_leaf_nodes : node.client_name => {
+    for _, node in var.extra_client_nodes : node.client_name => {
       name      = node.client_name
       vm_name   = "routerd-${var.run_id}-${node.client_name}"
       role      = "client"
@@ -97,8 +97,9 @@ resource "proxmox_virtual_environment_vm" "node" {
   }
 
   network_device {
-    bridge  = var.bridge
-    vlan_id = var.vlan_id
+    bridge      = var.bridge
+    vlan_id     = var.vlan_id
+    mac_address = lookup(var.management_macs, each.value.name, null)
   }
 
   network_device {

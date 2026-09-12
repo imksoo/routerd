@@ -22,6 +22,11 @@ variable "client_private_ip" { type = string }
 variable "extra_leaf_nodes" {
   type = map(object({
     router_private_ip = string
+  }))
+  default = {}
+}
+variable "extra_client_nodes" {
+  type = map(object({
     client_name       = string
     client_private_ip = string
   }))

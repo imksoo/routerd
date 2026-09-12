@@ -58,8 +58,9 @@ resource "proxmox_virtual_environment_vm" "rr" {
   }
 
   network_device {
-    bridge  = each.value.underlay_bridge
-    vlan_id = each.value.vlan_id
+    bridge      = each.value.underlay_bridge
+    vlan_id     = each.value.vlan_id
+    mac_address = each.value.management_mac
   }
 
   initialization {
