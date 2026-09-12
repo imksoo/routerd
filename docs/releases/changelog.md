@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260912.2100
+
 ### Fixed
 
 - Prevented the `service-unit` controller from restarting `routerd.service`

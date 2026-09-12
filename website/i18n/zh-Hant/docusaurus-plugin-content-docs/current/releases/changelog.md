@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260912.2100
+
 ### 修正
 
 - 防止 `service-unit` 控制器在 `Type=notify` 仍處於啟動階段時重新啟動

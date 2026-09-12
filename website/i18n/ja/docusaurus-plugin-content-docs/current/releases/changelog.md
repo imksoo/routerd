@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260912.2100
+
 ### 修正
 
 - `Type=notify` の起動処理中に `service-unit` コントローラが
