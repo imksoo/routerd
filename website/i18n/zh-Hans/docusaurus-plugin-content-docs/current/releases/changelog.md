@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260912.2028
+
 ### 修复
 
 - 即使未设置 `LogRetention`，SQLite 事件日志现在也会限制在24小时、100,000行和

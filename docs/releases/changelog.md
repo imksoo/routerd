@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260912.2028
+
 ### Fixed
 
 - Bound the SQLite event journal even when `LogRetention` is omitted: routerd

@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260912.2028
+
 ### 修正
 
 - `LogRetention` が未設定でも SQLite イベントジャーナルを24時間、10万行、論理ペイロード
