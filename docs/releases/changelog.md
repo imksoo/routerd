@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Normalized `/tmp` and `/var/tmp` to root-owned mode 1777 in Live ISO builds,
+  including builds restored from a rootfs cache, so standard temporary-file
+  use and `routerctl doctor disk` work immediately after boot (#1230).
+
 ## v20260912.2100
 
 ### Fixed

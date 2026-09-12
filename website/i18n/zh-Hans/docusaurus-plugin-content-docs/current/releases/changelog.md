@@ -11,6 +11,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- Live ISO构建现在会将 `/tmp` 和 `/var/tmp` 规范为root所有的1777模式，包括从
+  rootfs缓存恢复的构建。启动后即可正常使用标准临时文件和 `routerctl doctor disk`
+  （#1230）。
+
 ## v20260912.2100
 
 ### 修复

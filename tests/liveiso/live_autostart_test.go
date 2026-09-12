@@ -70,6 +70,14 @@ func TestLiveISOInstallsUbuntuPackagesIntoSquashFS(t *testing.T) {
 	}
 }
 
+func TestLiveISONormalizesTemporaryDirectoryPermissions(t *testing.T) {
+	script := liveISOScript(t)
+	want := `run_root install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"`
+	if !strings.Contains(script, want) {
+		t.Fatalf("Ubuntu live ISO must normalize temporary directories with sticky permissions: missing %q", want)
+	}
+}
+
 func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	script := liveISOScript(t)
 	for _, needle := range []string{
