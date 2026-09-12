@@ -4,6 +4,7 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -126,7 +127,16 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 		}
 	}
 	logEvent(ctx, logger, event)
+	if nonFatalPersistenceError(storeErr) {
+		return nil
+	}
 	return storeErr
+}
+
+func nonFatalPersistenceError(err error) bool {
+	type nonFatal interface{ NonFatalPersistence() bool }
+	var marked nonFatal
+	return errors.As(err, &marked) && marked.NonFatalPersistence()
 }
 
 func logEvent(ctx context.Context, logger *slog.Logger, event Event) {

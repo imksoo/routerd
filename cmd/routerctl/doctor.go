@@ -1989,7 +1989,12 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 
 	status := doctorPass
 	remedy := ""
-	if stats.NumGoroutine > doctorRuntimeGoroutineWarn {
+	if stats.EventJournal != nil && stats.EventJournal.StorageAlert != nil && stats.EventJournal.StorageAlert.Critical {
+		status = doctorFail
+		detail = appendDoctorDetail(detail, "storageCritical="+stats.EventJournal.StorageAlert.Condition)
+		remedy = "volatile Live ISO: reboot the router OS; persistent disk: prune/compact events or expand storage"
+	}
+	if stats.NumGoroutine > doctorRuntimeGoroutineWarn && status != doctorFail {
 		status = doctorWarn
 		detail = appendDoctorDetail(detail, fmt.Sprintf("unusually high goroutine count (%d > %d)", stats.NumGoroutine, doctorRuntimeGoroutineWarn))
 		remedy = "capture a goroutine profile and inspect routerd for leaked goroutines"
@@ -2671,17 +2676,47 @@ func (r doctorRunner) doctorRollback() []doctorCheck {
 }
 
 func (r doctorRunner) doctorDisk() []doctorCheck {
+	checks := []doctorCheck{doctorEventJournalCheck(r.store)}
 	if !r.opts.Host {
-		return []doctorCheck{doctorHostSkipped("disk", "df /var/lib/routerd /run/routerd")}
+		return append(checks, doctorHostSkipped("disk", "df /var/lib/routerd /run/routerd"))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
 	defer cancel()
-	checks := []doctorCheck{doctorTempDirPermissionsCheck(ctx)}
+	checks = append(checks, doctorTempDirPermissionsCheck(ctx))
 	command := runDiagnosticCommand(ctx, "df routerd runtime", "df", "-Pk", "/var/lib/routerd", "/run/routerd")
 	if !command.OK {
 		return append(checks, doctorCheck{Area: "disk", Name: command.Name, Status: doctorWarn, Detail: stringutil.FirstNonEmpty(command.Error, command.Output), Remedy: "check routerd runtime and state paths"})
 	}
 	return append(checks, doctorDFChecks(command.Output)...)
+}
+
+func doctorEventJournalCheck(store routerstate.Store) doctorCheck {
+	type journalStatsReader interface {
+		EventJournalStats() routerstate.EventJournalStats
+	}
+	reader, ok := store.(journalStatsReader)
+	if !ok {
+		return doctorCheck{Area: "disk", Name: "event journal", Status: doctorSkip, Detail: "state store does not expose event journal limits"}
+	}
+	return doctorEventJournalStatsCheck(reader.EventJournalStats())
+}
+
+func doctorEventJournalStatsCheck(stats routerstate.EventJournalStats) doctorCheck {
+	detail := fmt.Sprintf("rows=%d/%d payloadBytes=%d/%d", stats.Rows, stats.MaxRows, stats.PayloadBytes, stats.MaxPayloadBytes)
+	if stats.StorageAlert != nil && stats.StorageAlert.Critical {
+		return doctorCheck{Area: "disk", Name: "event journal", Status: doctorFail, Detail: detail + " condition=" + stats.StorageAlert.Condition, Remedy: "volatile Live ISO: reboot the router OS; persistent disk: prune/compact events or expand storage"}
+	}
+	rowPct, bytePct := int64(0), int64(0)
+	if stats.MaxRows > 0 {
+		rowPct = stats.Rows * 100 / stats.MaxRows
+	}
+	if stats.MaxPayloadBytes > 0 {
+		bytePct = stats.PayloadBytes * 100 / stats.MaxPayloadBytes
+	}
+	if rowPct >= 90 || bytePct >= 90 {
+		return doctorCheck{Area: "disk", Name: "event journal", Status: doctorWarn, Detail: detail, Remedy: "verify automatic pruning and configure LogRetention or an external LogSink for longer history"}
+	}
+	return doctorCheck{Area: "disk", Name: "event journal", Status: doctorPass, Detail: detail}
 }
 
 func doctorTempDirPermissionsCheck(ctx context.Context) doctorCheck {

@@ -12,6 +12,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Bound the SQLite event journal even when `LogRetention` is omitted: routerd
+  now keeps at most 24 hours, 100,000 rows, and 64 MiB of logical payload,
+  while never pruning operational state tables. Storage-full journal failures
+  no longer stop local runtime event delivery. The daemon reports
+  `EventJournalReadOnly` through runtime status, `routerctl doctor`, an
+  out-of-database runtime alert file, and systemd service status, with distinct
+  reboot guidance for volatile Live ISO storage and repair guidance for
+  persistent disks (#1223).
+
 ## v20260901.1516
 
 ### Fixed

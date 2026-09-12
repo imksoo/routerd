@@ -442,6 +442,7 @@ type RuntimeStats struct {
 	StateStatusWriteCount    uint64                                      `json:"stateStatusWriteCount,omitempty" yaml:"stateStatusWriteCount,omitempty"`
 	StateStatusSkipCount     uint64                                      `json:"stateStatusSkipCount,omitempty" yaml:"stateStatusSkipCount,omitempty"`
 	StateStatusKindStats     map[string]routerstate.StatusKindWriteStats `json:"stateStatusKindStats,omitempty" yaml:"stateStatusKindStats,omitempty"`
+	EventJournal             *routerstate.EventJournalStats              `json:"eventJournal,omitempty" yaml:"eventJournal,omitempty"`
 	// OpenFDs is a sample-time approximate count of open file descriptors from
 	// /proc/self/fd (the transient directory-read fd is excluded). It is 0 when
 	// the count is unavailable (e.g. non-Linux, /proc not mounted). Treat it as
