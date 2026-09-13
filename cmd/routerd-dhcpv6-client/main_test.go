@@ -153,6 +153,7 @@ func TestRefreshingAndRebindingLeaseRemainDependencyReady(t *testing.T) {
 				Interface:  "wan-vmac",
 				ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0x5e, 0, 1, 0x13},
 				IAID:       1,
+				Now:        func() time.Time { return now },
 			}, &daemonMemoryTransport{})
 			if err != nil {
 				t.Fatal(err)
