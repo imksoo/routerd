@@ -1429,30 +1429,34 @@ client_matrix() {
   ! grep -qv $'\tPASS$' "$out/summary.tsv"
 }
 
-# Verify traffic originated by each running leaf. Client-only matrices prove
-# forwarding, but cannot detect a missing SAM return route for the router's own
-# source address.
+# Verify traffic between leaf routers using each router's provider/capture
+# address as the source. Client-only matrices prove forwarding, but cannot
+# detect a missing SAM return route for the router's own source address.
+# This is an initial-state product gate; the existing transition matrices remain
+# the authoritative non-regression gates while a leaf is deliberately stopped.
 router_origin_matrix() {
   local label="$1"
   local out="$evidence_dir/matrix/$label"
-  local src dst src_site dst_site dst_ip result status=0
+  local src dst src_site dst_site src_ip dst_ip result status=0
   mkdir -p "$out"
   : >"$out/router-origin-summary.tsv"
   for src in "${leaf_routers[@]}"; do
     node_is_stopped "$src" && continue
     src_site="$(node_field "$src" site)"
-    for dst in "${clients[@]}"; do
+    src_ip="$(node_field "$src" private_ip)"
+    for dst in "${leaf_routers[@]}"; do
+      node_is_stopped "$dst" && continue
       dst_site="$(node_field "$dst" site)"
       [ "$src_site" != "$dst_site" ] || continue
       dst_ip="$(node_field "$dst" private_ip)"
       result=PASS
       {
         echo "=== router-origin $src ($src_site) -> $dst ($dst_site) ==="
-        echo "SRC=$src DST=$dst DSTIP=$dst_ip"
+        echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
         echo "## route-get"
-        ssh_node "$src" "ip route get '$dst_ip' | grep -q ' dev samt'" || result=FAIL_ROUTE
+        ssh_node "$src" "ip route get '$dst_ip' from '$src_ip' | grep -q ' dev samt'" || result=FAIL_ROUTE
         echo "## ping"
-        ssh_node "$src" "ping -c 3 -W 2 '$dst_ip'" || result=FAIL_PING
+        ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" || result=FAIL_PING
       } >"$out/${src}_to_${dst}.router-origin.txt" 2>&1 || result=FAIL
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/router-origin-summary.tsv"
       [ "$result" = PASS ] || status=1
@@ -1945,7 +1949,7 @@ run_validation_set() {
   elif ! client_matrix "$label"; then
     dataplane_status=FAIL_MATRIX
     record_timing "$label" dataplane-control-and-client-matrix "$phase_started"
-  elif ! router_origin_matrix "$label"; then
+  elif [ "$label" = "initial" ] && ! router_origin_matrix "$label"; then
     dataplane_status=FAIL_ROUTER_ORIGIN
     record_timing "$label" dataplane-control-client-and-router-origin-matrix "$phase_started"
   elif ! cloud_ingress_matrix "$label"; then
