@@ -46,6 +46,90 @@ func TestReconcileWritesConfigAndSkipsReloadWhenSocketMissing(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigCapturesStickyDNSMasqHosts(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "run")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"), []byte(
+		"fc:b2:14:8c:49:1a,172.18.1.127,MacBookProM5Max,12h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "172.18.0.1"})
+	router.Spec.Resources[0].Spec = api.DNSZoneSpec{
+		Zone:        "lab.example",
+		DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
+	}
+	controller := Controller{
+		Router:     router,
+		Store:      mapStore{},
+		RuntimeDir: runtimeDir,
+		StateDir:   filepath.Join(dir, "state"),
+	}
+	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	config, err := controller.runtimeConfig("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].DHCPHostRecords) != 1 {
+		t.Fatalf("runtime zones = %#v", config.Zones)
+	}
+	record := config.Zones[0].DHCPHostRecords[0]
+	if record.Hostname != "MacBookProM5Max" || record.IP != "172.18.1.127" {
+		t.Fatalf("runtime DHCP host record = %#v", record)
+	}
+}
+
+func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "run")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hostsPath := filepath.Join(runtimeDir, "dnsmasq-hosts.hosts")
+	if err := os.WriteFile(hostsPath, []byte(
+		"fc:b2:14:8c:49:1a,172.18.1.127,MacBookProM5Max,12h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var reloads atomic.Int32
+	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reloads.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "172.18.0.1"})
+	router.Spec.Resources[0].Spec = api.DNSZoneSpec{
+		Zone:        "lab.example",
+		DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
+	}
+	controller := Controller{
+		Router:     router,
+		Store:      mapStore{},
+		RuntimeDir: runtimeDir,
+		StateDir:   filepath.Join(dir, "state"),
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloads.Load(); got != 1 {
+		t.Fatalf("initial reloads = %d, want 1", got)
+	}
+	if err := os.WriteFile(hostsPath, []byte(
+		"fc:b2:14:8c:49:1a,172.18.1.128,MacBookProM5Max,12h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloads.Load(); got != 2 {
+		t.Fatalf("reloads after sticky host update = %d, want 2", got)
+	}
+}
+
 func TestReconcileReloadsResolverWhenConfigChanges(t *testing.T) {
 	dir := t.TempDir()
 	var reloads atomic.Int32

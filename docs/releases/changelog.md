@@ -17,6 +17,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Explicit `DHCPv4Reservation` entries now suppress conflicting IPv4 sticky
   holds with the same MAC address or IP address, preventing duplicate
   `dhcp-host` directives and preserving the declared reservation (#1235).
+- Queued managed HealthCheck unit restarts without waiting for systemd during
+  `Type=notify` bootstrap, preventing an `After=routerd.service` ordering
+  deadlock before routerd can emit `READY=1` (#1232).
+- Included routerd-generated sticky DHCP host records in DNS resolver runtime
+  snapshots, so resolver restart and HA lease synchronization restore local A,
+  AAAA, and PTR answers even before a client renews its active lease. Reloads
+  preserve newer in-memory active lease events while keeping declared records
+  and the current active lease file authoritative over sticky recovery data
+  (#1233).
 
 ## v20260912.2138
 

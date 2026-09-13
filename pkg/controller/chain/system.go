@@ -522,7 +522,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			path := filepath.Join(c.SystemdSystemDir, unitName)
-			changed, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv, command)
+			changed, activationQueued, err := c.applyHealthCheckSystemdUnit(ctx, path, unitName, resource.Metadata.Name, spec, telemetryEnv, command)
 			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 					"phase":     "Error",
@@ -538,8 +538,12 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 				return err
 			}
 			phase := "Applied"
+			reason := ""
 			if c.DryRun && changed {
 				phase = "Rendered"
+			} else if activationQueued {
+				phase = "Activating"
+				reason = "RestartQueued"
 			}
 			if healthCheckDisabled(spec) {
 				phase = "Disabled"
@@ -554,14 +558,18 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 					return err
 				}
 			}
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
+			status := map[string]any{
 				"phase":     phase,
 				"unitName":  unitName,
 				"path":      path,
 				"changed":   changed,
 				"dryRun":    c.DryRun,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			}); err != nil {
+			}
+			if reason != "" {
+				status["reason"] = reason
+			}
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 				return err
 			}
 			if changed && !c.DryRun && c.Bus != nil {
@@ -1452,7 +1460,7 @@ func appendMissingStrings(values []string, additions ...string) []string {
 	return out
 }
 
-func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, error) {
+func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, bool, error) {
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
 	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
@@ -1476,32 +1484,32 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	})
 	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
 	if err != nil {
-		return changed, err
+		return changed, false, err
 	}
 	if healthCheckDisabled(spec) {
 		if c.DryRun {
-			return changed, nil
+			return changed, false, nil
 		}
 		if changed {
 			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-				return changed, err
+				return changed, false, err
 			}
 		}
 		if changed || systemdUnitEnabledOrActive(ctx, command, unitName) {
 			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
 			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
 		}
-		return changed, nil
+		return changed, false, nil
 	}
 	if c.DryRun {
-		return changed, nil
+		return changed, false, nil
 	}
 	if changed {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-			return changed, err
+			return changed, false, err
 		}
 		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
-			return changed, err
+			return changed, false, err
 		}
 	}
 	active := true
@@ -1509,12 +1517,29 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		active = false
 	}
 	if changed || !active {
-		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
-			return changed, err
+		if systemdUnitActive(ctx, command, render.RouterdUnitName) {
+			// Once routerd is READY, use a blocking restart and verify the helper
+			// became active. A successful systemctl invocation alone does not prove
+			// that ExecStart stayed up.
+			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+				return changed, false, err
+			}
+			if !systemdUnitActive(ctx, command, unitName) {
+				return changed, false, fmt.Errorf("healthcheck helper %s is not active after restart", unitName)
+			}
+			return true, false, nil
 		}
-		return true, nil
+		// HealthCheck units are ordered After=routerd.service. During a
+		// Type=notify bootstrap, waiting for this job would deadlock: systemd
+		// cannot start the helper until routerd emits READY, while routerd would
+		// be waiting here for the helper job to finish. Queue the restart and
+		// report it as Activating; a later reconciliation observes the result.
+		if _, err := command(ctx, "systemctl", "--no-block", "restart", unitName); err != nil {
+			return changed, false, err
+		}
+		return true, true, nil
 	}
-	return changed, nil
+	return changed, false, nil
 }
 
 func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context, explicitUnits map[string]bool, command outputCommandFunc) error {
