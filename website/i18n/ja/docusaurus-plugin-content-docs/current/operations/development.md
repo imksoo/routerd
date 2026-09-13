@@ -27,6 +27,10 @@ make validate-example
 make website-build
 ```
 
+`webconsole/`、チェックイン済みの静的 asset、共通 quality workflow、または Makefile を
+変更した場合、CI は Web Console 専用 gate も実行します。`npm ci`、全依存と本番依存の
+high severity audit、TypeScript typecheck、本番 build、生成 asset の差分検査を行います。
+
 CI ワークフローはリリース成果物を公開しません。
 リリースアーカイブは、日付ベースのタグで `Release` ワークフローが生成します。
 

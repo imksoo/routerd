@@ -18,6 +18,12 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
   `NotifyAccess=main` 配置下，由 reconcile 启动的 systemd-aware 工具所发送的通知被拒绝，
   并持续以 warning 填满 journal（#1240）。
 
+### 安全
+
+- 将 Web Console build chain 更新至 Vite 8.3.0、PostCSS 8.5.28 和 nanoid 3.3.19，
+  消除了 `npm audit` 报告的开发环境及供应链中已知的高危安全公告。发布的 Web Console
+  仍为预先生成的静态资源，不会在生产环境中运行 Vite development server（#1242）。
+
 ## v20260913.0617
 
 ### 修复

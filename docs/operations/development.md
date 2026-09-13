@@ -27,6 +27,11 @@ make validate-example
 make website-build
 ```
 
+When a change touches `webconsole/`, its checked-in static assets, the shared
+quality workflow, or the Makefile, CI also runs the Web Console-specific gate:
+`npm ci`, high-severity audits for all and production dependencies, TypeScript
+type-checking, a production build, and a generated-asset drift check.
+
 The CI workflow does not publish release artifacts.
 Release archives are created only by the `Release` workflow on date-based tags.
 

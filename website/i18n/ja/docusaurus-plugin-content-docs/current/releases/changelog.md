@@ -18,6 +18,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
   `NotifyAccess=main` の構成で、reconcile が起動した systemd 対応ツールの通知が拒否され、
   warning で journal が埋まる問題を防ぎます（#1240）。
 
+### セキュリティ
+
+- Web Console の build chain を Vite 8.3.0、PostCSS 8.5.28、nanoid 3.3.19 へ更新し、
+  `npm audit` が報告していた開発環境・supply chain 上の既知の high severity advisory を
+  解消しました。配布する Web Console は引き続き事前生成済みの静的 asset であり、
+  Vite development server を本番環境では実行しません（#1242）。
+
 ## v20260913.0617
 
 ### 修正
