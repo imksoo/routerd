@@ -32,6 +32,44 @@ type DHCPStickyHost struct {
 	LeaseTime  string
 }
 
+// ExcludeReservedIPv4StickyHosts keeps explicit DHCPv4 reservations
+// authoritative over held lease history. A stale hold that matches either the
+// reserved client or the reserved address would otherwise produce conflicting
+// dhcp-host directives.
+func ExcludeReservedIPv4StickyHosts(hosts []DHCPStickyHost, reservations []api.DHCPv4ReservationSpec) []DHCPStickyHost {
+	reservedMACs := make(map[string]struct{}, len(reservations))
+	reservedIPs := make(map[string]struct{}, len(reservations))
+	for _, reservation := range reservations {
+		if mac := strings.ToLower(strings.TrimSpace(reservation.MACAddress)); mac != "" {
+			reservedMACs[mac] = struct{}{}
+		}
+		if ip := strings.TrimSpace(reservation.IPAddress); ip != "" {
+			reservedIPs[ip] = struct{}{}
+		}
+	}
+	if len(reservedMACs) == 0 && len(reservedIPs) == 0 {
+		return hosts
+	}
+	out := make([]DHCPStickyHost, 0, len(hosts))
+	for _, host := range hosts {
+		family := strings.ToLower(strings.TrimSpace(host.Family))
+		if family == "" {
+			if strings.Contains(host.IPAddress, ":") {
+				family = "ipv6"
+			} else {
+				family = "ipv4"
+			}
+		}
+		_, macReserved := reservedMACs[strings.ToLower(strings.TrimSpace(host.MACAddress))]
+		_, ipReserved := reservedIPs[strings.TrimSpace(host.IPAddress)]
+		if family == "ipv4" && (macReserved || ipReserved) {
+			continue
+		}
+		out = append(out, host)
+	}
+	return out
+}
+
 func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string, error) {
 	var warnings []string
 	aliases, staticIPv4, delegatedIPv6, selfPolicies, err := dnsmasqInputs(router)
@@ -215,7 +253,15 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			}
 			buf.WriteString("dhcp-host=" + dnsmasqHostReservation(reservationSpec, leaseTime) + "\n")
 		}
-		for _, host := range stickyHostsForIPv4Scope(runtime.StickyHosts, dhcpv4PoolStart(spec), dhcpv4PoolEnd(spec), leaseTime) {
+		reservationSpecs := make([]api.DHCPv4ReservationSpec, 0, len(v4ReservationsByServer[res.Metadata.Name]))
+		for _, reservation := range v4ReservationsByServer[res.Metadata.Name] {
+			reservationSpec, err := reservation.DHCPv4ReservationSpec()
+			if err == nil {
+				reservationSpecs = append(reservationSpecs, reservationSpec)
+			}
+		}
+		stickyHosts := ExcludeReservedIPv4StickyHosts(runtime.StickyHosts, reservationSpecs)
+		for _, host := range stickyHostsForIPv4Scope(stickyHosts, dhcpv4PoolStart(spec), dhcpv4PoolEnd(spec), leaseTime) {
 			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
 		}
 		_ = ifname
@@ -413,6 +459,7 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		for _, option := range spec.Options {
 			buf.WriteString("dhcp-option=tag:" + tag + "," + dnsmasqDHCPv4Option(option) + "\n")
 		}
+		var reservationSpecs []api.DHCPv4ReservationSpec
 		for _, reservation := range router.Spec.Resources {
 			if reservation.Kind != "DHCPv4Reservation" {
 				continue
@@ -422,12 +469,14 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 				continue
 			}
 			reservationTag := sanitizeDnsmasqTag(reservation.Metadata.Name)
+			reservationSpecs = append(reservationSpecs, reservationSpec)
 			buf.WriteString("dhcp-host=" + dnsmasqIPv4Reservation(reservationSpec, reservationTag) + "\n")
 			for _, option := range reservationSpec.Options {
 				buf.WriteString("dhcp-option=tag:" + reservationTag + "," + dnsmasqDHCPv4Option(option) + "\n")
 			}
 		}
-		for _, host := range stickyHostsForIPv4Scope(runtime.StickyHosts, dhcpv4PoolStart(spec), dhcpv4PoolEnd(spec), leaseTime) {
+		stickyHosts := ExcludeReservedIPv4StickyHosts(runtime.StickyHosts, reservationSpecs)
+		for _, host := range stickyHostsForIPv4Scope(stickyHosts, dhcpv4PoolStart(spec), dhcpv4PoolEnd(spec), leaseTime) {
 			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
 		}
 	}

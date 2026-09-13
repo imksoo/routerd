@@ -14,6 +14,9 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
+- Explicit `DHCPv4Reservation` entries now suppress conflicting IPv4 sticky
+  holds with the same MAC address or IP address, preventing duplicate
+  `dhcp-host` directives and preserving the declared reservation (#1235).
 - Queued managed HealthCheck unit restarts without waiting for systemd during
   `Type=notify` bootstrap, preventing an `After=routerd.service` ordering
   deadlock before routerd can emit `READY=1` (#1232).
