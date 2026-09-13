@@ -20,6 +20,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
   reconciliation from flooding the journal with rejected notification
   warnings under `Type=notify` and `NotifyAccess=main` (#1240).
 
+### Security
+
+- Updated the Web Console build chain to Vite 8.3.0, PostCSS 8.5.28, and
+  nanoid 3.3.19, removing the known high-severity development and supply-chain
+  advisories reported by `npm audit`. The shipped Web Console remains a
+  prebuilt static asset and does not run the Vite development server (#1242).
+
 ## v20260913.0617
 
 ### Fixed

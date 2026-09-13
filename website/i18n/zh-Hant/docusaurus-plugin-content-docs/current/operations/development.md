@@ -26,6 +26,10 @@ make validate-example
 make website-build
 ```
 
+當變更涉及 `webconsole/`、已簽入的靜態資源、共用 quality workflow 或 Makefile 時，CI 還會
+執行 Web Console 專用關卡：`npm ci`、全部相依套件及正式環境相依套件的 high severity
+audit、TypeScript typecheck、正式環境 build，以及產生資源的差異檢查。
+
 CI workflow 不公開發布成果物。
 發布封存檔由日期格式的 tag 觸發 `Release` workflow 產生。
 
