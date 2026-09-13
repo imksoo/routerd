@@ -244,6 +244,11 @@ qga_guest_host_keys() {
       printf 'host_key_attempt=%s exitcode=%s\n' "$attempt" "$exitcode"
       [ -z "${err_data:-}" ] || printf 'host_key_error=%s\n' "$err_data"
     } >>"$evidence"
+    # run_with_progress watches the command log, while detailed QGA evidence
+    # is written to a separate file. Emit one bounded progress line so a
+    # healthy slow first boot cannot be mistaken for a stale mutation.
+    printf 'QGA host-key readiness pending node=%s attempt=%s/%s exitcode=%s\n' \
+      "$node" "$attempt" "$retries" "$exitcode" >&2
     if [ "$attempt" -lt "$retries" ]; then
       sleep "$retry_sleep"
     fi
@@ -314,6 +319,10 @@ for entry in "${pve_nodes[@]}"; do
         exit 1
       fi
       printf 'dhcp_identity_attempt=%s state=agent-unavailable\n' "$dhcp_identity_attempt" >>"$evidence"
+      # Keep the supervisor heartbeat fresh while the detailed retry evidence
+      # remains in its dedicated file.
+      printf 'QGA DHCP identity pending node=%s attempt=%s/%s\n' \
+        "$node" "$dhcp_identity_attempt" "$retries" >&2
       if [ "$dhcp_identity_attempt" -lt "$retries" ]; then
         sleep "$retry_sleep"
       fi

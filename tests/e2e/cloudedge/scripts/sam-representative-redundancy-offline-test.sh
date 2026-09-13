@@ -69,8 +69,19 @@ write_matrix() {
     esac
   fi
 }
+write_router_matrix() {
+  local path="$1"
+  jq -r '
+    .nodes.value | to_entries as $nodes
+    | $nodes[] as $src | $nodes[] as $dst
+    | select($src.value.role == "leaf" and $dst.value.role == "leaf")
+    | select($src.value.site != $dst.value.site)
+    | [$src.key, $dst.key, "PASS"] | @tsv
+  ' "$tofu_output" >"$path"
+}
 write_matrix initial false "$evidence_dir/matrix/initial/summary.tsv"
 write_matrix initial true "$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+write_router_matrix "$evidence_dir/matrix/initial/router-origin-summary.tsv"
 canary_rows=4
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_CANARY:-0}" = 1 ] && canary_rows=3
 for label in after-failover-pve-rr-a after-rejoin-pve-rr-a; do
@@ -183,6 +194,7 @@ jq -e '
 ' "$evidence/profile-result.json" >/dev/null
 [ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/summary.tsv")" -eq 12 ]
 [ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/cloud-ingress-summary.tsv")" -eq 9 ]
+[ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/router-origin-summary.tsv")" -eq 48 ]
 # After A stops, B must fit all remote client addresses plus its primary IP
 # on one t3.small ENI (four total IPv4 slots). This is a fixture capacity proof,
 # not evidence that a provider accepted the actual assignments.

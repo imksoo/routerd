@@ -12,6 +12,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Advertise an on-prem proxy-ARP leaf's resolved capture-source address as a
+  non-owner SAM return route. Router-originated diagnostics can now receive
+  replies from remote mobility sites without making the router address a
+  provider capture candidate (#1244).
+
 ## v20260913.1222
 
 ### Fixed
