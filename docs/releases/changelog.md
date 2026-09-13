@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Preserved routerd's private systemd notification socket for `READY=1` and
+  `STATUS=` messages while removing `NOTIFY_SOCKET` from the environment
+  inherited by child commands. This prevents systemd-aware tools launched by
+  reconciliation from flooding the journal with rejected notification
+  warnings under `Type=notify` and `NotifyAccess=main` (#1240).
+
 ## v20260913.0617
 
 ### Fixed

@@ -11,6 +11,13 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 在內部保留 routerd 自身傳送 `READY=1` 與 `STATUS=` 所需的 systemd 通知 socket，同時從
+  子命令繼承的環境中移除 `NOTIFY_SOCKET`。這可避免在 `Type=notify` 與
+  `NotifyAccess=main` 設定下，由 reconcile 啟動的 systemd-aware 工具所傳送的通知遭拒絕，
+  並持續以 warning 填滿 journal（#1240）。
+
 ## v20260913.0617
 
 ### 修正
