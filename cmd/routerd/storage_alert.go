@@ -15,6 +15,24 @@ import (
 
 const storageCriticalFile = "storage-critical.json"
 
+// systemdNotifySocketPath is captured before serve starts spawning host
+// commands. NOTIFY_SOCKET must not remain in the environment inherited by
+// those commands: some systemd-aware tools send their own notifications and
+// systemd then attributes them to routerd.service.
+var systemdNotifySocketPath string
+
+func detachSystemdNotifySocket(args []string) {
+	if len(args) == 0 || args[0] != "serve" {
+		return
+	}
+	path := strings.TrimSpace(os.Getenv("NOTIFY_SOCKET"))
+	if path == "" {
+		return
+	}
+	systemdNotifySocketPath = path
+	_ = os.Unsetenv("NOTIFY_SOCKET")
+}
+
 func mirrorStorageAlert(alert routerstate.StorageAlert) {
 	path := filepath.Join(platformDefaults.RuntimeDir, storageCriticalFile)
 	if err := routerstate.WriteStorageAlertFile(path, alert); err != nil {
@@ -37,7 +55,10 @@ func notifySystemdStatus(status string) error {
 }
 
 func notifySystemd(payload string) error {
-	path := strings.TrimSpace(os.Getenv("NOTIFY_SOCKET"))
+	path := strings.TrimSpace(systemdNotifySocketPath)
+	if path == "" {
+		path = strings.TrimSpace(os.Getenv("NOTIFY_SOCKET"))
+	}
 	if path == "" {
 		return nil
 	}
