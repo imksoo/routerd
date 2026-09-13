@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260913.1222
+
 ### 修正
 
 - 在內部保留 routerd 自身傳送 `READY=1` 與 `STATUS=` 所需的 systemd 通知 socket，同時從

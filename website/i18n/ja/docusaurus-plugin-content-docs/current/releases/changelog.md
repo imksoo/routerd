@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260913.1222
+
 ### 修正
 
 - routerd 自身が `READY=1` と `STATUS=` の送信に使う systemd 通知ソケットを内部に保持しつつ、
