@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260913.0617
+
 ### Fixed
 
 - Kept an unexpired DHCPv6 prefix-delegation lease available to dependent

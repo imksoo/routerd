@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260913.0617
+
 ### 修正
 
 - 未過期的 DHCPv6 PD 租約在用戶端處於 Renewing/Rebinding 時仍以 `Bound` 狀態提供給相依資源，

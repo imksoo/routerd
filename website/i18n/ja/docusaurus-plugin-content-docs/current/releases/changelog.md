@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260913.0617
+
 ### 修正
 
 - 未失効の DHCPv6 PD リースはクライアントが Renewing/Rebinding 中でも、依存リソースへ
