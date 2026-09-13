@@ -5,6 +5,7 @@ package main
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,5 +56,41 @@ func TestNotifySystemdReadyWithoutSystemd(t *testing.T) {
 	t.Setenv("NOTIFY_SOCKET", "")
 	if err := notifySystemd("READY=1\nSTATUS=ready"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDetachSystemdNotifySocketKeepsRouterdNotificationAndCleansChildEnvironment(t *testing.T) {
+	originalSocket := systemdNotifySocketPath
+	systemdNotifySocketPath = ""
+	t.Cleanup(func() { systemdNotifySocketPath = originalSocket })
+
+	socket := filepath.Join(t.TempDir(), "notify.sock")
+	listener, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: socket, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("NOTIFY_SOCKET", socket)
+
+	detachSystemdNotifySocket([]string{"serve"})
+	if got := os.Getenv("NOTIFY_SOCKET"); got != "" {
+		t.Fatalf("NOTIFY_SOCKET remained in child environment: %q", got)
+	}
+	if err := exec.Command("sh", "-c", `test -z "$NOTIFY_SOCKET"`).Run(); err != nil {
+		t.Fatalf("child inherited NOTIFY_SOCKET: %v", err)
+	}
+	if err := notifySystemd("READY=1\nSTATUS=ready"); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 128)
+	n, _, err := listener.ReadFromUnix(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(buf[:n]); got != "READY=1\nSTATUS=ready" {
+		t.Fatalf("systemd notification = %q", got)
 	}
 }

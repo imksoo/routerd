@@ -11,6 +11,13 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- routerd 自身が `READY=1` と `STATUS=` の送信に使う systemd 通知ソケットを内部に保持しつつ、
+  子コマンドが継承する環境から `NOTIFY_SOCKET` を除去しました。これにより `Type=notify` と
+  `NotifyAccess=main` の構成で、reconcile が起動した systemd 対応ツールの通知が拒否され、
+  warning で journal が埋まる問題を防ぎます（#1240）。
+
 ## v20260913.0617
 
 ### 修正
