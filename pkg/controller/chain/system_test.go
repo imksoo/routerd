@@ -1018,6 +1018,8 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 	}}}
 	store := mapStore{api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "172.18.0.1/16"}}
 	var commands []string
+	routerdActive := false
+	healthCheckActive := false
 	controller := SystemdUnitController{
 		Router:           router,
 		Store:            store,
@@ -1026,7 +1028,10 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
 			commands = append(commands, line)
-			if line == "systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service" {
+			if line == "systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service" && !healthCheckActive {
+				return nil, errors.New("inactive")
+			}
+			if line == "systemctl is-active --quiet routerd.service" && !routerdActive {
 				return nil, errors.New("inactive")
 			}
 			return []byte("ok"), nil
@@ -1059,15 +1064,80 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		"systemctl daemon-reload",
 		"systemctl enable routerd-healthcheck@internet-via-dslite-a.service",
 		"systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service",
-		"systemctl restart routerd-healthcheck@internet-via-dslite-a.service",
+		"systemctl --no-block restart routerd-healthcheck@internet-via-dslite-a.service",
 	} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
 	}
+	if strings.Contains(gotCommands, "systemctl restart "+unitName) {
+		t.Fatalf("HealthCheck restart must not block Type=notify bootstrap:\n%s", gotCommands)
+	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
-	if status["phase"] != "Applied" || status["changed"] != true {
+	if status["phase"] != "Activating" || status["reason"] != "RestartQueued" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
+	}
+
+	restartsBeforeReady := len(commands)
+	routerdActive = true
+	healthCheckActive = true
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Applied" || status["changed"] != false {
+		t.Fatalf("status after READY = %#v", status)
+	}
+	for _, command := range commands[restartsBeforeReady:] {
+		if strings.Contains(command, "restart "+unitName) {
+			t.Fatalf("active HealthCheck was restarted after READY: %v", commands[restartsBeforeReady:])
+		}
+	}
+}
+
+func TestSystemdUnitControllerReportsHealthCheckRestartFailureAfterReady(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	dir := t.TempDir()
+	unitName := "routerd-healthcheck@internet.service"
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+		Metadata: api.ObjectMeta{Name: "internet"},
+		Spec: api.HealthCheckSpec{
+			Daemon:       "routerd-healthcheck",
+			Target:       "1.1.1.1",
+			TargetSource: "static",
+			Protocol:     "icmp",
+		},
+	}}}}
+	store := mapStore{}
+	var commands []string
+	controller := SystemdUnitController{
+		Router:           router,
+		Store:            store,
+		SystemdSystemDir: dir,
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			_ = ctx
+			line := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, line)
+			if line == "systemctl is-active --quiet "+unitName {
+				return nil, errors.New("inactive")
+			}
+			return []byte("ok"), nil
+		},
+	}
+
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("inactive HealthCheck after synchronous restart was not returned")
+	}
+	if !commandLineContains(commands, "systemctl restart "+unitName) {
+		t.Fatalf("synchronous restart missing after routerd became active: %v", commands)
+	}
+	if commandLineContains(commands, "systemctl --no-block restart "+unitName) {
+		t.Fatalf("normal reconcile unexpectedly queued a nonblocking restart: %v", commands)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" {
+		t.Fatalf("status = %#v, want detected restart failure", status)
 	}
 }
 

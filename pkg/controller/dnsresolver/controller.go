@@ -134,6 +134,12 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
 	servedZones := dnsResolverZoneRefs(spec)
 	autoRecords := c.hostnameRecordsForResolver(servedZones)
+	runtimeDir, _ := c.dirs()
+	hostData, hostReadErr := os.ReadFile(filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"))
+	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
+		return config, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
+	}
+	dhcpHostRecords := dnsresolver.ParseDNSMasqHostRecords(hostData)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSZone" {
 			continue
@@ -152,7 +158,11 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 		if err := c.saveZoneStatus(resource.Metadata.Name, zoneSpec, pendingRecords); err != nil {
 			return config, err
 		}
-		config.Zones = append(config.Zones, dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec})
+		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec}
+		if len(zoneSpec.DHCPDerived.Sources) > 0 {
+			runtimeZone.DHCPHostRecords = append([]dnsresolver.RuntimeDHCPHostRecord(nil), dhcpHostRecords...)
+		}
+		config.Zones = append(config.Zones, runtimeZone)
 	}
 	return config, nil
 }
