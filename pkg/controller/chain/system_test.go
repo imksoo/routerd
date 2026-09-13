@@ -1059,11 +1059,14 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		"systemctl daemon-reload",
 		"systemctl enable routerd-healthcheck@internet-via-dslite-a.service",
 		"systemctl is-active --quiet routerd-healthcheck@internet-via-dslite-a.service",
-		"systemctl restart routerd-healthcheck@internet-via-dslite-a.service",
+		"systemctl --no-block restart routerd-healthcheck@internet-via-dslite-a.service",
 	} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
 		}
+	}
+	if strings.Contains(gotCommands, "systemctl restart "+unitName) {
+		t.Fatalf("HealthCheck restart must not block Type=notify bootstrap:\n%s", gotCommands)
 	}
 	status := store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
 	if status["phase"] != "Applied" || status["changed"] != true {

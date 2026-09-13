@@ -1509,7 +1509,12 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		active = false
 	}
 	if changed || !active {
-		if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
+		// HealthCheck units are ordered After=routerd.service. During a
+		// Type=notify bootstrap, waiting for this job would deadlock: systemd
+		// cannot start the helper until routerd emits READY, while routerd would
+		// be waiting here for the helper job to finish. Queue the restart and let
+		// systemd complete it after routerd becomes active.
+		if _, err := command(ctx, "systemctl", "--no-block", "restart", unitName); err != nil {
 			return changed, err
 		}
 		return true, nil
