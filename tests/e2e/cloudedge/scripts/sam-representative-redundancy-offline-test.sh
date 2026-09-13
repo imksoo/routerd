@@ -69,8 +69,20 @@ write_matrix() {
     esac
   fi
 }
+write_router_matrix() {
+  local label="$1" failed="" path="$2"
+  case "$label" in after-failover-*) failed="${label#after-failover-}" ;; esac
+  jq -r --arg failed "$failed" '
+    .nodes.value | to_entries as $nodes
+    | $nodes[] as $src | $nodes[] as $dst
+    | select($src.value.role == "leaf" and $src.key != $failed)
+    | select($dst.value.role == "client" and $src.value.site != $dst.value.site)
+    | [$src.key, $dst.key, "PASS"] | @tsv
+  ' "$tofu_output" >"$path"
+}
 write_matrix initial false "$evidence_dir/matrix/initial/summary.tsv"
 write_matrix initial true "$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+write_router_matrix initial "$evidence_dir/matrix/initial/router-origin-summary.tsv"
 canary_rows=4
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_CANARY:-0}" = 1 ] && canary_rows=3
 for label in after-failover-pve-rr-a after-rejoin-pve-rr-a; do
@@ -85,6 +97,7 @@ if [ "$failover_node" != pve-rr-a ]; then
     mkdir -p "$evidence_dir/matrix/$label"
     write_matrix "$label" false "$evidence_dir/matrix/$label/summary.tsv"
     write_matrix "$label" true "$evidence_dir/matrix/$label/cloud-ingress-summary.tsv"
+    write_router_matrix "$label" "$evidence_dir/matrix/$label/router-origin-summary.tsv"
     for gate in dataplane provider rr-pve-rr-a rr-pve-rr-b; do
       [ "${SAM_REPRESENTATIVE_FAKE_MISSING_GATE:-}" != "$label-$gate" ] || continue
       printf '%s-%s\tPASS\t1\n' "$label" "$gate" >>"$evidence_dir/convergence/summary.tsv"
@@ -183,6 +196,7 @@ jq -e '
 ' "$evidence/profile-result.json" >/dev/null
 [ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/summary.tsv")" -eq 12 ]
 [ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/cloud-ingress-summary.tsv")" -eq 9 ]
+[ "$(wc -l <"$evidence/representative-redundancy/matrix/initial/router-origin-summary.tsv")" -eq 24 ]
 # After A stops, B must fit all remote client addresses plus its primary IP
 # on one t3.small ENI (four total IPv4 slots). This is a fixture capacity proof,
 # not evidence that a provider accepted the actual assignments.

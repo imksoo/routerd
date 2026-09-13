@@ -238,6 +238,24 @@ verify_matrix() {
   ' "$path" >/dev/null
 }
 
+verify_router_origin_matrix() {
+  local path="$1" label="$2" failed_node=""
+  [ -f "$path" ] || return 1
+  case "$label" in
+    after-failover-*) failed_node="${label#after-failover-}" ;;
+  esac
+  jq -Rne --slurpfile nodes "$nodes_json" --arg failed "$failed_node" '
+    [inputs | split("\t")] as $rows
+    | ($nodes[0] | to_entries | map(select(.value.role == "leaf" and .key != $failed))) as $leaves
+    | ($nodes[0] | to_entries | map(select(.value.role == "client"))) as $clients
+    | [$leaves[] as $src | $clients[] as $dst
+       | select($src.value.site != $dst.value.site)
+       | [$src.key, $dst.key]] as $expected
+    | ($rows | all(length == 3 and .[2] == "PASS"))
+      and (($rows | map(.[0:2]) | sort) == ($expected | sort))
+  ' "$path" >/dev/null
+}
+
 verify_transition_ack() {
   local convergence="$1" label="$2"
   case "$label" in
@@ -255,6 +273,7 @@ verify_full_validation() {
   verify_transition_ack "$convergence" "$label" || return 1
   verify_matrix "$dir/matrix/$label/summary.tsv" false || return 1
   verify_matrix "$dir/matrix/$label/cloud-ingress-summary.tsv" true || return 1
+  verify_router_origin_matrix "$dir/matrix/$label/router-origin-summary.tsv" "$label" || return 1
   verify_gate "$convergence" "$label-dataplane" || return 1
   verify_gate "$convergence" "$label-provider" || return 1
   for rr in pve-rr-a pve-rr-b; do
