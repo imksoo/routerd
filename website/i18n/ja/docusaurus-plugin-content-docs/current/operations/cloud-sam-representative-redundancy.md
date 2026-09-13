@@ -74,6 +74,11 @@ PVE の `prior_state` 保持を理由とする plan guard の緩和も不要で�
 クライアント数とルーターの冗長化は独立で、クライアント削減時も leaf B と RR 2 台を
 削りません。各クライアントは同環境の両 leaf を next-hop に使い、A 専用ではありません。
 完全な環境間行列は `4 × 3 = 12` directed flow、そのうち cloud 起点は `3 × 3 = 9` です。
+初期状態の router-origin 行列はこれと別に、異なる環境にある leaf の
+全有向ペアを対象とします。送信元 leaf 8 台 × 他環境の送信先 leaf 6 台で、
+正確に 48 directed probe です。各 probe は送信元 leaf の private address を
+固定し、`ip route get` が SAM tunnel を選ぶことと ICMP 成功の両方を
+必須とします。client forwarding の成功から類推はしません。
 従来の 8 クライアント構成の 56/42 flow には同環境内のクライアント間通信も含まれて
 いました。その同環境内通信と追加アドレスの組合せは今回の検証対象から外れます。
 4 環境間の E2E と指定した A 系切り替え試験は維持します。`clients_per_site = 2` は
@@ -154,7 +159,8 @@ PVE が渡すゲスト別 IP 設定を無視したり、qualification 中に NIC
    B の配備前に A が参加した証拠を残します。
 3. `pve-rr-b` を配備し、同じ membership 確認後、ペアの準備完了を記録します。
 4. control/dataplane と provider の gate、全 12 directed client hostname flow、
-   全 9 cloud-origin ingress flow による完全な baseline を実行します。
+   全 9 cloud-origin ingress flow、全 48 directed cross-site leaf-to-leaf
+   router-origin probe による完全な baseline を実行します。
 5. `pve-rr-a` を停止します。B の BGP membership、稼働中の全 leaf の
    control/ownership・provider gate を確認し、AWS → Azure → OCI → PVE → AWS の
    hostname canary 4 経路を実行します。
@@ -171,6 +177,12 @@ PVE が渡すゲスト別 IP 設定を無視したり、qualification 中に NIC
 edge の停止後・復帰後には両方の完全な traffic matrix を繰り返します。
 RR 用 canary で edge E2E の証拠を代用しません。必須証拠の欠落・重複・失敗・
 skip は PASS ではありません。
+
+48 行の router-origin 行列は初期状態の回帰 gate です。service 切り替え中には
+繰り返さず、切り替えの検証範囲は完全な 12 行の client 行列、9 行の
+cloud-ingress 行列と control/provider gate です。報告ではこれらを分け、
+初期 router-origin の成功を、切り替え中の router-origin 維持や通信中セッション無断の
+証明として表示してはいけません。
 
 ここでの「停止」は、ゲストの `routerd.service` と、別 service がある場合の
 `routerd-bgp.service` の停止です。復帰ではそれらを開始します。
