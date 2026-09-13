@@ -11,6 +11,12 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修正
+
+- 將本地 proxy-ARP leaf 已解析的 capture source address 作為非 owner 的 SAM return-route
+  進行通告。路由器自身發起的診斷流量現在可以接收遠端 Mobility site 的回應，同時不會把
+  router address 納入 provider capture 候選（#1244）。
+
 ## v20260913.1222
 
 ### 修正

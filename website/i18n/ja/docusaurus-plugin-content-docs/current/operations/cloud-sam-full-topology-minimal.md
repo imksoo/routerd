@@ -28,6 +28,8 @@ baseline 1 回だけを検証します。
 - control-plane/dataplane の readiness gate。
 - 全 12 directed client-to-client hostname flow。
 - 全 9 cloud-origin directed cloud-ingress hostname flow。
+- 送信元 private address の固定、SAM route 選択、ICMP 成功をすべて要求する、
+  全 48 directed cross-site leaf-to-leaf router-origin probe。
 - `MobilityPool` の provider readiness/no-conflict gate。
 
 legacy protocol、performance、load-balance report、transfer probe、failover/rejoin、
