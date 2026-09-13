@@ -76,6 +76,9 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 		if spec.DHCPDerived.LeaseFile != "" {
 			zone.loadDnsmasqLeases(spec.DHCPDerived.LeaseFile)
 		}
+		for _, record := range runtime.DHCPHostRecords {
+			zone.addRecoveredLease(record)
+		}
 		table.zones[name] = zone
 	}
 	return table
@@ -311,6 +314,22 @@ func (z *zoneData) addLease(lease dhcpLeaseEvent) {
 		return
 	}
 	z.addRecord(lease.Hostname, "", lease.IP, ttl, true)
+}
+
+func (z *zoneData) addRecoveredLease(record dnsresolver.RuntimeDHCPHostRecord) {
+	if record.Hostname == "" || record.IP == "" {
+		return
+	}
+	fqdn := dns.Fqdn(record.Hostname)
+	if !strings.HasSuffix(fqdn, z.Name) {
+		fqdn = dns.Fqdn(strings.TrimSuffix(record.Hostname, ".") + "." + strings.TrimSuffix(z.Name, "."))
+	}
+	// The active lease file and declared records were loaded first. A sticky
+	// host is recovery data only and must not replace either source.
+	if _, exists := z.Records[strings.ToLower(fqdn)]; exists {
+		return
+	}
+	z.addLease(dhcpLeaseEvent{IP: record.IP, Hostname: record.Hostname})
 }
 
 func (z *zoneData) deleteDynamic(ip string) {

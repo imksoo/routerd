@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,8 +23,91 @@ type RuntimeConfig struct {
 }
 
 type RuntimeZone struct {
-	Name string          `json:"name"`
-	Spec api.DNSZoneSpec `json:"spec"`
+	Name            string                  `json:"name"`
+	Spec            api.DNSZoneSpec         `json:"spec"`
+	DHCPHostRecords []RuntimeDHCPHostRecord `json:"dhcpHostRecords,omitempty"`
+}
+
+// RuntimeDHCPHostRecord is a routerd-generated dnsmasq host entry captured in
+// the resolver runtime snapshot. It lets a freshly started resolver restore a
+// sticky DHCP hostname even when that client is not present in the active
+// dnsmasq lease file and has not emitted a new lease event yet.
+type RuntimeDHCPHostRecord struct {
+	Hostname string `json:"hostname"`
+	IP       string `json:"ip"`
+}
+
+// ParseDNSMasqHostRecords extracts hostname/address pairs from routerd's
+// dnsmasq-hosts sidecar. The sidecar contains both reservation form
+// (mac,set:tag,hostname,ip) and sticky form (mac,ip,hostname,lease-time).
+func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
+	seen := map[string]bool{}
+	var records []RuntimeDHCPHostRecord
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, ",")
+		for i := range fields {
+			fields[i] = strings.TrimSpace(fields[i])
+		}
+		ipIndex := -1
+		ip := ""
+		for i := 1; i < len(fields); i++ {
+			candidate := strings.Trim(fields[i], "[]")
+			if net.ParseIP(candidate) != nil {
+				ipIndex = i
+				ip = candidate
+				break
+			}
+		}
+		if ipIndex < 0 {
+			continue
+		}
+		hostname := ""
+		for _, index := range []int{ipIndex + 1, ipIndex - 1} {
+			if index >= 0 && index < len(fields) && dnsmasqHostnameField(fields[index]) {
+				hostname = fields[index]
+				break
+			}
+		}
+		if hostname == "" {
+			continue
+		}
+		key := strings.ToLower(hostname) + "|" + ip
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip})
+	}
+	sort.Slice(records, func(i, j int) bool {
+		left := strings.ToLower(records[i].Hostname) + "|" + records[i].IP
+		right := strings.ToLower(records[j].Hostname) + "|" + records[j].IP
+		return left < right
+	})
+	return records
+}
+
+func dnsmasqHostnameField(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "*" || net.ParseIP(strings.Trim(value, "[]")) != nil {
+		return false
+	}
+	if _, err := net.ParseMAC(value); err == nil {
+		return false
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"set:", "tag:", "id:", "net:"} {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+	if _, err := time.ParseDuration(lower); err == nil {
+		return false
+	}
+	return !strings.ContainsAny(value, " \t")
 }
 
 func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
