@@ -6634,7 +6634,7 @@ func dnsmasqIPv4Reservation(spec api.DHCPv4ReservationSpec, tag string) string {
 	return strings.Join(parts, ",")
 }
 
-func dnsmasqStickyHostLines(family, leaseTime string) []string {
+func dnsmasqStickyHostLines(router *api.Router, family, leaseTime string) []string {
 	defaults, _ := platform.Current()
 	path := strings.TrimRight(defaults.StateDir, "/") + "/dhcp-sticky.db"
 	if _, err := os.Stat(path); err != nil {
@@ -6649,7 +6649,11 @@ func dnsmasqStickyHostLines(family, leaseTime string) []string {
 	if err != nil {
 		return nil
 	}
-	var lines []string
+	return dnsmasqStickyHostLinesFromRows(router, rows, family, leaseTime)
+}
+
+func dnsmasqStickyHostLinesFromRows(router *api.Router, rows []logstore.DHCPStickyLease, family, leaseTime string) []string {
+	var hosts []render.DHCPStickyHost
 	for _, row := range rows {
 		rowFamily := strings.ToLower(strings.TrimSpace(row.Family))
 		if rowFamily == "" {
@@ -6662,12 +6666,27 @@ func dnsmasqStickyHostLines(family, leaseTime string) []string {
 		if rowFamily != family || row.MAC == "" || row.IP == "" {
 			continue
 		}
-		parts := []string{strings.ToLower(row.MAC), row.IP}
-		if row.Hostname != "" {
-			parts = append(parts, row.Hostname)
+		hosts = append(hosts, render.DHCPStickyHost{
+			MACAddress: row.MAC,
+			IPAddress:  row.IP,
+			Hostname:   row.Hostname,
+			Family:     rowFamily,
+			LeaseTime:  leaseTime,
+		})
+	}
+	reservationEntries := dnsmasqReservationEntries(router)
+	reservations := make([]api.DHCPv4ReservationSpec, 0, len(reservationEntries))
+	for _, reservation := range reservationEntries {
+		reservations = append(reservations, reservation.spec)
+	}
+	var lines []string
+	for _, host := range render.ExcludeReservedIPv4StickyHosts(hosts, reservations) {
+		parts := []string{strings.ToLower(host.MACAddress), host.IPAddress}
+		if host.Hostname != "" {
+			parts = append(parts, host.Hostname)
 		}
-		if leaseTime != "" {
-			parts = append(parts, leaseTime)
+		if host.LeaseTime != "" {
+			parts = append(parts, host.LeaseTime)
 		}
 		lines = append(lines, "dhcp-host="+strings.Join(parts, ","))
 	}
@@ -6716,8 +6735,8 @@ func writeDnsmasqHostsFile(router *api.Router, path string) (bool, error) {
 	var lines []string
 	lines = append(lines, dnsmasqReservationHostLines(router)...)
 	if routerHasDHCPStickyHold(router) {
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv4", "12h"))...)
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv6", "12h"))...)
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv4", "12h"))...)
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv6", "12h"))...)
 	}
 	sort.Strings(lines)
 	data := []byte(routerdGeneratedDNSMasqMarker + strings.Join(lines, "\n"))
@@ -6767,7 +6786,12 @@ func routerHasDHCPStickyHold(router *api.Router) bool {
 	return false
 }
 
-func dnsmasqReservationHostLines(router *api.Router) []string {
+type dnsmasqReservationEntry struct {
+	name string
+	spec api.DHCPv4ReservationSpec
+}
+
+func dnsmasqReservationEntries(router *api.Router) []dnsmasqReservationEntry {
 	if router == nil {
 		return nil
 	}
@@ -6777,7 +6801,7 @@ func dnsmasqReservationHostLines(router *api.Router) []string {
 			servers[resource.Metadata.Name] = true
 		}
 	}
-	var lines []string
+	var entries []dnsmasqReservationEntry
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Reservation" {
 			continue
@@ -6792,7 +6816,16 @@ func dnsmasqReservationHostLines(router *api.Router) []string {
 		if server := strings.TrimSpace(spec.Server); server != "" && !servers[server] {
 			continue
 		}
-		lines = append(lines, dnsmasqIPv4Reservation(spec, sanitizeChainTag(resource.Metadata.Name)))
+		entries = append(entries, dnsmasqReservationEntry{name: resource.Metadata.Name, spec: spec})
+	}
+	return entries
+}
+
+func dnsmasqReservationHostLines(router *api.Router) []string {
+	entries := dnsmasqReservationEntries(router)
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, dnsmasqIPv4Reservation(entry.spec, sanitizeChainTag(entry.name)))
 	}
 	return lines
 }

@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Explicit `DHCPv4Reservation` entries now suppress conflicting IPv4 sticky
+  holds with the same MAC address or IP address, preventing duplicate
+  `dhcp-host` directives and preserving the declared reservation (#1235).
+
 ## v20260912.2138
 
 ### Fixed

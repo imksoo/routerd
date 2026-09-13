@@ -1112,8 +1112,8 @@ func dnsmasqLegacyHostsMatchRouter(data []byte, router *api.Router) bool {
 	}
 	lines := append([]string{}, dnsmasqReservationHostLines(router)...)
 	if routerHasDHCPStickyHold(router) {
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv4", "12h"))...)
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines("ipv6", "12h"))...)
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv4", "12h"))...)
+		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv6", "12h"))...)
 	}
 	sort.Strings(lines)
 	if len(lines) == 0 {

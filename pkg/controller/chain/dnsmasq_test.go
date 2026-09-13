@@ -20,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -872,6 +873,26 @@ func TestDnsmasqHostFileLinesStripOptionPrefix(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dnsmasqHostFileLines = %#v, want %#v", got, want)
+	}
+}
+
+func TestDnsmasqStickyHostLinesExcludeReservationConflicts(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{StickyHoldDays: 3}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "nintendo-switch"}, Spec: api.DHCPv4ReservationSpec{
+			Server: "lan-v4", MACAddress: "cc:c0:79:0e:73:0a", Hostname: "nintendo-switch", IPAddress: "172.18.1.96",
+		}},
+	}}}
+	rows := []logstore.DHCPStickyLease{
+		{MAC: "CC:C0:79:0E:73:0A", IP: "172.18.1.96", Hostname: "nintendo-switch", Family: "ipv4"},
+		{MAC: "cc:c0:79:0e:73:0a", IP: "172.18.1.97", Hostname: "old-address", Family: "ipv4"},
+		{MAC: "02:00:00:00:01:51", IP: "172.18.1.96", Hostname: "old-client", Family: "ipv4"},
+		{MAC: "02:00:00:00:01:52", IP: "172.18.1.98", Hostname: "unrelated", Family: "ipv4"},
+	}
+	got := dnsmasqStickyHostLinesFromRows(router, rows, "ipv4", "12h")
+	want := []string{"dhcp-host=02:00:00:00:01:52,172.18.1.98,unrelated,12h"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sticky host lines = %#v, want %#v", got, want)
 	}
 }
 
