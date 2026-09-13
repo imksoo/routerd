@@ -37,20 +37,32 @@ func planBGPLivenessMarkerPath(source, selfNode, prefix string) (bgpdaemon.Appli
 // observation already carried in PoolRuntimeSnapshot.  It deliberately does
 // not read MobilityPool status or reconstruct desired paths in the effect
 // layer.
-func planBGPReturnRoutePaths(source string, self memberPlanInfo, selfIPs, captured map[string]bool, primaryObserved bool) []bgpdaemon.AppliedPath {
-	if !primaryObserved || len(selfIPs) == 0 {
-		return nil
+func planBGPReturnRoutePaths(source string, self memberPlanInfo, pool netip.Prefix, selfIPs, captured map[string]bool, primaryObserved bool) []bgpdaemon.AppliedPath {
+	candidates := map[string]bool{}
+	if primaryObserved {
+		for address := range selfIPs {
+			if !captured[address] {
+				candidates[address] = true
+			}
+		}
 	}
-	var out []bgpdaemon.AppliedPath
-	addresses := make([]string, 0, len(selfIPs))
-	for address := range selfIPs {
+	// An on-prem proxy-ARP leaf uses its capture source as the preferred source
+	// for packets it originates toward remote mobility addresses. Advertise that
+	// address as a return route just like a provider-observed router primary;
+	// otherwise the remote site treats the overlapping pool as locally connected
+	// and the reply never returns through SAM.
+	if strings.TrimSpace(self.Role) == "onprem" && strings.TrimSpace(self.Capture.Type) == "proxy-arp" {
+		if prefix, ok := captureSourcePrefix(self.CaptureSourceAddress, pool); ok {
+			candidates[prefix.String()] = true
+		}
+	}
+	addresses := make([]string, 0, len(candidates))
+	for address := range candidates {
 		addresses = append(addresses, address)
 	}
 	sort.Strings(addresses)
+	var out []bgpdaemon.AppliedPath
 	for _, address := range addresses {
-		if captured[address] {
-			continue
-		}
 		prefix, err := netip.ParsePrefix(address)
 		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
 			continue

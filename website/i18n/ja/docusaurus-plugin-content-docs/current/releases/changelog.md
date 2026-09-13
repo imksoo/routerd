@@ -11,6 +11,12 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- on-prem proxy-ARP leafで解決したcapture source addressを、ownerではないSAM return-routeとして
+  広告するようにしました。router自身が送信する診断通信は、router addressをprovider capture候補に
+  せずにremote Mobility siteからの応答を受信できます（#1244）。
+
 ## v20260913.1222
 
 ### 修正

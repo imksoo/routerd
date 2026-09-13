@@ -181,7 +181,7 @@ func ReconcilePool(snapshot PoolRuntimeSnapshot) (PoolPlan, error) {
 		plan.ProviderActions = nil
 	}
 	if !pool.Self.MaintenanceDrain {
-		plan.BGPPaths = append(plan.BGPPaths, planBGPReturnRoutePaths(pool.Source, pool.Self, snapshot.Ownership.SelfPrivateIPs, snapshot.Ownership.SelfCapturedIPs, snapshot.Ownership.SelfPrimaryKnown)...)
+		plan.BGPPaths = append(plan.BGPPaths, planBGPReturnRoutePaths(pool.Source, pool.Self, pool.Prefix, snapshot.Ownership.SelfPrivateIPs, snapshot.Ownership.SelfCapturedIPs, snapshot.Ownership.SelfPrimaryKnown)...)
 		if marker, ok := planBGPLivenessMarkerPath(pool.Source, pool.Self.NodeRef, snapshot.LivenessMarkerPrefix); ok {
 			plan.BGPPaths = append(plan.BGPPaths, marker)
 		}
