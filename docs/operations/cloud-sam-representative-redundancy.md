@@ -79,6 +79,11 @@ Client cardinality is independent of router redundancy: reducing clients must
 never remove leaf B or either RR. Each client uses both local leaves as next
 hops; it is not dedicated to leaf A. The complete four-client matrix has
 `4 × 3 = 12` directed cross-site flows, of which `3 × 3 = 9` originate in clouds.
+The initial router-origin matrix separately covers every ordered pair of leaves
+in different sites: eight source leaves times six remote destination leaves,
+for exactly 48 directed probes. Each probe pins the source leaf's private
+address, requires `ip route get` to select the SAM tunnel, and then requires
+ICMP success. This is not inferred from client forwarding.
 The prior eight-client profile had 56/42 flows and included same-site client
 pairs. Those same-site pairs and extra source/destination addresses are no
 longer covered; the four-site E2E and all specified A-side transitions remain.
@@ -165,7 +170,8 @@ Its sequence is deliberately one-directional:
 3. Deploy `pve-rr-b`, wait for the same membership observation, then record
    that the pair is ready.
 4. Run the full baseline: control/dataplane and provider gates, all 12
-   directed client hostname flows, and all 9 cloud-origin ingress flows.
+   directed client hostname flows, all 9 cloud-origin ingress flows, and all
+   48 directed cross-site leaf-to-leaf router-origin probes.
 5. Stop `pve-rr-a`. First prove that `pve-rr-b` still has an observed BGP
    membership, retain the all-leaf control/ownership and provider gates, then
    run four hostname canaries around AWS → Azure → OCI → PVE → AWS.
@@ -184,6 +190,13 @@ deployment or the initial baseline, but **do** repeat both complete traffic
 matrices after every edge stop and every edge rejoin. They never substitute
 the RR canaries for edge E2E evidence. Missing, duplicate, failed, or skipped
 required evidence is not a pass.
+
+The 48-row router-origin matrix is an initial-state regression gate. It is not
+repeated during service transitions; transition coverage remains the complete
+12-row client and 9-row cloud-ingress matrices plus their control/provider
+gates. Reports must keep these scopes separate and must not present initial
+router-origin success as proof of in-flight or transition-time router-origin
+availability.
 
 Here, a stop means stopping the guest's `routerd.service` and its separate
 `routerd-bgp.service` when present, then starting those services for rejoin.

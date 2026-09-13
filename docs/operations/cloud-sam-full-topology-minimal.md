@@ -28,6 +28,8 @@ accepts only this one baseline:
 - the control-plane/dataplane readiness gate;
 - all 12 directed client-to-client hostname flows;
 - all 9 cloud-origin directed cloud-ingress hostname flows; and
+- all 48 directed cross-site leaf-to-leaf router-origin probes, each with an
+  explicitly pinned private source, SAM route selection, and ICMP success; and
 - the `MobilityPool` provider readiness/no-conflict gate.
 
 It does **not** run legacy protocol probes, performance probes, load-balance
