@@ -259,6 +259,51 @@ func TestReloadPreservesDynamicLeaseRecords(t *testing.T) {
 	}
 }
 
+func TestReloadPrefersUpdatedRecoveredLeaseOverOldDynamicRecord(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "resolver.json")
+	initial := testResolverConfig([]int{5053})
+	initial.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
+		Hostname: "leasehost",
+		IP:       "192.0.2.127",
+	}}
+	writeRuntimeConfig(t, configPath, initial)
+	d := newTestDaemon(t, configPath, initial, true)
+
+	updated := testResolverConfig([]int{5053})
+	updated.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
+		Hostname: "leasehost",
+		IP:       "192.0.2.128",
+	}}
+	writeRuntimeConfig(t, configPath, updated)
+	if _, err := d.reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	req := new(dns.Msg)
+	req.SetQuestion("leasehost.lab.example.", dns.TypeA)
+	d.stateMu.RLock()
+	zones := d.zones
+	d.stateMu.RUnlock()
+	resp, ok := zones.Answer(req, []string{"DNSZone/lan-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("updated recovered record missing: ok=%v resp=%v", ok, resp)
+	}
+	if a, isA := resp.Answer[0].(*dns.A); !isA || a.A.String() != "192.0.2.128" {
+		t.Fatalf("answer after reload = %v, want 192.0.2.128", resp.Answer[0])
+	}
+	oldPTR := new(dns.Msg)
+	oldPTR.SetQuestion("127.2.0.192.in-addr.arpa.", dns.TypePTR)
+	if stale, answered := zones.Answer(oldPTR, []string{"DNSZone/lan-zone"}); answered {
+		t.Fatalf("old PTR survived reload: %v", stale)
+	}
+	newPTR := new(dns.Msg)
+	newPTR.SetQuestion("128.2.0.192.in-addr.arpa.", dns.TypePTR)
+	ptrResp, answered := zones.Answer(newPTR, []string{"DNSZone/lan-zone"})
+	if !answered || len(ptrResp.Answer) != 1 {
+		t.Fatalf("updated PTR missing after reload: answered=%v resp=%v", answered, ptrResp)
+	}
+}
+
 func TestReloadHandlerStatusCodes(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "resolver.json")
 	initial := testResolverConfig([]int{5053})

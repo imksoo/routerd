@@ -116,19 +116,7 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 		if zone == nil {
 			continue
 		}
-		record := item.record
-		record.Dynamic = true
-		zone.Records[strings.ToLower(record.Hostname)] = record
-		for _, ip := range record.IPv4 {
-			if ptr, err := dns.ReverseAddr(ip); err == nil {
-				zone.PTR[dns.Fqdn(ptr)] = record.Hostname
-			}
-		}
-		for _, ip := range record.IPv6 {
-			if ptr, err := dns.ReverseAddr(ip); err == nil {
-				zone.PTR[dns.Fqdn(ptr)] = record.Hostname
-			}
-		}
+		zone.addDynamicRecordIfAbsent(item.record)
 	}
 }
 
@@ -329,7 +317,40 @@ func (z *zoneData) addRecoveredLease(record dnsresolver.RuntimeDHCPHostRecord) {
 	if _, exists := z.Records[strings.ToLower(fqdn)]; exists {
 		return
 	}
+	if z.hasPTR(record.IP) {
+		return
+	}
 	z.addLease(dhcpLeaseEvent{IP: record.IP, Hostname: record.Hostname})
+}
+
+func (z *zoneData) addDynamicRecordIfAbsent(record zoneRecord) {
+	if record.Hostname == "" {
+		return
+	}
+	if _, exists := z.Records[strings.ToLower(dns.Fqdn(record.Hostname))]; exists {
+		return
+	}
+	for _, ip := range append(append([]string(nil), record.IPv4...), record.IPv6...) {
+		if z.hasPTR(ip) {
+			return
+		}
+	}
+	record.Dynamic = true
+	z.Records[strings.ToLower(dns.Fqdn(record.Hostname))] = record
+	for _, ip := range append(append([]string(nil), record.IPv4...), record.IPv6...) {
+		if ptr, err := dns.ReverseAddr(ip); err == nil {
+			z.PTR[dns.Fqdn(ptr)] = record.Hostname
+		}
+	}
+}
+
+func (z *zoneData) hasPTR(ip string) bool {
+	ptr, err := dns.ReverseAddr(ip)
+	if err != nil {
+		return false
+	}
+	_, exists := z.PTR[dns.Fqdn(ptr)]
+	return exists
 }
 
 func (z *zoneData) deleteDynamic(ip string) {
