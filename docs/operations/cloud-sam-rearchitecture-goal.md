@@ -11,7 +11,7 @@ integration gate, never a substitute for completing the migration.
 The execution snapshots below retain the earlier RR-only profile and its
 32-minute qualification / 55-minute mutation budget as historical source
 decisions. They are superseded for current qualification scope and budget by
-the [representative redundancy contract](cloud-sam-representative-redundancy.md#approved-budget),
+the [representative redundancy contract](/docs/operations/cloud-sam-representative-redundancy#approved-budget),
 including the four edge-A scenarios and the approved 90/115/145-minute
 qualification/mutation/planned-cleanup policy. This reference does not change
 past evidence or authorize live admission.
@@ -21,7 +21,7 @@ each of four sites plus two independent PVE RRs), with one client per site:
 14 guests, 12 directed E2E pairs, and 9 cloud-ingress pairs. The earlier
 eight-client / 56 / 42 snapshots below remain historical, not current VM
 requirements. RR-A and all four edge-A stop/rejoin gates remain mandatory.
-See the [closed size and source policy](../../tools/release-qa-labs/cost-bounded-profile.md).
+See the [closed size and source policy](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/cost-bounded-profile.md).
 
 ## Diagnosis to preserve
 

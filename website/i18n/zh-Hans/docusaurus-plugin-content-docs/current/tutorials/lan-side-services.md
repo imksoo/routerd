@@ -81,6 +81,8 @@ routerd 将 LAN 侧服务明确划分给两个守护进程：
 ```
 
 `DHCPv4Reservation` 会展开为 dnsmasq 的 host reservation 条目。
+显式预约的优先级高于具有相同 MAC 地址或 IP 地址的 sticky hold。添加或修改预约前无需清除
+sticky database；routerd 在生成 dnsmasq 配置时会排除冲突的临时 hold。
 在 Web 管理界面与事件日志中，会以不依赖设备当前 IP 的稳定资源名称显示。
 
 FreeBSD 上，dnsmasq 的租约文件存放于 `/var/db/routerd/dnsmasq` 目录下。

@@ -82,6 +82,9 @@ routerd は LAN 側サービスを 2 つのデーモンに明確に分けます�
 
 `DHCPv4Reservation` は dnsmasq のホスト予約エントリに展開されます。
 Web 管理画面とイベントログには、デバイスの現在の IP に依存しない安定したリソース名で現れます。
+明示的な予約は、同じ MAC アドレスまたは IP アドレスを持つ sticky hold より優先されます。
+予約の追加や変更前に sticky database を消去する必要はありません。routerd は dnsmasq の設定を
+生成するとき、競合する一時 hold を除外します。
 
 FreeBSD では、dnsmasq のリースファイルを `/var/db/routerd/dnsmasq` 配下に置きます。
 `/var/run` だけに置くと、再起動でリースが失われるためです。

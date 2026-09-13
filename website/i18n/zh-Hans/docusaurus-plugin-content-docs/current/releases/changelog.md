@@ -11,6 +11,21 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 未过期的 DHCPv6 PD 租约在客户端处于 Renewing/Rebinding 时仍以 `Bound` 状态提供给依赖资源，
+  并将 `LeaseReady` condition 保持为 true；详细交换状态可通过 `observed.leaseState` 查看。
+  Renew/Rebind 会按 RFC 8415 的间隔持续重试，直到收到 Reply、T2 触发状态转换或租约过期，
+  从而在更新期间维持 delegated address、DS-Lite 和运行中的 VRRP MASTER VIP（#1237）。
+- 当显式 `DHCPv4Reservation` 与 IPv4 sticky hold 使用相同 MAC 地址或 IP 地址时，抑制冲突的
+  sticky hold，避免生成重复的 `dhcp-host` 条目，并以声明的预约为准（#1235）。
+- 在 `Type=notify` 启动期间，不等待 systemd 完成便提交受管理 HealthCheck unit 的重启，
+  避免 routerd 发送 `READY=1` 前与 `After=routerd.service` 形成循环等待（#1232）。
+- 将 routerd 生成的 sticky DHCP host record 纳入 DNS resolver runtime snapshot，使 resolver
+  重启或 HA 租约同步后，即使客户端尚未更新 active lease，也能恢复本地 A、AAAA 和 PTR 应答。
+  reload 会保留较新的内存 active lease event，并使声明的 record 和当前 active lease file
+  优先于 sticky recovery data（#1233）。
+
 ## v20260912.2138
 
 ### 修复

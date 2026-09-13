@@ -11,6 +11,25 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+### 修正
+
+- 未失効の DHCPv6 PD リースはクライアントが Renewing/Rebinding 中でも、依存リソースへ
+  `Bound` として公開し、`LeaseReady` condition を true に保つようにしました。詳細な交換状態は
+  `observed.leaseState` で確認できます。Renew/Rebind は Reply の受信、T2 による遷移、または
+  リース失効まで RFC 8415 の間隔で再送し、更新中も delegated address、DS-Lite、稼働中の
+  VRRP MASTER VIP を維持します（#1237）。
+- 明示的な `DHCPv4Reservation` と MAC アドレスまたは IP アドレスが競合する IPv4 sticky
+  hold を抑止し、重複する `dhcp-host` の生成を防いで、宣言した予約を優先するようにしました
+  （#1235）。
+- `Type=notify` の起動処理中は systemd の完了を待たずに管理対象 HealthCheck unit の再起動を
+  投入し、routerd が `READY=1` を通知する前に `After=routerd.service` と循環待ちになる問題を
+  解消しました（#1232）。
+- routerd が生成した sticky DHCP host record を DNS resolver の runtime snapshot に含め、
+  client が active lease を更新する前でも resolver の再起動や HA lease 同期後にローカルの
+  A、AAAA、PTR 応答を復元するようにしました。reload では新しい in-memory active lease event を
+  保持し、宣言済み record と現在の active lease file を sticky recovery data より優先します
+  （#1233）。
+
 ## v20260912.2138
 
 ### 修正
