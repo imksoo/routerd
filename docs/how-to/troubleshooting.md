@@ -26,12 +26,19 @@ tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
 
 Look for:
 
-- `phase` is `Bound`.
+- `phase` is `Bound`; an unexpired lease remains publicly `Bound` while a
+  Renew or Rebind exchange is in progress.
+- `observed.leaseState` identifies the detailed exchange state (`renewing` or
+  `rebinding`) and the `LeaseReady` condition remains true while that lease is
+  still usable.
 - `currentPrefix` is populated.
 - `renewAt` is in the future.
 - The event log shows `Reply` and `Renew` records.
 
-If the prefix is **not** `Bound`, IPv6 RA, AAAA, and DHCPv6 should be paused on the LAN. routerd's safety contract is to stop advertising stale prefixes.
+If the prefix is **not** `Bound`, or `LeaseReady` becomes false, IPv6 RA, AAAA,
+and DHCPv6 should be paused on the LAN. routerd's safety contract is to keep an
+unexpired prefix available during renewal, but stop advertising it after it is
+no longer usable.
 
 ## DHCPv4
 

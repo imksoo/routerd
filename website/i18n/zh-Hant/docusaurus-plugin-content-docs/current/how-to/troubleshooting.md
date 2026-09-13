@@ -27,13 +27,15 @@ tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
 
 確認以下項目：
 
-- `phase` 是否為 `Bound`
+- `phase` 是否為 `Bound`；未過期的租約在 Renew/Rebind 交換期間對外仍保持 `Bound`
+- `observed.leaseState` 是否顯示詳細交換狀態（`renewing` 或 `rebinding`），且租約仍可用時
+  `LeaseReady` condition 是否為 true
 - `currentPrefix` 是否已填入
 - `renewAt` 是否為未來時刻
 - 事件日誌中是否記錄了 `Reply` 或 `Renew`
 
-若非 `Bound` 狀態，LAN 側的 IPv6 RA、AAAA 記錄、DHCPv6 應停止運作。
-不繼續派發舊有前綴，是 routerd 在安全層面的承諾。
+若非 `Bound` 狀態，或 `LeaseReady` 變為 false，LAN 側的 IPv6 RA、AAAA 記錄及 DHCPv6 應停止
+運作。routerd 的安全約定是在更新期間維持尚未過期的前綴，但在該前綴不再可用後停止派發。
 
 ## DHCPv4
 

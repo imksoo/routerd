@@ -81,6 +81,8 @@ routerd 將 LAN 側服務明確劃分給兩個常駐程式：
 ```
 
 `DHCPv4Reservation` 會展開為 dnsmasq 的 host reservation 項目。
+明確保留的優先順序高於具有相同 MAC 位址或 IP 位址的 sticky hold。新增或修改保留前不必清除
+sticky database；routerd 在產生 dnsmasq 設定時會排除衝突的暫時 hold。
 在 Web 管理介面與事件記錄中，會以不依賴裝置當前 IP 的穩定資源名稱顯示。
 
 FreeBSD 上，dnsmasq 的租約檔案存放於 `/var/db/routerd/dnsmasq` 目錄下。

@@ -4,12 +4,6 @@ title: Changelog
 
 # Changelog
 
-## DHCPv6 PD 更新中のデータプレーン維持
-
-- 未失効の DHCPv6 PD リースは Renewing/Rebinding 中も `Bound` として依存リソースへ公開し、詳細な交換状態は `observed.leaseState` と `LeaseReady` condition で観測できるようにしました。
-- DHCPv6 Renew/Rebind を RFC 8415 の再送間隔で繰り返し、1回の Reply 欠落で T2 またはリース失効まで停止しないようにしました。
-- 更新中も IPv6 delegated address、DS-Lite、稼働中 VRRP MASTER の VIP を維持する回帰テストを追加しました。
-
 routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
 Changes are grouped under Added, Changed, Deprecated, Removed, Fixed, and Security.
 Versions, however, do not follow Semantic Versioning; routerd uses date-and-time-based
@@ -20,6 +14,13 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
+- Kept an unexpired DHCPv6 prefix-delegation lease available to dependent
+  resources while the client is Renewing or Rebinding. The public phase and
+  `LeaseReady` condition remain `Bound`/true, while `observed.leaseState`
+  exposes the detailed exchange state. Renew/Rebind retries now continue at
+  RFC 8415 intervals until a reply arrives, T2 changes the exchange, or the
+  lease expires, preserving delegated addresses, DS-Lite, and an active VRRP
+  MASTER VIP during renewal (#1237).
 - Explicit `DHCPv4Reservation` entries now suppress conflicting IPv4 sticky
   holds with the same MAC address or IP address, preventing duplicate
   `dhcp-host` directives and preserving the declared reservation (#1235).

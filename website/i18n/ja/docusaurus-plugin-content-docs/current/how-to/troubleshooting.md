@@ -27,13 +27,17 @@ tail -n 20 /var/lib/routerd/dhcpv6-client/wan-pd/events.jsonl
 
 確認点は次の通りです。
 
-- `phase` が `Bound` になっている
+- `phase` が `Bound` になっている。未失効のリースは Renew/Rebind の交換中も公開上は
+  `Bound` のままです
+- `observed.leaseState` で詳細な交換状態（`renewing` または `rebinding`）を確認でき、
+  リースが利用可能な間は `LeaseReady` condition が true になっている
 - `currentPrefix` が入っている
 - `renewAt` が未来の時刻になっている
 - イベントログに `Reply` や `Renew` が記録されている
 
-`Bound` でない場合、LAN 側の IPv6 RA、AAAA、DHCPv6 は止まるべきです。
-古いプレフィックスを配り続けないことが、routerd の安全上の約束です。
+`Bound` でない場合、または `LeaseReady` が false になった場合、LAN 側の IPv6 RA、AAAA、
+DHCPv6 は止まるべきです。未失効のプレフィックスは更新中も維持し、利用不能になった後は
+配り続けないことが、routerd の安全上の約束です。
 
 ## DHCPv4
 

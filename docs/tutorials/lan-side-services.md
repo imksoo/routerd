@@ -88,6 +88,7 @@ Use a separate range for automatic clients and reserve a smaller block for fixed
 ```
 
 `DHCPv4Reservation` renders to a dnsmasq host reservation entry. It also gives the Web Console and event log a stable resource name for the device, independent of its current IP.
+An explicit reservation takes precedence over a sticky hold with the same MAC address or IP address. You do not need to clear the sticky database before adding or changing a reservation; routerd omits the conflicting temporary hold when it renders dnsmasq configuration.
 
 On FreeBSD, routerd keeps the dnsmasq lease file under `/var/db/routerd/dnsmasq` instead of `/var/run`. The rc.d script creates both the runtime directory and the lease directory before starting dnsmasq. During `routerctl apply`, routerd runs `dnsmasq --test` before restarting the service and renders the pf exceptions required for DHCP, DHCPv6, Router Advertisement, and DNS traffic.
 
