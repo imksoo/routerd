@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260913.1740
+
 ### Fixed
 
 - Advertise an on-prem proxy-ARP leaf's resolved capture-source address as a

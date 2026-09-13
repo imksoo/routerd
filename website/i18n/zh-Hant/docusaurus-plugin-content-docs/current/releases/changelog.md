@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260913.1740
+
 ### 修正
 
 - 將本地 proxy-ARP leaf 已解析的 capture source address 作為非 owner 的 SAM return-route

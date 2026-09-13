@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260913.1740
+
 ### 修正
 
 - on-prem proxy-ARP leafで解決したcapture source addressを、ownerではないSAM return-routeとして
