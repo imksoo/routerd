@@ -104,6 +104,30 @@ func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 	}
 }
 
+func TestZoneStickySnapshotKeepsFirstDuplicateHostname(t *testing.T) {
+	table := newZoneTable([]resolvercfg.RuntimeZone{{
+		Name: "home",
+		Spec: api.DNSZoneSpec{
+			Zone:        "home.internal",
+			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}, TTL: 60},
+		},
+		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.127"},
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.181"},
+		},
+	}})
+
+	req := new(dns.Msg)
+	req.SetQuestion("macbookprom5max.home.internal.", dns.TypeA)
+	resp, ok := table.Answer(req, []string{"DNSZone/home"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("restored answer ok=%v resp=%v", ok, resp)
+	}
+	if a, isA := resp.Answer[0].(*dns.A); !isA || a.A.String() != "172.18.1.127" {
+		t.Fatalf("duplicate sticky answer = %v, want first record 172.18.1.127", resp.Answer[0])
+	}
+}
+
 func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := dir + "/dnsmasq.leases"

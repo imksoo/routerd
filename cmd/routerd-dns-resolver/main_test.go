@@ -259,6 +259,119 @@ func TestReloadPreservesDynamicLeaseRecords(t *testing.T) {
 	}
 }
 
+func TestReloadActiveLeaseEventTakesPrecedenceOverNewStickySnapshot(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "resolver.json")
+	initial := testResolverConfig([]int{5053})
+	initial.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
+		Hostname: "client",
+		IP:       "192.0.2.127",
+	}}
+	writeRuntimeConfig(t, configPath, initial)
+	d := newTestDaemon(t, configPath, initial, true)
+	d.zones.ApplyLease(dhcpLeaseEvent{
+		Action:   daemonapi.DHCPLeaseActionAdded,
+		MAC:      "02:00:00:00:00:01",
+		IP:       "192.0.2.128",
+		Hostname: "client",
+	})
+
+	writeRuntimeConfig(t, configPath, initial)
+	if _, err := d.reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	d.stateMu.RLock()
+	zones := d.zones
+	d.stateMu.RUnlock()
+	assertZoneARecord(t, zones, "client.lab.example.", "192.0.2.128")
+	assertZonePTRRecord(t, zones, "128.2.0.192.in-addr.arpa.", "client.lab.example.")
+	assertZoneNoPTRRecord(t, zones, "127.2.0.192.in-addr.arpa.")
+}
+
+func TestReloadStaticAndLeaseFileTakePrecedenceOverOldActiveEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*testing.T, *resolvercfg.RuntimeConfig)
+		wantIP    string
+		wantPTR   string
+	}{
+		{
+			name: "static",
+			configure: func(t *testing.T, config *resolvercfg.RuntimeConfig) {
+				config.Zones[0].Spec.Records = append(config.Zones[0].Spec.Records, api.DNSZoneRecordSpec{
+					Hostname: "client",
+					IPv4:     "192.0.2.129",
+				})
+			},
+			wantIP:  "192.0.2.129",
+			wantPTR: "client.lab.example.",
+		},
+		{
+			name: "active lease file",
+			configure: func(t *testing.T, config *resolvercfg.RuntimeConfig) {
+				leaseFile := filepath.Join(t.TempDir(), "dnsmasq.leases")
+				if err := os.WriteFile(leaseFile, []byte("1789306800 02:00:00:00:00:02 192.0.2.130 client *\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
+			},
+			wantIP:  "192.0.2.130",
+			wantPTR: "client.lab.example.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "resolver.json")
+			initial := testResolverConfig([]int{5053})
+			writeRuntimeConfig(t, configPath, initial)
+			d := newTestDaemon(t, configPath, initial, true)
+			d.zones.ApplyLease(dhcpLeaseEvent{
+				Action:   daemonapi.DHCPLeaseActionAdded,
+				MAC:      "02:00:00:00:00:01",
+				IP:       "192.0.2.128",
+				Hostname: "client",
+			})
+
+			updated := testResolverConfig([]int{5053})
+			tt.configure(t, &updated)
+			writeRuntimeConfig(t, configPath, updated)
+			if _, err := d.reload(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			d.stateMu.RLock()
+			zones := d.zones
+			d.stateMu.RUnlock()
+			assertZoneARecord(t, zones, "client.lab.example.", tt.wantIP)
+			ptr, err := dns.ReverseAddr(tt.wantIP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertZonePTRRecord(t, zones, ptr, tt.wantPTR)
+			assertZoneNoPTRRecord(t, zones, "128.2.0.192.in-addr.arpa.")
+		})
+	}
+}
+
+func TestActiveLeaseEventUpdatesLoadedLeaseFileBeforeReload(t *testing.T) {
+	leaseFile := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	if err := os.WriteFile(leaseFile, []byte("1789306800 02:00:00:00:00:02 192.0.2.127 client *\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := testResolverConfig(nil)
+	config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
+	zones := newZoneTable(config.Zones)
+	zones.ApplyLease(dhcpLeaseEvent{
+		Action:   daemonapi.DHCPLeaseActionAdded,
+		MAC:      "02:00:00:00:00:02",
+		IP:       "192.0.2.128",
+		Hostname: "client",
+	})
+
+	assertZoneARecord(t, zones, "client.lab.example.", "192.0.2.128")
+	assertZonePTRRecord(t, zones, "128.2.0.192.in-addr.arpa.", "client.lab.example.")
+	assertZoneNoPTRRecord(t, zones, "127.2.0.192.in-addr.arpa.")
+}
+
 func TestReloadPrefersUpdatedRecoveredLeaseOverOldDynamicRecord(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "resolver.json")
 	initial := testResolverConfig([]int{5053})
@@ -301,6 +414,41 @@ func TestReloadPrefersUpdatedRecoveredLeaseOverOldDynamicRecord(t *testing.T) {
 	ptrResp, answered := zones.Answer(newPTR, []string{"DNSZone/lan-zone"})
 	if !answered || len(ptrResp.Answer) != 1 {
 		t.Fatalf("updated PTR missing after reload: answered=%v resp=%v", answered, ptrResp)
+	}
+}
+
+func assertZoneARecord(t *testing.T, zones *zoneTable, name, wantIP string) {
+	t.Helper()
+	req := new(dns.Msg)
+	req.SetQuestion(name, dns.TypeA)
+	resp, ok := zones.Answer(req, []string{"DNSZone/lan-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("A record missing for %s: ok=%v resp=%v", name, ok, resp)
+	}
+	if a, isA := resp.Answer[0].(*dns.A); !isA || a.A.String() != wantIP {
+		t.Fatalf("A record for %s = %v, want %s", name, resp.Answer[0], wantIP)
+	}
+}
+
+func assertZonePTRRecord(t *testing.T, zones *zoneTable, name, wantTarget string) {
+	t.Helper()
+	req := new(dns.Msg)
+	req.SetQuestion(name, dns.TypePTR)
+	resp, ok := zones.Answer(req, []string{"DNSZone/lan-zone"})
+	if !ok || len(resp.Answer) != 1 {
+		t.Fatalf("PTR record missing for %s: ok=%v resp=%v", name, ok, resp)
+	}
+	if ptr, isPTR := resp.Answer[0].(*dns.PTR); !isPTR || ptr.Ptr != wantTarget {
+		t.Fatalf("PTR record for %s = %v, want %s", name, resp.Answer[0], wantTarget)
+	}
+}
+
+func assertZoneNoPTRRecord(t *testing.T, zones *zoneTable, name string) {
+	t.Helper()
+	req := new(dns.Msg)
+	req.SetQuestion(name, dns.TypePTR)
+	if resp, ok := zones.Answer(req, []string{"DNSZone/lan-zone"}); ok {
+		t.Fatalf("unexpected PTR record for %s: %v", name, resp)
 	}
 }
 
