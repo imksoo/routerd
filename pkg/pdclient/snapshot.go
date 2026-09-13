@@ -97,7 +97,7 @@ func (c *Client) Snapshot() Snapshot {
 
 func (c *Client) Restore(snapshot Snapshot) {
 	now := c.now()
-	if snapshot.State == StateBound && !snapshotMatchesConfig(snapshot, c.Config, now) {
+	if snapshotCarriesUsableLease(snapshot.State) && !snapshotMatchesConfig(snapshot, c.Config, now) {
 		c.State = StateIdle
 		c.Lease = Lease{}
 		c.PreviousPrefixes = nil
@@ -144,6 +144,10 @@ func (c *Client) Restore(snapshot Snapshot) {
 	}
 	c.setPreviousPrefixes(previous)
 	c.restoreInformation(snapshot)
+}
+
+func snapshotCarriesUsableLease(state State) bool {
+	return state == StateBound || state == StateRenewing || state == StateRebinding
 }
 
 func snapshotMatchesConfig(snapshot Snapshot, config Config, now time.Time) bool {

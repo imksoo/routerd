@@ -141,6 +141,103 @@ func TestNextReadDeadlineUsesSolicitRetry(t *testing.T) {
 	}
 }
 
+func TestRefreshingAndRebindingLeaseRemainDependencyReady(t *testing.T) {
+	now := time.Date(2026, 9, 13, 4, 38, 41, 0, time.UTC)
+	for _, state := range []pdclient.State{pdclient.StateBound, pdclient.StateRenewing, pdclient.StateRebinding} {
+		t.Run(string(state), func(t *testing.T) {
+			if got := resourcePhase(state); got != "Bound" {
+				t.Fatalf("resource phase = %q, want Bound", got)
+			}
+			client, err := pdclient.New(pdclient.Config{
+				Resource:   "wan-pd",
+				Interface:  "wan-vmac",
+				ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0x5e, 0, 1, 0x13},
+				IAID:       1,
+			}, &daemonMemoryTransport{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Restore(pdclient.Snapshot{
+				Resource:      "wan-pd",
+				Interface:     "wan-vmac",
+				State:         state,
+				CurrentPrefix: "2001:db8:1220::/60",
+				ServerDUID:    "00030001010203040506",
+				ClientDUID:    "0003000102005e000113",
+				IAID:          1,
+				T1Seconds:     7200,
+				T2Seconds:     12600,
+				Preferred:     14400,
+				Valid:         14400,
+				AcquiredAt:    now,
+				ExpiresAt:     now.Add(4 * time.Hour),
+			})
+			daemon := &dhcpv6Daemon{opts: options{resource: "wan-pd"}, client: client, recorder: &packetRecorder{limit: 10}}
+			daemon.initTelemetry()
+			status := daemon.statusLocked().Resources[0]
+			if status.Phase != "Bound" || status.Observed["leaseState"] != string(state) || status.Conditions[0].Status != "True" {
+				t.Fatalf("status = %#v", status)
+			}
+		})
+	}
+}
+
+func TestStartClientResumesRestoredLeaseExchange(t *testing.T) {
+	now := time.Date(2026, 9, 13, 4, 38, 41, 0, time.UTC)
+	tests := []struct {
+		state   pdclient.State
+		message uint8
+	}{
+		{state: pdclient.StateRenewing, message: pdclient.MessageRenew},
+		{state: pdclient.StateRebinding, message: pdclient.MessageRebind},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			transport := &daemonMemoryTransport{}
+			client, err := pdclient.New(pdclient.Config{
+				Resource:    "wan-pd",
+				Interface:   "wan-vmac",
+				ClientDUID:  []byte{0, 3, 0, 1, 2, 0, 0x5e, 0, 1, 0x13},
+				IAID:        1,
+				Now:         func() time.Time { return now },
+				Transaction: func() (uint32, error) { return 0x010203, nil },
+				Random:      func() float64 { return 0.5 },
+			}, transport)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Restore(pdclient.Snapshot{
+				Resource:      "wan-pd",
+				Interface:     "wan-vmac",
+				State:         tt.state,
+				CurrentPrefix: "2001:db8:1220::/60",
+				ServerDUID:    "00030001010203040506",
+				ClientDUID:    "0003000102005e000113",
+				IAID:          1,
+				T1Seconds:     7200,
+				T2Seconds:     12600,
+				Preferred:     14400,
+				Valid:         14400,
+				AcquiredAt:    now.Add(-2 * time.Hour),
+				ExpiresAt:     now.Add(2 * time.Hour),
+			})
+			daemon := &dhcpv6Daemon{
+				opts:   options{resource: "wan-pd", leaseFile: filepath.Join(t.TempDir(), "lease.json")},
+				client: client,
+			}
+			if err := daemon.startClient(context.Background()); err != nil {
+				t.Fatalf("start client: %v", err)
+			}
+			if len(transport.sent) != 1 || transport.sent[0].Message.Type != tt.message {
+				t.Fatalf("sent packets = %#v, want one message type %d", transport.sent, tt.message)
+			}
+			if client.NextRetryAt().IsZero() {
+				t.Fatal("restored lease exchange did not schedule a retransmission")
+			}
+		})
+	}
+}
+
 type daemonMemoryTransport struct {
 	sent []pdclient.OutboundPacket
 }

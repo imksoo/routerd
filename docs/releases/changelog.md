@@ -4,6 +4,12 @@ title: Changelog
 
 # Changelog
 
+## DHCPv6 PD 更新中のデータプレーン維持
+
+- 未失効の DHCPv6 PD リースは Renewing/Rebinding 中も `Bound` として依存リソースへ公開し、詳細な交換状態は `observed.leaseState` と `LeaseReady` condition で観測できるようにしました。
+- DHCPv6 Renew/Rebind を RFC 8415 の再送間隔で繰り返し、1回の Reply 欠落で T2 またはリース失効まで停止しないようにしました。
+- 更新中も IPv6 delegated address、DS-Lite、稼働中 VRRP MASTER の VIP を維持する回帰テストを追加しました。
+
 routerd release history. The format follows [Keep a Changelog](https://keepachangelog.com/).
 Changes are grouped under Added, Changed, Deprecated, Removed, Fixed, and Security.
 Versions, however, do not follow Semantic Versioning; routerd uses date-and-time-based

@@ -197,6 +197,95 @@ func TestClientRenewRebindExpire(t *testing.T) {
 	}
 }
 
+func TestClientRetransmitsRenewAndRebindWhileLeaseRemainsValid(t *testing.T) {
+	now := time.Date(2026, 9, 13, 2, 38, 41, 0, time.UTC)
+	transport := &memoryTransport{}
+	client, err := New(Config{
+		Resource:    "wan-pd",
+		Interface:   "wan-vmac",
+		ClientDUID:  []byte{0, 3, 0, 1, 2, 0, 0x5e, 0, 1, 0x13},
+		IAID:        1,
+		Now:         func() time.Time { return now },
+		Transaction: func() (uint32, error) { return 0x020304 + uint32(len(transport.sent)), nil },
+		Random:      func() float64 { return 0.5 },
+	}, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.State = StateBound
+	client.Lease = Lease{
+		Prefix:     netip.MustParsePrefix("2001:db8:1220::/60"),
+		ServerDUID: []byte{0, 3, 0, 1, 1, 2, 3, 4, 5, 6},
+		IAID:       1,
+		T1:         10 * time.Second,
+		T2:         40 * time.Second,
+		Preferred:  60 * time.Second,
+		Valid:      80 * time.Second,
+		AcquiredAt: now,
+	}
+
+	now = now.Add(10 * time.Second)
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	renewXID := transport.last().Message.TransactionID
+	if client.State != StateRenewing || client.NextRetryAt().Sub(now) != renewInitialRetransmissionTimeout {
+		t.Fatalf("renew state/retry = %s %s", client.State, client.NextRetryAt().Sub(now))
+	}
+	now = client.NextRetryAt()
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.sent) != 2 || transport.last().Message.Type != MessageRenew || transport.last().Message.TransactionID != renewXID {
+		t.Fatalf("renew retransmission = %#v", transport.sent)
+	}
+
+	now = client.Lease.RebindAt()
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rebindXID := transport.last().Message.TransactionID
+	if client.State != StateRebinding || rebindXID == renewXID || client.NextRetryAt().Sub(now) != rebindInitialRetransmissionTimeout {
+		t.Fatalf("rebind state/xid/retry = %s %06x %s", client.State, rebindXID, client.NextRetryAt().Sub(now))
+	}
+	now = client.NextRetryAt()
+	if err := client.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if transport.last().Message.Type != MessageRebind || transport.last().Message.TransactionID != rebindXID {
+		t.Fatalf("rebind retransmission = %#v", transport.last().Message)
+	}
+	if got := client.Snapshot().CurrentPrefix; got != "2001:db8:1220::/60" {
+		t.Fatalf("usable prefix removed during refresh: %q", got)
+	}
+}
+
+func TestRestoreRejectsExpiredRenewingOrRebindingSnapshot(t *testing.T) {
+	now := time.Date(2026, 9, 13, 4, 38, 41, 0, time.UTC)
+	for _, state := range []State{StateRenewing, StateRebinding} {
+		t.Run(string(state), func(t *testing.T) {
+			client, err := New(Config{Resource: "wan-pd", Interface: "wan-vmac", ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0x5e, 0, 1, 0x13}, IAID: 1, Now: func() time.Time { return now }}, &memoryTransport{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Restore(Snapshot{
+				Resource:      "wan-pd",
+				Interface:     "wan-vmac",
+				State:         state,
+				CurrentPrefix: "2001:db8:1220::/60",
+				ClientDUID:    "0003000102005e000113",
+				IAID:          1,
+				Valid:         60,
+				AcquiredAt:    now.Add(-2 * time.Minute),
+				ExpiresAt:     now.Add(-time.Minute),
+			})
+			if client.State != StateIdle || client.Lease.Prefix.IsValid() {
+				t.Fatalf("expired %s snapshot restored as usable: %s %+v", state, client.State, client.Lease)
+			}
+		})
+	}
+}
+
 func TestClientSnapshotIsDBFriendly(t *testing.T) {
 	now := time.Date(2026, 5, 2, 1, 0, 0, 0, time.UTC)
 	client, err := New(Config{

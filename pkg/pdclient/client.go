@@ -28,6 +28,10 @@ const (
 const (
 	solicitInitialRetransmissionTimeout = time.Second
 	solicitMaxRetransmissionTimeout     = time.Hour
+	renewInitialRetransmissionTimeout   = 10 * time.Second
+	renewMaxRetransmissionTimeout       = 10 * time.Minute
+	rebindInitialRetransmissionTimeout  = 10 * time.Second
+	rebindMaxRetransmissionTimeout      = 10 * time.Minute
 )
 
 type Config struct {
@@ -106,6 +110,8 @@ type Client struct {
 	lastMessage         Message
 	solicitRetryAt      time.Time
 	solicitRetryTimeout time.Duration
+	leaseRetryAt        time.Time
+	leaseRetryTimeout   time.Duration
 }
 
 func New(config Config, transport Transport) (*Client, error) {
@@ -150,6 +156,9 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 		if (c.State == StateBound || c.State == StateRenewing) && c.Lease.T2 > 0 && !now.Before(c.Lease.RebindAt().Add(-rebindMargin)) {
 			return c.Rebind(ctx)
 		}
+		if (c.State == StateRenewing || c.State == StateRebinding) && !c.leaseRetryAt.IsZero() && !now.Before(c.leaseRetryAt) {
+			return c.retransmitLeaseExchange(ctx, now)
+		}
 	}
 	if c.State == StateIdle || c.State == StateExpired {
 		return c.Start(ctx)
@@ -164,6 +173,18 @@ func (c *Client) NextSolicitRetryAt() time.Time {
 		return time.Time{}
 	}
 	return c.solicitRetryAt
+}
+
+// NextRetryAt returns the next retransmission deadline for the active DHCPv6
+// exchange. Renew and Rebind keep using the unexpired lease while retrying.
+func (c *Client) NextRetryAt() time.Time {
+	if c.State == StateSoliciting {
+		return c.solicitRetryAt
+	}
+	if c.State == StateRenewing || c.State == StateRebinding {
+		return c.leaseRetryAt
+	}
+	return time.Time{}
 }
 
 func (c *Client) Renew(ctx context.Context) error {
@@ -298,6 +319,7 @@ func (c *Client) acceptReply(msg Message) {
 		RenewedAt:  now,
 	}
 	c.State = StateBound
+	c.clearLeaseRetry()
 }
 
 func (c *Client) rememberPreviousPrefix(next netip.Prefix, now time.Time) {
@@ -378,6 +400,12 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	} else {
 		c.clearSolicitRetry()
 	}
+	if next == StateRenewing || next == StateRebinding {
+		c.leaseRetryTimeout = c.nextLeaseRetryTimeout(next, 0)
+		c.leaseRetryAt = c.now().Add(c.leaseRetryTimeout)
+	} else {
+		c.clearLeaseRetry()
+	}
 	return c.sendMessage(ctx, msg, payload)
 }
 
@@ -410,20 +438,60 @@ func (c *Client) clearSolicitRetry() {
 	c.solicitRetryTimeout = 0
 }
 
+func (c *Client) retransmitLeaseExchange(ctx context.Context, now time.Time) error {
+	want := MessageRenew
+	if c.State == StateRebinding {
+		want = MessageRebind
+	}
+	if (c.State != StateRenewing && c.State != StateRebinding) || c.lastMessage.Type != want || c.lastMessage.TransactionID != c.lastTransaction {
+		return nil
+	}
+	payload, err := EncodeMessage(c.lastMessage)
+	if err != nil {
+		return err
+	}
+	if err := c.sendMessage(ctx, c.lastMessage, payload); err != nil {
+		return err
+	}
+	c.leaseRetryTimeout = c.nextLeaseRetryTimeout(c.State, c.leaseRetryTimeout)
+	c.leaseRetryAt = now.Add(c.leaseRetryTimeout)
+	return nil
+}
+
+func (c *Client) clearLeaseRetry() {
+	c.leaseRetryAt = time.Time{}
+	c.leaseRetryTimeout = 0
+}
+
+func (c *Client) nextLeaseRetryTimeout(state State, previous time.Duration) time.Duration {
+	initial, maximum := renewInitialRetransmissionTimeout, renewMaxRetransmissionTimeout
+	if state == StateRebinding {
+		initial, maximum = rebindInitialRetransmissionTimeout, rebindMaxRetransmissionTimeout
+	}
+	return c.nextExchangeRetryTimeout(previous, initial, maximum, false)
+}
+
 // nextSolicitRetryTimeout follows the RFC 8415 retransmission shape: a
 // randomized initial timeout, exponential growth, and SOL_MAX_RT as the
 // upper bound before the permitted +/-10 percent randomization.
 func (c *Client) nextSolicitRetryTimeout(previous time.Duration) time.Duration {
+	return c.nextExchangeRetryTimeout(previous, solicitInitialRetransmissionTimeout, solicitMaxRetransmissionTimeout, true)
+}
+
+func (c *Client) nextExchangeRetryTimeout(previous, initial, maximum time.Duration, strictlyAboveInitial bool) time.Duration {
 	random := c.random()
 	if previous <= 0 {
-		// RFC 8415 requires the first Solicit RT to be strictly greater than
-		// SOL_TIMEOUT. Keep the random component in the (0, 0.1] range.
-		return solicitInitialRetransmissionTimeout + time.Duration((0.000001+random*0.099999)*float64(solicitInitialRetransmissionTimeout))
+		if strictlyAboveInitial {
+			// RFC 8415 requires the first Solicit RT to be strictly greater than
+			// SOL_TIMEOUT. Keep the random component in the (0, 0.1] range.
+			return initial + time.Duration((0.000001+random*0.099999)*float64(initial))
+		}
+		return time.Duration(float64(initial) * (0.9 + random*0.2))
 	}
 	factor := random*0.2 - 0.1
 	next := time.Duration(float64(previous) * (2 + factor))
-	if next > solicitMaxRetransmissionTimeout {
-		next = time.Duration(float64(solicitMaxRetransmissionTimeout) * (1 + factor))
+	if next > maximum {
+		next = time.Duration(float64(maximum) * (1 + factor))
 	}
 	return next
 }

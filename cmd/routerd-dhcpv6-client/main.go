@@ -168,7 +168,7 @@ func onceCommand(args []string, stdout io.Writer) error {
 		}
 		daemon.mu.Unlock()
 
-		_ = daemon.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, daemon.nextSolicitRetryAt()))
+		_ = daemon.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, daemon.nextRetryAt()))
 		n, _, err := daemon.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) && ctx.Err() == nil {
@@ -375,7 +375,7 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 			d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DHCPv6 client daemon stopped", nil)
 			return ctx.Err()
 		}
-		_ = d.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, d.nextSolicitRetryAt()))
+		_ = d.conn.SetReadDeadline(nextReadDeadline(ctx, time.Now(), 3*time.Second, d.nextRetryAt()))
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
 			if timeoutError(err) {
@@ -401,8 +401,19 @@ func (d *dhcpv6Daemon) startClient(ctx context.Context) error {
 			d.publish(daemonapi.EventDHCPv6SolicitSent, daemonapi.SeverityInfo, "SolicitSent", "sent DHCPv6 Solicit", nil)
 		}
 	}()
-	if d.client.State == pdclient.StateBound {
+	switch d.client.State {
+	case pdclient.StateBound:
 		if err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin); err != nil {
+			return err
+		}
+		return d.saveLeaseLocked(ctx)
+	case pdclient.StateRenewing:
+		if err := d.client.Renew(ctx); err != nil {
+			return err
+		}
+		return d.saveLeaseLocked(ctx)
+	case pdclient.StateRebinding:
+		if err := d.client.Rebind(ctx); err != nil {
 			return err
 		}
 		return d.saveLeaseLocked(ctx)
@@ -457,10 +468,10 @@ func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	return nil
 }
 
-func (d *dhcpv6Daemon) nextSolicitRetryAt() time.Time {
+func (d *dhcpv6Daemon) nextRetryAt() time.Time {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.client.NextSolicitRetryAt()
+	return d.client.NextRetryAt()
 }
 
 func (d *dhcpv6Daemon) restoreLease(ctx context.Context) error {
@@ -679,12 +690,13 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 		Since:    snapshot.UpdatedAt,
 		Conditions: []daemonapi.Condition{{
 			Type:               "LeaseReady",
-			Status:             conditionStatus(snapshot.State == pdclient.StateBound),
+			Status:             conditionStatus(snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding),
 			Reason:             string(snapshot.State),
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
 		Observed: map[string]string{
 			"interface":     d.opts.ifname,
+			"leaseState":    string(snapshot.State),
 			"currentPrefix": snapshot.CurrentPrefix,
 			"serverDUID":    snapshot.ServerDUID,
 			"packetRing":    strconv.Itoa(len(d.recorder.snapshot())),
@@ -1089,12 +1101,8 @@ func resourcePhase(state pdclient.State) string {
 		return daemonapi.ResourcePhaseIdle
 	case pdclient.StateSoliciting, pdclient.StateRequesting:
 		return daemonapi.ResourcePhaseAcquiring
-	case pdclient.StateBound:
+	case pdclient.StateBound, pdclient.StateRenewing, pdclient.StateRebinding:
 		return daemonapi.ResourcePhaseBound
-	case pdclient.StateRenewing:
-		return daemonapi.ResourcePhaseRefreshing
-	case pdclient.StateRebinding:
-		return daemonapi.ResourcePhaseRebinding
 	case pdclient.StateExpired:
 		return daemonapi.ResourcePhaseExpired
 	default:

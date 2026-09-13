@@ -14,6 +14,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -755,6 +756,53 @@ func TestGracefulActivationWithholdsVIPUntilReadinessThenAnnounces(t *testing.T)
 	}
 	if !containsString(calls, "ip addr del 10.240.70.10/32 dev ens18") {
 		t.Fatalf("standby did not withdraw VIP: %#v", calls)
+	}
+}
+
+func TestGracefulActivationKeepsPublishedVIPDuringUsablePDRefresh(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	spec, _ := router.Spec.Resources[1].VirtualAddressSpec()
+	spec.VRRP.GracefulActivation = &api.VirtualAddressVRRPGracefulActivationSpec{
+		ReadyWhen: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+			"DHCPv6PrefixDelegation/wan-pd.phase": {Equals: daemonapi.ResourcePhaseBound},
+		}},
+		Timeout: "45s",
+	}
+	router.Spec.Resources[1].Spec = spec
+	now := time.Date(2026, 9, 13, 4, 38, 41, 0, time.UTC)
+	store := statefulMapStore{
+		mapStore: mapStore{api.NetAPIVersion + "/VirtualAddress/vip": {
+			"role":                "master",
+			"activationState":     "Ready",
+			"activationStartedAt": now.Add(-time.Hour).Format(time.RFC3339Nano),
+			"vipAdvertised":       true,
+		}},
+		values: map[string]routerstate.Value{
+			"DHCPv6PrefixDelegation/wan-pd.phase": {Status: routerstate.StatusSet, Value: daemonapi.ResourcePhaseBound, Since: now, UpdatedAt: now},
+		},
+		now: now,
+	}
+	var calls []string
+	controller := &Controller{
+		Router: router, Store: store, IP: "ip", OperatingSystem: platform.OSLinux, Now: func() time.Time { return now },
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			line := name + " " + strings.Join(args, " ")
+			calls = append(calls, line)
+			if line == "ip -4 -o addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			return nil, nil
+		},
+	}
+	statuses, err := reconcileGracefulActivations(context.Background(), controller, map[string]string{"lan": "ens18"}, map[string]string{"vip": "master"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := statuses["vip"]; got.State != "Ready" || !got.VIPAdvertised {
+		t.Fatalf("refreshing lease withdrew ready VIP: %#v", got)
+	}
+	if containsString(calls, "ip addr del 10.240.70.10/32 dev ens18") {
+		t.Fatalf("refreshing lease deleted VIP: %#v", calls)
 	}
 }
 
