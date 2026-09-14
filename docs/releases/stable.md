@@ -15,59 +15,47 @@ automation.
 
 | Item | Value |
 | --- | --- |
-| Version | **v20260707.1514** |
+| Version | **v20260914.0729** |
 | Status | Current production-recommended stable release |
-| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
-| Track record | Release workflow passed, generated config/control schemas match the website copies, and the tag passed a fresh AWS/Azure/OCI/PVE full topology with redundancy: 8 clients, 8 leaves, 2 AWS route reflectors, matrix 56/56, provider convergence 4s, dataplane convergence 567s, cleanup state 0. |
+| Release page | [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729) |
+| Track record | Release CI passed; official ISO rollout reported successful on 10 routers, plus two home routers updated from official archives. See validation scope below. |
 | Binary | Statically linked (`CGO_ENABLED=0`), published as fixed-name and versioned archives |
 
-## Why v20260707.1514 is recommended
+## Validation scope
 
-v20260707.1514 is the current stable milestone because it combines the recent
-runtime steady-state fixes with a fresh real-machine CloudEdge SAM qualification
-run. The accepted run used AWS, Azure, OCI, and PVE with redundant leaves and two
-AWS route reflectors. The directed client matrix passed `56/56`, and the
-post-run cleanup destroyed all 53 OpenTofu resources with no residual state.
+The operator promoted **v20260914.0729** after official-release rollout reports:
 
-The release is also consistent across repository and website schemas:
+- Ten ISO routers: BGP, runtime doctor, service state and bidirectional SAM ICMP/TCP passed; API HTTP stayed successful during VRRP switching. Evidence: `docs/routerd-v20260914.0729-rollout-log.md`, Forgejo commit `317fb30`.
+- Two home routers: VIP, DHCP, DNS, four DS-Lite paths and native nDPI checked; client HTTPS 360/360, doctor fail=0. Evidence: `evidence-20260914-release0729/result.md`.
+- [Candidate fault-injection evidence](https://github.com/imksoo/routerd/pull/1252#issuecomment-5660295106) covers isolated Linux netns observation failures and publication history retention.
 
-- `make check-schema` passed.
-- `make check-website-schemas` passed.
-- `schemas/routerd-config-v1alpha1.schema.json` is byte-identical to
-  `website/static/schemas/routerd-config-v1alpha1.schema.json`.
-- Control schema and Control OpenAPI website copies are also byte-identical to
-  their canonical repository files.
-
-The evidence archive for the accepted full run is stored outside the repository
-at:
-
-```text
-/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
-```
+These are operator-reported results, not a new AWS/Azure/OCI qualification. Initial ISO-update packet loss recovered by the test 15 seconds later; an earlier candidate's single DNS timeout remains unexplained. Do not interpret the milestone as zero packet loss throughout every upgrade. Existing rollback ISOs were retained.
 
 ## Install the stable release
 
 Use the fixed tag URL when you want the recommended stable build:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
 Versioned archives are also published on the same release page, for example
-`routerd-v20260707.1514-linux-amd64.tar.gz`.
+`routerd-v20260914.0729-linux-amd64.tar.gz`.
 
 ## Previous stable milestone
+
+Previous stable **v20260707.1514** passed the historical AWS/Azure/OCI/PVE redundant topology (matrix 56/56, provider convergence 4s, dataplane convergence 567s, cleanup state 0). Those results belong to that release, not this one.
 
 v20260627.1533 was the prior production-recommended stable release. It passed a
 cost-bounded AWS/Azure/OCI/PVE single-topology baseline after the PVE ISO
 substrate was corrected: convergence 136s, matrix 12/12, all leaf
 MobilityPools Ready, provider pending/failed 0, cleanup state 0. It remains a
 valid rollback candidate for operators who need that exact milestone, but new
-deployments should start with v20260707.1514.
+deployments should start with v20260914.0729.
 
 ## Known observations
 

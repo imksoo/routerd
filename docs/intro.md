@@ -24,7 +24,7 @@ or workplace.
 
 :::tip Recommended stable milestone
 For a new deployment, start from the recommended stable milestone
-**v20260707.1514**. The current release may contain newer work; the
+**v20260914.0729**. The current release may contain newer work; the
 [Stable milestone](./releases/stable.md) page explains why this milestone is
 the production recommendation.
 :::

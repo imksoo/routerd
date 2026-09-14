@@ -12,46 +12,41 @@ routerd 以 `vYYYYMMDD.HHmm` 格式頻繁發布版本。其中經過評估**可�
 
 | 項目 | 內容 |
 | --- | --- |
-| 版本 | **v20260707.1514** |
+| 版本 | **v20260914.0729** |
 | 定位 | 目前推薦穩定版 |
-| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
-| 運行實績 | Release workflow 通過；產生的 config/control schema 與 website copy 一致；AWS/Azure/OCI/PVE 冗餘 full topology 實機測試通過：8 clients、8 leaves、2 個 AWS RR、matrix 56/56、provider 收斂 4s、dataplane 收斂 567s、cleanup state 0 |
+| Release page | [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729) |
+| 運行實績 | Release CI 成功；已回報完成 10 台官方 ISO 路由器及兩台使用官方封存檔的家用路由器升級驗證。範圍見下文。 |
 | 二進位 | 靜態連結（`CGO_ENABLED=0`），同時發布固定名稱和帶版本號的 archive |
 
-## 推薦 v20260707.1514 的理由
+## 驗證範圍
 
-v20260707.1514 包含近期 steady-state runtime 修正，並通過了新的真實機器 CloudEdge SAM qualification，因此是目前穩定版里程碑。接受的 run 在 AWS、Azure、OCI 和 PVE 上使用冗餘 leaf 與兩個 AWS route reflector，directed client matrix 為 `56/56` PASS。測試後的 cleanup 銷毀了 53 個 OpenTofu resource，state 為 0。
+根據維運人員提交的官方版本部署報告，將 **v20260914.0729** 指定為推薦穩定版。
 
-schema 也已確認與發布網站一致：
+- 10 台 ISO 路由器：BGP、runtime doctor、服務、SAM 雙向 ICMP/TCP 正常；VRRP 切換期間 API HTTP 正常。紀錄：`docs/routerd-v20260914.0729-rollout-log.md`，Forgejo commit `317fb30`。
+- 兩台家用路由器：VIP、DHCP、DNS、四條 DS-Lite 路徑、native nDPI 正常；HTTPS 360/360，doctor fail=0。紀錄：`evidence-20260914-release0729/result.md`。
+- [候選版本故障注入證據](https://github.com/imksoo/routerd/pull/1252#issuecomment-5660295106)：隔離 Linux netns 內驗證觀測錯誤不會遺失發布歷史。
 
-- `make check-schema` PASS。
-- `make check-website-schemas` PASS。
-- `schemas/routerd-config-v1alpha1.schema.json` 與 `website/static/schemas/routerd-config-v1alpha1.schema.json` byte 一致。
-- Control schema 與 Control OpenAPI 的 website copy 也與 canonical file byte 一致。
-
-接受的 full run evidence summary 保存在 repository 外：
-
-```text
-/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
-```
+這是維運人員回報的結果，不是新的 AWS/Azure/OCI 實機認證。ISO 更新後的初始丟包在 15 秒後的複測中已收斂；較早候選版本的一次 DNS 逾時仍未查明原因。不能據此聲稱整個升級過程零丟包。舊 ISO 已保留用於回復。
 
 ## 安裝穩定版
 
 使用推薦穩定版時，請使用固定 tag URL：
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-同一 release page 也發布帶版本號的 archive，例如 `routerd-v20260707.1514-linux-amd64.tar.gz`。
+同一 release page 也發布帶版本號的 archive，例如 `routerd-v20260914.0729-linux-amd64.tar.gz`。
 
 ## 上一個穩定版
 
-v20260627.1533 是上一個推薦穩定版。它在修正 PVE ISO substrate 後通過了 cost-bounded AWS/Azure/OCI/PVE single-topology baseline：136 秒收斂、matrix 12/12、全部 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0。需要固定到該里程碑的 operator 仍可將它作為 rollback 候選，但新部署應從 v20260707.1514 開始。
+前一穩定版 **v20260707.1514** 的歷史 AWS/Azure/OCI/PVE 冗餘測試為 matrix 56/56、provider 收斂 4s、dataplane 收斂 567s、cleanup state 0。這些結果屬於舊版，不是本版的新測試。
+
+v20260627.1533 是上一個推薦穩定版。它在修正 PVE ISO substrate 後通過了 cost-bounded AWS/Azure/OCI/PVE single-topology baseline：136 秒收斂、matrix 12/12、全部 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0。需要固定到該里程碑的 operator 仍可將它作為 rollback 候選，但新部署應從 v20260914.0729 開始。
 
 ## 已知觀測
 

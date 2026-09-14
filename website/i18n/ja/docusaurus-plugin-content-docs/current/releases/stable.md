@@ -12,46 +12,41 @@ routerd は `vYYYYMMDD.HHmm` 形式で頻繁にリリースします。その中
 
 | 項目 | 内容 |
 | --- | --- |
-| バージョン | **v20260707.1514** |
+| バージョン | **v20260914.0729** |
 | 位置づけ | 現在の推奨安定版 |
-| Release page | [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514) |
-| 稼働実績 | Release workflow 通過、生成 config/control schema と website copy の一致確認、AWS/Azure/OCI/PVE の冗長化込み full topology 実機試験で 8 clients、8 leaves、AWS RR 2、matrix 56/56、provider 収束 4s、dataplane 収束 567s、cleanup state 0 |
+| Release page | [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729) |
+| 稼働実績 | Release CI成功。公式ISOの10台展開と、公式アーカイブによる家庭用ルーター2台の更新・検証完了報告。検証範囲は下記参照。 |
 | バイナリ | 静的リンク（`CGO_ENABLED=0`）。固定名 archive と版番号付き archive を公開 |
 
-## v20260707.1514 を推奨する理由
+## 検証範囲
 
-v20260707.1514 は、直近の steady-state runtime 修正を含み、実機 CloudEdge SAM qualification を通過したため、現在の安定版マイルストーンです。受理した run は AWS、Azure、OCI、PVE に冗長 leaf と AWS route reflector 2 台を置いた構成で、directed client matrix は `56/56` PASS でした。試験後の cleanup では OpenTofu resource 53 個を destroy し、state は 0 になっています。
+運用者の公式版展開完了報告に基づき、**v20260914.0729**を推奨安定版に指定しました。
 
-schema についても repository と website の整合を確認済みです。
+- ISOの10台：BGP、runtime doctor、サービス状態、SAM双方向ICMP/TCP正常。VRRP切替中もAPI HTTP正常。記録：`docs/routerd-v20260914.0729-rollout-log.md`、Forgejo commit `317fb30`。
+- 家庭用ルーター2台：VIP、DHCP、DNS、DS-Lite 4経路、native nDPIを確認。HTTPS 360/360成功、doctor fail=0。記録：`evidence-20260914-release0729/result.md`。
+- [候補版の障害注入記録](https://github.com/imksoo/routerd/pull/1252#issuecomment-5660295106)：隔離Linux netnsで観測エラー時の公開履歴保持を確認。
 
-- `make check-schema` PASS。
-- `make check-website-schemas` PASS。
-- `schemas/routerd-config-v1alpha1.schema.json` と `website/static/schemas/routerd-config-v1alpha1.schema.json` は byte 一致。
-- Control schema と Control OpenAPI の website copy も canonical file と byte 一致。
-
-受理した full run の evidence summary は repository 外の次の場所に保存しています。
-
-```text
-/home/imksoo/routerd-labs-archive/evidence/rv202607071514-full-20260707T100026Z/e2e-baseline-awsprofile-retry1/summary.txt
-```
+これは運用者から報告された検証結果であり、新たなAWS/Azure/OCI実機認証ではありません。ISO更新直後のパケット損失は15秒後の再試験で収束しました。以前の候補版のDNSタイムアウト1件は原因未確定です。更新中を含む全期間無損失を意味しません。切り戻し用旧ISOは保持されています。
 
 ## 安定版をインストールする
 
 推奨安定版を使う場合は、固定 tag の URL を使います。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
 ```
 
-同じ release page には `routerd-v20260707.1514-linux-amd64.tar.gz` のような版番号付き archive もあります。
+同じ release page には `routerd-v20260914.0729-linux-amd64.tar.gz` のような版番号付き archive もあります。
 
 ## 以前の安定版
 
-v20260627.1533 は以前の推奨安定版です。PVE ISO substrate 修正後の cost-bounded AWS/Azure/OCI/PVE single-topology baseline で、136 秒収束、matrix 12/12、全 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0 を確認しています。その時点に固定したい operator の rollback 候補としては有効ですが、新規導入は v20260707.1514 から始めてください。
+直前の安定版 **v20260707.1514** はAWS/Azure/OCI/PVE冗長構成の過去試験でmatrix 56/56、provider収束4s、dataplane収束567s、cleanup state 0でした。この実績を今回の版の試験結果に読み替えません。
+
+v20260627.1533 は以前の推奨安定版です。PVE ISO substrate 修正後の cost-bounded AWS/Azure/OCI/PVE single-topology baseline で、136 秒収束、matrix 12/12、全 leaf MobilityPool Ready、provider pending/failed 0、cleanup state 0 を確認しています。その時点に固定したい operator の rollback 候補としては有効ですが、新規導入は v20260914.0729 から始めてください。
 
 ## 既知の観測
 
