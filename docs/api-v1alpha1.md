@@ -539,6 +539,10 @@ conditions match. A BACKUP, FAULT, or STOP transition removes the VIP before
 RA withdrawal, VMAC shutdown, and conntrack demotion. `timeout` defaults to 45
 seconds; expiry reports `activationState: Failed` while keeping the VIP
 withheld, and later status changes remain eligible to complete activation.
+Once published on the current MASTER, the VIP remains present if readiness
+temporarily degrades; status reports `ReadinessDegraded` and the unmet conditions.
+Readiness gates initial publication, not continued ownership. Role demotion
+still withdraws the VIP; this gate does not implement health-driven election.
 This feature is opt-in; VRRP resources without `gracefulActivation` retain
 keepalived-managed VIP behavior.
 

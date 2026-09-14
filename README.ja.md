@@ -396,4 +396,9 @@ v1alpha1 の名前やフィールドは互換性なしで変わることがあ�
 - Proxmox ラボ自動化
 - 汎用ファイアウォール規則言語
 
+設定の世代切替では、設定が変わらない管理下クライアントを維持します。
+VRRPのgracefulActivationはVIPの初回公開を待機する機能です。公開済みの
+MASTERでは、一時的な条件低下だけでVIPを撤去しません。更新時には現行の
+生成service unitを保持し、設定由来のCapabilityやEnvironmentを維持します。
+
 正確な設計状態は `docs/design.md` を参照してください。

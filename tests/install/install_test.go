@@ -490,6 +490,43 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	}
 }
 
+func TestInstallPreservesCurrentGeneratedRouterdService(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	dir := t.TempDir()
+	pkg, prefix := filepath.Join(dir, "package"), filepath.Join(dir, "prefix")
+	systemdDir, binDir := filepath.Join(dir, "systemd"), filepath.Join(dir, "bin")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\nexit 0\n")
+	writeExecutable(t, filepath.Join(binDir, "systemctl"), "#!/bin/sh\nif [ \"$1\" = is-active ]; then exit 1; fi\nexit 0\n")
+	for _, path := range []string{systemdDir, filepath.Join(pkg, "systemd")} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := fmt.Sprintf("# routerd-managed-service: v1\n# Managed by routerd. Do not edit by hand.\n[Service]\nType=notify\nExecStart=%s/sbin/routerd serve --config %s/etc/routerd/router.yaml\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE\nEnvironment=OTEL_SERVICE_NAME=routerd\n", prefix, prefix)
+	unitPath := filepath.Join(systemdDir, "routerd.service")
+	if err := os.WriteFile(unitPath, []byte(current), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte("[Service]\nType=notify\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+		"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + systemdDir,
+	}, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	got, err := os.ReadFile(unitPath)
+	if err != nil || string(got) != current {
+		t.Fatalf("generated unit changed: %s, %v", got, err)
+	}
+	if !strings.Contains(out, "preserving generated routerd.service") {
+		t.Fatalf("missing preservation log: %s", out)
+	}
+}
+
 func TestInstallPreservesForeignCanonicalServiceArtifacts(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -254,16 +254,19 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 		startedAt := gracefulActivationStartedAt(previous, controllerNow(c))
 		status.StartedAt = startedAt
 		ready := resourcequery.ResourceWhenPresent(gate.ReadyWhen) && resourcequery.ResourceWhenMatches(gate.ReadyWhen, newVRRPWhenStore(c.Store))
-		if !ready {
-			if present {
-				if removeErr := c.removeGracefulVIP(ctx, ifname, address); removeErr != nil {
-					status.State, status.Reason, status.Error = "Failed", "VIPWithdrawFailed", removeErr.Error()
-					statuses[resource.Metadata.Name] = status
-					resultErr = errors.Join(resultErr, removeErr)
-					continue
-				}
-				status.VIPAdvertised = false
+		// Readiness gates admission, not continued ownership. Withdrawing a
+		// published VIP while keepalived remains MASTER prevents HA takeover
+		// and breaks even traffic with a usable alternative egress path.
+		if present {
+			status.State = "Ready"
+			if !ready {
+				status.Reason = "ReadinessDegraded"
+				status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
 			}
+			statuses[resource.Metadata.Name] = status
+			continue
+		}
+		if !ready {
 			status.State = "Preparing"
 			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
 			if controllerNow(c).Sub(startedAt) >= timeout {

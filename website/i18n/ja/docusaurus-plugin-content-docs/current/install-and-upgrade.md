@@ -9,6 +9,13 @@ title: インストールとアップグレード
 routerd はリリースアーカイブから導入します。ルーターホストに Go や Makefile は
 必要ありません。最初の対象は Ubuntu Server です。
 
+更新時には、現行routerdが生成した`routerd.service`を保持します。
+`Managed by routerd`というコメントだけでは旧形式と判断しません。
+削除済みの`--controller-chain`を含むunitは移行対象です。
+設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
+VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
+一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。
+
 :::caution 初回は隔離した VM で
 
 初めての導入は、普段の回線を運ぶルーターでは行わないでください。

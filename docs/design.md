@@ -296,6 +296,13 @@ SDK path sends logs, metrics, and traces to that endpoint.
 
 - [What is routerd](./concepts/what-is-routerd.md)
 - [Resource model](./concepts/resource-model.md)
+Managed client supervision belongs to the serve lifetime, not to one controller
+generation. An unchanged client survives runtime reload; a completed supervisor
+must be replaced even when its desired spec is unchanged. VIP readiness gates
+initial admission, while VRRP role transitions govern withdrawal after publication.
+Installers preserve current generated routerd units and replace obsolete
+controller-chain units explicitly.
+
 - [Design philosophy](./concepts/design-philosophy.md)
 - [Apply and render](./concepts/apply-and-render.md)
 - [State and ownership](./concepts/state-and-ownership.md)

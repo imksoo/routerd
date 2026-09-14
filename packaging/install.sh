@@ -497,7 +497,7 @@ routerd_service_has_legacy_config()
 {
     service_path=$1
     [ -f "${service_path}" ] || return 1
-    grep -Eq '(^# Managed by routerd\.|--controller-chain)' "${service_path}"
+    grep -Eq -- '--controller-chain' "${service_path}"
 }
 
 routerd_script_calls_removed_check()
@@ -2094,6 +2094,9 @@ case "${os}" in
                 target_unit="${systemd_system_dir}/${unit_name}"
                 if [ "${unit_name}" = "routerd.service" ] && routerd_service_has_legacy_config "${target_unit}"; then
                     echo "warning: replacing legacy routerd.service managed by removed SystemdUnit/controller-chain flags: ${target_unit}" >&2
+                elif [ "${unit_name}" = "routerd.service" ] && [ -f "${target_unit}" ] && grep -q '^# Managed by routerd\.' "${target_unit}"; then
+                    echo "preserving generated routerd.service: ${target_unit}"
+                    continue
                 fi
                 atomic_install 0644 "${unit}" "${target_unit}"
             done

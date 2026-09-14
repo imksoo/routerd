@@ -14,6 +14,11 @@ Installation and upgrade are documented in
 Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
 
+Runtime reload preserves unchanged supervised clients. VRRP graceful activation
+gates initial VIP publication; transient readiness loss does not withdraw an
+already published MASTER VIP. Upgrades preserve the current generated service
+unit, including configured capabilities and environment.
+
 routerd is a pre-release declarative router control plane for people who want a
 general-purpose host to behave like an understandable router.
 

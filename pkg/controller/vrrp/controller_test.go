@@ -746,6 +746,18 @@ func TestGracefulActivationWithholdsVIPUntilReadinessThenAnnounces(t *testing.T)
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("ready calls = %#v, want %#v", calls, want)
 	}
+	// A transient dependency failure must not leave a MASTER without its
+	// gateway address, including after the initial activation timeout.
+	delete(store.values, "DSLiteTunnel/dslite-a.phase")
+	now = now.Add(time.Minute)
+	calls = nil
+	statuses, err = reconcileGracefulActivations(context.Background(), controller, map[string]string{"lan": "ens18"}, map[string]string{"vip": "master"})
+	if err != nil || !present || !statuses["vip"].VIPAdvertised || statuses["vip"].Reason != "ReadinessDegraded" {
+		t.Fatalf("published gateway lost during dependency failure: %#v, %v", statuses, err)
+	}
+	if len(calls) != 1 || calls[0] != "ip -4 -o addr show dev ens18" {
+		t.Fatalf("degraded MASTER mutated network: %#v", calls)
+	}
 	calls = nil
 	statuses, err = reconcileGracefulActivations(context.Background(), controller, map[string]string{"lan": "ens18"}, map[string]string{"vip": "backup"})
 	if err != nil {

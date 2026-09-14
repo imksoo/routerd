@@ -292,6 +292,8 @@ updated after the helper process started.
 When `/etc/systemd/system/routerd.service` is already managed by routerd
 configuration, the installer preserves that unit instead of overwriting it with
 the archive template.
+Only units containing the removed `--controller-chain` option are treated as
+legacy here; the current `Managed by routerd` comment is not a legacy signal.
 
 Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 If the install fails partway through, the script restores files from the
