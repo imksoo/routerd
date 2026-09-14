@@ -748,6 +748,9 @@ func TestGracefulActivationWithholdsVIPUntilReadinessThenAnnounces(t *testing.T)
 	}
 	// A transient dependency failure must not leave a MASTER without its
 	// gateway address, including after the initial activation timeout.
+	if err := controller.saveStatuses("Applied", "", false, nil, map[string]string{"vip": "master"}, nil, statuses, nil); err != nil {
+		t.Fatal(err)
+	}
 	delete(store.values, "DSLiteTunnel/dslite-a.phase")
 	now = now.Add(time.Minute)
 	calls = nil
