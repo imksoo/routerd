@@ -295,6 +295,12 @@ the archive template.
 Only units containing the removed `--controller-chain` option are treated as
 legacy here; the current `Managed by routerd` comment is not a legacy signal.
 
+Runtime reload preserves unchanged supervised DHCP clients. A graceful VRRP
+MASTER retains its VIP during readiness degradation only when saved status
+records successful publication on the same address and interface. A leftover
+address without that history must pass initial readiness; BACKUP/FAULT still
+withdraws the VIP.
+
 Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 If the install fails partway through, the script restores files from the
 temporary rollback backup.

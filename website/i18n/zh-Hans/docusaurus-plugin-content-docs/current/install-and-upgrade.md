@@ -71,6 +71,13 @@ sudo routerctl get status
 
 ## 升级
 
+升级会保留当前 routerd 生成的 `routerd.service`，包括配置中的 Capability 和 Environment。
+`Managed by routerd` 注释本身不表示旧格式；含已移除的 `--controller-chain` 参数的 unit 会被替换。
+运行时配置代际切换会保留配置未变的受管理 DHCP 客户端。
+VRRP `gracefulActivation` 控制 VIP 的初次发布；同一地址、接口已有 Ready/advertised MASTER
+记录时，暂时的 readiness 下降不会撤销 VIP。只有地址存在而没有发布记录时仍需通过初始检查。
+降为 BACKUP/FAULT 时仍会撤销 VIP。
+
 下载新版本、校验哈希、解压后再次运行同一个安装脚本即可：
 
 ```bash

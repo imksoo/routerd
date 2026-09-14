@@ -543,6 +543,9 @@ Once published on the current MASTER, the VIP remains present if readiness
 temporarily degrades; status reports `ReadinessDegraded` and the unmet conditions.
 Readiness gates initial publication, not continued ownership. Role demotion
 still withdraws the VIP; this gate does not implement health-driven election.
+Retention requires a saved Ready/advertised MASTER status for the same address
+and interface. An existing address without that publication history still goes
+through the initial readiness gate.
 This feature is opt-in; VRRP resources without `gracefulActivation` retain
 keepalived-managed VIP behavior.
 

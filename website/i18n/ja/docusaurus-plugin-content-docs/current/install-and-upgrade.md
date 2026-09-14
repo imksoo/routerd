@@ -15,6 +15,8 @@ routerd はリリースアーカイブから導入します。ルーターホス
 設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
 VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
 一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。
+継続保有には同一アドレス・インターフェースのReady/advertised MASTER記録が必要です。
+アドレスだけが残り公開記録がない場合は、初回のreadiness判定を適用します。
 
 :::caution 初回は隔離した VM で
 

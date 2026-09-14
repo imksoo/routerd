@@ -257,7 +257,11 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 		// Readiness gates admission, not continued ownership. Withdrawing a
 		// published VIP while keepalived remains MASTER prevents HA takeover
 		// and breaks even traffic with a usable alternative egress path.
-		if present {
+		published, _ := statusvalue.StrictBool(previous["vipAdvertised"])
+		published = published && statusvalue.Field(previous, "role") == "master" &&
+			statusvalue.Field(previous, "activationState") == "Ready" &&
+			statusvalue.Field(previous, "address") == address && statusvalue.Field(previous, "ifname") == ifname
+		if present && (ready || published) {
 			status.State = "Ready"
 			if !ready {
 				status.Reason = "ReadinessDegraded"
@@ -267,6 +271,15 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 			continue
 		}
 		if !ready {
+			if present {
+				if removeErr := c.removeGracefulVIP(ctx, ifname, address); removeErr != nil {
+					status.State, status.Reason, status.Error = "Failed", "VIPWithdrawFailed", removeErr.Error()
+					statuses[resource.Metadata.Name] = status
+					resultErr = errors.Join(resultErr, removeErr)
+					continue
+				}
+				status.VIPAdvertised = false
+			}
 			status.State = "Preparing"
 			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
 			if controllerNow(c).Sub(startedAt) >= timeout {

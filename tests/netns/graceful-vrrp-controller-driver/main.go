@@ -104,6 +104,10 @@ func main() {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
 	}
+	// A leftover address without publication history must not bypass admission.
+	if out, err := exec.Command("ip", "addr", "replace", "172.18.0.1/32", "dev", ifname).CombinedOutput(); err != nil {
+		fatal(fmt.Errorf("seed leftover VIP: %w: %s", err, out))
+	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		fatal(fmt.Errorf("preparing reconcile: %w", err))
 	}
