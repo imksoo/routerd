@@ -193,6 +193,55 @@ func TestSupervisedDaemonCrashRestartAdoptsExactOwnedToken(t *testing.T) {
 	}
 }
 
+func TestSupervisedDaemonSurvivesGenerationAndStopsWithServe(t *testing.T) {
+	useSupervisedDaemonMarkerTestRoot(t)
+	spec := supervisedDaemonSpec{ResourceName: "wan", Binary: "routerd-dhcpv4-client", Args: []string{"daemon", "--resource", "wan"}}
+	marker := supervisedDaemonMarker{Version: 1, Binary: spec.Binary, Resource: spec.ResourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: "owned-token", PID: 4242}
+	if err := writeSupervisedDaemonMarker(marker); err != nil {
+		t.Fatal(err)
+	}
+	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
+	t.Cleanup(func() { supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady })
+	supervisedDaemonProcesses = func() []supervisedDaemonProcess {
+		return []supervisedDaemonProcess{{PID: 4242, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --supervisor-owner owned-token"}}
+	}
+	supervisedDaemonSocketReady = func(string) bool { return true }
+	serve, stopServe := context.WithCancel(context.Background())
+	defer stopServe()
+	generation, stopGeneration := context.WithCancel(serve)
+	runner := &Runner{clientDaemonContext: serve}
+	runner.reconcileSupervisedDaemonSpecs(generation, nil, []supervisedDaemonSpec{spec})
+	key := supervisedDaemonKey(spec.Binary, spec.ResourceName)
+	first := runner.clientDaemonStates[key]
+	stopGeneration()
+	select {
+	case <-first.Done:
+		t.Fatal("generation cancellation stopped unchanged client supervisor")
+	case <-time.After(50 * time.Millisecond):
+	}
+	runner.reconcileSupervisedDaemonSpecs(serve, nil, []supervisedDaemonSpec{spec})
+	if runner.clientDaemonStates[key].Done != first.Done {
+		t.Fatal("unchanged client restarted across generation")
+	}
+	stopServe()
+	select {
+	case <-first.Done:
+	case <-time.After(time.Second):
+		t.Fatal("serve cancellation did not stop client supervisor")
+	}
+	// A finished loop with the same spec must not suppress recovery.
+	resume, stopResume := context.WithCancel(context.Background())
+	defer stopResume()
+	runner.clientDaemonContext = resume
+	runner.reconcileSupervisedDaemonSpecs(resume, nil, []supervisedDaemonSpec{spec})
+	next := runner.clientDaemonStates[key]
+	if next.Done == first.Done {
+		t.Fatal("finished supervisor reused")
+	}
+	stopResume()
+	<-next.Done
+}
+
 func TestSupervisedDaemonDeletedResourceStopsOwnedOrphanAndRemovesMarker(t *testing.T) {
 	useSupervisedDaemonMarkerTestRoot(t)
 	marker := supervisedDaemonMarker{Version: 1, Binary: "routerd-dhcpv6-client", Resource: "wan-pd", SpecHash: "hash", OwnerToken: "owned-token", PID: 4343}

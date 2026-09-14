@@ -539,6 +539,15 @@ conditions match. A BACKUP, FAULT, or STOP transition removes the VIP before
 RA withdrawal, VMAC shutdown, and conntrack demotion. `timeout` defaults to 45
 seconds; expiry reports `activationState: Failed` while keeping the VIP
 withheld, and later status changes remain eligible to complete activation.
+Once published on the current MASTER, the VIP remains present if readiness
+temporarily degrades; status reports `ReadinessDegraded` and the unmet conditions.
+Readiness gates initial publication, not continued ownership. Role demotion
+still withdraws the VIP; this gate does not implement health-driven election.
+Retention requires saved successful MASTER publication for the same address
+and interface (`vipPublicationConfirmed`). Observation errors remain visible in
+`activationState`/`activationReason` but do not erase this history. Confirmed
+demotion, address absence, or failed publication invalidates it. An existing address without that publication history still goes
+through the initial readiness gate.
 This feature is opt-in; VRRP resources without `gracefulActivation` retain
 keepalived-managed VIP behavior.
 
@@ -809,7 +818,7 @@ and fields outside the target kind's `provides` set.
 | `VRF` | `ifname` (string), `members` (stringList), `phase` (string), `routeTable` (int) |
 | `VXLANSegment` | `ifname` (string), `phase` (string), `vni` (int) |
 | `VXLANTunnel` | `ifname` (string), `phase` (string), `vni` (int) |
-| `VirtualAddress` | `activationReason` (string), `activationStartedAt` (timestamp), `activationState` (string), `activationWaitingFor` (stringList), `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `vipAdvertised` (bool), `virtualRouterID` (int) |
+| `VirtualAddress` | `activationReason` (string), `activationStartedAt` (timestamp), `activationState` (string), `activationWaitingFor` (stringList), `address` (string), `dryRun` (bool), `hostname` (string), `ifname` (string), `phase` (string), `priority` (int), `role` (string), `vipAdvertised` (bool), `vipPublicationConfirmed` (bool), `virtualRouterID` (int) |
 | `WebConsole` | `listenAddress` (string), `phase` (string), `port` (int) |
 | `WireGuardInterface` | `fwmark` (int), `hostFirewall` (object), `listenPort` (int), `peerCount` (int), `peersFrom` (objectList), `pendingSources` (stringList), `phase` (string), `publicKey` (string), `selfNodeRef` (string) |
 | `WireGuardPeer` | `handshakeAgeSeconds` (int), `latestEndpoint` (string), `latestHandshake` (timestamp), `phase` (string), `transferRxBytes` (int), `transferTxBytes` (int) |

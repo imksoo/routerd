@@ -187,6 +187,20 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 					status["activationError"] = activation.Error
 				}
 			}
+			if spec.VRRP.GracefulActivation != nil {
+				confirmed := matchingVIPPublication(previous, address, aliases[spec.Interface])
+				if observedRole, known := roles[resource.Metadata.Name]; known && observedRole != "master" {
+					confirmed = false
+				} else if activation, ok := activations[resource.Metadata.Name]; ok {
+					switch activation.Reason {
+					case "VIPObserveFailed", "AddressUnavailable":
+						// An unsuccessful observation cannot revoke successful publication.
+					default:
+						confirmed = role == "master" && activation.State == "Ready" && activation.VIPAdvertised
+					}
+				}
+				status["vipPublicationConfirmed"] = confirmed
+			}
 			carryBackendActionStatus(status, previous, extra)
 			if statusvalue.Field(previous, "role") == role && statusvalue.Field(previous, "lastRoleTransitionAt") != "" {
 				status["lastRoleTransitionAt"] = statusvalue.Field(previous, "lastRoleTransitionAt")
@@ -211,6 +225,21 @@ func (c *Controller) saveStatuses(phase, path string, changed bool, tracks map[s
 		}
 	}
 	return nil
+}
+
+// Publication is historical evidence, separate from the latest observation.
+// The address/interface binding prevents carrying it into a different VIP.
+func matchingVIPPublication(previous map[string]any, address, ifname string) bool {
+	if statusvalue.Field(previous, "address") != address || statusvalue.Field(previous, "ifname") != ifname {
+		return false
+	}
+	if value, exists := previous["vipPublicationConfirmed"]; exists {
+		confirmed, _ := statusvalue.StrictBool(value)
+		return confirmed
+	}
+	// Seed history from status written by versions predating this field.
+	advertised, _ := statusvalue.StrictBool(previous["vipAdvertised"])
+	return advertised && statusvalue.Field(previous, "role") == "master" && statusvalue.Field(previous, "activationState") == "Ready"
 }
 
 func carryBackendActionStatus(status, previous map[string]any, extra map[string]any) {

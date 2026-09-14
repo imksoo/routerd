@@ -1261,6 +1261,7 @@ type Runner struct {
 	ARPObserverCommands arpObserverCommandPusher
 
 	supervisedMu           sync.Mutex
+	clientDaemonContext    context.Context // serve lifetime, not a controller generation
 	clientDaemonStates     map[string]supervisedDaemonState
 	daemonSourcesStarted   map[string]bool
 	arpObserverReadySet    map[string]bool
@@ -1731,6 +1732,7 @@ func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time
 }
 
 func (r *Runner) Start(ctx context.Context) error {
+	r.clientDaemonContext = ctx
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
@@ -3239,6 +3241,13 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 	for key, state := range r.clientDaemonStates {
 		next, ok := desiredAll[key]
 		if ok && supervisedDaemonSpecEqual(state.Spec, next) {
+			select {
+			case <-state.Done:
+				// A finished supervisor cannot monitor or restart its child.
+				delete(r.clientDaemonStates, key)
+				continue
+			default:
+			}
 			delete(pendingStart, key)
 			continue
 		}
@@ -3305,7 +3314,11 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		if _, ok := r.clientDaemonStates[key]; ok {
 			continue
 		}
-		childCtx, cancel := context.WithCancel(ctx)
+		parent := r.clientDaemonContext
+		if parent == nil {
+			parent = ctx
+		}
+		childCtx, cancel := context.WithCancel(parent)
 		done := r.startSupervisedDaemonSpec(childCtx, logger, spec)
 		r.clientDaemonStates[key] = supervisedDaemonState{Spec: spec, Cancel: cancel, Done: done}
 	}

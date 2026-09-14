@@ -104,6 +104,10 @@ func main() {
 			return exec.CommandContext(ctx, name, args...).CombinedOutput()
 		},
 	}
+	// A leftover address without publication history must not bypass admission.
+	if out, err := exec.Command("ip", "addr", "replace", "172.18.0.1/32", "dev", ifname).CombinedOutput(); err != nil {
+		fatal(fmt.Errorf("seed leftover VIP: %w: %s", err, out))
+	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		fatal(fmt.Errorf("preparing reconcile: %w", err))
 	}
@@ -117,6 +121,33 @@ func main() {
 	}
 	assertStatus(store, "Ready", true)
 	assertAddress(ifname, true)
+	store.ready = false
+	store.now = store.now.Add(time.Minute)
+	// Fail only the VIP observation while retaining real kernel address state.
+	command := controller.Command
+	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "ip" && strings.Join(args, " ") == "-4 -o addr show dev "+ifname {
+			return nil, fmt.Errorf("injected transient VIP observation error")
+		}
+		return command(ctx, name, args...)
+	}
+	if err := controller.Reconcile(context.Background()); err == nil {
+		fatal(fmt.Errorf("expected observation failure"))
+	}
+	assertAddress(ifname, true)
+	assertStatus(store, "Failed", false)
+	if store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4")["vipPublicationConfirmed"] != true {
+		fatal(fmt.Errorf("observation failure erased publication history"))
+	}
+	controller.Command = command
+	if err := controller.Reconcile(context.Background()); err != nil {
+		fatal(fmt.Errorf("degraded master reconcile: %w", err))
+	}
+	assertStatus(store, "Ready", true)
+	assertAddress(ifname, true)
+	if got := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4")["activationReason"]; got != "ReadinessDegraded" {
+		fatal(fmt.Errorf("degraded reason = %v", got))
+	}
 
 	if err := writeElectionRole(runtimeDir, "lan-gw-v4", "backup"); err != nil {
 		fatal(err)

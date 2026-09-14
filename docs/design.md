@@ -290,6 +290,16 @@ collector. When an endpoint is declared, generated systemd, NixOS, and FreeBSD
 rc.d units receive the matching `OTEL_*` environment variables and the existing
 SDK path sends logs, metrics, and traces to that endpoint.
 
+Managed client supervision belongs to the serve lifetime, not to one controller
+generation. An unchanged client survives runtime reload; a completed supervisor
+must be replaced even when its desired spec is unchanged. VIP readiness gates
+initial admission. Retention during degradation requires saved Ready/advertised
+MASTER publication for the same address and interface; role demotion withdraws it.
+`vipPublicationConfirmed` retains that history independently of observation
+errors. Demotion, observed VIP absence, and failed publication invalidate it.
+Installers preserve current generated routerd units and replace obsolete
+controller-chain units explicitly.
+
 ---
 
 ## 8. Related documents
