@@ -117,6 +117,16 @@ func main() {
 	}
 	assertStatus(store, "Ready", true)
 	assertAddress(ifname, true)
+	store.ready = false
+	store.now = store.now.Add(time.Minute)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		fatal(fmt.Errorf("degraded master reconcile: %w", err))
+	}
+	assertStatus(store, "Ready", true)
+	assertAddress(ifname, true)
+	if got := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "lan-gw-v4")["activationReason"]; got != "ReadinessDegraded" {
+		fatal(fmt.Errorf("degraded reason = %v", got))
+	}
 
 	if err := writeElectionRole(runtimeDir, "lan-gw-v4", "backup"); err != nil {
 		fatal(err)

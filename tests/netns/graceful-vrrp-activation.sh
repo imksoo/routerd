@@ -29,4 +29,4 @@ else
 fi
 ip netns exec "$NS" env ROUTERD_NETNS_TEST_TOKEN="$TEST_ID" "$DRIVER" "$WORKDIR/runtime" "$WORKDIR/keepalived.conf" eth0
 
-log "ok: elected role withheld VIP until readiness and withdrew it on BACKUP"
+log "ok: withheld VIP until ready, retained it on degraded MASTER, withdrew it on BACKUP"
