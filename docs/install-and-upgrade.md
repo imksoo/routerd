@@ -300,6 +300,9 @@ MASTER retains its VIP during readiness degradation only when saved status
 records successful publication on the same address and interface. A leftover
 address without that history must pass initial readiness; BACKUP/FAULT still
 withdraws the VIP.
+Successful publication history is separate from current observation status:
+transient observation errors preserve it, while demotion, observed VIP absence,
+or publication failure invalidates it. Address/interface changes cannot reuse it.
 
 Every replaced file is copied to `*.backup.YYYYMMDDHHMMSS` before replacement.
 If the install fails partway through, the script restores files from the

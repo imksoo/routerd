@@ -77,6 +77,8 @@ sudo routerctl get status
 VRRP `gracefulActivation` 控制 VIP 的初次發布；相同位址、介面已有 Ready/advertised MASTER
 紀錄時，暫時的 readiness 下降不會撤銷 VIP。只有位址存在而沒有發布紀錄時仍須通過初始檢查。
 降為 BACKUP/FAULT 時仍會撤銷 VIP。
+成功發布歷史與目前觀測狀態分開保存，觀測錯誤不會清除歷史。
+降級、確認 VIP 不存在或發布失敗會使歷史失效；不同位址或介面不能沿用歷史。
 
 下載新版本、核對雜湊、解壓縮後，再執行相同安裝腳本：
 

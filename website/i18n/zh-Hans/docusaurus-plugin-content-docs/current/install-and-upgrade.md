@@ -77,6 +77,8 @@ sudo routerctl get status
 VRRP `gracefulActivation` 控制 VIP 的初次发布；同一地址、接口已有 Ready/advertised MASTER
 记录时，暂时的 readiness 下降不会撤销 VIP。只有地址存在而没有发布记录时仍需通过初始检查。
 降为 BACKUP/FAULT 时仍会撤销 VIP。
+成功发布历史与当前观测状态分开保存，观测错误不会清除历史。
+降级、确认 VIP 不存在或发布失败会使历史失效；不同地址或接口不能沿用历史。
 
 下载新版本、校验哈希、解压后再次运行同一个安装脚本即可：
 

@@ -294,7 +294,9 @@ Managed client supervision belongs to the serve lifetime, not to one controller
 generation. An unchanged client survives runtime reload; a completed supervisor
 must be replaced even when its desired spec is unchanged. VIP readiness gates
 initial admission. Retention during degradation requires saved Ready/advertised
-MASTER status for the same address and interface; role demotion withdraws it.
+MASTER publication for the same address and interface; role demotion withdraws it.
+`vipPublicationConfirmed` retains that history independently of observation
+errors. Demotion, observed VIP absence, and failed publication invalidate it.
 Installers preserve current generated routerd units and replace obsolete
 controller-chain units explicitly.
 
