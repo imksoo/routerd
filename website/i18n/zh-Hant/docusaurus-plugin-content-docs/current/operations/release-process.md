@@ -148,6 +148,7 @@ routerd 本體以 BSD 3-Clause License 發布。
 發布前請重新產生清單：
 
 ```sh
+go mod download all
 make third-party-licenses
 ```
 

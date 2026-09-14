@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260914.0729
+
 ### 修正
 
 - 正常公開済みMASTERのVIPを、一時的なreadiness低下でも保持します。同一アドレス・

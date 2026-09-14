@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260914.0729
+
 ### Fixed
 
 - Retain a successfully published MASTER VIP during temporary readiness loss.

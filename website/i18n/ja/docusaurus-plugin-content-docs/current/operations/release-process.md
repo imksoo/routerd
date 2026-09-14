@@ -182,6 +182,7 @@ routerd 本体は BSD 3-Clause License で配布します。
 リリースを公開する前に、一覧を再生成してください。
 
 ```sh
+go mod download all
 make third-party-licenses
 ```
 

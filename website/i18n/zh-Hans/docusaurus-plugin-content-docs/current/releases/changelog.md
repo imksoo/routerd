@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20260914.0729
+
 ### 修复
 
 - 暂时的 readiness 下降不再撤销已成功发布的 MASTER VIP。同一地址及接口的发布历史
