@@ -12,6 +12,27 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Retain a successfully published MASTER VIP during temporary readiness loss.
+  Keep matching address/interface publication history across observation errors,
+  while reporting those errors and invalidating history on demotion, confirmed
+  VIP absence, or failed publication. Initial admission remains gated (#1248, #1252).
+- Keep unchanged supervised DHCP clients alive across runtime configuration
+  generations and recreate completed supervisors; removal, configuration changes,
+  and serve shutdown retain their lifecycle handling (#1249, #1252).
+- Preserve the current generated `routerd.service`, including capabilities and
+  environment, during upgrades. Units using removed `--controller-chain` flags
+  are still migrated (#1250, #1252).
+
+### Validation
+
+- Candidate `f43b4451`: local tests and CI passed; two-router installation/reload
+  checks and isolated Linux netns observation-failure tests passed. The reported
+  client HTTPS run completed 360/360 requests successfully. An earlier candidate's
+  isolated DNS timeout remains unexplained; this is not a claim of universal
+  outage-free operation or new AWS/Azure/OCI qualification. See PR #1252 for evidence.
+
 ## v20260913.1740
 
 ### Fixed

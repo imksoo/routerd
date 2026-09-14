@@ -11,6 +11,23 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- 暂时的 readiness 下降不再撤销已成功发布的 MASTER VIP。同一地址及接口的发布历史
+  在观测错误后仍保留，同时报告错误；降级、确认 VIP 不存在或发布失败会使历史失效。
+  初次发布仍须满足就绪条件（#1248、#1252）。
+- 运行时配置代际切换会保留配置未变的受管理 DHCP 客户端，并重建已结束的 supervisor。
+  删除、配置变更及 serve 退出时仍执行相应生命周期处理（#1249、#1252）。
+- 升级时保留当前生成的 `routerd.service` 及其 Capability、Environment；仍会迁移含
+  已移除 `--controller-chain` 参数的旧 unit（#1250、#1252）。
+
+### 验证
+
+- 候选版本 `f43b4451` 通过本地测试、CI、两台路由器的升级及 reload 测试，以及隔离 Linux
+  netns 的观测故障测试。报告的客户端 HTTPS 测试为 360/360 成功。较早候选版本的一次 DNS
+  超时仍未查明原因；这些结果不代表所有条件下均无中断，也不代表新的 AWS/Azure/OCI
+  实机认证。证据见 PR #1252。
+
 ## v20260913.1740
 
 ### 修复

@@ -169,8 +169,12 @@ Release archives and the live ISO include third-party software with separate
 licenses. Before publishing a release, regenerate the inventory:
 
 ```sh
+go mod download all
 make third-party-licenses
 ```
+
+Populate the complete module cache first so license detection reads each
+dependency's license instead of falling back to the repository directory.
 
 The generated `THIRD_PARTY_LICENSES.md` records Go module license files and
 Alpine package license metadata. The live ISO is an aggregate distribution:
