@@ -11,6 +11,15 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 新增
+
+- Connections 显示 DS-Lite 本地 IPv4 SNAT 条目数（总计/TCP/UDP/其他）。从完整 conntrack snapshot 按转换后地址统计，不受 600 行上限及筛选影响。共享地址显示合计，未取得与零分别显示；不是 AFTR 端条目数或端口容量（#1253、#1254）。
+- 直接访问与自动刷新均取得 DS-Lite 资源；新增浏览器回归测试并纳入 Web Console CI。
+
+### 验证
+
+- 候选版本 `714e2cd5` 已报告通过双机页面直接访问、自动刷新、HTTPS 480/480 和四条隧道通信测试。旧手工统计混入非 NAT 监控流量，不能作为 SNAT 基准。官方资产仍需单独部署验证。推荐 Stable 保持 `v20260914.0729`。
+
 ## v20260914.0729
 
 ### 修复

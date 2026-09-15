@@ -1,5 +1,9 @@
 # Web 管理界面
 
+Connections 按 DS-Lite 显示完整 conntrack snapshot 的本地 IPv4 SNAT 总计/TCP/UDP/其他
+条目数，不受显示上限和筛选影响。按观测到的 `innerLocalIPv4` 对应；共享地址显示合计，
+未取得不等于零。这不是 AFTR 端件数或端口容量。直接访问和自动刷新都会取得隧道状态。
+
 ![Web Console 作为读取 routerd local API status、event、log 和 diagnostic 的只读 browser path](/img/diagrams/concept-web-console.png)
 
 `WebConsole` 是用来读取 routerd 状态的 HTTP 界面。

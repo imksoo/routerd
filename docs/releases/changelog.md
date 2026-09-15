@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Show DS-Lite local IPv4 SNAT entry counts (total/TCP/UDP/other) in Connections, grouped by translated address from the full conntrack snapshot before the 600-row limit or filters. Shared addresses show combined counts; unavailable data is distinct from zero. These are not provider AFTR counts or port capacity (#1253, #1254).
+- Fetch DS-Lite resources on direct Connections access and automatic refresh; add browser regression coverage and run it in Web Console CI.
+
+### Validation
+
+- Candidate `714e2cd5`: reported two-router browser direct-access/refresh checks, HTTPS 480/480, and all four tunnel paths passed. Earlier manual counts included non-NAT monitoring flows and are not valid SNAT baselines. Official-release assets require their own rollout verification. Recommended stable remains `v20260914.0729`.
+
 ## v20260914.0729
 
 ### Fixed
