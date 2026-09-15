@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const webconsoleDir = path.resolve(scriptDir, "..");
@@ -21,10 +22,22 @@ if (!existsSync(path.join(staticDir, "index.html"))) {
 
 await mkdir(outputDir, { recursive: true });
 
+let natResourceRevision = 0;
+const connectionResourceRequests = [];
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (url.pathname === "/api/v1/summary") return json(res, summaryFixture());
+    if (url.pathname === "/api/v1/summary") {
+      const fixture = summaryFixture();
+      if (natResourceRevision > 0) {
+        fixture.resources.find(resource => resource.name === "ds-lite-a").status.innerLocalIPv4 = "192.0.0.9";
+        fixture.connections.bySNAT = { "192.0.0.9": { total: 702, tcp: 691, udp: 10, other: 1 } };
+      }
+      if (url.searchParams.get("connections") === "600") connectionResourceRequests.push(url.searchParams.get("resources"));
+      if (url.searchParams.get("resources") === "0") delete fixture.resources;
+      return json(res, fixture);
+    }
     if (url.pathname === "/api/v1/routes") return json(res, routesFixture());
     if (url.pathname === "/api/v1/config") return json(res, configFixture());
     if (url.pathname === "/api/v1/generations") return json(res, generationsFixture());
@@ -59,11 +72,33 @@ const baseURL = `http://127.0.0.1:${port}/`;
 
 const browser = await chromium.launch();
 try {
+  // Start with a fresh page: no Overview/Resources response may seed its state.
+  const direct = await browser.newPage();
+  await direct.clock.install();
+  await direct.goto(`${baseURL}#connections`);
+  const directNAT = direct.getByRole("table", { name: "DS-Lite NATエントリー数" });
+  await expect(directNAT).toBeVisible();
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("701");
+  expect(connectionResourceRequests.at(-1)).toBe("1");
+  const requestsBeforeRefresh = connectionResourceRequests.length;
+  natResourceRevision = 1;
+  await direct.clock.fastForward(30000);
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("192.0.0.9");
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("702");
+  expect(connectionResourceRequests.length).toBeGreaterThan(requestsBeforeRefresh);
+  expect(connectionResourceRequests.every(value => value === "1")).toBe(true);
+  await direct.close();
+  natResourceRevision = 0;
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
   await capture(page, "#overview", "overview-desktop.png");
   await capture(page, "#routes", "routes-desktop.png");
   await capture(page, "#controllers", "controllers-desktop.png");
   await capture(page, "#connections", "connections-desktop.png");
+  const natTable = page.getByRole("table", { name: "DS-Lite NATエントリー数" });
+  await natTable.waitFor();
+  if (!(await natTable.innerText()).includes("701")) throw new Error("NAT summary must use full snapshot, not displayed entries");
+  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-b" }).innerText()).includes("0")) throw new Error("Successful snapshot must show zero for an idle tunnel");
+  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-pending" }).innerText()).includes("未取得")) throw new Error("Unresolved tunnel must not show zero");
   await capture(page, "#clients/inventory", "clients-desktop.png");
   await capture(page, "#firewall/timeline", "firewall-desktop.png");
   await capture(page, "#config", "config-desktop.png");
@@ -198,7 +233,9 @@ function resourceFixture() {
   return [
     { apiVersion: "net.routerd.net/v1alpha1", kind: "EgressRoutePolicy", name: "ipv4-default", status: { phase: "Healthy", selectedCandidate: "ds-lite-a", selectedDevice: "ds-lite-a" } },
     { apiVersion: "net.routerd.net/v1alpha1", kind: "HealthCheck", name: "internet-via-dslite-a", status: { phase: "Healthy", target: "9.9.9.9" } },
-    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-a", status: { phase: "Up", address: "192.0.0.2/29" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-a", status: { phase: "Up", address: "192.0.0.2/29", innerLocalIPv4: "192.0.0.2" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-b", status: { phase: "Up", innerLocalIPv4: "192.0.0.3" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-pending", status: { phase: "Pending" } },
     { apiVersion: "net.routerd.net/v1alpha1", kind: "DNSResolver", name: "lan-resolver", status: { phase: "Ready", address: "172.18.0.1" } },
     { apiVersion: "firewall.routerd.net/v1alpha1", kind: "FirewallPolicy", name: "three-role", status: { phase: "Observed", changedFields: "dry-run" } },
     { apiVersion: "system.routerd.net/v1alpha1", kind: "Package", name: "router-tools", status: { phase: "Healthy" } },
@@ -241,9 +278,10 @@ function eventFixture(now) {
 
 function connectionFixture() {
   return {
-    count: 635,
+    count: 935,
     max: 262144,
-    byFamily: { ipv4: 410, ipv6: 225 },
+    byFamily: { ipv4: 710, ipv6: 225 },
+    bySNAT: { "192.0.0.2": { total: 701, tcp: 690, udp: 10, other: 1 } },
     entries: [
       { family: "ipv4", protocol: "tcp", state: "ESTABLISHED", assured: true, timeout: 431999, original: { source: "172.18.1.110", sourcePort: "55124", destination: "140.82.112.6", destinationPort: "443" } },
       { family: "ipv4", protocol: "udp", state: "ASSURED", assured: true, timeout: 179, original: { source: "172.18.0.150", sourcePort: "53210", destination: "1.1.1.1", destinationPort: "53" } },

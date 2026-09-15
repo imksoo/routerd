@@ -39,3 +39,17 @@ code {
     overflow-wrap: anywhere;
   }
 }
+.dslite-nat-summary {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.dslite-nat-summary th, .dslite-nat-summary td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid #67717d;
+}
+.dslite-nat-summary th:nth-child(-n+2), .dslite-nat-summary td:nth-child(-n+2) {
+  text-align: left;
+}

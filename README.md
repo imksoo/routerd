@@ -316,6 +316,10 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 
 ## Developer Build
 
+Web Console Connections includes per-DS-Lite IPv4 SNAT counts from the full
+local conntrack snapshot, independent of the displayed connection limit.
+These are local entries, not provider AFTR counts; unavailable data is not zero.
+
 Go 1.24 or newer is expected.
 
 ```sh

@@ -1,5 +1,11 @@
 # Web 管理画面
 
+Connectionsの「DS-Lite NATエントリー数」は、トンネルのinnerLocalIPv4に対応する
+ローカルIPv4 SNAT状態を合計・TCP・UDP・その他に分けて表示します。
+接続一覧の表示上限や絞り込みとは独立した全件集計です。
+取得不能は「未取得」と表示します。事業者側AFTRの件数ではありません。
+同じSNATアドレスを共有するトンネルは合算値になるため、行の単純合計はできません。
+
 ![Web Console が routerd local API の status、event、log、diagnostic を読み取る read-only browser path](/img/diagrams/concept-web-console.png)
 
 `WebConsole` は、routerd の状態を読むための HTTP 画面です。

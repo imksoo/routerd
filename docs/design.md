@@ -4,6 +4,11 @@ title: Architecture overview
 
 # routerd architecture overview
 
+Web Console Connections summarizes local IPv4 SNAT entries by translated
+address before applying entry display limits. DS-Lite rows use the resource's
+observed innerLocalIPv4; shared addresses represent combined state, not unique
+tunnel attribution. Missing observations remain unknown, never an assumed zero.
+
 This document is an introduction to routerd for operators and contributors. It covers the design intent and the major moving parts.
 For day-to-day usage, start with the [tutorials](./tutorials/getting-started.md) and the [how-to guides](./how-to/multi-wan.md).
 For resource definitions, see the [API reference](./api-v1alpha1.md).
