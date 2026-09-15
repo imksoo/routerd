@@ -124,6 +124,14 @@ jobs:
       - name: Check generated Web Console assets
         run: git diff --exit-code -- pkg/webconsole/static
 
+      - name: Install Chromium for Web Console regression tests
+        working-directory: webconsole
+        run: npx playwright install --with-deps chromium
+
+      - name: Test Web Console direct access and automatic refresh
+        working-directory: webconsole
+        run: npm run screenshot
+
   go-test:
     name: Go tests
     runs-on: ubuntu-latest

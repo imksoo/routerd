@@ -2619,7 +2619,7 @@ function App() {
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
     const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
-    const includeResources = selected === "resources" || selected === "gateway-health" || selected === "vrrp";
+    const includeResources = selected === "resources" || selected === "gateway-health" || selected === "vrrp" || selected === "connections";
     const includeEvents = selected === "events";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({

@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const webconsoleDir = path.resolve(scriptDir, "..");
@@ -21,10 +22,22 @@ if (!existsSync(path.join(staticDir, "index.html"))) {
 
 await mkdir(outputDir, { recursive: true });
 
+let natResourceRevision = 0;
+const connectionResourceRequests = [];
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (url.pathname === "/api/v1/summary") return json(res, summaryFixture());
+    if (url.pathname === "/api/v1/summary") {
+      const fixture = summaryFixture();
+      if (natResourceRevision > 0) {
+        fixture.resources.find(resource => resource.name === "ds-lite-a").status.innerLocalIPv4 = "192.0.0.9";
+        fixture.connections.bySNAT = { "192.0.0.9": { total: 702, tcp: 691, udp: 10, other: 1 } };
+      }
+      if (url.searchParams.get("connections") === "600") connectionResourceRequests.push(url.searchParams.get("resources"));
+      if (url.searchParams.get("resources") === "0") delete fixture.resources;
+      return json(res, fixture);
+    }
     if (url.pathname === "/api/v1/routes") return json(res, routesFixture());
     if (url.pathname === "/api/v1/config") return json(res, configFixture());
     if (url.pathname === "/api/v1/generations") return json(res, generationsFixture());
@@ -59,6 +72,23 @@ const baseURL = `http://127.0.0.1:${port}/`;
 
 const browser = await chromium.launch();
 try {
+  // Start with a fresh page: no Overview/Resources response may seed its state.
+  const direct = await browser.newPage();
+  await direct.clock.install();
+  await direct.goto(`${baseURL}#connections`);
+  const directNAT = direct.getByRole("table", { name: "DS-Lite NATエントリー数" });
+  await expect(directNAT).toBeVisible();
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("701");
+  expect(connectionResourceRequests.at(-1)).toBe("1");
+  const requestsBeforeRefresh = connectionResourceRequests.length;
+  natResourceRevision = 1;
+  await direct.clock.fastForward(30000);
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("192.0.0.9");
+  await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("702");
+  expect(connectionResourceRequests.length).toBeGreaterThan(requestsBeforeRefresh);
+  expect(connectionResourceRequests.every(value => value === "1")).toBe(true);
+  await direct.close();
+  natResourceRevision = 0;
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
   await capture(page, "#overview", "overview-desktop.png");
   await capture(page, "#routes", "routes-desktop.png");
