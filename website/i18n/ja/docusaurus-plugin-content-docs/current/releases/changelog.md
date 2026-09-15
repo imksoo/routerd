@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20260915.1207
+
 ### 追加
 
 - ConnectionsにDS-Lite別のローカルIPv4 SNAT件数（合計/TCP/UDP/その他）を追加。全conntrack snapshotを変換後アドレスで集計し、600件の表示上限・絞り込みとは独立します。同一アドレス共有時は合算、未取得と0件は区別し、AFTR側件数やポート容量ではないことを明示します（#1253、#1254）。

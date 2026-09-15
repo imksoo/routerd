@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20260915.1207
+
 ### Added
 
 - Show DS-Lite local IPv4 SNAT entry counts (total/TCP/UDP/other) in Connections, grouped by translated address from the full conntrack snapshot before the 600-row limit or filters. Shared addresses show combined counts; unavailable data is distinct from zero. These are not provider AFTR counts or port capacity (#1253, #1254).
