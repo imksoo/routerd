@@ -1,5 +1,9 @@
 # routerd
 
+Web ConsoleのConnectionsではDS-LiteごとのIPv4 NATエントリー数を表示します。
+表示行数とは独立してローカルconntrack全件から集計し、取得不能はゼロと区別します。
+事業者側AFTRの件数ではありません。
+
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
 [プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/) ·

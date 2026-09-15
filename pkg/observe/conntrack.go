@@ -15,12 +15,43 @@ import (
 )
 
 type ConnectionTable struct {
-	Count    int                 `json:"count" yaml:"count"`
-	Max      int                 `json:"max,omitempty" yaml:"max,omitempty"`
-	ByMark   map[string]int      `json:"byMark,omitempty" yaml:"byMark,omitempty"`
-	ByFamily map[string]int      `json:"byFamily,omitempty" yaml:"byFamily,omitempty"`
-	Entries  []ConnectionEntry   `json:"entries,omitempty" yaml:"entries,omitempty"`
-	Stats    []ConntrackCPUStats `json:"stats,omitempty" yaml:"stats,omitempty"`
+	Count    int                        `json:"count" yaml:"count"`
+	Max      int                        `json:"max,omitempty" yaml:"max,omitempty"`
+	ByMark   map[string]int             `json:"byMark,omitempty" yaml:"byMark,omitempty"`
+	ByFamily map[string]int             `json:"byFamily,omitempty" yaml:"byFamily,omitempty"`
+	BySNAT   *map[string]NATEntryCounts `json:"bySNAT,omitempty" yaml:"bySNAT,omitempty"`
+	Entries  []ConnectionEntry          `json:"entries,omitempty" yaml:"entries,omitempty"`
+	Stats    []ConntrackCPUStats        `json:"stats,omitempty" yaml:"stats,omitempty"`
+}
+
+// NATEntryCounts counts local IPv4 SNAT state, not provider-side AFTR state.
+type NATEntryCounts struct {
+	Total int `json:"total" yaml:"total"`
+	TCP   int `json:"tcp" yaml:"tcp"`
+	UDP   int `json:"udp" yaml:"udp"`
+	Other int `json:"other" yaml:"other"`
+}
+
+func conntrackEntriesBySNAT(entries []ConnectionEntry) map[string]NATEntryCounts {
+	counts := make(map[string]NATEntryCounts)
+	for _, entry := range entries {
+		address := entry.Reply.Destination
+		if entry.Family != "ipv4" || address == "" || entry.Original.Source == "" || address == entry.Original.Source {
+			continue
+		}
+		count := counts[address]
+		count.Total++
+		switch entry.Protocol {
+		case "tcp":
+			count.TCP++
+		case "udp":
+			count.UDP++
+		default:
+			count.Other++
+		}
+		counts[address] = count
+	}
+	return counts
 }
 
 type ConnectionEntry struct {
@@ -82,10 +113,12 @@ func Connections(limit int) (*ConnectionTable, error) {
 		return nil, fmt.Errorf("%s -L -o extended: %w: %s", command, err, strings.TrimSpace(string(out)))
 	}
 	allEntries := parseConntrackEntries(string(out), 0)
+	bySNAT := conntrackEntriesBySNAT(allEntries)
 	table := &ConnectionTable{
 		Count:    readProcInt("/proc/sys/net/netfilter/nf_conntrack_count", len(allEntries)),
 		Max:      readProcInt("/proc/sys/net/netfilter/nf_conntrack_max", 0),
 		ByMark:   conntrackEntriesByMark(allEntries),
+		BySNAT:   &bySNAT,
 		ByFamily: conntrackEntriesByFamily(allEntries),
 		Entries:  selectConnectionEntries(allEntries, limit),
 	}

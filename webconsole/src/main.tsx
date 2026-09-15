@@ -267,6 +267,7 @@ type ConnectionTable = {
   count?: number;
   max?: number;
   byFamily?: Record<string, number>;
+  bySNAT?: Record<string, { total: number; tcp: number; udp: number; other: number }> | null;
   entries?: ConnectionEntry[];
 };
 
@@ -3229,6 +3230,7 @@ function App() {
               <Metric label="Showing" value={connectionShowingValue(summary?.connections, filteredConnections.length)} />
               <Metric label="Groups" value={String(connectionGroupsList.length)} />
             </div>
+            <DSLiteNATSummary table={summary?.connections} resources={summary?.resources ?? []} />
             <div className={styles.connectionJumpBar}>
               <Button size="small" appearance="secondary" icon={<ArrowUpRegular />} onClick={scrollToTop}>Top</Button>
               {connectionGroupsList.length > 0 ? (
@@ -7863,6 +7865,27 @@ function facetSort(a: string, b: string) {
 
 function stringSort(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+function DSLiteNATSummary({ table, resources }: { table?: ConnectionTable; resources: ResourceStatus[] }) {
+  const tunnels = resources.filter(resource => resource.kind === "DSLiteTunnel");
+  if (tunnels.length === 0) return null;
+  return <Card>
+    <CardHeader header={<Text weight="semibold">DS-Lite NATエントリー数</Text>}
+      description={<Text>このルーターのIPv4 SNAT状態です。AFTR側の件数ではありません。一覧の表示上限・絞り込みとは独立した集計です。同じSNATアドレスを共有するトンネルは合算値になります。</Text>} />
+    <div style={{ overflowX: "auto" }}>
+      <table className="dslite-nat-summary" aria-label="DS-Lite NATエントリー数">
+        <thead><tr><th>トンネル</th><th>SNATアドレス</th><th>合計</th><th>TCP</th><th>UDP</th><th>その他</th></tr></thead>
+        <tbody>{tunnels.map(resource => {
+          const address = String(resource.status?.innerLocalIPv4 ?? "");
+          const count = address && table?.bySNAT != null
+            ? table.bySNAT[address] ?? { total: 0, tcp: 0, udp: 0, other: 0 } : undefined;
+          return <tr key={resource.name}><td>{resource.name}</td><td>{address || "未取得"}</td>
+            <td>{count?.total ?? "未取得"}</td><td>{count?.tcp ?? "—"}</td><td>{count?.udp ?? "—"}</td><td>{count?.other ?? "—"}</td></tr>;
+        })}</tbody>
+      </table>
+    </div>
+  </Card>;
 }
 
 function connectionGroups(entries: ConnectionEntry[]) {

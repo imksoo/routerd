@@ -64,6 +64,11 @@ try {
   await capture(page, "#routes", "routes-desktop.png");
   await capture(page, "#controllers", "controllers-desktop.png");
   await capture(page, "#connections", "connections-desktop.png");
+  const natTable = page.getByRole("table", { name: "DS-Lite NATエントリー数" });
+  await natTable.waitFor();
+  if (!(await natTable.innerText()).includes("701")) throw new Error("NAT summary must use full snapshot, not displayed entries");
+  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-b" }).innerText()).includes("0")) throw new Error("Successful snapshot must show zero for an idle tunnel");
+  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-pending" }).innerText()).includes("未取得")) throw new Error("Unresolved tunnel must not show zero");
   await capture(page, "#clients/inventory", "clients-desktop.png");
   await capture(page, "#firewall/timeline", "firewall-desktop.png");
   await capture(page, "#config", "config-desktop.png");
@@ -198,7 +203,9 @@ function resourceFixture() {
   return [
     { apiVersion: "net.routerd.net/v1alpha1", kind: "EgressRoutePolicy", name: "ipv4-default", status: { phase: "Healthy", selectedCandidate: "ds-lite-a", selectedDevice: "ds-lite-a" } },
     { apiVersion: "net.routerd.net/v1alpha1", kind: "HealthCheck", name: "internet-via-dslite-a", status: { phase: "Healthy", target: "9.9.9.9" } },
-    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-a", status: { phase: "Up", address: "192.0.0.2/29" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-a", status: { phase: "Up", address: "192.0.0.2/29", innerLocalIPv4: "192.0.0.2" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-b", status: { phase: "Up", innerLocalIPv4: "192.0.0.3" } },
+    { apiVersion: "net.routerd.net/v1alpha1", kind: "DSLiteTunnel", name: "ds-lite-pending", status: { phase: "Pending" } },
     { apiVersion: "net.routerd.net/v1alpha1", kind: "DNSResolver", name: "lan-resolver", status: { phase: "Ready", address: "172.18.0.1" } },
     { apiVersion: "firewall.routerd.net/v1alpha1", kind: "FirewallPolicy", name: "three-role", status: { phase: "Observed", changedFields: "dry-run" } },
     { apiVersion: "system.routerd.net/v1alpha1", kind: "Package", name: "router-tools", status: { phase: "Healthy" } },
@@ -241,9 +248,10 @@ function eventFixture(now) {
 
 function connectionFixture() {
   return {
-    count: 635,
+    count: 935,
     max: 262144,
-    byFamily: { ipv4: 410, ipv6: 225 },
+    byFamily: { ipv4: 710, ipv6: 225 },
+    bySNAT: { "192.0.0.2": { total: 701, tcp: 690, udp: 10, other: 1 } },
     entries: [
       { family: "ipv4", protocol: "tcp", state: "ESTABLISHED", assured: true, timeout: 431999, original: { source: "172.18.1.110", sourcePort: "55124", destination: "140.82.112.6", destinationPort: "443" } },
       { family: "ipv4", protocol: "udp", state: "ASSURED", assured: true, timeout: 179, original: { source: "172.18.0.150", sourcePort: "53210", destination: "1.1.1.1", destinationPort: "53" } },

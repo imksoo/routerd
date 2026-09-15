@@ -275,6 +275,33 @@
             },
             "type": "object"
           },
+          "bySNAT": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "other": {
+                  "type": "integer"
+                },
+                "tcp": {
+                  "type": "integer"
+                },
+                "total": {
+                  "type": "integer"
+                },
+                "udp": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "total",
+                "tcp",
+                "udp",
+                "other"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
           "count": {
             "type": "integer"
           },
