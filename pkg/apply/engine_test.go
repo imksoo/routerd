@@ -486,7 +486,7 @@ func TestAdoptionCandidates(t *testing.T) {
 		t.Fatalf("missing fwmark adoption candidate: %+v", candidates)
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{
+	if err := ledger.Remember([]resource.Artifact{
 		{
 			Kind:  "linux.ipv4.fwmarkRule",
 			Name:  "priority=10,mark=0x100,table=100",
@@ -497,7 +497,9 @@ func TestAdoptionCandidates(t *testing.T) {
 				"table":    "100",
 			},
 		},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	candidates, err = engine.AdoptionCandidates(router, ledger)
 	if err != nil {
 		t.Fatalf("adoption candidates with ledger: %v", err)
@@ -549,14 +551,16 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "test"},
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{
+	if err := ledger.Remember([]resource.Artifact{
 		{Kind: "linux.ipip6.tunnel", Name: "ds-old", Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/old"},
 		{Kind: "nft.table", Name: "ip/routerd_old", Owner: "net.routerd.net/v1alpha1/NAT44Rule/old", Attributes: map[string]string{"family": "ip", "name": "routerd_old"}},
 		{Kind: "systemd.service", Name: "routerd-old.service", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
 		{Kind: "net.ipv6.address", Name: "ens19:2001:db8::1/64", Owner: "net.routerd.net/v1alpha1/VirtualAddress/old-v6"},
 		{Kind: "net.link", Name: "ens19", Owner: "net.routerd.net/v1alpha1/Interface/lan"},
 		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: "net.routerd.net/v1alpha1/PPPoESession/old"},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
 			"ip -4 rule show":            "",

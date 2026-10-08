@@ -604,7 +604,11 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 		return err
 	}
 	var stale []resource.Artifact
-	for _, owned := range ledger.All() {
+	ownedArtifacts, err := ledger.All()
+	if err != nil {
+		return err
+	}
+	for _, owned := range ownedArtifacts {
 		switch owned.Kind {
 		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
 		default:
@@ -652,7 +656,9 @@ func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Co
 	if len(forgotten) == 0 {
 		return nil
 	}
-	ledger.Forget(forgotten)
+	if err := ledger.Forget(forgotten); err != nil {
+		return err
+	}
 	return ledger.Save(c.LedgerPath)
 }
 

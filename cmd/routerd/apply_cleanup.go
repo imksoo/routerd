@@ -163,7 +163,9 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		removedArtifacts = append(removedArtifacts, artifact)
 	}
 	if len(removedArtifacts) > 0 {
-		ledger.Forget(removedArtifacts)
+		if err := ledger.Forget(removedArtifacts); err != nil {
+			return removed, err
+		}
 		if err := ledger.Save(ledgerPath); err != nil {
 			return removed, err
 		}
@@ -402,7 +404,9 @@ func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation 
 	if sqliteLedger, ok := ledger.(interface{ SetGeneration(int64) }); ok {
 		sqliteLedger.SetGeneration(generation)
 	}
-	ledger.Remember(artifacts)
+	if err := ledger.Remember(artifacts); err != nil {
+		return 0, err
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		return 0, err
 	}

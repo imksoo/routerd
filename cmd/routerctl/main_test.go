@@ -53,11 +53,13 @@ func TestShowIPv6PDTableIncludesSpecStateLedger(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{{
+	if err := ledger.Remember([]resource.Artifact{{
 		Kind:  "dhcp.ipv6.prefixDelegation",
 		Name:  "ens18",
 		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
-	}})
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
@@ -1090,11 +1092,13 @@ func TestShowDiffAndLedgerModes(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{{
+	if err := ledger.Remember([]resource.Artifact{{
 		Kind:  "net.link",
 		Name:  "ens18",
 		Owner: "net.routerd.net/v1alpha1/Interface/wan",
-	}})
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
@@ -1472,11 +1476,13 @@ spec:
 		t.Fatalf("save state: %v", err)
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{{
+	if err := ledger.Remember([]resource.Artifact{{
 		Kind:  "systemd.service",
 		Name:  "routerd-stale.service",
 		Owner: "net.routerd.net/v1alpha1/DSLiteTunnel/stale",
-	}})
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
@@ -1560,7 +1566,9 @@ func TestDescribeIPv6PDIncludesStatusLedgerEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite ledger: %v", err)
 	}
-	ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"}})
+	if err := ledger.Remember([]resource.Artifact{{Kind: "dhcp.ipv6.prefixDelegation", Name: "ens18", Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd"}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Close(); err != nil {
 		t.Fatalf("close sqlite ledger: %v", err)
 	}

@@ -119,7 +119,9 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 			}
 			return errors.New("adoption blocked by drifted candidates")
 		}
-		ledger.Remember(artifacts)
+		if err := ledger.Remember(artifacts); err != nil {
+			return err
+		}
 		if err := ledger.Save(*ledgerPath); err != nil {
 			return err
 		}

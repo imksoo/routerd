@@ -19,8 +19,10 @@ func TestLedgerRememberForgetAndSave(t *testing.T) {
 	}
 	defer func() { _ = ledger.Close() }()
 	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
-	ledger.Remember([]Artifact{artifact})
-	if !ledger.Owns(artifact) {
+	if err := ledger.Remember([]Artifact{artifact}); err != nil {
+		t.Fatal(err)
+	}
+	if owns, err := ledger.Owns(artifact); err != nil || !owns {
 		t.Fatal("ledger does not own remembered artifact")
 	}
 	if err := ledger.Save(path); err != nil {
@@ -31,11 +33,13 @@ func TestLedgerRememberForgetAndSave(t *testing.T) {
 		t.Fatalf("reload ledger: %v", err)
 	}
 	defer func() { _ = loaded.Close() }()
-	if !loaded.Owns(artifact) {
+	if owns, err := loaded.Owns(artifact); err != nil || !owns {
 		t.Fatal("reloaded ledger does not own artifact")
 	}
-	loaded.Forget([]Artifact{artifact})
-	if loaded.Owns(artifact) {
+	if err := loaded.Forget([]Artifact{artifact}); err != nil {
+		t.Fatal(err)
+	}
+	if owns, err := loaded.Owns(artifact); err != nil || owns {
 		t.Fatal("ledger still owns forgotten artifact")
 	}
 }
@@ -64,7 +68,7 @@ func TestSQLiteLedgerCloseReleasesFD(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iter %d load: %v", i, err)
 		}
-		_ = ledger.All()
+		_, _ = ledger.All()
 		if err := ledger.Close(); err != nil {
 			t.Fatalf("iter %d close: %v", i, err)
 		}
