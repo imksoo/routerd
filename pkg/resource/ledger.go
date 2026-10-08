@@ -191,6 +191,9 @@ CREATE TABLE IF NOT EXISTS artifacts (
   generation INTEGER,
   observed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS ledger_migrations (
+  name TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS objects (
   api_version TEXT NOT NULL,
   kind TEXT NOT NULL,
@@ -337,11 +340,31 @@ func (l *SQLiteLedger) tableHasColumn(table, column string) (bool, error) {
 
 func (l *SQLiteLedger) migrateLegacyJSON() error {
 	legacy := filepath.Join(filepath.Dir(l.path), "artifacts.json")
-	if _, err := os.Stat(legacy); errors.Is(err, os.ErrNotExist) {
-		return nil
+	if _, err := os.Stat(legacy); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	tx, err := l.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var migrated int
+	if err := tx.QueryRow(`SELECT count(*) FROM ledger_migrations WHERE name = 'legacy-artifacts-json'`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		// The import committed before an interrupted or failed rename. Never
+		// import again, even if all of that ownership has since been forgotten.
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return os.Rename(legacy, legacy+".migrated")
 	}
 	var count int
-	if err := l.db.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil {
 		return err
 	}
 	if count != 0 {
@@ -351,8 +374,14 @@ func (l *SQLiteLedger) migrateLegacyJSON() error {
 	if err != nil {
 		return err
 	}
-	if err := l.Remember(jsonLedger.Artifacts); err != nil {
+	if err := l.rememberArtifacts(tx, jsonLedger.Artifacts); err != nil {
 		return fmt.Errorf("migrate legacy ownership ledger: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO ledger_migrations(name) VALUES ('legacy-artifacts-json')`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return os.Rename(legacy, legacy+".migrated")
 }
@@ -378,6 +407,16 @@ func (l *SQLiteLedger) Remember(artifacts []Artifact) error {
 		return fmt.Errorf("remember artifacts: %w", err)
 	}
 	defer tx.Rollback()
+	if err := l.rememberArtifacts(tx, artifacts); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit ownership ledger: %w", err)
+	}
+	return nil
+}
+
+func (l *SQLiteLedger) rememberArtifacts(tx *sql.Tx, artifacts []Artifact) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, artifact := range artifacts {
 		if artifact.Owner == "" {
@@ -395,9 +434,6 @@ ON CONFLICT(artifact_id) DO UPDATE SET kind=excluded.kind,name=excluded.name,own
 		if err != nil {
 			return fmt.Errorf("remember artifact %s: %w", artifact.Identity(), err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit ownership ledger: %w", err)
 	}
 	return nil
 }

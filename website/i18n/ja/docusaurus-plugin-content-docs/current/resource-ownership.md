@@ -90,6 +90,11 @@ host inventory を比較し、dry-run 可能な plan を作ります。plan に�
 resource-specific teardown、ledger forget、stale status deletion、state backup、
 audit event が含まれます。
 
+台帳の読み書きに失敗した場合、所有権が空として扱わず処理を停止します。
+SQLite の一括更新はトランザクションで確定します。旧 `artifacts.json` の移行は
+同じトランザクションに完了を記録し、rename に失敗しても旧所有権を再取り込みせず
+rename だけを再試行します。移行後に台帳が空になっても旧所有権は復活しません。
+
 desired set は apply と serve が使う effective view です。`FilterRouterByWhen`、
 dynamic SAM resource、`DynamicConfigPart` の merge 後を使うため、`when: false` の
 resource や、まだ profile が存在する SAM 生成 tunnel/BGP/route resource を orphan と
