@@ -333,6 +333,10 @@ make website-build
 The Makefile is for development tasks.
 End-user installation goes through the release archive and `install.sh`.
 
+The [network namespace tests](tests/netns/README.md) require explicit `sudo` on
+a disposable Linux guest. They include SAM empty-forwarding cleanup with
+iptables-nft 1.8.7 and newer versions.
+
 Important binaries built by `make build` include:
 
 - `routerd`

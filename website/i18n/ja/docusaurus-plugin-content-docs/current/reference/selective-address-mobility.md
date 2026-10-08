@@ -373,6 +373,13 @@ Linux での `proxy-arp` 捕捉では、routerd は以下を行います。
 
 ## 所有権の確認
 
+Linux では転送が不要になっても、SAM が所有する古い転送ルールと
+インターフェース単位の `accept_local` を後片付けします。
+`routerd_sam_forward` チェーンが存在しなければ変更しません。
+iptables-nft 1.8.7 はチェーンの不在にも互換性エラーを返すため、
+読み取り専用のテーブル一覧で不在を確認します。既存チェーンの互換性エラーや
+読み取り失敗はエラーのまま扱い、チェーンを強制的に削除することはありません。
+
 `MobilityPool` status は 1 つの所有権ビューを公開します。
 
 - `ownershipResolverControlPlaneOwnerTable` は唯一のアドレス単位の運用投影であり、`doctor sam`、FIB ポリシーチェック、運用者が共通して使うコントロールプレーンテーブルです。観測されたモビリティアドレスごとに決定的な 1 行を持ち、選択された owner node/provider/NIC/subnet/resource、local evidence node/provider/NIC/subnet/resource/source、捕捉状態と最終的な `captureDisposition`/`captureReason`、広告/抑制状態、競合理由/勝者/resolution を含みます。

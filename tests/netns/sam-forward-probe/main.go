@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+//go:build linux
+
 // This executable is only a netns test driver. Never run it in a host namespace.
 package main
 

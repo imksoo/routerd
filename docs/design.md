@@ -199,6 +199,13 @@ Every controller follows the common `framework.FuncController` shape:
 
 The `eventedStore` wrapper guarantees that every persisted state change emits `routerd.resource.status.changed`, which downstream controllers consume to resolve cross-resource dependencies.
 
+The Linux SAM controller reconciles an empty forwarding intent by removing
+stale owned rules and per-interface `accept_local` state. An absent
+`routerd_sam_forward` chain is a read-only no-op. iptables-nft 1.8.7 can report
+an absent chain as incompatible, so that diagnostic requires a successful
+whole-table listing proving the exact chain is absent. Existing incompatible
+chains and failed reads remain errors; the controller does not flush them.
+
 Kubernetes edge resources use this status flow directly. `IngressService`
 health checks choose an active backend and the NAT renderer uses that status on
 the next reconcile. `BGPRouter` / `BGPPeer` status is observed from the

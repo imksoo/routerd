@@ -16,6 +16,7 @@ scripts=(
   forcefrag-df-forward.sh
   arp-observer-ignore-member-mac.sh
   sam-proxy-arp-garp-transition.sh
+  sam-empty-forward-chain.sh
   vxlan-l2-control-plane-transparency.sh
   vxlan-l2-mss-clamp.sh
 )
