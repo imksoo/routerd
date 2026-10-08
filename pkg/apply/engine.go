@@ -5,6 +5,7 @@ package apply
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -1909,18 +1910,74 @@ func (e *Engine) interfaceState(ifname string) (bool, bool) {
 }
 
 func (e *Engine) hasAddress(ifname, address, family string) bool {
+	want, err := netip.ParsePrefix(address)
+	if err != nil || (family == "-4" && !want.Addr().Is4()) || (family == "-6" && !want.Addr().Is6()) {
+		return false
+	}
 	out, err := e.Command("ip", "-brief", family, "addr", "show", "dev", ifname)
 	if err != nil {
 		out, err = e.Command("ifconfig", ifname)
-		if err != nil {
-			return false
+		return err == nil && ifconfigHasAddress(string(out), ifname, want)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		name, _, _ := strings.Cut(fields[0], "@")
+		if name != ifname {
+			continue
+		}
+		for _, field := range fields[2:] {
+			// Compare the host address and prefix length, not the masked network.
+			if got, err := netip.ParsePrefix(field); err == nil && got == want {
+				return true
+			}
 		}
 	}
-	if strings.Contains(string(out), address) {
-		return true
-	}
-	if addr, _, ok := strings.Cut(address, "/"); ok {
-		return strings.Contains(string(out), addr)
+	return false
+}
+
+func ifconfigHasAddress(output, ifname string, want netip.Prefix) bool {
+	currentInterface := ""
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if line[0] != ' ' && line[0] != '\t' {
+			currentInterface = strings.TrimSuffix(fields[0], ":")
+		}
+		if currentInterface != ifname || len(fields) < 4 {
+			continue
+		}
+		if (want.Addr().Is4() && fields[0] != "inet") || (want.Addr().Is6() && fields[0] != "inet6") {
+			continue
+		}
+		addr, err := netip.ParseAddr(fields[1])
+		if err != nil || addr.WithZone("") != want.Addr() {
+			continue
+		}
+		for i := 2; i+1 < len(fields); i++ {
+			if want.Addr().Is6() && fields[i] == "prefixlen" {
+				bits, err := strconv.Atoi(fields[i+1])
+				if err == nil && bits == want.Bits() {
+					return true
+				}
+			}
+			if want.Addr().Is4() && fields[i] == "netmask" {
+				var mask net.IPMask
+				if value, err := strconv.ParseUint(strings.TrimPrefix(fields[i+1], "0x"), 16, 32); err == nil {
+					mask = net.IPMask{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)}
+				} else if value, err := netip.ParseAddr(fields[i+1]); err == nil && value.Is4() {
+					bytes := value.As4()
+					mask = net.IPMask(bytes[:])
+				}
+				if ones, bits := mask.Size(); bits == 32 && ones == want.Bits() {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
