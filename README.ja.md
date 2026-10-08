@@ -94,8 +94,7 @@ routerd は、次の独立した特徴を大切にします。
 
 - **OS をまたぐ宣言的リソース**: Ubuntu Server を主対象にします。FreeBSD と
   NixOS は同じモデルを共有しますが、native renderer が未完成の部分は
-  groundwork として扱います。Alpine Linux はライブ ISO と最小ホスト向けの
-  土台を持ちます。
+  groundwork として扱います。ライブ ISO は Ubuntu ベースです。
 - **ライブ ISO と USB 永続化**: ディスクレス mini PC ルーターを構成できます。
 - **観測できる経路判断**: イベント、世代差分、ヘルスチェック、Web Console、
   OpenTelemetry で理由を追えます。
@@ -282,14 +281,15 @@ Linux 用の release archive には、静的リンクした routerd バイナリ
 
 routerd 本体は [BSD 3-Clause License](LICENSE) で配布します。
 release archive とライブ ISO には、各 software が持つ別のライセンスが含まれます。
-Alpine ベースのライブ ISO は aggregate distribution です。
+Ubuntu ベースのライブ ISO は aggregate distribution です。
 dnsmasq、nftables、WireGuard tools、ppp、iproute2 などの GPL 系ツールは、
 それぞれのライセンスとソース入手経路を保ちます。
 ISO 全体が 1 つの GPL work として再ライセンスされるものではありません。
 
 release archive には `share/doc/LICENSE` と
 `share/doc/THIRD_PARTY_LICENSES.md` を同梱します。
-ライブ ISO では `/usr/share/licenses/routerd/` から同じ通知を確認できます。
+ライブ ISO では `/usr/local/share/doc/routerd/` にある `LICENSE` と
+`THIRD_PARTY_LICENSES.txt` から同じ通知を確認できます。
 一覧は次のコマンドで再生成します。
 
 ```sh
@@ -322,7 +322,8 @@ sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
 
 ## 開発者向けビルド
 
-Go 1.24 以降を前提にします。
+ソースからのビルドには Go 1.25.0 以降が必要です。`go.mod` は Go 1.25.9
+toolchain を指定しています。リリースアーカイブから導入する場合、Go は不要です。
 
 ```sh
 make test
@@ -382,8 +383,9 @@ sudo routerctl plugin run <name> --dry-run
 
 もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
 リソースモデルを使いますが、native renderer と service integration の一部は
-まだ groundwork で、機能同等ではありません。Alpine はライブ ISO と `apk`
-package bootstrap に対応していますが、OpenRC service parity も groundwork です。
+まだ groundwork で、機能同等ではありません。ライブ ISO は Ubuntu ベースで、
+ビルドスクリプトの既定は `noble` です。Alpine の `apk` package bootstrap と
+OpenRC integration は別のプラットフォーム経路です。
 現在の対応表は `docs/platforms.md` を参照してください。
 
 routerd はプレリリースです。
