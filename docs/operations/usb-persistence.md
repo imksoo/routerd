@@ -14,6 +14,9 @@ This is intended for mini PCs that boot from removable media. It avoids a
 permanent internal disk while still preserving the router configuration across
 reboots.
 
+The current Ubuntu live ISO uses the persistence helper described here.
+Alpine `lbu` instructions from older images do not apply to this image.
+
 ## Layout
 
 When USB persistence is enabled, routerd uses this layout on the selected
@@ -130,20 +133,12 @@ If the device is removed unexpectedly, routerd keeps running from RAM. The live
 helper logs a warning and stops treating the USB path as durable until the
 device is reinserted and mounted again.
 
-## Alpine lbu
+## Historical Alpine lbu integration
 
-The ISO includes Alpine `lbu`. The live helper adds routerd paths to the lbu
-include list:
-
-```text
-/usr/local/etc/routerd
-/var/lib/routerd
-/var/db/routerd
-/etc/periodic/daily/routerd-usb-flush
-```
-
-The helper runs `lbu commit` after saving config or flushing state. You normally
-do not need to run `lbu` directly.
+Earlier Alpine-based images used `lbu` and `/etc/periodic/daily` integration.
+That is historical platform-specific behavior, not a prerequisite or command
+sequence for the current Ubuntu live ISO. Use the current helper’s `save-config`,
+`flush`, and `umount` commands below.
 
 ## Useful commands
 

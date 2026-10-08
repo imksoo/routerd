@@ -13,6 +13,9 @@ routerd 的 Live ISO 可作为无盘路由器运行。
 这适合从可移动介质启动的 mini PC。
 不需要内置磁盘，重新启动后仍可保留配置。
 
+当前 Ubuntu Live ISO 使用本文说明的持久化辅助脚本。旧 Alpine 镜像的
+`lbu` 步骤不适用于当前 ISO。
+
 ## 目录配置
 
 启用 USB 持久化后，routerd 会在选定分区上创建以下配置。

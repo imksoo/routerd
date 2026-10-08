@@ -65,6 +65,11 @@ SPDX-License-Identifier: BSD-3-Clause
 
 ## ライブ ISO
 
+現在のライブ ISO は `debootstrap` で作る Ubuntu ベースで、既定の suite は
+`noble` です。生成される一覧は Ubuntu archive の OS パッケージ情報への案内を
+含みますが、全パッケージのソース一覧ではありません。再配布時は実際に使用した
+Ubuntu リリースのソースとライセンス情報を確認してください。
+
 ライブ ISO は集合的な配布物で、次を組み合わせています。
 
 - routerd バイナリとスクリプト
@@ -79,8 +84,8 @@ SPDX-License-Identifier: BSD-3-Clause
 ライブ ISO では、次の場所から routerd の通知を確認できます。
 
 ```text
-/usr/share/licenses/routerd/LICENSE
-/usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
+/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
 ## リリースチェックリスト
@@ -94,7 +99,7 @@ SPDX-License-Identifier: BSD-3-Clause
 4. 通常のテスト、スキーマ、example、website、アーカイブ、ライブ ISO のチェックを実行します。
 5. リリースアーカイブに `share/doc/LICENSE` と
    `share/doc/THIRD_PARTY_LICENSES.md` があることを確認します。
-6. ライブ ISO に `/usr/share/licenses/routerd/` があることを確認します。
+6. ライブ ISO に `/usr/local/share/doc/routerd/` があることを確認します。
 
 依存関係が大きく変わった場合は、タグを作る前にこのページと、生成済みの
 ライセンス一覧を見直します。

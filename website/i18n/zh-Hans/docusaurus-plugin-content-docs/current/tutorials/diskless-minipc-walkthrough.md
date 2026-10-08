@@ -12,6 +12,13 @@ title: 无盘 mini PC 教程
 
 ![无盘 mini PC 流程](/img/routerd-diskless-minipc.svg)
 
+:::note 历史截图与控制台示例
+当前 ISO 基于 Ubuntu，`scripts/build-live-iso.sh` 默认使用 `noble`。
+以下截图和 `v20260510.1811` 日志保留自旧版 Alpine 教程，用于说明流程，
+不是当前 Ubuntu 启动画面、内核或接口名的验证证据。请在实际镜像上运行
+`ip -br link`，并依当前向导提示操作。当前安装流程见[安装与升级](../install-and-upgrade.md)。
+:::
+
 ## 准备物品
 
 - 具备两个以上网络接口的 mini PC
@@ -44,8 +51,8 @@ sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 从固定 URL 获取 ISO。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -79,7 +86,7 @@ ISO 同时启用视频控制台与串行控制台。
 VGA 的画面截图作为启动轨迹使用，实际的输入与结果请通过下方的
 串行控制台日志确认。
 
-![Boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
+![旧版 Live ISO 启动截图](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. 执行向导
 
@@ -87,12 +94,9 @@ VGA 的画面截图作为启动轨迹使用，实际的输入与结果请通过�
 
 ![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
-串行控制台会显示如下的 Live ISO 说明与向导开始画面。
+以下为旧版 Alpine 教程保留的串行控制台示例。
 
 ```text
-Welcome to Ubuntu
-Kernel 6.8.0-xx-generic on x86_64 (/dev/ttyS0)
-
 localhost login: root
 routerd live v20260510.1811
 

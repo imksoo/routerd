@@ -62,6 +62,10 @@ Release archive 包含下列內容：
 
 ## Live ISO
 
+目前 Live ISO 透過 `debootstrap` 建置，以 Ubuntu 為基礎，預設 suite 為 `noble`。
+產生的清單指向 Ubuntu archive 的基礎系統套件資訊，並不是逐套件原始碼清單。
+重新散布映像前，請核對實際使用的 Ubuntu 版本的原始碼和授權資訊。
+
 Live ISO 是彙整式發布物，組合了下列內容：
 
 - routerd 二進位檔與 script
@@ -75,8 +79,8 @@ Live ISO 整體並不因此被重新授權為單一 GPL 著作物。
 Live ISO 在下列路徑提供 routerd 的授權聲明：
 
 ```text
-/usr/share/licenses/routerd/LICENSE
-/usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
+/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
 套件的 source 資訊可透過套件儲存庫
@@ -91,6 +95,6 @@ release 前請確認下列事項：
 3. 確認 GPL 系列授權條款僅出現在個別分發的套件或其他外部工具中。
 4. 執行一般的測試、schema、example、website、archive 及 Live ISO 檢查。
 5. 確認 release archive 包含 `share/doc/LICENSE` 與 `share/doc/THIRD_PARTY_LICENSES.md`。
-6. 確認 Live ISO 包含 `/usr/share/licenses/routerd/`。
+6. 確認 Live ISO 包含 `/usr/local/share/doc/routerd/`。
 
 若相依套件集有較大幅度的變動，請在建立 tag 前重新檢視本頁與已產生的授權條款清單。

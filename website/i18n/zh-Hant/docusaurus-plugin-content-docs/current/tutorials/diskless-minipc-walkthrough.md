@@ -12,6 +12,13 @@ title: 無碟 mini PC 教學
 
 ![無碟 mini PC 流程](/img/routerd-diskless-minipc.svg)
 
+:::note 歷史截圖與主控台範例
+目前 ISO 以 Ubuntu 為基礎，`scripts/build-live-iso.sh` 預設使用 `noble`。
+以下截圖和 `v20260510.1811` 紀錄保留自舊版 Alpine 教學，用於說明流程，
+不是目前 Ubuntu 開機畫面、核心或介面名稱的驗證證據。請在實際映像上執行
+`ip -br link`，並依目前精靈提示操作。目前安裝流程見[安裝與升級](../install-and-upgrade.md)。
+:::
+
 ## 準備物品
 
 - 具備兩個以上網路介面的 mini PC
@@ -44,8 +51,8 @@ sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 從固定 URL 取得 ISO。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -79,7 +86,7 @@ ISO 同時啟用視訊主控台與序列主控台。
 VGA 的畫面擷取作為開機軌跡使用，實際的輸入與結果請透過下方的
 序列主控台日誌確認。
 
-![Ubuntu boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
+![舊版 Live ISO 開機截圖](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. 執行精靈
 
@@ -87,12 +94,9 @@ VGA 的畫面擷取作為開機軌跡使用，實際的輸入與結果請透過�
 
 ![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
-序列主控台會顯示如下的 Live ISO 說明與精靈開始畫面。
+以下為舊版 Alpine 教學保留的序列主控台範例。
 
 ```text
-Welcome to Ubuntu 24.04 LTS
-Kernel 6.8.0-124-generic on x86_64 (/dev/ttyS0)
-
 localhost login: root
 routerd live v20260510.1811
 

@@ -13,6 +13,15 @@ once per day.
 
 ![Diskless mini PC flow](/img/routerd-diskless-minipc.svg)
 
+:::note Historical screenshots and console examples
+The current ISO uses Ubuntu; `scripts/build-live-iso.sh` defaults to `noble`.
+The screenshots and `v20260510.1811` transcripts below are retained from the
+older Alpine-based walkthrough. They explain the workflow, but are not evidence
+of the current Ubuntu boot screen, kernel, or interface names. Use `ip -br link`
+on your actual image and follow the current wizard prompts. For the current
+install path, see [Install and upgrade](../install-and-upgrade.md).
+:::
+
 ## What you need
 
 - A mini PC with at least two network interfaces.
@@ -52,11 +61,12 @@ Replace `/dev/sdX1` only after identifying the actual removable USB partition.
 
 ## 2. Boot the live ISO
 
-Download the fixed latest URL:
+Download the [recommended stable milestone](../releases/stable.md), pinned
+to its release tag:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -92,7 +102,7 @@ On Proxmox VE, the interactive wizard is normally easier to read through
 `qm terminal`; the VGA screenshots are useful for boot evidence, while the
 serial transcript below shows the actual inputs and results.
 
-![Alpine boot messages](/img/iso-boot/iso-boot-02-alpine-boot.png)
+![Historical live ISO boot screenshot](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. Run the wizard
 
@@ -100,7 +110,7 @@ Log in as `root`. The live ISO starts the setup wizard.
 
 ![routerd live login and message of the day](/img/iso-boot/iso-boot-03-login-motd.png)
 
-The serial console should show the live ISO message and the wizard prompt:
+The older Alpine walkthrough recorded this serial-console example:
 
 ```text
 Welcome to Alpine Linux 3.23

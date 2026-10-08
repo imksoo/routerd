@@ -177,9 +177,10 @@ Populate the complete module cache first so license detection reads each
 dependency's license instead of falling back to the repository directory.
 
 The generated `THIRD_PARTY_LICENSES.md` records Go module license files and
-Alpine package license metadata. The live ISO is an aggregate distribution:
-GPL-licensed Alpine packages keep their own licenses and source availability
-paths. The ISO is not relicensed as a single GPL work.
+points to Ubuntu archive source/license metadata for the current live ISO base
+(default `noble`). It is not a complete per-package source inventory. The ISO
+is an aggregate distribution: OS packages keep their own licenses and source
+availability paths. The ISO is not relicensed as a single GPL work.
 
 ## Runtime dependencies
 
@@ -204,7 +205,8 @@ On Arch-like systems, the installer uses `pacman` and installs:
 ca-certificates curl dnsmasq nftables wireguard-tools chrony bind tcpdump cronie jq ppp rp-pppoe conntrack-tools iproute2 iputils traceroute kmod radvd strongswan iptables keepalived openssh
 ```
 
-On Alpine, the installer uses `apk` and installs:
+For a separate Alpine host (not the current Ubuntu live ISO), the installer
+uses `apk` and installs:
 
 ```text
 alpine-conf ca-certificates curl dnsmasq nftables wireguard-tools chrony bind-tools tcpdump cronie jq ppp ppp-pppoe conntrack-tools iproute2 iputils iputils-tracepath kmod radvd strongswan iptables keepalived util-linux e2fsprogs dosfstools exfatprogs qemu-guest-agent openssh

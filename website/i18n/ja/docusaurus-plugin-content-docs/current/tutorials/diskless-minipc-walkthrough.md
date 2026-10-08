@@ -13,6 +13,14 @@ routerd ライブ ISO から起動し、設定を USB に保存します。
 
 ![ディスクレス mini PC の流れ](/img/routerd-diskless-minipc.svg)
 
+:::note 過去の画面とコンソール例
+現在の ISO は Ubuntu ベースで、`scripts/build-live-iso.sh` の既定は `noble` です。
+以下の画面と `v20260510.1811` のログは、旧 Alpine ベースの手順から残した参考例です。
+現在の Ubuntu の起動画面、kernel、NIC 名を検証した証跡ではありません。
+実際のイメージで `ip -br link` と現在のウィザード表示を確認してください。
+現在の導入経路は[インストールとアップグレード](../install-and-upgrade.md)を参照します。
+:::
+
 ## 用意するもの
 
 - ネットワークインターフェースを 2 つ以上持つ mini PC
@@ -46,8 +54,8 @@ sudo mkfs.ext4 -L ROUTERD /dev/sdX1
 固定 URL から取得します。
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -81,7 +89,7 @@ Proxmox VE では、対話式ウィザードは通常 `qm terminal` の方が読
 VGA の画面キャプチャは起動の証跡として使い、実際の入力と結果は下の
 シリアルコンソールログで確認します。
 
-![起動メッセージ](/img/iso-boot/iso-boot-02-alpine-boot.png)
+![旧ライブ ISO の起動画面](/img/iso-boot/iso-boot-02-alpine-boot.png)
 
 ## 3. ウィザードを実行する
 
@@ -89,8 +97,7 @@ VGA の画面キャプチャは起動の証跡として使い、実際の入力�
 
 ![routerd ライブのログインと MOTD](/img/iso-boot/iso-boot-03-login-motd.png)
 
-シリアルコンソールでは、ライブ ISO の案内とウィザードの開始が次のように
-表示されます。
+旧 Alpine の手順には、次のシリアルコンソール例があります。
 
 ```text
 routerd live v20260510.1811
