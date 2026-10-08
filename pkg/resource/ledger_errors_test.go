@@ -166,6 +166,54 @@ func TestSQLiteLedgerMigrationFailurePreservesLegacyAndRetries(t *testing.T) {
 	}
 }
 
+func TestSQLiteLedgerMigrationRenameFailureRetriesWithoutRestoringOwnership(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routerd.db")
+	legacy := filepath.Join(dir, "artifacts.json")
+	artifacts := ledgerErrorArtifacts()
+	source := &JSONLedger{Version: 1, Artifacts: artifacts}
+	if err := source.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the destination deterministically fails rename, even as root.
+	if err := os.Mkdir(legacy+".migrated", 0700); err != nil {
+		t.Fatal(err)
+	}
+	if ledger, err := OpenSQLiteLedger(path); err == nil {
+		_ = ledger.Close()
+		t.Fatal("open hid migration rename failure")
+	}
+	if err := os.Remove(legacy + ".migrated"); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := OpenSQLiteLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("retry left legacy source behind: %v", err)
+	}
+	if err := ledger.Forget(artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Even a restored old JSON backup must not resurrect forgotten ownership.
+	if err := source.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenSQLiteLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if all, err := reopened.All(); err != nil || len(all) != 0 {
+		t.Fatalf("legacy ownership resurrected: %v, %v", all, err)
+	}
+}
+
 func TestSQLiteLedgerLockedWritesFail(t *testing.T) {
 	l := errorTestLedger(t)
 	artifacts := ledgerErrorArtifacts()
