@@ -190,6 +190,34 @@ Keep strict controller-progress checks and the complete capture/TTL tail.
 Validate the deadline logic with a fake clock and retain a stalled-controller
 negative fixture before freezing the collector.
 
+Controller completion counters are not a fixed-cadence heartbeat. The
+`mobility-arp-request` controller handles pending targets serially; each
+synchronous `probe-target` waits between its retries, and the framework records
+completion and resets the interval only after the entire batch returns. Two
+normal reads can therefore show the same reconcile count while commands finish.
+
+Use `arp_controller_progress.evaluate_arp_controller_progress()` for this
+controller, retaining every original controller and high-frequency counter read.
+Bind the independent counter series to the actual on-demand observer PID,
+process start ticks and daemon `since`. Each adjacent controller pair must show
+strictly increasing completion count/time, or command completions wholly between
+the first read's completion and the next read's start. The latter requires
+complete counter coverage (the existing 0.4-second maximum gap) and a later
+successful reconcile completion in the same bounded observation. Retain the
+per-pair explanation and subsequent completion index. Autonomous probes or
+scans alone cannot establish this evidence. Ensure this controller is the sole
+command producer during the observation; direct probe API calls invalidate that
+assumption. Regressions, sampler errors, process changes, current/new reconcile
+errors, inconsistent completion fields and a final unfinished batch remain FAIL.
+The API omits a zero `reconcileErrorCount`; missing required fields still fail.
+
+This is evidence of continued work and completion, not a per-reconcile latency
+SLO. Keep the observation duration, normal polling cadence, target attribution,
+TTL/expiry, measured clock bounds, self-suppression and final environment gates.
+Do not resample until counters differ, discard repeated reads, or reinterpret a
+sealed FAIL as PASS. Test stalled-controller and missing-evidence cases, freeze
+the changed evaluator and adapter, then certify a new run before live testing.
+
 For qualification split into canary and final phases, verify the new run identity
 before computing the frozen contract. Copying a plan to a new directory does
 not update its JSON `runId`. Check both documents against the prospective
