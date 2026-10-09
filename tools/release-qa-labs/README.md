@@ -95,14 +95,28 @@ Bind version verification to the exact successful Release workflow and tag:
 For on-demand ARP positive controls, an unexpired federation database record is
 not proof of a pending command. Do not require all background facts to disappear
 or attribute an arbitrary counter increment to the selected target.
-`arp_probe_attribution.py` provides an offline, fail-closed subgate for bounded
-100–200 ms receiver-local status samples and complete `tcpdump -nn -tt -e`
-broadcast captures. Bind the actual observer's PID/start time, source IP/MAC,
-retry count and timeout before using it. It requires one command completion,
-exact probe/frame accounting for the selected target, no autonomous increments,
-stable identity/counters, an observed quiet guard before the burst, and packets
-outside ambiguous status-read boundaries. Unicast kernel NUD packets cannot
-prove a daemon probe. Missing, mixed, or sparse evidence remains inconclusive.
+Use `arp_probe_attribution.attribute_recorded_command()` with bounded 100–200 ms
+receiver-local status samples and complete `tcpdump -nn -tt -e` captures. Preserve
+the original `observed.lastCommandProbe` JSON string as `lastCommandProbe` beside
+the five counters in each sample. Bind the actual observer's PID/start time,
+source IP/MAC, retry count and timeout before using it.
+
+The helper requires a new successful command record with sequence equal to the
+completion counter, the selected target, its actual write count, and start/end
+times inside the request's validity. It verifies the exact target broadcasts
+inside those times and their retry cadence. Neighboring targets and autonomous
+traffic do not erase the explicit command evidence. Missing/stale records,
+record/counter inconsistencies, partial captures, identity changes, sampling
+gaps, missing/extra target frames and unicast-only evidence remain rejected.
+The record is only the most recent successful command; poll promptly because a
+later success replaces it. Aggregate counter deltas can include background work
+and are retained separately from this command's recorded write count.
+
+The legacy `attribute_command_probe()` remains available for old diagnostic
+replays. Aggregate counts and a quiet guard cannot exclude a proactive start or
+command completion delayed from before the capture; even matching batch totals
+cannot prove that closure. New formal qualification must use explicit command
+records, not fall back to the legacy inference when a record is absent.
 
 The caller still verifies the fresh request's full identity and generation,
 pool/membership, measured clock uncertainty, remaining TTL and observation tail,

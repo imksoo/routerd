@@ -124,6 +124,15 @@ On FreeBSD, the equivalent path is `/var/run/routerd/...`.
 
 The semantics of `renew` differ per daemon: DHCPv6 sends a Renew, DHCPv4 refreshes the lease, healthcheck triggers an immediate probe.
 
+The ARP observer accepts `probe-target` through `POST /v1/commands`. After a
+successful command, `GET /v1/status` includes `observed.lastCommandProbe` as JSON
+text with `sequence`, `target`, `startedAt`, `completedAt`, and `packetsSent`.
+The sequence equals the same snapshot's `commandProbeCount`; timestamps use UTC
+RFC3339. Only the last success is retained. Rejections, cooldown suppression,
+partial failures, and autonomous probes do not replace it. Bind this diagnostic
+to the observer process and packet capture when correlating requests; it is not
+a request identifier or durable history. See [the design](design.md#52-controller-chain).
+
 ## Phase vocabulary
 
 `ResourceStatus.phase` uses a shared vocabulary across resources:
