@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -233,5 +234,57 @@ func TestARPProbeRequestTrackerAllowsRefreshedStableEvent(t *testing.T) {
 	}
 	if !tracker.claim("same", now.Add(10*time.Second), now.Add(time.Minute), now.Add(10*time.Second)) {
 		t.Fatal("refreshed stable event ID was not claimed")
+	}
+}
+
+func TestARPRequestReconcileRetriesFailuresAndDeduplicatesCompletedRequests(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	spec := arpFanoutPoolSpec()
+	store := testStore(t, now)
+	source := DiscoveryController{Router: staticRouter("pve-rt07", spec), Store: store, Now: func() time.Time { return now }}
+	request := daemonapi.DaemonEvent{
+		Type: OnPremARPRequestObservedEvent, Time: now,
+		Attributes: map[string]string{"target": "192.168.123.129", "pool": "cloudedge", "interface": "svnet1"},
+	}
+	if err := source.HandleEvent(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	probeErr := error(context.DeadlineExceeded)
+	remote := DiscoveryController{
+		Router: staticRouter("pve-rt08", spec), Store: store,
+		Now: func() time.Time { return now }, ARPProbeRequests: NewARPProbeRequestTracker(),
+		ProbeARP: func(_ context.Context, pool, address string) error {
+			if pool != "cloudedge" || address != "192.168.123.129/32" {
+				t.Fatalf("unexpected probe %s/%s", pool, address)
+			}
+			calls++
+			return probeErr
+		},
+	}
+	if err := remote.ReconcileARPProbeRequests(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initial reconcile error = %v, want transient failure", err)
+	}
+	// Success includes a self-target no-op at observer selection. The same
+	// event stays claimed until refreshed, instead of invoking the probe again.
+	probeErr = nil
+	for i := 0; i < 40; i++ {
+		if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
+			t.Fatalf("reconcile %d after recovery: %v", i, err)
+		}
+		now = now.Add(time.Second)
+	}
+	if calls != 2 {
+		t.Fatalf("probe calls = %d, want failure then one successful retry", calls)
+	}
+	request.Time = now
+	if err := source.HandleEvent(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.ReconcileARPProbeRequests(context.Background()); err != nil {
+		t.Fatalf("refreshed observation: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("probe calls = %d, want refreshed observation to be eligible", calls)
 	}
 }

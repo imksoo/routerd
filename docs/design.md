@@ -212,6 +212,14 @@ full stored diagnostics and the separate ARP observation/request/probe events
 used for discovery and lease freshness. Matching `EventRule` history uses the
 same comparison, so routine status refreshes do not inflate event counts.
 
+For federated on-demand ARP requests, a ready observer whose source address is
+the requested target completes selection without sending a probe command. This
+keeps the request's deduplication claim instead of repeatedly submitting a
+self-target command that the daemon will reject. Other eligible observers are
+still probed; their transport failures and the absence of a ready matching
+observer remain retryable. A refreshed observation can be processed again.
+The daemon independently retains its source-address and prefix safety checks.
+
 The Linux SAM controller reconciles an empty forwarding intent by removing
 stale owned rules and per-interface `accept_local` state. An absent
 `routerd_sam_forward` chain is a read-only no-op. iptables-nft 1.8.7 can report

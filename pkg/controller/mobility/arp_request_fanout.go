@@ -26,7 +26,9 @@ const (
 )
 
 // ARPProbeFunc asks an already-supervised local on-demand observer to probe one
-// address. The chain implementation owns socket selection and readiness.
+// address. The chain implementation owns socket selection and readiness. A nil
+// result includes a completed no-op when a ready observer owns the target;
+// errors release the request claim so transient failures can be retried.
 type ARPProbeFunc func(context.Context, string, string) error
 
 type arpProbeRequestClaim struct {

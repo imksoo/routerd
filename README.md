@@ -136,6 +136,8 @@ or status fails, follow [Troubleshooting](https://routerd.net/docs/how-to/troubl
   locally without editing configuration from the browser.
   ARP observer counters and last-seen times stay available in status without
   creating a status-change event on every routine refresh.
+  Federated ARP requests skip an observer's own source address while preserving
+  retries for transient probe failures.
 - **Real host bootstrap**: package installation, sysctl defaults,
   systemd-networkd adoption, systemd units, log forwarding, and Web Console
   setup are declared as resources.
