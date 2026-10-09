@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261009.2218
+
 ### 新增
 
 - ARP observer狀態保留最近一次成功探測命令的完成序號、目標、開始/完成時間及成功傳送數。拒絕、抑制、失敗或自主探測不會覆寫記錄，例行診斷更新也不會增加狀態事件。 (#1293)

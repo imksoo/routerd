@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261009.2218
+
 ### Added
 
 - ARP observer status retains the last successful probe command's sequence, target, start/completion times, and successful write count. Rejected, suppressed, failed, and autonomous probes do not replace it, and routine diagnostic updates do not generate status events. (#1293)
