@@ -133,6 +133,38 @@ Keep strict controller-progress checks and the complete capture/TTL tail.
 Validate the deadline logic with a fake clock and retain a stalled-controller
 negative fixture before freezing the collector.
 
+For qualification split into canary and final phases, verify the new run identity
+before computing the frozen contract. Copying a plan to a new directory does
+not update its JSON `runId`. Check both documents against the prospective
+contract's run ID and their respective phase keys:
+
+```sh
+python3 - "$RUN_ID" "$RUN_ROOT" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+run_id, root = sys.argv[1], Path(sys.argv[2]).resolve()
+if root.name != run_id:
+    raise SystemExit("run root and prospective contract ID differ")
+for stage in ("canary", "final"):
+    path = root / "qualification" / (stage + "-plan.json")
+    plan = json.loads(path.read_text())
+    if plan.get("runId") != run_id or plan.get("stage") != stage:
+        raise SystemExit("phase plan identity mismatch: " + str(path))
+print("phase plan identities: pass")
+PY
+```
+
+Also review command arguments, assertion paths, target coverage, and time budgets
+for the new run; historical evidence references must remain explicitly separate.
+Evaluate the candidate driver against the saved fresh evidence before freezing,
+then bind the checked plan bytes and all execution dependencies. Certification
+and qualification must repeat their independent identity and hash checks. If
+certification rejects a frozen plan, preserve that failed contract, plan, and
+result and prepare a new run; do not repair the frozen input or overwrite its
+certification result.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
