@@ -134,6 +134,8 @@ or status fails, follow [Troubleshooting](https://routerd.net/docs/how-to/troubl
 - **Operational visibility**: bus events, resource status, DNS queries,
   connection observations, traffic flow logs, and firewall logs can be inspected
   locally without editing configuration from the browser.
+  ARP observer counters and last-seen times stay available in status without
+  creating a status-change event on every routine refresh.
 - **Real host bootstrap**: package installation, sysctl defaults,
   systemd-networkd adoption, systemd units, log forwarding, and Web Console
   setup are declared as resources.

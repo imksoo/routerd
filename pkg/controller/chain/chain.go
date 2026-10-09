@@ -773,6 +773,21 @@ func statusForEvent(apiVersion, kind string, status map[string]any) map[string]a
 			delete(stable, key)
 		}
 	}
+	if apiVersion == api.MobilityAPIVersion && kind == "ARPObserver" {
+		// The daemon keeps its client diagnostics as JSON text. Re-observing
+		// the same client refreshes seenAt without changing its identity.
+		// Keep all other fields, including unknown ones, and retain malformed
+		// input unchanged so a decoding failure cannot hide a status change.
+		if raw, ok := stable["observedClients"].(string); ok {
+			var clients []map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(raw), &clients); err == nil {
+				for _, client := range clients {
+					delete(client, "seenAt")
+				}
+				stable["observedClients"] = clients
+			}
+		}
+	}
 	if apiVersion != api.MobilityAPIVersion || kind != "MobilityPool" {
 		return stable
 	}
@@ -785,6 +800,16 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 		return true
 	}
 	switch kind {
+	case "ARPObserver":
+		if apiVersion != api.MobilityAPIVersion {
+			return false
+		}
+		// Preserve these diagnostics in status, but do not journal or fan out
+		// another resource transition for each packet, probe, or scan.
+		switch key {
+		case "lastPacketAt", "lastEventAt", "lastScanAt", "packetsSeen", "observedCount", "probeCount", "probeHitCount", "proactiveCount", "requestObservedCount", "commandProbeCount", "scanCount", "ignoredSenderMACObservationCount":
+			return true
+		}
 	case "HealthCheck":
 		return key == "lastSuccessTime"
 	case "NAT44SessionSync":
