@@ -11,6 +11,14 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- ARPObserver 仅更新数据包、probe、scan 计数器、观测时间或已知客户端的 seenAt 时，不再生成 resource status 事件。保留最新诊断值、原始 ARP 观测、客户端身份变化及故障与恢复事件。 (#1273).
+
+### 验证
+
+- 候选版本 `7a7ff047` 在修复此前未应用的既有返回路由并重新认证环境后，通过了现有2个 core、8个 leaf 的PVE部署回归测试。10分钟内HTTP为120/120、API为298/298、DNS为120/120，指定源地址的通信矩阵为80/80。在300秒观测窗口内，仅诊断值变化引起的ARP status事件为0，原始ARP观测继续运行。本次发布不包含新增的云提供商或性能认证。
+
 ## v20261009.0024
 
 ### 修复

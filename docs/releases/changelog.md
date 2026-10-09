@@ -12,6 +12,14 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Suppress ARPObserver resource status events when only packet/probe/scan counters, observation timestamps, or a known client's seenAt change. Keep current diagnostics, raw ARP observations, client identity changes, and failure/recovery events. (#1273).
+
+### Validation
+
+- Candidate `7a7ff047` passed certified regression on the existing two-core/eight-leaf PVE deployment after restoring a previously unapplied return route: 10-minute HTTP 120/120, API 298/298, DNS 120/120, and 80/80 source-specific matrix replies. In a 300-second window, diagnostic-only ARP status events were zero while raw ARP observations continued. This release does not add cloud-provider or performance qualification.
+
 ## v20261009.0024
 
 ### Fixed
