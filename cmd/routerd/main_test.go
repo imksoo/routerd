@@ -2163,11 +2163,13 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 		t.Fatalf("save state: %v", err)
 	}
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{{
+	if err := ledger.Remember([]resource.Artifact{{
 		Kind:  "file",
 		Name:  "/tmp/routerd-test",
 		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
-	}})
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
 	}
@@ -2191,8 +2193,8 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 		t.Fatalf("load ledger: %v", err)
 	}
 	defer func() { _ = loadedLedger.Close() }()
-	if len(loadedLedger.All()) != 0 {
-		t.Fatalf("ledger after delete = %+v, want empty", loadedLedger.All())
+	if artifacts, err := loadedLedger.All(); err != nil || len(artifacts) != 0 {
+		t.Fatalf("ledger after delete = %+v, err = %v, want empty", artifacts, err)
 	}
 }
 

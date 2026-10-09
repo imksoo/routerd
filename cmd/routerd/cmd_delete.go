@@ -67,8 +67,12 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 	result := controlapi.DeleteResult{TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"}, DryRun: dryRun}
 	for _, target := range targets {
 		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name
+		owned, err := ledger.All()
+		if err != nil {
+			return result, err
+		}
 		plan := lifecycle.PlanDeleteTargetGC(lifecycle.GCPlanInput{
-			LedgerArtifacts: ledger.All(),
+			LedgerArtifacts: owned,
 			TargetOwnerIDs:  map[string]bool{owner: true},
 		})
 		for _, removal := range plan.ArtifactRemovals {
@@ -86,7 +90,9 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 			result.Artifacts = append(result.Artifacts, label)
 		}
 		if !dryRun {
-			ledger.Forget(plan.LedgerForgets)
+			if err := ledger.Forget(plan.LedgerForgets); err != nil {
+				return result, err
+			}
 			if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
 				if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
 					return result, err

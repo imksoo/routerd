@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,12 +16,15 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// Ledger records ownership. Read failures must not be treated as an empty
+// ledger or an unowned artifact. SQLite mutations commit before returning;
+// JSON mutations require Save to persist.
 type Ledger interface {
-	Remember([]Artifact)
-	Forget([]Artifact)
-	Owns(Artifact) bool
+	Remember([]Artifact) error
+	Forget([]Artifact) error
+	Owns(Artifact) (bool, error)
 	Save(string) error
-	All() []Artifact
+	All() ([]Artifact, error)
 	Close() error
 }
 
@@ -58,7 +62,7 @@ func LoadLedger(path string) (Ledger, error) {
 	return &ledger, nil
 }
 
-func (l *JSONLedger) Remember(artifacts []Artifact) {
+func (l *JSONLedger) Remember(artifacts []Artifact) error {
 	byID := map[string]Artifact{}
 	for _, artifact := range l.Artifacts {
 		byID[artifact.Identity()] = artifact
@@ -78,9 +82,10 @@ func (l *JSONLedger) Remember(artifacts []Artifact) {
 	})
 	l.Version = 1
 	l.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
-func (l *JSONLedger) Forget(artifacts []Artifact) {
+func (l *JSONLedger) Forget(artifacts []Artifact) error {
 	remove := map[string]bool{}
 	for _, artifact := range artifacts {
 		remove[artifact.Identity()] = true
@@ -93,15 +98,16 @@ func (l *JSONLedger) Forget(artifacts []Artifact) {
 	}
 	l.Artifacts = kept
 	l.UpdatedAt = time.Now().UTC()
+	return nil
 }
 
-func (l *JSONLedger) Owns(artifact Artifact) bool {
+func (l *JSONLedger) Owns(artifact Artifact) (bool, error) {
 	for _, known := range l.Artifacts {
 		if known.Identity() == artifact.Identity() {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func (l *JSONLedger) Save(path string) error {
@@ -116,10 +122,10 @@ func (l *JSONLedger) Save(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func (l *JSONLedger) All() []Artifact {
+func (l *JSONLedger) All() ([]Artifact, error) {
 	out := append([]Artifact(nil), l.Artifacts...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
-	return out
+	return out, nil
 }
 
 // Close is a no-op for JSONLedger; it exists to satisfy the Ledger interface
@@ -184,6 +190,9 @@ CREATE TABLE IF NOT EXISTS artifacts (
   source TEXT,
   generation INTEGER,
   observed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ledger_migrations (
+  name TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS objects (
   api_version TEXT NOT NULL,
@@ -331,11 +340,31 @@ func (l *SQLiteLedger) tableHasColumn(table, column string) (bool, error) {
 
 func (l *SQLiteLedger) migrateLegacyJSON() error {
 	legacy := filepath.Join(filepath.Dir(l.path), "artifacts.json")
-	if _, err := os.Stat(legacy); errors.Is(err, os.ErrNotExist) {
-		return nil
+	if _, err := os.Stat(legacy); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	tx, err := l.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var migrated int
+	if err := tx.QueryRow(`SELECT count(*) FROM ledger_migrations WHERE name = 'legacy-artifacts-json'`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		// The import committed before an interrupted or failed rename. Never
+		// import again, even if all of that ownership has since been forgotten.
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return os.Rename(legacy, legacy+".migrated")
 	}
 	var count int
-	if err := l.db.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM artifacts`).Scan(&count); err != nil {
 		return err
 	}
 	if count != 0 {
@@ -345,7 +374,15 @@ func (l *SQLiteLedger) migrateLegacyJSON() error {
 	if err != nil {
 		return err
 	}
-	l.Remember(jsonLedger.Artifacts)
+	if err := l.rememberArtifacts(tx, jsonLedger.Artifacts); err != nil {
+		return fmt.Errorf("migrate legacy ownership ledger: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO ledger_migrations(name) VALUES ('legacy-artifacts-json')`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	return os.Rename(legacy, legacy+".migrated")
 }
 
@@ -364,39 +401,80 @@ func loadJSONLedgerFile(path string) (*JSONLedger, error) {
 	return &ledger, nil
 }
 
-func (l *SQLiteLedger) Remember(artifacts []Artifact) {
+func (l *SQLiteLedger) Remember(artifacts []Artifact) error {
+	tx, err := l.db.Begin()
+	if err != nil {
+		return fmt.Errorf("remember artifacts: %w", err)
+	}
+	defer tx.Rollback()
+	if err := l.rememberArtifacts(tx, artifacts); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit ownership ledger: %w", err)
+	}
+	return nil
+}
+
+func (l *SQLiteLedger) rememberArtifacts(tx *sql.Tx, artifacts []Artifact) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, artifact := range artifacts {
 		if artifact.Owner == "" {
 			continue
 		}
-		attrs, _ := json.Marshal(artifact.Attributes)
+		attrs, err := json.Marshal(artifact.Attributes)
+		if err != nil {
+			return fmt.Errorf("encode artifact %s: %w", artifact.Identity(), err)
+		}
 		ownerAPI, ownerKind, ownerName := splitOwner(artifact.Owner)
-		_, _ = l.db.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
+		_, err = tx.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
 VALUES(?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(artifact_id) DO UPDATE SET kind=excluded.kind,name=excluded.name,owner_api_version=excluded.owner_api_version,owner_kind=excluded.owner_kind,owner_name=excluded.owner_name,attributes=excluded.attributes,source=excluded.source,generation=excluded.generation,observed_at=excluded.observed_at`,
 			artifact.Identity(), artifact.Kind, artifact.Name, ownerAPI, ownerKind, ownerName, string(attrs), "routerd", effectiveGeneration(l.generation), now)
+		if err != nil {
+			return fmt.Errorf("remember artifact %s: %w", artifact.Identity(), err)
+		}
 	}
+	return nil
 }
 
-func (l *SQLiteLedger) Forget(artifacts []Artifact) {
+func (l *SQLiteLedger) Forget(artifacts []Artifact) error {
+	tx, err := l.db.Begin()
+	if err != nil {
+		return fmt.Errorf("forget artifacts: %w", err)
+	}
+	defer tx.Rollback()
 	for _, artifact := range artifacts {
-		_, _ = l.db.Exec(`DELETE FROM artifacts WHERE artifact_id = ?`, artifact.Identity())
+		if _, err := tx.Exec(`DELETE FROM artifacts WHERE artifact_id = ?`, artifact.Identity()); err != nil {
+			return fmt.Errorf("forget artifact %s: %w", artifact.Identity(), err)
+		}
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit ownership ledger: %w", err)
+	}
+	return nil
 }
 
-func (l *SQLiteLedger) Owns(artifact Artifact) bool {
+func (l *SQLiteLedger) Owns(artifact Artifact) (bool, error) {
 	var id string
 	err := l.db.QueryRow(`SELECT artifact_id FROM artifacts WHERE artifact_id = ?`, artifact.Identity()).Scan(&id)
-	return err == nil
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check ownership of %s: %w", artifact.Identity(), err)
+	}
+	return true, nil
 }
 
-func (l *SQLiteLedger) Save(path string) error { return nil }
+// SQLite mutations are committed before Remember and Forget return. Save only
+// checks that the backing store is still available; it does not defer writes.
+func (l *SQLiteLedger) Save(path string) error { return l.db.Ping() }
 
-func (l *SQLiteLedger) All() []Artifact {
+func (l *SQLiteLedger) All() ([]Artifact, error) {
 	rows, err := l.db.Query(`SELECT kind,name,coalesce(owner_api_version,''),coalesce(owner_kind,''),coalesce(owner_name,''),coalesce(attributes,'{}') FROM artifacts ORDER BY artifact_id`)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("list owned artifacts: %w", err)
 	}
 	defer rows.Close()
 	var out []Artifact
@@ -404,16 +482,21 @@ func (l *SQLiteLedger) All() []Artifact {
 		var artifact Artifact
 		var attrs, ownerAPI, ownerKind, ownerName string
 		if err := rows.Scan(&artifact.Kind, &artifact.Name, &ownerAPI, &ownerKind, &ownerName, &attrs); err != nil {
-			continue
+			return nil, fmt.Errorf("scan owned artifact: %w", err)
 		}
 		artifact.Owner = joinOwner(ownerAPI, ownerKind, ownerName)
-		_ = json.Unmarshal([]byte(attrs), &artifact.Attributes)
+		if err := json.Unmarshal([]byte(attrs), &artifact.Attributes); err != nil {
+			return nil, fmt.Errorf("decode owned artifact %s: %w", artifact.Identity(), err)
+		}
 		if artifact.Attributes == nil {
 			artifact.Attributes = map[string]string{}
 		}
 		out = append(out, artifact)
 	}
-	return out
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read owned artifacts: %w", err)
+	}
+	return out, nil
 }
 
 func (l *SQLiteLedger) SetGeneration(generation int64) {

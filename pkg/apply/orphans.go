@@ -51,7 +51,14 @@ func (e *Engine) AdoptionCandidateArtifacts(router *api.Router, ledger resource.
 	seen := map[string]bool{}
 	for _, artifact := range desired {
 		id := artifact.Identity()
-		if seen[id] || ledger.Owns(artifact) {
+		if seen[id] {
+			continue
+		}
+		owns, err := ledger.Owns(artifact)
+		if err != nil {
+			return nil, nil, err
+		}
+		if owns {
 			continue
 		}
 		actualArtifact, ok := actualByID[id]
@@ -145,9 +152,13 @@ func (e *Engine) LedgerOwnedOrphanPlanEffective(effective, declared *api.Router,
 	}
 	aliases := interfaceAliases(effective)
 	desired := DesiredOwnedArtifacts(effective, aliases)
+	owned, err := ledger.All()
+	if err != nil {
+		return lifecycle.GCPlan{}, err
+	}
 	return lifecycle.PlanArtifactOrphans(lifecycle.GCPlanInput{
 		DesiredArtifacts: desired,
-		LedgerArtifacts:  ledger.All(),
+		LedgerArtifacts:  owned,
 		HostArtifacts:    e.actualInventoryBackedArtifacts(),
 	}), nil
 }

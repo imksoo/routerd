@@ -530,7 +530,11 @@ func buildShowResources(router *api.Router, resources []api.Resource, store rout
 				item.State = nil
 			}
 		}
-		item.Ledger = ledgerArtifactsForOwner(ledger, res.ID())
+		owned, err := ledgerArtifactsForOwner(ledger, res.ID())
+		if err != nil {
+			return nil, err
+		}
+		item.Ledger = owned
 		if opts.Events {
 			item.Events = eventsForResource(store, res)
 		}
@@ -646,15 +650,19 @@ func interfaceAliases(resources []api.Resource) map[string]string {
 	return aliases
 }
 
-func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) []resource.Artifact {
+func ledgerArtifactsForOwner(ledger resource.Ledger, owner string) ([]resource.Artifact, error) {
 	var out []resource.Artifact
-	for _, artifact := range ledger.All() {
+	artifacts, err := ledger.All()
+	if err != nil {
+		return nil, err
+	}
+	for _, artifact := range artifacts {
 		if artifact.Owner == owner {
 			out = append(out, artifact)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Identity() < out[j].Identity() })
-	return out
+	return out, nil
 }
 
 func writeOrphans(stdout io.Writer, router *api.Router, ledger resource.Ledger) error {

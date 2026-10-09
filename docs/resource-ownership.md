@@ -93,6 +93,11 @@ with the ownership ledger, object status rows, and host inventory. It then build
 a dry-run-capable plan containing artifact removals, resource-specific teardown,
 ledger forgets, stale status deletion, state backup, and audit events.
 
+Ledger read and write failures stop the operation rather than being treated as
+empty ownership. SQLite batches commit atomically. Legacy `artifacts.json`
+imports record completion in that same transaction; a failed rename is retried
+without reimporting old ownership, even after the ledger becomes empty.
+
 The desired set is the same effective view used by apply and serve:
 `FilterRouterByWhen`, dynamic SAM resources, and `DynamicConfigPart` merges are
 included. This prevents `when: false` resources from being treated as active

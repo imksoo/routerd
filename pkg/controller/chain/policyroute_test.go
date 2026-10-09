@@ -1152,7 +1152,7 @@ func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 	dir := t.TempDir()
 	ledgerPath := filepath.Join(dir, "artifacts.json")
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{
+	if err := ledger.Remember([]resource.Artifact{
 		{
 			Kind:  "linux.ipv4.fwmarkRule",
 			Name:  "priority=10110,mark=0x110,table=110",
@@ -1185,7 +1185,9 @@ func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
 			Attributes: map[string]string{"table": "111"},
 		},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatal(err)
 	}
@@ -1246,11 +1248,11 @@ func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = loaded.Close() }()
-	if loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}) {
-		t.Fatalf("stale rule remained in ledger: %+v", loaded.All())
+	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}); err != nil || owns {
+		t.Fatalf("stale rule remained in ledger (ownership query error: %v)", err)
 	}
-	if !loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10111,mark=0x111,table=111"}) {
-		t.Fatalf("desired rule missing from ledger: %+v", loaded.All())
+	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10111,mark=0x111,table=111"}); err != nil || !owns {
+		t.Fatalf("desired rule missing from ledger (ownership query error: %v)", err)
 	}
 }
 

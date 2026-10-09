@@ -172,14 +172,16 @@ func TestDeletedPPPoESessionLedgerOrphansIncludeGeneratedFilesAndRuntime(t *test
 	}
 	owner := api.NetAPIVersion + "/PPPoESession/pppoe-flets"
 	ledger := resource.NewLedger()
-	ledger.Remember([]resource.Artifact{
+	if err := ledger.Remember([]resource.Artifact{
 		{Kind: "systemd.service", Name: "routerd-pppoe-pppoe-flets.service", Owner: owner},
 		{Kind: "file", Name: "/etc/ppp/peers/routerd-pppoe-flets", Owner: owner},
 		{Kind: "unix.socket", Name: "/run/routerd/pppoe-client/pppoe-flets.sock", Owner: owner},
 		{Kind: "directory", Name: "/run/routerd/pppoe-client/pppoe-flets", Owner: owner},
 		{Kind: "directory", Name: "/var/lib/routerd/pppoe-client/pppoe-flets", Owner: owner},
 		{Kind: "file", Name: "/etc/ppp/chap-secrets", Owner: owner},
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	engine := &Engine{
 		Command: fakeCommand(map[string]string{
 			"ip -4 rule show":            "",
