@@ -9,11 +9,33 @@ slug: /how-to/troubleshooting
 
 When investigating routerd, first separate **what routerd intends** from **what the host actually has**. Verify routerd's view, then compare against the OS state.
 
+## When the service or status command fails
+
+On Ubuntu, start by checking the service rather than retrying a live apply:
+
+```bash
+sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+```
+
+- Missing configuration or validation errors: return to [the first-router
+  tutorial](../tutorials/first-router.md) and review the file before starting.
+- Missing socket or connection refused: `routerctl` requires the running daemon.
+  A one-shot `routerd apply --once` exits and does not provide control sockets.
+- Permission denied: first try `sudo routerctl get status`. For read-only
+  access without sudo, follow [local socket access](../install-and-upgrade.md#local-control-socket-access-for-non-root-operators).
+- Service is active but the client cannot connect: inspect the WAN lease, LAN
+  address/gateway, then DNS, as described in [the client checks](../tutorials/first-router.md).
+
+Do not run a second `routerd serve` or live one-shot apply alongside the installed
+service. Keep the console open while diagnosing a failed network change.
+
 ## Triage order
 
-1. `routerctl get status` — overall view.
-2. `routerctl describe <kind>/<name>` — focus on a specific resource.
-3. `routerctl plan` — what would change next.
+1. `sudo routerctl get status` — overall view.
+2. `sudo routerctl describe <kind>/<name>` — focus on a specific resource.
+3. `sudo routerctl plan` — what would change next.
 4. OS commands (`ip`, `nft`, `ss`, `journalctl`) — actual host state.
 5. The relevant daemon's `/v1/status` and event log.
 

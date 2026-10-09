@@ -10,10 +10,10 @@ title: 安装与升级
 
 ## 1. 下载并安装发布归档
 
-在 [GitHub Releases](https://github.com/imksoo/routerd/releases) 选择与 CPU 架构相符的归档。下面使用当前推荐的稳定里程碑 [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514)；[稳定版页面](./releases/stable.md)是这个推荐的唯一来源。示例为 Linux amd64；arm64 请把文件名改为 `linux-arm64`。
+在 [GitHub Releases](https://github.com/imksoo/routerd/releases) 选择与 CPU 架构相符的归档。下面使用当前推荐的稳定里程碑 [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729)；[稳定版页面](./releases/stable.md)是这个推荐的唯一来源。示例为 Linux amd64；arm64 请把文件名改为 `linux-arm64`。
 
 ```bash
-RELEASE=v20260707.1514
+RELEASE=v20260914.0729
 curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
 curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
@@ -32,42 +32,10 @@ routerd --help
 
 ## 2. 先准备配置，再启动服务
 
-把示例复制成自己的配置并编辑接口名。`ens18`、`ens19` 只是常见 VM 名称，不一定是你的机器上的名字。服务尚未运行时，不要用 `routerctl`；先直接使用 `routerd` 检查文件。
-
-```bash
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudoedit /usr/local/etc/routerd/router.yaml
-sudo routerd validate --config /usr/local/etc/routerd/router.yaml
-```
-
-`routerd validate` 直接读取 YAML，不需要服务已经运行，也不会改动主机网络。
-
-接着做一次隔离的 dry-run。临时路径让状态报告和所有可能的渲染目标都远离系统默认目录；`--skip-service-manager` 会略过服务管理器操作，`--dry-run` 本身不会提交网络变更。
-
-```bash
-LAB_DIR="$(mktemp -d)"
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager \
-  --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
-  --status-file "$LAB_DIR/status.json" \
-  --netplan-file "$LAB_DIR/50-routerd.yaml" \
-  --dnsmasq-file "$LAB_DIR/dnsmasq.conf" \
-  --dnsmasq-service-file "$LAB_DIR/routerd-dnsmasq.service" \
-  --nftables-file "$LAB_DIR/routerd-nat.nft"
-```
-
-检查输出中的接口名、依赖和警告。dry-run 会观察部分主机信息，但不应把网络设置应用到主机；它也不能证明网线、ISP 或防火墙策略在真实流量下正确。
-
-确认有控制台或独立管理路径后，才启动正常服务：
-
-```bash
-sudo systemctl enable --now routerd.service
-sudo systemctl is-active routerd.service
-sudo routerctl get status
-```
-
-现在 `routerd serve` 已通过 systemd 运行，`routerctl` 才有可连接的本机 socket。之后的 `routerctl validate`、`routerctl plan` 和 `routerctl apply` 都是向这个运行中的服务请求操作。
+按[安全起步](./tutorials/getting-started.md)完成离线检查，再按
+[第一台实验路由器](./tutorials/first-router.md)准备完整 DHCP/NAT 配置、启动服务、
+检查状态并测试客户端。`router.yaml.sample` 是包含 ISP 特定设置的较大示例，
+不能只改接口名就当成通用默认值。普通全新 `./install.sh` 只安装文件，不会启动服务。
 
 ## 升级
 

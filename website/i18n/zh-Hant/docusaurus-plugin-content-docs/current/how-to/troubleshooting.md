@@ -10,11 +10,28 @@ slug: /how-to/troubleshooting
 排查 routerd 問題時，請先區分 **routerd 的意圖** 與 **主機的實際狀態**。
 確認 routerd 意圖達成什麼之後，再與 OS 的實際狀態進行比對。
 
+## 服務或狀態指令失敗時
+
+在 Ubuntu 上先檢查服務，不要反覆嘗試 live apply：
+
+```bash
+sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+```
+
+- 缺少設定或驗證失敗：回到[第一台實驗路由器](../tutorials/first-router.md)，啟動前先修正檔案。
+- socket 不存在或連線遭拒：`routerctl` 需要執行中的 daemon。`routerd apply --once` 會結束，不會留下控制 socket。
+- 權限不足：先用 `sudo routerctl get status`。免 sudo 唯讀存取需要管理員將使用者加入 `routerd` 群組，並重新登入。
+- 服務 active 但用戶端無法連線：依[用戶端檢查](../tutorials/first-router.md)依序檢查 WAN 租約、LAN 位址與閘道、DNS。
+
+不要在現有服務旁另開 `routerd serve` 或 live one-shot apply。排查網路變更失敗時保持主控台可用。
+
 ## 基本排查順序
 
-1. `routerctl get status` — 綜覽全局
-2. `routerctl describe <kind>/<name>` — 深入查看目標資源
-3. `routerctl plan` — 確認下次套用將會發生什麼變更
+1. `sudo routerctl get status` — 綜覽全局
+2. `sudo routerctl describe <kind>/<name>` — 深入查看目標資源
+3. `sudo routerctl plan` — 確認下次套用將會發生什麼變更
 4. OS 指令（`ip`、`nft`、`ss`、`journalctl`）— 確認實際狀態
 5. 對應常駐程式的 `/v1/status` 與事件日誌
 

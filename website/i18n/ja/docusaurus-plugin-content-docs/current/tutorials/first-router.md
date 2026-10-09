@@ -9,7 +9,7 @@ sidebar_position: 2
 
 このチュートリアルでは、隔離した LAN のテスト用クライアントにプライベート IPv4
 アドレスとゲートウェイを渡し、上流ネットワークへ IPv4 で出られるようにします。完全な例
-[`examples/example-basic-ipv4-nat.yaml`](../../../../../../examples/example-basic-ipv4-nat.yaml)
+[`examples/example-basic-ipv4-nat.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-basic-ipv4-nat.yaml)
 を使います。
 
 家庭用ルーターへそのまま貼り付ける手順ではなく、実験用の手順です。
@@ -22,6 +22,20 @@ VM コンソール、シリアルコンソール、または別の管理 NIC を
 と重なるなら別の未使用範囲に変えます。
 
 :::
+
+## 始める前に
+
+- [インストールとアップグレード](../install-and-upgrade.md)に従って導入します。
+- Ubuntu Server のラボホストに WAN/LAN の2つの NIC と、コンソールまたは
+  独立した管理経路を用意します。名前は `ip -br link` で確認します。
+- WAN はインターネットへ接続できる上流 DHCP ネットワークへ、LAN は隔離した
+  スイッチ/ブリッジとテスト端末だけへ接続します。LAN に別の DHCP サーバーを置きません。
+- sudo を使えるユーザーとダウンロード用の通信経路が必要です。端末の確認例は Linux 用です。
+- 以下は `routerd.service` が停止中の初回導入手順です。既に稼働中なら、別の live
+  one-shot apply を同時に実行しません。候補を確認してから、手順3の代わりに
+  `sudo routerctl plan -f first-router.yaml --replace` と
+  `sudo routerctl apply -f first-router.yaml --replace` をラボのコンソールで使います。
+  全置換はファイルにないリソースを削除するので、本番設定を実験用ファイルで置換しません。
 
 ## 成功した状態
 
@@ -103,6 +117,7 @@ sudo routerd apply --config first-router.yaml --once
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
 ## 4. 小さな通信経路を最後まで確認する
@@ -135,3 +150,6 @@ curl -I https://example.com/
 - [LAN 側サービス](./lan-side-services.md) — IPv4 が動いてからローカル DNS と IPv6 を
   足します
 - [基本 NAT と firewall policy](./basic-firewall.md) — 現在の firewall の範囲と安全な次の手順
+
+起動や状態確認に失敗したら、再度 live apply を試す前に
+[トラブルシュート](../how-to/troubleshooting.md)を参照します。

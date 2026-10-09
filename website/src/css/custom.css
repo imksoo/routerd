@@ -24,9 +24,7 @@
   min-height: 560px;
   padding: 5rem 0 4rem;
   color: #f8fafc;
-  background:
-    linear-gradient(135deg, rgba(15, 23, 42, .98), rgba(8, 47, 73, .92)),
-    url('/img/routerd-social-card.svg') center/cover no-repeat;
+  background: linear-gradient(135deg, #0f172a, #082f49);
 }
 
 .heroBanner::after {

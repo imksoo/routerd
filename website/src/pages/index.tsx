@@ -55,6 +55,7 @@ interface SiteCopy {
   quickstartTitle: string;
   quickstartBody: string;
   installLinkLabel: string;
+  firstRouterLinkLabel: string;
   quickstartStages: QuickstartStage[];
   note: string;
 }
@@ -148,28 +149,29 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
     ],
     quickstartTitle: 'Ubuntu Server: check first, then go live',
     quickstartBody:
-      'Install routerd on a spare Ubuntu Server VM or host, place the sample YAML at the path below, and keep a console or independent management path available before the live step.',
+      'This is a summary for a fresh Ubuntu Server lab host with no running routerd service. Follow the linked tutorial to download and adapt a complete first-router.yaml before running these commands. Keep a console or independent management path.',
     installLinkLabel: 'Read the Ubuntu Server installation guide',
+    firstRouterLinkLabel: 'Follow the complete first-router tutorial',
     quickstartStages: [
       {
         title: '1. Validate the file only',
         body: 'This checks YAML and resource rules. It does not change the host network and does not need routerd to be running.',
-        command: 'sudo routerd validate --config /usr/local/etc/routerd/router.yaml',
+        command: 'sudo routerd validate --config first-router.yaml',
       },
       {
         title: '2. Run an isolated dry-run',
         body: 'This uses temporary state, ledger, and status paths while it exercises the one-shot apply path. It does not apply network changes or write routerd’s normal state files; no daemon or routerctl command is involved.',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. Apply live from the console',
         body: 'This changes the host network and then exits. Run it only from the lab console or with an independent management path available.',
-        command: '# Live one-shot apply: changes the host network, then exits.\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once',
+        command: '# Live one-shot apply: changes the host network, then exits.\nsudo routerd apply --config first-router.yaml --once',
       },
       {
         title: '4. Start the daemon; then use routerctl',
-        body: 'routerd serve is live and continues to reconcile the host network. After it starts, use another terminal for routerctl.',
-        command: '# Start the live daemon from the console.\nsudo routerd serve --config /usr/local/etc/routerd/router.yaml\n\n# Only after routerd serve is running, use another terminal.\nsudo routerctl get status\nsudo routerctl get events --limit 20',
+        body: 'The installed systemd service runs routerd serve and continues to reconcile the host network. Expect active, then inspect status and test the LAN client as shown in the tutorial.',
+        command: 'sudo install -d -m 0755 /usr/local/etc/routerd\nsudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml\nsudo systemctl enable --now routerd.service\nsudo systemctl is-active routerd.service\nsudo routerctl get status\nsudo routerctl get events --limit 20',
       },
     ],
     note:
@@ -261,28 +263,29 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
     ],
     quickstartTitle: 'Ubuntu Server: 確認してから live にする',
     quickstartBody:
-      '予備の Ubuntu Server VM またはホストへ routerd を導入し、下記パスへサンプル YAML を置きます。live 実行の前に、コンソールまたは独立した管理経路を必ず確保してください。',
+      'これは routerd がまだ動いていない新規 Ubuntu Server ラボ向けの概要です。リンク先の手順で完全な first-router.yaml を取得し、内容を確認してから実行します。コンソールまたは独立した管理経路を確保してください。',
     installLinkLabel: 'Ubuntu Server の導入手順を読む',
+    firstRouterLinkLabel: '最初のルーターの手順へ',
     quickstartStages: [
       {
         title: '1. 設定ファイルだけを検証する',
         body: 'YAML とリソースの規則を確認します。ホストネットワークは変更せず、routerd デーモンの起動も不要です。',
-        command: 'sudo routerd validate --config /usr/local/etc/routerd/router.yaml',
+        command: 'sudo routerd validate --config first-router.yaml',
       },
       {
         title: '2. 隔離した dry-run を実行する',
         body: '一時ディレクトリへ state、ledger、status を出して、1回分の apply 経路を確認します。ネットワーク変更や通常の routerd 状態ファイルは書かれず、routerd デーモンも routerctl も使いません。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. コンソールから live apply する',
         body: 'ホストネットワークを変更して終了します。ラボのコンソール、または独立した管理経路があるときだけ実行してください。',
-        command: '# 1回だけ live で反映します。ホストネットワークを変更して終了します。\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once',
+        command: '# 1回だけ live で反映します。ホストネットワークを変更して終了します。\nsudo routerd apply --config first-router.yaml --once',
       },
       {
         title: '4. デーモンを起動してから routerctl を使う',
-        body: 'routerd serve は live であり、実行中もホストネットワークを反映・調整します。起動後にだけ、別の端末で routerctl を使います。',
-        command: '# コンソールから live デーモンを起動します。\nsudo routerd serve --config /usr/local/etc/routerd/router.yaml\n\n# routerd serve の起動後、別の端末で実行します。\nsudo routerctl get status\nsudo routerctl get events --limit 20',
+        body: 'systemd サービスが routerd serve を起動し、ネットワークを継続的に調整します。active を確認した後、状態と手順にある LAN 端末の通信を確認します。',
+        command: 'sudo install -d -m 0755 /usr/local/etc/routerd\nsudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml\nsudo systemctl enable --now routerd.service\nsudo systemctl is-active routerd.service\nsudo routerctl get status\nsudo routerctl get events --limit 20',
       },
     ],
     note:
@@ -370,28 +373,29 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
     ],
     quickstartTitle: 'Ubuntu Server：先檢查，再上線',
     quickstartBody:
-      '請在備用的 Ubuntu Server VM 或主機安裝 routerd，將範例 YAML 放到下列路徑；進行 live 步驟前，保留主控台或獨立管理路徑。',
+      '這是尚未執行 routerd 的全新 Ubuntu Server 實驗主機流程摘要。先依連結的教學下載並調整完整的 first-router.yaml，再執行指令。請保留主控台或獨立管理路徑。',
     installLinkLabel: '閱讀 Ubuntu Server 安裝指南',
+    firstRouterLinkLabel: '依序完成第一台路由器',
     quickstartStages: [
       {
         title: '1. 只驗證設定檔',
         body: '此步驟會檢查 YAML 和資源規則，不會變更主機網路，也不需要 routerd 守護程式正在執行。',
-        command: 'sudo routerd validate --config /usr/local/etc/routerd/router.yaml',
+        command: 'sudo routerd validate --config first-router.yaml',
       },
       {
         title: '2. 執行隔離的 dry-run',
         body: '此步驟會使用暫存的 state、ledger 與 status 路徑執行一次套用流程，不會套用網路變更或寫入 routerd 的正常狀態檔。它仍是獨立操作，不需要守護程式或 routerctl。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. 從主控台進行 live 套用',
         body: '這會變更主機網路後結束。只在實驗環境的主控台，或有獨立管理路徑時執行。',
-        command: '# 一次 live 套用：變更主機網路後結束。\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once',
+        command: '# 一次 live 套用：變更主機網路後結束。\nsudo routerd apply --config first-router.yaml --once',
       },
       {
         title: '4. 啟動守護程式，再使用 routerctl',
-        body: 'routerd serve 是 live 執行，會持續套用並協調主機網路。啟動後才在另一個終端機使用 routerctl。',
-        command: '# 從主控台啟動 live 守護程式。\nsudo routerd serve --config /usr/local/etc/routerd/router.yaml\n\n# routerd serve 啟動後，於另一個終端機執行。\nsudo routerctl get status\nsudo routerctl get events --limit 20',
+        body: 'systemd 服務會啟動 routerd serve，持續套用與協調主機網路。確認 active 後，檢查狀態並依教學測試 LAN 用戶端。',
+        command: 'sudo install -d -m 0755 /usr/local/etc/routerd\nsudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml\nsudo systemctl enable --now routerd.service\nsudo systemctl is-active routerd.service\nsudo routerctl get status\nsudo routerctl get events --limit 20',
       },
     ],
     note:
@@ -479,28 +483,29 @@ const copy: Record<SupportedHomepageLocale, SiteCopy> = {
     ],
     quickstartTitle: 'Ubuntu Server：先检查，再上线',
     quickstartBody:
-      '请在备用的 Ubuntu Server VM 或主机上安装 routerd，将示例 YAML 放到下列路径；进行 live 步骤前，保留控制台或独立管理路径。',
+      '这是尚未运行 routerd 的全新 Ubuntu Server 实验主机流程摘要。先按链接的教程下载并调整完整的 first-router.yaml，再执行命令。请保留控制台或独立管理路径。',
     installLinkLabel: '阅读 Ubuntu Server 安装指南',
+    firstRouterLinkLabel: '按顺序完成第一台路由器',
     quickstartStages: [
       {
         title: '1. 只验证配置文件',
         body: '这会检查 YAML 和资源规则，不会变更主机网络，也不需要 routerd 守护进程正在运行。',
-        command: 'sudo routerd validate --config /usr/local/etc/routerd/router.yaml',
+        command: 'sudo routerd validate --config first-router.yaml',
       },
       {
         title: '2. 运行隔离的 dry-run',
         body: '这会使用临时的 state、ledger 和 status 路径执行一次应用流程，不应用网络变更，也不写入 routerd 的正常状态文件。它仍是独立操作，不需要守护进程或 routerctl。',
-        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"',
+        command: 'LAB_DIR="$(mktemp -d)"\nsudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager --state-file "$LAB_DIR/state.db" --ledger-file "$LAB_DIR/ledger.db" --status-file "$LAB_DIR/status.json"\nrm -rf "$LAB_DIR"',
       },
       {
         title: '3. 从控制台进行 live 应用',
         body: '这会变更主机网络后退出。只在实验环境的控制台，或有独立管理路径时运行。',
-        command: '# 一次 live 应用：变更主机网络后退出。\nsudo routerd apply --config /usr/local/etc/routerd/router.yaml --once',
+        command: '# 一次 live 应用：变更主机网络后退出。\nsudo routerd apply --config first-router.yaml --once',
       },
       {
         title: '4. 启动守护进程，再使用 routerctl',
-        body: 'routerd serve 是 live 运行，会持续应用并协调主机网络。启动后才在另一个终端中使用 routerctl。',
-        command: '# 从控制台启动 live 守护进程。\nsudo routerd serve --config /usr/local/etc/routerd/router.yaml\n\n# routerd serve 启动后，在另一个终端中运行。\nsudo routerctl get status\nsudo routerctl get events --limit 20',
+        body: 'systemd 服务会启动 routerd serve，持续应用与协调主机网络。确认 active 后，检查状态并按教程测试 LAN 客户端。',
+        command: 'sudo install -d -m 0755 /usr/local/etc/routerd\nsudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml\nsudo systemctl enable --now routerd.service\nsudo systemctl is-active routerd.service\nsudo routerctl get status\nsudo routerctl get events --limit 20',
       },
     ],
     note:
@@ -621,6 +626,8 @@ function Quickstart({siteCopy}: {siteCopy: SiteCopy}) {
         <p>{siteCopy.quickstartBody}</p>
         <p>
           <Link to="/docs/install-and-upgrade">{siteCopy.installLinkLabel} →</Link>
+          {' · '}
+          <Link to="/docs/tutorials/first-router">{siteCopy.firstRouterLinkLabel} →</Link>
         </p>
         {siteCopy.quickstartStages.map((stage) => (
           <div key={stage.title}>

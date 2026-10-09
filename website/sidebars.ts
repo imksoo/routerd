@@ -16,13 +16,10 @@ const sidebars: SidebarsConfig = {
       items: [
         'intro',
         'tutorials/network-basics',
-        'concepts/what-is-routerd',
-        'concepts/positioning',
-        'concepts/design-philosophy',
         'install-and-upgrade',
-        'tutorials/index',
         'tutorials/getting-started',
         'tutorials/first-router',
+        'tutorials/index',
       ],
     },
     {
@@ -30,6 +27,9 @@ const sidebars: SidebarsConfig = {
       label: 'Learn',
       collapsed: false,
       items: [
+        'concepts/what-is-routerd',
+        'concepts/positioning',
+        'concepts/design-philosophy',
         'concepts/glossary',
         'concepts/resource-model',
         'concepts/apply-and-render',

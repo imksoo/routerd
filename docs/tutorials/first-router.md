@@ -9,7 +9,7 @@ sidebar_position: 2
 
 This tutorial gives an isolated LAN client a private IPv4 address, a gateway,
 and an IPv4 path to an upstream network. It uses the complete example
-[`examples/example-basic-ipv4-nat.yaml`](../../examples/example-basic-ipv4-nat.yaml).
+[`examples/example-basic-ipv4-nat.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-basic-ipv4-nat.yaml).
 
 It is a lab tutorial, not a copy-and-paste replacement for a household router.
 
@@ -20,6 +20,23 @@ guess which interface carries the management connection. The example uses the
 private range `192.168.10.0/24`; change it if it overlaps with an upstream,
 VPN, school, or management network.
 :::
+
+## Before you start
+
+- Install routerd using [Install and upgrade](../install-and-upgrade.md).
+- Use an Ubuntu Server lab host with two distinct WAN/LAN interfaces, plus a
+  console or independent management path. Identify them with `ip -br link`.
+- Connect WAN to an upstream DHCP network with Internet access. Connect LAN
+  only to an isolated switch/bridge and a test client; no other DHCP server
+  should serve that LAN.
+- Keep a sudo-capable login and Internet access for the download. The client
+  checks below use Linux commands.
+- This is a first-install path with `routerd.service` stopped. If it is already
+  running, do not run a second live one-shot apply alongside it. After reviewing
+  the candidate, use `sudo routerctl plan -f first-router.yaml --replace` and
+  `sudo routerctl apply -f first-router.yaml --replace` from the lab console
+  instead of step 3. Full replacement removes resources omitted from the file;
+  do not use a lab file to replace a production configuration.
 
 ## What success looks like
 
@@ -99,6 +116,7 @@ and start the service:
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
 ## 4. Check the whole small path
@@ -132,3 +150,6 @@ Do not keep applying the file repeatedly while the cause is unknown.
   DNS names and add IPv6 only after IPv4 works
 - [Basic NAT and firewall policy](./basic-firewall.md) — current firewall scope
   and safer next steps
+
+If startup or status fails, use [Troubleshooting](../how-to/troubleshooting.md)
+before trying another live apply.

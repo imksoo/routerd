@@ -106,45 +106,13 @@ local DNS design before advertising the router's LAN address as DNS.
 put the WAN interface in an `untrust` zone and the LAN interface in a `trust`
 zone.
 
-## Apply sequence
+## Run this example
 
-```bash
-cp examples/example-basic-ipv4-nat.yaml router.yaml
-routerd validate --config router.yaml
-
-workdir=$(mktemp -d)
-routerd apply --config router.yaml --once --dry-run \
-  --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
-  --status-file "$workdir/status.json"
-rm -rf "$workdir"
-```
-
-Only apply for real from a console or an independent management path. Confirm
-that management access is not on the LAN interface being readdressed.
-
-```bash
-sudo routerd apply --config router.yaml --once
-```
-
-## Checks
-
-```bash
-sudo routerctl get status
-sudo routerctl describe DHCPv4Client/wan-dhcpv4
-sudo routerctl describe IPv4StaticAddress/lan-base
-sudo routerctl describe NAT44Rule/lan-to-wan
-sudo nft list table ip routerd_nat
-sudo nft list table inet routerd_filter
-```
-
-From a LAN client:
-
-```bash
-ip route
-ping 192.168.10.1
-curl https://1.1.1.1/
-```
+Use [Bring up the first lab router](../tutorials/first-router.md) for the complete
+release-matched download, interface edits, validation, isolated dry-run, live
+apply, daemon startup, and client checks. Release archives do not include the
+repository’s `examples/` directory. The YAML excerpts above explain the model;
+use the complete downloaded file, not just the excerpts.
 
 ## Common edits
 

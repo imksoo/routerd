@@ -93,7 +93,7 @@ writing routerd's normal state files.
 
 ```bash
 workdir=$(mktemp -d)
-routerd apply --config first-router.yaml --once --dry-run \
+routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
   --state-file "$workdir/state.db" \
   --ledger-file "$workdir/ledger.db" \
   --status-file "$workdir/status.json"
@@ -105,45 +105,12 @@ Inspect the output and remove the temporary directory when you are done:
 rm -rf "$workdir"
 ```
 
-## 6. Make a live change only from the lab console
+## 6. Stop here before a live change
 
-When the interface names and intent are correct, a one-shot apply changes the
-host and exits:
-
-```bash
-sudo routerd apply --config first-router.yaml --once
-```
-
-For a persistent router, put the reviewed file at
-`/usr/local/etc/routerd/router.yaml` and start the installed service:
-
-```bash
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
-```
-
-On FreeBSD, use the rc.d service documented in
-[Install and upgrade](../install-and-upgrade.md) instead.
-
-## 7. Use `routerctl` after the service starts
-
-`routerctl` is a client for the running local `routerd` daemon. It is useful
-after the service has created its Unix sockets:
-
-```bash
-sudo routerctl get status
-sudo routerctl get events --limit 20
-sudo routerctl get connections --limit 50
-```
-
-On a fresh installation, use `sudo` for these commands. You can later add an
-operator to the `routerd` group and start a new login session for read-only
-status access without `sudo`.
-
-When the daemon is running, `routerctl validate`, `routerctl plan`, and
-`routerctl apply` submit a candidate configuration to that daemon. They are not
-standalone first-install commands.
+The small file above only names interfaces; it does not provide DHCP, NAT, or
+Internet access. Leave the service stopped and continue to
+[Bring up the first lab router](./first-router.md) for a complete, reviewed
+configuration, service startup, status checks, and a LAN client test.
 
 ## Next steps
 

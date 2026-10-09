@@ -8,6 +8,8 @@ title: 安全起步
 
 本教程的目标不是马上把机器变成家庭网关，而是安全地完成第一轮：写一份很小的配置、检查它、再在不提交网络变更的条件下运行一次。请使用隔离的 Ubuntu Server VM 或备用电脑，并保留控制台。
 
+尚未安装时，先完成[安装与升级](../install-and-upgrade.md)。
+
 ## 1. 先找出接口名
 
 ```bash
@@ -63,23 +65,18 @@ routerd validate --config first-router.yaml
 ```bash
 workdir=$(mktemp -d)
 routerd apply --once --dry-run --skip-service-manager --config first-router.yaml --status-file "$workdir/status.json" --state-file "$workdir/state.db" --ledger-file "$workdir/ledger.db" --netplan-file "$workdir/50-routerd.yaml" --dnsmasq-file "$workdir/dnsmasq.conf" --dnsmasq-service-file "$workdir/routerd-dnsmasq.service" --nftables-file "$workdir/routerd-nat.nft"
+rm -rf "$workdir"
 ```
 
 `--dry-run` 会计算依赖关系、计划和渲染意图，但不会提交主机网络变更。临时目录还避免状态报告和输出路径落入 `/run`、`/etc` 或 `/var/lib`。阅读输出，特别留意接口名、资源引用和管理路径警告。
 
 不要把 dry-run 当作连通性或安全测试：它不会替你验证真实 ISP、交换机 VLAN 或完整的防火墙暴露面。
 
-## 5. 准备好后再运行 daemon
+## 5. 在下一篇中进行真实变更
 
-真实应用由 `routerd apply --once`（不带 `--dry-run`）或 `routerd serve` 完成，两者都可能改变网络。确认有控制台或独立管理网络后，再把配置安装到默认位置并启动服务：
-
-```bash
-sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd
-sudo routerctl get status
-```
-
-最后一条命令之所以放在这里，是因为此时 `routerd serve` 已由 systemd 运行。`routerctl` 通过这个运行中的 daemon 查询状态；服务没启动时不要用它替代 `routerd validate`。
+这个小文件只声明接口，没有 DHCP、NAT 或互联网共享。请保持服务停止，继续
+[第一台实验路由器](./first-router.md)，在那里按顺序检查完整配置、启动服务、
+查看状态并测试 LAN 客户端。
 
 ## 下一步
 
