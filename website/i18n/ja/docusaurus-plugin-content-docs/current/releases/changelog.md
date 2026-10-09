@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261009.0902
+
 ### 修正
 
 - ARPObserver のパケット・probe・scan カウンター、観測時刻、既知クライアントの seenAt だけが更新された場合、resource status イベントを生成しないようにしました。最新の診断値、生の ARP 観測、クライアント識別情報の変更、障害・復旧イベントは保持します。 (#1273).

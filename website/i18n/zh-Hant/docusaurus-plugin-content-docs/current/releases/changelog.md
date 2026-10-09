@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261009.0902
+
 ### 修正
 
 - ARPObserver 僅更新封包、probe、scan 計數器、觀測時間或已知用戶端的 seenAt 時，不再產生 resource status 事件。保留最新診斷值、原始 ARP 觀測、用戶端身分變更及故障與復原事件。 (#1273).
