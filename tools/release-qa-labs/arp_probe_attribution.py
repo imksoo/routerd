@@ -15,7 +15,9 @@ before collecting qualification evidence.
 """
 
 import collections
+import hashlib
 import ipaddress
+import json
 import math
 import re
 
@@ -71,8 +73,8 @@ def _samples(rows):
     return parsed
 
 
-def _packets(text, source_ip, source_mac):
-    broadcast, unicast = [], 0
+def _request_packets(text, source_ip, source_mac):
+    packets = []
     for line in text.splitlines():
         line = line.lower()
         match = REQUEST.match(line)
@@ -85,12 +87,122 @@ def _packets(text, source_ip, source_mac):
             continue
         packet["target"] = str(ipaddress.IPv4Address(packet["target"]))
         packet["at"] = _number(packet["at"])
-        if packet["dst"] == "ff:ff:ff:ff:ff:ff":
-            broadcast.append(packet)
-        else:
-            unicast += 1
-    broadcast.sort(key=lambda item: item["at"])
+        if not MAC.fullmatch(packet["dst"]):
+            raise ValueError("invalid destination MAC in bound ARP request")
+        packet["line"] = line
+        packets.append(packet)
+    return sorted(packets, key=lambda item: item["at"])
+
+
+def _packets(text, source_ip, source_mac):
+    packets = _request_packets(text, source_ip, source_mac)
+    broadcast = [{k: v for k, v in packet.items() if k != "line"}
+                 for packet in packets if packet["dst"] == "ff:ff:ff:ff:ff:ff"]
+    unicast = len(packets) - len(broadcast)
     return broadcast, unicast
+
+
+def matching_arp_requests(
+    packet_text, *, source_ip, source_mac, target_ip, not_before, not_after,
+):
+    """Parse matching sender requests, including tcpdump's optional (MAC) field.
+
+Both unicast and broadcast requests may establish a client request. This is
+also suitable for detecting forbidden self-target requests. It does not prove
+a daemon command; that requires attribute_command_probe and its broadcast
+accounting. Capture completeness and cross-host clock bounds remain caller gates.
+"""
+    result = {"success": False, "packets": []}
+    try:
+        if not all(isinstance(v, str) for v in (packet_text, source_ip, source_mac, target_ip)):
+            raise ValueError("capture and addresses must be strings")
+        source_ip, target_ip = str(ipaddress.IPv4Address(source_ip)), str(ipaddress.IPv4Address(target_ip))
+        source_mac = source_mac.lower()
+        if not MAC.fullmatch(source_mac):
+            raise ValueError("invalid source MAC")
+        start, end = _number(not_before), _number(not_after)
+        if start > end:
+            raise ValueError("reversed packet interval")
+        result["packets"] = [p for p in _request_packets(packet_text, source_ip, source_mac)
+                             if p["target"] == target_ip and start <= p["at"] <= end]
+        result["success"] = True
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        result["error"] = str(error)
+    return result
+
+
+REQUEST_KEYS = (
+    "id", "group_name", "source_node", "type", "subject", "dedupe_key",
+    "payload", "observed_at", "expires_at",
+)
+
+
+def first_request_receipt(
+    counter_sampling, request, *, clock_uncertainty_seconds, minimum_remaining_seconds=30,
+):
+    """Use the first completed full-key DB read for either self or positive QA.
+
+Inputs are receiver-local DB/status samples and SHA256-bound changed DB states.
+Every sample names its dbStateIndex and brackets SELECT with dbReadEpoch and
+dbCompletedEpoch, followed by epoch/completedEpoch for the counter read. Never
+substitute a read's start, recorded_at, or a slower observer's polling time.
+The caller still proves request origin/freshness, TTL tail, observer identity,
+controller progress, packet capture, and absence of competing generations.
+"""
+    result = {"success": False}
+    try:
+        uncertainty, minimum = _number(clock_uncertainty_seconds), _number(minimum_remaining_seconds)
+        if uncertainty < 0 or minimum <= 0:
+            raise ValueError("invalid frozen receipt bounds")
+        for key in REQUEST_KEYS:
+            if key not in request:
+                raise ValueError("incomplete request generation")
+        if not isinstance(request["payload"], dict) or any(
+            not isinstance(request[k], str) or not request[k] for k in REQUEST_KEYS[:6]
+        ):
+            raise ValueError("invalid request identity")
+        observed, expires = _integer(request["observed_at"]), _integer(request["expires_at"])
+        if expires <= observed:
+            raise ValueError("invalid request lifetime")
+        if counter_sampling["errors"] != [] or counter_sampling["threadExited"] is not True:
+            raise ValueError("incomplete or failed receiver sampler")
+        states, samples = counter_sampling["dbStates"], counter_sampling["samples"]
+        if not isinstance(states, list) or not states or not isinstance(samples, list) or not samples:
+            raise ValueError("missing DB snapshots or samples")
+        for state in states:
+            if not isinstance(state["rows"], list) or any(not isinstance(row, dict) for row in state["rows"]):
+                raise ValueError("invalid DB snapshot rows")
+            raw = json.dumps(state["rows"], ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+            if hashlib.sha256(raw).hexdigest() != state["sha256"]:
+                raise ValueError("DB snapshot digest mismatch")
+        previous_end, first = None, None
+        for index, sample in enumerate(samples):
+            began, end = _number(sample["dbReadEpoch"]), _number(sample["dbCompletedEpoch"])
+            status_start, status_end = _number(sample["epoch"]), _number(sample["completedEpoch"])
+            if not began <= end <= status_start <= status_end or (previous_end is not None and began < previous_end):
+                raise ValueError("overlapping or reversed DB/status reads")
+            previous_end = status_end
+            state_index = sample["dbStateIndex"]
+            if isinstance(state_index, bool) or not isinstance(state_index, int) or not 0 <= state_index < len(states):
+                raise ValueError("missing referenced DB snapshot")
+            matches = [row for row in states[state_index]["rows"]
+                       if all(key in row and row[key] == request[key] for key in REQUEST_KEYS)]
+            if len(matches) > 1:
+                raise ValueError("duplicate request generation in DB snapshot")
+            if matches and first is None:
+                first = {"sampleIndex": index, "dbStateIndex": state_index,
+                         "readEpoch": began, "firstReadEpoch": end}
+        if first is None:
+            raise ValueError("full-key request generation never observed")
+        remaining = expires - first["firstReadEpoch"] - uncertainty
+        result.update(first, remainingTTLLowerBound=remaining,
+                      minimumRemainingSeconds=minimum, clockUncertaintySeconds=uncertainty,
+                      success=remaining >= minimum)
+        if not result["success"]:
+            result["error"] = "insufficient remaining request lifetime"
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        result["error"] = str(error)
+    return result
 
 
 def attribute_command_probe(
