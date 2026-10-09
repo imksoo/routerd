@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261009.0902
+
 ### Fixed
 
 - Suppress ARPObserver resource status events when only packet/probe/scan counters, observation timestamps, or a known client's seenAt change. Keep current diagnostics, raw ARP observations, client identity changes, and failure/recovery events. (#1273).
