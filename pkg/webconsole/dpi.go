@@ -82,7 +82,10 @@ func dpiServiceStatusFromMap(socket string, raw map[string]any) *DPIServiceStatu
 	return status
 }
 
-func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) ([]logstore.TrafficFlow, error) {
+func (h Handler) enrichTrafficFlowsWithDPI(ctx context.Context, flows []logstore.TrafficFlow, now time.Time, ttl time.Duration) ([]logstore.TrafficFlow, error) {
+	if err := ctx.Err(); err != nil {
+		return flows, err
+	}
 	if len(flows) == 0 {
 		return flows, nil
 	}
@@ -92,24 +95,34 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 		}
 		return flows, nil
 	}
-	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	if os.IsNotExist(err) {
+		applyTrafficFlowListPortFallback(flows)
+		return flows, nil
+	}
 	if err != nil {
 		return flows, err
 	}
 	defer store.Close()
+	entries := make([]logstore.FirewallLogEntry, len(flows))
 	for i := range flows {
-		entry := logstore.FirewallLogEntry{
+		entries[i] = logstore.FirewallLogEntry{
 			Protocol:   flows[i].Protocol,
 			SrcAddress: flows[i].ClientAddress,
 			SrcPort:    flows[i].ClientPort,
 			DstAddress: flows[i].PeerAddress,
 			DstPort:    flows[i].PeerPort,
 		}
-		dpiFlow, ok, err := store.FindDPIFlowForFirewallEntry(context.Background(), entry, now, ttl)
-		if err != nil {
-			return flows, err
-		}
-		if !ok {
+	}
+	matches, err := store.FindDPIFlowsForFirewallEntries(ctx, entries, now, ttl)
+	if err != nil {
+		return flows, err
+	}
+	for i := range flows {
+		dpiFlow := matches[i]
+		if dpiFlow == nil {
 			applyTrafficFlowPortFallback(&flows[i])
 			continue
 		}
@@ -169,7 +182,10 @@ func (h Handler) enrichTrafficFlowsWithDPI(flows []logstore.TrafficFlow, now tim
 	return flows, nil
 }
 
-func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now time.Time, ttl time.Duration) error {
+func (h Handler) enrichConnectionsWithDPI(ctx context.Context, table *observe.ConnectionTable, now time.Time, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if table == nil || len(table.Entries) == 0 {
 		return nil
 	}
@@ -179,24 +195,36 @@ func (h Handler) enrichConnectionsWithDPI(table *observe.ConnectionTable, now ti
 		}
 		return nil
 	}
-	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	if os.IsNotExist(err) {
+		applyConnectionTablePortFallback(table)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	entries := make([]logstore.FirewallLogEntry, len(table.Entries))
 	for i := range table.Entries {
 		entry := &table.Entries[i]
-		flow, ok, err := store.FindDPIFlowForFirewallEntry(context.Background(), logstore.FirewallLogEntry{
+		entries[i] = logstore.FirewallLogEntry{
 			Protocol:   entry.Protocol,
 			SrcAddress: entry.Original.Source,
 			SrcPort:    atoiDefault(entry.Original.SourcePort, 0),
 			DstAddress: entry.Original.Destination,
 			DstPort:    atoiDefault(entry.Original.DestinationPort, 0),
-		}, now, ttl)
-		if err != nil {
-			return err
 		}
-		if !ok {
+	}
+	matches, err := store.FindDPIFlowsForFirewallEntries(ctx, entries, now, ttl)
+	if err != nil {
+		return err
+	}
+	for i := range table.Entries {
+		entry := &table.Entries[i]
+		flow := matches[i]
+		if flow == nil {
 			applyConnectionPortFallback(entry)
 			continue
 		}

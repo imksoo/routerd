@@ -869,54 +869,114 @@ type dpiFlowLookup struct {
 }
 
 func (l *FirewallLog) findDPIFlow(ctx context.Context, lookup dpiFlowLookup) (DPIFlowEntry, bool, error) {
-	protocol := strings.ToLower(strings.TrimSpace(lookup.Protocol))
-	if protocol == "" || lookup.SrcAddress == "" || lookup.DstAddress == "" {
-		return DPIFlowEntry{}, false, nil
-	}
-	columns, err := tableColumns(ctx, l.db, "dpi_flow")
+	flows, err := l.FindDPIFlowsForFirewallEntries(ctx, []FirewallLogEntry{{Protocol: lookup.Protocol, SrcAddress: lookup.SrcAddress, SrcPort: lookup.SrcPort, DstAddress: lookup.DstAddress, DstPort: lookup.DstPort}}, lookup.Now, lookup.TTL)
 	if err != nil {
 		return DPIFlowEntry{}, false, err
 	}
-	now := lookup.Now
+	if flows[0] == nil {
+		return DPIFlowEntry{}, false, nil
+	}
+	return *flows[0], true, nil
+}
+
+// dpiLookupBatchSize keeps each statement below even SQLite's older 999-variable limit.
+const dpiLookupBatchSize = 128
+
+// FindDPIFlowsForFirewallEntries returns one result per input entry; nil means no
+// match. Schema discovery happens once per call and SQL is bounded in batches.
+// Each tuple selects the newest unexpired flow in either direction, just like
+// FindDPIFlowForFirewallEntry. Duplicate inputs retain their own result positions.
+func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entries []FirewallLogEntry, now time.Time, ttl time.Duration) ([]*DPIFlowEntry, error) {
+	out := make([]*DPIFlowEntry, len(entries))
+	if l == nil || l.db == nil || len(entries) == 0 {
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Invalid tuples have no match even when a legacy database has no DPI table.
+	valid := false
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Protocol) != "" && entry.SrcAddress != "" && entry.DstAddress != "" {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return out, nil
+	}
+
+	columns, err := tableColumns(ctx, l.db, "dpi_flow")
+	if err != nil {
+		return nil, err
+	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	ttl := lookup.TTL
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
-FROM dpi_flow
-WHERE ts_last >= ? AND protocol = ? AND (
-  (src_address = ? AND dst_address = ? AND coalesce(src_port,0) = ? AND coalesce(dst_port,0) = ?)
+	for start := 0; start < len(entries); start += dpiLookupBatchSize {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		end := min(start+dpiLookupBatchSize, len(entries))
+		values := make([]string, 0, end-start)
+		args := make([]any, 0, 6*(end-start)+1)
+		for i := start; i < end; i++ {
+			entry := entries[i]
+			protocol := strings.ToLower(strings.TrimSpace(entry.Protocol))
+			if protocol == "" || entry.SrcAddress == "" || entry.DstAddress == "" {
+				continue
+			}
+			values = append(values, "(?,?,?,?,?,?)")
+			args = append(args, i, protocol, entry.SrcAddress, entry.DstAddress, entry.SrcPort, entry.DstPort)
+		}
+		if len(values) == 0 {
+			continue
+		}
+		args = append(args, now.Add(-ttl).UnixNano())
+		query := `WITH requested(request_index,request_protocol,request_src,request_dst,request_src_port,request_dst_port) AS (VALUES ` + strings.Join(values, ",") + `)
+SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),` + optionalTextColumn(columns, "detected_protocol") + `,` + optionalTextColumn(columns, "master_protocol") + `,` + optionalTextColumn(columns, "application_protocol") + `,` + optionalTextColumn(columns, "category") + `,` + optionalTextColumn(columns, "risk") + `,` + optionalIntColumn(columns, "confidence") + `,` + optionalTextColumn(columns, "metadata_json") + `,` + optionalTextColumn(columns, "engine") + `,` + optionalTextColumn(columns, "source") + `,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+FROM requested JOIN dpi_flow ON flow_id = (
+ SELECT candidate.flow_id FROM dpi_flow AS candidate
+ WHERE candidate.ts_last >= ? AND candidate.protocol = request_protocol AND (
+  (candidate.src_address = request_src AND candidate.dst_address = request_dst AND coalesce(candidate.src_port,0) = request_src_port AND coalesce(candidate.dst_port,0) = request_dst_port)
   OR
-  (dst_address = ? AND src_address = ? AND coalesce(dst_port,0) = ? AND coalesce(src_port,0) = ?)
-)
-ORDER BY ts_last DESC LIMIT 1`,
-		now.Add(-ttl).UnixNano(), protocol,
-		lookup.SrcAddress, lookup.DstAddress, lookup.SrcPort, lookup.DstPort,
-		lookup.SrcAddress, lookup.DstAddress, lookup.SrcPort, lookup.DstPort)
+  (candidate.dst_address = request_src AND candidate.src_address = request_dst AND coalesce(candidate.dst_port,0) = request_src_port AND coalesce(candidate.src_port,0) = request_dst_port)
+ ) ORDER BY candidate.ts_last DESC LIMIT 1
+)`
+		if err := l.queryDPIFlowBatch(ctx, query, args, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (l *FirewallLog) queryDPIFlowBatch(ctx context.Context, query string, args []any, out []*DPIFlowEntry) error {
+	rows, err := l.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return DPIFlowEntry{}, false, err
+		return err
 	}
 	defer rows.Close()
-	if !rows.Next() {
-		return DPIFlowEntry{}, false, rows.Err()
+	for rows.Next() {
+		var index int
+		var flow DPIFlowEntry
+		var first, last, classified int64
+		var riskJSON, metadataJSON string
+		if err := rows.Scan(&index, &flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
+			return err
+		}
+		flow.Risk = jsonStringSlice(riskJSON)
+		flow.Metadata = jsonStringMap(metadataJSON)
+		flow.FirstSeen = time.Unix(0, first).UTC()
+		flow.LastSeen = time.Unix(0, last).UTC()
+		if classified > 0 {
+			flow.ClassifiedAt = time.Unix(0, classified).UTC()
+		}
+		out[index] = &flow
 	}
-	var flow DPIFlowEntry
-	var first, last, classified int64
-	var riskJSON, metadataJSON string
-	if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
-		return DPIFlowEntry{}, false, err
-	}
-	flow.Risk = jsonStringSlice(riskJSON)
-	flow.Metadata = jsonStringMap(metadataJSON)
-	flow.FirstSeen = time.Unix(0, first).UTC()
-	flow.LastSeen = time.Unix(0, last).UTC()
-	if classified > 0 {
-		flow.ClassifiedAt = time.Unix(0, classified).UTC()
-	}
-	return flow, true, nil
+	return rows.Err()
 }
 
 func (l *FirewallLog) FindExpiredReturn(ctx context.Context, entry FirewallLogEntry, now time.Time, ttl time.Duration) (ExpiredFlowEntry, bool, error) {
