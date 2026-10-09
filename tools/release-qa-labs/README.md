@@ -135,14 +135,40 @@ the independent ARP opportunities merely because a DB generation arrived.
 Use `arp_control_schedule.build_positive_control_schedule()` to validate fixed,
 unconditional positive ARP opportunities before freezing. For a 400-second
 capture, one bounded schedule keeps ordinary pings at offsets 60 and 120 seconds,
-then sends one real-client ARP request at each of offsets 223 and 293 seconds.
+then launches one real-client ARP operation at each of offsets 213 and 286 seconds.
 Set `capture_lead_seconds=20`, `request_generation_window_seconds=30`,
-`dispatch_timeout_seconds=10`, `request_ttl_seconds=45`,
+`dispatch_timeout_seconds=15`, `request_ttl_seconds=45`,
 `clock_allowance_seconds=10`, `expiry_tail_seconds=10`, and
 `quiet_guard_seconds=1.55`. Pass these frozen values, `observation_seconds=400`,
-`ping_offsets=[60, 120]`, and `arp_offsets=[223, 293]` to the helper. It requires
-66.55 seconds between ARP opportunities and reserves 388 seconds including the
-last expiry tail, leaving 12 seconds within the capture budget.
+`ping_offsets=[60, 120]`, and `arp_offsets=[213, 286]` to the helper. It requires
+71.55 seconds between ARP operations and reserves 386 seconds including the
+last expiry tail, leaving 14 seconds within the capture budget.
+
+An immediate ARP can complete while its timestamp's conservative lower bound
+still precedes coordinator dispatch. In a failed observation, packets and owner
+replies satisfied strict probe attribution, but subtracting the measured host
+clock bounds placed client/origin evidence about 0.11–0.13 seconds before that
+dispatch. Preserve this inconclusive result and the freshness gate. Successful
+packet/counter attribution alone does not establish a fresh test stimulus.
+
+Use `validate_stimulus_clock_margin(stimulus_lead_seconds=6.1,
+maximum_host_clock_bound_seconds=3, dispatch_timeout_seconds=15,
+transport_reserve_seconds=8)` alongside the schedule. Each scheduled operation
+must really wait at least 6.1 seconds on the sender before executing its single
+ARP request. With host offset in `[-b, b]`, subtracting `b` from a host timestamp
+can place its lower bound `2*b` before real time. A real lead greater than `2*b`
+therefore provides positive margin after actual dispatch, even at the worst
+allowed offset. The lead and transport reserve must fit the dispatch deadline.
+
+Record actual dispatch, sender monotonic wait, send/command timestamps, and
+completion. Reject a short or unmeasured wait, host clock bounds exceeding the
+frozen maximum at either end, and any absolute-deadline overrun. Pass remaining
+time through remote execution; do not start a fresh timeout after waiting. Never
+backdate the dispatch, shift captured timestamps, or infer an actual wait from
+its requested duration. Exercise the live command-construction/execution path
+with fake-clock boundary tests before freeze. Keep ordinary pings and existing
+self-target opportunities, including the conditional self opportunity at 180
+seconds; the real sender lead applies only to the two scheduled positive ARPs.
 
 The caller must execute every returned opportunity within its deadline, using
 the actual client's interface, IP and MAC; no source spoofing, cache flush,

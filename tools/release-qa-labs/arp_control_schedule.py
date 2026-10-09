@@ -26,6 +26,43 @@ def _offsets(values):
     return result
 
 
+def validate_stimulus_clock_margin(
+    *, stimulus_lead_seconds, maximum_host_clock_bound_seconds,
+    dispatch_timeout_seconds, transport_reserve_seconds,
+):
+    """Reserve real sender delay for an unchanged conservative freshness gate.
+
+    If a host timestamp has offset in [-bound, bound], subtracting bound
+    places its lower bound as much as 2*bound before real time. A deliberate
+    sender delay greater than that amount establishes positive margin after
+    the actual coordinator dispatch start, even at the worst allowed offset.
+
+    The caller measures the delay with the sender's monotonic clock before
+    executing ARP, enforces the remaining absolute dispatch deadline, and
+    checks every host's clock bound at both ends. Requested delay alone is
+    not evidence; packet/event freshness and all attribution gates still run.
+    """
+    lead, bound, dispatch, reserve = map(_seconds, (
+        stimulus_lead_seconds, maximum_host_clock_bound_seconds,
+        dispatch_timeout_seconds, transport_reserve_seconds,
+    ))
+    if min(lead, dispatch, reserve) <= 0:
+        raise ValueError("lead, dispatch and transport reserve must be positive")
+    if lead <= 2 * bound:
+        raise ValueError("sender lead cannot establish a positive clock margin")
+    if lead + reserve >= dispatch:
+        raise ValueError("sender lead leaves insufficient dispatch reserve")
+    return {
+        "requiredActualLeadSeconds": lead,
+        "maximumHostClockBoundSeconds": bound,
+        "minimumClockMarginSeconds": lead - 2 * bound,
+        "dispatchTimeoutSeconds": dispatch,
+        "transportReserveSeconds": reserve,
+        "requiresMeasuredLead": True,
+        "attributionRequired": True,
+    }
+
+
 def build_positive_control_schedule(
     ping_offsets, arp_offsets, *, observation_seconds, capture_lead_seconds,
     request_generation_window_seconds, dispatch_timeout_seconds,
