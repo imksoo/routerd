@@ -186,6 +186,11 @@ routerd は in-process の event bus と複数の controller を組み合わせ�
 `routerd.resource.status.changed` を発行します。リソースごとに診断情報として定義した
 観測時刻やカウンタの通常更新は、イベントの比較対象から除きます。
 
+他ノードから届いたオンデマンドARP要求の宛先が、準備済み監視プロセス自身の
+送信元IPと一致するときは、probeコマンドを送らず処理済みとして重複を抑止します。
+別の監視プロセスから探索できる場合は引き続き探索し、通信失敗や準備待ちは再試行します。
+観測時刻が更新された要求は再び処理できます。daemon側の自己IP・prefix検査も維持します。
+
 `ARPObserver` の受信・probe・scanカウンタと観測時刻は、引き続きstatusで確認できます。
 同じ端末の `observedClients[].seenAt` だけが更新されても、状態変更イベントは増えません。
 端末の追加・削除、IP/MAC/sourceの変更、observer設定の変更、障害・回復は通知します。

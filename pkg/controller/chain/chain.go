@@ -3782,6 +3782,12 @@ func (r *Runner) probeARPObservers(ctx context.Context, poolName, address string
 			continue
 		}
 		matched++
+		if source, parseErr := netip.ParseAddr(spec.SourceAddress); parseErr == nil && source == prefix.Addr() {
+			// A ready observer never probes its own source address. Treat this
+			// selection as completed so the federation request stays claimed;
+			// still try other eligible observers and propagate their failures.
+			continue
+		}
 		if err := r.arpObserverCommandPusher().ProbeTarget(ctx, spec.Socket, target); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", spec.ResourceName, err))
 		}

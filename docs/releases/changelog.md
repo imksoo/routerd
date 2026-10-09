@@ -12,6 +12,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Skip a ready on-demand ARP observer's own source address when handling federated probe requests, avoiding repeated rejected commands until the event expires. Keep other eligible observers, transient failure retries, refreshed observations, and daemon safety checks. (#1275).
+
 ## v20261009.0902
 
 ### Fixed

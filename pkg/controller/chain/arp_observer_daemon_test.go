@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -317,6 +318,74 @@ func TestRunnerProbesOnlyReadyOnDemandObserverForPool(t *testing.T) {
 	}
 	if err := runner.probeARPObservers(context.Background(), "svnet1", "192.168.124.1/32"); err == nil {
 		t.Fatal("out-of-prefix probe found an observer")
+	}
+}
+
+func TestRunnerARPProbeSkipsObserverSourceAddress(t *testing.T) {
+	self := dynamicconfig.ARPObserverIntent{
+		ResourceName: "mobility-arp-svnet1-demand-1", PoolRef: "svnet1",
+		Prefix: "192.0.2.0/24", SourceType: "on-demand-arp", IfName: "eth1",
+		EventInterface: "svnet1", OnDemand: true, SourceAddress: "192.0.2.10",
+	}
+	other := self
+	other.ResourceName = "mobility-arp-svnet1-demand-2"
+	other.SourceAddress = "192.0.2.20"
+	other.IfName = "eth2"
+	for _, tt := range []struct {
+		name    string
+		intents []dynamicconfig.ARPObserverIntent
+		ready   bool
+		pool    string
+		target  string
+		want    []string
+		wantErr bool
+	}{
+		{name: "self target", intents: []dynamicconfig.ARPObserverIntent{self}, ready: true, pool: "svnet1", target: "192.0.2.10/32"},
+		{name: "valid client", intents: []dynamicconfig.ARPObserverIntent{self}, ready: true, pool: "svnet1", target: "192.0.2.30/32", want: []string{"192.0.2.30"}},
+		{name: "another eligible observer", intents: []dynamicconfig.ARPObserverIntent{self, other}, ready: true, pool: "svnet1", target: "192.0.2.10/32", want: []string{"192.0.2.10"}},
+		{name: "unready self observer", intents: []dynamicconfig.ARPObserverIntent{self}, pool: "svnet1", target: "192.0.2.10/32", wantErr: true},
+		{name: "different pool", intents: []dynamicconfig.ARPObserverIntent{self}, ready: true, pool: "other", target: "192.0.2.10/32", wantErr: true},
+		{name: "outside prefix", intents: []dynamicconfig.ARPObserverIntent{self}, ready: true, pool: "svnet1", target: "198.51.100.10/32", wantErr: true},
+		{name: "not a host prefix", intents: []dynamicconfig.ARPObserverIntent{self}, ready: true, pool: "svnet1", target: "192.0.2.10/24", wantErr: true},
+		{name: "no observer", ready: true, pool: "svnet1", target: "192.0.2.10/32", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, tt.intents, time.Time{})}}
+			pusher := &fakeARPObserverCommandPusher{}
+			runner := Runner{Store: store, ARPObserverCommands: pusher}
+			for _, intent := range tt.intents {
+				runner.setARPObserverReady(intent.ResourceName, tt.ready)
+			}
+			if err := runner.probeARPObservers(context.Background(), tt.pool, tt.target); (err != nil) != tt.wantErr {
+				t.Fatalf("probeARPObservers error = %v, want error %v", err, tt.wantErr)
+			}
+			if !reflect.DeepEqual(pusher.probes, tt.want) {
+				t.Fatalf("probes = %v, want %v", pusher.probes, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunnerARPProbeSelfTargetDoesNotHideTransportFailure(t *testing.T) {
+	intents := []dynamicconfig.ARPObserverIntent{
+		{ResourceName: "mobility-arp-svnet1-demand-1", PoolRef: "svnet1", Prefix: "192.0.2.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "svnet1", OnDemand: true, SourceAddress: "192.0.2.10"},
+		{ResourceName: "mobility-arp-svnet1-demand-2", PoolRef: "svnet1", Prefix: "192.0.2.0/24", SourceType: "on-demand-arp", IfName: "eth2", EventInterface: "svnet1", OnDemand: true, SourceAddress: "192.0.2.20"},
+	}
+	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, intents, time.Time{})}}
+	pusher := &fakeARPObserverCommandPusher{probeErr: context.DeadlineExceeded}
+	runner := Runner{Store: store, ARPObserverCommands: pusher}
+	for _, intent := range intents {
+		runner.setARPObserverReady(intent.ResourceName, true)
+	}
+	if err := runner.probeARPObservers(context.Background(), "svnet1", "192.0.2.10/32"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("probeARPObservers error = %v, want transient failure", err)
+	}
+	pusher.probeErr = nil
+	if err := runner.probeARPObservers(context.Background(), "svnet1", "192.0.2.10/32"); err != nil {
+		t.Fatalf("probeARPObservers after recovery: %v", err)
+	}
+	if !reflect.DeepEqual(pusher.probes, []string{"192.0.2.10"}) {
+		t.Fatalf("probes after recovery = %v, want one eligible observer", pusher.probes)
 	}
 }
 
