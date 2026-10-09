@@ -1,5 +1,10 @@
 # Web Console
 
+Missing DNS, traffic flow, or firewall log databases produce empty log lists
+(and empty DNS/traffic aggregates), as when the optional collector has not yet
+created its store. These reads do not create files or directories. Errors from
+existing stores, such as database corruption, remain visible.
+
 Connections includes per-DS-Lite local IPv4 SNAT counts from the complete
 conntrack snapshot, independent of display limits and filters. Total/TCP/UDP/other
 counts are keyed by observed `innerLocalIPv4`; shared addresses show combined

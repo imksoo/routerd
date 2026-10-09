@@ -297,6 +297,9 @@ func (h Handler) queryLogList(ctx context.Context, filter logstore.DNSQueryFilte
 		return nil, nil
 	}
 	store, err := logstore.OpenDNSQueryLogReadOnly(h.opts.DNSQueryLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -314,6 +317,9 @@ func (h Handler) queryLogAggregate(ctx context.Context, filter logstore.DNSQuery
 		return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
 	store, err := logstore.OpenDNSQueryLogReadOnly(h.opts.DNSQueryLogPath)
+	if os.IsNotExist(err) {
+		return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
+	}
 	if err != nil {
 		return logstore.DNSQueryAggregate{}, err
 	}
@@ -331,6 +337,9 @@ func (h Handler) trafficFlowList(ctx context.Context, filter logstore.TrafficFlo
 		return nil, nil
 	}
 	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +357,9 @@ func (h Handler) trafficFlowAggregate(ctx context.Context, filter logstore.Traff
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
 	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	if os.IsNotExist(err) {
+		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
+	}
 	if err != nil {
 		return logstore.TrafficFlowAggregate{}, err
 	}
@@ -365,6 +377,9 @@ func (h Handler) firewallLogList(ctx context.Context, filter logstore.FirewallLo
 		return nil, nil
 	}
 	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
