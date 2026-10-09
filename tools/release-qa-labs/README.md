@@ -92,6 +92,26 @@ Bind version verification to the exact successful Release workflow and tag:
   Preserve a failed inspection and its corrected attempt separately; missing
   or inconsistent identity evidence must remain a failure until resolved.
 
+For on-demand ARP positive controls, an unexpired federation database record is
+not proof of a pending command. Do not require all background facts to disappear
+or attribute an arbitrary counter increment to the selected target.
+`arp_probe_attribution.py` provides an offline, fail-closed subgate for bounded
+100–200 ms receiver-local status samples and complete `tcpdump -nn -tt -e`
+broadcast captures. Bind the actual observer's PID/start time, source IP/MAC,
+retry count and timeout before using it. It requires one command completion,
+exact probe/frame accounting for the selected target, no autonomous increments,
+stable identity/counters, an observed quiet guard before the burst, and packets
+outside ambiguous status-read boundaries. Unicast kernel NUD packets cannot
+prove a daemon probe. Missing, mixed, or sparse evidence remains inconclusive.
+
+The caller still verifies the fresh request's full identity and generation,
+pool/membership, measured clock uncertainty, remaining TTL and observation tail,
+controller progress, other observers' passive mode, and capture completeness.
+Use conservative request-validity bounds for the helper; reject competing
+same-target generations separately. This subgate does not replace certification
+or the full connectivity/resource/log gates. Freeze collector limits and helper
+source hashes before a new run, and retain earlier failed runs unchanged.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
