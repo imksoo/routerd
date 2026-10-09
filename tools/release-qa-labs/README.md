@@ -126,6 +126,37 @@ tcpdump's valid `who-has IP (MAC) tell IP` form. A successful parse may contain
 zero matches. Client unicast requests and self-target detection are supported;
 neither establishes a daemon command without the separate broadcast subgate.
 
+Delivery of a fresh request does not establish a usable positive control. An
+ordinary ping can also trigger reverse-path neighbor discovery near the eventual
+federated command, leaving no quiet interval for attribution. Repeating the ping
+at the same periodic traffic phase does not resolve that ambiguity. Do not cancel
+the independent ARP opportunities merely because a DB generation arrived.
+
+Use `arp_control_schedule.build_positive_control_schedule()` to validate fixed,
+unconditional positive ARP opportunities before freezing. For a 400-second
+capture, one bounded schedule keeps ordinary pings at offsets 60 and 120 seconds,
+then sends one real-client ARP request at each of offsets 223 and 293 seconds.
+Set `capture_lead_seconds=20`, `request_generation_window_seconds=30`,
+`dispatch_timeout_seconds=10`, `request_ttl_seconds=45`,
+`clock_allowance_seconds=10`, `expiry_tail_seconds=10`, and
+`quiet_guard_seconds=1.55`. Pass these frozen values, `observation_seconds=400`,
+`ping_offsets=[60, 120]`, and `arp_offsets=[223, 293]` to the helper. It requires
+66.55 seconds between ARP opportunities and reserves 388 seconds including the
+last expiry tail, leaving 12 seconds within the capture budget.
+
+The caller must execute every returned opportunity within its deadline, using
+the actual client's interface, IP and MAC; no source spoofing, cache flush,
+direct probe API, or event injection is needed. Retain the schedule, all stimulus
+receipts, and every generation's evaluation. Enforce the real capture-start
+lead and measured clock bounds, and reject a missed opportunity or overrun.
+The generation window is a scheduling allowance, not proof that natural traffic
+stopped. Keep the existing checks for actual competing generations, full request
+identity, initial remaining TTL, complete capture/expiry tail, quiet guard, exact
+packet/counter accounting and controller progress. Additional traffic can still
+make all opportunities inconclusive; that remains FAIL. Preserve the original
+failed qualification and use a new frozen run and certification for the changed
+collector. A schedule validation PASS is not evidence of a live positive control.
+
 Preserve normal controller polling intervals at the end of an observation.
 If the next normal poll would exceed the capture deadline, keep capture running
 to the deadline and finish without inserting an abbreviated final status poll.
