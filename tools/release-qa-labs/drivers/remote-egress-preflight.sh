@@ -154,6 +154,35 @@ direct_tcp_any_family() {
   return 2
 }
 
+proxy_tcp_tls() {
+  local host="$1" result="$2" attempt status prefix
+  rm -f "$result"
+  printf 'attempt\texit\n' >"$result.attempts.tsv"
+  # These are readiness probes before provisioning, not qualification traffic.
+  # At most three attempts, each with a 20-second total deadline, may recover
+  # transient transport failures. Certificate and other errors fail at once.
+  for attempt in 1 2 3; do
+    prefix="$result.attempt-$attempt"
+    status=0
+    curl --silent --show-error --head --connect-timeout 10 --max-time 20 \
+      --proxy "$proxy" "https://$host/" --output "$prefix.headers" \
+      --write-out '%{http_connect}\t%{http_code}\t%{time_connect}\t%{time_appconnect}\t%{time_total}\n' \
+      >"$prefix.timings.tsv" 2>"$prefix.stderr" || status=$?
+    printf '%s\t%s\n' "$attempt" "$status" >>"$result.attempts.tsv"
+    if [ "$status" -eq 0 ]; then
+      install -m 0600 "$prefix.headers" "$result"
+      return 0
+    fi
+    printf 'release lab driver: HTTPS preflight host=%s attempt=%s/3 curlExit=%s\n' \
+      "$host" "$attempt" "$status" >&2
+    case "$status" in
+      7|28|52|55|56) [ "$attempt" -lt 3 ] || return "$status" ;;
+      *) return "$status" ;;
+    esac
+    sleep 1
+  done
+}
+
 proxy="${HTTPS_PROXY:-${https_proxy:-}}"
 if [ -n "$proxy" ]; then
   # In proxy mode the explicit TCP gate is for the proxy endpoint. curl then
@@ -167,8 +196,7 @@ if [ -n "$proxy" ]; then
   getent ahosts "$proxy_host" >"$out/dns-proxy.txt"
   timeout 10 bash -c "exec 3<>/dev/tcp/$proxy_host/$proxy_port"
   for host in "${hosts[@]:0:4}"; do
-    curl --silent --show-error --head --connect-timeout 10 \
-      --proxy "$proxy" "https://$host/" >"$out/proxy-connect-tls-${host//[^A-Za-z0-9_.-]/_}.txt"
+    proxy_tcp_tls "$host" "$out/proxy-connect-tls-${host//[^A-Za-z0-9_.-]/_}.txt"
   done
 else
   for host in "${hosts[@]:0:4}"; do

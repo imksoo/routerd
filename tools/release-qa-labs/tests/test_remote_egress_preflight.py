@@ -144,7 +144,29 @@ esac
 shift
 [ "$1" = bash ] && exit 0
 exec "$@"''')
-        self.make("curl", 'echo "curl $*" >>"$CALLS"; [ "${FAILURE:-}" = proxy ] && exit 9; exit 0')
+        self.make("sleep", 'echo "sleep $*" >>"$CALLS"')
+        self.make("curl", '''echo "curl $*" >>"$CALLS"
+count_file="$CALLS.curl-count"
+count=$(cat "$count_file" 2>/dev/null || echo 0)
+count=$((count + 1)); echo "$count" >"$count_file"
+output=
+while [ "$#" -gt 0 ]; do
+  case "$1" in --output) output="$2"; shift;; esac
+  shift
+done
+[ -n "$output" ] && printf 'fixture headers attempt %s\\n' "$count" >"$output"
+case "${FAILURE:-}" in
+  proxy) exit 9;;
+  proxy_timeout) echo 'fixture timeout' >&2; exit 28;;
+  proxy_certificate) echo 'fixture invalid certificate' >&2; exit 60;;
+  proxy_retry_*)
+    if [ "$count" -eq 1 ]; then
+      echo 'fixture transient transport failure' >&2
+      exit "${FAILURE#proxy_retry_}"
+    fi;;
+esac
+printf '200\\t302\\t0.001\\t0.01\\t0.02\\n'
+exit 0''')
         self.make("openssl", '''echo "openssl $*" >>"$CALLS"
 case "${FAILURE:-}:$*" in tls:*|v6_tls:*-6*) exit 9;; esac
 exit 0''')
@@ -228,6 +250,48 @@ esac''')
             with self.subTest(failure=failure):
                 self.assert_failed(failure, proxy=True)
         self.assert_failed("mirror", proxy=True, mirror_present=False)
+
+    def test_transient_proxy_failures_retry_with_evidence_before_authentication(self):
+        for code in (7, 28, 52, 55, 56):
+            with self.subTest(code=code):
+                result, calls, output = self.run_preflight(f"proxy_retry_{code}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(output.exists())
+                log = calls.read_text()
+                self.assertEqual(log.count("curl "), 5)  # One retry plus four endpoints.
+                self.assertEqual(log.count("sleep 1"), 1)
+                self.assertLess(log.rindex("curl "), log.index("aws "))
+                self.assertIn("--connect-timeout 10 --max-time 20", log)
+                prefix = output.parent / "proxy-connect-tls-sts.ap-northeast-1.amazonaws.com.txt"
+                self.assertEqual(Path(str(prefix) + ".attempts.tsv").read_text(),
+                                 f"attempt\texit\n1\t{code}\n2\t0\n")
+                self.assertIn("transient", Path(str(prefix) + ".attempt-1.stderr").read_text())
+                self.assertIn("attempt 1", Path(str(prefix) + ".attempt-1.headers").read_text())
+                self.assertIn("attempt 2", prefix.read_text())
+                self.assertTrue(Path(str(prefix) + ".attempt-2.timings.tsv").read_text())
+
+    def test_persistent_timeout_stops_after_three_attempts_without_auth_or_pass(self):
+        result, calls, output = self.run_preflight("proxy_timeout")
+        self.assertEqual(result.returncode, 28)
+        log = calls.read_text()
+        self.assertEqual(log.count("curl "), 3)
+        self.assertEqual(log.count("sleep 1"), 2)
+        self.assertNotIn("aws ", log)
+        self.assertFalse(output.exists())
+        prefix = output.parent / "proxy-connect-tls-sts.ap-northeast-1.amazonaws.com.txt"
+        self.assertFalse(prefix.exists())
+        self.assertEqual(Path(str(prefix) + ".attempts.tsv").read_text(),
+                         "attempt\texit\n1\t28\n2\t28\n3\t28\n")
+        self.assertEqual(Path(str(prefix) + ".attempt-3.stderr").stat().st_mode & 0o777, 0o600)
+
+    def test_certificate_failure_is_never_retried(self):
+        result, calls, output = self.run_preflight("proxy_certificate")
+        self.assertEqual(result.returncode, 60)
+        log = calls.read_text()
+        self.assertEqual(log.count("curl "), 1)
+        self.assertNotIn("sleep ", log)
+        self.assertNotIn("aws ", log)
+        self.assertFalse(output.exists())
 
     def test_aws_key_pair_must_match_the_pinned_guest_key(self):
         other = self.root / "other-guest-key"
