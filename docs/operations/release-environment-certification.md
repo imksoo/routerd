@@ -51,6 +51,25 @@ certification is equivalent to no certification.
 
 ## Reproducible environment contract
 
+Before freezing a prospective run contract, validate its final bytes with the
+standard validator and replay the actual evidence driver against its saved
+observations:
+
+```sh
+python3 scripts/release_certification.py validate-contract \
+  --contract prospective-contract.json --environment "$environment" \
+  --topology "$topology" --providers "$providers" > contract-validation.json
+```
+
+The command checks the same run schema, requested identity/provider set and
+artifact checksum used by the certifier. It invokes no provider driver and
+issues no certification. Compare its `contractSha256` with the file being
+frozen, and repeat both validations after any contract or binding update.
+Preparation-only metadata belongs in a separate record. A custom evidence
+driver can pass while the standard contract is invalid. If formal certification
+rejects an already frozen contract, preserve that run as failed and prepare a
+new run; do not repair the frozen input or weaken its schema.
+
 Each release qualification environment must be reproducible from a recorded
 contract, not from operator memory. The certification manifest or attached
 evidence must identify:

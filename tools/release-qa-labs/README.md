@@ -258,7 +258,24 @@ PY
 Also review command arguments, assertion paths, target coverage, and time budgets
 for the new run; historical evidence references must remain explicitly separate.
 Evaluate the candidate driver against the saved fresh evidence before freezing,
-then bind the checked plan bytes and all execution dependencies. Certification
+then bind the checked plan bytes and all execution dependencies. Also run the
+standard contract validator on the **final prospective bytes**, after every
+metadata or hash-binding update:
+
+```sh
+python3 scripts/release_certification.py validate-contract \
+  --contract prospective-contract.json --environment "$environment" \
+  --topology "$topology" --providers "$providers" > contract-validation.json
+```
+
+This offline command checks the same schema, identity and artifact checksum as
+formal certification without invoking any driver or issuing a certificate. Its
+`contractSha256` must match the bytes subsequently frozen. Keep preparation
+markers such as `preFreezeReviewPending` in a separate file; do not add them to
+the strict contract schema or silently remove arbitrary rejected properties.
+Both the standard validation and actual evidence-driver replay must pass before
+freeze. A custom driver PASS alone does not validate the standard contract.
+Certification
 and qualification must repeat their independent identity and hash checks. If
 certification rejects a frozen plan, preserve that failed contract, plan, and
 result and prepare a new run; do not repair the frozen input or overwrite its

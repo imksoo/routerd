@@ -300,6 +300,33 @@ def run_driver(
     return result
 
 
+def command_validate_contract(argv: list[str]) -> int:
+    """Check prospective bytes without issuing evidence or invoking a driver."""
+    parser = argparse.ArgumentParser(description=command_validate_contract.__doc__)
+    parser.add_argument("--contract", type=Path, required=True)
+    parser.add_argument("--environment", required=True)
+    parser.add_argument("--topology", required=True)
+    parser.add_argument("--providers", required=True)
+    args = parser.parse_args(argv)
+    try:
+        raw = args.contract.read_bytes()
+        contract = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise ContractError(f"cannot read contract {args.contract}: {exc}") from exc
+    if not isinstance(contract, dict):
+        raise ContractError("run contract must be a JSON object")
+    validate_contract(
+        contract, args.environment, args.topology, normalize_providers(args.providers)
+    )
+    print(json.dumps({
+        "status": "pass", "validationOnly": True, "checkedAt": rfc3339(utc_now()),
+        "contractPath": str(args.contract.resolve()),
+        "contractSha256": hashlib.sha256(raw).hexdigest(),
+        "artifactSha256": contract["routerdArtifact"]["sha256"],
+    }, sort_keys=True))
+    return 0
+
+
 def validate_driver_result(
     result: dict[str, Any], component: str, providers: list[str]
 ) -> None:
@@ -929,6 +956,8 @@ def main() -> int:
     if len(sys.argv) < 2:
         raise ContractError("missing command")
     command, argv = sys.argv[1], sys.argv[2:]
+    if command == "validate-contract":
+        return command_validate_contract(argv)
     if command == "pve":
         return command_certify("pve", argv)
     if command == "cloud":
