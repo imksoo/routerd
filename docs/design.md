@@ -212,6 +212,17 @@ full stored diagnostics and the separate ARP observation/request/probe events
 used for discovery and lease freshness. Matching `EventRule` history uses the
 same comparison, so routine status refreshes do not inflate event counts.
 
+`observed.lastCommandProbe` is JSON text describing only the last successful
+`probe-target` command: `sequence`, IPv4 `target`, RFC3339 `startedAt` and
+`completedAt`, and `packetsSent`. The sequence equals `commandProbeCount` in
+the same atomic status snapshot. The record is absent before the first success
+and resets with the observer process. Cooldown suppression, rejected commands,
+partial/failed sends, and autonomous probes do not replace it. Later successful
+commands overwrite it; it is bounded diagnostics, not a command history or a
+federated request identifier. Collect it with process identity and actual packet
+captures when correlating a fresh request. Its updates are excluded from status
+events and `EventRule` history while remaining available in stored status.
+
 For federated on-demand ARP requests, a ready observer whose source address is
 the requested target completes selection without sending a probe command. This
 keeps the request's deduplication claim instead of repeatedly submitting a

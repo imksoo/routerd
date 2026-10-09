@@ -15,6 +15,7 @@ before collecting qualification evidence.
 """
 
 import collections
+import datetime
 import hashlib
 import ipaddress
 import json
@@ -211,13 +212,15 @@ def attribute_command_probe(
     capture_complete, kernel_drops, other_observers_passive,
     max_sample_gap=0.4, retry_spacing_tolerance=0.15,
 ):
-    """Return fail-closed target attribution, with explicit accepted windows.
+    """Legacy isolated-burst diagnostic, with explicit accepted windows.
 
 For a completed command, require exactly retries+1 broadcast requests and
 probeCount increments, one command completion, and no autonomous increments.
 Every bound-source broadcast in the interval must target the selected address.
 Packet timestamps inside an endpoint status-read interval remain ambiguous.
 Unicast kernel NUD requests cannot establish a daemon probe.
+Counters and a quiet guard alone cannot exclude work delayed from before the
+capture. New qualification must use attribute_recorded_command instead.
 """
     result = {"success": False, "acceptedWindows": [], "rejections": {}}
     try:
@@ -306,4 +309,113 @@ Unicast kernel NUD requests cannot establish a daemon probe.
     result["rejections"] = dict(rejected)
     result["unicastRequestsExcluded"] = unicast
     result["method"] = "one command completion, exact probe/capture accounting, no autonomous increments"
+    return result
+
+
+def _command_timestamp(value):
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError("command evidence needs a UTC RFC3339 timestamp")
+    # fromisoformat truncates sub-microsecond digits. Preserve the fractional
+    # second explicitly because daemon records use RFC3339Nano.
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z", value)
+    if not match:
+        raise ValueError("invalid command evidence timestamp")
+    base = datetime.datetime.fromisoformat(match[1] + "+00:00").timestamp()
+    return base + float("0." + (match[2] or "0"))
+
+
+def attribute_recorded_command(
+    samples, packet_text, *, source_ip, source_mac, target_ip,
+    probe_retries, probe_timeout_seconds, valid_after, valid_before,
+    capture_complete, kernel_drops, other_observers_passive,
+    max_sample_gap=0.4, retry_spacing_tolerance=0.15,
+):
+    """Bind captured target packets to an explicit successful command record.
+
+Each original status sample carries the observer's unmodified lastCommandProbe
+JSON string beside its counters. This record is updated atomically with the
+completion counter and identifies the target, start/end and actual writes.
+Background counters cannot substitute for missing command evidence. The caller
+still binds configuration, fresh full-key request receipt/TTL, competing
+generations, controller health/progress, and complete capture coverage.
+"""
+    result = {"success": False, "acceptedWindows": [], "rejections": {}}
+    try:
+        if not all(isinstance(v, str) for v in (source_ip, source_mac, target_ip, packet_text)):
+            raise ValueError("addresses, MAC, and capture must be strings")
+        source_ip, target_ip = str(ipaddress.IPv4Address(source_ip)), str(ipaddress.IPv4Address(target_ip))
+        source_mac = source_mac.lower()
+        if not MAC.fullmatch(source_mac) or source_ip == target_ip:
+            raise ValueError("invalid positive-control address or MAC")
+        if capture_complete is not True or _integer(kernel_drops) != 0:
+            raise ValueError("capture is incomplete or dropped packets")
+        if other_observers_passive is not True:
+            raise ValueError("other observers may actively probe")
+        attempts = _integer(probe_retries) + 1
+        timeout, gap, tolerance = map(_number, (probe_timeout_seconds, max_sample_gap, retry_spacing_tolerance))
+        valid_after, valid_before = _number(valid_after), _number(valid_before)
+        if timeout <= 0 or gap <= 0 or tolerance < 0 or valid_after >= valid_before:
+            raise ValueError("invalid frozen timing bounds")
+        rows = _samples(samples)
+        packets, unicast = _packets(packet_text, source_ip, source_mac)
+        records = {}
+        for index, (raw, row) in enumerate(zip(samples, rows)):
+            count = row["counts"]["commandProbeCount"]
+            value = raw.get("lastCommandProbe")
+            if count == 0 and value in (None, ""):
+                continue
+            if not isinstance(value, str):
+                raise ValueError("missing original command evidence JSON")
+            record = json.loads(value)
+            if not isinstance(record, dict):
+                raise ValueError("invalid command evidence object")
+            sequence = _integer(record["sequence"])
+            if not sequence or sequence != count or _integer(record["packetsSent"]) != attempts:
+                raise ValueError("command record/counter or packet-count mismatch")
+            target = str(ipaddress.IPv4Address(record["target"]))
+            start, end = _command_timestamp(record["startedAt"]), _command_timestamp(record["completedAt"])
+            if not _command_timestamp(row["identity"][2]) <= start <= end <= row["end"]:
+                raise ValueError("invalid command evidence lifetime")
+            if sequence in records:
+                if records[sequence]["record"] != record:
+                    raise ValueError("same command sequence changed its evidence")
+                continue
+            records[sequence] = {"record": record, "target": target, "start": start, "end": end,
+                                 "firstSample": index}
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        result["error"] = str(error)
+        return result
+
+    rejected = collections.Counter()
+    for sequence, evidence in records.items():
+        if sequence <= rows[0]["counts"]["commandProbeCount"] or evidence["target"] != target_ip:
+            continue
+        try:
+            start, end = evidence["start"], evidence["end"]
+            if start < valid_after or end > valid_before:
+                raise ValueError("outside_request_validity")
+            after = evidence["firstSample"]
+            before = next((i for i in range(after - 1, -1, -1) if rows[i]["end"] <= start), None)
+            if before is None or rows[before]["counts"]["commandProbeCount"] >= sequence:
+                raise ValueError("missing_precommand_sample")
+            window = rows[before:after + 1]
+            if any(b["end"] - a["start"] > gap for a, b in zip(window, window[1:])):
+                raise ValueError("sparse_counter_samples")
+            frames = [p for p in packets if p["target"] == target_ip and start <= p["at"] <= end]
+            if len(frames) != attempts:
+                raise ValueError("target_packet_count")
+            if any(abs(b["at"] - a["at"] - timeout) > tolerance for a, b in zip(frames, frames[1:])):
+                raise ValueError("retry_spacing")
+            delta = {k: rows[after]["counts"][k] - rows[before]["counts"][k] for k in COUNTERS}
+            if delta["probeCount"] < attempts:
+                raise ValueError("insufficient_successful_writes")
+            result["acceptedWindows"].append({
+                "beforeSample": before, "afterSample": after, "start": start, "end": end,
+                "counterDeltas": delta, "probePackets": frames, "commandEvidence": evidence["record"],
+                "observerIdentity": list(rows[before]["identity"]),
+            })
+        except ValueError as error:
+            rejected[str(error)] += 1
+    result.update(success=bool(result["acceptedWindows"]), rejections=dict(rejected),
+                  unicastRequestsExcluded=unicast, method="explicit successful target command and captured writes")
     return result

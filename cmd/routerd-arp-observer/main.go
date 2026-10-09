@@ -83,6 +83,7 @@ type daemon struct {
 	proactiveCount                   uint64
 	requestObservedCount             uint64
 	commandProbeCount                uint64
+	lastCommandProbe                 *commandProbeEvidence
 	lastPacketAt                     time.Time
 	lastEventAt                      time.Time
 	lastScanAt                       time.Time
@@ -103,6 +104,17 @@ type arpClient struct {
 	MAC        string    `json:"mac"`
 	SourceType string    `json:"sourceType"`
 	SeenAt     time.Time `json:"seenAt"`
+}
+
+// commandProbeEvidence is bounded operational evidence for the last successful
+// command. Aggregate probe counters also include autonomous work and cannot
+// identify a command's target when those paths overlap.
+type commandProbeEvidence struct {
+	Sequence    uint64    `json:"sequence"`
+	Target      string    `json:"target"`
+	StartedAt   time.Time `json:"startedAt"`
+	CompletedAt time.Time `json:"completedAt"`
+	PacketsSent int       `json:"packetsSent"`
 }
 
 type arpPacket struct {
@@ -362,7 +374,7 @@ func (d *daemon) probeNextPrefixTarget(ctx context.Context, socket *packetSocket
 	d.mu.Lock()
 	d.proactiveCount++
 	d.mu.Unlock()
-	_ = d.probeTarget(ctx, socket, target)
+	_, _ = d.probeTarget(ctx, socket, target)
 }
 
 func (d *daemon) nextProactiveTarget() (netip.Addr, bool) {
@@ -400,7 +412,7 @@ func (d *daemon) recordPacket(ctx context.Context, socket *packetSocket, packet 
 		}
 		if d.shouldStartActiveProbe(packet.TargetIP, now) {
 			d.publishARPRequestObserved(packet, now)
-			go func() { _ = d.probeTarget(ctx, socket, packet.TargetIP) }()
+			go func() { _, _ = d.probeTarget(ctx, socket, packet.TargetIP) }()
 		}
 	}
 }
@@ -569,29 +581,31 @@ func (d *daemon) markProbeHit(address netip.Addr) bool {
 	return true
 }
 
-func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) error {
+func (d *daemon) probeTarget(ctx context.Context, socket *packetSocket, target netip.Addr) (int, error) {
 	attempts := d.opts.probeRetries + 1
+	sent := 0
 	for i := 0; i < attempts; i++ {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return sent, ctx.Err()
 		}
 		if !d.activeProbingArmed() {
-			return fmt.Errorf("ARP observer is not armed")
+			return sent, fmt.Errorf("ARP observer is not armed")
 		}
 		if err := d.sendARPProbe(socket, target); err != nil {
 			d.setObserverError(err)
 			d.clearPendingProbe(target)
-			return err
+			return sent, err
 		}
+		sent++
 		if i+1 < attempts {
 			select {
 			case <-time.After(d.opts.probeTimeout):
 			case <-ctx.Done():
-				return ctx.Err()
+				return sent, ctx.Err()
 			}
 		}
 	}
-	return nil
+	return sent, nil
 }
 
 func (d *daemon) clearPendingProbe(target netip.Addr) {
@@ -678,13 +692,19 @@ func (d *daemon) serve(ctx context.Context) error {
 				result.Message = "probe suppressed by cooldown"
 				break
 			}
-			if err := d.probeTarget(r.Context(), socket, target); err != nil {
+			started := time.Now().UTC()
+			sent, err := d.probeTarget(r.Context(), socket, target)
+			if err != nil {
 				result.Accepted = false
 				result.Message = err.Error()
 				break
 			}
 			d.mu.Lock()
 			d.commandProbeCount++
+			d.lastCommandProbe = &commandProbeEvidence{
+				Sequence: d.commandProbeCount, Target: target.String(),
+				StartedAt: started, CompletedAt: time.Now().UTC(), PacketsSent: sent,
+			}
 			d.mu.Unlock()
 			result.Message = "target probe sent"
 		default:
@@ -744,6 +764,10 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 	observed["ignoredSenderMACCount"] = strconv.Itoa(len(ignoredSenderMACs))
 	observed["ignoredSenderMACObservationCount"] = strconv.FormatUint(d.ignoredSenderMACObservationCount, 10)
 	observed["ignoredSenderMACsConfigured"] = strconv.FormatBool(d.ignoredSenderMACsInitialized)
+	if d.lastCommandProbe != nil {
+		lastCommand, _ := json.Marshal(d.lastCommandProbe)
+		observed["lastCommandProbe"] = string(lastCommand)
+	}
 	if !d.lastPacketAt.IsZero() {
 		observed["lastPacketAt"] = d.lastPacketAt.Format(time.RFC3339Nano)
 	}

@@ -32,6 +32,7 @@ func arpObserverTestStatus(sequence int) map[string]any {
 		"ignoredSenderMACsConfigured": "true",
 		"ignoredSenderMACs":           "",
 		"observedClients":             fmt.Sprintf(`[{"ip":"192.0.2.10","mac":"02:00:00:00:00:10","sourceType":"arp-observer","seenAt":%q}]`, at),
+		"lastCommandProbe":            fmt.Sprintf(`{"sequence":%d,"target":"192.0.2.%d","startedAt":%q,"completedAt":%q,"packetsSent":3}`, sequence, sequence+1, at, at),
 	}
 	for _, field := range []string{"packetsSeen", "observedCount", "probeCount", "probeHitCount", "proactiveCount", "requestObservedCount", "commandProbeCount", "scanCount", "ignoredSenderMACObservationCount"} {
 		status[field] = strconv.Itoa(sequence)

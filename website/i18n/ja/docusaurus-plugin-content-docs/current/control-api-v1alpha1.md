@@ -93,6 +93,13 @@ FreeBSD では、対応するパスは `/var/run/routerd/...` です。
 
 `renew` の意味はデーモンごとに異なります。DHCPv6 は Renew の送信、DHCPv4 はリース更新、healthcheck は即時の probe です。
 
+ARP observerの `POST /v1/commands` は `probe-target` を受け付けます。成功すると
+`GET /v1/status` の `observed.lastCommandProbe` に、`sequence`・`target`・
+UTC RFC3339の `startedAt` / `completedAt`・`packetsSent` をJSON文字列で返します。
+sequenceは同じ読取の `commandProbeCount` と一致します。保持するのは直近の成功1件で、
+拒否・cooldown抑止・途中失敗・自律探索では更新しません。要求IDや永続履歴ではないため、
+要求との照合には監視プロセスの識別情報と実パケットも使用します。
+
 ## フェーズ語彙
 
 `ResourceStatus.phase` は、リソース横断で共通の語彙を使います。

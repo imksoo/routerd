@@ -197,6 +197,14 @@ routerd は in-process の event bus と複数の controller を組み合わせ�
 この処理はイベントの比較にだけ適用し、保存する診断情報や、端末検出・鮮度更新に使う
 ARP観測・要求・probeイベントは維持します。`EventRule` の履歴にも同じ比較を使うため、
 通常のstatus更新でイベント件数が増えることはありません。
+
+`observed.lastCommandProbe` は直近の成功した `probe-target` コマンド1件をJSON文字列で
+保持します。内容は `sequence`、IPv4の `target`、RFC3339形式の `startedAt` / `completedAt`、
+`packetsSent` です。同じstatus読取の `commandProbeCount` とsequenceは一致します。
+最初の成功前は存在せず、プロセス再起動時にリセットされます。cooldown抑止・拒否・
+途中失敗・自律探索では更新せず、次の成功コマンドで上書きします。要求の識別子や
+完全なコマンド履歴ではないため、プロセス識別情報・要求世代・実パケットと併せて
+照合します。この診断値の更新も状態変更イベントと `EventRule` 履歴を増やしません。
 これにより下流のコントローラーが連鎖的に再評価され、リソース間の依存解決が成立します。
 
 Kubernetes エッジリソースもこの status フローを直接使います。`IngressService` のヘルスチェックがアクティブなバックエンドを選択し、NAT レンダラーが次のリコンサイルでその status を使います。`BGPRouter` / `BGPPeer` の status は、常駐する `routerd-bgp` デーモンから型付きの `ListPeer` / `ListPath` API 呼び出しで観測し、`track` を通じて `VirtualAddress` の VRRP 優先度を下げることもできます。BGP の設定変更は、FRR 形式のテキスト設定のレンダリングやリロードツールの呼び出しではなく、GoBGP API オブジェクトでデーモンに適用します。`VirtualAddress` と `IngressService` のホスト名は、DNSResolver が提供するゾーンに導出 A/AAAA レコードとして反映されます。BGP/VRRP/Ingress の status は `routerctl get BGPRouter`、`routerctl get VirtualAddress`、`routerctl get IngressService` のビューと、遷移やバックエンド正常性の低カーディナリティ OTel メトリクスでも可視化されます。

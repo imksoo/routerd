@@ -807,7 +807,7 @@ func volatileStatusEventField(apiVersion, kind, key string) bool {
 		// Preserve these diagnostics in status, but do not journal or fan out
 		// another resource transition for each packet, probe, or scan.
 		switch key {
-		case "lastPacketAt", "lastEventAt", "lastScanAt", "packetsSeen", "observedCount", "probeCount", "probeHitCount", "proactiveCount", "requestObservedCount", "commandProbeCount", "scanCount", "ignoredSenderMACObservationCount":
+		case "lastPacketAt", "lastEventAt", "lastScanAt", "packetsSeen", "observedCount", "probeCount", "probeHitCount", "proactiveCount", "requestObservedCount", "commandProbeCount", "lastCommandProbe", "scanCount", "ignoredSenderMACObservationCount":
 			return true
 		}
 	case "HealthCheck":
