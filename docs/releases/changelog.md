@@ -12,6 +12,24 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Observe interface addresses using exact host and prefix matches instead of substring matches (#1262).
+- Propagate ownership ledger failures, make SQLite ownership batches atomic, and record legacy import completion before renaming its source so retries cannot restore forgotten ownership (#1268).
+- Return empty results when optional DNS, traffic, and firewall log databases do not exist yet, while preserving errors for corrupt or unreadable stores (#1270).
+- Handle iptables-nft 1.8.7's ambiguous missing SAM chain response with a read-only whole-table check. Existing incompatible chains and failed reads remain errors (#1272).
+
+### Changed
+
+- Split Web Console handlers by responsibility, batch DPI lookups, and propagate request cancellation through log queries (#1263, #1266).
+- Make CI change detection fail closed and update the source-map-js dependency; clarify toolchain, Ubuntu ISO, and first-router guidance across four languages (#1264, #1265, #1267).
+
+### Validation
+
+- Integrated candidate `58d923d1` passed certified AWS/Azure/OCI/PVE representative-redundancy QA: 245 checks and 735/735 ping replies, including RR A and each site's leaf A stop/rejoin. Cleanup, seven-scope zero inventory, and token revocation passed.
+- The old `1adaf900` and candidate release binaries each passed 48,000/48,000 probes on the same isolated PVE guest with steady traffic and saved-state restarts. The iptables 1.8.7 SAM error reproduced only on the old binary. This comparison exercised WireGuard/IPIP/IPv4/SAM controllers, not old-versus-new cloud provider or BGP execution.
+- An earlier attempt lost two ICMP packets; this did not recur in the final QA, and this release does not claim a proven fix for that intermittent loss. B-side symmetric failover, legacy protocols, and performance were not qualified. Official release assets are rebuilt by release CI; the recommended stable milestone remains `v20260914.0729`.
+
 ## v20260915.1207
 
 ### Added
