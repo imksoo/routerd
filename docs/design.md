@@ -197,7 +197,20 @@ Every controller follows the common `framework.FuncController` shape:
 - `PeriodicFunc`: idempotent periodic re-evaluation
 - `ReconcileFunc`: state convergence on event arrival
 
-The `eventedStore` wrapper guarantees that every persisted state change emits `routerd.resource.status.changed`, which downstream controllers consume to resolve cross-resource dependencies.
+The `eventedStore` wrapper persists current status and emits
+`routerd.resource.status.changed` for meaningful resource changes, which
+downstream controllers consume to resolve cross-resource dependencies.
+Routine observation timestamps and counters are excluded from the event
+comparison where the resource defines them as diagnostics.
+
+For `ARPObserver`, packet/probe/scan counters and observation timestamps remain
+available in status. Refreshing `observedClients[].seenAt` for the same client
+does not create another status event. Client additions/removals, IP/MAC/source
+changes, observer configuration changes, and health/error transitions still
+emit events. This projection affects event comparison only: it preserves the
+full stored diagnostics and the separate ARP observation/request/probe events
+used for discovery and lease freshness. Matching `EventRule` history uses the
+same comparison, so routine status refreshes do not inflate event counts.
 
 The Linux SAM controller reconciles an empty forwarding intent by removing
 stale owned rules and per-interface `accept_local` state. An absent

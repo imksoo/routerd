@@ -182,7 +182,16 @@ routerd は in-process の event bus と複数の controller を組み合わせ�
 - `PeriodicFunc`: 定期的な再評価（idempotent）
 - `ReconcileFunc`: イベント受信時の状態収束
 
-`eventedStore` ラッパーは、状態を保存するときに必ず `routerd.resource.status.changed` を発行します。
+`eventedStore` ラッパーは現在のstatusを保存し、リソースの意味のある変化に対して
+`routerd.resource.status.changed` を発行します。リソースごとに診断情報として定義した
+観測時刻やカウンタの通常更新は、イベントの比較対象から除きます。
+
+`ARPObserver` の受信・probe・scanカウンタと観測時刻は、引き続きstatusで確認できます。
+同じ端末の `observedClients[].seenAt` だけが更新されても、状態変更イベントは増えません。
+端末の追加・削除、IP/MAC/sourceの変更、observer設定の変更、障害・回復は通知します。
+この処理はイベントの比較にだけ適用し、保存する診断情報や、端末検出・鮮度更新に使う
+ARP観測・要求・probeイベントは維持します。`EventRule` の履歴にも同じ比較を使うため、
+通常のstatus更新でイベント件数が増えることはありません。
 これにより下流のコントローラーが連鎖的に再評価され、リソース間の依存解決が成立します。
 
 Kubernetes エッジリソースもこの status フローを直接使います。`IngressService` のヘルスチェックがアクティブなバックエンドを選択し、NAT レンダラーが次のリコンサイルでその status を使います。`BGPRouter` / `BGPPeer` の status は、常駐する `routerd-bgp` デーモンから型付きの `ListPeer` / `ListPath` API 呼び出しで観測し、`track` を通じて `VirtualAddress` の VRRP 優先度を下げることもできます。BGP の設定変更は、FRR 形式のテキスト設定のレンダリングやリロードツールの呼び出しではなく、GoBGP API オブジェクトでデーモンに適用します。`VirtualAddress` と `IngressService` のホスト名は、DNSResolver が提供するゾーンに導出 A/AAAA レコードとして反映されます。BGP/VRRP/Ingress の status は `routerctl get BGPRouter`、`routerctl get VirtualAddress`、`routerctl get IngressService` のビューと、遷移やバックエンド正常性の低カーディナリティ OTel メトリクスでも可視化されます。
