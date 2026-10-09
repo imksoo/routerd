@@ -294,6 +294,21 @@ successful transport or baseline construction alone is not a pre-stop PASS.
 This preparation check neither replaces the formal per-node pre-stop gate nor
 changes an earlier failed run's result.
 
+For ISO staging observations, use
+`iso_storage_evidence.validate_iso_storage_evidence(stdout, expected_hashes=...,
+target_path=..., expected_target_bytes=...)`. Keep the original output: one UTC
+timestamp (`YYYY-MM-DDTHH:MM:SSZ`), the target `sha256sum` row first, the retained
+ISO checksum rows, and a final `ISO_BYTES <positive integer>` target-size marker.
+Bind the expected paths, digests, and size to independent release/retention
+manifests. The helper requires every expected checksum, verifies the target
+size, and rejects duplicate, missing, malformed, or unknown lines. Passing size
+metadata to a checksum-only parser causes a false infrastructure failure;
+silently filtering arbitrary lines can hide incomplete evidence. Require
+transport success, host identity and freshness separately. Replay the actual
+certification consumer against every saved host observation before freezing,
+and bind this helper and its caller in the contract. Keep prior failed results
+and raw observations unchanged.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
