@@ -22,6 +22,7 @@ sudo ./keepalived-no-spurious-restart.sh
 sudo ./graceful-vrrp-activation.sh
 sudo ./ingress-conntrack-survive.sh
 sudo ./forcefrag-df-forward.sh
+sudo ./sam-empty-forward-chain.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
 sudo ./vxlan-l2-mss-clamp.sh
 sudo ROUTERD_RUN_NETNS=1 ./vrrp-vmac-lan-address-lifecycle.sh
@@ -40,6 +41,7 @@ The scripts cover:
 | `vrrp-vmac-lan-address-lifecycle.sh` | The role hook retains staged delegated IPv6 addresses, records graceful election ownership, removes the deferred VIP before BACKUP, and never publishes it directly on MASTER. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
+| `sam-empty-forward-chain.sh` | The real SAM controller treats an absent forwarding chain as a no-op, preserves incompatible existing chains as errors, and removes stale owned forwarding rules and `accept_local`. Run with both Ubuntu 22.04 iptables-nft 1.8.7 and a newer backend. |
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |
 | `vxlan-l2-control-plane-transparency.sh` | A unicast-peer `VXLANTunnel` bridge carries ARP, DHCPv4 Discover/Offer, IPv6 RS/RA/NS/NA, and DHCPv6 Solicit/Reply between isolated endpoint namespaces. |
 | `vxlan-l2-mss-clamp.sh` | A/B proves bridge-family IPv4/IPv6 SYN MSS lowering across a VXLAN bridge, preserves smaller MSS and non-TCP Ethernet frames, then removes the owned policy. |
@@ -48,3 +50,9 @@ The scripts cover:
 Do not add tests here that mutate the default host namespace. New scenarios must
 create their own namespaces and links, run with explicit `sudo`, and tear down
 all host artifacts on exit.
+
+`sam-empty-forward-chain.sh` builds its small controller test driver with Go.
+For a guest without Go, build `./tests/netns/sam-forward-probe` with
+`CGO_ENABLED=0` and set `ROUTERD_SAM_FORWARD_PROBE` to that executable. Select
+the iptables backend through `PATH`; do not change the host's alternatives.
+The test driver refuses to execute in the PID 1 network namespace.

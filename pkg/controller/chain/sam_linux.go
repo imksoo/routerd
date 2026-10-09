@@ -255,7 +255,7 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 	if len(paths) == 0 {
 		out, err := ops.runIPTables("-S", chain)
 		if err != nil {
-			if samForwardChainAbsent(err, out) {
+			if samForwardChainAbsent(chain, err, out, ops.runIPTables) {
 				return nil
 			}
 			return fmt.Errorf("iptables -S %s: %w: %s", chain, err, strings.TrimSpace(string(out)))
@@ -323,7 +323,7 @@ func reconcileSAMForwardPaths(paths []sam.CaptureAction, ops samForwardPathOps) 
 	return nil
 }
 
-func samForwardChainAbsent(err error, output []byte) bool {
+func samForwardChainAbsent(chain string, err error, output []byte, runIPTables func(...string) ([]byte, error)) bool {
 	if err == nil {
 		return false
 	}
@@ -331,7 +331,30 @@ func samForwardChainAbsent(err error, output []byte) bool {
 		return true
 	}
 	message := strings.ToLower(err.Error() + " " + string(output))
-	return strings.Contains(message, "no chain") || strings.Contains(message, "chain/target/match by that name")
+	if strings.Contains(message, "no chain") || strings.Contains(message, "chain/target/match by that name") {
+		return true
+	}
+	// iptables-nft 1.8.7 reports an absent named chain as incompatible too.
+	// That message alone is not proof of absence: a native nft rule in an
+	// existing chain can produce the same error. Only a successful whole-table
+	// listing that does not contain this exact chain permits a no-op.
+	if !strings.Contains(string(output), "chain `"+chain+"' in table `filter' is incompatible") {
+		return false
+	}
+	rules, listErr := runIPTables("-S")
+	if listErr != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(rules), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == chain {
+			switch fields[0] {
+			case "-N", "-P", "-A":
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func samSysctlPresent(key string) (bool, error) {

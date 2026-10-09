@@ -336,6 +336,10 @@ make website-build
 Makefile は開発用です。
 利用者向けの配置はリリースアーカイブと `install.sh` で行います。
 
+[ネットワーク名前空間テスト](tests/netns/README.md)は、使い捨ての Linux ゲストで
+明示的に `sudo` を指定して実行します。iptables-nft 1.8.7 以降での、SAM の転送が
+不要になった場合のクリーンアップも検証します。
+
 主な生成物:
 
 - `routerd`
