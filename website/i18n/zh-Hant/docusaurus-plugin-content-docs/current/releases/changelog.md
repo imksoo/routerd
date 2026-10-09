@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261009.0024
+
 ### 修正
 
 - 介面位址觀測改為精確比對主機位址與前綴，避免子字串誤判（#1262）。

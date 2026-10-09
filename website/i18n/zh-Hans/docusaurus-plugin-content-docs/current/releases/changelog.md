@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261009.0024
+
 ### 修复
 
 - 接口地址观测改为精确匹配主机地址和前缀，避免子字符串误匹配（#1262）。

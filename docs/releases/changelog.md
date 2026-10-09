@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261009.0024
+
 ### Fixed
 
 - Observe interface addresses using exact host and prefix matches instead of substring matches (#1262).
