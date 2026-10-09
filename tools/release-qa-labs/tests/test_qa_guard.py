@@ -811,6 +811,11 @@ class ContractGuardTests(unittest.TestCase):
         with mock.patch.object(qa_guard.socket, "getfqdn", return_value="qa-local.example.test"):
             self.verify(self.fake_git(), actual_host=None)
 
+    def test_overlong_run_id_is_rejected_by_contract_precheck(self):
+        self.contract["runId"] = "relqa-pvecert-command-evidence-r1-20261009T195505Z"
+        with self.assertRaisesRegex(qa_guard.GuardError, "invalid runId.*1-43"):
+            self.verify(self.fake_git())
+
     def test_artifact_tamper_is_rejected(self):
         self.artifact.write_bytes(b"tampered")
         with self.assertRaisesRegex(qa_guard.GuardError, "SHA-256 mismatch"):
