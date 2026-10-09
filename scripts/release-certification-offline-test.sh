@@ -194,6 +194,51 @@ exit 99
 EOF
 chmod +x "$work/forbidden-driver"
 
+# The exact prospective contract must pass the standard checks before freeze.
+# This entry point cannot run a provider driver or issue a certification.
+python3 "$repo_root/scripts/release_certification.py" validate-contract \
+  --environment offline --topology full --providers pve,aws,azure,oci \
+  --contract "$work/contract.json" >"$work/contract-validation.json"
+python3 - "$work/contract.json" "$work/contract-validation.json" <<'PY'
+import hashlib, json, pathlib, sys
+contract, result = map(pathlib.Path, sys.argv[1:])
+value = json.loads(result.read_text())
+assert value["status"] == "pass" and value["validationOnly"] is True, value
+assert value["contractSha256"] == hashlib.sha256(contract.read_bytes()).hexdigest(), value
+assert "expiresAt" not in value and "certifiers" not in value and "run" not in value, value
+PY
+test ! -e "$work/pve-certification.json"
+test ! -e "$work/forbidden-driver-called"
+
+for mutation in \
+  '.preFreezeReviewPending = false' \
+  'del(.lifecycle)' \
+  '.routerdArtifact.sha256 = ("0" * 64)' \
+  '.environment = "wrong"' \
+  '.topology = "wrong"' \
+  '.providers = [.providers[0]]'; do
+  jq "$mutation" "$work/contract.json" >"$work/invalid-contract.json"
+  if python3 "$repo_root/scripts/release_certification.py" validate-contract \
+    --environment offline --topology full --providers pve,aws,azure,oci \
+    --contract "$work/invalid-contract.json" >"$work/invalid-contract-result.json"; then
+    echo "invalid prospective contract unexpectedly passed: $mutation" >&2
+    exit 1
+  fi
+  test ! -s "$work/invalid-contract-result.json"
+done
+
+# The formal entry point must still reject the original preparation-marker bug
+# before it can invoke even an explicitly supplied provider driver.
+jq '.preFreezeReviewPending = false' "$work/contract.json" >"$work/preparation-contract.json"
+if "$repo_root/scripts/certify-pve-substrate.sh" \
+  --environment offline --topology full --contract "$work/preparation-contract.json" \
+  --driver "$work/forbidden-driver" --out "$work/preparation-certification.json"; then
+  echo "preparation-only metadata unexpectedly certified" >&2
+  exit 1
+fi
+test ! -e "$work/forbidden-driver-called"
+test ! -e "$work/preparation-certification.json"
+
 "$repo_root/scripts/certify-pve-substrate.sh" \
   --environment offline \
   --topology full \
