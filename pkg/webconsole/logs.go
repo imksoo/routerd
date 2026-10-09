@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ func (h Handler) connections(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.enrichConnectionsWithDPI(table, time.Now().UTC(), time.Hour); err != nil {
+	if err := h.enrichConnectionsWithDPI(r.Context(), table, time.Now().UTC(), time.Hour); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -43,7 +44,7 @@ func (h Handler) dnsQueries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("agg") == "1" {
-		agg, err := h.queryLogAggregate(filter)
+		agg, err := h.queryLogAggregate(r.Context(), filter)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -51,7 +52,7 @@ func (h Handler) dnsQueries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, agg)
 		return
 	}
-	rows, err := h.queryLogList(filter)
+	rows, err := h.queryLogList(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -65,7 +66,7 @@ func (h Handler) dnsQueriesAggregate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	agg, err := h.queryLogAggregate(filter)
+	agg, err := h.queryLogAggregate(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -80,7 +81,7 @@ func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("agg") == "1" {
-		agg, err := h.trafficFlowAggregate(filter)
+		agg, err := h.trafficFlowAggregate(r.Context(), filter)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -88,16 +89,16 @@ func (h Handler) trafficFlows(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, agg)
 		return
 	}
-	rows, err := h.trafficFlowList(filter)
+	rows, err := h.trafficFlowList(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: filter.Since, Limit: 1000})
+	queries, err := h.queryLogList(r.Context(), logstore.DNSQueryFilter{Since: filter.Since, Limit: 1000})
 	if err == nil {
 		rows = enrichTrafficFlowsWithDNS(rows, queries)
 	}
-	if enriched, err := h.enrichTrafficFlowsWithDPI(rows, time.Now().UTC(), time.Hour); err == nil {
+	if enriched, err := h.enrichTrafficFlowsWithDPI(r.Context(), rows, time.Now().UTC(), time.Hour); err == nil {
 		rows = enriched
 	}
 	writeJSON(w, rows)
@@ -109,7 +110,7 @@ func (h Handler) trafficFlowsAggregate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	agg, err := h.trafficFlowAggregate(filter)
+	agg, err := h.trafficFlowAggregate(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -233,7 +234,7 @@ func (h Handler) firewallLogs(w http.ResponseWriter, r *http.Request) {
 			since = time.Now().Add(-duration)
 		}
 	}
-	rows, err := h.firewallLogList(logstore.FirewallLogFilter{
+	rows, err := h.firewallLogList(r.Context(), logstore.FirewallLogFilter{
 		Since:  since,
 		Action: r.URL.Query().Get("action"),
 		Src:    r.URL.Query().Get("src"),
@@ -277,7 +278,7 @@ func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
 		bucket = time.Hour
 	}
 	now := time.Now().UTC()
-	rows, err := h.firewallDenyTimelineList(now.Add(-window), now, bucket)
+	rows, err := h.firewallDenyTimelineList(r.Context(), now.Add(-window), now, bucket)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -288,7 +289,10 @@ func (h Handler) firewallDenyTimeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, rows)
 }
 
-func (h Handler) queryLogList(filter logstore.DNSQueryFilter) ([]logstore.DNSQuery, error) {
+func (h Handler) queryLogList(ctx context.Context, filter logstore.DNSQueryFilter) ([]logstore.DNSQuery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
 		return nil, nil
 	}
@@ -297,12 +301,15 @@ func (h Handler) queryLogList(filter logstore.DNSQueryFilter) ([]logstore.DNSQue
 		return nil, err
 	}
 	defer store.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	return store.List(ctx, filter)
 }
 
-func (h Handler) queryLogAggregate(filter logstore.DNSQueryFilter) (logstore.DNSQueryAggregate, error) {
+func (h Handler) queryLogAggregate(ctx context.Context, filter logstore.DNSQueryFilter) (logstore.DNSQueryAggregate, error) {
+	if err := ctx.Err(); err != nil {
+		return logstore.DNSQueryAggregate{}, err
+	}
 	if strings.TrimSpace(h.opts.DNSQueryLogPath) == "" {
 		return logstore.DNSQueryAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
@@ -311,12 +318,15 @@ func (h Handler) queryLogAggregate(filter logstore.DNSQueryFilter) (logstore.DNS
 		return logstore.DNSQueryAggregate{}, err
 	}
 	defer store.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return store.Aggregate(ctx, filter)
 }
 
-func (h Handler) trafficFlowList(filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
+func (h Handler) trafficFlowList(ctx context.Context, filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return nil, nil
 	}
@@ -325,12 +335,15 @@ func (h Handler) trafficFlowList(filter logstore.TrafficFlowFilter) ([]logstore.
 		return nil, err
 	}
 	defer store.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	return store.List(ctx, filter)
 }
 
-func (h Handler) trafficFlowAggregate(filter logstore.TrafficFlowFilter) (logstore.TrafficFlowAggregate, error) {
+func (h Handler) trafficFlowAggregate(ctx context.Context, filter logstore.TrafficFlowFilter) (logstore.TrafficFlowAggregate, error) {
+	if err := ctx.Err(); err != nil {
+		return logstore.TrafficFlowAggregate{}, err
+	}
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
@@ -339,12 +352,15 @@ func (h Handler) trafficFlowAggregate(filter logstore.TrafficFlowFilter) (logsto
 		return logstore.TrafficFlowAggregate{}, err
 	}
 	defer store.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return store.Aggregate(ctx, filter)
 }
 
-func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {
+func (h Handler) firewallLogList(ctx context.Context, filter logstore.FirewallLogFilter) ([]logstore.FirewallLogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
 		return nil, nil
 	}
@@ -353,21 +369,29 @@ func (h Handler) firewallLogList(filter logstore.FirewallLogFilter) ([]logstore.
 		return nil, err
 	}
 	defer store.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	return store.List(ctx, filter)
 }
 
-func (h Handler) firewallDenyTimelineList(since time.Time, until time.Time, bucket time.Duration) ([]logstore.FirewallDenyTimelineBucket, error) {
+func (h Handler) firewallDenyTimelineList(ctx context.Context, since time.Time, until time.Time, bucket time.Duration) ([]logstore.FirewallDenyTimelineBucket, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.DenyTimeline(context.Background(), since, until, bucket)
+	return store.DenyTimeline(ctx, since, until, bucket)
 }
 
 func (h Handler) conntrackTuningSummary(now time.Time, window time.Duration, autoApply bool) (conntracktuning.Summary, error) {

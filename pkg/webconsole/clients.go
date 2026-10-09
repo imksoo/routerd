@@ -13,7 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 )
 
-func (h Handler) clients(w http.ResponseWriter) {
+func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	clientSince := now.Add(-clientObservationWindow)
 	leases, err := h.dhcpLeaseList()
@@ -32,21 +32,21 @@ func (h Handler) clients(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	flows, err := h.trafficFlowList(logstore.TrafficFlowFilter{Since: clientSince, Limit: 200})
+	flows, err := h.trafficFlowList(r.Context(), logstore.TrafficFlowFilter{Since: clientSince, Limit: 200})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: 1000})
+	queries, err := h.queryLogList(r.Context(), logstore.DNSQueryFilter{Since: clientSince, Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	flows = enrichTrafficFlowsWithDNS(flows, queries)
-	if enriched, err := h.enrichTrafficFlowsWithDPI(flows, now, clientObservationWindow); err == nil {
+	if enriched, err := h.enrichTrafficFlowsWithDPI(r.Context(), flows, now, clientObservationWindow); err == nil {
 		flows = enriched
 	}
-	firewallLogs, err := h.firewallLogList(logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
+	firewallLogs, err := h.firewallLogList(r.Context(), logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

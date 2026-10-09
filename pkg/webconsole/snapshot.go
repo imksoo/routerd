@@ -16,6 +16,10 @@ import (
 )
 
 func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
+	return h.snapshot(context.Background(), opts)
+}
+
+func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	if opts.EventLimit == 0 {
 		opts.EventLimit = 50
 	}
@@ -58,27 +62,27 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else if opts.IncludeDPIEnrichment {
-			if err := h.enrichConnectionsWithDPI(connections, now, clientObservationWindow); err != nil {
+			if err := h.enrichConnectionsWithDPI(ctx, connections, now, clientObservationWindow); err != nil {
 				errors = append(errors, err.Error())
 			}
 		} else {
 			applyConnectionTablePortFallback(connections)
 		}
 		h.enrichConnectionsWithLocalRedirect(connections)
-		if err := h.enrichConnectionsWithRemoteIdentity(context.Background(), connections); err != nil {
+		if err := h.enrichConnectionsWithRemoteIdentity(ctx, connections); err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
 	var dnsQueries []logstore.DNSQuery
 	if opts.DNSQueryLimit >= 0 {
-		dnsQueries, err = h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: opts.DNSQueryLimit})
+		dnsQueries, err = h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.DNSQueryLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 	}
 	fingerprintDNSQueries := dnsQueries
 	if opts.IncludeClients && opts.FingerprintQueryLimit > opts.DNSQueryLimit {
-		if queries, err := h.queryLogList(logstore.DNSQueryFilter{Since: clientSince, Limit: opts.FingerprintQueryLimit}); err == nil {
+		if queries, err := h.queryLogList(ctx, logstore.DNSQueryFilter{Since: clientSince, Limit: opts.FingerprintQueryLimit}); err == nil {
 			fingerprintDNSQueries = queries
 		} else {
 			errors = append(errors, err.Error())
@@ -86,13 +90,13 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	}
 	var trafficFlows []logstore.TrafficFlow
 	if opts.TrafficFlowLimit >= 0 {
-		trafficFlows, err = h.trafficFlowList(logstore.TrafficFlowFilter{Since: clientSince, Limit: opts.TrafficFlowLimit})
+		trafficFlows, err = h.trafficFlowList(ctx, logstore.TrafficFlowFilter{Since: clientSince, Limit: opts.TrafficFlowLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
 		trafficFlows = enrichTrafficFlowsWithDNS(trafficFlows, dnsQueries)
 		if opts.IncludeDPIEnrichment {
-			if enriched, err := h.enrichTrafficFlowsWithDPI(trafficFlows, now, clientObservationWindow); err == nil {
+			if enriched, err := h.enrichTrafficFlowsWithDPI(ctx, trafficFlows, now, clientObservationWindow); err == nil {
 				trafficFlows = enriched
 			} else {
 				errors = append(errors, err.Error())
@@ -107,11 +111,11 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 		if opts.IncludeClients {
 			firewallSince = clientSince
 		}
-		firewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: firewallSince, Action: "drop", Limit: opts.FirewallLimit})
+		firewallLogs, err = h.firewallLogList(ctx, logstore.FirewallLogFilter{Since: firewallSince, Action: "drop", Limit: opts.FirewallLimit})
 		if err != nil {
 			errors = append(errors, err.Error())
 		}
-		if err := h.enrichFirewallLogsWithRemoteIdentity(context.Background(), firewallLogs); err != nil {
+		if err := h.enrichFirewallLogsWithRemoteIdentity(ctx, firewallLogs); err != nil {
 			errors = append(errors, err.Error())
 		}
 		h.enrichFirewallLogsWithAddressSets(firewallLogs)
@@ -148,7 +152,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 			errors = append(errors, err.Error())
 		}
 		if opts.FirewallLimit < 0 {
-			clientFirewallLogs, err = h.firewallLogList(logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
+			clientFirewallLogs, err = h.firewallLogList(ctx, logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
 			if err != nil {
 				errors = append(errors, err.Error())
 			}
@@ -173,11 +177,11 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 	if h.opts.Result != nil {
 		result = h.opts.Result()
 	}
-	dpiStatus := h.dpiStatus(context.Background())
+	dpiStatus := h.dpiStatus(ctx)
 	systemUsage := h.readSystemUsage()
 	result = resultWithLatestGeneration(result, h.opts.Store)
 	controllers := h.controllerStatuses()
-	recordConsoleMetrics(context.Background(), resources, controllers, dhcpLeases, clients, stickyLeases, now)
+	recordConsoleMetrics(ctx, resources, controllers, dhcpLeases, clients, stickyLeases, now)
 	return Snapshot{
 		GeneratedAt:      now,
 		ConsoleLinks:     cleanConsoleLinks(h.opts.ConsoleLinks),
@@ -231,7 +235,7 @@ func resultWithLatestGeneration(result *apply.Result, store routerstate.Store) *
 }
 
 func (h Handler) summary(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, h.Snapshot(SnapshotOptions{
+	writeJSON(w, h.snapshot(r.Context(), SnapshotOptions{
 		EventLimit:             signedIntQuery(r, "events", 50),
 		ConnectionsLimit:       signedIntQuery(r, "connections", h.opts.ConnectionsLimit),
 		FirewallLimit:          signedIntQuery(r, "firewallLogs", 50),

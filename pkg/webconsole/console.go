@@ -126,7 +126,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "api/v1/firewall/deny-timeline":
 		h.firewallDenyTimeline(w, r)
 	case "api/v1/clients":
-		h.clients(w)
+		h.clients(w, r)
 	case "api/v1/vpn":
 		h.vpn(w)
 	case "api/v1/routes":
