@@ -165,6 +165,36 @@ certification rejects a frozen plan, preserve that failed contract, plan, and
 result and prepare a new run; do not repair the frozen input or overwrite its
 certification result.
 
+For an existing router's retained-media ISO rollout, construct its baseline with
+`rollout_baseline.build_rollout_baseline(observed, media, node=..., host=...,
+vmid=..., expected_version=..., management_device=...)`. Supply the complete
+fresh guest probe and host media observations, bound to that node and VM. The
+offline helper requires bound, present DHCP addresses on the expected management
+interface, verifies that they are actually assigned, and preserves them as the
+nonempty `management_address` field. It also checks hostname, current version,
+boot identity, and the retained `ide2` ISO, `sata2` hostname media, and `scsi1`
+configuration media. Runtime and persistent configuration hashes must match.
+Missing or malformed evidence raises `ValueError`; do not fill it with defaults.
+The historical `runtime_sha256` field is the configuration hash, not a binary
+hash. Keep the artifact manifest and running-executable verification separate.
+
+Bind the builder, its callers, raw observations, current artifact manifests,
+and generated baseline hashes before freezing. A partially completed rollout
+needs each node's actual current version and manifest. Explicitly record the
+guest-SSH applicability of the authorized transport; a QGA-only procedure does
+not require enabling guest SSH.
+
+Before freezing, run the **actual read-only pre-stop guest and media evaluators
+for every rollout target** against additional fresh observations and these
+baselines. Require all existing checks: management addresses, hostname, boot,
+configuration and media identity, executable identity, service health, routing,
+and each node's role-specific state. Retain per-node results and exercise missing
+management addresses and identity mismatches as negative fixtures. Generic
+candidate certification does not validate every rollout consumer field, and
+successful transport or baseline construction alone is not a pre-stop PASS.
+This preparation check neither replaces the formal per-node pre-stop gate nor
+changes an earlier failed run's result.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
