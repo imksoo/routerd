@@ -69,6 +69,29 @@ process on a disposable PVE client. That sandbox has every network mutator,
 DHCP/DHCPv6/RA emitter, BGP component, and service-manager action in dry-run
 mode; it is not a system service and it is removed before deployment starts.
 
+Release artifact inspection on the coordinator must also avoid executing
+`routerd --version`. Use `readelf` and `go version -m` to inspect static linking,
+target architecture, Go toolchain, and CGO settings without starting the target.
+Go deliberately omits linker flags from build information when `-trimpath` is
+enabled. Therefore, missing version/commit `-X` flags in `go version -m` output
+are not evidence of a missing or incorrect embedded version.
+
+Bind version verification to the exact successful Release workflow and tag:
+
+- Resolve the tag to its full commit and verify the workflow's checkout commit.
+  Retain the release job's build commands with the requested version/commit and
+  its actual installer smoke-test `routerd --version` output. A build command
+  alone does not prove the observed runtime version. If that evidence is
+  unavailable, verify in an authorized disposable guest before qualification.
+- Match the downloaded archive and ISO against their checksum sidecars and
+  published asset digests and sizes. Compare each core binary's bytes in the
+  archive, ISO live path, and ISO installer payload; retain the binary manifest.
+  Archive-only provider executors are outside the ISO's core binary footprint.
+- Verify the deployed runtime version and running executable against this
+  artifact binding during guest certification and post-deployment checks.
+  Preserve a failed inspection and its corrected attempt separately; missing
+  or inconsistent identity evidence must remain a failure until resolved.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
