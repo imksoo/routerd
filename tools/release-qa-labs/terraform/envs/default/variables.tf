@@ -1,8 +1,12 @@
 # --- Run metadata ---
 
 variable "run_id" {
-  description = "Unique identifier for this test run (e.g. sam-e2e-20260620-0200)."
+  description = "Unique run identifier: 1-43 ASCII letters, digits or hyphens, starting and ending with a letter or digit."
   type        = string
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9-]{0,41}[A-Za-z0-9])?$", var.run_id))
+    error_message = "run_id must be 1-43 ASCII letters, digits or hyphens, starting and ending with a letter or digit, so generated PVE hostnames fit 64 bytes and AWS IAM names fit their provider limit."
+  }
 }
 variable "purpose" {
   type    = string

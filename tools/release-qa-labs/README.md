@@ -389,6 +389,15 @@ before precheck. Drivers consume only that pinned copy. A later deletion or
 modification of the mutable source is recorded as input tampering but cannot
 remove the credential required for supervised cleanup.
 
+Choose a unique `runId` of 1–43 ASCII letters, digits or hyphens, beginning
+and ending with a letter or digit (for example,
+`relqa-pvecert-cmdev-r2-20261009T200000Z`). The longest generated guest
+hostname, `routerd-<runId>-pve-client-a`, must fit Linux's 64-byte limit;
+this budget also accommodates the generated AWS IAM role name. Both the
+contract precheck and the root Terraform variable reject incompatible IDs
+before provisioning. Names are never truncated or rewritten. Keep staging,
+certification and full-test IDs distinct, and use a fresh run after a failure.
+
 Create a distinct API token for each run under the pre-provisioned,
 least-privilege `pve.tokenOwner` service account; the release lifecycle never
 creates PVE users or ACLs. Create the token with privilege separation disabled:

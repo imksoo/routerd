@@ -754,6 +754,19 @@ def confined_path(value: str | Path, root: Path, label: str, *, exact: Path | No
     return resolved
 
 
+def verify_run_id(run_id: str) -> None:
+    # The longest fixed guest name is routerd-<runId>-pve-client-a (or -b).
+    # Linux allows 64 hostname bytes, leaving 43 ASCII bytes for the run ID.
+    # This also keeps routerd-sam-e2e-<runId> below IAM's 64-character limit.
+    # Preserve exact identities: truncation would alias distinct runs.
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,41}[A-Za-z0-9])?", run_id):
+        raise GuardError(
+            "invalid runId: use 1-43 ASCII letters, digits or hyphens, "
+            "starting and ending with a letter or digit; generated PVE "
+            "hostnames must fit 64 bytes"
+        )
+
+
 def verify_contract(contract_path: Path, release_repo: Path, framework: Path, actual_host: str | None) -> None:
     contract = load_json(contract_path)
     # The released supervisor and the certification entry points both consume
@@ -765,8 +778,7 @@ def verify_contract(contract_path: Path, release_repo: Path, framework: Path, ac
     if "labsCommit" in contract:
         raise GuardError("v2 run contract must use qaImplementation.commit")
     run_id = require(contract, "runId", str)
-    if not run_id or run_id in {".", ".."} or "/" in run_id:
-        raise GuardError("invalid runId")
+    verify_run_id(run_id)
     if require(contract, "stateMode", str) != FRESH_STATE_MODE:
         raise GuardError(
             "stateMode must be fresh-fabric-fresh-state; legacy state migrations are not permitted"
