@@ -112,6 +112,27 @@ same-target generations separately. This subgate does not replace certification
 or the full connectivity/resource/log gates. Freeze collector limits and helper
 source hashes before a new run, and retain earlier failed runs unchanged.
 
+Apply `first_request_receipt()` to both self-target and positive-control
+generations. It verifies complete, ordered receiver-local DB reads and
+SHA256-bound snapshots, then uses the first completed SELECT matching all
+generation keys. Preserve the frozen clock allowance and minimum remaining TTL;
+do not substitute `recorded_at`, SELECT start, or a slower polling timestamp.
+Missing, late, corrupt, or mismatched receipts fail closed. Its receipt timestamp
+can also bound the positive-control window; packet and origin proof remain
+independent requirements.
+
+Use `matching_arp_requests()` for sender/target/MAC/time matching, including
+tcpdump's valid `who-has IP (MAC) tell IP` form. A successful parse may contain
+zero matches. Client unicast requests and self-target detection are supported;
+neither establishes a daemon command without the separate broadcast subgate.
+
+Preserve normal controller polling intervals at the end of an observation.
+If the next normal poll would exceed the capture deadline, keep capture running
+to the deadline and finish without inserting an abbreviated final status poll.
+Keep strict controller-progress checks and the complete capture/TTL tail.
+Validate the deadline logic with a fake clock and retain a stalled-controller
+negative fixture before freezing the collector.
+
 `execution.mode` is mandatory and is either `production` or
 `staging-no-mutation`. Missing and unknown modes fail closed. Staging additionally
 requires a `relqa-staging-...` run ID and the exact environment
