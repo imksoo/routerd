@@ -229,7 +229,8 @@ routerd は次の手段で運用状態を観測できます。
 - `routerctl get status`: 全リソースの phase 一覧
 - `routerctl describe <kind>/<name>`: 個別リソースの spec、status、最近の event
 - `routerctl get events --topic <pattern> --resource <kind>/<name>`: bus event を tail する
-- `routerctl plan --diff`: apply 前の差分プレビュー
+- `routerctl plan`: 稼働中の daemon で現在の設定の計画を確認する。完全な候補ファイルには
+  `routerctl plan -f candidate.yaml --replace` を使う
 - Web 管理画面（既定では `http://<mgmt-ip>:8080/`）: summary、events、connections、clients、firewall、config をブラウザで表示する
 - `journalctl -u routerd.service -f | grep "routerd event"`: bus event を systemd journal で追跡する
 

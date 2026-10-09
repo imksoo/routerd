@@ -33,8 +33,7 @@ That command regenerates `THIRD_PARTY_LICENSES.md`. It lists:
 - detected license text type
 - license file name
 - module source URL
-- Alpine packages used by the live ISO
-- Alpine package license metadata and upstream URL
+- Ubuntu base-package source and license metadata guidance
 
 The current audit path checks Go module license files for GPL, LGPL, and AGPL
 text. If such a linked Go module appears, stop the release and review whether
@@ -48,7 +47,7 @@ SPDX-License-Identifier: BSD-3-Clause
 ```
 
 Those headers identify the routerd source license. They do not change the
-licenses of bundled tools, Alpine packages, Go modules, or other third-party
+licenses of bundled tools, OS packages, Go modules, or other third-party
 components listed in `THIRD_PARTY_LICENSES.md`.
 
 ## Release archives
@@ -66,25 +65,31 @@ When redistributing a release archive, keep those files with the archive.
 
 ## Live ISO
 
+The current live ISO is built from Ubuntu using `debootstrap` (the default
+suite is `noble`). The generated inventory points to Ubuntu archive metadata
+for the base OS packages; it is not a complete per-package source inventory.
+Review the source and license information for the exact base release before
+redistributing an image.
+
 The live ISO is an aggregate distribution. It combines:
 
 - routerd binaries and scripts
-- Alpine Linux base files
-- Alpine packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
+- Ubuntu base files
+- Ubuntu packages such as dnsmasq, nftables, WireGuard tools, ppp, iproute2,
   chrony, tcpdump, and related utilities
 
-Those Alpine packages keep their own upstream licenses. Some are GPL licensed.
+Those OS packages keep their own upstream licenses. Some are GPL licensed.
 The live ISO is not relicensed as a single GPL work.
 
 The live ISO includes the routerd notices at:
 
 ```text
-/usr/share/licenses/routerd/LICENSE
-/usr/share/licenses/routerd/THIRD_PARTY_LICENSES.txt
+/usr/local/share/doc/routerd/LICENSE
+/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt
 ```
 
-Source information for Alpine packages is available from Alpine package
-repositories, APKBUILD records, and the upstream URLs listed in
+Source information for the Ubuntu base packages is available from Ubuntu
+archive metadata for the release used to build the ISO, as explained in
 `THIRD_PARTY_LICENSES.md`.
 
 ## Release checklist
@@ -93,12 +98,12 @@ Before publishing a release:
 
 1. Run `make third-party-licenses`.
 2. Confirm the Go module copyleft check reports no GPL, LGPL, or AGPL module.
-3. Confirm GPL-family licenses only appear in separately distributed Alpine
+3. Confirm GPL-family licenses only appear in separately distributed OS
    packages or other external tools.
 4. Run the normal test, schema, example, website, archive, and live ISO checks.
 5. Confirm release archives include `share/doc/LICENSE` and
    `share/doc/THIRD_PARTY_LICENSES.md`.
-6. Confirm the live ISO includes `/usr/share/licenses/routerd/`.
+6. Confirm the live ISO includes `/usr/local/share/doc/routerd/`.
 
 If the dependency set changes substantially, review this page and the generated
 license inventory before tagging the release.

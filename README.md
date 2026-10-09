@@ -277,14 +277,15 @@ Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
 
 routerd itself is released under the [BSD 3-Clause License](LICENSE). Release
 archives and the live ISO include third-party software with their own licenses. The
-Alpine-based live ISO is an aggregate distribution: GPL-licensed tools such as
+Ubuntu-based live ISO is an aggregate distribution: GPL-licensed tools such as
 dnsmasq, nftables, WireGuard tools, ppp, and iproute2 keep their own licenses
 and source availability paths. The ISO as a whole is not relicensed as one GPL
 work.
 
 The release archive includes `share/doc/LICENSE` and
 `share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices
-under `/usr/share/licenses/routerd/`. Regenerate the inventory with:
+under `/usr/local/share/doc/routerd/` (`LICENSE` and
+`THIRD_PARTY_LICENSES.txt`). Regenerate the inventory with:
 
 ```sh
 make third-party-licenses
@@ -320,7 +321,8 @@ Web Console Connections includes per-DS-Lite IPv4 SNAT counts from the full
 local conntrack snapshot, independent of the displayed connection limit.
 These are local entries, not provider AFTR counts; unavailable data is not zero.
 
-Go 1.24 or newer is expected.
+Source builds require Go 1.25.0 or newer; `go.mod` selects the Go 1.25.9
+toolchain. Release-archive users do not need Go.
 
 ```sh
 make test
@@ -381,9 +383,9 @@ Managed daemons expose the same local contract:
 
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
 the resource model but remain second-tier: some native renderers and service
-integration are groundwork rather than feature parity. Alpine supports the live
-ISO and `apk` package bootstrap, while OpenRC service parity is also
-groundwork. See
+integration are groundwork rather than feature parity. The live ISO uses Ubuntu
+(the build script defaults to `noble`). Alpine
+`apk` package bootstrap and OpenRC integration are separate platform paths. See
 `docs/platforms.md` for the current OS surface matrix.
 
 The implementation is pre-release. v1alpha1 names and fields may still change

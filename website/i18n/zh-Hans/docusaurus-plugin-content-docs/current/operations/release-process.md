@@ -152,8 +152,12 @@ go mod download all
 make third-party-licenses
 ```
 
-生成的 `THIRD_PARTY_LICENSES.md` 记录 Go 模块的授权文件与 OS 软件包的授权元数据。Live ISO 是集合性发布物。
+生成的 `THIRD_PARTY_LICENSES.md` 记录 Go 模块的授权文件及基础系统授权信息的获取说明。Live ISO 是集合性发布物。
 采用 GPL 授权的 OS 软件包各自保留其授权与源码获取方式，不视为以 GPL 著作重新授权整个 ISO。
+
+当前 Live ISO 通过 `debootstrap` 构建，基于 Ubuntu，默认 suite 为 `noble`。
+生成的清单指向 Ubuntu archive 的基础系统软件包信息，并不是逐包源码清单。
+重新分发镜像前，请核对实际使用的 Ubuntu 版本的源码和授权信息。
 
 ## 运行期依赖
 
