@@ -12,6 +12,16 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- ARP observer status retains the last successful probe command's sequence, target, start/completion times, and successful write count. Rejected, suppressed, failed, and autonomous probes do not replace it, and routine diagnostic updates do not generate status events. (#1293)
+
+### Fixed
+
+- Release QA correlates positive ARP controls with explicit command records and captured target packets. Fresh request receipts, retained deployment baselines, stimulus clock margins, and serial controller progress are validated. (#1282, #1284, #1289, #1291, #1293)
+
+- Release QA rejects run IDs whose generated guest hostnames or provider names would exceed their limits before provisioning and retains bounded retries with per-attempt diagnostics for transient HTTPS preflight failures. (#1295, #1297)
+
 ## v20261009.1349
 
 ### Fixed
