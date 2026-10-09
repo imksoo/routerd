@@ -84,29 +84,12 @@ sidebar_position: 10
 
 這個第一輪實驗直接對用戶端公告外部 DNS 解析器 `1.1.1.1` 和 `1.0.0.1`，因此路由器本身暫時不需要承擔 DNS 服務。請先確認學校、家庭、公司或上游網路允許使用這些公共解析器；若網路政策指定 DNS，或你要讓路由器提供本地名稱、過濾或條件式轉送，請改用獲准的 DNS 位址，或先設定 `DNSResolver`，再公告路由器的 LAN 位址。
 
-## 先用本機命令檢查
+## 執行這個範例
 
-以具有 `sudo` 權限的本機使用者執行下列獨立檢查；它們不需要 daemon，也不會套用網路變更。
-
-```bash
-LAB_DIR="$(mktemp -d)"
-sudo routerd validate --config examples/example-basic-ipv4-nat.yaml
-sudo routerd apply --config examples/example-basic-ipv4-nat.yaml --once --dry-run --skip-service-manager \
-  --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
-  --status-file "$LAB_DIR/status.json"
-rm -rf "$LAB_DIR"
-```
-
-服務未啟動時，不要用 `routerctl validate` 或 `routerctl plan` 代替。
-
-真實服務運行後，才可查詢資源。首次安裝請保留 `sudo`；若管理員透過 `routerd` 群組授予本機 socket 存取權，加入後必須重新登入才會生效：
-
-```bash
-sudo routerctl get status
-sudo routerctl describe DHCPv4Client/wan-dhcpv4
-sudo routerctl describe NAT44Rule/lan-to-wan
-```
+[第一台實驗路由器](../tutorials/first-router.md)提供符合安裝版本的檔案下載、
+介面修改、驗證、隔離 dry-run、真正套用、服務啟動及用戶端檢查的完整步驟。
+發布封存檔不包含儲存庫的 `examples/` 目錄。上面的片段用於解釋資源，實際執行時請用
+下載的完整檔案。
 
 ## 關於防火牆
 

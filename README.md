@@ -7,24 +7,15 @@
 [繁體中文入口](https://routerd.net/zh-Hant/docs/) ·
 [简体中文入口](https://routerd.net/zh-Hans/docs/)
 
+routerd is a pre-release declarative router control plane for people who want a
+general-purpose host to behave like an understandable router.
+
 Prebuilt release archives for Linux amd64 and FreeBSD amd64 are published on
 the [GitHub Releases page](https://github.com/imksoo/routerd/releases).
 Installation and upgrade are documented in
 [`docs/install-and-upgrade.md`](docs/install-and-upgrade.md).
 Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
-
-Runtime reload preserves unchanged supervised clients. VRRP graceful activation
-gates initial VIP publication; transient readiness loss does not withdraw an
-already published MASTER VIP. Upgrades preserve the current generated service
-unit, including configured capabilities and environment.
-
-routerd is a pre-release declarative router control plane for people who want a
-general-purpose host to behave like an understandable router.
-
-Apply errors report partial progress through configuration replacement, runtime
-activation and generation persistence. See [apply failure semantics](docs/concepts/apply-and-render.md#interpreting-a-partial-apply-failure)
-before treating a failed request as an unchanged router.
 
 ## Start safely
 
@@ -58,6 +49,73 @@ shows a plan, writes the required host artifacts, and lets
 
 The project is built around a simple idea: a router should be configured like a
 system, but observed like a service.
+
+## Quick Start
+
+Install from a release archive on an Ubuntu Server lab host:
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+```
+
+For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the stable release tag
+and run the same `./install.sh`.
+Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 hosts.
+Versioned archives such as `routerd-v20260914.0729-linux-amd64.tar.gz` are also
+available on the same release page when you need an explicitly named artifact.
+
+Linux release archives contain statically linked routerd binaries
+(`CGO_ENABLED=0`). They do not depend on the target host's glibc version.
+
+`install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
+installs the service template, writes `router.yaml.sample`, and preserves an
+existing `/usr/local/etc/routerd/router.yaml`.
+Use `./install.sh --list-deps` to inspect the package list.
+Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
+
+### Configure and preview
+
+For a first lab, use the small [first-router tutorial](https://routerd.net/docs/tutorials/first-router),
+which downloads an example matching the installed release. The bundled
+`router.yaml.sample` is a larger, ISP-specific configuration, not a safe default.
+The tutorial explains which interface names, addresses, and DNS servers to edit.
+Save your reviewed file as `first-router.yaml`, then check it without a daemon:
+
+```sh
+sudo routerd validate --config first-router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
+```
+
+### Start, then check status
+
+Only continue on a fresh lab host, with a console or independent management
+path. Starting this service applies the configuration and changes the network.
+If a routerd service is already running, use the existing-router guidance in
+[the tutorial](https://routerd.net/docs/tutorials/first-router) instead.
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl get events --limit 20
+```
+
+Expect `active`, then inspect resource status and test connectivity from the
+isolated LAN client. `routerctl` needs the running local daemon; a successful
+one-shot `routerd apply --once` does not leave that daemon running. If startup
+or status fails, follow [Troubleshooting](https://routerd.net/docs/how-to/troubleshooting).
 
 ## Why routerd?
 
@@ -246,80 +304,7 @@ spec:
     - 10.0.0.0/8
 ```
 
-## Quick Start
-
-Install from a release archive on the router host:
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
-```
-
-For FreeBSD, download `routerd-freebsd-amd64.tar.gz` from the stable release tag
-and run the same `./install.sh`.
-Use `routerd-linux-arm64.tar.gz` or `routerd-freebsd-arm64.tar.gz` on arm64 hosts.
-Versioned archives such as `routerd-v20260707.1514-linux-amd64.tar.gz` are also
-available on the same release page when you need an explicitly named artifact.
-
-Linux release archives contain statically linked routerd binaries
-(`CGO_ENABLED=0`). They do not depend on the target host's glibc version.
-
-`install.sh` installs known OS packages, copies binaries to `/usr/local/sbin`,
-installs the service template, writes `router.yaml.sample`, and preserves an
-existing `/usr/local/etc/routerd/router.yaml`.
-Use `./install.sh --list-deps` to inspect the package list.
-Use `sudo ./install.sh --no-install-deps` when packages are managed elsewhere.
-
-## License and Redistribution
-
-routerd itself is released under the [BSD 3-Clause License](LICENSE). Release
-archives and the live ISO include third-party software with their own licenses. The
-Ubuntu-based live ISO is an aggregate distribution: GPL-licensed tools such as
-dnsmasq, nftables, WireGuard tools, ppp, and iproute2 keep their own licenses
-and source availability paths. The ISO as a whole is not relicensed as one GPL
-work.
-
-The release archive includes `share/doc/LICENSE` and
-`share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices
-under `/usr/local/share/doc/routerd/` (`LICENSE` and
-`THIRD_PARTY_LICENSES.txt`). Regenerate the inventory with:
-
-```sh
-make third-party-licenses
-```
-
-Then create a configuration and validate it directly before a daemon exists:
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-
-sudo routerd validate --config /usr/local/etc/routerd/router.yaml
-
-workdir=$(mktemp -d)
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
-  --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
-  --status-file "$workdir/status.json"
-rm -rf "$workdir"
-```
-
-Apply only from a console or independent management path after confirming it is
-safe. This changes the host network:
-
-```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-```
-
 ## Developer Build
-
-Web Console Connections includes per-DS-Lite IPv4 SNAT counts from the full
-local conntrack snapshot, independent of the displayed connection limit.
-These are local entries, not provider AFTR counts; unavailable data is not zero.
 
 Source builds require Go 1.25.0 or newer; `go.mod` selects the Go 1.25.9
 toolchain. Release-archive users do not need Go.
@@ -405,3 +390,37 @@ when a breaking cleanup makes the router safer or easier to operate.
 - General-purpose firewall rule language
 
 See `docs/design.md` for the authoritative design state.
+
+## Operational details
+
+Apply errors report partial progress through configuration replacement, runtime
+activation and generation persistence. See [apply failure semantics](docs/concepts/apply-and-render.md#interpreting-a-partial-apply-failure)
+before treating a failed request as an unchanged router.
+
+Runtime reload preserves unchanged supervised clients. VRRP graceful activation
+gates initial VIP publication; transient readiness loss does not withdraw an
+already published MASTER VIP. Upgrades preserve the current generated service
+unit, including configured capabilities and environment.
+
+Web Console Connections includes per-DS-Lite IPv4 SNAT counts from the full
+local conntrack snapshot, independent of the displayed connection limit.
+These are local entries, not provider AFTR counts; unavailable data is not zero.
+
+
+## License and Redistribution
+
+routerd itself is released under the [BSD 3-Clause License](LICENSE). Release
+archives and the live ISO include third-party software with their own licenses. The
+Ubuntu-based live ISO is an aggregate distribution: GPL-licensed tools such as
+dnsmasq, nftables, WireGuard tools, ppp, and iproute2 keep their own licenses
+and source availability paths. The ISO as a whole is not relicensed as one GPL
+work.
+
+The release archive includes `share/doc/LICENSE` and
+`share/doc/THIRD_PARTY_LICENSES.md`. The live ISO exposes the same notices
+under `/usr/local/share/doc/routerd/` (`LICENSE` and
+`THIRD_PARTY_LICENSES.txt`). Regenerate the inventory with:
+
+```sh
+make third-party-licenses
+```

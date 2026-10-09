@@ -134,42 +134,12 @@ DNS サーバーとして配りたいときは、先に `DNSResolver` などの 
 
 :::
 
-## daemon の前に確認する
+## この設定例を実行する
 
-例をコピーして NIC 名とアドレスを直したら、サービスを起動する前に確認します。
-
-```sh
-cp examples/example-basic-ipv4-nat.yaml ./router.yaml
-LAB_DIR="$(mktemp -d)"
-sudo routerd validate --config ./router.yaml
-sudo routerd apply --config ./router.yaml --once --dry-run --skip-service-manager \
-  --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
-  --status-file "$LAB_DIR/status.json"
-sudo sed -n "1,160p" "$LAB_DIR/status.json"
-```
-
-dry-run の出力で、WAN と LAN の名前、DHCP の範囲、NAT の送信元が正しいことを
-確認します。管理用 NIC や、普段のネットワークの範囲が入っていたら先へ進みません。
-
-## サービス起動後の確認
-
-VM コンソールを開いたまま設定を標準の場所に置き、サービスを起動した**後で**、
-`routerctl` を使います。
-
-```sh
-sudo install -m 0600 ./router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
-sudo systemctl is-active routerd.service
-sudo routerctl get status
-sudo routerctl describe DHCPv4Client/wan-dhcpv4
-sudo routerctl describe NAT44Rule/lan-to-wan
-sudo nft list table ip routerd_nat
-```
-
-LAN クライアントには DHCP を受けさせるか、手動で `192.168.10.x/24` と
-ゲートウェイ `192.168.10.1` を設定します。DNS は例の外部アドレスを使うか、
-自分の LAN 用 DNS を設定してから確認します。
+[最初のルーター](../tutorials/first-router.md)に、導入版に合うファイルの取得、
+インターフェース名の変更、検証、隔離 dry-run、反映、サービス起動、端末の確認を
+まとめています。リリースアーカイブにはリポジトリの `examples/` ディレクトリは
+含まれません。上の抜粋だけでなく、取得した完全なファイルを使ってください。
 
 ## 関連項目
 

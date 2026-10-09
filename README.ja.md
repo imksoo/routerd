@@ -1,9 +1,5 @@
 # routerd
 
-Web ConsoleのConnectionsではDS-LiteごとのIPv4 NATエントリー数を表示します。
-表示行数とは独立してローカルconntrack全件から集計し、取得不能はゼロと区別します。
-事業者側AFTRの件数ではありません。
-
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
 [プロジェクトサイトとドキュメント: routerd.net](https://routerd.net/) ·
@@ -12,18 +8,13 @@ Web ConsoleのConnectionsではDS-LiteごとのIPv4 NATエントリー数を表�
 [繁體中文](https://routerd.net/zh-Hant/docs/) ·
 [简体中文](https://routerd.net/zh-Hans/docs/)
 
+routerd は、汎用ホストを見通しのよいルーターとして動かすための、
+プレリリースの宣言的ルーター制御プレーンです。
+
 Linux amd64 と FreeBSD amd64 のビルド済みアーカイブは
 [GitHub Releases](https://github.com/imksoo/routerd/releases) で公開しています。
 インストールとアップグレードは
 [日本語の導入手順](https://routerd.net/ja/docs/install-and-upgrade) を参照してください。
-
-routerd は、汎用ホストを見通しのよいルーターとして動かすための、
-プレリリースの宣言的ルーター制御プレーンです。
-
-適用エラーには設定置換・runtime 切替・世代保存の進捗を含めます。
-失敗した要求でも変更済みの場合があるため、
-[適用途中で失敗した場合](website/i18n/ja/docusaurus-plugin-content-docs/current/concepts/apply-and-render.md#適用途中で失敗した場合)
-を参照してください。
 
 ## 最初は安全なラボから
 
@@ -55,6 +46,79 @@ routerd は設定を検証し、計画を表示し、必要なホスト成果物
 
 routerd の基本思想は単純です。
 ルーターはシステムとして設定し、サービスとして観測できるべきです。
+
+## クイックスタート
+
+ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
+
+```sh
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
+sha256sum -c routerd-linux-amd64.tar.gz.sha256
+tar -xzf routerd-linux-amd64.tar.gz
+sudo ./install.sh
+```
+
+FreeBSD では stable release tag の `routerd-freebsd-amd64.tar.gz` を取得し、
+同じ `./install.sh` を実行します。
+arm64 ホストでは `routerd-linux-arm64.tar.gz` または
+`routerd-freebsd-arm64.tar.gz` を使います。
+同じ release page には `routerd-v20260914.0729-linux-amd64.tar.gz` のような
+版番号付きアーカイブもあります。
+
+Linux 用の release archive には、静的リンクした routerd バイナリを含めます
+(`CGO_ENABLED=0`)。
+配置先ホストの glibc 版には依存しません。
+
+`install.sh` は必要な OS パッケージを導入し、実行ファイルを
+`/usr/local/sbin` に配置します。
+また、サービスのテンプレートと `router.yaml.sample` を配置します。
+既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
+パッケージ一覧は次のコマンドで確認できます。
+
+```sh
+./install.sh --list-deps
+```
+
+### 設定を作り、変更前に確認する
+
+初回は[最初のルーターの手順](https://routerd.net/ja/docs/tutorials/first-router)から、
+導入した版に合う小さな設定例を取得します。同梱の `router.yaml.sample` は
+ISP 固有の設定を含む大きな例であり、そのまま使える安全な既定値ではありません。
+手順に従ってインターフェース名、アドレス、DNS を確認し、`first-router.yaml`
+として保存してから、デーモンを起動せずに確認します。
+
+```sh
+sudo routerd validate --config first-router.yaml
+
+workdir=$(mktemp -d)
+sudo routerd apply --config first-router.yaml --once --dry-run --skip-service-manager \
+  --state-file "$workdir/state.db" \
+  --ledger-file "$workdir/ledger.db" \
+  --status-file "$workdir/status.json"
+rm -rf "$workdir"
+```
+
+### 起動してから状態を見る
+
+新規のラボホストで、コンソールまたは独立した管理経路を確保してから進みます。
+サービスの起動は設定を実際に反映し、ネットワークを変更します。
+既に routerd が稼働している場合は、[手順](https://routerd.net/ja/docs/tutorials/first-router)の
+既存ルーター向けの説明を使ってください。
+
+```sh
+sudo install -d -m 0755 /usr/local/etc/routerd
+sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
+sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
+sudo routerctl get status
+sudo routerctl get events --limit 20
+```
+
+`active` を確認した後、リソースの状態と隔離した LAN クライアントの通信を
+確認します。`routerctl` には稼働中のローカルデーモンが必要です。
+`routerd apply --once` は終了するため、それだけではデーモンは残りません。
+起動や状態確認に失敗したら[トラブルシュート](https://routerd.net/ja/docs/how-to/troubleshooting)を参照します。
 
 ## routerd が目指すもの
 
@@ -244,82 +308,6 @@ spec:
     - 10.0.0.0/8
 ```
 
-## クイックスタート
-
-ルーターホスト上でリリースアーカイブを展開し、同梱のインストーラーを実行します。
-
-```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
-sha256sum -c routerd-linux-amd64.tar.gz.sha256
-tar -xzf routerd-linux-amd64.tar.gz
-sudo ./install.sh
-```
-
-FreeBSD では stable release tag の `routerd-freebsd-amd64.tar.gz` を取得し、
-同じ `./install.sh` を実行します。
-arm64 ホストでは `routerd-linux-arm64.tar.gz` または
-`routerd-freebsd-arm64.tar.gz` を使います。
-同じ release page には `routerd-v20260707.1514-linux-amd64.tar.gz` のような
-版番号付きアーカイブもあります。
-
-Linux 用の release archive には、静的リンクした routerd バイナリを含めます
-(`CGO_ENABLED=0`)。
-配置先ホストの glibc 版には依存しません。
-
-`install.sh` は必要な OS パッケージを導入し、実行ファイルを
-`/usr/local/sbin` に配置します。
-また、サービスのテンプレートと `router.yaml.sample` を配置します。
-既存の `/usr/local/etc/routerd/router.yaml` は上書きしません。
-パッケージ一覧は次のコマンドで確認できます。
-
-```sh
-./install.sh --list-deps
-```
-
-## ライセンスと再配布
-
-routerd 本体は [BSD 3-Clause License](LICENSE) で配布します。
-release archive とライブ ISO には、各 software が持つ別のライセンスが含まれます。
-Ubuntu ベースのライブ ISO は aggregate distribution です。
-dnsmasq、nftables、WireGuard tools、ppp、iproute2 などの GPL 系ツールは、
-それぞれのライセンスとソース入手経路を保ちます。
-ISO 全体が 1 つの GPL work として再ライセンスされるものではありません。
-
-release archive には `share/doc/LICENSE` と
-`share/doc/THIRD_PARTY_LICENSES.md` を同梱します。
-ライブ ISO では `/usr/local/share/doc/routerd/` にある `LICENSE` と
-`THIRD_PARTY_LICENSES.txt` から同じ通知を確認できます。
-一覧は次のコマンドで再生成します。
-
-```sh
-make third-party-licenses
-```
-
-設定ファイルを作成し、デーモンを起動する前に直接検証します。
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-
-sudo routerd validate --config /usr/local/etc/routerd/router.yaml
-
-workdir=$(mktemp -d)
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once --dry-run \
-  --state-file "$workdir/state.db" \
-  --ledger-file "$workdir/ledger.db" \
-  --status-file "$workdir/status.json"
-rm -rf "$workdir"
-```
-
-管理経路が残ることを確認し、コンソールまたは独立した管理経路から反映します。
-次のコマンドはホストのネットワークを変更します。
-
-```sh
-sudo routerd apply --config /usr/local/etc/routerd/router.yaml --once
-```
-
 ## 開発者向けビルド
 
 ソースからのビルドには Go 1.25.0 以降が必要です。`go.mod` は Go 1.25.9
@@ -412,3 +400,34 @@ MASTERでは、一時的な条件低下だけでVIPを撤去しません。更�
 生成service unitを保持し、設定由来のCapabilityやEnvironmentを維持します。
 
 正確な設計状態は `docs/design.md` を参照してください。
+
+## 運用時の補足
+
+適用エラーには設定置換・runtime 切替・世代保存の進捗を含めます。
+失敗した要求でも変更済みの場合があるため、
+[適用途中で失敗した場合](website/i18n/ja/docusaurus-plugin-content-docs/current/concepts/apply-and-render.md#適用途中で失敗した場合)
+を参照してください。
+
+Web ConsoleのConnectionsではDS-LiteごとのIPv4 NATエントリー数を表示します。
+表示行数とは独立してローカルconntrack全件から集計し、取得不能はゼロと区別します。
+事業者側AFTRの件数ではありません。
+
+
+## ライセンスと再配布
+
+routerd 本体は [BSD 3-Clause License](LICENSE) で配布します。
+release archive とライブ ISO には、各 software が持つ別のライセンスが含まれます。
+Ubuntu ベースのライブ ISO は aggregate distribution です。
+dnsmasq、nftables、WireGuard tools、ppp、iproute2 などの GPL 系ツールは、
+それぞれのライセンスとソース入手経路を保ちます。
+ISO 全体が 1 つの GPL work として再ライセンスされるものではありません。
+
+release archive には `share/doc/LICENSE` と
+`share/doc/THIRD_PARTY_LICENSES.md` を同梱します。
+ライブ ISO では `/usr/local/share/doc/routerd/` にある `LICENSE` と
+`THIRD_PARTY_LICENSES.txt` から同じ通知を確認できます。
+一覧は次のコマンドで再生成します。
+
+```sh
+make third-party-licenses
+```

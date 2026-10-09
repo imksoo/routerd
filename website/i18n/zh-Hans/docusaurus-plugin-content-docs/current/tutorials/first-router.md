@@ -9,7 +9,7 @@ sidebar_position: 2
 
 本教程让隔离 LAN 上的测试客户端取得私有 IPv4 地址和网关，并通过 IPv4 连到上游网络。
 它使用完整示例
-[`examples/example-basic-ipv4-nat.yaml`](../../../../../../examples/example-basic-ipv4-nat.yaml)。
+[`examples/example-basic-ipv4-nat.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-basic-ipv4-nat.yaml)。
 
 这是实验教程，不是可以直接粘贴到家用路由器上的配置。
 
@@ -20,6 +20,14 @@ sidebar_position: 2
 `192.168.10.0/24` 若与上游、VPN、学校或管理网络重叠，请换成未使用的私有网段。
 
 :::
+
+## 开始前准备
+
+- 先按[安装与升级](../install-and-upgrade.md)安装 routerd。
+- Ubuntu Server 实验主机需要两个独立的 WAN/LAN 接口，以及控制台或独立管理路径；用 `ip -br link` 确认名称。
+- WAN 接到能访问互联网的上游 DHCP 网络；LAN 只接隔离交换机/网桥和测试客户端，不要让其他 DHCP 服务器服务这个 LAN。
+- 需要可用 sudo 的账号和下载文件的网络。下面的客户端检查命令适用于 Linux。
+- 本文是 `routerd.service` 已停止的首次安装流程。若服务已运行，不要同时运行另一个 live one-shot apply。审查候选文件后，在实验控制台使用 `sudo routerctl plan -f first-router.yaml --replace` 和 `sudo routerctl apply -f first-router.yaml --replace` 代替第3步。全量替换会删除文件中未包含的资源，不要用实验文件替换生产配置。
 
 ## 成功时会看到什么
 
@@ -95,6 +103,7 @@ sudo routerd apply --config first-router.yaml --once
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
 ## 4. 完整检查这条小路径
@@ -124,3 +133,5 @@ curl -I https://example.com/
 - [基本 IPv4 NAT 网关](../config-examples/basic-ipv4-nat.md) — 用图和 YAML 对照说明这个文件
 - [LAN 侧服务](./lan-side-services.md) — IPv4 正常后再添加本地 DNS 和 IPv6
 - [基本 NAT 与 firewall policy](./basic-firewall.md) — 当前 firewall 的范围和更安全的下一步
+
+若启动或状态检查失败，先看[故障排查](../how-to/troubleshooting.md)，不要反复 live apply。

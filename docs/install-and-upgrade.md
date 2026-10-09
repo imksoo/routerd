@@ -21,15 +21,15 @@ addresses, routes, DHCP, and DNS.
 ## Quick install
 
 Download the archive for your OS and architecture from the recommended stable
-milestone, [v20260707.1514](https://github.com/imksoo/routerd/releases/tag/v20260707.1514).
+milestone, [v20260914.0729](https://github.com/imksoo/routerd/releases/tag/v20260914.0729).
 The [stable milestone](./releases/stable.md) page is the single source for this
 recommendation.
 
 Linux amd64:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
 tar -xzf routerd-linux-amd64.tar.gz
 sudo ./install.sh
@@ -40,8 +40,8 @@ For Linux arm64, use the `linux-arm64` archive.
 FreeBSD amd64:
 
 ```sh
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz
-fetch https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-freebsd-amd64.tar.gz.sha256
+fetch https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-freebsd-amd64.tar.gz
+fetch https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-freebsd-amd64.tar.gz.sha256
 cat routerd-freebsd-amd64.tar.gz.sha256
 sha256 routerd-freebsd-amd64.tar.gz
 tar -xzf routerd-freebsd-amd64.tar.gz
@@ -50,7 +50,7 @@ sudo ./install.sh
 
 For FreeBSD arm64, use the `freebsd-arm64` archive.
 The same release also includes versioned archives such as
-`routerd-v20260707.1514-linux-amd64.tar.gz`.
+`routerd-v20260914.0729-linux-amd64.tar.gz`.
 Use those when you need an explicitly named artifact.
 
 Linux archives are built with `CGO_ENABLED=0` and contain statically linked
@@ -63,8 +63,8 @@ the matching `routerd-ndpi-agent-libndpi-linux-amd64.tar.gz` archive and install
 it explicitly with the normal archive:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-ndpi-agent-libndpi-linux-amd64.tar.gz.sha256
 sudo ./install.sh --with-ndpi \
   --with-ndpi-archive ./routerd-ndpi-agent-libndpi-linux-amd64.tar.gz
@@ -81,6 +81,15 @@ It never overwrites an existing `/usr/local/etc/routerd/router.yaml`.
 On systemd hosts, the installer creates the `routerd` group for local socket
 access. Add an operator with `sudo usermod -aG routerd <user>` to allow
 `routerctl get status` and other local control socket operations without sudo.
+
+## First configuration
+
+For a first lab, follow [Getting started safely](./tutorials/getting-started.md)
+for an offline preview, then [Bring up the first lab router](./tutorials/first-router.md)
+for a complete DHCP/NAT configuration, service startup, and connectivity checks.
+The bundled `router.yaml.sample` contains a larger ISP-specific configuration;
+editing only interface names is not enough to make it suitable for every network.
+A normal fresh `./install.sh` installs files but does not start routerd.
 
 ## Upgrading a router that runs BGP
 
@@ -137,8 +146,8 @@ hardening, not a regression. No service-unit change is required.
 The stable release page also publishes a bootable Ubuntu-based live ISO:
 
 ```sh
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso
-curl -LO https://github.com/imksoo/routerd/releases/download/v20260707.1514/routerd-live.iso.sha256
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso
+curl -LO https://github.com/imksoo/routerd/releases/download/v20260914.0729/routerd-live.iso.sha256
 sha256sum -c routerd-live.iso.sha256
 ```
 
@@ -349,9 +358,10 @@ The installer never removes these state locations:
 - `/var/run/routerd`
 - `/var/log/otelcol`
 
-## First configuration
+## Alternative: interactive configuration
 
-For a first trial, start with the built-in setup wizard but ask it to stop
+As an alternative to the tutorial’s small lab file, use the built-in setup
+wizard and ask it to stop
 before a live apply:
 
 ```sh
@@ -393,14 +403,8 @@ the candidate:
 sudo ./install.sh configure --no-apply
 ```
 
-Manual configuration is still available.
-Copy a sample configuration into place and edit it for your interfaces:
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 /usr/local/etc/routerd/router.yaml.sample /usr/local/etc/routerd/router.yaml
-sudo vi /usr/local/etc/routerd/router.yaml
-```
+The following checks use the reviewed file created by the wizard. Do not
+replace it with the larger packaged sample merely to follow this section.
 
 Before a service is running, validate the file directly and perform a dry-run
 with isolated temporary state:

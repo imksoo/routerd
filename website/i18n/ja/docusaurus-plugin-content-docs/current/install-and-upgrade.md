@@ -9,17 +9,6 @@ title: インストールとアップグレード
 routerd はリリースアーカイブから導入します。ルーターホストに Go や Makefile は
 必要ありません。最初の対象は Ubuntu Server です。
 
-更新時には、現行routerdが生成した`routerd.service`を保持します。
-`Managed by routerd`というコメントだけでは旧形式と判断しません。
-削除済みの`--controller-chain`を含むunitは移行対象です。
-設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
-VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
-一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。
-継続保有には同一アドレス・インターフェースの正常公開済みMASTER記録が必要です。
-正常公開履歴は現在の観測状態と分離し、観測エラーでは保持します。
-降格・VIP不在の確認・公開失敗では失効し、異なるアドレスやインターフェースへ流用しません。
-アドレスだけが残り公開記録がない場合は、初回のreadiness判定を適用します。
-
 :::caution 初回は隔離した VM で
 
 初めての導入は、普段の回線を運ぶルーターでは行わないでください。
@@ -34,7 +23,7 @@ VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMA
 合うアーカイブを選びます。次は Linux amd64 の例です。
 
 ```sh
-RELEASE=v20260707.1514
+RELEASE=v20260914.0729
 curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz
 curl -fLO https://github.com/imksoo/routerd/releases/download/${RELEASE}/routerd-linux-amd64.tar.gz.sha256
 sha256sum -c routerd-linux-amd64.tar.gz.sha256
@@ -53,54 +42,24 @@ routerd --version
 
 ## 最初の設定は、起動前に確認する
 
-設定の置き場所は `/usr/local/etc/routerd/router.yaml` です。
-まずは [はじめに](./tutorials/getting-started.md) の小さな YAML を
-`first-router.yaml` として作ってください。サービスがまだ動いていない段階では、
-`routerctl` を使わず、`routerd` 本体で確認します。
-
-```sh
-LAB_DIR="$(mktemp -d)"
-sudo routerd validate --config ./first-router.yaml
-sudo routerd apply --config ./first-router.yaml --once --dry-run --skip-service-manager \
-  --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
-  --status-file "$LAB_DIR/status.json"
-```
-
-`validate` は YAML の書き方を調べます。dry-run は、依存関係と生成する内容を
-調べますが、本当のネットワーク変更は行いません。state、ledger、status の
-保存先を `LAB_DIR` の下にしているので、普段使う状態ファイルにも触れません。
-
-:::tip state、ledger、status とは
-
-- **state** は、routerd が見た状態を保存するデータベースです。
-- **ledger** は、routerd が所有するファイルや設定の記録です。
-- **status** は、その dry-run の結果を書いた JSON ファイルです。
-
-初回の dry-run では、どれも使い捨ての場所を指定します。
-
-:::
-
-## サービスを起動する
-
-ここから先は VM のネットワークを変える可能性があります。コンソールを開いたまま、
-インターフェース名、管理経路、dry-run の出力を確認してから実行します。
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 ./first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
-sudo systemctl is-active routerd.service
-```
-
-サービスが起動して初めて、`routerctl` でローカルソケットの状態を確認できます。
-
-```sh
-sudo routerctl get status
-sudo routerctl get events --limit 20
-```
+[安全なはじめ方](./tutorials/getting-started.md)でオフラインの確認を行い、
+[最初のルーター](./tutorials/first-router.md)で DHCP/NAT の完成した設定、起動、
+状態、LAN 端末の通信を順に確認します。`router.yaml.sample` は ISP 固有の設定も
+含む大きな例です。インターフェース名だけ直せば使える既定値ではありません。
+通常の新規 `./install.sh` はファイルを配置しますが、サービスは起動しません。
 
 ## 更新する
+
+更新時には、現行routerdが生成した`routerd.service`を保持します。
+`Managed by routerd`というコメントだけでは旧形式と判断しません。
+削除済みの`--controller-chain`を含むunitは移行対象です。
+設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
+VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
+一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。
+継続保有には同一アドレス・インターフェースの正常公開済みMASTER記録が必要です。
+正常公開履歴は現在の観測状態と分離し、観測エラーでは保持します。
+降格・VIP不在の確認・公開失敗では失効し、異なるアドレスやインターフェースへ流用しません。
+アドレスだけが残り公開記録がない場合は、初回のreadiness判定を適用します。
 
 更新も、まず VM コンソールと管理経路を確認してから行います。新しいアーカイブを
 展開し、同じ `install.sh` を実行します。

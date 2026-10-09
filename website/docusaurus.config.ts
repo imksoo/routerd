@@ -103,7 +103,7 @@ const config: Config = {
             {to: '/docs/install-and-upgrade', label: 'Install'},
             {to: '/docs/concepts/resource-model', label: 'Resource model'},
             {to: '/docs/concepts/glossary', label: 'Glossary'},
-            {to: '/docs/concepts/firewall', label: 'Build a router'},
+            {to: '/docs/tutorials/first-router', label: 'Build a router'},
             {to: '/docs/config-examples/', label: 'Configuration examples'},
             {to: '/docs/how-to/multi-wan', label: 'How-to guides'},
             {to: '/docs/operations/routerctl-doctor', label: 'Operate'},

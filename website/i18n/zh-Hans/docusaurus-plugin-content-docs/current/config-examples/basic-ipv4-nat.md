@@ -84,29 +84,12 @@ Internet / 上游路由器
 
 这个第一轮实验直接向客户端公布外部 DNS 解析器 `1.1.1.1` 和 `1.0.0.1`，这样路由器自身还不需要承担 DNS 服务。请先确认学校、家庭、单位或上游网络允许使用这些公共解析器；若网络策略要求指定 DNS，或你要让路由器提供本地名称、过滤或条件转发，请改为获准的 DNS 地址，或先配置 `DNSResolver`，再公布路由器的 LAN 地址。
 
-## 先用本地命令检查
+## 运行这个示例
 
-以具有 `sudo` 权限的本地用户运行下列独立检查；它们不需要 daemon，也不会应用网络变更。
-
-```bash
-LAB_DIR="$(mktemp -d)"
-sudo routerd validate --config examples/example-basic-ipv4-nat.yaml
-sudo routerd apply --config examples/example-basic-ipv4-nat.yaml --once --dry-run --skip-service-manager \
-  --state-file "$LAB_DIR/state.db" \
-  --ledger-file "$LAB_DIR/ledger.db" \
-  --status-file "$LAB_DIR/status.json"
-rm -rf "$LAB_DIR"
-```
-
-不要用未启动服务的 `routerctl validate` 或 `routerctl plan` 来替代它们。
-
-服务真实运行后，才可以查询资源。首次安装请保留 `sudo`；若管理员通过 `routerd` 组授予本地 socket 访问，加入后必须重新登录才会生效：
-
-```bash
-sudo routerctl get status
-sudo routerctl describe DHCPv4Client/wan-dhcpv4
-sudo routerctl describe NAT44Rule/lan-to-wan
-```
+[第一台实验路由器](../tutorials/first-router.md)提供与安装版本匹配的文件下载、
+接口修改、验证、隔离 dry-run、真实应用、服务启动及客户端检查的完整步骤。
+发布归档不包含仓库的 `examples/` 目录。上面的片段用于解释资源，实际运行时请用
+下载的完整文件。
 
 ## 关于防火墙
 

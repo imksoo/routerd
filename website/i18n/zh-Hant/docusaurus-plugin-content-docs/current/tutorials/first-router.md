@@ -9,7 +9,7 @@ sidebar_position: 2
 
 本教學讓隔離 LAN 上的測試用戶端取得私有 IPv4 位址與閘道，並透過 IPv4 連到上游網路。
 它使用完整範例
-[`examples/example-basic-ipv4-nat.yaml`](../../../../../../examples/example-basic-ipv4-nat.yaml)。
+[`examples/example-basic-ipv4-nat.yaml`](https://github.com/imksoo/routerd/blob/main/examples/example-basic-ipv4-nat.yaml)。
 
 這是實驗教學，不是可直接貼到家用路由器上的設定。
 
@@ -20,6 +20,14 @@ sidebar_position: 2
 `192.168.10.0/24` 若和上游、VPN、學校或管理網路重疊，請換成未使用的私有網段。
 
 :::
+
+## 開始前準備
+
+- 先依[安裝與升級](../install-and-upgrade.md)安裝 routerd。
+- Ubuntu Server 實驗主機需要兩個獨立的 WAN/LAN 介面，以及主控台或獨立管理路徑；用 `ip -br link` 確認名稱。
+- WAN 接到能存取網際網路的上游 DHCP 網路；LAN 只接隔離交換器/橋接器和測試用戶端，不要讓其他 DHCP 伺服器服務這個 LAN。
+- 需要可用 sudo 的帳號和下載檔案的網路。下面的用戶端檢查指令適用於 Linux。
+- 本文是 `routerd.service` 已停止的首次安裝流程。若服務已執行，不要同時執行另一個 live one-shot apply。審閱候選檔案後，在實驗主控台使用 `sudo routerctl plan -f first-router.yaml --replace` 和 `sudo routerctl apply -f first-router.yaml --replace` 代替第3步。完整取代會刪除檔案未包含的資源，不要用實驗檔案取代正式設定。
 
 ## 成功時會看到什麼
 
@@ -95,6 +103,7 @@ sudo routerd apply --config first-router.yaml --once
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
 sudo systemctl enable --now routerd.service
+sudo systemctl is-active routerd.service
 ```
 
 ## 4. 完整檢查這條小路徑
@@ -124,3 +133,5 @@ curl -I https://example.com/
 - [基本 IPv4 NAT 閘道](../config-examples/basic-ipv4-nat.md) — 以圖和 YAML 對照說明這個檔案
 - [LAN 側服務](./lan-side-services.md) — IPv4 正常後再加入本地 DNS 與 IPv6
 - [基本 NAT 與 firewall policy](./basic-firewall.md) — 目前 firewall 的範圍與較安全的下一步
+
+若啟動或狀態檢查失敗，先看[疑難排解](../how-to/troubleshooting.md)，不要反覆 live apply。

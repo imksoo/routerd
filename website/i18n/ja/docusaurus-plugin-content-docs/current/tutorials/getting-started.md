@@ -96,7 +96,8 @@ sudo routerd apply --config ./first-router.yaml --once --dry-run --skip-service-
   --state-file "$LAB_DIR/state.db" \
   --ledger-file "$LAB_DIR/ledger.db" \
   --status-file "$LAB_DIR/status.json"
-sed -n "1,120p" "$LAB_DIR/status.json"
+sudo sed -n "1,120p" "$LAB_DIR/status.json"
+rm -rf "$LAB_DIR"
 ```
 
 `--dry-run` があるため、routerd は本当のネットワーク変更をしません。
@@ -104,30 +105,12 @@ sed -n "1,120p" "$LAB_DIR/status.json"
 確認します。知らない NIC、知らないファイル、警告が出たら、ここで止めて YAML を
 直します。
 
-## 5. 安全なときだけサービスを起動する
+## 5. 実際の変更は次の手順で行う
 
-ここから先は **live** の操作です。VM コンソールを開いたまま、管理用 NIC が
-この YAML に含まれていないこと、dry-run が安全だったことを確認してください。
-
-```sh
-sudo install -d -m 0755 /usr/local/etc/routerd
-sudo install -m 0600 ./first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
-sudo systemctl is-active routerd.service
-```
-
-## 6. 起動後に routerctl で見る
-
-`routerctl` は `routerd.service` が作ったローカルソケットを使います。
-そのため、サービスが起動してから実行します。
-
-```sh
-sudo routerctl get status
-sudo routerctl get events --limit 20
-```
-
-初回は `sudo` を付けます。後で運用者を `routerd` グループへ追加し、新しいログインを
-開始すれば、読み取り専用の状態確認は `sudo` なしでも使えます。
+この小さな設定はインターフェースの宣言だけで、DHCP、NAT、インターネット共有は
+まだ提供しません。サービスは停止したまま、[最初のルーター](./first-router.md)へ
+進みます。完成した設定の確認、起動、状態確認、LAN クライアントの通信確認を
+そこで順に行います。
 
 ## 次に読むもの
 

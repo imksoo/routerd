@@ -10,11 +10,29 @@ slug: /how-to/troubleshooting
 routerd の調査では、まず **routerd の意図** と **ホストの実状態** を分けます。
 routerd が何を意図しているかを確認してから、OS の状態と突き合わせてください。
 
+## サービスの起動や状態確認に失敗したら
+
+Ubuntu では live apply を繰り返す前に、サービスとログを確認します。
+
+```bash
+sudo systemctl status routerd.service --no-pager
+sudo journalctl -u routerd.service -n 50 --no-pager
+sudo routerd validate --config /usr/local/etc/routerd/router.yaml
+```
+
+- 設定がない・検証エラー：[最初のルーター](../tutorials/first-router.md)に戻り、起動前にファイルを直します。
+- ソケットがない・接続拒否：`routerctl` には稼働中の daemon が必要です。`routerd apply --once` は終了し、ソケットは残しません。
+- 権限エラー：まず `sudo routerctl get status` を使います。sudo なしの読み取りには、管理者が `routerd` グループへ追加した後、新しいログインが必要です。
+- サービスは active だが端末が通信できない：WAN のリース、LAN のアドレスと gateway、DNS の順で[端末の確認](../tutorials/first-router.md)を行います。
+
+既存サービスと別の `routerd serve` や live one-shot apply を同時に実行しません。
+ネットワーク変更に失敗したときは、コンソールを開いたまま原因を調べます。
+
 ## 基本順序
 
-1. `routerctl get status` — 全体を見る
-2. `routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
-3. `routerctl plan` — 次の適用で何が変わるか
+1. `sudo routerctl get status` — 全体を見る
+2. `sudo routerctl describe <kind>/<name>` — 対象リソースを掘り下げる
+3. `sudo routerctl plan` — 次の適用で何が変わるか
 4. OS コマンド (`ip`、`nft`、`ss`、`journalctl`) — 実状態
 5. 該当デーモンの `/v1/status` とイベントログ
 
