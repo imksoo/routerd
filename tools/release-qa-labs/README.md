@@ -592,6 +592,16 @@ Before any mutation, the execution-host precheck verifies DNS, TCP, TLS,
 authenticated read-only provider/PVE access and the provider mirror. It then
 requires exhaustive zero inventory.
 
+Proxied HTTPS readiness probes allow at most three attempts for curl transport
+errors 7, 28, 52, 55 and 56, with a 10-second connection deadline, a 20-second
+whole-request deadline and a one-second pause between attempts. Every attempt
+retains separate headers, stderr, connection/TLS timings and exit status in
+private evidence. Certificate errors and other failures stop immediately;
+exhausted retries emit no PASS result and never reach authenticated admission
+or provisioning. The later authentication, key-binding, PVE and inventory gates
+remain mandatory. These precheck retries do not relax qualification traffic
+checks or turn an earlier failed run into a pass.
+
 Full runs also require sufficient Azure regional and VM-family vCPU quota
 before provisioning any provider, including PVE. Authentication and a zero
 run-tagged baseline do not establish capacity: deallocated VMs from other
