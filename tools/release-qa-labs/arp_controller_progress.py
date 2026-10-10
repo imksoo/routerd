@@ -7,7 +7,10 @@ module does not prove target attribution or replace error/TTL/packet gates.
 """
 
 import datetime
+import ipaddress
+import json
 import math
+import re
 
 
 def _number(value):
@@ -31,9 +34,72 @@ def _timestamp(value):
     return _number(parsed.timestamp())
 
 
+def _command_timestamp(value):
+    if not isinstance(value, str):
+        raise ValueError("command timestamp must be a UTC RFC3339 string")
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z", value)
+    if not match:
+        raise ValueError("invalid command timestamp")
+    base = datetime.datetime.fromisoformat(match[1] + "+00:00").timestamp()
+    return _number(base + float("0." + (match[2] or "0")))
+
+
+def _command_records(samples, fast, since, packet_count):
+    """Validate original optional command strings without inventing completions."""
+    records = {}
+    for index, (row, (_, sample_end, count)) in enumerate(zip(samples, fast)):
+        if "lastCommandProbe" not in row:
+            continue  # Legacy counter-only evidence cannot use the new fallback.
+        value = row["lastCommandProbe"]
+        if count == 0 and value in (None, ""):
+            continue
+        if not isinstance(value, str) or not 0 < len(value) <= 4096:
+            raise ValueError("missing or oversized original command JSON")
+        record = json.loads(value)
+        if not isinstance(record, dict):
+            raise ValueError("invalid command evidence object")
+        sequence = _counter(record["sequence"])
+        if sequence == 0 or sequence != count or _counter(record["packetsSent"]) != packet_count:
+            raise ValueError("command record/counter or packet-count mismatch")
+        if not isinstance(record["target"], str):
+            raise ValueError("invalid command target")
+        ipaddress.IPv4Address(record["target"])
+        start, end = _command_timestamp(record["startedAt"]), _command_timestamp(record["completedAt"])
+        if not since <= start <= end <= sample_end:
+            raise ValueError("invalid command evidence lifetime")
+        if sequence in records:
+            if records[sequence]["record"] != record:
+                raise ValueError("same command sequence changed its evidence")
+            continue
+        if records and start < next(reversed(records.values()))["end"]:
+            raise ValueError("serial command evidence overlaps")
+        records[sequence] = dict(record=record, original=value, start=start,
+                                 end=end, firstSample=index)
+    return records
+
+
+def _recorded_completion(records, fast, left_end, right_start, gap):
+    for sequence, evidence in records.items():
+        index = evidence["firstSample"]
+        if index == 0 or not left_end <= evidence["end"] <= right_start:
+            continue
+        before, after = fast[index - 1], fast[index]
+        # The first observation may follow the controller interval boundary,
+        # but the actual recorded completion must remain inside that interval.
+        # Bind it to one newly observed counter increment across covered reads.
+        if (before[2] + 1 != sequence or after[2] != sequence or
+                after[1] - before[0] > gap or
+                not before[0] <= evidence["end"] <= after[1]):
+            continue
+        return dict(method="recorded_command_completion", commandEvidence=evidence["record"],
+                    originalCommandJSON=evidence["original"], beforeCommandSample=index - 1,
+                    firstCommandSample=index, commandReadStart=before[0], commandReadEnd=after[1])
+    return None
+
+
 def evaluate_arp_controller_progress(
     samples, counter_sampling, *, observer_pid, observer_start_ticks,
-    observer_since, max_sample_gap=0.4,
+    observer_since, max_sample_gap=0.4, expected_command_packets=3,
 ):
     """Evaluate every original controller read; never discard equal pairs.
 
@@ -42,14 +108,18 @@ def evaluate_arp_controller_progress(
     The caller must exclude other command producers during the observation.
     A pair can establish either completed-reconcile progress or synchronous
     command-completion progress followed by a successful reconcile in this
-    same bounded observation. Autonomous probe/scan counters cannot qualify.
+    same bounded observation. A command's explicit completion time can qualify
+    even when its first status observation straddles the right read boundary.
+    expected_command_packets must match the frozen observer retry configuration.
+    Autonomous probe/scan counters cannot qualify.
     """
     result = {"success": False, "intervals": [], "errors": []}
     try:
         gap = _number(max_sample_gap)
-        if gap <= 0 or _counter(observer_pid) == 0 or not observer_start_ticks:
+        packets = _counter(expected_command_packets)
+        if not 0 < gap <= 0.4 or packets == 0 or _counter(observer_pid) == 0 or not observer_start_ticks:
             raise ValueError("missing observer binding or sample gap")
-        _timestamp(observer_since)
+        since = _timestamp(observer_since)
         if len(samples) < 2:
             raise ValueError("need at least two controller reads")
         if counter_sampling["errors"] or counter_sampling["threadExited"] is not True:
@@ -68,6 +138,7 @@ def evaluate_arp_controller_progress(
             if end < start or (fast and (start < fast[-1][1] or count < fast[-1][2])):
                 raise ValueError("command read timestamps or counters regressed")
             fast.append((start, end, count))
+        records = _command_records(commands, fast, since, packets)
         controllers = []
         identity = samples[0]["bootId"], samples[0]["mainPID"]
         if not all(identity):
@@ -106,7 +177,14 @@ def evaluate_arp_controller_progress(
                     any(b[1] - a[0] > gap for a, b in zip(window, window[1:]))):
                 proof["reason"] = "missing interior command counter coverage"
                 continue
-            if window[-1][2] <= window[0][2]:
+            completion = None
+            if window[-1][2] > window[0][2]:
+                completion = dict(method="serial_command_completions",
+                                  commandCountBefore=window[0][2], commandCountAfter=window[-1][2],
+                                  firstCommandReadStart=window[0][0], lastCommandReadEnd=window[-1][1])
+            else:
+                completion = _recorded_completion(records, fast, left["end"], right["start"], gap)
+            if completion is None:
                 proof["reason"] = "neither reconcile nor command completion progressed"
                 continue
             later = next((i for i in range(index + 2, len(controllers))
@@ -115,10 +193,7 @@ def evaluate_arp_controller_progress(
             if later is None:
                 proof["reason"] = "in-flight reconcile did not complete within observation"
                 continue
-            proof.update(success=True, method="serial_command_completions",
-                         commandCountBefore=window[0][2], commandCountAfter=window[-1][2],
-                         firstCommandReadStart=window[0][0], lastCommandReadEnd=window[-1][1],
-                         laterCompletedReadIndex=later)
+            proof.update(success=True, laterCompletedReadIndex=later, **completion)
         result["success"] = all(x["success"] for x in result["intervals"])
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as error:
         result["errors"].append(str(error))
