@@ -44,7 +44,7 @@ esac
 SH
 chmod +x "$fake_matrix"
 
-CE_AWS_INJECT_COMMAND='printf "injected=aws\n"' \
+CE_AWS_STOP_ACTIVE_INJECT_COMMAND='printf "injected=aws\n"' \
 CE_AWS_DETECTION_COMMAND='printf "detected=1\n"' \
 CE_AWS_SWITCHOVER_COMMAND='printf "switched=1\n"' \
 CE_AWS_RECOVERY_COMMAND='printf "recovered=1\n"' \

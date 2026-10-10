@@ -103,21 +103,23 @@ have python3 || die "python3 is required"
 mkdir -p "$(dirname "$out")"
 log "l2-loop: observing phase=$phase provider=$provider"
 
+attempt_dir=$(mktemp -d "$out.evidence.XXXXXXXX")
+if [[ -f "$out" ]]; then cp -- "$out" "$attempt_dir/previous.json"; fi
 observe_result="pass"
 observe_exit=0
 observe_output=""
-observe_output=$("$L2_LOOP_RUNNER" observe "$phase" "$provider" 2>"$out.$phase.stderr.txt") || observe_exit=$?
-printf '%s\n' "$observe_output" >"$out.$phase.stdout.txt"
+observe_output=$("$L2_LOOP_RUNNER" observe "$phase" "$provider" 2>"$attempt_dir/stderr.txt") || observe_exit=$?
+printf '%s\n' "$observe_output" >"$attempt_dir/stdout.txt"
 [[ "$observe_exit" -eq 0 ]] || observe_result="fail"
 metrics_json=$(kv_to_json "$observe_output")
 
 python3 - "$out" "$phase" "$provider" "$observe_result" "$metrics_json" \
-  "$broadcast_threshold" "$stp_tcn_threshold" "$ping_loss_threshold" "$observe_exit" <<'PY'
+  "$broadcast_threshold" "$stp_tcn_threshold" "$ping_loss_threshold" "$observe_exit" "$attempt_dir" <<'PY'
 import json, math, os, sys
 
 (
     out, phase, provider, observe_result, metrics_s,
-    broadcast_threshold_s, stp_tcn_threshold_s, ping_loss_threshold_s, observe_exit_s,
+    broadcast_threshold_s, stp_tcn_threshold_s, ping_loss_threshold_s, observe_exit_s, attempt_dir,
 ) = sys.argv[1:]
 
 metrics = json.loads(metrics_s)
@@ -150,7 +152,11 @@ phase_checks = {
 }
 if observe_result != "pass":
     phase_checks = {k: "inconclusive" for k in phase_checks}
-phase_result = "pass" if all(v == "pass" for v in phase_checks.values()) else "fail"
+phase_checks["suppressionMechanismRecorded"] = "pass" if isinstance(metrics.get("mechanism"), str) and metrics["mechanism"].strip() else "inconclusive"
+def aggregate(values):
+    values = list(values)
+    return "fail" if "fail" in values else "inconclusive" if not values or "inconclusive" in values else "pass"
+phase_result = aggregate(phase_checks.values())
 
 try:
     data = json.load(open(out))
@@ -159,7 +165,10 @@ try:
 except Exception:
     data = {}
 
-phases = [p for p in data.get("phases", []) if p.get("phase") != phase]
+thresholds = {"broadcastPps": broadcast_threshold, "stpTcnDelta": stp_tcn_threshold, "pingLossPercent": ping_loss_threshold}
+# A before observation begins a new pair. Never reuse an old after snapshot.
+previous = data.get("phases", []) if phase == "after" and data.get("thresholds") == thresholds else []
+phases = [p for p in previous if p.get("phase") == "before" and p.get("provider") == provider]
 phases.append({
     "phase": phase,
     "provider": provider,
@@ -168,8 +177,8 @@ phases.append({
     "metrics": metrics,
     "classification": "observation_inconclusive" if "inconclusive" in phase_checks.values() else "none" if phase_result == "pass" else "measured_threshold_failure",
     "observerExit": int(observe_exit_s),
-    "stdout": out + "." + phase + ".stdout.txt",
-    "stderr": out + "." + phase + ".stderr.txt",
+    "stdout": attempt_dir + "/stdout.txt",
+    "stderr": attempt_dir + "/stderr.txt",
 })
 phases.sort(key=lambda p: {"before": 0, "after": 1}.get(p.get("phase"), 99))
 
@@ -178,21 +187,15 @@ mechanisms = [
     for p in phases
     if str(p.get("metrics", {}).get("mechanism", "")).strip()
 ]
-summary = {
-    "broadcastStormAbsent": passed(all(p.get("checks", {}).get("broadcastStormAbsent") == "pass" for p in phases)),
-    "stpRstpStable": passed(all(p.get("checks", {}).get("stpRstpStable") == "pass" for p in phases)),
-    "macFlapAbsent": passed(all(p.get("checks", {}).get("macFlapAbsent") == "pass" for p in phases)),
-    "failoverPingStable": passed(all(p.get("checks", {}).get("failoverPingStable") == "pass" for p in phases)),
-    "suppressionMechanismRecorded": passed(bool(mechanisms)),
-}
+complete = [p.get("phase") for p in phases] == ["before", "after"]
+summary = {name: aggregate([p.get("checks", {}).get(name, "inconclusive") for p in phases] + ([] if complete else ["inconclusive"])) for name in phase_checks}
 data = {
-    "status": "pass" if phases and all(v == "pass" for v in summary.values()) else "fail",
-    "mechanism": ",".join(sorted(set(mechanisms))) if mechanisms else "",
-    "thresholds": {
-        "broadcastPps": broadcast_threshold,
-        "stpTcnDelta": stp_tcn_threshold,
-        "pingLossPercent": ping_loss_threshold,
-    },
+    "status": aggregate(summary.values()),
+    "classification": "measured_threshold_failure" if "fail" in summary.values() else "none" if complete and all(v == "pass" for v in summary.values()) else "observation_inconclusive",
+    "pairComplete": complete,
+    "phaseAcquisitionStatus": phase_result,
+    "mechanism": ",".join(sorted(set(mechanisms))),
+    "thresholds": thresholds,
     "phases": phases,
     "summary": summary,
 }
@@ -202,10 +205,12 @@ with open(out, "w") as f:
 print(out)
 PY
 
-result=$(python3 - "$out" <<'PY'
+result=$(python3 - "$out" "$phase" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
-print(data.get("phases", [{}])[-1].get("result", "fail"))
+# Successful before acquisition permits the caller to proceed to failover.
+# The persisted pair verdict stays inconclusive until after is acquired.
+print(data.get("phaseAcquisitionStatus", "inconclusive") if sys.argv[2] == "before" else data.get("status", "inconclusive"))
 PY
 )
-[[ "$result" == "pass" ]]
+case "$result" in pass) exit 0 ;; fail) exit 1 ;; *) exit 3 ;; esac

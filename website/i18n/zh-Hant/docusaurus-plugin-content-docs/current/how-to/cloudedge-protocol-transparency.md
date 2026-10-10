@@ -135,3 +135,7 @@ export CE_PROTOCOL_NFS_COMMAND='...'
 - `bulk_transfer_pmtu`
 - `protocol_source_ip_preserved`
 - `protocol_no_nat`
+
+SAM E2E工具逐位元組核對FTP、NFS和CIFS的讀取與寫入內容。故障切換傳輸使用已知的64 MiB資料，下載後同時核對大小和SHA-256。注入故障前，必須確認本次傳輸工作仍在執行且已收到部分資料；無法確認進度時，以未判定狀態停止，不注入故障或重試。保留啟動、結果和失敗嘗試的證據。可選的傳輸觀測和效能值與正常故障後matrix判定分開。部署使用本次專用目錄，傳播每個必要複製或設定步驟的失敗，並在重新啟動服務前比較已安裝的binary和設定與本次資料。
+
+L2 qualification需要同一provider和閾值設定的before與after觀測以及抑制機制記錄。before採集成功可進入下一操作，但儲存的彙總在after採集前仍為未判定；after的退出碼反映彙總結果。故障切換時長使用單調時鐘，journal關聯用UTC另行記錄。provider的VM停止實作處理`stop-active`；`drain`需要明確設定`CE_<PROVIDER>_DRAIN_INJECT_COMMAND`或`CE_DRAIN_INJECT_COMMAND`，on-premises停止也需要明確的node-stop command。僅停止keepalived不能證明node停止qualification。
