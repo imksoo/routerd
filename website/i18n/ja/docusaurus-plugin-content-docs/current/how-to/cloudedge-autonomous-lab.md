@@ -15,6 +15,17 @@ title: CloudEdge 自律ラボ (cloudedge-labctl)
 
 `--help`、dry パス、`down --expired` には**クラウド認証情報は不要**です。
 
+
+## 全体を繰り返さずに収束を観測する
+
+SAMはprovider Readyを待ってから通信を判定します。1回のvalidation内で、既存のprovider収束予算900秒を通信観測と共有します。失敗・欠落した必須項目だけを、各項目最大3回まで再取得します。成功項目と同一のcloud-ingress flowは、そのvalidationと同じ障害状態の中で証拠を共有します。成功flowではtracerouteを実行しません。管理SSHの実行完了を確認できない場合は、製品ping失敗と分けて `OBSERVATION_INCONCLUSIVE`（終了コード3）にします。回復前の失敗を含む原本は `matrix/<label>/flows.*/` に残します。
+
+診断採取と受入判定は分離します。収束待ちループで `doctor sam` を連打せず、診断時に1回採取します。同じ診断スナップショット内のstatus・適用済みBGP経路・global RIBは各1回取得し、保存応答から要約を作ります。診断採取の失敗で通信の判定を変更しません。
+
+cleanup inventoryではlifecycle変化とidentity不整合を区別します。AWS/OCIのidentityが一致し状態観測だけが異なる場合、同じinventory実行内で該当providerだけを最大2回追加観測し、各回の原本を保持します。identity・tag・accountの不一致、不正な応答、通信失敗を不在と扱いません。他providerのinventoryは継続し、不成立scopeはcountをnullにして資源ゼロ判定を通しません。既存の資源回収・削除ガードは維持します。
+
+次の有料試験の前に、`tools/release-qa-labs/tests/` の `test_sam_observation.py`、`test_inventory_resources.py`、`test_inventory_driver.py` で該当する保存応答・負例を再現します。資源は作成しません。実matrix/profile呼出し経路は `make cloudedge-representative-redundancy-offline-test` で確認します。これらの成功はクラウド実機試験の実施を意味しません。
+
 ## ライフサイクル
 
 ```sh

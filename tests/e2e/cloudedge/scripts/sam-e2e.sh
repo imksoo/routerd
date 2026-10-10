@@ -309,7 +309,11 @@ ssh_node() {
   local user host
   user="$(node_field "$node" ssh_user)"
   host="$(node_ssh_host "$node")" || { echo "missing management address for node $node" >&2; return 1; }
-  ssh -n "${ssh_base[@]}" "$user@$host" "$@"
+  if [ -n "${ssh_timeout_seconds:-}" ]; then
+    timeout "$ssh_timeout_seconds" ssh -n "${ssh_base[@]}" "$user@$host" "$@"
+  else
+    ssh -n "${ssh_base[@]}" "$user@$host" "$@"
+  fi
 }
 
 scp_node() {
@@ -428,12 +432,19 @@ mark_failed() {
   echo "FAIL: $*" >&2
 }
 
+mark_inconclusive() {
+  [ "$overall" -ne 0 ] || overall=3
+  echo "OBSERVATION_INCONCLUSIVE: $*" >&2
+}
+
 merge_validation_status() {
   local current="$1" next_status="$2"
   if [ "$current" -eq 1 ] || [ "$next_status" -eq 1 ]; then
     printf '1\n'
   elif [ "$current" -eq 2 ] || [ "$next_status" -eq 2 ]; then
     printf '2\n'
+  elif [ "$current" -eq 3 ] || [ "$next_status" -eq 3 ]; then
+    printf '3\n'
   else
     printf '0\n'
   fi
@@ -1246,10 +1257,6 @@ wait_dataplane_control_gate() {
   warm_onprem_discovery "$label"
   while [ "$SECONDS" -lt "$deadline" ]; do
     ok=1
-    for node in "${routers[@]}"; do
-      node_is_stopped "$node" && continue
-      ssh_node "$node" 'sudo routerctl doctor sam >/tmp/routerd-sam-doctor.txt 2>&1' >/dev/null 2>&1 || true
-    done
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
       node_site="$(node_field "$node" site)"
@@ -1294,7 +1301,7 @@ IPS"; then
 wait_provider_gate() {
   local label="$1"
   local started="$SECONDS"
-  local deadline=$((SECONDS + 900))
+  local deadline="${validation_deadline:-$((SECONDS + 900))}"
   local ok=0
   local status_text=TIMEOUT
   local node
@@ -1302,7 +1309,8 @@ wait_provider_gate() {
     ok=1
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
-      if ! ssh_node "$node" "set -e
+      [ "$SECONDS" -lt "$deadline" ] || { ok=0; break; }
+      if ! ssh_timeout_seconds="$((deadline - SECONDS))" ssh_node "$node" "set -e
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
 printf '%s\n' \"\$status\" | jq -e '
   .resource.status as \$s
@@ -1329,8 +1337,100 @@ collect_convergence_snapshot() {
   local node
   for node in "${routers[@]}"; do
     node_is_stopped "$node" && continue
-    ssh_node "$node" 'sudo routerctl doctor sam; sudo routerctl get status -o json; ip -br addr; ip route' >"$evidence_dir/convergence/${label}-${node}.txt" 2>&1 || true
+    ssh_node "$node" 'sudo routerctl get status -o json; ip -br addr; ip route' >"$evidence_dir/convergence/${label}-${node}.txt" 2>&1 || true
   done
+}
+
+# One cache belongs to one validation invocation and unchanged fault state.
+# Keep every failed/missing observation; retry only required components that
+# have not succeeded, under the original shared convergence deadline.
+observe_flow() {
+  local label="$1" src="$2" dst="$3" kind="$4" required="${5:-ping hostname}"
+  local src_ip dst_ip dst_host dst_user dir state component command marker raw rc transport_rc actual
+  local attempt remaining result attempt_result pending sent components
+  src_ip="$(node_field "$src" private_ip)"; dst_ip="$(node_field "$dst" private_ip)"
+  dst_host="$(node_field "$dst" name)"; dst_user="$(node_field "$dst" ssh_user)"
+  dir="$flow_evidence_dir/$kind-$src-$dst"
+  mkdir -p "$dir"
+  printf 'flow_evidence=%s\n' "$dir"
+  state="$(printf '%s\n' "$label" "$src_ip" "$dst_ip" "$dst_host" "$dst_user" "${stopped_routers[@]}")"
+  if [ -f "$dir/invalidated" ] || { [ -f "$dir/state" ] && [ "$(cat "$dir/state")" != "$state" ]; }; then
+    touch "$dir/invalidated"
+    printf '%s\n' OBSERVATION_INCONCLUSIVE >"$dir/status"
+    printf '%s\t%s\n' "$SECONDS" FAULT_STATE_CHANGED >>"$dir/attempts.tsv"
+    return 3
+  fi
+  printf '%s\n' "$state" >"$dir/state"
+  components="ping hostname"
+  [ "$kind" != router ] || components="route ping"
+  if [[ " $required " == *" route "* ]] && [ "$kind" != router ]; then components="route $components"; fi
+  while :; do
+    sent=0
+    for component in $components; do
+      [ "$(cat "$dir/$component.status" 2>/dev/null || true)" != PASS ] || continue
+      attempt="$(cat "$dir/$component.count" 2>/dev/null || echo 0)"
+      [ "$attempt" -lt 3 ] || continue
+      # Optional first observations may be shared with a later matrix; do not
+      # retry them unless that consumer actually requires them.
+      if [ "$attempt" -gt 0 ] && [[ " $required " != *" $component "* ]]; then continue; fi
+      remaining=$((validation_deadline - SECONDS))
+      [ "$remaining" -gt 0 ] || break
+      attempt=$((attempt + 1)); sent=1
+      printf '%s\n' "$attempt" >"$dir/$component.count"
+      case "$component" in
+        route)
+          command="ip route get '$dst_ip' from '$src_ip'"
+          [ "$kind" != router ] || command="$command | grep -q ' dev samt'"
+          ;;
+        ping) command="ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" ;;
+        hostname)
+          command="ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname"
+          ;;
+      esac
+      marker="__ROUTERD_FLOW_${BASHPID}_${RANDOM}_${component}_${attempt}__"
+      raw="$dir/$component.$attempt.txt"
+      transport_rc=0
+      ssh_timeout_seconds="$remaining" ssh_node "$src" \
+        "set +e; $command; rc=\$?; printf '\\n$marker=%s\\n' \"\$rc\"; exit 0" >"$raw" 2>&1 || transport_rc=$?
+      rc="$(sed -n "s/^$marker=\([0-9][0-9]*\)$/\1/p" "$raw")"
+      attempt_result=OBSERVATION_INCONCLUSIVE
+      if [ "$rc" = 0 ]; then
+        attempt_result=PASS
+        if [ "$component" = hostname ]; then
+          actual="$(sed "/^$marker=/d; /^$/d" "$raw" | tail -n 1)"
+          [ "$actual" = "$dst_host" ] || attempt_result=FAIL_HOSTNAME
+        fi
+      elif [ "$rc" = 1 ]; then
+        case "$component" in route) attempt_result=FAIL_ROUTE;; ping) attempt_result=FAIL_PING;; esac
+      fi
+      printf '%s\n' "$attempt_result" >"$dir/$component.status"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$SECONDS" "$component" "$attempt" "$attempt_result" "$transport_rc" "${rc:-missing}" >>"$dir/attempts.tsv"
+    done
+    result=PASS; pending=0
+    for component in $required; do
+      attempt_result="$(cat "$dir/$component.status" 2>/dev/null || echo OBSERVATION_INCONCLUSIVE)"
+      if [ "$attempt_result" != PASS ]; then
+        if [[ "$attempt_result" == FAIL_* ]]; then result="$attempt_result";
+        elif [ "$result" = PASS ]; then result=OBSERVATION_INCONCLUSIVE; fi
+        attempt="$(cat "$dir/$component.count" 2>/dev/null || echo 0)"
+        [ "$attempt" -ge 3 ] || pending=1
+      fi
+    done
+    [ "$result" != PASS ] || break
+    [ "$pending" -eq 1 ] && [ "$sent" -eq 1 ] && [ "$((validation_deadline - SECONDS))" -gt 2 ] || break
+    sleep 2
+  done
+  printf '%s\n' "$result" >"$dir/status"
+  if [[ "$result" == FAIL_* ]] && [ ! -f "$dir/diagnostics.txt" ]; then
+    remaining=$((validation_deadline - SECONDS))
+    [ "$remaining" -le 20 ] || remaining=20
+    if [ "$remaining" -gt 0 ]; then
+      ssh_timeout_seconds="$remaining" ssh_node "$src" \
+        "ip route get '$dst_ip' from '$src_ip'; timeout '$remaining' sh -c \"traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'\"" \
+        >"$dir/diagnostics.txt" 2>&1 || true
+    fi
+  fi
+  case "$result" in PASS) return 0;; OBSERVATION_INCONCLUSIVE) return 3;; *) return 1;; esac
 }
 
 transition_canary_matrix() {
@@ -1362,104 +1462,54 @@ transition_canary_matrix() {
     dst_user="$(node_field "$dst" ssh_user)"
     result=PASS
     {
-      echo "=== transition canary $src ($src_site) -> $dst ($dst_site) ==="
-      echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
-      echo "## route-get"
-      if ! ssh_node "$src" "ip route get '$dst_ip' from '$src_ip'"; then
-        result=FAIL_ROUTE
-      fi
-      echo "## ping"
-      if ! ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'"; then
-        result=FAIL_PING
-      fi
-      echo "## ssh-hostname"
-      actual=
-      for attempt in 1 2 3; do
-        actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
-        [ "$actual" = "$dst_host" ] && break
-        sleep 2
-      done
-      if [ "$actual" != "$dst_host" ]; then
-        result=FAIL_HOSTNAME
-      fi
-      printf '%s\n' "$actual"
+      observe_flow "$label" "$src" "$dst" client 'route ping hostname' || result=$?
     } >"$out/${src}_to_${dst}.transition-canary.txt" 2>&1
+    if [ "$result" != PASS ]; then
+      [ "$status" -eq 1 ] || status="$result"
+      result="$(cat "$flow_evidence_dir/client-$src-$dst/status")"
+    fi
     printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/transition-canary-summary.tsv"
-    [ "$result" = PASS ] || status=1
   done
   return "$status"
 }
 
 client_matrix() {
-  local label="$1"
-  local out="$evidence_dir/matrix/$label"
-  local src dst src_ip dst_ip dst_host dst_user result actual attempt
+  local label="$1" out="$evidence_dir/matrix/$1" src dst result rc status=0
   mkdir -p "$out"
   : >"$out/summary.tsv"
   for src in "${clients[@]}"; do
     for dst in "${clients[@]}"; do
       [ "$src" != "$dst" ] || continue
-      src_ip="$(node_field "$src" private_ip)"
-      dst_ip="$(node_field "$dst" private_ip)"
-      dst_host="$(node_field "$dst" name)"
-      dst_user="$(node_field "$dst" ssh_user)"
-      result=PASS
-      {
-        echo "=== $src -> $dst ==="
-        echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
-        echo "## route-get"
-        ssh_node "$src" "ip route get '$dst_ip' from '$src_ip'" || true
-        echo "## ping"
-        ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" || true
-        echo "## traceroute"
-        ssh_node "$src" "timeout 20s sh -c \"traceroute -n -w 2 -q 1 '$dst_ip' || tracepath '$dst_ip'\" || true"
-        echo "## ssh-hostname"
-        actual=
-        for attempt in 1 2 3; do
-          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.nested-ssh.stderr" | tail -n 1)" || true
-          [ "$actual" = "$dst_host" ] && break
-          sleep 2
-        done
-        [ "$actual" = "$dst_host" ] || result=FAIL_HOSTNAME
-        printf '%s\n' "$actual"
-      } >"$out/${src}_to_${dst}.txt" 2>&1 || result=FAIL
+      rc=0
+      # Preserve the client matrix's hostname gate. Its ping observation is
+      # shared with cloud-ingress, where ping was already mandatory.
+      observe_flow "$label" "$src" "$dst" client hostname >"$out/${src}_to_${dst}.txt" 2>&1 || rc=$?
+      result="$(cat "$flow_evidence_dir/client-$src-$dst/status")"
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/summary.tsv"
+      if [ "$rc" -ne 0 ] && [ "$status" -ne 1 ]; then status="$rc"; fi
     done
   done
-  ! grep -qv $'\tPASS$' "$out/summary.tsv"
+  return "$status"
 }
 
-# Verify traffic between leaf routers using each router's provider/capture
-# address as the source. Client-only matrices prove forwarding, but cannot
-# detect a missing SAM return route for the router's own source address.
-# This is an initial-state product gate; the existing transition matrices remain
-# the authoritative non-regression gates while a leaf is deliberately stopped.
+# Router-origin flows still require the SAM return route and a ping result.
+
 router_origin_matrix() {
-  local label="$1"
-  local out="$evidence_dir/matrix/$label"
-  local src dst src_site dst_site src_ip dst_ip result status=0
+  local label="$1" out="$evidence_dir/matrix/$1" src dst src_site dst_site result rc status=0
   mkdir -p "$out"
   : >"$out/router-origin-summary.tsv"
   for src in "${leaf_routers[@]}"; do
     node_is_stopped "$src" && continue
     src_site="$(node_field "$src" site)"
-    src_ip="$(node_field "$src" private_ip)"
     for dst in "${leaf_routers[@]}"; do
       node_is_stopped "$dst" && continue
       dst_site="$(node_field "$dst" site)"
       [ "$src_site" != "$dst_site" ] || continue
-      dst_ip="$(node_field "$dst" private_ip)"
-      result=PASS
-      {
-        echo "=== router-origin $src ($src_site) -> $dst ($dst_site) ==="
-        echo "SRC=$src SRCIP=$src_ip DST=$dst DSTIP=$dst_ip"
-        echo "## route-get"
-        ssh_node "$src" "ip route get '$dst_ip' from '$src_ip' | grep -q ' dev samt'" || result=FAIL_ROUTE
-        echo "## ping"
-        ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" || result=FAIL_PING
-      } >"$out/${src}_to_${dst}.router-origin.txt" 2>&1 || result=FAIL
+      rc=0
+      observe_flow "$label" "$src" "$dst" router 'route ping' >"$out/${src}_to_${dst}.router-origin.txt" 2>&1 || rc=$?
+      result="$(cat "$flow_evidence_dir/router-$src-$dst/status")"
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/router-origin-summary.tsv"
-      [ "$result" = PASS ] || status=1
+      if [ "$rc" -ne 0 ] && [ "$status" -ne 1 ]; then status="$rc"; fi
     done
   done
   return "$status"
@@ -1494,26 +1544,11 @@ cloud_ingress_matrix() {
       dst_ip="$(node_field "$dst" private_ip)"
       dst_host="$(node_field "$dst" name)"
       dst_user="$(node_field "$dst" ssh_user)"
-      result=PASS
-      {
-        echo "=== cloud ingress $src -> $dst ==="
-        echo "SRC=$src SRCSITE=$src_site SRCIP=$src_ip DST=$dst DSTSITE=$dst_site DSTIP=$dst_ip"
-        echo "## route-get"
-        ssh_node "$src" "ip route get '$dst_ip' from '$src_ip'" || true
-        echo "## ping"
-        ssh_node "$src" "ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" || result=FAIL_PING
-        echo "## ssh-hostname"
-        actual=
-        for attempt in 1 2 3; do
-          actual="$(ssh_node "$src" "ssh -i ~/.ssh/routerd-cloudedge-guest -o UserKnownHostsFile=~/.ssh/routerd-e2e-known_hosts -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes -o BatchMode=yes -o CanonicalizeHostname=no -o IdentitiesOnly=yes -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 '$dst_user@$dst_ip' hostname 2>/dev/null" 2>"$out/${src}_to_${dst}.cloud-ingress-nested-ssh.stderr" | tail -n 1)" || true
-          [ "$actual" = "$dst_host" ] && break
-          sleep 2
-        done
-        [ "$actual" = "$dst_host" ] || result=FAIL_HOSTNAME
-        printf '%s\n' "$actual"
-      } >"$out/${src}_to_${dst}.cloud-ingress.txt" 2>&1 || result=FAIL
+      result=0
+      observe_flow "$label" "$src" "$dst" client 'ping hostname' >"$out/${src}_to_${dst}.cloud-ingress.txt" 2>&1 || result=$?
+      if [ "$result" -ne 0 ] && [ "$status" -ne 1 ]; then status="$result"; fi
+      result="$(cat "$flow_evidence_dir/client-$src-$dst/status")"
       printf '%s\t%s\t%s\n' "$src" "$dst" "$result" >>"$out/cloud-ingress-summary.tsv"
-      [ "$result" = "PASS" ] || status=1
     done
   done
 
@@ -1918,7 +1953,7 @@ performance_matrix() {
 run_validation_set() {
   local label="$1"
   local status=0 provider_status=0 dataplane_status=PASS dataplane_started="$SECONDS"
-  local phase_started
+  local phase_started matrix_rc=0
   local -a required_rrs=()
 
   phase_started="$SECONDS"
@@ -1936,24 +1971,55 @@ run_validation_set() {
   elif ! wait_dataplane_control_gate "$label"; then
     dataplane_status=TIMEOUT
     record_timing "$label" dataplane-control-gate "$phase_started"
+  fi
+  if [ "$dataplane_status" = PASS ]; then
+    validation_deadline=$((SECONDS + 900))
+    phase_started="$SECONDS"
+    if ! wait_provider_gate "$label"; then
+      provider_status=2
+      echo "PROVIDER-CONVERGENCE-FAIL: $label" >&2
+    fi
+    record_timing "$label" provider-gate "$phase_started"
+    if [ "$provider_status" -ne 0 ]; then
+      phase_started="$SECONDS"
+      collect_convergence_snapshot "${label}-provider"
+      record_timing "$label" convergence-snapshot-after-provider-fail "$phase_started"
+    elif [ "$success_evidence_minimal" -eq 1 ]; then
+      record_skipped_success_evidence convergence "${label}-provider"
+    else
+      phase_started="$SECONDS"
+      collect_convergence_snapshot "${label}-provider"
+      record_timing "$label" convergence-snapshot-provider "$phase_started"
+    fi
+
+    [ "$provider_status" -eq 0 ] || return "$provider_status"
+    mkdir -p "$evidence_dir/matrix/$label"
+    flow_evidence_dir="$(mktemp -d "$evidence_dir/matrix/$label/flows.XXXXXXXX")"
+  fi
+  if [ "$dataplane_status" != PASS ]; then
+    :
   elif [ "$skip_matrix" -eq 1 ]; then
     dataplane_status=PASS
     record_timing "$label" dataplane-control-gate "$phase_started"
   elif [ "$transition_canary" -eq 1 ] && [ "$label" != "initial" ]; then
-    if ! transition_canary_matrix "$label"; then
+    if ! { matrix_rc=0; transition_canary_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
       dataplane_status=FAIL_TRANSITION_CANARY
+      [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
       record_timing "$label" dataplane-control-transition-canary "$phase_started"
     else
       record_timing "$label" dataplane-control-transition-canary "$phase_started"
     fi
-  elif ! client_matrix "$label"; then
+  elif ! { matrix_rc=0; client_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_MATRIX
+    [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
     record_timing "$label" dataplane-control-and-client-matrix "$phase_started"
-  elif [ "$label" = "initial" ] && ! router_origin_matrix "$label"; then
+  elif [ "$label" = "initial" ] && ! { matrix_rc=0; router_origin_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_ROUTER_ORIGIN
+    [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
     record_timing "$label" dataplane-control-client-and-router-origin-matrix "$phase_started"
-  elif ! cloud_ingress_matrix "$label"; then
+  elif ! { matrix_rc=0; cloud_ingress_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_CLOUD_INGRESS
+    [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
     record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
   else
     record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
@@ -1965,6 +2031,7 @@ run_validation_set() {
     collect_convergence_snapshot "$label"
     record_timing "$label" convergence-snapshot-after-dataplane-fail "$phase_started"
     echo "DATAPLANE-CONVERGENCE-FAIL: $label $dataplane_status" >&2
+    [ "$dataplane_status" != OBSERVATION_INCONCLUSIVE ] || return 3
     return 1
   elif [ "$success_evidence_minimal" -eq 1 ]; then
     record_skipped_success_evidence convergence "$label"
@@ -1974,23 +2041,6 @@ run_validation_set() {
     record_timing "$label" convergence-snapshot "$phase_started"
   fi
 
-  phase_started="$SECONDS"
-  if ! wait_provider_gate "$label"; then
-    provider_status=2
-    echo "PROVIDER-CONVERGENCE-FAIL: $label" >&2
-  fi
-  record_timing "$label" provider-gate "$phase_started"
-  if [ "$provider_status" -ne 0 ]; then
-    phase_started="$SECONDS"
-    collect_convergence_snapshot "${label}-provider"
-    record_timing "$label" convergence-snapshot-after-provider-fail "$phase_started"
-  elif [ "$success_evidence_minimal" -eq 1 ]; then
-    record_skipped_success_evidence convergence "${label}-provider"
-  else
-    phase_started="$SECONDS"
-    collect_convergence_snapshot "${label}-provider"
-    record_timing "$label" convergence-snapshot-provider "$phase_started"
-  fi
 
   phase_started="$SECONDS"
   legacy_protocol_matrix "$label" || status=1
@@ -2011,12 +2061,12 @@ collect_diagnostics() {
   local node
   mkdir -p "$dir"
   for node in "${routers[@]}"; do
+    ssh_node "$node" 'sudo routerctl get status -o json' >"$dir/${node}.status.json" 2>"$dir/${node}.status.stderr" || true
     ssh_node "$node" "$(cat <<REMOTE_DIAG
 echo "stage=$label"
 echo "captured_at=\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 hostname
 sudo routerctl doctor sam || true
-sudo routerctl get status -o json || true
 sudo routerctl describe MobilityPool/cloudedge -o json || true
 sudo routerctl action list || true
 ip -br addr
@@ -2030,7 +2080,6 @@ sudo routerctl get events -o json || true
 echo "--- routerd.mobility.holder.transition"
 sudo routerctl get events --topic routerd.mobility.holder.transition -o json || true
 echo "--- event-retention"
-sudo routerctl get status -o json 2>/dev/null | grep -Ei '"event|retention|maxAge|maxEvents"' || true
 sudo routerctl dynamic render -o json 2>/dev/null | grep -Ei '"EventGroup"|"retention"|"maxAge"|"maxEvents"' || true
 echo "--- state-db-events"
 if command -v sqlite3 >/dev/null 2>&1 && sudo test -r /var/lib/routerd/routerd.db; then
@@ -2042,7 +2091,7 @@ echo "--- journals"
 journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500
 REMOTE_DIAG
 )" >"$dir/${node}.txt" 2>&1 || true
-    ssh_node "$node" 'sudo routerctl get status -o json 2>/dev/null | jq '"'"'
+    jq '
       [
         .. | objects
         | select((.kind? == "BGPRouter") or (.resource.kind? == "BGPRouter") or has("prefixes") or has("livenessMarkers"))
@@ -2053,8 +2102,8 @@ REMOTE_DIAG
             livenessMarkers: (.status.livenessMarkers? // .resource.status.livenessMarkers? // .livenessMarkers? // {})
           }
       ]
-    '"'"'' >"$dir/${node}.bgp-prefixes-liveness.json" 2>"$dir/${node}.bgp-prefixes-liveness.stderr" || true
-    ssh_node "$node" 'sudo routerctl get status -o json 2>/dev/null | jq -r '"'"'
+    ' "$dir/${node}.status.json" >"$dir/${node}.bgp-prefixes-liveness.json" 2>"$dir/${node}.bgp-prefixes-liveness.stderr" || true
+    jq -r '
       [
         .. | objects
         | select((.kind? == "BGPRouter") or (.resource.kind? == "BGPRouter") or has("prefixes") or has("livenessMarkers"))
@@ -2067,15 +2116,15 @@ REMOTE_DIAG
       ]
       | .[]
       | "status_bgp_router name=\(.name) prefixes=\(.prefixCount) truncated=\(.truncated) livenessMarkers=\(.livenessMarkerCount)"
-    '"'"'' >"$dir/${node}.bgp-status-summary.txt" 2>"$dir/${node}.bgp-status-summary.stderr" || true
+    ' "$dir/${node}.status.json" >"$dir/${node}.bgp-status-summary.txt" 2>"$dir/${node}.bgp-status-summary.stderr" || true
     ssh_node "$node" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied | jq .; else echo "routerd_bgp_control_socket_missing"; fi' >"$dir/${node}.bgp-applied.json" 2>"$dir/${node}.bgp-applied.stderr" || true
-    ssh_node "$node" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied | jq -r '"'"'
+    jq -r '
       "routerd_bgp_applied paths=\((.paths // []) | length) static=\((.paths // []) | map(select((.source // "") == "static")) | length) mobility=\((.paths // []) | map(select((.source // "") | startswith("MobilityPool/"))) | length)"
-    '"'"'; else echo "routerd_bgp_applied unavailable"; fi' >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
+    ' "$dir/${node}.bgp-applied.json" >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
     ssh_node "$node" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j 2>/dev/null | jq .; else echo "gobgp_cli_unavailable"; fi' >"$dir/${node}.gobgp-global-rib.json" 2>"$dir/${node}.gobgp-global-rib.stderr" || true
-    ssh_node "$node" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j 2>/dev/null | jq -r '"'"'
+    jq -r '
       if type == "array" then "gobgp_global_rib entries=\(length)" else "gobgp_global_rib entries=unknown" end
-    '"'"'; else echo "gobgp_global_rib unavailable"; fi' >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
+    ' "$dir/${node}.gobgp-global-rib.json" >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
   done
 }
 
@@ -2433,6 +2482,8 @@ if [ "$overall" -eq 0 ]; then
     run_validation_set "initial" || initial_validation_rc=$?
     if [ "$initial_validation_rc" -eq 2 ]; then
       mark_failed "initial validation set PROVIDER-CONVERGENCE-FAIL"
+    elif [ "$initial_validation_rc" -eq 3 ]; then
+      mark_inconclusive "initial validation set"
     elif [ "$initial_validation_rc" -ne 0 ]; then
       mark_failed "initial validation set"
     fi
@@ -2456,11 +2507,15 @@ if [ "$overall" -eq 0 ]; then
   fi
   if [ "$failover_status" -eq 2 ]; then
     mark_failed "failover PROVIDER-CONVERGENCE-FAIL"
+  elif [ "$failover_status" -eq 3 ]; then
+    mark_inconclusive "failover"
   elif [ "$failover_status" -ne 0 ]; then
     mark_failed "failover"
   fi
   if [ "$rejoin_status" -eq 2 ]; then
     mark_failed "rejoin PROVIDER-CONVERGENCE-FAIL"
+  elif [ "$rejoin_status" -eq 3 ]; then
+    mark_inconclusive "rejoin"
   elif [ "$rejoin_status" -ne 0 ]; then
     mark_failed "rejoin"
   fi
