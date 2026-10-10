@@ -70,6 +70,7 @@ func TestRuntimeShapeChangedReloadsDSLiteSourceChange(t *testing.T) {
 }
 
 func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
+	before := time.Now()
 	wantErr := errors.New("stop after inspecting deadline")
 	mutator := serveConfigMutator{
 		reload: func(ctx context.Context, _ *api.Router) error {
@@ -77,9 +78,9 @@ func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
 			if !ok {
 				t.Fatal("runtime reload context has no deadline")
 			}
-			remaining := time.Until(deadline)
-			if remaining < 59*time.Second || remaining > time.Minute {
-				t.Fatalf("runtime reload deadline remaining = %s, want approximately 60s", remaining)
+			after := time.Now()
+			if deadline.Before(before.Add(time.Minute)) || deadline.After(after.Add(time.Minute)) {
+				t.Fatalf("deadline %s outside creation interval [%s, %s]", deadline, before.Add(time.Minute), after.Add(time.Minute))
 			}
 			return wantErr
 		},

@@ -68,7 +68,7 @@ verify_sha256() {
         actual=$(shasum -a 256 "${archive}" | awk '{print $1}')
     else
         log "warning: no sha256sum/shasum found; skipping checksum verification"
-        return 0
+        return 3
     fi
     [ "${actual}" = "${expected}" ] || die "SHA256 mismatch: expected ${expected}, got ${actual}"
 }
@@ -94,8 +94,13 @@ fetch "${archive_url}" "${workdir}/${archive_name}"
 log "downloading checksum"
 fetch "${checksum_url}" "${workdir}/${archive_name}.sha256"
 expected=$(awk '{print $1}' "${workdir}/${archive_name}.sha256")
-verify_sha256 "${workdir}/${archive_name}" "${expected}"
-log "checksum verified"
+if verify_sha256 "${workdir}/${archive_name}" "${expected}"; then
+    log "checksum verified"
+else
+    verification_status=$?
+    [ "$verification_status" -eq 3 ] || exit "$verification_status"
+    log "checksum unverified; continuing under the existing optional-verification policy"
+fi
 
 log "extracting archive"
 tar -C "${workdir}" -xzf "${workdir}/${archive_name}"

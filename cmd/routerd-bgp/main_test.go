@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -612,11 +613,15 @@ func TestControlSocketSerializesAppliedStateTransactions(t *testing.T) {
 	release := make(chan struct{})
 	paths := &fakePathServer{addStarted: started, releaseAdd: release}
 	socketPath := filepath.Join(dir, "control.sock")
-	server, err := serveControlSocket(socketPath, statePath, paths)
+	stateLock := &notifyingStateMutex{attempts: make(chan struct{}, 2)}
+	server, err := serveControlSocketWithStateLock(socketPath, statePath, paths, stateLock)
 	if err != nil {
 		t.Fatalf("serve control socket: %v", err)
 	}
 	defer server.Shutdown(context.Background())
+	var releaseOnce sync.Once
+	releaseTransaction := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseTransaction()
 	client := unixHTTPClient(socketPath)
 	defer client.CloseIdleConnections()
 
@@ -648,9 +653,10 @@ func TestControlSocketSerializesAppliedStateTransactions(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("path transaction did not reach AddPath")
 	}
+	<-stateLock.attempts // POST reached the same state lock before AddPath.
 	getDone := make(chan error, 1)
 	go func() {
 		response, err := client.Get("http://routerd-bgp/v1/applied")
@@ -662,9 +668,11 @@ func TestControlSocketSerializesAppliedStateTransactions(t *testing.T) {
 	select {
 	case err := <-getDone:
 		t.Fatalf("GET completed during in-flight state transaction: %v", err)
-	case <-time.After(40 * time.Millisecond):
+	case <-stateLock.attempts: // GET reached the lock held by the transaction.
+	case <-time.After(10 * time.Second):
+		t.Fatal("GET did not reach applied-state lock")
 	}
-	close(release)
+	releaseTransaction()
 	if err := <-postDone; err != nil {
 		t.Fatalf("POST dynamic path: %v", err)
 	}
@@ -982,4 +990,15 @@ func doJSON(t *testing.T, client *http.Client, method, path string, body any) *h
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	return resp
+}
+
+// Observe actual lock entry, while preserving its real serialization behavior.
+type notifyingStateMutex struct {
+	sync.Mutex
+	attempts chan struct{}
+}
+
+func (m *notifyingStateMutex) Lock() {
+	m.attempts <- struct{}{}
+	m.Mutex.Lock()
 }
