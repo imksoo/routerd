@@ -1708,8 +1708,19 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	}
 
 	events := listMobilityTransitionEvents(t, store)
-	seizeEvents := transitionEventsByKindAddress(t, events, "seize-complete")
-	confirmEvents := transitionEventsByKindAddress(t, events, "capture-confirmed")
+	// Production stamps each applied pool reconcile with its pool, controller
+	// instance and snapshot time. Compare that operation, leaving other pools,
+	// controllers and earlier reconciles outside this fixture's expected set.
+	currentEvents := make([]routerstate.StoredEvent, 0, len(events))
+	for _, event := range events {
+		if event.ResourceAPIVersion == api.MobilityAPIVersion && event.ResourceKind == "MobilityPool" && event.ResourceName == "cloudedge" &&
+			event.SourceKind == "controller" && event.SourceInstance == selfNode &&
+			fmt.Sprint(event.Attributes["timestamp"]) == now.Format(time.RFC3339Nano) {
+			currentEvents = append(currentEvents, event)
+		}
+	}
+	seizeEvents := transitionEventsByKindAddress(t, currentEvents, "seize-complete")
+	confirmEvents := transitionEventsByKindAddress(t, currentEvents, "capture-confirmed")
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", selfNode)).ActionPlansJSON)
 	seizedPlan := findActionPlanByAddress(plans, actionAssignSecondaryIP, seized)
@@ -1723,10 +1734,10 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	}
 	_, hasSeizeComplete := seizeEvents[seized]
 	_, hasCaptureConfirmed := confirmEvents[confirmed]
-	if !hasSeizeComplete || !hasCaptureConfirmed {
+	if len(seizeEvents) != 1 || len(confirmEvents) != 1 || !hasSeizeComplete || !hasCaptureConfirmed {
 		t.Fatalf("completion events: seize-complete=%d capture-confirmed=%d, want one each (seize=%#v confirm=%#v)", len(seizeEvents), len(confirmEvents), seizeEvents, confirmEvents)
 	}
-	durations := extractTransitionDurationsByAddress(t, events)
+	durations := extractTransitionDurationsByAddress(t, currentEvents)
 	for _, want := range []struct {
 		kind, address string
 		duration      time.Duration
