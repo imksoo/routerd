@@ -88,8 +88,27 @@ With a certified environment, release qualification may evaluate:
   scenario, as long as the substrate remains certified.
 
 The qualification result should reference the certification manifest ID and
-record whether each failure is `product_failure`, `infra_failure`, or
-`preflight_failure`.
+record whether each failure is `product_failure`, `infra_failure`,
+`preflight_failure`, or `observation_inconclusive`. Use `product_failure` only
+for an observed violation of the product requirement. A missing or ambiguous
+stimulus, uncertain clock ordering, or incomplete collection is
+`observation_inconclusive`; a missing or invalid driver report is an
+`infra_failure`. An inconclusive result keeps `status: fail` (qualification has
+not passed), without claiming a product defect.
+
+Retain every attempt and its actual sender start/end time, result, correlation
+identifier and collection error. Use timestamps from the same host when
+establishing causality; a management RPC timestamp includes transport delay.
+A DB receipt alone does not prove that a stimulus was qualified. Any additional
+observation opportunity must fit the original deadline, capture window and
+unchanged fault state. Reacquire only missing or unsuccessful observations;
+never discard a proven product violation when a later attempt succeeds.
+
+Reproduce the saved failure and adjacent healthy observations before a local
+regression check. Select further retests from the changed paths and untested
+requirements, and record the scope and reason before running them. Keep sealed
+results unchanged; a diagnostic replay or a partial local pass does not replace
+the original run or qualify other nodes, providers or conditions.
 
 ## Operator workflow
 
