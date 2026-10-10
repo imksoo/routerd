@@ -1030,7 +1030,10 @@ func TestSAMTransportProfileDirectLeafAbsenceLeavesRRFallbackDerived(t *testing.
 	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
 		t.Fatalf("TunnelInterface count = %d, want only RR fallbacks resources=%#v", got, resources)
 	}
-	if hasTransportResourceForPeer(resources, "leaf-b") {
+	if !hasTransportResourceForPeer(resources, "leaf-a", "rr-a") {
+		t.Fatalf("peer lookup positive control missed generated peer rr-a: %#v", resources)
+	}
+	if hasTransportResourceForPeer(resources, "leaf-a", "leaf-b") {
 		t.Fatalf("direct leaf resources remain despite absent direct group: %#v", resources)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
@@ -1131,7 +1134,10 @@ func TestSAMTransportProfileDirectLeafRequiresMatchingRRFallbackPolicy(t *testin
 		t.Fatalf("Reconcile: %v", err)
 	}
 	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("leaf-a", "leaf-a")).ResourcesJSON)
-	if hasTransportResourceForPeer(resources, "leaf-b") {
+	if !hasTransportResourceForPeer(resources, "leaf-a", "rr-a") {
+		t.Fatalf("peer lookup positive control missed generated peer rr-a: %#v", resources)
+	}
+	if hasTransportResourceForPeer(resources, "leaf-a", "leaf-b") {
 		t.Fatalf("direct peer used a different policy's RR fallback: %#v", resources)
 	}
 	if got := countResources(resources, api.HybridAPIVersion, "TunnelInterface"); got != 1 {
@@ -1184,7 +1190,10 @@ func TestSAMTransportProfileRejectsDirectGroupCollisionAndKeepsRRFallback(t *tes
 	if got, want := countResources(resources, api.HybridAPIVersion, "TunnelInterface"), 2; got != want {
 		t.Fatalf("TunnelInterface count = %d, want only RR fallbacks resources=%#v", got, resources)
 	}
-	if hasTransportResourceForPeer(resources, "leaf-b") {
+	if !hasTransportResourceForPeer(resources, "leaf-a", "rr-a") {
+		t.Fatalf("peer lookup positive control missed generated peer rr-a: %#v", resources)
+	}
+	if hasTransportResourceForPeer(resources, "leaf-a", "leaf-b") {
 		t.Fatalf("partial direct peer remained after group rejection: %#v", resources)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "leaf-a")
@@ -2001,8 +2010,11 @@ func TestSAMTransportProfileSkipsRevokedExpiredAndUnauthorizedEnrollmentClaims(t
 	if tunnel.Remote != "10.20.0.21" {
 		t.Fatalf("active tunnel remote = %q, want leaf endpoint", tunnel.Remote)
 	}
+	if !hasTransportResourceForPeer(resources, "rr-a", "leaf-active") {
+		t.Fatalf("peer lookup positive control missed generated peer leaf-active: %#v", resources)
+	}
 	for _, skipped := range []string{"leaf-revoked", "leaf-expired", "leaf-unauthorized", "leaf-ttl-expired"} {
-		if hasTransportResourceForPeer(resources, skipped) {
+		if hasTransportResourceForPeer(resources, "rr-a", skipped) {
 			t.Fatalf("%s must not be materialized: %#v", skipped, resources)
 		}
 	}
@@ -2051,7 +2063,10 @@ func TestSAMTransportProfileSAMNodeSetSelectionPreservesHubSpoke(t *testing.T) {
 	if tunnel.Remote != "203.0.113.11" {
 		t.Fatalf("tunnel remote = %q, want selected NodeSet endpoint", tunnel.Remote)
 	}
-	if hasTransportResourceForPeer(resources, "rr-rt02") {
+	if !hasTransportResourceForPeer(resources, "svnet1", "rr-rt01") {
+		t.Fatalf("peer lookup positive control missed generated peer rr-rt01: %#v", resources)
+	}
+	if hasTransportResourceForPeer(resources, "svnet1", "rr-rt02") {
 		t.Fatalf("unselected NodeSet node received transport resources: %#v", resources)
 	}
 }
@@ -2566,11 +2581,11 @@ func countResources(resources []api.Resource, apiVersion, kind string) int {
 	return count
 }
 
-func hasTransportResourceForPeer(resources []api.Resource, peer string) bool {
+func hasTransportResourceForPeer(resources []api.Resource, profile, peer string) bool {
 	for _, resource := range resources {
 		for _, owner := range resource.Metadata.OwnerRefs {
-			if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" {
-				if resource.Metadata.Annotations["routerd.net/sam-peer"] == peer {
+			if owner.APIVersion == api.MobilityAPIVersion && owner.Kind == "SAMTransportProfile" && owner.Name == profile {
+				if resource.Metadata.Annotations["mobility.routerd.net/peer-node"] == peer {
 					return true
 				}
 			}

@@ -965,7 +965,7 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 		t.Fatalf("unchanged priority policy should not publish status churn: %#v", event)
 	case event := <-routeCh:
 		t.Fatalf("priority policy should not publish legacy route changed event: %#v", event)
-	case <-time.After(40 * time.Millisecond):
+	default:
 	}
 }
 
@@ -1020,7 +1020,7 @@ func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T
 		t.Fatalf("unchanged priority dry-run policy should not publish status churn: %#v", event)
 	case event := <-routeCh:
 		t.Fatalf("priority dry-run policy should not publish legacy route changed event: %#v", event)
-	case <-time.After(40 * time.Millisecond):
+	default:
 	}
 }
 
@@ -1319,7 +1319,7 @@ func TestIPv4PolicyRouteApplyNftTableReloadsUnchangedStaleTable(t *testing.T) {
 		"-c -f " + tablePath,
 		"-f " + tablePath,
 	} {
-		if !strings.Contains(got, want) {
+		if !strings.Contains("\n"+got, "\n"+want+"\n") {
 			t.Fatalf("nft command log missing %q:\n%s", want, got)
 		}
 	}
@@ -1391,7 +1391,7 @@ func TestIPv4PolicyRouteApplyNftTableReloadsMissingRecentlyVerifiedTable(t *test
 	}
 	got := string(logData)
 	for _, want := range []string{"list table ip routerd_policy", "-c -f " + tablePath, "-f " + tablePath} {
-		if !strings.Contains(got, want) {
+		if !strings.Contains("\n"+got, "\n"+want+"\n") {
 			t.Fatalf("nft command log missing %q:\n%s", want, got)
 		}
 	}
@@ -1421,7 +1421,7 @@ func TestIPv4PolicyRouteApplyNftTableDeletesExistingTableWhenDesiredEmptyDespite
 	}
 	got := string(logData)
 	for _, want := range []string{"list table ip routerd_policy", "delete table ip routerd_policy"} {
-		if !strings.Contains(got, want) {
+		if !strings.Contains("\n"+got, "\n"+want+"\n") {
 			t.Fatalf("nft command log missing %q:\n%s", want, got)
 		}
 	}

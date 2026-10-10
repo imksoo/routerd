@@ -77,6 +77,11 @@ go_source_url()
     printf 'https://pkg.go.dev/%s@%s\n' "${module}" "${version}"
 }
 
+go list -m -json all >"${tmpdir}/modules.json" || {
+    echo "Cannot acquire Go module inventory; license report was not generated" >&2
+    exit 3
+}
+
 go_copyleft="${tmpdir}/go-copyleft"
 : > "${go_copyleft}"
 
@@ -104,7 +109,7 @@ go_copyleft="${tmpdir}/go-copyleft"
     echo
     echo "| Module | Version | Detected license | License file | Source URL |"
     echo "| --- | --- | --- | --- | --- |"
-    go list -m -json all | awk '
+    awk '
         /"Path":/ {
             path = $2
             gsub(/[",]/, "", path)
@@ -125,7 +130,7 @@ go_copyleft="${tmpdir}/go-copyleft"
             }
             path = ""; version = ""; dir = ""
         }
-    ' | while IFS='	' read -r module version dir; do
+    ' "$tmpdir/modules.json" | while IFS='	' read -r module version dir; do
         file=$(license_file "${dir}")
         label=$(license_label "${file}")
         case "${label}" in

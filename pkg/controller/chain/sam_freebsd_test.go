@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -279,6 +280,10 @@ func TestFreeBSDSAMIPForwardingUsesFreeBSDSysctlAndFailsClosed(t *testing.T) {
 func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	reset := saveFreeBSDSAMSeams()
 	defer reset()
+	previousLock := freeBSDSAMForwardPathMu
+	lock := &observedPFStateLock{attempts: make(chan struct{}, 2)}
+	freeBSDSAMForwardPathMu = lock
+	defer func() { freeBSDSAMForwardPathMu = previousLock }()
 	freeBSDSAMRunCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name + " " + strings.Join(args, " ") {
 		case "pfctl -a routerd_sam_forward -sr":
@@ -291,6 +296,9 @@ func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	}
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
 	freeBSDSAMRunCommandInput = func(_ context.Context, name, _ string, args ...string) ([]byte, error) {
 		if name != "pfctl" || strings.Join(args, " ") != "-a routerd_sam_forward -f -" {
 			return nil, errors.New("unexpected PF load")
@@ -304,24 +312,36 @@ func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first PF transaction did not start")
+	}
+	select {
+	case <-lock.attempts: // first transaction acquired the real state lock
+	case <-time.After(10 * time.Second):
+		t.Fatal("first PF transaction bypassed the state lock")
 	}
 	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
 	select {
 	case <-entered:
 		t.Fatal("second PF transaction entered before the first completed")
-	case <-time.After(50 * time.Millisecond):
+	case <-lock.attempts:
+	case <-time.After(10 * time.Second):
+		t.Fatal("second PF transaction never reached its lock")
 	}
-	close(release)
+	unblock()
 	for range 2 {
-		if err := <-errCh; err != nil {
-			t.Fatalf("ReconcileForwardPaths: %v", err)
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("ReconcileForwardPaths: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("PF transaction did not complete after release")
 		}
 	}
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("second PF transaction did not run after the first completed")
 	}
 }
@@ -386,3 +406,10 @@ func saveFreeBSDSAMSeams() func() {
 		freeBSDSAMAddPublishedARP = addPublishedARP
 	}
 }
+
+type observedPFStateLock struct {
+	sync.Mutex
+	attempts chan struct{}
+}
+
+func (m *observedPFStateLock) Lock() { m.attempts <- struct{}{}; m.Mutex.Lock() }

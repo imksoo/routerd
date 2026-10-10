@@ -32,7 +32,7 @@ const (
 // pfctl). PF rejects a second transaction against the same anchor while the
 // first one owns its inactive ticket. Keep the whole routerd-owned anchor
 // reconciliation serial, matching the Linux iptables transaction boundary.
-var freeBSDSAMForwardPathMu sync.Mutex
+var freeBSDSAMForwardPathMu sync.Locker = &sync.Mutex{}
 
 var freeBSDSAMRouteSequence uint32
 

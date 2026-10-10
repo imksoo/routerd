@@ -109,6 +109,13 @@ load_sites_from_spec() {
     ip=$(echo "$ip" | tr -d '[:space:]')
     [[ -z "$name" || -z "$ip" || "$name" == "$ip" ]] && {
       echo "$SELF: bad site spec entry: '$pair' (want site=ip)" >&2; exit 2; }
+    local existing
+    for existing in "${SITE_NAMES[@]}"; do
+      [[ "$existing" != "$name" ]] || { echo "$SELF: duplicate site: $name" >&2; exit 2; }
+    done
+    for existing in "${SITE_IPS[@]}"; do
+      [[ "$existing" != "$ip" ]] || { echo "$SELF: duplicate client address: $ip" >&2; exit 2; }
+    done
     SITE_NAMES+=("$name")
     SITE_IPS+=("$ip")
   done
@@ -125,8 +132,7 @@ else
     "aws=${AWS_CLIENT_IP:-10.77.60.11}" \
     "azure=${AZURE_CLIENT_IP:-10.77.60.12}" \
     "oci=${OCI_CLIENT_IP:-10.77.60.13}"; do
-    SITE_NAMES+=("${entry%%=*}")
-    SITE_IPS+=("${entry#*=}")
+    load_sites_from_spec "$entry"
   done
 fi
 

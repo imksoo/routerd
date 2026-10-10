@@ -162,7 +162,7 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 1 {
 		t.Fatalf("applied mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 1 {
+	if len(commands) != 1 || commands[0] != "ip -4 addr replace 10.77.60.1/32 dev lan0" {
 		t.Fatalf("apply commands = %#v", commands)
 	}
 
@@ -174,7 +174,7 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 0 {
 		t.Fatalf("withdrawn mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 2 {
+	if len(commands) != 2 || commands[1] != "ip -4 addr del 10.77.60.1/32 dev lan0" {
 		t.Fatalf("apply/withdraw commands = %#v", commands)
 	}
 }

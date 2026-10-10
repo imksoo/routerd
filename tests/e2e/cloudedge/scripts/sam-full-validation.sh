@@ -151,6 +151,53 @@ for scenario in "${selected_scenarios[@]}"; do
   }
 done
 
+# A PASS prefix is reusable only with the same payload, topology, harness and
+# intact scenario outputs. This metadata records an acquired exit-0 result; it
+# does not reinterpret diagnostic summaries as acceptance.
+if [ -z "$artifact" ] || [ ! -f "$artifact" ]; then
+  echo "--artifact FILE is required" >&2
+  exit 2
+fi
+command -v python3 >/dev/null || { echo "python3 is required for resume provenance" >&2; exit 2; }
+
+scenario_provenance() {
+  local mode="$1" name="$2" dir="$3"
+  python3 - "$mode" "$name" "$dir" "$artifact" "$tofu_output" "$e2e_script" "$script_dir/sam-full-validation.sh" <<'PYRESUME'
+import hashlib, json, pathlib, sys
+mode, name, directory, *inputs = sys.argv[1:]
+root = pathlib.Path(directory)
+marker = root / "scenario-provenance.json"
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+try:
+    identity = dict(zip(("artifact", "topology", "e2eHarness", "suiteHarness"),
+                        (digest(pathlib.Path(p)) for p in inputs)))
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("symlink evidence cannot bind scenario outputs")
+        if path.is_file() and path != marker:
+            files[str(path.relative_to(root))] = digest(path)
+    if not all(p in files for p in ("sam-e2e.log", "summary.txt")):
+        raise ValueError("required scenario outputs missing")
+    record = {"scenario": name, "result": "PASS", "inputs": identity, "files": files}
+    if mode == "seal":
+        if marker.exists():
+            raise ValueError("existing scenario provenance cannot be overwritten")
+        with marker.open("x") as out:
+            json.dump(record, out, sort_keys=True, indent=2)
+            out.write("\n")
+    elif mode == "verify":
+        if json.loads(marker.read_text()) != record:
+            raise ValueError("stale inputs or changed/missing scenario outputs")
+    else:
+        raise ValueError("unknown provenance operation")
+except (OSError, ValueError, TypeError) as exc:
+    print("resume observation is not bound: " + str(exc), file=sys.stderr)
+    raise SystemExit(3)
+PYRESUME
+}
+
 resume_count=0
 if [ -n "$resume_status" ]; then
   [ -f "$resume_status" ] || { echo "resume status not found: $resume_status" >&2; exit 2; }
@@ -176,6 +223,7 @@ if [ -n "$resume_status" ]; then
       echo "resume evidence directory is missing: $dir" >&2
       exit 2
     }
+    scenario_provenance verify "$name" "$dir" || exit 3
     resume_count=$((resume_count + 1))
   done < <(tail -n +2 "$resume_status")
   selected_scenarios=("${scenario_names[@]:$resume_count}")
@@ -200,6 +248,10 @@ run_scenario() {
   local name="$1"; shift
   local dir="$evidence_root/$name"
   local rc=0
+  if [ -e "$dir" ]; then
+    echo "scenario evidence already exists; refusing overwrite: $dir" >&2
+    return 3
+  fi
   mkdir -p "$dir"
   echo "== scenario $name =="
   set +e
@@ -216,6 +268,7 @@ run_scenario() {
   "$summary_script" "$dir" >"$dir/summary.txt"
   sed -n '1,160p' "$dir/summary.txt"
   if [ "$rc" -eq 0 ]; then
+    scenario_provenance seal "$name" "$dir" || return 3
     printf '%s\tPASS\t%s\n' "$name" "$dir" >>"$evidence_root/scenario-status.tsv"
   else
     printf '%s\tFAIL\t%s\n' "$name" "$dir" >>"$evidence_root/scenario-status.tsv"
