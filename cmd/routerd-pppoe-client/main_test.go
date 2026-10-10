@@ -11,7 +11,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -405,19 +408,36 @@ func TestPPPoEStopForceKillsAndWaitsForManagedChild(t *testing.T) {
 		pppoeInterfaceTeardownTimeout = previousTeardownTimeout
 		pppoeInterfaceProbeInterval = previousProbeInterval
 	})
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "child-ready")
+	fifo := filepath.Join(dir, "child-hold")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
 	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) {
-		return "sh", []string{"-c", "trap '' INT; exec sleep 30"}
+		return "sh", []string{"-c", "trap '' INT; printf ready > \"$1\"; exec cat \"$2\"", "fixture", ready, fifo}
 	}
 	pppoeStopGracePeriod = 10 * time.Millisecond
 	linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
 	pppoeInterfaceTeardownTimeout = time.Second
 	pppoeInterfaceProbeInterval = time.Millisecond
-	dir := t.TempDir()
 	d := newDaemon(options{resource: "forced", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
 	if err := d.startSession(t.Context()); err != nil {
 		t.Fatalf("start forced session: %v", err)
 	}
+	t.Cleanup(d.stopSession)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("child did not install INT-ignore disposition")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	d.mu.Lock()
+	cmd := d.cmd
 	done := d.cmdDone
 	d.mu.Unlock()
 	d.stopSession()
@@ -425,6 +445,10 @@ func TestPPPoEStopForceKillsAndWaitsForManagedChild(t *testing.T) {
 	case <-done:
 	default:
 		t.Fatal("forced stop returned before completion")
+	}
+	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+		t.Fatalf("managed child was not force killed: %v", cmd.ProcessState)
 	}
 }
 
@@ -457,23 +481,40 @@ func TestPPPoEManagedChildUsesDaemonLifetimeRatherThanRequestContext(t *testing.
 		pppoeSessionCommand = previousCommand
 		linuxPPPoEInterfaceExists = previousLinuxExists
 	})
-	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "sleep", []string{"30"} }
-	linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
 	dir := t.TempDir()
+	fifo := filepath.Join(dir, "child-hold")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	pppoeSessionCommand = func(pppoeclient.Config) (string, []string) { return "cat", []string{fifo} }
+	linuxPPPoEInterfaceExists = func(context.Context, string) (bool, error) { return false, nil }
 	d := newDaemon(options{resource: "lifetime", ifname: "vtnet0", username: "user", password: "secret", runtimeDir: dir, stateFile: filepath.Join(dir, "state.json")}, nil)
-	d.lifetimeCtx = context.Background()
+	lifetime := &notifyingLifetimeContext{Context: context.Background(), used: make(chan struct{})}
+	d.lifetimeCtx = lifetime
 	requestCtx, cancel := context.WithCancel(context.Background())
 	if err := d.startSession(requestCtx); err != nil {
 		cancel()
 		t.Fatalf("start session: %v", err)
 	}
-	cancel()
-	time.Sleep(20 * time.Millisecond)
+	t.Cleanup(d.stopSession)
 	d.mu.Lock()
-	stillRunning := d.cmd != nil
+	cmd := d.cmd
+	done := d.cmdDone
 	d.mu.Unlock()
-	if !stillRunning {
+	// Observe the actual exec context consultation, not a delayed cmd pointer.
+	if cmd == nil {
+		t.Fatal("managed command missing")
+	}
+	select {
+	case <-lifetime.used:
+	default:
+		t.Fatal("managed command did not use daemon lifetime context")
+	}
+	cancel()
+	select {
+	case <-done:
 		t.Fatal("request context cancellation terminated the managed PPPoE child")
+	default:
 	}
 	d.stopSession()
 }
@@ -535,26 +576,43 @@ func TestPPPoEInterfaceTeardownTimeoutFailsClosedOnBothBackends(t *testing.T) {
 }
 
 func TestPPPoEStopWaitsForInFlightStartReservation(t *testing.T) {
-	startDone := make(chan struct{})
-	d := &daemon{sessionStarting: true, startDone: startDone}
-	stopped := make(chan struct{})
-	go func() {
-		d.stopSession()
-		close(stopped)
-	}()
-	select {
-	case <-stopped:
-		t.Fatal("stopSession returned while start reservation was in flight")
-	case <-time.After(20 * time.Millisecond):
-	}
-	d.mu.Lock()
-	d.sessionStarting = false
-	d.startDone = nil
-	close(startDone)
-	d.mu.Unlock()
-	select {
-	case <-stopped:
-	case <-time.After(time.Second):
-		t.Fatal("stopSession did not converge after start reservation completed")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		startDone := make(chan struct{})
+		d := &daemon{sessionStarting: true, startDone: startDone}
+		stopped := make(chan struct{})
+		go func() {
+			d.stopSession()
+			close(stopped)
+		}()
+		synctest.Wait() // stopSession has run until its reservation wait blocks.
+		select {
+		case <-stopped:
+			t.Fatal("stopSession returned while start reservation was in flight")
+		default:
+		}
+		d.mu.Lock()
+		d.sessionStarting = false
+		d.startDone = nil
+		close(startDone)
+		d.mu.Unlock()
+		synctest.Wait()
+		select {
+		case <-stopped:
+		default:
+			t.Fatal("stopSession did not converge after start reservation completed")
+		}
+	})
+}
+
+// The managed command must consult the supplied daemon context. Background
+// Done is nil, so this also proves request cancellation is not its watcher.
+type notifyingLifetimeContext struct {
+	context.Context
+	used chan struct{}
+	once sync.Once
+}
+
+func (c *notifyingLifetimeContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.used) })
+	return c.Context.Done()
 }

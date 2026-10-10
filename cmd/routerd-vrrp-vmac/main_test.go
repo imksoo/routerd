@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestParseOptions(t *testing.T) {
@@ -332,12 +333,17 @@ func TestStagingReconcileGuardDiscardsDeactivateAfterMasterElection(t *testing.T
 
 func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T) {
 	var transitionLock sync.Mutex
+	lockAttempts := make(chan struct{}, 2)
 	role := "backup"
 	activationStarted := make(chan struct{})
 	continueActivation := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseActivation := func() { releaseOnce.Do(func() { close(continueActivation) }) }
+	defer releaseActivation()
 	deactivateCalls := 0
 	hooks := runHooks{
 		lockElection: func(string) (func() error, error) {
+			lockAttempts <- struct{}{}
 			transitionLock.Lock()
 			return func() error { transitionLock.Unlock(); return nil }, nil
 		},
@@ -386,12 +392,20 @@ func TestGracefulReconcileDiscardsRoleObservedBeforeTransitionLock(t *testing.T)
 	activateResult := make(chan error, 1)
 	go func() { activateResult <- runWithHooks(args, hooks) }()
 	<-activationStarted
+	<-lockAttempts
 
 	reconcileResult := make(chan error, 1)
 	staleArgs := append([]string{"deactivate"}, args[1:]...)
 	staleArgs = append(staleArgs, "--reconcile")
 	go func() { reconcileResult <- runWithHooks(staleArgs, hooks) }()
-	close(continueActivation)
+	select {
+	case <-lockAttempts: // stale reconcile reached the held transition lock
+	case <-reconcileResult:
+		t.Fatal("reconcile returned before attempting transition lock")
+	case <-time.After(10 * time.Second):
+		t.Fatal("reconcile did not reach transition lock")
+	}
+	releaseActivation()
 
 	if err := <-activateResult; err != nil {
 		t.Fatalf("activate notification: %v", err)

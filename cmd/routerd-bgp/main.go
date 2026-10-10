@@ -344,6 +344,10 @@ func nativePath(path *gobgpapi.Path) (*gobgpapiutil.Path, error) {
 }
 
 func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.Server, error) {
+	return serveControlSocketWithStateLock(socketPath, statePath, paths, &sync.Mutex{})
+}
+
+func serveControlSocketWithStateLock(socketPath, statePath string, paths pathServer, appliedStateMu sync.Locker) (*http.Server, error) {
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen control socket: %w", err)
@@ -353,7 +357,6 @@ func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.S
 	// requests are read-modify-write transactions; without this gate a request
 	// which read state before routerd stored a direct-peer transition fence could
 	// overwrite that fence after it was written.
-	var appliedStateMu sync.Mutex
 	mux.HandleFunc("/v1/applied", func(w http.ResponseWriter, r *http.Request) {
 		appliedStateMu.Lock()
 		defer appliedStateMu.Unlock()
