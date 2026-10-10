@@ -110,10 +110,20 @@ class InventoryResourceTests(unittest.TestCase):
         self.active["NextToken"] = "partial"
         with self.assertRaises(self.parser.InventoryError): self.aws()
 
-    def test_aws_lifecycle_mismatch_between_queries_fails_closed(self):
+    def test_aws_lifecycle_change_requests_local_reobservation(self):
         self.active = copy.deepcopy(self.lookup)
         self.active["Reservations"][0]["Instances"][0]["State"]["Name"] = "stopped"
-        with self.assertRaises(self.parser.InventoryError): self.aws()
+        with self.assertRaises(self.parser.InventoryPending): self.aws()
+        self.active["Reservations"][0]["OwnerId"] = "999999999999"
+        with self.assertRaises(self.parser.InventoryError) as error: self.aws()
+        self.assertNotIsInstance(error.exception, self.parser.InventoryPending)
+
+    def test_oci_lifecycle_change_is_not_an_identity_mismatch(self):
+        self.search_item["lifecycle-state"] = "TERMINATING"
+        with self.assertRaises(self.parser.InventoryPending): self.oci()
+        self.compute_item["freeform-tags"] = {"RouterdRunId": "different-run"}
+        with self.assertRaises(self.parser.InventoryError) as error: self.oci()
+        self.assertNotIsInstance(error.exception, self.parser.InventoryPending)
 
     def test_oci_confirmed_tombstone_preserves_input(self):
         before = copy.deepcopy((self.search, self.compute))
