@@ -1307,10 +1307,12 @@ func TestDoctorRoutesPassesMatchingIPv4Route(t *testing.T) {
 }
 
 func TestDoctorRoutesHonorsPreferredSourceSkipped(t *testing.T) {
+	calls := 0
 	requireLinuxDoctorFixture(t)
 	oldRun := doctorRunDiagnosticCommand
 	defer func() { doctorRunDiagnosticCommand = oldRun }()
 	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		calls++
 		if label == "ip -4 route show 10.44.0.0/24" {
 			return diagnoseCommandCheck{
 				Name:   label,
@@ -1351,9 +1353,22 @@ func TestDoctorRoutesHonorsPreferredSourceSkipped(t *testing.T) {
 	if strings.Contains(check.Detail, "preferredSource=10.44.0.1") {
 		t.Fatalf("check detail = %q, should not require skipped preferred source", check.Detail)
 	}
+	if calls == 0 {
+		t.Fatal("enabled host positive control did not call probe")
+	}
+
 }
 
 func TestDoctorRoutesSkipsHostChecksWithNoHost(t *testing.T) {
+
+	oldRun := doctorRunDiagnosticCommand
+	t.Cleanup(func() { doctorRunDiagnosticCommand = oldRun })
+	calls := 0
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		calls++
+		t.Errorf("unexpected disabled/no-host probe: %s %s %v", label, name, args)
+		return diagnoseCommandCheck{Name: label, OK: false}
+	}
 	configPath, statePath := writeDoctorFixture(t)
 	store := openDoctorState(t, statePath)
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", "cloud-route", map[string]any{
@@ -1378,6 +1393,10 @@ func TestDoctorRoutesSkipsHostChecksWithNoHost(t *testing.T) {
 	if check.Status != doctorSkip {
 		t.Fatalf("check = %#v, want skip", check)
 	}
+	if calls != 0 {
+		t.Fatalf("disabled/no-host probes = %d, want zero", calls)
+	}
+
 }
 
 func TestDoctorPluginExecutableRunAndFreshnessChecks(t *testing.T) {
@@ -1573,6 +1592,15 @@ func TestDoctorDSLiteDownStatusIsNotOverriddenBySelectedPolicy(t *testing.T) {
 }
 
 func TestDoctorDSLiteWhenFalseSkipsInactiveTunnelAndHostProbes(t *testing.T) {
+
+	oldRun := doctorRunDiagnosticCommand
+	t.Cleanup(func() { doctorRunDiagnosticCommand = oldRun })
+	calls := 0
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		calls++
+		t.Errorf("unexpected disabled/no-host probe: %s %s %v", label, name, args)
+		return diagnoseCommandCheck{Name: label, OK: false}
+	}
 	configPath, statePath := writeDoctorDSLiteFixture(t)
 	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Disabled", "reason": "WhenFalse"}, "", map[string]any{}, map[string]any{})
 	installDoctorDSLiteHostCommands(t, false, false)
@@ -1584,6 +1612,10 @@ func TestDoctorDSLiteWhenFalseSkipsInactiveTunnelAndHostProbes(t *testing.T) {
 	}
 	assertDoctorCheckAbsent(t, report, "dig AFTR aftr.example.net")
 	assertDoctorCheckAbsent(t, report, "ip link show ds-routerd")
+	if calls != 0 {
+		t.Fatalf("disabled/no-host probes = %d, want zero", calls)
+	}
+
 }
 
 func TestDoctorHybridHealthyNoHost(t *testing.T) {
@@ -2608,6 +2640,15 @@ func TestDoctorNATConntrackdTCPLiberalRuntime(t *testing.T) {
 }
 
 func TestDoctorNATConntrackdTCPLiberalNoHostSkips(t *testing.T) {
+
+	oldRun := doctorRunDiagnosticCommand
+	t.Cleanup(func() { doctorRunDiagnosticCommand = oldRun })
+	calls := 0
+	doctorRunDiagnosticCommand = func(_ context.Context, label, name string, args ...string) diagnoseCommandCheck {
+		calls++
+		t.Errorf("unexpected disabled/no-host probe: %s %s %v", label, name, args)
+		return diagnoseCommandCheck{Name: label, OK: false}
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44SessionSync"},
 		Metadata: api.ObjectMeta{Name: "sessions"},
@@ -2618,6 +2659,10 @@ func TestDoctorNATConntrackdTCPLiberalNoHostSkips(t *testing.T) {
 	if check.Status != doctorSkip || !strings.Contains(check.Detail, "--no-host") {
 		t.Fatalf("tcp_be_liberal no-host check = %#v", check)
 	}
+	if calls != 0 {
+		t.Fatalf("disabled/no-host probes = %d, want zero", calls)
+	}
+
 }
 
 func TestDoctorNATConntrackdTCPLiberalNonLinuxSkips(t *testing.T) {

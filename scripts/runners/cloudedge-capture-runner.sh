@@ -271,7 +271,13 @@ from pathlib import Path
 jsonl, per_test, aggregate = map(Path, sys.argv[1:])
 points = []
 if jsonl.exists():
-    points = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        try:
+            point = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(point, dict):
+            points.append(point)
 run = {
     "testId": os.environ["TEST_ID"],
     "phase": "CAP",
@@ -351,12 +357,44 @@ run_start() {
   fi
 }
 
+validate_capture_state() {
+  python3 - "$1" "$test_id" "$source_site" "$router_provider" "$remote_site" <<'PY'
+import json,sys,pathlib
+path,test_id,source,router,remote=sys.argv[1:]
+expected={"source":source,"router-inside":router,"router-outside-tunnel":router,"remote":remote}
+try:
+    lines=pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+    records=[json.loads(line) for line in lines if line.strip()]
+    if len(records)!=4:raise ValueError("four capture point observations required")
+    seen=set()
+    for record in records:
+        if not isinstance(record,dict):raise ValueError("capture point is not an object")
+        role=record.get("role")
+        if role not in expected or role in seen:raise ValueError("missing, duplicate or foreign capture role")
+        seen.add(role)
+        if record.get("node")!=expected[role]:raise ValueError("capture node does not match requested point")
+        for key in ("host","interface","filename","path","remotePath","pidPath","filter","startCommand","startAt"):
+            if not isinstance(record.get(key),str) or not record[key]:raise ValueError("capture field absent: "+key)
+        if not record["filename"].startswith(test_id+"-") or pathlib.Path(record["path"]).name!=record["filename"]:raise ValueError("capture filename identity mismatch")
+        if type(record.get("startExit")) is not int:raise ValueError("capture start exit observation unavailable")
+except (OSError,ValueError,TypeError) as error:
+    print(str(error));sys.exit(1)
+PY
+}
+
 run_stop() {
   local jsonl=$state_jsonl stop_jsonl=$cap_dir/$test_id-capture-stop.jsonl stopped_at failures=0 reasons=()
   local old role node host iface filename local_path remote_path pid_path filter command exit_status reason at copy_cmd copy_exit
-  [[ -f "$jsonl" ]] || ce_die "capture state not found: $jsonl"
-  : >"$stop_jsonl"
+  local state_reason
   stopped_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if ! state_reason=$(validate_capture_state "$jsonl"); then
+    reason="required capture state unavailable: $state_reason (raw state: $jsonl)"
+    TEST_ID=$test_id RESULT=PARTIAL REASON="$reason" STARTED_AT="" STOPPED_AT=$stopped_at \
+      write_manifest "$jsonl" PARTIAL "$reason" "" "$stopped_at"
+    printf 'result=PARTIAL\nreason=%s\nmanifest=%s\n' "$reason" "$cap_dir/$test_id-capture-manifest.json"
+    return 0
+  fi
+  : >"$stop_jsonl"
   while IFS= read -r old; do
     [[ -n "$old" ]] || continue
     IFS=$'\t' read -r role node host iface filename local_path remote_path pid_path filter < <(

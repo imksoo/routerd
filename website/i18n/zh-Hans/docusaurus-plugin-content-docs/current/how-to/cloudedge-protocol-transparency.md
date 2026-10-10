@@ -135,3 +135,21 @@ export CE_PROTOCOL_NFS_COMMAND='...'
 - `bulk_transfer_pmtu`
 - `protocol_source_ip_preserved`
 - `protocol_no_nat`
+
+SAM E2E工具逐字节核对FTP、NFS和CIFS的读取与写入内容。故障切换传输使用已知的64 MiB数据，下载后同时核对大小和SHA-256。注入故障前，必须确认本次传输任务仍在运行且已收到部分数据；无法确认进度时，以未判定状态停止，不注入故障或重试。保留启动、结果和失败尝试的证据。可选的传输观测和性能值与正常故障后matrix判定分开。部署使用本次专用目录，传播每个必要复制或配置步骤的失败，并在重启服务前比较已安装的binary和配置与本次数据。
+
+L2 qualification需要同一provider和阈值配置的before与after观测以及抑制机制记录。before采集成功可进入下一操作，但保存的汇总在after采集前仍为未判定；after的退出码反映汇总结果。故障切换时长使用单调时钟，journal关联用UTC另行记录。provider的VM停止实现处理`stop-active`；`drain`需要显式配置`CE_<PROVIDER>_DRAIN_INJECT_COMMAND`或`CE_DRAIN_INJECT_COMMAND`，on-premises停止也需要明确的node-stop command。仅停止keepalived不能证明node停止qualification。
+
+## Federation qualification 证据
+
+`scripts/cloudedge-federation-qualification.sh` 的 release qualification 要求正数 cycles 和全部 8 个场景。`--allow-skip` 允许开发用子集，其结果不会认定 release。每次尝试使用新的证据目录和 event ID，保留 command 的 stdout/stderr/退出码；worker 在现有 `--duration` 预算内停止，预算包含 cleanup。失败、观测不足或 cleanup 未确认时，不重试，并停止后续故障和 cycle。遗留故障 marker 需要操作员在下一次尝试前检查。
+
+TTL refresh 将当前 receiver event 的 `ExpiresAt` 与 sender 的延长值对照，旧 delivered 行或缺失的 `staleTTL` 不能作为证明。subscription 失败和恢复绑定本次 event ID 与 receiver 侧注入后的时间。partition 隔离记录正常 A/B baseline、A 故障期间本次 B 配送，以及限定 group/peer 的 SLO 违规、remediation 和配置阈值对应关系；相同阈值也是有效配置。security 使用正确签名的损坏 body 和带错误签名的有效 body，要求预期 HTTP 400/401、receiver 未接收和本次有效 event 配送。transport error 和 5xx 不证明拒绝成功。
+
+OTel 可用性、sample 和 label 属于诊断，缺失保持未判定，不替换成数值零或产品失败。保存的 binary SHA-256 和产品 source commit 与 QA repository commit 分开记录。已部署 source identity 不明或不匹配时，在 scenario 故障前停止。退出码 1 表示观测到的 assertion 失败，2 表示无效输入/setup，3 表示观测或 provenance 不完整。这些修改通过 offline 边界验证，不代表 provider 或 release qualification 已完成。
+
+开发用 partition 子集未选择 multi-group 时，不要求 B group。实机的 Go 是可选工具。`CE_BINARY_PROVENANCE_FILE` 可指定现有 prepared/release contract，将 `routerdArtifact.commit` 和 `execution.candidate_binary_hashes` 与本次 binary SHA-256 对照。runtime commit 显示冲突或 hash 不匹配时保留未确认状态，不会仅凭 commit 参数确认 identity。
+
+eventd digest 来自目标 systemd unit 的 MainPID 执行文件（`/proc/<pid>/exe`），取得后再次核对进程和执行文件。进程缺失或变化时保持未确认，PATH 中的 binary 不能证明运行中服务的 identity。成功响应中的空 OTel label 数组仍为诊断未判定。
+
+现有 offline assertion 按 WireGuard peer block 和完整 resource snapshot、每个 leaf 恢复的准确七个 peer、注入的 transition event identity/时间以及 transport peer/address 对应关系核对。SSE request deadline 可中断阻塞的正文读取。active-stable guard 要求指定文件存在，并逐个检查 version token。PoC bundle 将 schema 验证记录为 validated、unavailable 或 invalid，不新增必须安装 validator 的 gate。capture stop 检查现有四个 typed point record；缺失或损坏的 state 保持 PARTIAL，不执行 stop/copy。AWS fabric 核对请求的 secondary address 及其最长匹配 route，保留 raw facts 和 PARTIAL/NOT-RUN。labctl 只构建匹配的 clean 当前 checkout 并记录 commit/tree identity；dry run 和 prebuilt 输入不声称完成 build 或使用请求的 source。RR stage 拒绝必需 row 的重复或冲突，report gate 从已确认 outcome 导出。这些是 offline 检查，不代表实机 qualification。

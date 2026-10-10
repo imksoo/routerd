@@ -1008,6 +1008,13 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 		t.Fatalf("backup config still contains reservation:\n%s", data)
 	}
 
+	disabledHosts, err := os.ReadFile(dnsmasqHostsFile(configPath))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("disabled hosts sidecar: %v", err)
+	}
+	if strings.Contains(string(disabledHosts), "02:00:00:00:01:50") || strings.Contains(string(disabledHosts), "192.168.10.150") {
+		t.Fatalf("disabled reservation leaked to hosts sidecar: %s", disabledHosts)
+	}
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	effective = controller.effectiveRouter()
 	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
@@ -1618,27 +1625,43 @@ func TestIPv4StaticAddressControllerRestoresMissingAddressWithUnchangedStatus(t 
 	store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "lan-base", map[string]any{
 		"phase": "Applied", "interface": "lan", "ifname": "ens19", "address": "172.18.0.1/16", "dryRun": false,
 	})
-	var applied bool
+	var commands []string
+	present := false
+	expectedApply := "ip -4 addr replace 172.18.0.1/16 dev ens19"
+	expectedIfname, expectedAddress := "ens19", "172.18.0.1/16"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		expectedApply = "ifconfig ens19 inet 172.18.0.1/16 alias"
+	}
+
 	controller := IPv4StaticAddressController{
 		Router: router,
 		Store:  store,
-		AddressPresent: func(context.Context, string, string) bool {
-			return false
+		AddressPresent: func(_ context.Context, ifname, address string) bool {
+			return present && ifname == expectedIfname && address == expectedAddress
 		},
 		DevicePresent: func(context.Context, string) bool {
 			return true
 		},
 		Command: func(ctx context.Context, name string, args ...string) error {
-			applied = true
+			call := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, call)
+			if call == expectedApply {
+				present = true
+			}
 			return nil
 		},
 	}
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if !applied {
-		t.Fatal("expected missing address to be restored")
+	want := []string{expectedApply}
+	if !present || !reflect.DeepEqual(commands, want) {
+		t.Fatalf("restore command/readback = %#v present=%t, want %#v", commands, present, want)
 	}
+	if !controller.AddressPresent(t.Context(), expectedIfname, expectedAddress) {
+		t.Fatal("restored selected address absent from modeled readback")
+	}
+
 }
 
 func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing.T) {
@@ -2756,24 +2779,42 @@ func TestLANAddressControllerRestoresMissingAddressWithUnchangedStatus(t *testin
 	store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-base", map[string]any{
 		"phase": "Applied", "address": "2409:10:3d60:1271::1/64", "interface": "lan", "prefixSource": "wan-pd", "dryRun": false,
 	})
-	var applied bool
+	var commands []string
+	present := false
+	expectedApply := "ip -6 addr replace 2409:10:3d60:1271::1/64 dev lo"
+	expectedIfname, expectedAddress := "lo", "2409:10:3d60:1271::1/64"
+
 	controller := LANAddressController{
-		Router: router,
-		Store:  store,
-		AddressPresent: func(context.Context, string, string) bool {
-			return false
+		Router:          router,
+		Store:           store,
+		OperatingSystem: platform.OSLinux,
+		AddressPresent: func(_ context.Context, ifname, address string) bool {
+			return present && ifname == expectedIfname && address == expectedAddress
 		},
 		Command: func(ctx context.Context, name string, args ...string) error {
-			applied = true
+			call := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, call)
+			if call == expectedApply {
+				present = true
+			}
 			return nil
 		},
 	}
 	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}
-	if !applied {
-		t.Fatal("expected missing delegated address to be restored")
+	want := []string{
+		"ip -6 addr del 2409:10:3d60:1271::1/64 dev lo",
+		"ip -6 addr del 2409:10:3d60:1271::1/128 dev lo",
+		expectedApply,
 	}
+	if !present || !reflect.DeepEqual(commands, want) {
+		t.Fatalf("restore command/readback = %#v present=%t, want %#v", commands, present, want)
+	}
+	if !controller.AddressPresent(t.Context(), expectedIfname, expectedAddress) {
+		t.Fatal("restored selected address absent from modeled readback")
+	}
+
 }
 
 func TestLANAddressControllerRemovesWhenFalseDelegatedAddress(t *testing.T) {

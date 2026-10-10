@@ -349,7 +349,45 @@ esac''')
         result, evidence = self.run_driver()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--instance-ids", (self.calls / "aws").read_text())
-        self.assertFalse((evidence / "inventory.json").exists())
+        scopes = {row["name"]: row for row in json.loads((evidence / "inventory.json").read_text())["scopes"]}
+        self.assertEqual(scopes["aws-tagged-resources"]["queryStatus"], "incomplete")
+        self.assertIsNone(scopes["aws-tagged-resources"]["count"])
+        self.assertEqual(scopes["pve-vms"]["queryStatus"], "complete")
+
+    def test_aws_lifecycle_only_reobserves_aws_and_preserves_failed_attempt(self):
+        tags = [{"Key": "routerd-run-id", "Value": "run-1"}]
+        instance = "i-0123456789abcdef0"
+        tagged = {"ResourceTagMappingList": [{"ResourceARN":
+            "arn:aws:ec2:ap-northeast-1:123456789012:instance/" + instance, "Tags": tags}]}
+        terminated = {"Reservations": [{"OwnerId": "123456789012", "Instances": [
+            {"InstanceId": instance, "State": {"Name": "terminated"}, "Tags": tags}]}]}
+        active = json.loads(json.dumps(terminated))
+        active["Reservations"][0]["Instances"][0]["State"]["Name"] = "shutting-down"
+        self.install_provider_fixtures(aws_tagged=json.dumps(tagged), aws_lookup=json.dumps(terminated),
+                                       aws_active=json.dumps(active))
+        path = self.bin / "aws"
+        source = path.read_text().replace(
+            "printf '%s\\n' '" + json.dumps(active) + "'",
+            "if [ \"$(grep -c -- '--filters' \"$CALLS/aws\")\" -eq 1 ]; then printf '%s\\n' '" +
+            json.dumps(active) + "'; else echo '{\"Reservations\":[]}'; fi")
+        path.write_text(source)
+        self.make("sleep", "exit 0")
+        result, evidence = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.calls / "aws").read_text().count("--filters"), 2)
+        self.assertEqual((self.calls / "az").read_text().count("group exists"), 1)
+        self.assertEqual((self.calls / "oci").read_text().count("compute instance list"), 1)
+        pending = list((evidence / "aws-attempts").glob("*/aws-resource-counts.json"))
+        self.assertEqual(len(pending), 2)
+        self.assertTrue(any(json.loads(p.read_text()).get("retryable") for p in pending))
+
+    def test_identity_mismatch_does_not_retry_or_skip_other_providers(self):
+        self.install_provider_fixtures(aws_tagged='{"ResourceTagMappingList":[{"ResourceARN":"arn:fixture","Tags":[]}]}')
+        result, evidence = self.run_driver()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.calls / "aws").read_text().count("get-resources"), 1)
+        self.assertIn("compute instance list", (self.calls / "oci").read_text())
+        self.assertIn("pvesh get /cluster/resources", (self.calls / "ssh").read_text())
 
 
 if __name__ == "__main__":

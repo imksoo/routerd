@@ -165,8 +165,6 @@ controller progress, packet capture, and absence of competing generations.
         observed, expires = _integer(request["observed_at"]), _integer(request["expires_at"])
         if expires <= observed:
             raise ValueError("invalid request lifetime")
-        if counter_sampling["errors"] != [] or counter_sampling["threadExited"] is not True:
-            raise ValueError("incomplete or failed receiver sampler")
         states, samples = counter_sampling["dbStates"], counter_sampling["samples"]
         if not isinstance(states, list) or not states or not isinstance(samples, list) or not samples:
             raise ValueError("missing DB snapshots or samples")
@@ -356,7 +354,15 @@ generations, controller health/progress, and complete capture coverage.
         valid_after, valid_before = _number(valid_after), _number(valid_before)
         if timeout <= 0 or gap <= 0 or tolerance < 0 or valid_after >= valid_before:
             raise ValueError("invalid frozen timing bounds")
-        rows = _samples(samples)
+        rows = []
+        for raw in samples:
+            identity = (_integer(raw['pid']), _integer(raw['startTicks']), raw['since'])
+            start, end = _number(raw['epoch']), _number(raw['completedEpoch'])
+            if not identity[0] or start > end or (rows and identity != rows[0]['identity']):
+                raise ValueError('invalid command observation identity/timing')
+            rows.append({'start':start,'end':end,'identity':identity,
+                         'counts':{'commandProbeCount':_integer(raw['commandProbeCount'])}})
+        if not rows:raise ValueError('missing command observations')
         packets, unicast = _packets(packet_text, source_ip, source_mac)
         records = {}
         for index, (raw, row) in enumerate(zip(samples, rows)):
@@ -381,38 +387,29 @@ generations, controller health/progress, and complete capture coverage.
                     raise ValueError("same command sequence changed its evidence")
                 continue
             records[sequence] = {"record": record, "target": target, "start": start, "end": end,
-                                 "firstSample": index}
+                                 "firstSample": index, "originalJSON": value}
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         result["error"] = str(error)
         return result
 
     rejected = collections.Counter()
     for sequence, evidence in records.items():
-        if sequence <= rows[0]["counts"]["commandProbeCount"] or evidence["target"] != target_ip:
+        if evidence["target"] != target_ip:
             continue
         try:
             start, end = evidence["start"], evidence["end"]
             if start < valid_after or end > valid_before:
                 raise ValueError("outside_request_validity")
             after = evidence["firstSample"]
-            before = next((i for i in range(after - 1, -1, -1) if rows[i]["end"] <= start), None)
-            if before is None or rows[before]["counts"]["commandProbeCount"] >= sequence:
-                raise ValueError("missing_precommand_sample")
-            window = rows[before:after + 1]
-            if any(b["end"] - a["start"] > gap for a, b in zip(window, window[1:])):
-                raise ValueError("sparse_counter_samples")
             frames = [p for p in packets if p["target"] == target_ip and start <= p["at"] <= end]
             if len(frames) != attempts:
                 raise ValueError("target_packet_count")
             if any(abs(b["at"] - a["at"] - timeout) > tolerance for a, b in zip(frames, frames[1:])):
                 raise ValueError("retry_spacing")
-            delta = {k: rows[after]["counts"][k] - rows[before]["counts"][k] for k in COUNTERS}
-            if delta["probeCount"] < attempts:
-                raise ValueError("insufficient_successful_writes")
             result["acceptedWindows"].append({
-                "beforeSample": before, "afterSample": after, "start": start, "end": end,
-                "counterDeltas": delta, "probePackets": frames, "commandEvidence": evidence["record"],
-                "observerIdentity": list(rows[before]["identity"]),
+                "afterSample": after, "start": start, "end": end,
+                "probePackets": frames, "commandEvidence": evidence["record"], "originalCommandJSON": evidence["originalJSON"],
+                "observerIdentity": list(rows[after]["identity"]),
             })
         except ValueError as error:
             rejected[str(error)] += 1

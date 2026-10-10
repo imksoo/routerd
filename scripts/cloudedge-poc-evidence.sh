@@ -70,6 +70,7 @@ have python3 || die "python3 is required"
 python3 - "$gold_dir" "$date_utc" "$out" "$schema" <<'PY'
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -361,12 +362,27 @@ manifest = {
 write(out / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 write(out / "07-summary" / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
+validation = {"status": "unavailable", "validated": False, "schema": str(schema), "schemaSha256": hashlib.sha256(schema.read_bytes()).hexdigest()}
+validation_error = None
 try:
     import jsonschema
-except Exception:
-    jsonschema = None
-if jsonschema is not None:
-    jsonschema.validate(instance=manifest, schema=json.loads(schema.read_text(encoding="utf-8")))
+except ImportError as error:
+    validation["reason"] = "jsonschema unavailable: " + str(error)
+else:
+    try:
+        jsonschema.validate(instance=manifest, schema=json.loads(schema.read_text(encoding="utf-8")))
+    except (jsonschema.ValidationError, jsonschema.SchemaError, json.JSONDecodeError) as error:
+        validation.update(status="invalid", reason=str(error))
+        validation_error = error
+    else:
+        validation.update(status="validated", validated=True)
+write(out / "schema-validation.json", json.dumps(validation, indent=2, sort_keys=True) + "\n")
+write(out / "07-summary" / "schema-validation.json", json.dumps(validation, indent=2, sort_keys=True) + "\n")
+for report in (out / "go-nogo.md", out / "07-summary" / "go-nogo.md"):
+    with report.open("a", encoding="utf-8") as file:
+        file.write("\nSchema validation: " + validation["status"] + ". See `schema-validation.json`.\n")
+if validation_error is not None:
+    raise validation_error
 
 print(out)
 PY

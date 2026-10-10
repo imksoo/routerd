@@ -1865,14 +1865,39 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	if err := rollbackCommand([]string{"--list", "--state-file", statePath}, &stdout, io.Discard); err != nil {
 		t.Fatalf("rollback --list: %v", err)
 	}
-	output := stdout.String()
-	for _, text := range []string{"generation", "started_at", "finished_at", "phase", "config", fmt.Sprintf("%d", gen1), fmt.Sprintf("%d", gen2), "yes", "(current)"} {
-		if !strings.Contains(output, text) {
-			t.Fatalf("rollback list missing %q:\n%s", text, output)
-		}
+
+	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(rows) != 3 || !reflect.DeepEqual(strings.Fields(rows[0]), []string{"generation", "started_at", "finished_at", "phase", "config", "current"}) {
+		t.Fatalf("typed generation table: %q", stdout.String())
 	}
-	if strings.Index(output, fmt.Sprintf("%d", gen2)) > strings.Index(output, fmt.Sprintf("%d", gen1)) {
-		t.Fatalf("generations are not newest-first:\n%s", output)
+	type row struct {
+		generation             int64
+		phase, config, current string
+	}
+	var got []row
+	for _, text := range rows[1:] {
+		fields := strings.Fields(text)
+		if len(fields) < 5 || len(fields) > 6 {
+			t.Fatalf("invalid generation row %q", text)
+		}
+		generation, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil {
+			t.Fatalf("generation identity: %v", err)
+		}
+		for _, stamp := range fields[1:3] {
+			if _, err := time.Parse(time.RFC3339, stamp); err != nil {
+				t.Fatalf("generation timestamp %q: %v", stamp, err)
+			}
+		}
+		current := ""
+		if len(fields) == 6 {
+			current = fields[5]
+		}
+		got = append(got, row{generation, fields[3], fields[4], current})
+	}
+	want := []row{{gen2, "Applied", "yes", "(current)"}, {gen1, "Applied", "yes", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("newest-first generation rows = %#v, want %#v", got, want)
 	}
 }
 
@@ -1885,7 +1910,15 @@ func TestRollbackToGenerationDryRunUsesStoredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	gen := seedGeneration(t, store, "hash-1", testRouterYAML("rollback-dry-run"), true, "Applied")
+	selectedYAML := strings.Replace(testRouterYAML("rollback-selected"), "resources: []", "resources:\n    - apiVersion: net.routerd.net/v1alpha1\n      kind: Interface\n      metadata:\n        name: selected-interface\n      spec:\n        ifname: lo\n        managed: false\n        owner: external", 1)
+	otherYAML := strings.Replace(selectedYAML, "selected-interface", "other-interface", 1)
+	gen := seedGeneration(t, store, "hash-selected", selectedYAML, true, "Applied")
+	latest := seedGeneration(t, store, "hash-other", otherYAML, true, "Applied")
+	before, err := store.ListGenerations(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
@@ -1910,9 +1943,36 @@ func TestRollbackToGenerationDryRunUsesStoredConfig(t *testing.T) {
 		t.Fatalf("reopen sqlite: %v", err)
 	}
 	defer func() { _ = store.Close() }()
-	if got := store.LatestGeneration(); got != gen {
-		t.Fatalf("latest generation after dry-run = %d, want %d", got, gen)
+	if got := store.LatestGeneration(); got != latest {
+		t.Fatalf("latest generation after dry-run = %d, want %d", got, latest)
 	}
+	var result apply.Result
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("typed selected plan: %v", err)
+	}
+	var identities []string
+	for _, resource := range result.Resources {
+		identities = append(identities, resource.ID)
+	}
+	want := []string{api.NetAPIVersion + "/Interface/selected-interface"}
+	if !reflect.DeepEqual(identities, want) {
+		t.Fatalf("selected generation resource identities = %#v, want %#v", identities, want)
+	}
+	after, err := store.ListGenerations(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("stored generation records changed: before=%#v after=%#v", before, after)
+	}
+	if _, err := os.Stat(ledgerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dry-run mutated ownership ledger: %v", err)
+	}
+
 }
 
 func TestRollbackToGenerationErrors(t *testing.T) {
@@ -3605,6 +3665,26 @@ func TestApplyDnsmasqConfigPreservesForeignArtifactsWhenDesiredIsEmpty(t *testin
 	if err := os.WriteFile(servicePath, []byte("# administrator owned\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	originals := map[string][]byte{}
+	for _, path := range []string{configPath, servicePath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[path] = data
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "service-calls")
+	for _, command := range []string{"systemctl", "service", "sysrc"} {
+		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
+		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
 	if err != nil {
 		t.Fatalf("preserve foreign dnsmasq: %v", err)
@@ -3612,10 +3692,18 @@ func TestApplyDnsmasqConfigPreservesForeignArtifactsWhenDesiredIsEmpty(t *testin
 	if len(changed) != 0 {
 		t.Fatalf("changed = %v, want no foreign mutation", changed)
 	}
-	for _, path := range []string{configPath, servicePath} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("foreign %s was removed: %v", path, err)
+
+	for path, original := range originals {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("foreign artifact %s: %v", path, err)
 		}
+		if string(data) != string(original) {
+			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
+		}
+	}
+	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
 	}
 }
 
@@ -3635,6 +3723,26 @@ func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignLinuxServiceWhenDesire
 	if err := os.WriteFile(servicePath, []byte("[Unit]\nDescription=administrator managed dnsmasq\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	originals := map[string][]byte{}
+	for _, path := range []string{configPath, servicePath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[path] = data
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "service-calls")
+	for _, command := range []string{"systemctl", "service", "sysrc"} {
+		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
+		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
 	if err != nil {
 		t.Fatalf("preserve ownership collision: %v", err)
@@ -3642,10 +3750,18 @@ func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignLinuxServiceWhenDesire
 	if len(changed) != 0 {
 		t.Fatalf("changed = %v, want no collision mutation", changed)
 	}
-	for _, path := range []string{configPath, servicePath} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("collision path %s was removed: %v", path, err)
+
+	for path, original := range originals {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("foreign artifact %s: %v", path, err)
 		}
+		if string(data) != string(original) {
+			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
+		}
+	}
+	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
 	}
 }
 
@@ -3665,6 +3781,26 @@ func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignFreeBSDServiceWhenDesi
 	if err := os.WriteFile(servicePath, []byte("#!/bin/sh\n# administrator-owned rc.d service\n"), 0555); err != nil {
 		t.Fatal(err)
 	}
+	originals := map[string][]byte{}
+	for _, path := range []string{configPath, servicePath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[path] = data
+	}
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "service-calls")
+	for _, command := range []string{"systemctl", "service", "sysrc"} {
+		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
+		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
 	if err != nil {
 		t.Fatalf("preserve ownership collision: %v", err)
@@ -3672,10 +3808,18 @@ func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignFreeBSDServiceWhenDesi
 	if len(changed) != 0 {
 		t.Fatalf("changed = %v, want no collision mutation", changed)
 	}
-	for _, path := range []string{configPath, servicePath} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("collision path %s was removed: %v", path, err)
+
+	for path, original := range originals {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("foreign artifact %s: %v", path, err)
 		}
+		if string(data) != string(original) {
+			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
+		}
+	}
+	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
 	}
 }
 

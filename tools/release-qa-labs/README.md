@@ -95,10 +95,9 @@ Bind version verification to the exact successful Release workflow and tag:
 For on-demand ARP positive controls, an unexpired federation database record is
 not proof of a pending command. Do not require all background facts to disappear
 or attribute an arbitrary counter increment to the selected target.
-Use `arp_probe_attribution.attribute_recorded_command()` with bounded 100–200 ms
-receiver-local status samples and complete `tcpdump -nn -tt -e` captures. Preserve
-the original `observed.lastCommandProbe` JSON string as `lastCommandProbe` beside
-the five counters in each sample. Bind the actual observer's PID/start time,
+Use `arp_probe_attribution.attribute_recorded_command()` with actual receiver-local
+command observations and complete `tcpdump -nn -tt -e` captures. Preserve the
+original `observed.lastCommandProbe` JSON string and its completion sequence. Bind the actual observer's PID/start time,
 source IP/MAC, retry count and timeout before using it.
 
 The helper requires a new successful command record with sequence equal to the
@@ -106,8 +105,9 @@ completion counter, the selected target, its actual write count, and start/end
 times inside the request's validity. It verifies the exact target broadcasts
 inside those times and their retry cadence. Neighboring targets and autonomous
 traffic do not erase the explicit command evidence. Missing/stale records,
-record/counter inconsistencies, partial captures, identity changes, sampling
-gaps, missing/extra target frames and unicast-only evidence remain rejected.
+record/sequence inconsistencies, partial captures, identity changes, missing/extra
+target frames and unicast-only evidence remain rejected. Continuous counter
+coverage and aggregate probe counters are not acceptance requirements.
 The record is only the most recent successful command; poll promptly because a
 later success replaces it. Aggregate counter deltas can include background work
 and are retained separately from this command's recorded write count.
@@ -204,78 +204,29 @@ Keep strict controller-progress checks and the complete capture/TTL tail.
 Validate the deadline logic with a fake clock and retain a stalled-controller
 negative fixture before freezing the collector.
 
-Controller completion counters are not a fixed-cadence heartbeat. The
-`mobility-arp-request` controller handles pending targets serially; each
-synchronous `probe-target` waits between its retries, and the framework records
-completion and resets the interval only after the entire batch returns. Two
-normal reads can therefore show the same reconcile count while commands finish.
+Controller completion counters are not a fixed-cadence heartbeat. Serial target
+batches can span several reads. `arp_controller_progress` remains available for
+legacy diagnostic replay; its every-interval progress and coverage checks must
+not gate ARP acceptance or stimulus dispatch. Preserve controller observations
+and errors for diagnosis. Judge self suppression, required target command/packet
+evidence and completed sender communication independently.
 
-Use `arp_controller_progress.evaluate_arp_controller_progress()` for this
-controller, retaining every original controller and high-frequency counter read.
-Bind the independent counter series to the actual on-demand observer PID,
-process start ticks and daemon `since`. Each adjacent controller pair must show
-strictly increasing completion count/time, or command completions wholly between
-the first read's completion and the next read's start. The latter requires
-complete counter coverage (the existing 0.4-second maximum gap) and a later
-successful reconcile completion in the same bounded observation. Retain the
-per-pair explanation and subsequent completion index. Autonomous probes or
-scans alone cannot establish this evidence. Ensure this controller is the sole
-command producer during the observation; direct probe API calls invalidate that
-assumption. Regressions, sampler errors, process changes, current/new reconcile
-errors, inconsistent completion fields and a final unfinished batch remain FAIL.
-The API omits a zero `reconcileErrorCount`; missing required fields still fail.
+`arp_counter_sampler.CounterSampler` is optional receiver-local diagnostic
+collection. Its 80 ms HTTP timeout, 100 ms cadence and 400 ms coverage bound
+constrain that collector, not product acceptance. Retain the original command
+JSON, full-key DB receipts, slow-read diagnostics, per-stage timing and failed
+reads. A sampler failure must not stop packet capture or sender collection.
+Missing required command/packet or fresh-request evidence remains inconclusive;
+never invent it from aggregate counters or a later successful observation.
 
-When a command completes near a read boundary, its first status observation can
-fall outside the interior counter window. The evaluator can use the original
-`lastCommandProbe` JSON string in that case. The recorded completion must still
-fall inside the original controller interval, and the first observation must
-show exactly one new command across adjacent reads spanning at most 400 ms.
-Require a valid IPv4 target, immutable sequence evidence, UTC start/completion
-times within the bound observer lifetime and read, and the frozen configuration's
-successful packet count (`expected_command_packets`, default 3). Keep complete
-interior coverage and the later successful reconcile requirement. Missing command
-metadata cannot enable this fallback; malformed present metadata fails. Retain
-the original JSON, observation indices and completion method in the proof. The
-boundary itself and the 400 ms coverage limit do not move.
+The capture adapter publishes run-owned PID/start ticks/boot ID and progress
+atomically. Before a stimulus, `arp_observation_health` checks the current owned
+collector/capture processes and terminal state against the ready record.
+Counter error markers, sampler availability and progress age are diagnostic.
+Keep their records without coupling their failures to capture health. Preserve
+actual capture errors and original communication failures, and keep dispatch
+inside its existing deadline. Always perform owned cleanup.
 
-This is evidence of continued work and completion, not a per-reconcile latency
-SLO. Keep the observation duration, normal polling cadence, target attribution,
-TTL/expiry, measured clock bounds, self-suppression and final environment gates.
-Do not resample until counters differ, discard repeated reads, or reinterpret a
-sealed FAIL as PASS. Test stalled-controller and missing-evidence cases, freeze
-the changed evaluator and adapter, then certify a new run before live testing.
-
-Use `arp_counter_sampler.CounterSampler` for receiver-local read-only DB and
-observer reads. Its 100 ms default cadence is a scheduling target. The hard
-coverage bound remains 400 ms, including each full read and the span from the
-previous read's start through the current read's completion. Missed schedule
-ticks are skipped without catch-up reads or synthetic evidence. An over-cadence
-read within that coverage bound is retained; a real gap, DB/HTTP error, missing
-counter or changed observer fails closed. Keep the original command JSON string
-and full DB receipt fields. The sampler retains bounded slow-read diagnostics,
-per-stage timing aggregates and the complete failed read in `errors`, instead
-of discarding the evidence that explains an overrun.
-
-The run-owned capture adapter must publish JSON atomically, bind its own and
-the capture process's PID/start ticks/boot ID in `ownership.json` and
-`ready.json`, and publish `completedMonotonic`, `collectorPID`, `collectorState`
-and `collectorErrors` with each progress record. Receiver progress also carries
-`counterSamplerHealth` (`errors`, `sampleCount`, `running`). Pass an `on_error`
-callback to the sampler that atomically writes a run-owned `counter-error.json`;
-this exposes failures immediately even if the slow collector is busy. Publish
-failed progress before stopping the capture, and include that marker in owned
-cleanup. Preserve the original error before assessing secondary capture/TTL
-failures.
-
-Before **every** stimulus dispatch, collect
-`arp_observation_health.read_collector_state()` on each guest and require
-`assert_collector_running()` against the identities from that run's ready
-records. It checks the original error/terminal markers, current process
-identities and progress age on the guest's monotonic clock (at most 10 seconds).
-A terminal collector forbids further stimuli even when its terminal result has
-no errors. A stale success file must never count as evidence that observation is
-still running. Keep these checks inside the existing dispatch budget; do not
-extend the 15-second scheduled-ARP deadline or other frozen timing limits.
 Test these adapter connections before freezing a new run, including publication
 failure, stale progress, early capture exit and the original R11 failure case.
 

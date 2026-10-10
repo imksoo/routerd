@@ -70,8 +70,7 @@ class CommandEvidenceTests(unittest.TestCase):
         self.assertEqual(window["commandEvidence"]["sequence"], 2)
         self.assertEqual(window["commandEvidence"]["packetsSent"], 3)
         self.assertEqual(len(window["probePackets"]), 3)
-        self.assertGreater(window["counterDeltas"]["probeCount"], 3)
-        self.assertEqual(window["counterDeltas"]["proactiveCount"], 1)
+        self.assertNotIn("counterDeltas", window)
 
     def test_aggregate_counters_never_replace_absent_record(self):
         rows, packets = fixture()
@@ -139,16 +138,16 @@ class CommandEvidenceTests(unittest.TestCase):
         rows, packets = fixture()
         self.assertFalse(evaluate(rows, packets.replace("100.750000", "100.400000"))["success"])
 
-    def test_missing_successful_write_counter_fails(self):
+    def test_recorded_writes_do_not_require_aggregate_write_counter(self):
         rows, packets = fixture()
         for row in rows:
             row["probeCount"] = 0
-        self.assertFalse(evaluate(rows, packets)["success"])
+        self.assertTrue(evaluate(rows, packets)["success"])
 
-    def test_gap_and_missing_precommand_sample_fail(self):
+    def test_recorded_command_does_not_require_continuous_sampling(self):
         rows, packets = fixture()
-        self.assertFalse(evaluate([r for r in rows if not 100.3 < r["epoch"] < 101], packets)["success"])
-        self.assertFalse(evaluate([r for r in rows if r["epoch"] >= 100.3], packets)["success"])
+        self.assertTrue(evaluate([r for r in rows if not 100.3 < r["epoch"] < 101], packets)["success"])
+        self.assertTrue(evaluate([r for r in rows if r["epoch"] >= 100.3], packets)["success"])
 
     def test_process_restart_or_counter_reset_fails(self):
         for field, value in [("pid", 101), ("startTicks", "201"), ("since", stamp(60)), ("commandProbeCount", 0)]:

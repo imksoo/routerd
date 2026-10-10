@@ -3,10 +3,11 @@
 package config
 
 import (
-	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -595,16 +596,49 @@ func testResource(apiVersion, kind, name string, spec any) api.Resource {
 
 func apiSpecStructsWithResourceWhen(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile("../api/specs.go")
+	packages, err := parser.ParseDir(token.NewFileSet(), "../api", func(info os.FileInfo) bool { return !strings.HasSuffix(info.Name(), "_test.go") }, 0)
 	if err != nil {
-		t.Fatalf("read api specs: %v", err)
+		t.Fatalf("parse API definitions: %v", err)
 	}
-	re := regexp.MustCompile(`(?s)type\s+(\w+)\s+struct\s*\{([^{}]*)\}`)
-	var out []string
-	for _, match := range re.FindAllSubmatch(data, -1) {
-		if bytes.Contains(match[2], []byte("When")) && regexp.MustCompile(`\bWhen\s+ResourceWhenSpec\b`).Match(match[2]) {
-			out = append(out, string(match[1]))
-		}
+	pkg, ok := packages["api"]
+	if !ok {
+		t.Fatal("API package absent")
+	}
+	discovered := map[string]bool{}
+	for _, file := range pkg.Files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			def, ok := node.(*ast.TypeSpec)
+			if !ok {
+				return true
+			}
+			structure, ok := def.Type.(*ast.StructType)
+			if !ok {
+				return false
+			}
+			for _, field := range structure.Fields.List {
+				typ := field.Type
+				if ptr, ok := typ.(*ast.StarExpr); ok {
+					typ = ptr.X
+				}
+				ident, ok := typ.(*ast.Ident)
+				if !ok || ident.Name != "ResourceWhenSpec" {
+					continue
+				}
+				for _, name := range field.Names {
+					if name.Name == "When" {
+						discovered[def.Name.Name] = true
+					}
+				}
+			}
+			return false
+		})
+	}
+	if len(discovered) == 0 {
+		t.Fatal("no API ResourceWhenSpec fields discovered")
+	}
+	out := make([]string, 0, len(discovered))
+	for name := range discovered {
+		out = append(out, name)
 	}
 	sort.Strings(out)
 	return out

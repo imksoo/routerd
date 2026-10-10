@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -63,10 +64,38 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 	client.retryAttempts = 20
 	client.retryDelay = 50 * time.Millisecond
 
+	firstFailure := make(chan struct{})
+	serverReady := make(chan struct{})
+	transport := client.httpClient.Transport.(*http.Transport)
+	originalDial := transport.DialContext
+	var attempts atomic.Int32
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		attempt := attempts.Add(1)
+		conn, err := originalDial(ctx, network, address)
+		if attempt == 1 {
+			if err == nil {
+				conn.Close()
+				return nil, errors.New("first dial unexpectedly succeeded")
+			}
+			close(firstFailure)
+			select {
+			case <-serverReady:
+			case <-ctx.Done():
+			}
+		}
+		return conn, err
+	}
 	errCh := make(chan error, 1)
 	cleanupCh := make(chan func(), 1)
+	t.Cleanup(func() {
+		select {
+		case cleanup := <-cleanupCh:
+			cleanup()
+		default:
+		}
+	})
 	go func() {
-		time.Sleep(150 * time.Millisecond)
+		<-firstFailure
 		listener, err := net.Listen("unix", socketPath)
 		if err != nil {
 			errCh <- err
@@ -82,14 +111,18 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 			_ = server.Close()
 			_ = listener.Close()
 		}
+		close(serverReady)
 		errCh <- server.Serve(listener)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	status, err := client.Status(ctx)
 	if err != nil {
 		t.Fatalf("Status returned error before delayed socket was ready: %v", err)
+	}
+	if attempts.Load() < 2 {
+		t.Fatalf("dial attempts = %d; retry not exercised", attempts.Load())
 	}
 	if status.Status.Phase != "Healthy" || status.Status.Generation != 7 {
 		t.Fatalf("status = %+v", status.Status)

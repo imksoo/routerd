@@ -53,7 +53,7 @@ cmd_ssh() {
   fi
   src_identity=$(ce_remote_identity_command "$src_expected")
   dst_identity=$(ce_remote_identity_command "$dst_expected")
-  ce_client_ssh "$src" "src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh $opts $(printf '%q' "$user@$dst_ip") \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
+  ce_client_ssh "$src" "echo default_gw_before=\$(ip route show default | awk '{print \$3; exit}'); src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh $opts $(printf '%q' "$user@$dst_ip") \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
 }
 
 main() {

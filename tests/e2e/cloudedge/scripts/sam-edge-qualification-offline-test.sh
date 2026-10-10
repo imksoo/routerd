@@ -27,18 +27,25 @@ is_cloud_site() { [[ "$1" == aws || "$1" == azure || "$1" == oci ]]; }
 ssh_node() {
   local destination
   case "$2" in
-    ssh\ *)
+    *" hostname;"*)
       destination="$(sed -n "s/.*'test@\([^']*\)' hostname.*/\1/p" <<<"$2")"
       jq -r --arg ip "$destination" 'to_entries[] | select(.value.private_ip == $ip) | .value.name' "$nodes_json"
       ;;
-    *) return 0 ;;
   esac
+  if [[ "$2" =~ (__ROUTERD_FLOW_[a-zA-Z0-9_]+__)= ]]; then
+    printf '\n%s=0\n' "${BASH_REMATCH[1]}"
+  fi
 }
 # Execute only the actual matrix function with a fake SSH boundary. Never
 # source the executable harness or run its preflight/deployment entrypoint.
 eval "$(sed -n '/^cloud_ingress_matrix() {/,/^}/p' "$repo_root/tests/e2e/cloudedge/scripts/sam-e2e.sh")"
+eval "$(sed -n '/^observe_flow() {/,/^}/p' "$repo_root/tests/e2e/cloudedge/scripts/sam-e2e.sh")"
+stopped_routers=()
 check_matrix() {
   local label="$1" expected="$2"
+  mkdir -p "$evidence_dir/matrix/$label"
+  flow_evidence_dir="$(mktemp -d "$evidence_dir/matrix/$label/flows.XXXXXXXX")"
+  validation_deadline=$((SECONDS + 900))
   cloud_ingress_matrix "$label"
   local actual
   actual="$(wc -l <"$evidence_dir/matrix/$label/cloud-ingress-summary.tsv")"

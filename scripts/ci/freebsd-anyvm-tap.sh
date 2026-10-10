@@ -126,6 +126,19 @@ source = source.replace(needle, replacement, 1)
 # post-boot owned marker through the same SSH channel.
 needle = '                    debuglog(config[\'debug\'], "[trace] final-SSH returned rc={}".format(rc))'
 replacement = '''                    debuglog(config['debug'], "[trace] final-SSH returned rc={}".format(rc))
+                    evidence_dir = os.environ.get("ROUTERD_ANYVM_EVIDENCE_DIR")
+                    if evidence_dir:
+                        evidence_path = os.path.join(evidence_dir, "native-child-evidence.tar.gz")
+                        with open(evidence_path, "wb") as evidence_stream:
+                            try:
+                                evidence_rc = subprocess.call(ssh_base_cmd + ["cat", "/var/tmp/routerd-native-evidence.tar.gz"], stdout=evidence_stream, timeout=30)
+                            except subprocess.TimeoutExpired:
+                                evidence_rc = 124
+                        debuglog(config['debug'], "native evidence copy rc={}".format(evidence_rc))
+                        with open(os.path.join(evidence_dir, "native-evidence-copy.log"), "w") as evidence_status:
+                            evidence_status.write("guest_exit={} evidence_copy_exit={}\\n".format(rc, evidence_rc))
+                        if evidence_rc != 0 and rc == 0:
+                            rc = 2
                     if rc != 0:
                         raise SystemExit(rc)
                     reboot_marker = os.environ.get("ROUTERD_ANYVM_REBOOT_MARKER")
@@ -152,7 +165,7 @@ reboot_marker=
 if [[ "$kernelmodule_persistence" == true ]]; then
   reboot_marker=/var/tmp/routerd-kernelmodule-persistence/reboot.complete
 fi
-ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
+ROUTERD_ANYVM_EVIDENCE_DIR="$artifact_dir" ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
   -- "cd /home/runner/work/routerd/routerd && pkg install -y $guest_packages && if [ '$lifecycle_runtime' = true ]; then pkg install -y kea; fi && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME=$tunnelinterface_runtime ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME=$package_lifecycle ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=$lifecycle_runtime ROUTERD_FREEBSD_PPPOE_RUNTIME=$pppoe_runtime ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME=$wireguard_vxlan_runtime ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME=$tailscale_boundary_runtime ROUTERD_FREEBSD_CARP_RUNTIME=$carp_runtime sh scripts/freebsd-native-vm-smoke.sh"

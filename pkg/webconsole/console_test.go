@@ -765,7 +765,9 @@ func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/events/stream", nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/events/stream", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -804,13 +806,7 @@ func TestHandlerStreamsBusEventsOverSSE(t *testing.T) {
 
 	var sawEvent bool
 	var sawData bool
-	deadline := time.After(2 * time.Second)
 	for !(sawEvent && sawData) {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for streamed event")
-		default:
-		}
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			t.Fatal(err)

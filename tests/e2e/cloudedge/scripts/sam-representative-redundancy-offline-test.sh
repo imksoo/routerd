@@ -85,7 +85,10 @@ write_router_matrix "$evidence_dir/matrix/initial/router-origin-summary.tsv"
 canary_rows=4
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_CANARY:-0}" = 1 ] && canary_rows=3
 for label in after-failover-pve-rr-a after-rejoin-pve-rr-a; do
-  for _ in $(seq 1 "$canary_rows"); do printf 'client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/$label/transition-canary-summary.tsv"
+  clients=(aws-client-a azure-client-a oci-client-a pve-client-a)
+  for index in $(seq 0 $((canary_rows - 1))); do
+    printf '%s\t%s\tPASS\n' "${clients[$index]}" "${clients[$(((index + 1) % 4))]}"
+  done >"$evidence_dir/matrix/$label/transition-canary-summary.tsv"
 done
 rr_status=PASS
 [ "${SAM_REPRESENTATIVE_FAKE_INCOMPLETE_RR:-0}" = 1 ] && rr_status=TIMEOUT

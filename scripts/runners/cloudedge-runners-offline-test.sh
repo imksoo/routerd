@@ -37,18 +37,31 @@ case "$1" in
       *) ip=10.77.60.254 ;;
     esac
     printf 'peer_ip=%s\n' "$ip"
-    printf 'default_gw=10.77.60.1\n'
+    printf 'default_gw_before=10.77.60.1\ndefault_gw=10.77.60.1\n'
     ;;
   *) exit 2 ;;
 esac
 SH
 chmod +x "$fake_matrix"
 
-CE_AWS_INJECT_COMMAND='printf "injected=aws\n"' \
+CE_AWS_STOP_ACTIVE_INJECT_COMMAND='printf "injected=aws\n"' \
 CE_AWS_DETECTION_COMMAND='printf "detected=1\n"' \
 CE_AWS_SWITCHOVER_COMMAND='printf "switched=1\n"' \
 CE_AWS_RECOVERY_COMMAND='printf "recovered=1\n"' \
   "$SCRIPT_DIR/cloudedge-failover-runner.sh" inject aws stop-active >/dev/null
+# Reuse the injection fixture with a failing override. All fallback tools are
+# harmless sentinels, so this assertion cannot stop a VM or open SSH.
+mkdir -p "$tmp/fallback-bin"
+for tool in aws az oci ssh; do
+  printf '#!/bin/sh\nprintf "fallback-called\\n" >>"%s"\nexit 0\n' "$tmp/fallback-calls" >"$tmp/fallback-bin/$tool"
+  chmod +x "$tmp/fallback-bin/$tool"
+done
+override_rc=0
+PATH="$tmp/fallback-bin:$PATH" CE_AWS_ACTIVE_INSTANCE_ID=fixture-only \
+CE_AWS_INJECT_COMMAND='exit 17' \
+  "$SCRIPT_DIR/cloudedge-failover-runner.sh" inject aws stop-active >"$tmp/override-failure.log" 2>&1 || override_rc=$?
+[[ "$override_rc" -eq 17 && ! -e "$tmp/fallback-calls" ]] || die "failed injection override reached fallback or lost its exit"
+
 CE_AWS_DETECTION_COMMAND='printf "detected=1\n"' \
   "$SCRIPT_DIR/cloudedge-failover-runner.sh" observe aws detection >/dev/null
 CE_AWS_SWITCHOVER_COMMAND='printf "switched=1\n"' \
@@ -345,6 +358,10 @@ CE_PROTOCOL_PMTU_COMMAND='printf "overlay_mtu=1380\nroute_mtu=1380\nroute_advmss
 CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
 CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
   "$SCRIPT_DIR/cloudedge-protocol-runner.sh" setup aws azure 1024 >/dev/null
+override_rc=0
+PATH="$tmp/fallback-bin:$PATH" CE_PROTOCOL_SETUP_COMMAND='exit 17' \
+  "$SCRIPT_DIR/cloudedge-protocol-runner.sh" setup aws azure 1024 >"$tmp/setup-override-failure.log" 2>&1 || override_rc=$?
+[[ "$override_rc" -eq 17 && ! -e "$tmp/fallback-calls" ]] || die "failed setup override reached fallback or lost its exit"
 
 for op in ftp-active ftp-passive nfs rpc bulk pmtu source-preserved no-nat; do
   env \
@@ -357,6 +374,11 @@ for op in ftp-active ftp-passive nfs rpc bulk pmtu source-preserved no-nat; do
     CE_PROTOCOL_SOURCE_PRESERVED_COMMAND='printf "peer_ip=10.77.60.11\ndetail=source_ok\n"' \
     CE_PROTOCOL_NO_NAT_COMMAND='printf "detail=no_nat_ok\n"' \
     "$SCRIPT_DIR/cloudedge-protocol-runner.sh" "$op" aws azure 1024 >/dev/null
+  override_key="CE_PROTOCOL_$(printf '%s' "$op" | tr '[:lower:]-' '[:upper:]_')_COMMAND"
+  override_rc=0
+  env PATH="$tmp/fallback-bin:$PATH" "$override_key=exit 17" \
+    "$SCRIPT_DIR/cloudedge-protocol-runner.sh" "$op" aws azure 1024 >"$tmp/protocol-override-failure.log" 2>&1 || override_rc=$?
+  [[ "$override_rc" -eq 17 && ! -e "$tmp/fallback-calls" ]] || die "failed $op override reached fallback or lost its exit"
 done
 
 protocol_json="$tmp/protocol-probe.json"

@@ -15,6 +15,21 @@ title: CloudEdge 自主實驗室 (cloudedge-labctl)
 
 `--help`、dry 路徑、`down --expired` **不需要雲端憑證**。
 
+
+## 觀測收斂而不重複整套測試
+
+SAM在provider Ready之後判定通訊。每次validation將原有的900秒provider收斂預算與流量觀測共用。僅重新取得失敗或缺失的必要項目，每項最多觀測3次；成功項目和相同的cloud-ingress flow在同一次validation及相同故障狀態內共用證據。成功flow不執行traceroute。無法確認管理SSH執行完成時，標記為 `OBSERVATION_INCONCLUSIVE`（結束碼3），而不判定為產品ping失敗。包含恢復前失敗的原始紀錄保留在 `matrix/<label>/flows.*/`。
+
+L2 採集失敗或指標缺失判為無法確定，並保留 stdout/stderr；只有成功採集後的數值零才有效。gateway unchanged 比較每個流在來源主機上通訊前後的路由，不是整個部署的基準。failover action 必須符合本次故障開始時間、位址和 standby。恢復時間包含 coordinator/API/SSH/poll 開銷，僅超過此上界不能證明產品退化；60 秒目標保持不變。netns 測試或 cleanup 失敗時保留工作目錄和 cleanup log。FreeBSD 同一網路堆疊內的 VXLAN ping 不能證明經過 WireGuard 的轉送；該 smoke 報告設定、handshake、所有權和 restart 證據，並註明轉送未經驗證。IPC 請求在既有等待預算內設定期限，無法採集使用 exit 3。bus 慢 subscriber 測試使用偵測阻塞的 watchdog，而非吞吐量門檻。
+
+診斷採集與驗收判定分離。收斂等待迴圈不再反覆執行 `doctor sam`，僅在診斷時採集一次。同一診斷快照中的 status、已套用 BGP 路徑和 global RIB 各讀取一次，摘要從儲存的回應產生。診斷採集失敗不改變流量判定。
+
+retained ARP檢查中，監控HTTP的80ms timeout、100ms counter週期、400ms連續coverage以及每個區間的controller進度僅是診斷限制，不是驗收條件。診斷失敗不得停止pcap或sender採集。仍須保留完整的self ARP捕捉、實際target command與packet對應、有效請求與TTL、完成的通訊及process identity；缺少必要證據時判為證據不足。原始觀測保留既有時間、target、command sequence和provider resource ID以供關聯。
+
+cleanup inventory區分lifecycle變化和identity不一致。AWS/OCI的identity一致而狀態觀測不同時，只在同次inventory執行中額外查詢對應provider最多2次，保留每次原始回應。identity、tag、account不一致、無效回應及通訊失敗不能證明資源不存在。其他provider的inventory繼續執行；不完整scope的count為null，不能通過零資源判定。既有資源回收和刪除保護保持不變。
+
+下一次付費測試之前，用 `tools/release-qa-labs/tests/` 下的 `test_sam_observation.py`、`test_inventory_resources.py` 和 `test_inventory_driver.py` 重播相關回應及負例，不建立資源。透過 `make cloudedge-representative-redundancy-offline-test` 檢查實際matrix/profile呼叫路徑。這些測試通過不代表已完成雲端實機測試。
+
 ## 生命週期
 
 ```sh

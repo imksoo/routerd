@@ -114,7 +114,7 @@ fi
 
 validate_changelog() {
 	file=$1
-	[ -f "$file" ] || return 0
+	[ -f "$file" ] || { echo "optional changelog absent; skipping validation: $file" >&2; return 0; }
 	if ! perl -0e '
 		use strict;
 		use warnings;
@@ -140,8 +140,9 @@ validate_changelog() {
 	fi
 }
 
-# Validate every changelog before changing version files or promoting any
-# section. A missing translation must leave the repository untouched.
+# Validate each available changelog before changing version files or promoting
+# sections. Missing optional translations are reported and skipped; a malformed
+# available changelog leaves the repository untouched.
 validate_changelog docs/releases/changelog.md
 validate_changelog website/i18n/ja/docusaurus-plugin-content-docs/current/releases/changelog.md
 validate_changelog website/i18n/zh-Hant/docusaurus-plugin-content-docs/current/releases/changelog.md

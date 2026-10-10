@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -113,6 +115,7 @@ func TestDrainAndUndrainIngressBackend(t *testing.T) {
 }
 
 func TestRestartDNSResolverSelectsSingleResource(t *testing.T) {
+	requireLinuxDoctorFixture(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "router.yaml")
 	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
@@ -154,9 +157,10 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.TrimSpace(string(commands))
-	if !strings.Contains(got, "restart") || !strings.Contains(got, "routerd") || !strings.Contains(got, "dns") || !strings.Contains(got, "resolver") {
-		t.Fatalf("commands = %q", got)
+	invocations := strings.Split(strings.TrimSpace(string(commands)), "\n")
+	want := []string{"systemctl restart routerd-dns-resolver@lan-resolver.service"}
+	if !reflect.DeepEqual(invocations, want) {
+		t.Fatalf("selected restart invocations = %#v, want %#v", invocations, want)
 	}
 }
 
@@ -415,6 +419,19 @@ func TestLedgerPruneEventsCommandRecordsAuditEvent(t *testing.T) {
 	if err := store.RecordEvent("net.routerd.net/v1alpha1", "Interface", "wan", "Normal", "NewEvent", "new event"); err != nil {
 		t.Fatalf("record new event: %v", err)
 	}
+	before, err := store.ListEvents(routerstate.EventQuery{Limit: 20})
+	if err != nil {
+		t.Fatalf("events before prune: %v", err)
+	}
+	var preserved routerstate.StoredEvent
+	for _, record := range before {
+		if record.Reason == "NewEvent" {
+			preserved = record
+		}
+	}
+	if preserved.Reason != "NewEvent" {
+		t.Fatal("new event fixture missing")
+	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close state: %v", err)
 	}
@@ -468,6 +485,22 @@ func TestLedgerPruneEventsCommandRecordsAuditEvent(t *testing.T) {
 	if got := fmt.Sprint(event.Attributes["dryRun"]); got != "false" {
 		t.Fatalf("dryRun attribute = %q, want false", got)
 	}
+	remaining, err := store.ListEvents(routerstate.EventQuery{Limit: 20})
+	if err != nil {
+		t.Fatalf("remaining events: %v", err)
+	}
+	reasons := map[string]int{}
+	for _, record := range remaining {
+		reasons[record.Reason]++
+		if record.Reason == "NewEvent" && !reflect.DeepEqual(record, preserved) {
+			t.Fatalf("new event changed: before=%#v after=%#v", preserved, record)
+		}
+	}
+	want := map[string]int{"NewEvent": 1, "EventsPruned": 1}
+	if !reflect.DeepEqual(reasons, want) {
+		t.Fatalf("remaining exact event set = %#v, want %#v", reasons, want)
+	}
+
 }
 
 func TestDNSQueriesCommandReadsLogDatabase(t *testing.T) {
@@ -2004,8 +2037,17 @@ spec:
 }
 
 func TestDefaultStatePathUsesPlatformStateDir(t *testing.T) {
-	if got := defaultStatePath(); got == "" || filepath.Base(got) != "routerd.db" {
-		t.Fatalf("default state path = %q", got)
+	defaults, _ := platform.Current()
+	expectedDir := defaults.StateDir
+	switch defaults.OS {
+	case platform.OSLinux:
+		expectedDir = "/var/lib/routerd"
+	case platform.OSFreeBSD:
+		expectedDir = "/var/db/routerd"
+	}
+	want := filepath.Join(expectedDir, "routerd.db")
+	if got := defaultStatePath(); got != want {
+		t.Fatalf("platform state path = %q, want %q", got, want)
 	}
 }
 

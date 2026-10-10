@@ -411,6 +411,36 @@ fi
   --out "$work/certification.json" \
   --valid-for 24h
 
+# The existing join fixture must retain source identity and expiry before any
+# provider invocation. Exercise the actual certifier function with its driver
+# boundary replaced; all other validation still runs against these fixtures.
+python3 - "$repo_root" "$work" <<'PYJOIN'
+import copy, importlib.util, json, pathlib, sys
+from unittest.mock import patch
+repo, work = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("cert", repo / "scripts/release_certification.py")
+module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+pve = json.loads((work / "pve-certification.json").read_text())
+combined = json.loads((work / "certification.json").read_text())
+assert combined["expiresAt"] == pve["expiresAt"], "join extended inherited expiry"
+argv = ["--environment", "offline", "--topology", "full",
+        "--providers", "aws,azure,oci", "--contract", str(work / "contract.json"),
+        "--driver", str(work / "cloud-driver"), "--out", str(work / "identity-guard.json"),
+        "--pve-certification", str(work / "identity-input.json")]
+for field, value in (("artifact", "v20990102.0000"), ("qa", "c" * 40), ("execution", "legacy-state")):
+    other = copy.deepcopy(pve)
+    if field == "artifact": other["run"]["routerdArtifact"]["version"] = value
+    elif field == "qa": other["run"]["labsCommit"] = value; other["labsCommit"] = value
+    else: other["run"]["stateMode"] = value
+    (work / "identity-input.json").write_text(json.dumps(other))
+    with patch.object(module, "run_driver", side_effect=AssertionError("provider invoked")) as driver:
+        try: module.command_certify("cloud", argv)
+        except module.ContractError: pass
+        else: raise AssertionError("mismatched inherited contract accepted")
+        assert driver.call_count == 0
+print("existing-join-identity-expiry=ok driver_calls=0")
+PYJOIN
+
 "$repo_root/scripts/release-environment-preflight.sh" \
   --certification "$work/certification.json" \
   --environment offline \
@@ -435,6 +465,9 @@ fi
   --cloud-certification "$work/cloud-only-certification.json" \
   --out "$work/reverse-order-certification.json" \
   --valid-for 24h
+
+jq -e --slurpfile original "$work/cloud-only-certification.json" \
+  '.expiresAt == $original[0].expiresAt' "$work/reverse-order-certification.json" >/dev/null
 
 "$repo_root/scripts/release-environment-preflight.sh" \
   --certification "$work/reverse-order-certification.json" \

@@ -177,12 +177,14 @@ ifconfig "$client_bridge" >"$evidence_dir/vxlan-bridge-membership.log"
 grep -F "$client_vx" "$evidence_dir/vxlan-bridge-membership.log"
 ifconfig "$client_vx" inet 198.19.89.1/24 alias
 ifconfig "$peer_vx" inet 198.19.89.2/24 alias
-ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping.log"
+# Same-stack ping is diagnostic; local delivery cannot prove overlay forwarding.
+ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping.log" 2>&1 || true
 
 "$vx_script" onerestart >"$evidence_dir/vxlan-restart.log" 2>&1
 "$vx_script" onestatus >"$evidence_dir/vxlan-status-restart.log" 2>&1
 ifconfig "$client_vx" inet 198.19.89.1/24 alias
-ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping-restart.log"
+# Same-stack ping is diagnostic; local delivery cannot prove overlay forwarding.
+ping -S 198.19.89.1 -c 3 198.19.89.2 >"$evidence_dir/vxlan-over-wireguard-ping-restart.log" 2>&1 || true
 "$vx_script" onestop >"$evidence_dir/vxlan-stop.log" 2>&1
 vx_started=0
 if ifconfig "$client_vx" >"$evidence_dir/vxlan-after-stop.log" 2>&1; then
@@ -223,7 +225,8 @@ ifconfig "$client_if" destroy >>"$evidence_dir/wireguard-foreign-preserved.log" 
 printf '%s\n' \
   'wireguard-render-configure-handshake-observe-restart-stop=ok' \
   'wireguard-foreign-interface=generated-refusal-preserved' \
-  'vxlan-generated-configure-packet-restart-stop=ok' \
+  'vxlan-generated-configure-restart-stop=ok' \
+  'vxlan-over-wireguard-forwarding=unverified-same-stack-fixture' \
   'vxlan-generated-bridge-attach-detach=ok' \
   'vxlan-foreign-interface=generated-refusal-preserved' \
   'owned-interface-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"

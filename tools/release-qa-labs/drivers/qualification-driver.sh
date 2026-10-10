@@ -59,6 +59,7 @@ log="$evidence_root/commands/$qualification_profile-qualification.log"
 # deployment; routerd never owns DHCP, DHCPv6, or RA on that shared underlay.
 # PVE cloud-init names ipconfig0 management eth0 and client ipconfig1 eth1;
 # leaf capture has no ipconfig1 and retains ens19. Pin this closed profile.
+qualification_started=$SECONDS
 qualification_deadline=$((SECONDS + qualification_budget_seconds))
 PVE_MANAGEMENT_INTERFACE=eth0 PVE_CAPTURE_INTERFACE=ens19 PVE_CLIENT_CAPTURE_INTERFACE=eth1 \
   "$representative_validation" \
@@ -106,6 +107,17 @@ fi
 touch "$heartbeat"
 
 profile_result="$qualification_dir/profile-result.json"
+# Only final observed flow violations establish a product failure.
+product_evidence="$(python3 - "$qualification_dir" <<'PROOF'
+import json,sys
+from pathlib import Path
+proof=[]
+for path in Path(sys.argv[1]).rglob('status'):
+    if any(p.name.startswith('flows.') for p in path.parents) and path.read_text().strip() in {'FAIL_PING','FAIL_ROUTE','FAIL_HOSTNAME'}:
+        proof.append(str(path))
+print(json.dumps(proof))
+PROOF
+)"
 
 verify_profile_result() {
   jq -e \
@@ -151,11 +163,19 @@ if [ "$driver_rc" -eq 0 ] && verify_profile_result; then
   rc=0
 else
   status=fail
-  classification=product_failure
+  classification=infra_failure
+  [ "$driver_rc" -ne 3 ] && [ "$driver_rc" -ne 124 ] || classification=observation_inconclusive
+  if [ -f "$profile_result" ] && jq -e '
+    [.outcomes.samE2EExit?, .edgeScenarios[]?.e2eExit?]
+    | any(. == 3 or . == 124)' "$profile_result" >/dev/null 2>&1; then
+    classification=observation_inconclusive
+  fi
+  if [ "$(jq length <<<"$product_evidence")" -gt 0 ]; then classification=product_failure; fi
   result=fail
-  summary="$qualification_profile validation exit=$driver_rc; inspect $profile_result"
+  summary="$qualification_profile exit=$driver_rc classification=$classification; execution=$log profile=$profile_result; target/attempt/exit/stdout-stderr under $qualification_dir; product evidence=$product_evidence"
+  if [ "$driver_rc" -eq 0 ]; then summary="$summary; completed profile failed evidence validation"; fi
   if [ "$driver_rc" -eq 124 ]; then
-    summary="$qualification_profile qualification deadline exhausted (${qualification_budget_seconds}s); supervisor must quiesce the mutation process group before cleanup"
+    summary="$qualification_profile deadline exhausted ($qualification_budget_seconds s); incomplete execution, not proof of product failure; execution=$log profile=$profile_result product evidence=$product_evidence; supervisor owns cleanup"
   fi
   rc=1
 fi
@@ -166,9 +186,15 @@ jq -n \
   --arg result "$result" \
   --arg checkedAt "$(utc_now)" \
   --arg summary "$summary" \
+  --argjson driverExit "$driver_rc" \
+  --argjson elapsedSeconds "$((SECONDS - qualification_started))" \
+  --arg executionLog "$log" \
+  --arg profileResult "$profile_result" \
+  --argjson productEvidence "$product_evidence" \
   '{
     status:$status,
     classification:$classification,
+    driverExit:$driverExit,elapsedSeconds:$elapsedSeconds,executionLog:$executionLog,profileResult:$profileResult,productEvidence:$productEvidence,
     checks:[{
       name:"CloudEdge SAM representative-redundancy real-machine qualification",
       component:"cross-substrate",

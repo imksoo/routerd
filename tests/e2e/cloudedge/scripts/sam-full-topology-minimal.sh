@@ -163,34 +163,40 @@ timeout --foreground --kill-after=30s "${max_runtime_seconds}s" \
 e2e_rc=${PIPESTATUS[0]}
 set -e
 
+verify_matrix() {
+  local path="$1" cloud="$2"
+  [ -f "$path" ] || return 1
+  # Row counts alone can accept duplicates that hide an untested client.
+  # Require the exact directed pair set and PASS for every pair.
+  jq -Rne --slurpfile nodes "$nodes_json" --argjson cloud "$cloud" '
+    [inputs | split("\t")] as $rows
+    | ($nodes[0] | to_entries | map(select(.value.role == "client"))) as $clients
+    | [$clients[] as $src | $clients[] as $dst
+       | select($src.key != $dst.key)
+       | select(($cloud | not) or $src.value.site != "pve")
+       | [$src.key, $dst.key]] as $expected
+    | ($rows | all(length == 3 and .[2] == "PASS"))
+      and (($rows | map(.[0:2]) | sort) == ($expected | sort))
+  ' "$path" >/dev/null
+}
+
+
 verify_full_gate_evidence() {
-  local matrix cloud_ingress convergence expected_matrix expected_cloud actual_matrix actual_cloud
+  local matrix cloud_ingress convergence
   matrix="$qualification_dir/matrix/initial/summary.tsv"
   cloud_ingress="$qualification_dir/matrix/initial/cloud-ingress-summary.tsv"
   convergence="$qualification_dir/convergence/summary.tsv"
-  expected_matrix=$((client_count * (client_count - 1)))
-  expected_cloud=$((cloud_client_count * (client_count - 1)))
 
   if [ ! -f "$matrix" ] || [ ! -f "$cloud_ingress" ] || [ ! -f "$convergence" ]; then
     echo "minimal profile is missing required gate evidence" >&2
     return 1
   fi
-  actual_matrix="$(wc -l <"$matrix")"
-  actual_cloud="$(wc -l <"$cloud_ingress")"
-  [ "$actual_matrix" -eq "$expected_matrix" ] || {
-    echo "directed client matrix was incomplete: got $actual_matrix expected $expected_matrix" >&2
+  verify_matrix "$matrix" false || {
+    echo "directed client matrix does not contain exactly every required PASS pair" >&2
     return 1
   }
-  [ "$actual_cloud" -eq "$expected_cloud" ] || {
-    echo "directed cloud-ingress matrix was incomplete: got $actual_cloud expected $expected_cloud" >&2
-    return 1
-  }
-  awk -F '\t' '$3 != "PASS" { exit 1 }' "$matrix" || {
-    echo "directed client matrix contains a non-PASS result" >&2
-    return 1
-  }
-  awk -F '\t' '$3 != "PASS" { exit 1 }' "$cloud_ingress" || {
-    echo "directed cloud-ingress matrix contains a non-PASS result" >&2
+  verify_matrix "$cloud_ingress" true || {
+    echo "directed cloud-ingress matrix does not contain exactly every required PASS pair" >&2
     return 1
   }
   awk -F '\t' '$1 == "initial-dataplane" && $2 == "PASS" { found = 1 } END { exit !found }' "$convergence" || {

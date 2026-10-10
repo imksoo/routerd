@@ -1638,8 +1638,25 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `chain mgmt_to_self`) || !strings.Contains(got, `counter accept`) {
-		t.Fatalf("nftables output does not keep mgmt self access open:\n%s", got)
+	start := strings.Index(got, "chain mgmt_to_self {")
+	if start < 0 {
+		t.Fatalf("missing protected management chain:\n%s", got)
+	}
+	end := strings.Index(got[start:], "\n  }")
+	// This fixture allows all management traffic. Requiring the complete
+	// unconditional chain also rejects an SSH drop followed by an HTTP accept.
+	if end < 0 || strings.TrimSpace(got[start+len("chain mgmt_to_self {"):start+end]) != "counter accept" {
+		t.Fatalf("management self chain does not accept SSH:\n%s", got)
+	}
+	inputStart := strings.Index(got, "chain input {")
+	inputEnd := -1
+	if inputStart >= 0 {
+		inputEnd = strings.Index(got[inputStart:], "\n  }")
+	}
+	const inputPrefix = "chain input {\n    type filter hook input priority filter; policy drop;\n    ct state invalid counter drop\n    ct state { established, related } counter accept\n    iifname \"lo\" counter accept\n    meta l4proto ipv6-icmp counter accept\n    iifname @if_mgmt jump mgmt_to_self\n"
+	if !strings.Contains(got, `set if_mgmt { type ifname; elements = { "ens20" } }`) ||
+		inputEnd < 0 || !strings.HasPrefix(got[inputStart:inputStart+inputEnd], inputPrefix) {
+		t.Fatalf("protected management interface set is not bound to its self chain:\n%s", got)
 	}
 }
 

@@ -43,8 +43,16 @@ scripts/cloudedge-federation-qualification.sh \
 4. **restart** — eventd restart recovery (sender + receiver)
 5. **subscription** — subscription plugin failure + recovery
 6. **config-fault** — expected-peer / config fault detection via doctor
-7. **security** — HMAC / timestamp / malformed event rejection
+7. **security** — correctly signed malformed/invalid body rejection and bad-HMAC rejection, receiver nonacceptance and current valid delivery
 8. **multi-group** — per-group SLO isolation
+
+## Federation qualification evidence
+
+`scripts/cloudedge-federation-qualification.sh` requires positive cycles and all eight scenarios for release qualification. `--allow-skip` permits development subsets; their results never qualify a release. Each attempt uses a fresh evidence directory and event IDs, keeps command stdout/stderr/exit status and stops at the existing `--duration` budget per worker (including cleanup). A failure, incomplete observation or unconfirmed cleanup stops later faults and cycles without retries; retained fault markers require operator review before another attempt.
+
+TTL refresh compares the current receiver event with the sender's extended `ExpiresAt`; an old delivered row or absent `staleTTL` is insufficient. Subscription failure/recovery uses this attempt's event ID and receiver-side post-injection time. Partition isolation records a healthy A/B baseline, current B delivery during the A fault, and group/peer-scoped SLO violations plus remediation with configured thresholds. Identical thresholds are allowed. Security uses correctly signed malformed bodies and a valid body with a bad signature: expected HTTP 400/401 plus receiver nonacceptance and a current valid delivery are required; transport errors and 5xx prove no rejection.
+
+OTel availability, samples and labels are diagnostics: missing data remains inconclusive, never numeric zero or a product failure. The saved binary SHA-256 and product source commit are separate from the QA repository commit. Unknown or mismatched deployed source identity stops before scenario faults. Exit 1 records a measured assertion failure, 2 invalid input/setup, and 3 incomplete observation/provenance. These changes have offline boundary coverage; they do not establish provider or release qualification.
 
 Evidence template: [`evidence/federation-p4-operational-qualification-TEMPLATE.md`](evidence/federation-p4-operational-qualification-TEMPLATE)
 
@@ -73,3 +81,9 @@ Summary: 2 actions are **ready** for auto-execute (retry-failed-deliveries, forc
 - [ ] Documentation converged (all rows above = Updated)
 - [ ] CI green on qualification branch
 - [ ] Evidence committed to `docs/releases/evidence/`
+
+Development partition subsets that do not select multi-group require no B group. Go on the lab nodes is optional. `CE_BINARY_PROVENANCE_FILE` can point to an existing prepared/release contract: `routerdArtifact.commit` and `execution.candidate_binary_hashes` are bound to the current binary SHA-256. Conflicting runtime commit labels or mismatched hashes remain unconfirmed; a commit argument alone never establishes identity.
+
+The eventd digest comes from the selected systemd unit's MainPID executable (`/proc/<pid>/exe`), with the process and executable checked again after acquisition. A missing or changing process remains unconfirmed; a binary found on PATH does not prove the running service identity. An empty successful OTel label response remains diagnostic inconclusive.
+
+Existing offline assertions compare each WireGuard peer block and complete resource snapshots, the exact restored seven-peer topology for every leaf, seeded transition event identities/times, and transport peer/address associations. SSE request deadlines cancel blocked body reads. The active-stable guard requires the listed files and checks each version token separately. PoC bundles record schema validation as validated, unavailable, or invalid without requiring a new validator gate. Capture stop requires the existing four typed point records; missing or malformed state remains PARTIAL and performs no stop/copy calls. AWS fabric checks bind the requested secondary address to its longest matching route, retaining raw facts and PARTIAL/NOT-RUN. labctl builds only the matching clean current commit and records commit/tree identity; dry runs and prebuilt inputs do not claim a completed build or requested source use. RR stage proof rejects duplicate/conflicting required rows and report gates derive from checked outcomes. These are offline checks, not live qualification.

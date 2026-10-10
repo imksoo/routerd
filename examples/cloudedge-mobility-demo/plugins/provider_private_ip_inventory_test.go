@@ -4,6 +4,7 @@ package plugins_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type inventoryResult struct {
@@ -487,14 +491,14 @@ esac
 func TestProviderPrivateIPInventoryPluginOCISucceedsWhenRemoteVNICDetailTimesOut(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
+	pidFile := filepath.Join(bin, "optional-cli.pid")
 	writeExecutable(t, filepath.Join(bin, "oci"), `#!/bin/sh
 case "$*" in
   *"network vnic get --vnic-id vnic-router"*)
     printf '%s\n' '{"data":{"id":"vnic-router","subnet-id":"subnet-oci","compartment-id":"compartment-demo","skip-source-dest-check":true}}'
     ;;
   *"network vnic get --vnic-id vnic-client"*)
-    sleep 2
-    printf '%s\n' '{"data":{"id":"vnic-client","subnet-id":"subnet-oci"}}'
+    exec python3 -c 'import os,pathlib,time; pathlib.Path(os.environ["ROUTERD_FIXTURE_PID"]).write_text(str(os.getpid())); time.sleep(3600)'
     ;;
   *"compute vnic-attachment list --compartment-id compartment-demo"*)
     printf '%s\n' '{"data":[{"vnic-id":"vnic-router","instance-id":"i-router"},{"vnic-id":"vnic-client","instance-id":"i-client"}]}'
@@ -513,6 +517,7 @@ esac
 `)
 	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{
 		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
+		"ROUTERD_FIXTURE_PID=" + pidFile,
 		"ROUTERD_PROVIDER_INVENTORY_OCI_VNIC_DETAIL_TIMEOUT=0.1",
 	})
 	if res.Status.Status != "succeeded" {
@@ -520,6 +525,17 @@ esac
 	}
 	assertIP(t, res, "10.77.60.13", "vnic-client", "subnet-oci")
 	assertResource(t, res, "10.77.60.13", "i-client", "instance-nic")
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("optional CLI was not invoked: %v", err)
+	}
+	pid, err := strconv.Atoi(string(pidBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
+		t.Fatalf("timed-out CLI still alive or unverified: pid=%d err=%v", pid, err)
+	}
 }
 
 func TestProviderPrivateIPInventoryPluginOCIClassifiesRemoteRouterFromInstanceTags(t *testing.T) {
@@ -845,6 +861,7 @@ esac
 func TestProviderPrivateIPInventoryPluginAzureSucceedsWhenVMMetadataTimesOut(t *testing.T) {
 	requirePython(t)
 	bin := fakeBinDir(t)
+	pidFile := filepath.Join(bin, "optional-cli.pid")
 	writeExecutable(t, filepath.Join(bin, "az"), `#!/bin/sh
 case "$*" in
   *"network nic show --ids /nic/router"*)
@@ -854,8 +871,7 @@ case "$*" in
     printf '%s\n' '[{"id":"/nic/router","tags":{"role":"router"},"ipConfigurations":[{"privateIPAddress":"10.77.60.22","primary":true,"subnet":{"id":"/subnets/demo"}}]},{"id":"/nic/client","tags":{"role":"client"},"ipConfigurations":[{"privateIPAddress":"10.77.60.12","primary":true,"subnet":{"id":"/subnets/demo"}}]}]'
     ;;
   *"vm list --resource-group rg-demo"*)
-    sleep 2
-    printf '%s\n' '[]'
+    exec python3 -c 'import os,pathlib,time; pathlib.Path(os.environ["ROUTERD_FIXTURE_PID"]).write_text(str(os.getpid())); time.sleep(3600)'
     ;;
   *)
     echo "unexpected az args: $*" >&2
@@ -863,12 +879,23 @@ case "$*" in
     ;;
 esac
 `)
-	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_AZURE_VM_METADATA_TIMEOUT=0.1"})
+	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"azure","selfNicRef":"/nic/router","target":{"resourceGroup":"rg-demo"}}}`, []string{"ROUTERD_PROVIDER_INVENTORY_AZURE_VM_METADATA_TIMEOUT=0.1", "ROUTERD_FIXTURE_PID=" + pidFile})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status=%q error=%q, want succeeded despite Azure VM metadata timeout", res.Status.Status, res.Status.Error)
 	}
 	assertIP(t, res, "10.77.60.12", "/nic/client", "/subnets/demo")
 	assertResource(t, res, "10.77.60.12", "", "instance-nic")
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("optional CLI was not invoked: %v", err)
+	}
+	pid, err := strconv.Atoi(string(pidBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(pid, 0); err != syscall.ESRCH {
+		t.Fatalf("timed-out CLI still alive or unverified: pid=%d err=%v", pid, err)
+	}
 }
 
 func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
@@ -878,7 +905,9 @@ func runInventoryPlugin(t *testing.T, fakeBin, stdin string) inventoryResult {
 
 func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []string) inventoryResult {
 	t.Helper()
-	cmd := exec.Command("./provider-private-ip-inventory")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "./provider-private-ip-inventory")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	cmd.Env = append(cmd.Env, extraEnv...)

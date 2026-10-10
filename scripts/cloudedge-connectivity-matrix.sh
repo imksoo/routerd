@@ -50,7 +50,7 @@ ENV:
                        MATRIX_RUNNER ping  <src_site> <dst_ip>            -> exit 0/!0
                        MATRIX_RUNNER ssh   <src_site> <dst_ip>            -> prints:
                            peer_ip=<ip seen by dst>
-                           default_gw=<src client default gw>
+                           default_gw=<src client default gw>\n                           default_gw_before=<gateway measured before this flow>
                      The default runner shells out to ssh/ping using the demo
                      env (SSH_KEY_FILE, *_CLIENT_SSH_HOST, jump hosts).
   CE_MATRIX_SITES    Same format as --sites.
@@ -109,6 +109,13 @@ load_sites_from_spec() {
     ip=$(echo "$ip" | tr -d '[:space:]')
     [[ -z "$name" || -z "$ip" || "$name" == "$ip" ]] && {
       echo "$SELF: bad site spec entry: '$pair' (want site=ip)" >&2; exit 2; }
+    local existing
+    for existing in "${SITE_NAMES[@]}"; do
+      [[ "$existing" != "$name" ]] || { echo "$SELF: duplicate site: $name" >&2; exit 2; }
+    done
+    for existing in "${SITE_IPS[@]}"; do
+      [[ "$existing" != "$ip" ]] || { echo "$SELF: duplicate client address: $ip" >&2; exit 2; }
+    done
     SITE_NAMES+=("$name")
     SITE_IPS+=("$ip")
   done
@@ -125,8 +132,7 @@ else
     "aws=${AWS_CLIENT_IP:-10.77.60.11}" \
     "azure=${AZURE_CLIENT_IP:-10.77.60.12}" \
     "oci=${OCI_CLIENT_IP:-10.77.60.13}"; do
-    SITE_NAMES+=("${entry%%=*}")
-    SITE_IPS+=("${entry#*=}")
+    load_sites_from_spec "$entry"
   done
 fi
 
@@ -181,7 +187,7 @@ default_runner() {
       dst_identity=$(ce_remote_identity_command "$dst_expected")
       # shellcheck disable=SC2029
       ssh "${ssh_opts[@]}" "${target[@]}" \
-        "src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh -o BatchMode=yes -o StrictHostKeyChecking=$nested_strict -o UserKnownHostsFile=$nested_known_hosts -o ConnectTimeout=8 $user@$dst_ip \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
+        "echo default_gw_before=\$(ip route show default | awk '{print \$3; exit}'); src_out=\$(bash -lc $src_identity); src_rc=\$?; printf '%s\n' \"\$src_out\" | sed 's/^/src_/'; ssh_rc=0; ssh -o BatchMode=yes -o StrictHostKeyChecking=$nested_strict -o UserKnownHostsFile=$nested_known_hosts -o ConnectTimeout=8 $user@$dst_ip \"dst_out=\\\$(bash -lc $dst_identity); dst_rc=\\\$?; printf '%s\n' \\\"\\\$dst_out\\\" | sed 's/^/dst_/'; echo peer_ip=\\\$(echo \\\$SSH_CONNECTION | awk '{print \\\$1}'); exit \\\$dst_rc\" || ssh_rc=\$?; echo default_gw=\$(ip route show default | awk '{print \$3; exit}'); exit \$((src_rc != 0 ? src_rc : ssh_rc))"
       ;;
     *) echo "$SELF: default runner: unknown op $op" >&2; return 3 ;;
   esac
@@ -201,7 +207,7 @@ now_epoch() { date -u +%s; }
 
 write_flow_result() {
   local out=$1 src=$2 src_ip=$3 dst=$4 dst_ip=$5
-  local ping_res peer_ip default_gw ssh_out ssh_rc src_hostname dst_hostname
+  local ping_res peer_ip default_gw default_gw_before ssh_out ssh_rc src_hostname dst_hostname
   local src_hostkey dst_hostkey src_identity_error dst_identity_error
   local src_pres no_nat gw_ok identity_ok src_expected dst_expected flow_res
 
@@ -216,6 +222,7 @@ write_flow_result() {
   ssh_rc=0
   ssh_out=$(run_op ssh "$src" "$dst_ip" "$dst" 2>/dev/null) || ssh_rc=$?
   peer_ip=$(echo "$ssh_out" | sed -n 's/^peer_ip=//p' | head -n1)
+  default_gw_before=$(echo "$ssh_out" | sed -n 's/^default_gw_before=//p' | head -n1)
   default_gw=$(echo "$ssh_out" | sed -n 's/^default_gw=//p' | head -n1)
   src_hostname=$(echo "$ssh_out" | sed -n 's/^src_hostname=//p' | head -n1)
   dst_hostname=$(echo "$ssh_out" | sed -n 's/^dst_hostname=//p' | head -n1)
@@ -230,7 +237,8 @@ write_flow_result() {
 
   gw_ok="fail"
   if [[ "$EXPECT_GW" == "unchanged" ]]; then
-    [[ -n "$default_gw" ]] && gw_ok="pass"
+    if [[ -z "$default_gw_before" || -z "$default_gw" ]]; then gw_ok="inconclusive"
+    elif [[ "$default_gw" == "$default_gw_before" ]]; then gw_ok="pass"; fi
   else
     [[ "$default_gw" == "$EXPECT_GW" ]] && gw_ok="pass"
   fi
@@ -256,7 +264,7 @@ write_flow_result() {
   fi
 
   cat > "$out" <<EOF
-{"src":"$(json_escape "$src")","dst":"$(json_escape "$dst")","dstIp":"$(json_escape "$dst_ip")","srcIp":"$(json_escape "$src_ip")","peerIp":"$(json_escape "$peer_ip")","defaultGw":"$(json_escape "$default_gw")","srcHostname":"$(json_escape "$src_hostname")","dstHostname":"$(json_escape "$dst_hostname")","srcHostKeySHA256":"$(json_escape "$src_hostkey")","dstHostKeySHA256":"$(json_escape "$dst_hostkey")","srcIdentityError":"$(json_escape "$src_identity_error")","dstIdentityError":"$(json_escape "$dst_identity_error")","ping":"$ping_res","sourceIpPreserved":"$src_pres","defaultGwUnchanged":"$gw_ok","noNat":"$no_nat","identityCheck":"$identity_ok","result":"$flow_res"}
+{"src":"$(json_escape "$src")","dst":"$(json_escape "$dst")","dstIp":"$(json_escape "$dst_ip")","srcIp":"$(json_escape "$src_ip")","peerIp":"$(json_escape "$peer_ip")","defaultGw":"$(json_escape "$default_gw")","defaultGwBefore":"$(json_escape "$default_gw_before")","srcHostname":"$(json_escape "$src_hostname")","dstHostname":"$(json_escape "$dst_hostname")","srcHostKeySHA256":"$(json_escape "$src_hostkey")","dstHostKeySHA256":"$(json_escape "$dst_hostkey")","srcIdentityError":"$(json_escape "$src_identity_error")","dstIdentityError":"$(json_escape "$dst_identity_error")","ping":"$ping_res","sourceIpPreserved":"$src_pres","defaultGwUnchanged":"$gw_ok","noNat":"$no_nat","identityCheck":"$identity_ok","result":"$flow_res"}
 EOF
 }
 

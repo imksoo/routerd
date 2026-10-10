@@ -287,12 +287,19 @@ verify_staged_rr_pair() {
   local stages="$qualification_dir/deploy/rr-stage.tsv"
   [ -f "$stages" ] || return 1
   awk -F '\t' '
-    $1 == "rr-a-started" && $2 == "pve-rr-a" && $3 == "PASS" { a = 1; a_line = NR }
-    $1 == "rr-a-joined" && $2 == "pve-rr-a" && $3 == "PASS" { a_joined = 1; a_joined_line = NR }
-    $1 == "rr-b-started" && $2 == "pve-rr-b" && $3 == "PASS" { b = 1; b_line = NR }
-    $1 == "rr-b-joined" && $2 == "pve-rr-b" && $3 == "PASS" { b_joined = 1; b_joined_line = NR }
-    $1 == "rr-pair-ready" && $2 == "pve-rr-a,pve-rr-b" && $3 == "PASS" { pair = 1; pair_line = NR }
-    END { exit !(a && a_joined && b && b_joined && pair && a_line < a_joined_line && a_joined_line < b_line && b_line < b_joined_line && b_joined_line < pair_line) }
+    BEGIN {
+      names[1]="rr-a-started"; nodes[1]="pve-rr-a"
+      names[2]="rr-a-joined"; nodes[2]="pve-rr-a"
+      names[3]="rr-b-started"; nodes[3]="pve-rr-b"
+      names[4]="rr-b-joined"; nodes[4]="pve-rr-b"
+      names[5]="rr-pair-ready"; nodes[5]="pve-rr-a,pve-rr-b"
+      for (i=1;i<=5;i++) expected[names[i]]=i
+    }
+    $1 in expected {
+      position=expected[$1]; seen[position]++
+      if (seen[position]!=1 || $2!=nodes[position] || $3!="PASS" || position!=++matched) failed=1
+    }
+    END { exit !(matched==5 && !failed) }
   ' "$stages"
 }
 
@@ -305,8 +312,17 @@ verify_transition() {
   [ -f "$canary" ] && [ -f "$convergence" ] || return 1
   verify_transition_ack "$convergence" "$label" || return 1
   [ "$#" -gt 0 ] || return 1
-  [ "$(wc -l <"$canary")" -eq 4 ] || return 1
-  awk -F '\t' '$3 != "PASS" { exit 1 }' "$canary" || return 1
+  jq -Rne --slurpfile nodes "$nodes_json" '
+    [inputs | split("\t")] as $rows
+    | ["aws", "azure", "oci", "pve"] as $sites
+    | [$sites[] as $site | ($nodes[0] | to_entries
+       | map(select(.value.role == "client" and .value.site == $site))
+       | sort_by(.key) | .[0].key)] as $clients
+    | [$clients | to_entries[] | [.value, $clients[((.key + 1) % 4)]]] as $expected
+    | ($clients | all(type == "string" and length > 0))
+      and ($rows | all(length == 3 and .[2] == "PASS"))
+      and (($rows | map(.[0:2]) | sort) == ($expected | sort))
+  ' "$canary" >/dev/null || return 1
   verify_gate "$convergence" "$label-dataplane" || return 1
   verify_gate "$convergence" "$label-provider" || return 1
   for rr in "$@"; do
@@ -316,15 +332,15 @@ verify_transition() {
 
 e2e_rc=0
 run_e2e "$qualification_dir" pve-rr-a --transition-canary || e2e_rc=$?
-baseline_rc=0
-staging_rc=0
-failover_rc=0
-rejoin_rc=0
+baseline_rc=1
+staging_rc=1
+failover_rc=1
+rejoin_rc=1
 if [ "$e2e_rc" -eq 0 ]; then
-  verify_staged_rr_pair || staging_rc=1
-  verify_baseline || baseline_rc=1
-  verify_transition after-failover-pve-rr-a pve-rr-b || failover_rc=1
-  verify_transition after-rejoin-pve-rr-a pve-rr-a pve-rr-b || rejoin_rc=1
+  verify_staged_rr_pair && staging_rc=0 || :
+  verify_baseline && baseline_rc=0 || :
+  verify_transition after-failover-pve-rr-a pve-rr-b && failover_rc=0 || :
+  verify_transition after-rejoin-pve-rr-a pve-rr-a pve-rr-b && rejoin_rc=0 || :
 fi
 
 edge_nodes=(aws-leaf-a azure-leaf-a oci-leaf-a pve-leaf-a)
@@ -426,19 +442,19 @@ jq -n \
     edgeScenarios:$edgeScenarios,
     symmetry:{testedSides:["a"],bSideEquivalent:"unproven"},
     gates:{
-      rrAStaged:true,
-      rrAJoined:true,
-      rrBStaged:true,
-      rrBJoined:true,
-      rrPairReady:true,
-      fullBaseline:true,
-      directedClientMatrix:true,
-      directedCloudIngressMatrix:true,
-      providerReadiness:true,
-      rrAFailover:true,
-      rrBControlPlaneContinuity:true,
-      rrBContinuityCanary:true,
-      rrARejoin:true,
+      rrAStaged:($stagingEvidenceExit == 0),
+      rrAJoined:($stagingEvidenceExit == 0),
+      rrBStaged:($stagingEvidenceExit == 0),
+      rrBJoined:($stagingEvidenceExit == 0),
+      rrPairReady:($stagingEvidenceExit == 0),
+      fullBaseline:($baselineEvidenceExit == 0),
+      directedClientMatrix:($baselineEvidenceExit == 0),
+      directedCloudIngressMatrix:($baselineEvidenceExit == 0),
+      providerReadiness:($baselineEvidenceExit == 0),
+      rrAFailover:($failoverEvidenceExit == 0),
+      rrBControlPlaneContinuity:($failoverEvidenceExit == 0),
+      rrBContinuityCanary:($failoverEvidenceExit == 0),
+      rrARejoin:($rejoinEvidenceExit == 0),
       edgeAFailover:$edgePassed,
       edgeARejoin:$edgePassed,
       edgeAClientMatrix:$edgePassed,

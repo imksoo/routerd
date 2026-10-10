@@ -77,8 +77,10 @@ fi
 remote_script='
 set -eu
 bridge="$1"
-for id in $(qm list | awk "NR>1 {print \$1}"); do
-  cfg="$(qm config "$id" 2>/dev/null || true)"
+inventory="$(qm list)" || exit 3
+ids="$(printf "%s\n" "$inventory" | awk "NR>1 {print \$1}")"
+for id in $ids; do
+  cfg="$(qm config "$id")" || exit 3
   if printf "%s\n" "$cfg" | grep -Eq "^[[:space:]]*net[0-9]+: .*bridge=${bridge}([,[:space:]]|$)"; then
     name="$(printf "%s\n" "$cfg" | awk -F": " "/^name:/ {print \$2; exit}")"
     nets="$(printf "%s\n" "$cfg" | awk -v bridge="$bridge" '"'"'
