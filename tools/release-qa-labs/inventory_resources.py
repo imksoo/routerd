@@ -20,6 +20,10 @@ class InventoryError(ValueError):
     pass
 
 
+class InventoryPending(InventoryError):
+    """Validated identity, but asynchronous lifecycle observations disagree."""
+
+
 def require(condition, message):
     if not condition:
         raise InventoryError(message)
@@ -130,9 +134,14 @@ def aws_counts(tagged, lookup, active, run_id, region):
     require(set(expected) == set(resolved), "AWS exact-ID lookup is missing or has extra instances")
     for instance, account in expected.items():
         require(resolved[instance][0] == account, "AWS ARN and lookup account differ")
+    pending = []
     for instance, identity in active_instances.items():
-        require(identity[1] != "terminated", "AWS active query unexpectedly returned terminated state")
-        require(instance not in resolved or resolved[instance] == identity, "AWS instance observations disagree")
+        require(instance not in resolved or resolved[instance][0] == identity[0],
+                "AWS instance account observations disagree")
+        if identity[1] == "terminated" or (instance in resolved and resolved[instance][1] != identity[1]):
+            pending.append(instance)
+    if pending:
+        raise InventoryPending("AWS lifecycle changed between observations: " + ", ".join(pending))
     terminated = sum(state == "terminated" for _, state in resolved.values())
     # A delayed tagging index must not hide a live instance seen by EC2.
     additional_active = len(set(active_instances) - set(resolved))
@@ -173,6 +182,7 @@ def oci_counts(search, compute, run_id, compartment):
     identifiers = set()
     searched_instances = set()
     terminated = 0
+    pending = []
     for row in search["data"]["items"]:
         object_value(row, "OCI search resource")
         identifier = text_value(row.get("identifier"), "OCI search identifier")
@@ -190,10 +200,13 @@ def oci_counts(search, compute, run_id, compartment):
         observed = instances.get(identifier)
         require(observed is not None, "OCI search instance is missing from compute inventory")
         require(observed["freeform-tags"].get("RouterdRunId") == run_id
-                and observed.get("compartment-id") == compartment
-                and observed.get("lifecycle-state") == state, "OCI search and compute identity/state differ")
+                and observed.get("compartment-id") == compartment, "OCI search and compute identity differ")
+        if observed.get("lifecycle-state") != state:
+            pending.append(identifier)
         searched_instances.add(identifier)
         terminated += state == "TERMINATED"
+    if pending:
+        raise InventoryPending("OCI lifecycle changed between observations: " + ", ".join(pending))
     return counts(len(identifiers), terminated, len(active),
                   len(identifiers) - terminated + len(active - searched_instances))
 
@@ -231,6 +244,10 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except InventoryPending as error:
+        print(json.dumps({"classification": "observation_inconclusive", "retryable": True,
+                          "reason": str(error)}))
+        sys.exit(3)
     except InventoryError as error:
         print("inventory resources: " + str(error), file=sys.stderr)
         sys.exit(2)
