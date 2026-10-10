@@ -156,6 +156,7 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 		SQLiteStore: store,
 		entered:     make(chan struct{}),
 		release:     make(chan struct{}),
+		drained:     make(chan struct{}),
 	}
 	controller := &Controller{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
@@ -186,22 +187,34 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 			t.Fatal(err)
 		}
 	}
+	inputs, err := store.ListEvents(routerstate.EventQuery{Limit: 1})
+	if err != nil || len(inputs) != 1 {
+		t.Fatalf("input journal tip: rows=%d err=%v", len(inputs), err)
+	}
+	blockedEvents.throughID = inputs[0].ID
 	close(blockedEvents.release)
+	waitForDrain(t, blockedEvents.drained)
 	waitForRecent(t, b, "routerd.out", 1)
 	cancel()
 	controller.StopTimers()
 
+	tip, err := store.ListEvents(routerstate.EventQuery{Limit: 1})
+	if err != nil || len(tip) != 1 {
+		t.Fatalf("restart journal tip: rows=%d err=%v", len(tip), err)
+	}
+	restartEvents := &blockingEventStore{SQLiteStore: store, entered: make(chan struct{}), release: make(chan struct{}), drained: make(chan struct{}), throughID: tip[0].ID}
+	close(restartEvents.release)
 	restarted := &Controller{
 		Router: controller.Router,
 		Bus:    b,
 		Store:  store,
-		Events: store,
+		Events: restartEvents,
 		Poll:   20 * time.Millisecond,
 	}
 	restartCtx, restartCancel := context.WithCancel(context.Background())
 	defer restartCancel()
 	restarted.Start(restartCtx)
-	time.Sleep(100 * time.Millisecond)
+	waitForDrain(t, restartEvents.drained)
 	if got := len(b.Recent("routerd.out")); got != 1 {
 		t.Fatalf("restart replayed processed events: outputs = %d, want 1", got)
 	}
@@ -209,9 +222,12 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 
 type blockingEventStore struct {
 	*routerstate.SQLiteStore
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
+	entered   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+	drained   chan struct{}
+	throughID int64
+	drainOnce sync.Once
 }
 
 func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routerstate.StoredEvent, error) {
@@ -219,7 +235,29 @@ func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routers
 		close(s.entered)
 		<-s.release
 	})
-	return s.SQLiteStore.ListEvents(query)
+	rows, err := s.SQLiteStore.ListEvents(query)
+	if err == nil && len(rows) == 0 && query.SinceID >= s.throughID {
+		s.drainOnce.Do(func() { close(s.drained) })
+	}
+	return rows, err
+}
+
+// Signal only after the actual persisted cursor reaches the captured journal tip.
+func (s *blockingEventStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
+	err := s.SQLiteStore.SaveEventConsumerCursor(consumer, cursor)
+	if err == nil && cursor >= s.throughID {
+		s.drainOnce.Do(func() { close(s.drained) })
+	}
+	return err
+}
+
+func waitForDrain(t *testing.T, drained <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-drained:
+	case <-time.After(10 * time.Second):
+		t.Fatal("stored event drain did not reach the captured journal tip")
+	}
 }
 
 func testController(pattern api.EventRulePatternSpec) (*Controller, *bus.Bus) {
