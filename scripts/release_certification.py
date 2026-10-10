@@ -795,6 +795,30 @@ def start_watchdog(
     return process.pid
 
 
+def qualification_outcome(
+    driver_result: dict[str, Any], *, driver_exit: int, cleanup_exit: int,
+    inventory_exit: int, aborted: Any,
+) -> tuple[str, str]:
+    """Keep proven violations and incomplete observations distinct at the last caller."""
+    checks = driver_result.get("checks", [])
+    if not isinstance(checks, list):
+        return "fail", "infra_failure"
+    # A later successful opportunity must not erase an observed product violation.
+    if any(isinstance(check, dict) and check.get("result") == "fail"
+           and check.get("classification") == "product_failure" for check in checks):
+        return "fail", "product_failure"
+    if aborted or cleanup_exit != 0 or inventory_exit != 0:
+        return "fail", "infra_failure"
+    if (driver_exit == 0 and driver_result.get("status") == "pass"
+            and driver_result.get("classification") == "none"):
+        return "pass", "none"
+    classification = driver_result.get("classification")
+    if classification not in {"preflight_failure", "product_failure", "infra_failure", "observation_inconclusive"}:
+        # A missing, contradictory or unrecognised report proves no product defect.
+        classification = "infra_failure"
+    return "fail", classification
+
+
 def command_qualification(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="release-qualification-smoke.sh")
     parser.add_argument("--certification", type=Path, required=True)
@@ -919,17 +943,10 @@ def command_qualification(argv: list[str]) -> int:
         if isinstance(loaded, dict):
             driver_result = loaded
     aborted = load_json(abort) if abort.is_file() else None
-    result_status = "pass"
-    classification = "none"
-    if aborted:
-        result_status = "fail"
-        classification = "infra_failure"
-    elif cleanup_exit != 0 or inventory_exit != 0:
-        result_status = "fail"
-        classification = "infra_failure"
-    elif driver_exit != 0 or driver_result.get("status") != "pass":
-        result_status = "fail"
-        classification = driver_result.get("classification", "product_failure")
+    result_status, classification = qualification_outcome(
+        driver_result, driver_exit=driver_exit, cleanup_exit=cleanup_exit,
+        inventory_exit=inventory_exit, aborted=aborted,
+    )
     result = {
         "schemaVersion": "release-qualification-result/v1",
         "runId": run_id,

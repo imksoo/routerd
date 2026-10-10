@@ -42,7 +42,7 @@
     },
     "classification": {
       "type": "string",
-      "enum": ["none", "preflight_failure", "product_failure", "infra_failure"]
+      "enum": ["none", "preflight_failure", "product_failure", "infra_failure", "observation_inconclusive"]
     },
     "startedAt": {
       "type": "string",
