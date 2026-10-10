@@ -254,6 +254,7 @@ collect_raw >"$raw_file"
 
 python3 - "$provider" "$test_id" "$capture_address" "$control_dir" "$schema" "$raw_file" <<'PY'
 import csv
+import ipaddress
 import json
 import os
 import sys
@@ -328,19 +329,37 @@ def normalize_aws(raw):
     forwarding = None if source_dest_check is None else not bool(source_dest_check)
     route_tables = as_list(raw.get("routeTables") or raw.get("RouteTables"))
     routes = []
-    local_route = False
     for table in route_tables:
         for r in as_list(field(table, "routes", default=[])):
             prefix = field(r, "destinationCidrBlock", default="") or field(r, "destinationIpv6CidrBlock", default="")
             target = field(r, "gatewayId", default="") or field(r, "networkInterfaceId", default="") or field(r, "natGatewayId", default="") or field(r, "transitGatewayId", default="")
             routes.append(route(prefix, target, "route-table"))
-            if target == "local":
-                local_route = True
+    requested = capture_address or (secondary[0] if secondary else None)
+    address = None
+    try:
+        address = ipaddress.ip_address(str(requested))
+    except ValueError:
+        pass
+    requested_secondary = address is not None and any(str(address) == str(ip) for ip in secondary)
+    candidates = []
+    if address is not None:
+        for item in routes:
+            try:
+                prefix = ipaddress.ip_network(item["prefix"], strict=False)
+            except ValueError:
+                continue
+            if prefix.version == address.version and address in prefix:
+                candidates.append((prefix.prefixlen, item))
+    longest = []
+    if candidates:
+        bits = max(bits for bits, _ in candidates)
+        longest = [item for size, item in candidates if size == bits]
+    local_route = all(item["target"] == "local" for item in longest) if longest else None
     groups = as_list(field(ni, "groups", default=[])) + as_list(raw.get("securityGroups"))
     nacls = as_list(raw.get("networkAcls") or raw.get("NetworkAcls"))
     flows = as_list(raw.get("flowLogs") or raw.get("FlowLogs"))
     normalized = {
-        "captureAddress": capture_address or (secondary[0] if secondary else None),
+        "captureAddress": requested,
         "primaryAddress": primary,
         "secondaryAddresses": secondary,
         "forwardingEnabled": forwarding,
@@ -352,16 +371,18 @@ def normalize_aws(raw):
             "eniId": field(ni, "networkInterfaceId", default=""),
             "sourceDestCheck": source_dest_check,
             "routeTableCount": len(route_tables),
+            "requestedSecondaryAddressObserved": requested_secondary,
+            "longestPrefixRoutes": longest,
         },
     }
     checks = [
         check("aws_eni_primary_ip", bool(primary), "ENI primary private IP missing"),
-        check("aws_eni_secondary_ip", bool(secondary), "ENI secondary private IP missing"),
+        check("aws_eni_secondary_ip", requested_secondary, "requested capture address is not an observed ENI secondary IP"),
         check("aws_source_dest_check_disabled", forwarding is True, "source/dest check is not disabled"),
         check("aws_route_tables", bool(route_tables), "route table evidence missing"),
         check("aws_sg_nacl", bool(groups) and bool(nacls), "SG or NACL evidence missing"),
         check("aws_flow_logs", bool(flows), "VPC flow log reference missing"),
-        check("aws_longest_prefix_local_route", local_route, "local route evidence missing"),
+        check("aws_longest_prefix_local_route", local_route is True, "requested capture address has no confirmed longest-prefix local route"),
     ]
     return normalized, checks
 

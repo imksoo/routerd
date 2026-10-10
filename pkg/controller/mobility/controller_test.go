@@ -1708,8 +1708,8 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 	}
 
 	events := listMobilityTransitionEvents(t, store)
-	seizeEvents := transitionEventsByKindAddress(events, "seize-complete")
-	confirmEvents := transitionEventsByKindAddress(events, "capture-confirmed")
+	seizeEvents := transitionEventsByKindAddress(t, events, "seize-complete")
+	confirmEvents := transitionEventsByKindAddress(t, events, "capture-confirmed")
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	plans := decodeActionPlans(t, latestPart(t, store, DynamicSource("cloudedge", selfNode)).ActionPlansJSON)
 	seizedPlan := findActionPlanByAddress(plans, actionAssignSecondaryIP, seized)
@@ -1727,16 +1727,25 @@ func TestControllerBGPModeProviderCaptureCompletionEventsUseProductionObservatio
 		t.Fatalf("completion events: seize-complete=%d capture-confirmed=%d, want one each (seize=%#v confirm=%#v)", len(seizeEvents), len(confirmEvents), seizeEvents, confirmEvents)
 	}
 	durations := extractTransitionDurationsByAddress(t, events)
-	if got, ok := durations["seize-complete"][seized]; !ok {
-		t.Fatalf("missing extractable seize duration for %s (durations=%#v)", seized, durations)
-	} else if got < 0 {
-		t.Fatalf("extractable seize duration for %s = %s, want >= 0", seized, got)
+	for _, want := range []struct {
+		kind, address string
+		duration      time.Duration
+	}{
+		{"seize-complete", seized, 5 * time.Second}, {"capture-confirmed", confirmed, 4 * time.Second},
+	} {
+		if got, ok := durations[want.kind][want.address]; !ok || got != want.duration {
+			t.Fatalf("%s/%s duration=%s present=%t want=%s", want.kind, want.address, got, ok, want.duration)
+		}
+		selected := seizeEvents
+		if want.kind == "capture-confirmed" {
+			selected = confirmEvents
+		}
+		event := selected[want.address]
+		if fmt.Sprint(event.Attributes["timestamp"]) != now.Format(time.RFC3339Nano) || fmt.Sprint(event.Attributes["issuedAt"]) != now.Add(-want.duration).Format(time.RFC3339Nano) || fmt.Sprint(event.Attributes["toNode"]) != selfNode {
+			t.Fatalf("current transition identity/times = %#v", event)
+		}
 	}
-	if got, ok := durations["capture-confirmed"][confirmed]; !ok {
-		t.Fatalf("missing extractable capture duration for %s (durations=%#v)", confirmed, durations)
-	} else if got < 0 {
-		t.Fatalf("extractable capture duration for %s = %s, want >= 0", confirmed, got)
-	}
+
 }
 
 func TestControllerBGPModeBG24RuntimeSeizesWhenAWSActiveMarkerAbsent(t *testing.T) {

@@ -151,3 +151,5 @@ OTel 可用性、sample 和 label 屬於診斷，缺失保持未判定，不替�
 開發用 partition 子集未選擇 multi-group 時，不要求 B group。實機的 Go 是可選工具。`CE_BINARY_PROVENANCE_FILE` 可指定現有 prepared/release contract，將 `routerdArtifact.commit` 和 `execution.candidate_binary_hashes` 與本次 binary SHA-256 對照。runtime commit 顯示衝突或 hash 不匹配時保留未確認狀態，不會僅憑 commit 參數確認 identity。
 
 eventd digest 來自目標 systemd unit 的 MainPID 執行檔（`/proc/<pid>/exe`），取得後再次核對程序和執行檔。程序缺失或變化時保持未確認，PATH 中的 binary 不能證明執行中服務的 identity。成功回應中的空 OTel label 陣列仍為診斷未判定。
+
+現有 offline assertion 按 WireGuard peer block 和完整 resource snapshot、每個 leaf 恢復的準確七個 peer、注入的 transition event identity/時間以及 transport peer/address 對應關係核對。SSE request deadline 可中斷阻塞的本文讀取。active-stable guard 要求指定檔案存在，並逐個檢查 version token。PoC bundle 將 schema 驗證記錄為 validated、unavailable 或 invalid，不新增必須安裝 validator 的 gate。capture stop 檢查現有四個 typed point record；缺失或損壞的 state 保持 PARTIAL，不執行 stop/copy。AWS fabric 核對請求的 secondary address 及其最長匹配 route，保留 raw facts 和 PARTIAL/NOT-RUN。labctl 只建置匹配的 clean 目前 checkout 並記錄 commit/tree identity；dry run 和 prebuilt 輸入不聲稱完成 build 或使用請求的 source。RR stage 拒絕必需 row 的重複或衝突，report gate 從已確認 outcome 導出。這些是 offline 檢查，不代表實機 qualification。

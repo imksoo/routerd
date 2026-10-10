@@ -339,7 +339,7 @@ func providerCaptureActionRecordForTransitionTest(t *testing.T, id int64, action
 	}
 }
 
-func transitionEventsByKindAddress(events []routerstate.StoredEvent, kind string) map[string]routerstate.StoredEvent {
+func transitionEventsByKindAddress(t *testing.T, events []routerstate.StoredEvent, kind string) map[string]routerstate.StoredEvent {
 	out := map[string]routerstate.StoredEvent{}
 	for _, event := range events {
 		if statusvalue.Text(event.Attributes["transitionKind"]) != kind {
@@ -348,6 +348,9 @@ func transitionEventsByKindAddress(events []routerstate.StoredEvent, kind string
 		address := statusvalue.Text(event.Attributes["address"])
 		if address == "" {
 			continue
+		}
+		if _, duplicate := out[address]; duplicate {
+			t.Fatalf("duplicate raw transition identity %s/%s", kind, address)
 		}
 		out[address] = event
 	}
@@ -375,6 +378,9 @@ func extractTransitionDurationsByAddress(t *testing.T, events []routerstate.Stor
 		}
 		if out[kind] == nil {
 			out[kind] = map[string]time.Duration{}
+		}
+		if _, duplicate := out[kind][address]; duplicate {
+			t.Fatalf("duplicate transition duration identity %s/%s", kind, address)
 		}
 		out[kind][address] = at.Sub(issued)
 	}

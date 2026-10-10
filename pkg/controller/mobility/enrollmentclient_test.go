@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -948,6 +949,66 @@ func TestSAMEnrollmentClientRestoresEightLeafMeshAfterOneRRRestarts(t *testing.T
 		controller SAMEnrollmentClientController
 		store      *samEnrollmentClientTestStore
 	}
+	assertRestored := func(runtime leafRuntime) {
+		records, err := runtime.store.GetDynamicConfigPartsBySource("SAMRRSet/pve-rrs")
+		if err != nil || len(records) != 1 {
+			t.Fatalf("restored record %s: %#v %v", runtime.name, records, err)
+		}
+		var resources []api.Resource
+		if err := json.Unmarshal([]byte(records[0].ResourcesJSON), &resources); err != nil {
+			t.Fatal(err)
+		}
+		if len(resources) != 2 {
+			t.Fatalf("%s restored resource set = %#v", runtime.name, resources)
+		}
+		byID := map[string]api.Resource{}
+		for _, r := range resources {
+			key := r.APIVersion + "/" + r.Kind + "/" + r.Metadata.Name
+			if _, dup := byID[key]; dup {
+				t.Fatalf("duplicate restored resource %s", key)
+			}
+			byID[key] = r
+		}
+		rr, ok := byID[api.MobilityAPIVersion+"/SAMRRSet/pve-rrs"]
+		if !ok {
+			t.Fatal("restored RR fallback absent")
+		}
+		rrSpec, err := rr.SAMRRSetSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantRR := testSAMEnrollmentRRSetResource().Spec.(api.SAMRRSetSpec)
+		if !reflect.DeepEqual(rrSpec, wantRR) {
+			t.Fatalf("restored RR payload = %#v want %#v", rrSpec, wantRR)
+		}
+		group, ok := byID[api.MobilityAPIVersion+"/SAMPeerGroup/pve-direct-leaves"]
+		if !ok {
+			t.Fatal("restored direct group absent")
+		}
+		spec, err := group.SAMPeerGroupSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.EnrollmentPolicyRef != "SAMEnrollmentPolicy/pve-wg-leaves" || spec.TransportFingerprint != "sha256:mesh" || len(spec.OwnedPrefixesByNode) != 0 {
+			t.Fatalf("%s policy/fingerprint/ownership = %#v", runtime.name, spec)
+		}
+		got := map[string]api.SAMNodeSpec{}
+		for _, node := range spec.Nodes {
+			if _, dup := got[node.NodeRef]; dup {
+				t.Fatalf("duplicate restored peer %s", node.NodeRef)
+			}
+			got[node.NodeRef] = node
+		}
+		want := map[string]api.SAMNodeSpec{}
+		for index, leaf := range leaves {
+			if leaf != runtime.name {
+				want[leaf] = api.SAMNodeSpec{NodeRef: leaf, SAMEndpoint: fmt.Sprintf("10.30.0.%d", index+21)}
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s exact seven restored peers = %#v want %#v", runtime.name, got, want)
+		}
+	}
 	runtimes := make([]leafRuntime, 0, len(leaves))
 	for index, leaf := range leaves {
 		store := newSAMEnrollmentClientTestStore()
@@ -996,6 +1057,7 @@ func TestSAMEnrollmentClientRestoresEightLeafMeshAfterOneRRRestarts(t *testing.T
 			}
 			continue
 		}
+		assertRestored(runtime)
 		if status["phase"] != "Ready" || status["observedDirectPeerGroup"] != "SAMPeerGroup/pve-direct-leaves" {
 			t.Fatalf("last readmission status for %s = %#v, want agreed direct topology", runtime.name, status)
 		}
@@ -1022,7 +1084,7 @@ func TestSAMEnrollmentClientRestoresEightLeafMeshAfterOneRRRestarts(t *testing.T
 		if err != nil || len(records) != 1 {
 			t.Fatalf("restored records for %s = %#v err=%v", runtime.name, records, err)
 		}
-		assertSAMEnrollmentClientRecordContains(t, records[0], "pve-direct-leaves")
+		assertRestored(runtime)
 	}
 }
 
@@ -2494,6 +2556,18 @@ func assertSAMEnrollmentClientRRSetOnlyRecord(t *testing.T, store *samEnrollment
 	if len(resources) != 1 || resources[0].Kind != "SAMRRSet" {
 		t.Fatalf("resources = %#v, want RR fallback only", resources)
 	}
+	if resources[0].APIVersion != api.MobilityAPIVersion || resources[0].Metadata.Name != "pve-rrs" {
+		t.Fatalf("RR fallback identity = %#v", resources[0])
+	}
+	got, err := resources[0].SAMRRSetSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := testSAMEnrollmentRRSetResource().Spec.(api.SAMRRSetSpec)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RR fallback exact payload = %#v want %#v", got, want)
+	}
+
 }
 
 func assertSAMEnrollmentClientRRSetFallback(t *testing.T, store *samEnrollmentClientTestStore) {
