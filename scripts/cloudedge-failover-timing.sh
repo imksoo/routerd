@@ -41,7 +41,7 @@ EOF
 now_ms() {
   python3 - <<'PY'
 import time
-print(int(time.time() * 1000))
+print(time.monotonic_ns() // 1000000)
 PY
 }
 
@@ -120,7 +120,9 @@ have python3 || die "python3 is required"
 mkdir -p "$(dirname "$out")"
 
 start_ms=$(now_ms)
-export CE_FAILOVER_STARTED_MS="$start_ms"
+# Database timestamps are UTC; duration/deadline arithmetic is monotonic.
+CE_FAILOVER_STARTED_MS=$(python3 -c 'import time; print(time.time_ns() // 1000000)')
+export CE_FAILOVER_STARTED_MS
 log "timing: injecting provider=$provider fault=$fault"
 inject_result="pass"
 inject_detail=""
@@ -154,7 +156,7 @@ python3 - "$out" \
   "$start_ms" "$detection_ms" "$switchover_ms" "$recovery_ms" "$injection_completed_ms" \
   "$inject_result" "$detection_result" "$switchover_result" "$recovery_result" \
   "$inject_detail" "$detection_detail" "$switchover_detail" "$recovery_detail" <<'PY'
-import json, sys
+import json, os, sys
 
 (
     out, provider, fault, threshold_s, timeout_s,
@@ -185,6 +187,8 @@ data = {
     "status": "pass" if overall else "fail",
     "classification": "none" if overall else "infra_failure" if inject_result != "pass" else "observation_inconclusive",
     "observationLog": out + ".observations.log",
+    "clock": "monotonic",
+    "faultStartedUtcEpochMs": int(os.environ["CE_FAILOVER_STARTED_MS"]),
     "timingBasis": "coordinator-observed upper bound; includes API injection, SSH and polling; not exact product switchover duration",
     "thresholdSeconds": threshold,
     "timeoutSeconds": int(timeout_s),
