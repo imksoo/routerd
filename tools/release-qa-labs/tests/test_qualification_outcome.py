@@ -37,6 +37,19 @@ class QualificationOutcomeTests(unittest.TestCase):
             {"name": "later self ARP", "result": "pass", "classification": "none"}]}
         self.assertEqual(self.outcome(result, exit_code=0), ("fail", "product_failure"))
 
+    def test_bare_product_label_is_inconclusive(self):
+        for evidence in (None, [], "unstructured"):
+            result = {"status": "fail", "classification": "product_failure",
+                      "productEvidence": evidence}
+            self.assertEqual(self.outcome(result), ("fail", "observation_inconclusive"))
+
+    def test_explicit_product_evidence_survives_abort_and_cleanup_failure(self):
+        result = {"status": "pass", "classification": "product_failure",
+                  "productEvidence": [{"violation": "self-target probe packet"}]}
+        self.assertEqual(self.outcome(result, exit_code=0, cleanup=1,
+                                      aborted={"reason": "ttl"}),
+                         ("fail", "product_failure"))
+
     def test_healthy_adjacent_and_cleanup_failure_remain_distinct(self):
         result = {"status": "pass", "classification": "none", "checks": []}
         self.assertEqual(self.outcome(result, exit_code=0), ("pass", "none"))
