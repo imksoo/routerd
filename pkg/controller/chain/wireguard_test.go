@@ -4,10 +4,12 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -239,18 +241,44 @@ spec:
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{
-		"PublicKey = rrpub-a",
-		"AllowedIPs = 10.99.0.2/32",
-		"Endpoint = 203.0.113.10:51820",
-		"PublicKey = rrpub-b",
-		"AllowedIPs = 10.99.0.3/32",
-		"Endpoint = 203.0.113.11:51820",
-	} {
-		if !strings.Contains(setconf, want) {
-			t.Fatalf("setconf missing %q:\n%s", want, setconf)
+	peers := map[string]map[string]string{}
+	for _, block := range strings.Split(setconf, "[Peer]")[1:] {
+		fields := map[string]string{}
+		for _, line := range strings.Split(block, "\n") {
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+			if _, dup := fields[k]; dup {
+				t.Fatalf("duplicate peer field %q", k)
+			}
+			fields[k] = v
+		}
+		key := fields["PublicKey"]
+		if key == "" {
+			t.Fatal("peer key absent")
+		}
+		if _, dup := peers[key]; dup {
+			t.Fatalf("duplicate peer key %q", key)
+		}
+		peers[key] = fields
+	}
+	want := map[string]map[string]string{
+		"rrpub-a": {"AllowedIPs": "10.99.0.2/32", "Endpoint": "203.0.113.10:51820"},
+		"rrpub-b": {"AllowedIPs": "10.99.0.3/32", "Endpoint": "203.0.113.11:51820"},
+	}
+	if len(peers) != len(want) {
+		t.Fatalf("peer blocks = %#v", peers)
+	}
+	for key, fields := range want {
+		for field, value := range fields {
+			if peers[key][field] != value {
+				t.Fatalf("peer %s %s = %q want %q", key, field, peers[key][field], value)
+			}
 		}
 	}
+
 }
 
 func TestResolveWireGuardSAMResourcesDerivesPeersFromSAMRRSet(t *testing.T) {
@@ -1304,7 +1332,8 @@ spec:
 }
 
 func TestWireGuardControllerDerivesPeersFromSAMEnrollmentPolicy(t *testing.T) {
-	router := mustWireGuardRouter(t, `
+	now := time.Now().UTC()
+	router := mustWireGuardRouter(t, fmt.Sprintf(`
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata: {name: aws-rr-a}
@@ -1355,11 +1384,11 @@ spec:
       spec:
         policyRef: SAMEnrollmentPolicy/cloudedge-leaves
         leafID: leaf-ttl-expired
-        joinTimestamp: "2026-06-28T00:00:00Z"
+        joinTimestamp: "%s"
         tunnelAddress: 10.255.0.23/32
         wireGuard:
           publicKey: ttlpub
-`)
+`, now.Add(-2*time.Hour).Format(time.RFC3339)))
 	store := mapStore{}
 	var setconf string
 	controller := WireGuardController{
@@ -1966,6 +1995,23 @@ spec:
 	t.Fatal("IPv4StaticAddress not found")
 }
 
+func wireGuardResourceSnapshot(t *testing.T, router *api.Router) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, r := range router.Spec.Resources {
+		key := r.APIVersion + "/" + r.Kind + "/" + r.Metadata.Name
+		if _, dup := out[key]; dup {
+			t.Fatalf("duplicate resource identity %s", key)
+		}
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[key] = string(raw)
+	}
+	return out
+}
+
 func TestResolveWireGuardSAMResourcesIsIdempotent(t *testing.T) {
 	router := mustWireGuardRouter(t, `
 apiVersion: routerd.net/v1alpha1
@@ -2002,6 +2048,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
+	before := wireGuardResourceSnapshot(t, first)
 	second, err := resolveWireGuardSAMResources(first)
 	if err != nil {
 		t.Fatal(err)
@@ -2027,6 +2074,10 @@ spec:
 			t.Fatalf("%s/%s count = %d, want 1", want.kind, want.name, got)
 		}
 	}
+	if after := wireGuardResourceSnapshot(t, second); !reflect.DeepEqual(before, after) {
+		t.Fatalf("idempotent complete resources changed: before=%#v after=%#v", before, after)
+	}
+
 }
 
 func TestResolveWireGuardSAMResourcesNilRouter(t *testing.T) {
@@ -2052,11 +2103,13 @@ spec:
       spec:
         privateKey: priv
 `)
+	before := wireGuardResourceSnapshot(t, router)
 	resolved, err := resolveWireGuardSAMResources(router)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resolved.Spec.Resources) != len(router.Spec.Resources) {
-		t.Fatalf("expected no change; before=%d after=%d", len(router.Spec.Resources), len(resolved.Spec.Resources))
+	if after := wireGuardResourceSnapshot(t, resolved); !reflect.DeepEqual(before, after) {
+		t.Fatalf("no-op complete resources changed: before=%#v after=%#v", before, after)
 	}
+
 }

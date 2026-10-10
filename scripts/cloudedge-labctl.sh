@@ -308,8 +308,8 @@ USAGE:
   $SELF deploy [--build <path>] [--commit HEAD|<sha>] [--run-id <id>]
 
   --build PATH   Use an already-built dist tarball/dir at PATH (skip build).
-  --commit REF   Build a static dist at REF via 'make dist' (CGO_ENABLED=0).
-                 Mutually informative with --build; --build wins if both given.
+  --commit REF   Build the clean current checkout only when it matches REF (CGO_ENABLED=0).
+                 --build wins if both given; its source identity remains unconfirmed.
   --run-id ID    Target the nodes of this run (default: latest manifest).
 
 Node push wraps examples/cloudedge-mobility-demo deployment conventions, or is a
@@ -318,7 +318,7 @@ EOF
 }
 
 cmd_deploy() {
-  local build_path="" commit="" run_id=""
+  local build_path="" commit="" run_id="" requested_source="" actual_source="" source_tree="" source_status=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --build) build_path="${2:-}"; shift 2 ;;
@@ -331,13 +331,32 @@ cmd_deploy() {
 
   if [[ -n "$build_path" ]]; then
     [[ -e "$build_path" ]] || die "deploy: --build path not found: $build_path"
-    log "deploy: using prebuilt artifact at $build_path"
+    log "deploy: using prebuilt artifact at $build_path; source identity unconfirmed"
+    [[ -z "$commit" ]] || log "deploy: requested commit=$commit was not used (--build wins)"
   elif [[ -n "$commit" ]]; then
-    log "deploy: building static dist at $commit (make dist, CGO_ENABLED=0)"
+    requested_source=$(git -C "$REPO_ROOT" rev-parse --verify "$commit^{commit}") || die "deploy: cannot resolve requested commit: $commit"
+    actual_source=$(git -C "$REPO_ROOT" rev-parse --verify HEAD) || die "deploy: current build source unavailable"
+    source_tree=$(git -C "$REPO_ROOT" rev-parse --verify "HEAD^{tree}") || die "deploy: current source tree unavailable"
+    [[ "$requested_source" == "$actual_source" ]] || die "deploy: requested commit=$requested_source not used; current source=$actual_source (no checkout performed)"
+    source_status=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal) || die "deploy: current source status unavailable"
+    [[ -z "$source_status" ]] || die "deploy: current source is dirty; requested commit alone does not identify the build"
+    mkdir -p "$CE_STATE_DIR"
+    python3 - "$CE_STATE_DIR/deploy-build-provenance.json" "$commit" "$requested_source" "$actual_source" "$source_tree" "$DRY_RUN" <<'PYBUILD'
+import json,sys
+path,requested,requested_sha,actual,tree,dry=sys.argv[1:]
+json.dump({"requestedRef":requested,"requestedSourceCommit":requested_sha,"actualSourceCommit":actual,"actualSourceTree":tree,"requestedCommitUsed":False,"buildPerformed":False,"dryRun":dry=="1"},open(path,"w"),indent=2)
+PYBUILD
+    log "deploy: current source commit=$actual_source tree=$source_tree; requested=$commit"
     if [[ "$DRY_RUN" == "1" ]]; then
-      log "[dry] would run: make -C $REPO_ROOT dist  (commit=$commit)"
+      log "[dry] would run: make -C $REPO_ROOT dist (source=$actual_source); build not performed"
     else
       ( cd "$REPO_ROOT" && CGO_ENABLED=0 make dist ) || die "deploy: make dist failed"
+      source_status=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal) || die "deploy: post-build source status unavailable"
+      [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$actual_source" ]] && [[ -z "$source_status" ]] || die "deploy: source changed during build"
+      python3 - "$CE_STATE_DIR/deploy-build-provenance.json" <<'PYBUILD'
+import json,sys
+path=sys.argv[1];data=json.load(open(path));data.update(requestedCommitUsed=True,buildPerformed=True);json.dump(data,open(path,"w"),indent=2)
+PYBUILD
     fi
   else
     die "deploy: one of --build <path> or --commit <ref> is required"

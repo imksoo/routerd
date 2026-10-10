@@ -325,10 +325,22 @@ func TestDiscoveryControllerPublishesTypedARPObserverIntents(t *testing.T) {
 	}
 	byType := map[string]dynamicconfig.ARPObserverIntent{}
 	for _, intent := range intents {
+		if _, duplicate := byType[intent.SourceType]; duplicate {
+			t.Fatalf("duplicate ARP source type %s", intent.SourceType)
+		}
 		byType[intent.SourceType] = intent
 		if intent.IfName != "ens3" {
 			t.Fatalf("%s IfName = %q, want ens3", intent.SourceType, intent.IfName)
 		}
+	}
+	for _, kind := range []string{OnPremSourceARPObserver, OnPremSourceOnDemandARP, OnPremSourcePVESVNet} {
+		if _, ok := byType[kind]; !ok {
+			t.Fatalf("required ARP source %s absent: %#v", kind, byType)
+		}
+	}
+	passive := byType[OnPremSourceARPObserver]
+	if !passive.Observe || passive.OnDemand || passive.SourceType != OnPremSourceARPObserver {
+		t.Fatalf("passive ARP intent = %#v", passive)
 	}
 	onDemand := byType[OnPremSourceOnDemandARP]
 	if onDemand.SourceAddress != "192.168.123.134" || !onDemand.OnDemand || onDemand.Observe || onDemand.ProbeTimeout != "500ms" || onDemand.ProbeRetries != 2 || onDemand.ScanInterval != "1s" {

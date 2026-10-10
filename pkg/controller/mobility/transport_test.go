@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1375,7 +1376,14 @@ func TestCloudEdgeDynamicLeafExamplesMaterializeDualRRTransports(t *testing.T) {
 					t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", peer, tunnel.EncapSport, tunnel.EncapDport)
 				}
 				_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, peer)
-				if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+				prefix, err := netip.ParsePrefix(tunnel.Address)
+				if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 31 {
+					t.Fatalf("peer %s local /31 = %q", peer, tunnel.Address)
+				}
+				bytes := prefix.Addr().As4()
+				bytes[3] ^= 1
+				expectedNeighbor := netip.AddrFrom4(bytes).String()
+				if !reflect.DeepEqual(bgpPeer.Peers, []string{expectedNeighbor}) {
 					t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
 				}
 			}
@@ -1670,7 +1678,14 @@ func TestSAMRRTransportExamplesMaterializeReviewTransports(t *testing.T) {
 						t.Fatalf("%s tunnel encap ports = %d/%d, want 5555/5555", peer, tunnel.EncapSport, tunnel.EncapDport)
 					}
 					_, bgpPeer := findTransportBGPPeerResourceForPeer(t, resources, tc.profile, peer)
-					if len(bgpPeer.Peers) != 1 || strings.TrimSpace(bgpPeer.Peers[0]) == "" {
+					prefix, err := netip.ParsePrefix(tunnel.Address)
+					if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 31 {
+						t.Fatalf("peer %s local /31 = %q", peer, tunnel.Address)
+					}
+					bytes := prefix.Addr().As4()
+					bytes[3] ^= 1
+					expectedNeighbor := netip.AddrFrom4(bytes).String()
+					if !reflect.DeepEqual(bgpPeer.Peers, []string{expectedNeighbor}) {
 						t.Fatalf("%s BGP peer = %#v, want one derived RR tunnel address", peer, bgpPeer)
 					}
 				}
@@ -2293,8 +2308,33 @@ func TestSAMTransportProfilePeerRemovalReplacesDynamicPart(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("initial Reconcile: %v", err)
 	}
-	if resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("lab", "pve-rt")).ResourcesJSON); len(resources) != 6 {
-		t.Fatalf("initial resources = %d, want 6", len(resources))
+	initial := decodeResources(t, latestPart(t, store, TransportDynamicSource("lab", "pve-rt")).ResourcesJSON)
+	peerKinds := func(resources []api.Resource) map[string]bool {
+		result := map[string]bool{}
+		for _, r := range resources {
+			peer := r.Metadata.Annotations["mobility.routerd.net/peer-node"]
+			key := peer + "/" + r.APIVersion + "/" + r.Kind
+			if r.Metadata.Name == "" || result[key] {
+				t.Fatalf("missing or duplicate transport identity %s: %#v", key, r)
+			}
+			if r.Metadata.Annotations["mobility.routerd.net/self-node"] != "pve-rt" || r.Metadata.Annotations["mobility.routerd.net/transport-profile"] != "lab" {
+				t.Fatalf("foreign transport scope: %#v", r)
+			}
+			result[key] = true
+		}
+		return result
+	}
+	expected := func(peers ...string) map[string]bool {
+		result := map[string]bool{}
+		for _, peer := range peers {
+			for _, kind := range []string{api.HybridAPIVersion + "/TunnelInterface", api.NetAPIVersion + "/IPv4Route", api.NetAPIVersion + "/BGPPeer"} {
+				result[peer+"/"+kind] = true
+			}
+		}
+		return result
+	}
+	if got := peerKinds(initial); !reflect.DeepEqual(got, expected("k8s-rt", "cloud-rt")) {
+		t.Fatalf("initial exact peers = %#v", got)
 	}
 
 	controller.Router = transportRouter("lab", "pve-rt", []api.SAMTransportPeerSpec{
@@ -2305,9 +2345,10 @@ func TestSAMTransportProfilePeerRemovalReplacesDynamicPart(t *testing.T) {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("lab", "pve-rt")).ResourcesJSON)
-	if got, want := len(resources), 3; got != want {
-		t.Fatalf("resources after peer removal = %d, want %d", got, want)
+	if got := peerKinds(resources); !reflect.DeepEqual(got, expected("k8s-rt")) {
+		t.Fatalf("exact survivor/removed peer identities = %#v", got)
 	}
+
 }
 
 func TestSAMTransportProfileCopiesRouteReflectorSettings(t *testing.T) {
