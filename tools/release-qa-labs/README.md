@@ -232,6 +232,40 @@ Do not resample until counters differ, discard repeated reads, or reinterpret a
 sealed FAIL as PASS. Test stalled-controller and missing-evidence cases, freeze
 the changed evaluator and adapter, then certify a new run before live testing.
 
+Use `arp_counter_sampler.CounterSampler` for receiver-local read-only DB and
+observer reads. Its 100 ms default cadence is a scheduling target. The hard
+coverage bound remains 400 ms, including each full read and the span from the
+previous read's start through the current read's completion. Missed schedule
+ticks are skipped without catch-up reads or synthetic evidence. An over-cadence
+read within that coverage bound is retained; a real gap, DB/HTTP error, missing
+counter or changed observer fails closed. Keep the original command JSON string
+and full DB receipt fields. The sampler retains bounded slow-read diagnostics,
+per-stage timing aggregates and the complete failed read in `errors`, instead
+of discarding the evidence that explains an overrun.
+
+The run-owned capture adapter must publish JSON atomically, bind its own and
+the capture process's PID/start ticks/boot ID in `ownership.json` and
+`ready.json`, and publish `completedMonotonic`, `collectorPID`, `collectorState`
+and `collectorErrors` with each progress record. Receiver progress also carries
+`counterSamplerHealth` (`errors`, `sampleCount`, `running`). Pass an `on_error`
+callback to the sampler that atomically writes a run-owned `counter-error.json`;
+this exposes failures immediately even if the slow collector is busy. Publish
+failed progress before stopping the capture, and include that marker in owned
+cleanup. Preserve the original error before assessing secondary capture/TTL
+failures.
+
+Before **every** stimulus dispatch, collect
+`arp_observation_health.read_collector_state()` on each guest and require
+`assert_collector_running()` against the identities from that run's ready
+records. It checks the original error/terminal markers, current process
+identities and progress age on the guest's monotonic clock (at most 10 seconds).
+A terminal collector forbids further stimuli even when its terminal result has
+no errors. A stale success file must never count as evidence that observation is
+still running. Keep these checks inside the existing dispatch budget; do not
+extend the 15-second scheduled-ARP deadline or other frozen timing limits.
+Test these adapter connections before freezing a new run, including publication
+failure, stale progress, early capture exit and the original R11 failure case.
+
 For qualification split into canary and final phases, verify the new run identity
 before computing the frozen contract. Copying a plan to a new directory does
 not update its JSON `runId`. Check both documents against the prospective
