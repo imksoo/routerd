@@ -1,0 +1,20 @@
+{
+  "provenance": {
+    "run": "R11",
+    "originalSHA256": "ccb906479984f38683df1106f2040a8bc285b220454bca51388120cc692c4802",
+    "source": "receiver-observation.json",
+    "selection": "original terminal errors, sampler errors and capture duration; no failed sample timing exists in original evidence",
+    "meaning": "diagnostic regression extract; original sealed qualification remains FAIL"
+  },
+  "errors": [
+    "RuntimeError: counter sampler error before progress",
+    "high-frequency sampler failed"
+  ],
+  "counterErrors": [
+    {
+      "epoch": 1791592435.3553743,
+      "error": "sample exceeded interval"
+    }
+  ],
+  "captureDurationSeconds": 12.589721198999996
+}

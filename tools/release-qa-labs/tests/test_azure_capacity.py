@@ -183,6 +183,7 @@ class AzureCapacityPrecheckTests(unittest.TestCase):
         self.run_env.write_text(json.dumps({"releaseRepo": str(self.root)}))
         (drivers / "common.sh").write_text('''set -eu
 framework_root="$FIXTURE_FRAMEWORK"
+repo_root="$FIXTURE_SOURCE_REPO"
 default_contract_path="$FIXTURE_CONTRACT"
 run_env_path="$FIXTURE_RUN_ENV"
 load_contract() {
@@ -211,7 +212,8 @@ exit "${FIXTURE_AZ_EXIT:-0}"
 ''')
         az.chmod(0o755)
 
-    def run_precheck(self, values, *, scope="full-representative", azure_exit=0, active_subscription=SUBSCRIPTION):
+    def run_precheck(self, values, *, scope="full-representative", azure_exit=0, active_subscription=SUBSCRIPTION,
+                     source_repo=None):
         value = contract()
         value["qualification"]["runScope"] = scope
         self.contract.write_text(json.dumps(value))
@@ -222,11 +224,21 @@ exit "${FIXTURE_AZ_EXIT:-0}"
             capture_output=True, text=True, timeout=10, env={**os.environ,
                 "PATH": str(self.bin) + ":" + os.environ["PATH"],
                 "FIXTURE_FRAMEWORK": str(self.framework), "FIXTURE_CONTRACT": str(self.contract),
+                "FIXTURE_SOURCE_REPO": str(source_repo or ROOT.parents[1]),
                 "FIXTURE_RUN_ENV": str(self.run_env), "FIXTURE_TFVARS": str(self.variables),
                 "FIXTURE_CALLS": str(self.calls), "FIXTURE_USAGE": str(payload),
                 "FIXTURE_EVIDENCE": str(self.root / "evidence"), "FIXTURE_AZ_EXIT": str(azure_exit),
                 "FIXTURE_ACTIVE_SUBSCRIPTION": active_subscription})
         return result, self.calls.read_text().splitlines()
+
+    def test_failed_offline_admission_prevents_all_provider_checks(self):
+        scripts = self.root / 'scripts'
+        scripts.mkdir()
+        (scripts / 'release_qa_preflight.py').write_text(
+            'import os\nwith open(os.environ["FIXTURE_CALLS"], "a") as f: f.write("offline-fail\\n")\nraise SystemExit(1)\n')
+        result, calls = self.run_precheck(usage(), source_repo=self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, ['offline-fail'])
 
     def test_insufficient_quota_stops_before_pve_or_other_precheck_work(self):
         result, calls = self.run_precheck(usage("8", "10"))
