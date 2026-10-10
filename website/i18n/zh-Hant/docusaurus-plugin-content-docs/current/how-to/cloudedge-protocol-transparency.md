@@ -149,3 +149,5 @@ TTL refresh 將目前 receiver event 的 `ExpiresAt` 與 sender 的延長值對�
 OTel 可用性、sample 和 label 屬於診斷，缺失保持未判定，不替換成數值零或產品失敗。保存的 binary SHA-256 和產品 source commit 與 QA repository commit 分開記錄。已部署 source identity 不明或不匹配時，在 scenario 故障前停止。退出碼 1 表示觀測到的 assertion 失敗，2 表示無效輸入/setup，3 表示觀測或 provenance 不完整。這些修改通過 offline 邊界驗證，不代表 provider 或 release qualification 已完成。
 
 開發用 partition 子集未選擇 multi-group 時，不要求 B group。實機的 Go 是可選工具。`CE_BINARY_PROVENANCE_FILE` 可指定現有 prepared/release contract，將 `routerdArtifact.commit` 和 `execution.candidate_binary_hashes` 與本次 binary SHA-256 對照。runtime commit 顯示衝突或 hash 不匹配時保留未確認狀態，不會僅憑 commit 參數確認 identity。
+
+eventd digest 來自目標 systemd unit 的 MainPID 執行檔（`/proc/<pid>/exe`），取得後再次核對程序和執行檔。程序缺失或變化時保持未確認，PATH 中的 binary 不能證明執行中服務的 identity。成功回應中的空 OTel label 陣列仍為診斷未判定。

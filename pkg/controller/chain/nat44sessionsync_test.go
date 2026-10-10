@@ -395,8 +395,14 @@ func TestNAT44SessionSyncEventStreamStartsWithSnapshotAndConsumesEvents(t *testi
 	if len(sshScripts) < 2 {
 		t.Fatalf("ssh scripts = %d", len(sshScripts))
 	}
-	if !strings.Contains(sshScripts[0], "'-I'") || !strings.Contains(sshScripts[1], "'-I'") {
-		t.Fatalf("unexpected restore scripts:\n--- snapshot ---\n%s\n--- event ---\n%s", sshScripts[0], sshScripts[1])
+
+	expectedSnapshot := "'conntrack' '-I' '-t' '86400' '-u' 'SEEN_REPLY,ASSURED' '-s' '172.18.1.73' '-d' '142.251.23.95' '-r' '142.251.23.95' '-q' '192.0.0.2' '-p' 'tcp' '--sport' '52654' '--dport' '443' '--reply-port-src' '443' '--reply-port-dst' '52654' '--state' 'ESTABLISHED' '-m' '272'"
+	expectedEvent := "'conntrack' '-I' '-t' '86398' '-u' 'SEEN_REPLY,ASSURED' '-s' '172.18.1.150' '-d' '20.194.195.242' '-r' '20.194.195.242' '-q' '192.0.0.2' '-p' 'tcp' '--sport' '65190' '--dport' '443' '--reply-port-src' '443' '--reply-port-dst' '65190' '--state' 'ESTABLISHED' '-m' '272'"
+	snapshotCount, eventCount := strings.Count(sshScripts[0], expectedSnapshot), strings.Count(sshScripts[1], expectedEvent)
+	if snapshotCount != 1 || eventCount != defaultNAT44SessionSyncEventBatchMax ||
+		strings.Count(sshScripts[0], "'-I'") != 1 || strings.Count(sshScripts[1], "'-I'") != defaultNAT44SessionSyncEventBatchMax ||
+		strings.Contains(sshScripts[0], expectedEvent) || strings.Contains(sshScripts[1], expectedSnapshot) {
+		t.Fatalf("snapshot/new-event exact tuples mixed or missing: snapshot=%d event=%d want=1/%d", snapshotCount, eventCount, defaultNAT44SessionSyncEventBatchMax)
 	}
 	if saves := store.SaveCount(); saves != savesAfterResync {
 		t.Fatalf("event batch should not persist transient-only status: saves before=%d after=%d", savesAfterResync, saves)
