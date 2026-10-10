@@ -27,6 +27,32 @@ capture window and fault state. Do not rewrite sealed results, reuse partial
 passes under different conditions, or start a new full cloud deployment merely
 to debug a test. See [the qualification policy](./release-qualification-policy.md).
 
+## Before starting live qualification
+
+Run `make release-qa-preflight-test` from the complete reviewed checkout, then
+validate the actual final prospective contract:
+
+```sh
+python3 scripts/release_certification.py validate-contract \
+  --contract prospective-contract.json --environment "$environment" \
+  --topology "$topology" --providers "$providers" > contract-validation.json
+```
+
+The check rejects failed/missing/skipped offline regressions, copied phase IDs,
+changed evidence and incomplete retained-media baselines before a certification
+driver runs. It records source/fixture hashes and the contract SHA256; repeat it
+after any preparation change and match the frozen bytes. Certification,
+qualification preflight and the paid precheck repeat the gate automatically.
+A source-only PASS does not certify the live environment or a private caller.
+
+Preserve a failed run, reproduce its collector/predicate/preparation defect with
+saved data and negative controls, then fix and validate it before a new frozen
+run. Do not repeatedly provision clouds to debug known test-tooling errors.
+Product improvements do not excuse those reruns. A QA-only change with unchanged
+product bytes does not alone require another four-provider qualification.
+See the [R1–R12 failure classifications, prerequisites, examples and rerun criteria](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md).
+Do not infer actual or wasted spend from elapsed time; billing must be verified.
+
 ## Automated release
 
 Use the release helper from a clean working tree:

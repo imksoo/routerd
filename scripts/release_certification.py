@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -318,13 +319,40 @@ def command_validate_contract(argv: list[str]) -> int:
     validate_contract(
         contract, args.environment, args.topology, normalize_providers(args.providers)
     )
+    offline = offline_preflight(contract, contract_path=args.contract)
     print(json.dumps({
         "status": "pass", "validationOnly": True, "checkedAt": rfc3339(utc_now()),
         "contractPath": str(args.contract.resolve()),
         "contractSha256": hashlib.sha256(raw).hexdigest(),
         "artifactSha256": contract["routerdArtifact"]["sha256"],
+        "offlinePreflight": offline,
     }, sort_keys=True))
     return 0
+
+
+def offline_preflight(contract, *, contract_path=None, report_path=None):
+    """Always recheck source regressions and the actual saved preparation."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "release_qa_preflight", SCRIPT_DIR / "release_qa_preflight.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        raw = contract_path.read_bytes() if contract_path else None
+        if raw is not None and json.loads(raw) != contract:
+            raise ValueError("contract changed before offline preflight")
+        report = module.check(contract)
+        report["checkedAt"] = rfc3339(utc_now())
+        if raw is not None:
+            if raw != contract_path.read_bytes():
+                raise ValueError("contract changed during offline preflight")
+            report["contractSha256"] = hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError, ImportError) as exc:
+        if report_path:
+            write_json(report_path, {"status": "fail", "checkedAt": rfc3339(utc_now()), "error": str(exc)})
+        raise ContractError("offline preflight: " + str(exc)) from exc
+    if report_path:
+        write_json(report_path, report)
+    return report
 
 
 def validate_driver_result(
@@ -436,6 +464,8 @@ def command_certify(component: str, argv: list[str]) -> int:
     labs_commit = validate_contract(
         contract, args.environment, args.topology, contract_provider_set
     )
+    offline_preflight(contract, contract_path=args.contract,
+                      report_path=args.out.with_suffix(".offline-preflight.json"))
 
     certifiers: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
@@ -574,6 +604,7 @@ def command_preflight(argv: list[str]) -> int:
     )
     contract = certification["run"]
     validate_contract(contract, args.environment, args.topology, providers)
+    offline_preflight(contract)
     if args.release and args.release not in {
         contract["routerdArtifact"]["version"],
         contract["routerdArtifact"]["commit"],

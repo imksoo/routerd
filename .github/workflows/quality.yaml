@@ -256,6 +256,9 @@ jobs:
       - name: Run release certification lifecycle offline smoke
         run: make release-certification-offline-test
 
+      - name: Reject known release QA preparation and observation failures offline
+        run: make release-qa-preflight-test
+
   shellcheck:
     name: Shell scripts
     runs-on: ubuntu-latest

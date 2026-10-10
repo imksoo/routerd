@@ -785,6 +785,19 @@ command, evidence contract, and local offline test, see
 
 ## Offline validation
 
+The [R1–R12 findings and admission procedure](qualification-lessons.md) classify
+documentation gaps, unclear semantics, missed preparation steps and test-code
+defects separately. They include prerequisites, failure examples, saved-data
+regressions and criteria for starting a new run. Product improvements do not
+justify preventable QA reruns.
+
+Run `make release-qa-preflight-test` before allocating a paid lifecycle, then
+run the standard `validate-contract` command above on the final prospective
+bytes. Certification, qualification preflight and the paid precheck now repeat
+the offline gate automatically. Ship the complete reviewed checkout including
+tests/fixtures; missing or skipped mandatory checks fail closed. Source-only
+success does not validate a private adapter or certify a live environment.
+
 For host-safe source checks, use the selected fake-harness tests documented
 in the linked Cloud SAM profile pages. Those tests use no live endpoint or
 daemon; their success does not authorize host or cloud operations.
