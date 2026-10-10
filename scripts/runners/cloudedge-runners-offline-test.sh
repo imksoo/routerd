@@ -37,7 +37,7 @@ case "$1" in
       *) ip=10.77.60.254 ;;
     esac
     printf 'peer_ip=%s\n' "$ip"
-    printf 'default_gw=10.77.60.1\n'
+    printf 'default_gw_before=10.77.60.1\ndefault_gw=10.77.60.1\n'
     ;;
   *) exit 2 ;;
 esac

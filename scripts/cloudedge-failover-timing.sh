@@ -63,10 +63,13 @@ run_detail() {
 
 wait_stage() {
   local provider=$1 stage=$2 start_ms=$3 timeout_seconds=$4 poll_seconds=$5
-  local deadline_ms now detail
+  local deadline_ms now detail observe_output observe_exit
   deadline_ms=$((start_ms + timeout_seconds * 1000))
   while true; do
-    if "$FAILOVER_TIMING_RUNNER" observe "$provider" "$stage" >/dev/null 2>&1; then
+    observe_exit=0
+    observe_output=$("$FAILOVER_TIMING_RUNNER" observe "$provider" "$stage" 2>&1) || observe_exit=$?
+    printf 'stage=%s observed_ms=%s exit=%s\\n%s\\n' "$stage" "$(now_ms)" "$observe_exit" "$observe_output" >>"$out.observations.log"
+    if [[ "$observe_exit" -eq 0 ]]; then
       now=$(now_ms)
       detail=$(run_detail "$provider" "$stage")
       printf '%s\tpass\t%s\n' "$now" "$detail"
@@ -117,12 +120,14 @@ have python3 || die "python3 is required"
 mkdir -p "$(dirname "$out")"
 
 start_ms=$(now_ms)
+export CE_FAILOVER_STARTED_MS="$start_ms"
 log "timing: injecting provider=$provider fault=$fault"
 inject_result="pass"
 inject_detail=""
 if ! inject_detail=$("$FAILOVER_TIMING_RUNNER" inject "$provider" "$fault" 2>&1); then
   inject_result="fail"
 fi
+injection_completed_ms=$(now_ms)
 
 detection_ms=$start_ms
 switchover_ms=$start_ms
@@ -146,14 +151,14 @@ fi
 
 python3 - "$out" \
   "$provider" "$fault" "$threshold_seconds" "$timeout_seconds" \
-  "$start_ms" "$detection_ms" "$switchover_ms" "$recovery_ms" \
+  "$start_ms" "$detection_ms" "$switchover_ms" "$recovery_ms" "$injection_completed_ms" \
   "$inject_result" "$detection_result" "$switchover_result" "$recovery_result" \
   "$inject_detail" "$detection_detail" "$switchover_detail" "$recovery_detail" <<'PY'
 import json, sys
 
 (
     out, provider, fault, threshold_s, timeout_s,
-    start_ms, detection_ms, switchover_ms, recovery_ms,
+    start_ms, detection_ms, switchover_ms, recovery_ms, injection_completed_ms,
     inject_result, detection_result, switchover_result, recovery_result,
     inject_detail, detection_detail, switchover_detail, recovery_detail,
 ) = sys.argv[1:]
@@ -163,6 +168,7 @@ start = int(start_ms)
 detection = int(detection_ms)
 switchover = int(switchover_ms)
 recovery = int(recovery_ms)
+injection_completed = int(injection_completed_ms)
 
 def seconds(delta_ms):
     return round(delta_ms / 1000.0, 3)
@@ -177,6 +183,9 @@ overall = (
 )
 data = {
     "status": "pass" if overall else "fail",
+    "classification": "none" if overall else "infra_failure" if inject_result != "pass" else "observation_inconclusive",
+    "observationLog": out + ".observations.log",
+    "timingBasis": "coordinator-observed upper bound; includes API injection, SSH and polling; not exact product switchover duration",
     "thresholdSeconds": threshold,
     "timeoutSeconds": int(timeout_s),
     "events": [
@@ -186,7 +195,11 @@ data = {
             "detectionSeconds": detection_seconds,
             "switchoverSeconds": switchover_seconds,
             "recoverySeconds": recovery_seconds,
-            "recoveryUnderThreshold": "pass" if under else "fail",
+            "recoveryUnderThreshold": "pass" if under else "inconclusive",
+            "injectionSeconds": seconds(max(0, injection_completed - start)),
+            "faultTimeBoundsMs": [start, injection_completed],
+            "recoveryObservedAtMs": recovery,
+            "exactProductRecoverySeconds": None,
             "stages": {
                 "inject": {"result": inject_result, "detail": inject_detail},
                 "detection": {"result": detection_result, "detail": detection_detail},

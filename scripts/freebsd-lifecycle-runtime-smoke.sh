@@ -6,6 +6,12 @@
 # and obtains a lease from a disposable dnsmasq peer, while routerd-dns-resolver
 # starts, reports health over its Unix API, reloads, and stops cleanly.
 set -eu
+ipc_curl() {
+  curl --connect-timeout 1 --max-time 1 --fail --silent --show-error "$@" || {
+    echo 'INCONCLUSIVE: IPC request failed or exceeded its deadline' >&2
+    return 3
+  }
+}
 
 dhcpv4_client=
 dhcpv6_client=
@@ -133,15 +139,20 @@ wait_resolver_healthy() {
   pid=$1
   socket=$2
   status_file=$3
-  for _ in $(jot 30); do
+  status_deadline=$(( $(date +%s) + 30 ))
+  while [ "$(date +%s)" -lt "$status_deadline" ]; do
     kill -0 "$pid" 2>/dev/null || break
-    if curl --fail --silent --show-error --unix-socket "$socket" \
+    if ipc_curl --unix-socket "$socket" \
       http://localhost/v1/status >"$status_file" 2>/dev/null && \
       jq -e '.health == "ok" and .phase == "Running"' "$status_file" >/dev/null; then
       return 0
     fi
     sleep 1
   done
+  jq -e 'type == "object"' "$status_file" >/dev/null 2>&1 || {
+    echo 'INCONCLUSIVE: resolver status unavailable' >&2
+    return 3
+  }
   jq -e '.health == "ok" and .phase == "Running"' "$status_file" >/dev/null
 }
 
@@ -506,15 +517,17 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/dhcpv6.sock" ]
-for _ in $(jot 30); do
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
   kill -0 "$dhcpv6_pid" 2>/dev/null || break
-  if curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+  if ipc_curl --unix-socket "$work/dhcpv6.sock" \
     http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json" 2>/dev/null && \
     jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null; then
     break
   fi
   sleep 1
 done
+jq -e 'type == "object"' "$evidence_dir/dhcpv6-status-before.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
 jq -e 'select(.reason == "PrefixBound")' "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6-bound-event.json"
 test -s "$evidence_dir/dhcpv6-lease.json"
@@ -536,15 +549,17 @@ for _ in $(jot 30); do
   sleep 1
 done
 [ -S "$work/dhcpv6.sock" ]
-for _ in $(jot 30); do
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
   kill -0 "$dhcpv6_pid" 2>/dev/null || break
-  if curl --fail --silent --show-error --unix-socket "$work/dhcpv6.sock" \
+  if ipc_curl --unix-socket "$work/dhcpv6.sock" \
     http://localhost/v1/status >"$evidence_dir/dhcpv6-status-restart.json" 2>/dev/null && \
     jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null; then
     break
   fi
   sleep 1
 done
+jq -e 'type == "object"' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-restart.json" >/dev/null
 stop_owned_pid "$dhcpv6_pid"
 dhcpv6_pid=
@@ -565,7 +580,7 @@ for _ in $(jot 30); do
 done
 [ -S "$work/resolver.sock" ]
 wait_resolver_healthy "$resolver_pid" "$work/resolver.sock" "$evidence_dir/resolver-status-before.json"
-curl --fail --silent --show-error --unix-socket "$work/resolver.sock" -X POST \
+ipc_curl --unix-socket "$work/resolver.sock" -X POST \
   http://localhost/v1/reload >"$evidence_dir/resolver-reload.json"
 jq -e '.reloaded == true and .listeners == 1' "$evidence_dir/resolver-reload.json" >/dev/null
 stop_owned_pid "$resolver_pid"

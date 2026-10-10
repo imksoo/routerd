@@ -139,38 +139,39 @@ capture_address() {
 
 sql_value() {
   local provider=$1 sql=$2
-  ce_router_sql "$provider" observer "$sql" 2>/dev/null | head -n1 || true
+  ce_router_sql "$provider" observer "$sql" | head -n1
+}
+
+current_capture_predicate() {
+  local provider=$1 expected address since
+  expected=$(expected_standby_node "$provider")
+  address=$(capture_address "$provider")
+  since=${CE_FAILOVER_STARTED_MS:-}
+  [[ -n "$expected" && "$expected" =~ ^[a-zA-Z0-9_.:/-]+$ &&
+     -n "$address" && "$address" =~ ^[a-zA-Z0-9_.:/-]+$ &&
+     "$since" =~ ^[0-9]+$ ]] || {
+    echo 'current fault timestamp, target address or standby identity unavailable' >&2
+    return 2
+  }
+  printf "EXISTS (SELECT 1 FROM json_tree(action_executions.target_json) WHERE atom = '%s') AND json_extract(parameters_json,'$.mobilityCaptureHolder') = '%s' AND julianday(updated_at) >= 2440587.5 + %s / 86400000.0" "$address" "$expected" "$since"
 }
 
 observe_detection_default() {
-  local provider=$1 expected stopped address holder_count action_count
-  expected=$(expected_standby_node "$provider")
-  stopped=$(stopped_node "$provider")
-  address=$(capture_address "$provider")
-  if [[ -n "$expected" ]]; then
-    holder_count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE json_extract(parameters_json,'$.mobilityCaptureHolder') = '$expected' AND updated_at >= datetime('now','-10 minutes');")
-    [[ "${holder_count:-0}" =~ ^[0-9]+$ && "$holder_count" -gt 0 ]] && return 0
-  fi
-  if [[ -n "$stopped" && -n "$address" ]]; then
-    action_count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE target_json LIKE '%$address%' AND json_extract(parameters_json,'$.mobilityCaptureHolder') != '$stopped' AND updated_at >= datetime('now','-10 minutes');")
-    [[ "${action_count:-0}" =~ ^[0-9]+$ && "$action_count" -gt 0 ]] && return 0
-  fi
-  return 1
+  local provider=$1 predicate count
+  predicate=$(current_capture_predicate "$provider") || return 2
+  count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE $predicate;") || return 2
+  [[ "$count" =~ ^[0-9]+$ ]] || return 2
+  printf 'current_target_actions=%s\n' "$count"
+  [[ "$count" -gt 0 ]]
 }
 
 observe_switchover_default() {
-  local provider=$1 expected address action_count holder
-  expected=$(expected_standby_node "$provider")
-  address=$(capture_address "$provider")
-  action_count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE status = 'succeeded' AND action IN ('assign-secondary-ip','ensure-forwarding-enabled') AND updated_at >= datetime('now','-10 minutes');")
-  if [[ "${action_count:-0}" =~ ^[0-9]+$ && "$action_count" -gt 0 ]]; then
-    return 0
-  fi
-  if [[ -n "$expected" && -n "$address" ]]; then
-    holder=$(sql_value "$provider" "SELECT json_extract(parameters_json,'$.mobilityCaptureHolder') FROM action_executions WHERE target_json LIKE '%$address%' ORDER BY updated_at DESC LIMIT 1;")
-    [[ "$holder" == "$expected" ]] && return 0
-  fi
-  [[ "$provider" == "onprem" ]] && observe_detection_default "$provider"
+  local provider=$1 predicate count
+  predicate=$(current_capture_predicate "$provider") || return 2
+  count=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE $predicate AND status = 'succeeded' AND action IN ('assign-secondary-ip','ensure-forwarding-enabled');") || return 2
+  [[ "$count" =~ ^[0-9]+$ ]] || return 2
+  printf 'current_target_succeeded_actions=%s\n' "$count"
+  [[ "$count" -gt 0 ]]
 }
 
 observe_recovery_default() {
@@ -186,8 +187,11 @@ observe_recovery_default() {
 
 cmd_observe() {
   local provider=$1 stage=$2
-  if ce_run_stage_command "$provider" "$stage"; then
-    return 0
+  local override
+  override=$(ce_env_first "CE_$(provider_upper "$provider")_$(ce_upper "$stage")_COMMAND" 2>/dev/null || true)
+  if [[ -n "$override" ]]; then
+    bash -lc "$override"
+    return
   fi
   case "$stage" in
     detection) observe_detection_default "$provider" ;;
@@ -198,14 +202,10 @@ cmd_observe() {
 }
 
 cmd_detail() {
-  local provider=$1 stage=$2 expected stopped address holder actions
-  expected=$(expected_standby_node "$provider")
-  stopped=$(stopped_node "$provider")
-  address=$(capture_address "$provider")
-  holder=$(sql_value "$provider" "SELECT json_extract(parameters_json,'$.mobilityCaptureHolder') FROM action_executions ORDER BY updated_at DESC LIMIT 1;")
-  actions=$(sql_value "$provider" "SELECT COUNT(*) FROM action_executions WHERE status = 'succeeded' AND updated_at >= datetime('now','-10 minutes');")
-  printf 'stage=%s provider=%s expected_standby=%s stopped_node=%s address=%s holder=%s recent_succeeded_actions=%s\n' \
-    "$stage" "$provider" "$expected" "$stopped" "$address" "$holder" "${actions:-0}"
+  local provider=$1 stage=$2 predicate record
+  predicate=$(current_capture_predicate "$provider") || return 2
+  record=$(sql_value "$provider" "SELECT json_object('action',action,'status',status,'target',json(target_json),'holder',json_extract(parameters_json,'$.mobilityCaptureHolder'),'updatedAt',updated_at) FROM action_executions WHERE $predicate ORDER BY julianday(updated_at) DESC LIMIT 1;") || return 2
+  printf 'stage=%s provider=%s current_target_record=%s\\n' "$stage" "$provider" "$record"
 }
 
 main() {

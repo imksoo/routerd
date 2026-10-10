@@ -34,7 +34,7 @@ case "$op" in
   ping) exit 0 ;;
   ssh)
     printf 'peer_ip=%s\n' "$src_ip"
-    printf 'default_gw=10.77.60.1\n'
+    printf 'default_gw_before=10.77.60.1\ndefault_gw=10.77.60.1\n'
     ;;
   *) exit 2 ;;
 esac
@@ -223,7 +223,7 @@ case "$op" in
     printf 'dst_hostname=%s\n' "$dst_host"
     printf 'dst_hostkey_sha256=SHA256:dest\n'
     printf 'peer_ip=%s\n' "$src_ip"
-    printf 'default_gw=10.77.60.1\n'
+    printf 'default_gw_before=10.77.60.1\ndefault_gw=10.77.60.1\n'
     ;;
   *) exit 2 ;;
 esac
@@ -435,7 +435,7 @@ case "$op" in
   ping) exit 0 ;;
   ssh)
     printf 'peer_ip=%s\n' "$src_ip"
-    printf 'default_gw=10.77.60.1\n'
+    printf 'default_gw_before=10.77.60.1\ndefault_gw=10.77.60.1\n'
     ;;
   *) exit 2 ;;
 esac
