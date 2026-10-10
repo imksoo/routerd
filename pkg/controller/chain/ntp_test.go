@@ -58,8 +58,9 @@ func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
 	if !reflect.DeepEqual(status["servers"], []string{"2001:db8::123", "2001:db8::124"}) {
 		t.Fatalf("unexpected servers status: %#v", status)
 	}
-	if len(commands) != 2 {
-		t.Fatalf("expected timedatectl + restart, got %#v", commands)
+	wantCommands := [][]string{{"timedatectl", "set-ntp", "true"}, {"systemctl", "restart", "systemd-timesyncd.service"}}
+	if !reflect.DeepEqual(commands, wantCommands) {
+		t.Fatalf("NTP provider commands = %#v, want %#v", commands, wantCommands)
 	}
 }
 

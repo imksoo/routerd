@@ -37,10 +37,24 @@ done
 [ -n "$evidence_dir" ]
 [ "${SAM_E2E_MAX_SECONDARY_IPS:-}" = 3 ]
 mkdir -p "$evidence_dir/matrix/initial" "$evidence_dir/convergence"
-matrix_rows=12
-[ "${SAM_MINIMAL_FAKE_INCOMPLETE:-0}" = 1 ] && matrix_rows=11
-for _ in $(seq 1 "$matrix_rows"); do printf 'client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/summary.tsv"
-for _ in $(seq 1 9); do printf 'cloud-client-a\tclient-b\tPASS\n'; done >"$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+clients=(aws-client-a azure-client-a oci-client-a pve-client-a)
+for src in "${clients[@]}"; do
+  for dst in "${clients[@]}"; do
+    [ "$src" != "$dst" ] || continue
+    printf '%s\t%s\tPASS\n' "$src" "$dst"
+  done
+done >"$evidence_dir/matrix/initial/summary.tsv"
+for src in aws-client-a azure-client-a oci-client-a; do
+  for dst in "${clients[@]}"; do
+    [ "$src" != "$dst" ] || continue
+    printf '%s\t%s\tPASS\n' "$src" "$dst"
+  done
+done >"$evidence_dir/matrix/initial/cloud-ingress-summary.tsv"
+if [ "${SAM_MINIMAL_FAKE_INCOMPLETE:-0}" = 1 ]; then
+  # Keep twelve PASS rows, but duplicate one pair and omit another.
+  first="$(head -n 1 "$evidence_dir/matrix/initial/summary.tsv")"
+  sed -i "\$c\\$first" "$evidence_dir/matrix/initial/summary.tsv"
+fi
 printf 'label\tstatus\telapsed_seconds\ninitial-dataplane\tPASS\t1\ninitial-provider\tPASS\t1\n' >"$evidence_dir/convergence/summary.tsv"
 SCRIPT
 chmod +x "$scripts/sam-e2e.sh"
@@ -125,7 +139,7 @@ if SAM_MINIMAL_FAKE_INVOCATION="$invocation" SAM_MINIMAL_FAKE_INCOMPLETE=1 \
     --pve-ssh-key "$pve_ssh_key" \
     --pve-known-hosts "$pve_known_hosts" \
     --evidence-root "$work/incomplete" --max-runtime-seconds 1200 >/dev/null 2>&1; then
-  echo "minimal profile accepted an incomplete directed client matrix" >&2
+  echo "minimal profile accepted a duplicate directed pair hiding a missing pair" >&2
   exit 1
 fi
 jq -e '.result == "fail" and .outcomes.gateEvidenceExit == 1' \

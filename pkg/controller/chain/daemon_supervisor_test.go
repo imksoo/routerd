@@ -76,6 +76,12 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 			break
 		}
 	}
+	runner.supervisedMu.Lock()
+	expectedOwner := runner.clientDaemonStates[supervisedDaemonKey("routerd-dns-resolver", "lan-resolver")].Spec.OwnerToken
+	runner.supervisedMu.Unlock()
+	if expectedOwner == "" {
+		t.Fatal("supervisor did not assign an ownership token")
+	}
 	cancel()
 	pidData, err := os.ReadFile(pidPath)
 	if err != nil {
@@ -97,18 +103,12 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 		t.Fatalf("routerd-dns-resolver was not started")
 	}
 	got := strings.Fields(string(data))
-	for _, want := range []string{
-		"daemon",
-		"--resource", "lan-resolver",
-		"--config-file", "/var/lib/routerd/dns-resolver/lan-resolver/config.json",
-		"--socket", "/run/routerd/dns-resolver/lan-resolver.sock",
-		"--state-file", "/var/lib/routerd/dns-resolver/lan-resolver/state.json",
-		"--event-file", "/var/lib/routerd/dns-resolver/lan-resolver/events.jsonl",
-	} {
-		if !stringSliceContains(got, want) {
-			t.Fatalf("routerd-dns-resolver args missing %q: %v", want, got)
-		}
+	want := []string{"daemon", "--resource", "lan-resolver", "--config-file", "/var/lib/routerd/dns-resolver/lan-resolver/config.json", "--socket", "/run/routerd/dns-resolver/lan-resolver.sock", "--state-file", "/var/lib/routerd/dns-resolver/lan-resolver/state.json", "--event-file", "/var/lib/routerd/dns-resolver/lan-resolver/events.jsonl"}
+	want = append(want, "--supervisor-owner", expectedOwner)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DNS resolver argv = %v, want %v", got, want)
 	}
+
 }
 
 func TestSupervisedDaemonAlreadyCanceledReportsCompletion(t *testing.T) {

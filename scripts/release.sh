@@ -114,7 +114,7 @@ fi
 
 validate_changelog() {
 	file=$1
-	[ -f "$file" ] || return 0
+	[ -f "$file" ] || { echo "required changelog is missing: $file" >&2; exit 1; }
 	if ! perl -0e '
 		use strict;
 		use warnings;

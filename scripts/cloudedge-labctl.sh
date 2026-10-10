@@ -552,9 +552,16 @@ if not flows:
     print("na")
     raise SystemExit(0)
 if field == "directed":
-    ok = summary.get("result") == "pass"
+    # Qualification is the fixed four-site matrix, not any twelve passing rows.
+    sites = {"aws", "azure", "oci", "onprem"}
+    expected = {(src, dst) for src in sites for dst in sites if src != dst}
+    pairs = [(f.get("src"), f.get("dst")) for f in flows if isinstance(f, dict)]
+    ok = (len(pairs) == len(flows) == len(expected)
+          and set(pairs) == expected
+          and all(f.get("result") == "pass" for f in flows)
+          and summary.get("result") == "pass")
     if expected_total:
-        ok = ok and summary.get("total") == expected_total
+        ok = ok and len(flows) == expected_total and summary.get("total") == expected_total
 else:
     ok = all(f.get(field) == "pass" for f in flows)
 print("pass" if ok else "fail")
@@ -869,6 +876,10 @@ cmd_evidence() {
     else
       result="fail"   # no positive evidence => not a pass
     fi
+  fi
+
+  if [[ "$aws_ps" == fail || "$oci_ps" == fail || "$az_ps" == fail || "$onprem_ps" == fail ]]; then
+    result=fail
   fi
 
   local result_file="$out/result.json"

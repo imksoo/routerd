@@ -286,7 +286,7 @@ func mustPrefix(t *testing.T, label, value string) netip.Prefix {
 	if err != nil {
 		t.Fatalf("%s prefix %q: %v", label, value, err)
 	}
-	return prefix.Masked()
+	return prefix
 }
 
 func mustAddr(t *testing.T, label, value string) netip.Addr {

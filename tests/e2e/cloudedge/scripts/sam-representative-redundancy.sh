@@ -305,8 +305,17 @@ verify_transition() {
   [ -f "$canary" ] && [ -f "$convergence" ] || return 1
   verify_transition_ack "$convergence" "$label" || return 1
   [ "$#" -gt 0 ] || return 1
-  [ "$(wc -l <"$canary")" -eq 4 ] || return 1
-  awk -F '\t' '$3 != "PASS" { exit 1 }' "$canary" || return 1
+  jq -Rne --slurpfile nodes "$nodes_json" '
+    [inputs | split("\t")] as $rows
+    | ["aws", "azure", "oci", "pve"] as $sites
+    | [$sites[] as $site | ($nodes[0] | to_entries
+       | map(select(.value.role == "client" and .value.site == $site))
+       | sort_by(.key) | .[0].key)] as $clients
+    | [$clients | to_entries[] | [.value, $clients[((.key + 1) % 4)]]] as $expected
+    | ($clients | all(type == "string" and length > 0))
+      and ($rows | all(length == 3 and .[2] == "PASS"))
+      and (($rows | map(.[0:2]) | sort) == ($expected | sort))
+  ' "$canary" >/dev/null || return 1
   verify_gate "$convergence" "$label-dataplane" || return 1
   verify_gate "$convergence" "$label-provider" || return 1
   for rr in "$@"; do
