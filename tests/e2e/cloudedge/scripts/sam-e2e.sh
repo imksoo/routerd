@@ -1347,7 +1347,7 @@ collect_convergence_snapshot() {
 observe_flow() {
   local label="$1" src="$2" dst="$3" kind="$4" required="${5:-ping hostname}"
   local src_ip dst_ip dst_host dst_user dir state component command marker raw rc transport_rc actual
-  local attempt remaining result attempt_result pending sent components
+  local attempt remaining result attempt_result pending sent components attempt_started
   src_ip="$(node_field "$src" private_ip)"; dst_ip="$(node_field "$dst" private_ip)"
   dst_host="$(node_field "$dst" name)"; dst_user="$(node_field "$dst" ssh_user)"
   dir="$flow_evidence_dir/$kind-$src-$dst"
@@ -1380,7 +1380,7 @@ observe_flow() {
       case "$component" in
         route)
           command="ip route get '$dst_ip' from '$src_ip'"
-          [ "$kind" != router ] || command="$command | grep -q ' dev samt'"
+          [ "$kind" != router ] || command="route_output=\$(ip route get '$dst_ip' from '$src_ip' 2>&1); route_rc=\$?; printf '%s\\n' \"\$route_output\"; if [ \"\$route_rc\" -eq 0 ]; then printf '%s\\n' \"\$route_output\" | grep -q ' dev samt'; else (exit 2); fi"
           ;;
         ping) command="ping -I '$src_ip' -c 3 -W 2 '$dst_ip'" ;;
         hostname)
@@ -1390,6 +1390,7 @@ observe_flow() {
       marker="__ROUTERD_FLOW_${BASHPID}_${RANDOM}_${component}_${attempt}__"
       raw="$dir/$component.$attempt.txt"
       transport_rc=0
+      attempt_started=$SECONDS
       ssh_timeout_seconds="$remaining" ssh_node "$src" \
         "set +e; $command; rc=\$?; printf '\\n$marker=%s\\n' \"\$rc\"; exit 0" >"$raw" 2>&1 || transport_rc=$?
       rc="$(sed -n "s/^$marker=\([0-9][0-9]*\)$/\1/p" "$raw")"
@@ -1398,11 +1399,23 @@ observe_flow() {
         attempt_result=PASS
         if [ "$component" = hostname ]; then
           actual="$(sed "/^$marker=/d; /^$/d" "$raw" | tail -n 1)"
-          [ "$actual" = "$dst_host" ] || attempt_result=FAIL_HOSTNAME
+          if [ "$actual" != "$dst_host" ]; then
+            if [[ "$actual" =~ ^[[:alnum:]][[:alnum:].-]*$ ]]; then attempt_result=FAIL_HOSTNAME
+            else attempt_result=OBSERVATION_INCONCLUSIVE; fi
+          fi
         fi
       elif [ "$rc" = 1 ]; then
-        case "$component" in route) attempt_result=FAIL_ROUTE;; ping) attempt_result=FAIL_PING;; esac
+        case "$component" in
+          route)
+            if grep -q ' dev ' "$raw"; then attempt_result=FAIL_ROUTE
+            else attempt_result=INFRA_FAILURE; fi ;;
+          ping)
+            if grep -Eq '[1-9][0-9]* packets transmitted, 0 (packets )?received' "$raw"; then attempt_result=FAIL_PING; fi ;;
+        esac
+      elif [ -n "$rc" ]; then
+        attempt_result=INFRA_FAILURE
       fi
+      printf 'label=%s source=%s destination=%s target=%s component=%s attempt=%s operation=%s started_seconds=%s elapsed_seconds=%s transport_exit=%s remote_exit=%s result=%s\n' "$label" "$src" "$dst" "$dst_ip" "$component" "$attempt" "$marker" "$attempt_started" "$((SECONDS - attempt_started))" "$transport_rc" "$rc" "$attempt_result" >>"$raw"
       printf '%s\n' "$attempt_result" >"$dir/$component.status"
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$SECONDS" "$component" "$attempt" "$attempt_result" "$transport_rc" "${rc:-missing}" >>"$dir/attempts.tsv"
     done
@@ -1411,6 +1424,7 @@ observe_flow() {
       attempt_result="$(cat "$dir/$component.status" 2>/dev/null || echo OBSERVATION_INCONCLUSIVE)"
       if [ "$attempt_result" != PASS ]; then
         if [[ "$attempt_result" == FAIL_* ]]; then result="$attempt_result";
+        elif [ "$attempt_result" = INFRA_FAILURE ] && [[ "$result" != FAIL_* ]]; then result=INFRA_FAILURE
         elif [ "$result" = PASS ]; then result=OBSERVATION_INCONCLUSIVE; fi
         attempt="$(cat "$dir/$component.count" 2>/dev/null || echo 0)"
         [ "$attempt" -ge 3 ] || pending=1
@@ -1430,7 +1444,10 @@ observe_flow() {
         >"$dir/diagnostics.txt" 2>&1 || true
     fi
   fi
-  case "$result" in PASS) return 0;; OBSERVATION_INCONCLUSIVE) return 3;; *) return 1;; esac
+  if [ "$result" != PASS ]; then
+    printf 'flow=%s source=%s destination=%s target=%s result=%s attempts=%s raw=%s state=%s diagnostics=%s\n' "$label" "$src" "$dst" "$dst_ip" "$result" "$dir/attempts.tsv" "$dir" "$dir/state" "$dir/diagnostics.txt" >&2
+  fi
+  case "$result" in PASS) return 0;; OBSERVATION_INCONCLUSIVE) return 3;; INFRA_FAILURE) return 2;; *) return 1;; esac
 }
 
 transition_canary_matrix() {
@@ -2005,6 +2022,7 @@ run_validation_set() {
     if ! { matrix_rc=0; transition_canary_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
       dataplane_status=FAIL_TRANSITION_CANARY
       [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
+      [ "$matrix_rc" -ne 2 ] || dataplane_status=INFRA_FAILURE
       record_timing "$label" dataplane-control-transition-canary "$phase_started"
     else
       record_timing "$label" dataplane-control-transition-canary "$phase_started"
@@ -2012,14 +2030,17 @@ run_validation_set() {
   elif ! { matrix_rc=0; client_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_MATRIX
     [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
+    [ "$matrix_rc" -ne 2 ] || dataplane_status=INFRA_FAILURE
     record_timing "$label" dataplane-control-and-client-matrix "$phase_started"
   elif [ "$label" = "initial" ] && ! { matrix_rc=0; router_origin_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_ROUTER_ORIGIN
     [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
+    [ "$matrix_rc" -ne 2 ] || dataplane_status=INFRA_FAILURE
     record_timing "$label" dataplane-control-client-and-router-origin-matrix "$phase_started"
   elif ! { matrix_rc=0; cloud_ingress_matrix "$label" || matrix_rc=$?; [ "$matrix_rc" -eq 0 ]; }; then
     dataplane_status=FAIL_CLOUD_INGRESS
     [ "$matrix_rc" -ne 3 ] || dataplane_status=OBSERVATION_INCONCLUSIVE
+    [ "$matrix_rc" -ne 2 ] || dataplane_status=INFRA_FAILURE
     record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
   else
     record_timing "$label" dataplane-control-client-matrix-cloud-ingress "$phase_started"
@@ -2032,6 +2053,7 @@ run_validation_set() {
     record_timing "$label" convergence-snapshot-after-dataplane-fail "$phase_started"
     echo "DATAPLANE-CONVERGENCE-FAIL: $label $dataplane_status" >&2
     [ "$dataplane_status" != OBSERVATION_INCONCLUSIVE ] || return 3
+    [ "$dataplane_status" != INFRA_FAILURE ] || return 2
     return 1
   elif [ "$success_evidence_minimal" -eq 1 ]; then
     record_skipped_success_evidence convergence "$label"

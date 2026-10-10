@@ -96,7 +96,7 @@ class RequestReceiptTests(unittest.TestCase):
                                    ("samples", []), ("dbStates", [])]:
             value = fixture()
             value[field] = replacement
-            self.assertFalse(receipt(value)["success"])
+            self.assertEqual(receipt(value)["success"], field in ("errors", "threadExited"))
 
     def test_later_bad_evidence_is_not_hidden_by_an_earlier_match(self):
         value = fixture()

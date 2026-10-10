@@ -929,7 +929,13 @@ def command_qualification(argv: list[str]) -> int:
         classification = "infra_failure"
     elif driver_exit != 0 or driver_result.get("status") != "pass":
         result_status = "fail"
-        classification = driver_result.get("classification", "product_failure")
+        classification = driver_result.get("classification", "infra_failure")
+        if classification == "product_failure" and not (isinstance(driver_result.get("productEvidence"),list) and driver_result["productEvidence"]):
+            classification = "observation_inconclusive"
+        elif classification not in {"product_failure", "infra_failure", "observation_inconclusive"}:
+            classification = "infra_failure"
+    if driver_result.get("classification") == "product_failure" and isinstance(driver_result.get("productEvidence"),list) and driver_result["productEvidence"]:
+        result_status, classification = "fail", "product_failure"
     result = {
         "schemaVersion": "release-qualification-result/v1",
         "runId": run_id,

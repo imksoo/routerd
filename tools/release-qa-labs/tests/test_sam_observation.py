@@ -25,7 +25,7 @@ class SAMObservationTests(unittest.TestCase):
             for name, body in {
                 "ping": '''echo ping >>"$FIXTURE_LOG"
 n=$(wc -l <"$FIXTURE_LOG")
-if [ "$FIXTURE" = ping-fails ] || { [ "$FIXTURE" = ping-recovers ] && [ "$n" -eq 1 ]; }; then exit 1; fi
+if [ "$FIXTURE" = ping-fails ] || { [ "$FIXTURE" = ping-recovers ] && [ "$n" -eq 1 ]; }; then echo "3 packets transmitted, 0 received, 100% packet loss"; exit 1; fi
 ''',
                 "ssh": '''echo hostname >>"$FIXTURE_LOG"
 if [ "$FIXTURE" = wrong-host ]; then echo wrong-host

@@ -22,6 +22,8 @@ SAM在provider Ready之後判定通訊。每次validation將原有的900秒provi
 
 診斷採集與驗收判定分離。收斂等待迴圈不再反覆執行 `doctor sam`，僅在診斷時採集一次。同一診斷快照中的 status、已套用 BGP 路徑和 global RIB 各讀取一次，摘要從儲存的回應產生。診斷採集失敗不改變流量判定。
 
+retained ARP檢查中，監控HTTP的80ms timeout、100ms counter週期、400ms連續coverage以及每個區間的controller進度僅是診斷限制，不是驗收條件。診斷失敗不得停止pcap或sender採集。仍須保留完整的self ARP捕捉、實際target command與packet對應、有效請求與TTL、完成的通訊及process identity；缺少必要證據時判為證據不足。原始觀測保留既有時間、target、command sequence和provider resource ID以供關聯。
+
 cleanup inventory區分lifecycle變化和identity不一致。AWS/OCI的identity一致而狀態觀測不同時，只在同次inventory執行中額外查詢對應provider最多2次，保留每次原始回應。identity、tag、account不一致、無效回應及通訊失敗不能證明資源不存在。其他provider的inventory繼續執行；不完整scope的count為null，不能通過零資源判定。既有資源回收和刪除保護保持不變。
 
 下一次付費測試之前，用 `tools/release-qa-labs/tests/` 下的 `test_sam_observation.py`、`test_inventory_resources.py` 和 `test_inventory_driver.py` 重播相關回應及負例，不建立資源。透過 `make cloudedge-representative-redundancy-offline-test` 檢查實際matrix/profile呼叫路徑。這些測試通過不代表已完成雲端實機測試。
