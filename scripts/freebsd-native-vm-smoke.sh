@@ -59,16 +59,56 @@ routerd="$work/routerd"
 routerctl="$work/routerctl"
 own_pf=0
 
+cleanup_started=0
 cleanup() {
+  test_rc=$?
+  [ "$cleanup_started" -eq 0 ] || return "$test_rc"
+  cleanup_started=1
+  set +e
+  cleanup_rc=0
   if [ -s "$work/routerd.pid" ]; then
-    kill -TERM "$(cat "$work/routerd.pid")" 2>/dev/null || true
+    owned_pid=$(cat "$work/routerd.pid")
+    if kill -0 "$owned_pid" 2>/dev/null; then
+      kill -TERM "$owned_pid" >>"$work/cleanup.log" 2>&1
+      stop_rc=$?
+      printf 'routerd_stop_exit=%s\n' "$stop_rc" >>"$work/cleanup.log"
+      [ "$stop_rc" -eq 0 ] || cleanup_rc=2
+    else
+      printf 'routerd_already_stopped=true\n' >>"$work/cleanup.log"
+    fi
   fi
   if [ "$own_pf" -eq 1 ]; then
-    kldunload pf
+    kldunload pf >>"$work/cleanup.log" 2>&1
+    unload_rc=$?
+    printf 'pf_unload_exit=%s\n' "$unload_rc" >>"$work/cleanup.log"
+    [ "$unload_rc" -eq 0 ] || cleanup_rc=2
   fi
-  rm -rf "$work"
+  printf 'test_exit=%s\ncleanup_exit=%s\n' "$test_rc" "$cleanup_rc" >>"$work/cleanup.log"
+  # Save child JSON/logs and cleanup evidence, without archiving helper binaries
+  # or fixture credential/config files. The existing CI console artifact collects it.
+  archive=/var/tmp/routerd-native-evidence.tar.gz
+  list="$work/evidence-files"
+  (cd "$work" && find . -type f \( -name '*.json' -o -name '*.jsonl' -o -name '*.log' -o -name '*.meta' -o -name '*.result' -o -name result -o -name cleanup.log \) -print) >"$list"
+  archive_rc=$?
+  if [ "$archive_rc" -eq 0 ]; then
+    tar -czf "$archive" -C "$work" -T "$list"
+    archive_rc=$?
+  fi
+  printf 'evidence_archive=%s archive_exit=%s\n' "$archive" "$archive_rc" >&2
+  if [ "$archive_rc" -eq 0 ] && [ "$cleanup_rc" -eq 0 ]; then
+    rm -rf "$work"
+    remove_rc=$?
+    printf 'workdir_remove_exit=%s\n' "$remove_rc" >&2
+    [ "$remove_rc" -eq 0 ] || cleanup_rc=2
+  else
+    echo "native evidence retained at $work" >&2
+    cleanup_rc=2
+  fi
+  [ "$test_rc" -ne 0 ] || test_rc=$cleanup_rc
+  exit "$test_rc"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
 
 cat >"$config" <<'EOF'
 apiVersion: routerd.net/v1alpha1

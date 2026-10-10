@@ -61,6 +61,12 @@ Do not use placeholder groups such as `routerd.io`.
 
 Do not mutate the host network in normal unit tests.
 
+Test and harness changes must follow the mandatory design rules in
+docs/operations/development.md, including reusable helpers and templates.
+Keep diagnostic evidence separate from product acceptance and retain failed
+attempts and cleanup outcomes. Do not repeat failed live trials without cause
+analysis or treat missing observations as product PASS/FAIL.
+
 Any test that changes network state must be isolated under:
 - `tests/netns`
 - explicit `sudo`

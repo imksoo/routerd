@@ -90,18 +90,22 @@ run_restart_apply_diagnostic() {
   "$@" >"$log" 2>&1 &
   apply_pid=$!
   elapsed=0
+  start_epoch=$(date +%s)
   diagnostic=0
+  diagnostic_sampled=0
   while kill -0 "$apply_pid" 2>/dev/null; do
-    sleep 1; elapsed=$((elapsed + 1))
-    if [ "$elapsed" -eq 10 ] && kill -0 "$apply_pid" 2>/dev/null; then
+    sleep 1; elapsed=$(( $(date +%s) - start_epoch ))
+    if [ "$elapsed" -ge 10 ] && [ "$diagnostic_sampled" -eq 0 ] && kill -0 "$apply_pid" 2>/dev/null; then
+      diagnostic_sampled=1
+      run_bounded 3 restart-process-tree "$evidence/restart-apply.process-tree.log" ps -axo pid,ppid,pgid,sid,stat,command || true
+      run_bounded 3 restart-procstat "$evidence/restart-apply.procstat.log" procstat -kk "$apply_pid" || true
+    fi
+    if [ "$elapsed" -ge 45 ] && kill -0 "$apply_pid" 2>/dev/null; then
       diagnostic=1
-      ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/restart-apply.process-tree.log" 2>&1 || true
-      procstat -kk "$apply_pid" >"$evidence/restart-apply.procstat.log" 2>&1 || true
-      kill -QUIT "$apply_pid" 2>/dev/null || true
+      printf 'step=restart-apply timeout=45s classification=observation_inconclusive\n' >&3
+      kill -TERM "$apply_pid" 2>/dev/null || true
       sleep 2
-      if kill -0 "$apply_pid" 2>/dev/null; then kill -TERM "$apply_pid" 2>/dev/null || true; fi
-      sleep 1
-      if kill -0 "$apply_pid" 2>/dev/null; then kill -KILL "$apply_pid" 2>/dev/null || true; fi
+      kill -KILL "$apply_pid" 2>/dev/null || true
     fi
   done
   if wait "$apply_pid"; then apply_rc=0; else apply_rc=$?; fi
@@ -189,7 +193,8 @@ spec:
     spec: {localAddress: $host_addr, remoteAddress: $peer_addr, preSharedKey: $psk, phase1Proposals: [invalid-proposal], leftSubnet: $host_ts/32, rightSubnet: $peer_ts/32}
 EOF
 if run_invalid_apply_diagnostic "$evidence/invalid.log" "$routerd" apply --once --config "$work/invalid.yaml" --state-file "$state" --ledger-file "$ledger"; then invalid_rc=0; else invalid_rc=$?; fi
-[ "$invalid_rc" -ne 0 ] && [ "$invalid_rc" -ne 124 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
+case "$invalid_rc" in 124|125|126|127|[1-9][0-9][0-9]) echo 'INCONCLUSIVE: invalid apply did not establish a normal rejection' >&3; exit 3 ;; esac
+[ "$invalid_rc" -ne 0 ]; grep -Eiq 'swanctl|proposal|load' "$evidence/invalid.log"; if grep -F "$psk" "$evidence/invalid.log" >/dev/null; then exit 1; fi
 run_bounded 45 valid-apply "$evidence/apply.log" "$routerd" apply --once --config "$work/router.yaml" --state-file "$state" --ledger-file "$ledger"
 run_bounded 5 ipsec-module-loaded "$evidence/ipsec-module.log" kldstat -m ipsec
 run_bounded 20 initiate "$evidence/initiate.log" /usr/local/sbin/swanctl --initiate --ike native-tunnel --child net

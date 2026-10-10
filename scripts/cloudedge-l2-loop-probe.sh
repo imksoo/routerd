@@ -29,7 +29,7 @@ ENV:
 
 The runner should print key=value lines:
   broadcast_pps=<number>
-  stp_tcn_delta=<number>
+  stp_tcn_delta=<TCN BPDU or TC-flag frames during the sample; excludes ordinary BPDU/ACK-only>\n  bpdu_count=<all sampled BPDUs; diagnostic only>
   mac_flap_count=<number>
   ping_loss_percent=<number>
   blocked_ports=<number>
