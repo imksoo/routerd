@@ -47,8 +47,13 @@ website/src/pages/index.tsx
 
 fail=0
 for f in ${must_match_files}; do
-    [ -f "${f}" ] || continue
-    bad=$(grep -nE "v[0-9]{8}\.[0-9]{4}" "${f}" | grep -v "${active}" || true)
+    if [ ! -f "${f}" ]; then
+        echo "check-active-stable: required file missing: ${f}" >&2
+        fail=1
+        continue
+    fi
+    # An active token cannot hide a stale token on the same line.
+    bad=$(grep -nEo "v[0-9]{8}\.[0-9]{4}" "${f}" | awk -F ':' -v active="${active}" '$2 != active' || true)
     if [ -n "${bad}" ]; then
         echo "check-active-stable: ${f} mentions a stable version other than ${active}:" >&2
         printf '%s\n' "${bad}" >&2
