@@ -225,6 +225,19 @@ assumption. Regressions, sampler errors, process changes, current/new reconcile
 errors, inconsistent completion fields and a final unfinished batch remain FAIL.
 The API omits a zero `reconcileErrorCount`; missing required fields still fail.
 
+When a command completes near a read boundary, its first status observation can
+fall outside the interior counter window. The evaluator can use the original
+`lastCommandProbe` JSON string in that case. The recorded completion must still
+fall inside the original controller interval, and the first observation must
+show exactly one new command across adjacent reads spanning at most 400 ms.
+Require a valid IPv4 target, immutable sequence evidence, UTC start/completion
+times within the bound observer lifetime and read, and the frozen configuration's
+successful packet count (`expected_command_packets`, default 3). Keep complete
+interior coverage and the later successful reconcile requirement. Missing command
+metadata cannot enable this fallback; malformed present metadata fails. Retain
+the original JSON, observation indices and completion method in the proof. The
+boundary itself and the 400 ms coverage limit do not move.
+
 This is evidence of continued work and completion, not a per-reconcile latency
 SLO. Keep the observation duration, normal polling cadence, target attribution,
 TTL/expiry, measured clock bounds, self-suppression and final environment gates.
