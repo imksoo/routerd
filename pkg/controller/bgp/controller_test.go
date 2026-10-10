@@ -3,6 +3,7 @@
 package bgp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -365,6 +366,7 @@ type fakeServer struct {
 	thirdPartyNextHop string
 	watchSessions     chan watchSession
 	watchRequests     []*gobgpapi.WatchEventRequest
+	watchMu           sync.Mutex
 }
 
 type watchSession struct {
@@ -1326,6 +1328,22 @@ func (s *fakeServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathReque
 			return err
 		}
 	}
+
+	var destinations []*gobgpapi.Destination
+	for _, destination := range s.routes {
+		var paths []*gobgpapi.Path
+		for _, path := range destination.Paths {
+			if len(req.GetUuid()) > 0 && bytes.Equal(path.GetUuid(), req.GetUuid()) {
+				continue
+			}
+			paths = append(paths, path)
+		}
+		if len(paths) > 0 {
+			destination.Paths = paths
+			destinations = append(destinations, destination)
+		}
+	}
+	s.routes = destinations
 	return nil
 }
 
@@ -1349,7 +1367,9 @@ func (s *fakeServer) ListPath(_ context.Context, _ *gobgpapi.ListPathRequest, fn
 }
 
 func (s *fakeServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	s.watchMu.Lock()
 	s.watchRequests = append(s.watchRequests, req)
+	s.watchMu.Unlock()
 	if s.watchSessions == nil {
 		<-ctx.Done()
 		return ctx.Err()
@@ -2990,8 +3010,17 @@ func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	server.routes = []*gobgpapi.Destination{testDestination("10.77.60.11/32", "10.99.0.13")}
 	server.watchSessions <- watchSession{events: []*gobgpapi.WatchEventResponse{watchTableEvent("10.77.60.11/32", "10.99.0.13")}}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	controller.Start(ctx)
+
+	done := make(chan struct{})
+	go func() { defer close(done); controller.watchEventLoop(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Error("watch loop did not stop after cancellation")
+		}
+	})
 	waitForCondition(t, 500*time.Millisecond, func() bool {
 		return fib.calls() >= 2
 	})
@@ -2999,8 +3028,17 @@ func TestWatchEventReconnectsAfterStreamError(t *testing.T) {
 	if !reflect.DeepEqual(fib.lastRoutes(), want) {
 		t.Fatalf("FIB routes after reconnect = %#v, want %#v", fib.lastRoutes(), want)
 	}
-	if len(server.watchRequests) < 2 {
-		t.Fatalf("watch requests = %d, want reconnect after stream error", len(server.watchRequests))
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("watch loop did not join after cancellation")
+	}
+	server.watchMu.Lock()
+	count := len(server.watchRequests)
+	server.watchMu.Unlock()
+	if count < 2 {
+		t.Fatalf("watch requests = %d, want reconnect after stream error", count)
 	}
 }
 
@@ -4113,6 +4151,9 @@ func TestReconcileStaticAdvertisementWithdrawalRecoversFromAlreadyMissingPath(t 
 	bgpSpec.ExportPolicy.AllowedPrefixes = nil
 	bgpResource.Spec = bgpSpec
 	router.Spec.Resources[0] = bgpResource
+	beforeAdds := server.paths
+	expectedUUID := append([]byte(nil), server.routes[0].Paths[0].GetUuid()...)
+	server.routes = nil // Model the external deletion reported by the next DeletePath error.
 	server.deletePathErrors = []error{errors.New("can't find a specified path")}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("withdrawal after already-missing path: %v", err)
@@ -4120,6 +4161,13 @@ func TestReconcileStaticAdvertisementWithdrawalRecoversFromAlreadyMissingPath(t 
 	if _, found := staticAppliedPaths(server.applied.Paths)["10.0.0.0/16"]; found {
 		t.Fatalf("applied paths retained withdrawn static advertisement: %#v", server.applied.Paths)
 	}
+	if len(server.deletedPathUUIDs) != 1 || !bytes.Equal(server.deletedPathUUIDs[0], expectedUUID) {
+		t.Fatalf("already-missing withdrawal identity = %#v, want %x", server.deletedPathUUIDs, expectedUUID)
+	}
+	if len(server.routes) != 0 || server.paths != beforeAdds {
+		t.Fatalf("already-missing path resurrected: routes=%#v adds=%d", server.routes, server.paths)
+	}
+
 }
 
 func TestReconcileFencesStaticWithdrawalBeforeLiveDelete(t *testing.T) {
@@ -4146,6 +4194,14 @@ func TestReconcileFencesStaticWithdrawalBeforeLiveDelete(t *testing.T) {
 		t.Fatalf("pending static withdrawal = %#v, want persisted UUID", server.applied.PendingStaticPathRemovals)
 	}
 
+	beforeAdds := server.paths
+	expectedUUID, err := bgpdaemon.DecodeUUID(retiring.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(server.deletedPathUUIDs) != 1 || !bytes.Equal(server.deletedPathUUIDs[0], expectedUUID) {
+		t.Fatalf("first attempted withdrawal UUID = %#v, want %x", server.deletedPathUUIDs, expectedUUID)
+	}
 	// A process restart sees only the tombstone, retries the idempotent UUID
 	// withdrawal, and finishes without re-advertising the removed prefix.
 	recovered := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
@@ -4155,6 +4211,18 @@ func TestReconcileFencesStaticWithdrawalBeforeLiveDelete(t *testing.T) {
 	if len(server.applied.PendingStaticPathRemovals) != 0 {
 		t.Fatalf("applied state retained completed static withdrawal: %#v", server.applied.PendingStaticPathRemovals)
 	}
+	if len(server.deletedPathUUIDs) != 2 || !bytes.Equal(server.deletedPathUUIDs[1], expectedUUID) {
+		t.Fatalf("recovered exact UUID withdrawal = %#v, want retried %x", server.deletedPathUUIDs, expectedUUID)
+	}
+	for _, destination := range server.routes {
+		if destination.Prefix == "10.0.0.0/16" {
+			t.Fatalf("withdrawn prefix remains in modeled routes: %#v", server.routes)
+		}
+	}
+	if server.paths != beforeAdds {
+		t.Fatalf("withdrawal re-advertised a path: adds=%d, want %d", server.paths, beforeAdds)
+	}
+
 }
 
 func TestReconcileKeepsUnchangedStaticAdvertisementWithoutReadd(t *testing.T) {

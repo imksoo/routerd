@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -486,7 +487,9 @@ func TestDoctorFederationFaultInjectionLagViolation(t *testing.T) {
 	closeDoctorState(t, store)
 
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
@@ -529,7 +532,9 @@ func TestDoctorFederationFaultInjectionFailedDeliveryViolation(t *testing.T) {
 	closeDoctorState(t, store)
 
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
@@ -572,7 +577,9 @@ func TestDoctorFederationFaultInjectionPendingExpiringSoonViolation(t *testing.T
 	closeDoctorState(t, store)
 
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
@@ -670,7 +677,9 @@ func TestDoctorFederationRemediationPlanStaleTTL(t *testing.T) {
 	var out bytes.Buffer
 	// Stale TTL when all delivered events are stale is a FAIL check, so run()
 	// returns an error. The remediation plan is still generated.
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
@@ -841,6 +850,7 @@ func TestDoctorFederationRemediationPlanNoStateMutation(t *testing.T) {
 	now := time.Now().UTC()
 	ev := routerstate.EventRecord{
 		ID: "evt-1", Group: "cloudedge", Type: "t", SourceNode: "self-node",
+		Subject: "10.99.0.1/32", DedupeKey: "seeded-dedupe", Payload: map[string]string{"seed": "preserve-this-payload"},
 		ObservedAt: now.Add(-10 * time.Second), ExpiresAt: now.Add(10 * time.Minute),
 	}
 	if err := store.RecordFederationEvent(ev); err != nil {
@@ -866,7 +876,9 @@ func TestDoctorFederationRemediationPlanNoStateMutation(t *testing.T) {
 
 	// Run doctor with --remediation-plan
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 
 	// Verify state is unchanged
 	store2 := openDoctorState(t, statePath)
@@ -880,19 +892,32 @@ func TestDoctorFederationRemediationPlanNoStateMutation(t *testing.T) {
 	}
 	closeDoctorState(t, store2)
 
-	if len(deliveriesBefore) != len(deliveriesAfter) {
-		t.Fatalf("delivery count changed: %d → %d", len(deliveriesBefore), len(deliveriesAfter))
-	}
-	for i := range deliveriesBefore {
-		if deliveriesBefore[i].Status != deliveriesAfter[i].Status {
-			t.Errorf("delivery[%d] status changed: %q → %q", i, deliveriesBefore[i].Status, deliveriesAfter[i].Status)
+	deliveryMap := func(records []routerstate.DeliveryRecord) map[string]routerstate.DeliveryRecord {
+		result := map[string]routerstate.DeliveryRecord{}
+		for _, record := range records {
+			key := record.EventID + "/" + record.Peer
+			if _, duplicate := result[key]; duplicate {
+				t.Fatalf("duplicate delivery identity %s", key)
+			}
+			result[key] = record
 		}
-		if deliveriesBefore[i].Attempts != deliveriesAfter[i].Attempts {
-			t.Errorf("delivery[%d] attempts changed: %d → %d", i, deliveriesBefore[i].Attempts, deliveriesAfter[i].Attempts)
-		}
+		return result
 	}
-	if len(eventsBefore) != len(eventsAfter) {
-		t.Fatalf("event count changed: %d → %d", len(eventsBefore), len(eventsAfter))
+	eventMap := func(records []routerstate.EventRecord) map[string]routerstate.EventRecord {
+		result := map[string]routerstate.EventRecord{}
+		for _, record := range records {
+			if _, duplicate := result[record.ID]; duplicate {
+				t.Fatalf("duplicate event identity %s", record.ID)
+			}
+			result[record.ID] = record
+		}
+		return result
+	}
+	if !reflect.DeepEqual(deliveryMap(deliveriesBefore), deliveryMap(deliveriesAfter)) {
+		t.Fatalf("complete delivery records changed: before=%#v after=%#v", deliveriesBefore, deliveriesAfter)
+	}
+	if !reflect.DeepEqual(eventMap(eventsBefore), eventMap(eventsAfter)) {
+		t.Fatalf("complete event records changed: before=%#v after=%#v", eventsBefore, eventsAfter)
 	}
 }
 
@@ -922,7 +947,9 @@ func TestDoctorFederationRemediationPlanNoDuplicateActions(t *testing.T) {
 	closeDoctorState(t, store)
 
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("decode: %v\n%s", err, out.String())
@@ -938,10 +965,9 @@ func TestDoctorFederationRemediationPlanNoDuplicateActions(t *testing.T) {
 		k := actionKey{a.Action, a.TargetGroup, a.TargetPeer}
 		seen[k]++
 	}
-	for k, count := range seen {
-		if count > 1 {
-			t.Errorf("duplicate remediation action: %+v appeared %d times", k, count)
-		}
+	want := map[actionKey]int{{remediationRetryFailedDeliveries, "cloudedge", "peer-a"}: 1}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("scoped exactly-once remediation = %#v, want %#v", seen, want)
 	}
 }
 
@@ -974,20 +1000,41 @@ func TestDoctorFederationRemediationPlanDeterministicOrdering(t *testing.T) {
 	}
 	closeDoctorState(t, store)
 
-	var results []string
+	type actionKey struct{ action, group, peer string }
+	want := []actionKey{
+		{remediationRetryFailedDeliveries, "cloudedge", "peer-a"},
+		{remediationRetryFailedDeliveries, "cloudedge", "peer-b"},
+	}
+	var first *doctorRemediationPlan
 	for i := 0; i < 3; i++ {
 		var out bytes.Buffer
-		_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
-		results = append(results, out.String())
-	}
-	for i := 1; i < len(results); i++ {
-		if results[i] != results[0] {
-			t.Errorf("run %d output differs from run 0:\nrun 0: %s\nrun %d: %s", i, results[0], i, results[i])
+		if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{}); err == nil {
+			t.Fatal("seeded FAIL must return CLI error")
+		}
+		var report doctorReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+			t.Fatalf("typed report: %v", err)
+		}
+		if report.RemediationPlan == nil {
+			t.Fatal("remediation plan missing")
+		}
+		var got []actionKey
+		for _, action := range report.RemediationPlan.Actions {
+			got = append(got, actionKey{action.Action, action.TargetGroup, action.TargetPeer})
+			if action.Reason == "" || !action.Safe || action.RequiresOperatorApproval {
+				t.Fatalf("invalid seeded action: %#v", action)
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("ordered scoped plan = %#v, want %#v", got, want)
+		}
+		if i == 0 {
+			first = report.RemediationPlan
+		} else if !reflect.DeepEqual(first, report.RemediationPlan) {
+			t.Fatalf("run %d typed plan differs: first=%#v current=%#v", i, first, report.RemediationPlan)
 		}
 	}
 }
-
-// --- Backward compatibility test ---
 
 func TestDoctorFederationBackwardCompatNoSLO(t *testing.T) {
 	// No FederationSLO resource: old defaults, no schema changes required
@@ -1049,7 +1096,7 @@ func TestDoctorFederationBackwardCompatNoSLO(t *testing.T) {
 // --- loadSLOThresholds order-independence test ---
 
 func TestLoadSLOThresholdsOrderIndependent(t *testing.T) {
-	// FederationSLO at beginning of resources
+	// The fixture appends SLO after group/peer; exercise actual reordered resources.
 	sloFirst := `    - apiVersion: federation.routerd.net/v1alpha1
       kind: FederationSLO
       metadata:
@@ -1080,6 +1127,27 @@ func TestLoadSLOThresholdsOrderIndependent(t *testing.T) {
 		t.Errorf("ExpiresSoonSeconds = %d, want 45", thresholdsFirst.ExpiresSoonSeconds)
 	}
 
+	want := federationSLOThresholds{LagWarnSeconds: 25, LagFailSeconds: 90, ExpiresSoonSeconds: 45}
+	if thresholdsFirst != want {
+		t.Fatalf("initial thresholds = %#v, want %#v", thresholdsFirst, want)
+	}
+	original := append(routerFirst.Spec.Resources[:0:0], routerFirst.Spec.Resources...)
+	for i, j := 0, len(routerFirst.Spec.Resources)-1; i < j; i, j = i+1, j-1 {
+		routerFirst.Spec.Resources[i], routerFirst.Spec.Resources[j] = routerFirst.Spec.Resources[j], routerFirst.Spec.Resources[i]
+	}
+	if reflect.DeepEqual(original, routerFirst.Spec.Resources) {
+		t.Fatal("resource order did not change")
+	}
+	if got := loadSLOThresholds(routerFirst, "cloudedge"); got != want {
+		t.Fatalf("reversed thresholds = %#v, want %#v", got, want)
+	}
+	routerFirst.Spec.Resources = append(original[1:len(original):len(original)], original[0])
+	if reflect.DeepEqual(original, routerFirst.Spec.Resources) {
+		t.Fatal("rotated resource order did not change")
+	}
+	if got := loadSLOThresholds(routerFirst, "cloudedge"); got != want {
+		t.Fatalf("rotated thresholds = %#v, want %#v", got, want)
+	}
 	// Non-matching group should get defaults
 	thresholdsOther := loadSLOThresholds(routerFirst, "other-group")
 	if thresholdsOther.LagWarnSeconds != defaultFederationWarnLag {
@@ -1532,7 +1600,9 @@ func TestDoctorFederationMultiGroupSLO(t *testing.T) {
 
 	// Run doctor JSON with remediation plan
 	var out bytes.Buffer
-	_ = run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{})
+	if err := run([]string{"doctor", "federation", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json", "--remediation-plan"}, &out, &bytes.Buffer{}); err == nil {
+		t.Fatal("seeded FAIL diagnostics must return a CLI error")
+	}
 
 	var report doctorReport
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
@@ -1588,18 +1658,19 @@ func TestDoctorFederationMultiGroupSLO(t *testing.T) {
 		}
 	}
 
-	// Remediation: should only have lag-related actions for group-a, not group-b
 	if report.RemediationPlan == nil {
 		t.Fatal("remediation plan is nil")
 	}
-	for _, a := range report.RemediationPlan.Actions {
-		if a.TargetGroup == "group-b" && a.Action == "check-peer-connectivity" {
-			t.Errorf("unexpected remediation for group-b (should be healthy): %+v", a)
-		}
+	type actionKey struct{ action, group, peer string }
+	var got []actionKey
+	for _, action := range report.RemediationPlan.Actions {
+		got = append(got, actionKey{action.Action, action.TargetGroup, action.TargetPeer})
+	}
+	want := []actionKey{{remediationCheckPeerConnectivity, "group-a", "peer-a"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("affected-only exactly-once plan = %#v, want %#v", got, want)
 	}
 }
-
-// --- Doctor-level pipeline SLO recovery test ---
 
 func TestDoctorFederationPipelineSLORecovery(t *testing.T) {
 	// This test simulates a state transition at the doctor level:
