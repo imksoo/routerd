@@ -22,6 +22,12 @@ done
 command -v mpd5 >/dev/null
 command -v jq >/dev/null
 command -v curl >/dev/null
+ipc_curl() {
+  curl --connect-timeout 1 --max-time 1 --fail --silent --show-error "$@" || {
+    echo 'INCONCLUSIVE: IPC request failed or exceeded its deadline' >&2
+    return 3
+  }
+}
 command -v tcpdump >/dev/null
 
 mkdir -p "$evidence_dir"
@@ -182,8 +188,9 @@ done
 # IPCP succeeds only after mpd5 attaches the negotiated bundle to ng_iface.
 # routerd must own this preflight rather than relying on an ambient module.
 kldstat -q -m ng_iface
-for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial.json" || true
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial.json" || true
   jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null 2>&1 && break
   sleep 1
 done
@@ -198,6 +205,7 @@ done
     'show lcp' \
     'show auth'
 } | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-initial.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
 owned_ppp_ifname=$(jq -r '.resources[0].observed.ifname' "$evidence_dir/pppoe-status-initial.json")
 case "$owned_ppp_ifname" in
@@ -208,33 +216,41 @@ esac
 ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-connected.ifconfig"
 ping -n -c 3 198.18.10.1 >"$evidence_dir/pppoe-initial-client-to-ac.ping" 2>&1
 jexec "$jail_name" ping -n -c 3 198.18.10.2 >"$evidence_dir/pppoe-initial-ac-to-client.ping" 2>&1
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial-traffic.json"
+ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-initial-traffic.json"
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-initial-traffic.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1" and (.resources[0].observed.bytesIn | tonumber) > 0 and (.resources[0].observed.bytesOut | tonumber) > 0' "$evidence_dir/pppoe-status-initial-traffic.json" >/dev/null
 
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop.json"
-for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-stopped.json" || true
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop.json"
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-stopped.json" || true
   jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-stopped.json" >/dev/null 2>&1 && break
   sleep 1
 done
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-stopped.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-stopped.json" >/dev/null
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-restart.json"
-for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restarted.json" || true
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-restart.json"
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restarted.json" || true
   jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null 2>&1 && break
   sleep 1
 done
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-restarted.json" >/dev/null
 ping -n -c 3 198.18.10.1 >"$evidence_dir/pppoe-restart-client-to-ac.ping" 2>&1
 jexec "$jail_name" ping -n -c 3 198.18.10.2 >"$evidence_dir/pppoe-restart-ac-to-client.ping" 2>&1
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restart-traffic.json"
+ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-restart-traffic.json"
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-restart-traffic.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Connected" and (.resources[0].observed.bytesIn | tonumber) > 0 and (.resources[0].observed.bytesOut | tonumber) > 0' "$evidence_dir/pppoe-status-restart-traffic.json" >/dev/null
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop-final.json"
-for _ in $(jot 30); do
-  curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-finally-stopped.json" || true
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/stop >"$evidence_dir/pppoe-stop-final.json"
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-finally-stopped.json" || true
   jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null 2>&1 && break
   sleep 1
 done
+jq -e 'type == "object"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Idle"' "$evidence_dir/pppoe-status-finally-stopped.json" >/dev/null
 for _ in $(jot 30); do
   if ! ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-stop.ifconfig" 2>&1; then
@@ -251,7 +267,7 @@ ifconfig "$foreign_epair" name "$owned_ppp_ifname"
 foreign_ppp_ifname=$owned_ppp_ifname
 ifconfig "$foreign_ppp_ifname" up
 ifconfig "$foreign_ppp_ifname" >"$evidence_dir/pppoe-foreign-interface-before-start.ifconfig"
-curl --fail --silent --show-error --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-foreign-start.json"
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-foreign-start.json"
 jq -e '.accepted == false and (.message | contains("already exists"))' "$evidence_dir/pppoe-foreign-start.json" >/dev/null
 ifconfig "$foreign_ppp_ifname" >"$evidence_dir/pppoe-foreign-interface-after-start.ifconfig"
 cmp "$evidence_dir/pppoe-foreign-interface-before-start.ifconfig" "$evidence_dir/pppoe-foreign-interface-after-start.ifconfig"

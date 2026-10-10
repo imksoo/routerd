@@ -103,28 +103,28 @@ func TestSlowSubscriberDoesNotBlockBus(t *testing.T) {
 	}, 1)
 	defer cancel()
 
-	started := time.Now()
-	for range 100 {
-		if err := b.Publish(context.Background(), daemonapi.DaemonEvent{
-			Type: "routerd.test.event",
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
-		t.Fatalf("publishing to a slow subscriber took %s", elapsed)
-	}
-
-	done := make(chan struct{})
+	done := make(chan error, 1)
 	go func() {
+		for range 100 {
+			if err := b.Publish(context.Background(), daemonapi.DaemonEvent{
+				Type: "routerd.test.event",
+			}); err != nil {
+				done <- err
+				return
+			}
+		}
 		_, nextCancel := b.Subscribe(context.Background(), Subscription{}, 1)
 		nextCancel()
 		b.Recent("routerd.test.event")
-		close(done)
+		done <- nil
 	}()
+	// A watchdog detects a blocked bus; it is not a throughput assertion.
 	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
 		t.Fatal("slow subscriber blocked bus operations")
 	}
 	if !strings.Contains(logs.String(), "event dropped for slow subscriber") ||

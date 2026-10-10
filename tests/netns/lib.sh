@@ -44,12 +44,23 @@ add_cleanup() {
 }
 
 cleanup_all() {
-  local i
+  local test_exit=$? i cleanup_exit=0 command_exit
   set +e
   for ((i=${#CLEANUP[@]}-1; i>=0; i--)); do
-    eval "${CLEANUP[$i]}" >/dev/null 2>&1 || true
+    printf 'cleanup command=%s\n' "${CLEANUP[$i]}" >>"$WORKDIR/cleanup.log"
+    eval "${CLEANUP[$i]}" >>"$WORKDIR/cleanup.log" 2>&1
+    command_exit=$?
+    printf 'cleanup exit=%s\n' "$command_exit" >>"$WORKDIR/cleanup.log"
+    [[ "$command_exit" -eq 0 ]] || cleanup_exit=2
   done
-  rm -rf "$WORKDIR"
+  printf 'test_exit=%s cleanup_exit=%s\n' "$test_exit" "$cleanup_exit" >>"$WORKDIR/cleanup.log"
+  if [[ "$test_exit" -ne 0 || "$cleanup_exit" -ne 0 ]]; then
+    log "test_exit=$test_exit cleanup_exit=$cleanup_exit evidence=$WORKDIR"
+  else
+    rm -rf "$WORKDIR"
+  fi
+  [[ "$test_exit" -eq 0 ]] || exit "$test_exit"
+  exit "$cleanup_exit"
 }
 
 trap cleanup_all EXIT
