@@ -22,6 +22,8 @@ SAMはprovider Readyを待ってから通信を判定します。1回のvalidati
 
 診断採取と受入判定は分離します。収束待ちループで `doctor sam` を連打せず、診断時に1回採取します。同じ診断スナップショット内のstatus・適用済みBGP経路・global RIBは各1回取得し、保存応答から要約を作ります。診断採取の失敗で通信の判定を変更しません。
 
+retained ARPでは、監視HTTPの80ms timeout、100ms counter周期、400ms連続coverage、全区間controller進行は診断用の制約であり、受入条件ではありません。診断失敗でpcapやsender採取を止めません。完全なself ARP捕捉、実target commandとpacketの対応、新鮮な要求とTTL、完了した通信、process identityは維持し、必要証拠の欠落は不成立として区別します。既存の時刻・target・command sequence・provider resource IDを原本に残し、対応付けに使います。
+
 cleanup inventoryではlifecycle変化とidentity不整合を区別します。AWS/OCIのidentityが一致し状態観測だけが異なる場合、同じinventory実行内で該当providerだけを最大2回追加観測し、各回の原本を保持します。identity・tag・accountの不一致、不正な応答、通信失敗を不在と扱いません。他providerのinventoryは継続し、不成立scopeはcountをnullにして資源ゼロ判定を通しません。既存の資源回収・削除ガードは維持します。
 
 次の有料試験の前に、`tools/release-qa-labs/tests/` の `test_sam_observation.py`、`test_inventory_resources.py`、`test_inventory_driver.py` で該当する保存応答・負例を再現します。資源は作成しません。実matrix/profile呼出し経路は `make cloudedge-representative-redundancy-offline-test` で確認します。これらの成功はクラウド実機試験の実施を意味しません。
