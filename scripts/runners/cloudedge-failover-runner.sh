@@ -31,7 +31,8 @@ ENV, common:
   CE_<PROVIDER>_<STAGE>_COMMAND  Optional local override for observe stage.
 
 ENV, injection:
-  CE_<PROVIDER>_INJECT_COMMAND   Optional local override for inject.
+  CE_<PROVIDER>_INJECT_COMMAND   Explicit stop-active override (must stop a node).
+  CE_<PROVIDER>_DRAIN_INJECT_COMMAND  Required explicit drain implementation.
   AWS_REGION, AWS_PROFILE, AWS_ROUTER_A_INSTANCE_ID or CE_AWS_ACTIVE_INSTANCE_ID
   AZURE_RESOURCE_GROUP, AZURE_ROUTER_VM_NAME or CE_AZURE_ACTIVE_VM_ID
   OCI_ROUTER_INSTANCE_REF or CE_OCI_ACTIVE_INSTANCE_ID
@@ -47,9 +48,13 @@ EOF
 provider_upper() { ce_upper "$1"; }
 
 inject_override_command() {
-  local provider=$1 upper cmd
+  local provider=$1 fault=$2 upper cmd
   upper=$(provider_upper "$provider")
-  cmd=$(ce_env_first "CE_${upper}_INJECT_COMMAND" "CE_INJECT_COMMAND" 2>/dev/null || true)
+  if [[ "$fault" == stop-active ]]; then
+    cmd=$(ce_env_first "CE_${upper}_STOP_ACTIVE_INJECT_COMMAND" "CE_${upper}_INJECT_COMMAND" "CE_INJECT_COMMAND" 2>/dev/null || true)
+  else
+    cmd=$(ce_env_first "CE_${upper}_DRAIN_INJECT_COMMAND" "CE_DRAIN_INJECT_COMMAND" 2>/dev/null || true)
+  fi
   printf '%s' "$cmd"
 }
 
@@ -92,9 +97,10 @@ inject_oci() {
 }
 
 inject_onprem() {
-  local cmd=${CE_ONPREM_REMOTE_INJECT_COMMAND:-"sudo systemctl stop keepalived || sudo service keepalived stop"}
+  local cmd=${CE_ONPREM_REMOTE_INJECT_COMMAND:-}
+  [[ -n "$cmd" ]] || ce_die "stop-active requires an explicit node-stop command; stopping keepalived is not a node stop"
   ce_router_ssh onprem active "$cmd"
-  printf 'onprem_inject=remote-vrrp-stop\n'
+  printf 'onprem_inject=explicit-node-stop\n'
 }
 
 cmd_inject() {
@@ -103,11 +109,13 @@ cmd_inject() {
     stop-active|drain) ;;
     *) ce_die "unsupported fault: $fault" ;;
   esac
-  override=$(inject_override_command "$provider")
+  case "$provider" in aws|azure|oci|onprem) ;; *) ce_die "bad provider: $provider" ;; esac
+  override=$(inject_override_command "$provider" "$fault")
   if [[ -n "$override" ]]; then
     bash -lc "$override" || return $?
     return 0
   fi
+  [[ "$fault" == stop-active ]] || ce_die "drain requires CE_<PROVIDER>_DRAIN_INJECT_COMMAND or CE_DRAIN_INJECT_COMMAND; no stop fallback"
   case "$provider" in
     aws) inject_aws ;;
     azure) inject_azure ;;

@@ -408,7 +408,7 @@ for name in (
     if assertions.get(name) != "pass":
         raise SystemExit(f"{name}={assertions.get(name)!r}, want pass")
 l2 = result.get("l2Loop", {})
-if l2.get("status") != "pass" or len(l2.get("phases", [])) != 2:
+if l2.get("status") != "pass" or not l2.get("pairComplete") or [p.get("phase") for p in l2.get("phases", [])] != ["before", "after"] or any(p.get("result") != "pass" for p in l2.get("phases", [])):
     raise SystemExit("L2 loop probe summary missing or failed")
 if "vrrp-single-master" not in l2.get("mechanism", ""):
     raise SystemExit("L2 suppression mechanism was not recorded")

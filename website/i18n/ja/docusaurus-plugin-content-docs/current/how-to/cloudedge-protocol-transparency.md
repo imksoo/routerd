@@ -135,3 +135,7 @@ force fragmentation をグローバルに有効化しないでください。パ
 - `bulk_transfer_pmtu`
 - `protocol_source_ip_preserved`
 - `protocol_no_nat`
+
+SAM E2EハーネスはFTP、NFS、CIFSの読み取り・書き込み内容を完全一致で確認します。failover転送には既知の64 MiBペイロードを使い、ダウンロード後のサイズとSHA-256を照合します。故障注入前に今回の転送jobが実行中で部分データが到着していることを確認し、進行を取得できなければ未判定として停止し、故障注入や再試行を行いません。開始、結果、失敗試行の証跡を保持します。任意の転送観測と性能値は通常の故障後matrixの合否から分離します。deployでは今回専用ディレクトリを使い、必須copy/setupの失敗を伝播し、サービス再起動前にインストール済みbinaryと設定を今回のペイロードと照合します。
+
+L2 qualificationには同じproviderと閾値設定によるbefore/afterの両観測と抑制機構の記録が必要です。beforeの取得成功は次の操作を許可しますが、保存した集計はafter取得まで未判定で、afterは集計合否を終了コードに反映します。failoverの経過時間は単調時計で計測し、journal照合用UTCを別記録します。providerのVM停止実装は`stop-active`を扱います。`drain`には明示的な`CE_<PROVIDER>_DRAIN_INJECT_COMMAND`または`CE_DRAIN_INJECT_COMMAND`が必要で、on-premisesの停止にも明示的なnode-stop commandが必要です。keepalivedの停止だけでnode停止のqualificationを成立させません。
