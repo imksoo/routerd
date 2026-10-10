@@ -9,7 +9,8 @@ Usage:
 Collects post-destroy provider/PVE inventory from the IDs recorded in
 `tofu output -json`. A nonzero exit means a provider command still showed a
 non-terminated instance, an existing Azure resource group, or an existing PVE
-VMID. Provider NotFound errors are recorded as cleanup evidence.
+VMID. Exit 3 means incomplete input/acquisition. Ambiguous absence/auth is
+not cleanup proof. Raw stdout, stderr and exits are retained.
 USAGE
 }
 
@@ -30,12 +31,33 @@ done
 [ -f "$tofu_output" ] || { echo "tofu output not found: $tofu_output" >&2; exit 2; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 
-mkdir -p "$evidence_dir"
+# Claim a fresh attempt directory before writing any evidence/querying providers.
+# Existing directories are never overwritten, including partially failed attempts.
+if ! mkdir "$evidence_dir"; then
+  echo "INCONCLUSIVE: evidence directory already exists or cannot be created: $evidence_dir" >&2
+  exit 3
+fi
 nodes_json="$evidence_dir/nodes.json"
 fabric_json="$evidence_dir/fabric.json"
-jq '.nodes.value' "$tofu_output" >"$nodes_json"
-jq '.fabric.value' "$tofu_output" >"$fabric_json"
+jq -e '.nodes.value | select(type=="object" and length>0)' "$tofu_output" >"$nodes_json" || exit 3
+jq -e '.fabric.value | select(type=="object")' "$tofu_output" >"$fabric_json" || exit 3
 
+# Validate all recorded identities before any provider query.
+jq -e 'to_entries | all(.[]; (.key|test("^[A-Za-z0-9_.-]+$")) and
+  (if .value.site=="aws" then (.value.instance_id|type=="string") and (.value.instance_id|test("^i-[0-9a-f]+$"))
+   elif .value.site=="oci" then (.value.instance_id|type=="string") and (.value.instance_id|startswith("ocid1.instance."))
+   elif .value.site=="pve" then (.value.vm_id|tostring|test("^[1-9][0-9]*$"))
+   else true end))' "$nodes_json" >/dev/null || exit 3
+jq -e 'any(.[]; .site=="aws" or .site=="azure" or .site=="oci" or .site=="pve")' "$nodes_json" >/dev/null || {
+  echo "INCONCLUSIVE: no supported recorded provider scope" >&2; exit 3;
+}
+applicable() { jq -e --arg site "$1" 'any(.[]; .site==$site)' "$nodes_json" >/dev/null; }
+query() {
+  local out=$1 rc=0; shift
+  "$@" >"$out" 2>"$out.stderr" || rc=$?
+  printf '%s\n' "$rc" >"$out.exit"
+  return "$rc"
+}
 status=0
 summary="$evidence_dir/summary.tsv"
 printf 'provider\tcheck\tresult\tdetail\n' >"$summary"
@@ -45,119 +67,132 @@ record() {
   printf '%s\t%s\t%s\t%s\n' "$provider" "$check" "$result" "$detail" >>"$summary"
   if [ "$result" = "FAIL" ]; then
     status=1
+  elif [ "$result" = "INCONCLUSIVE" ] && [ "$status" = 0 ]; then
+    status=3
   fi
 }
 
 aws_inventory() {
-  command -v aws >/dev/null 2>&1 || {
-    record aws cli SKIP "aws CLI not found"
-    return 0
-  }
-  local region out active_count
-  region="$(jq -r '.aws.region // empty' "$fabric_json")"
-  [ -n "$region" ] || {
-    record aws region SKIP "missing fabric.aws.region"
-    return 0
-  }
-  mapfile -t ids < <(jq -r 'to_entries[] | select(.value.site == "aws") | .value.instance_id // empty' "$nodes_json" | sort -u)
-  if [ "${#ids[@]}" -eq 0 ]; then
-    record aws instances SKIP "no aws instances in tofu output"
-    return 0
-  fi
-  out="$evidence_dir/aws-instances.json"
-  if aws ec2 describe-instances --region "$region" --instance-ids "${ids[@]}" >"$out" 2>"$evidence_dir/aws-instances.stderr"; then
-    active_count="$(jq '[.Reservations[].Instances[] | select(.State.Name != "terminated")] | length' "$out")"
-    if [ "$active_count" = "0" ]; then
-      record aws instances PASS "all described instances are terminated"
+  applicable aws || { record aws instances NOT_APPLICABLE "no recorded AWS nodes"; return; }
+  command -v aws >/dev/null || { record aws cli INCONCLUSIVE "AWS CLI unavailable"; return; }
+  local region node id out state
+  region=$(jq -r '.aws.region // empty' "$fabric_json")
+  [ -n "$region" ] || { record aws region INCONCLUSIVE "missing AWS region"; return; }
+  # A batch NotFound cannot establish absence of all other IDs.
+  while read -r node id; do
+    out="$evidence_dir/aws-$node.json"
+    if query "$out" aws ec2 describe-instances --region "$region" --instance-ids "$id"; then
+      if ! state=$(jq -er --arg id "$id" '[.Reservations[].Instances[]|select(.InstanceId==$id)] |
+        if length==1 then .[0].State.Name else error("missing/duplicate identity") end' "$out"); then
+        record aws "$node" INCONCLUSIVE "malformed/missing identity"; continue
+      fi
+      case "$state" in
+        terminated) record aws "$node" PASS "recorded instance terminated" ;;
+        pending|running|shutting-down|stopping|stopped) record aws "$node" FAIL "remaining instance state=$state" ;;
+        *) record aws "$node" INCONCLUSIVE "unknown state=$state" ;;
+      esac
+    elif grep -Eq 'InvalidInstanceID\.NotFound' "$out.stderr"; then
+      record aws "$node" PASS "single recorded ID explicitly NotFound"
     else
-      record aws instances FAIL "non-terminated instances=$active_count"
+      record aws "$node" INCONCLUSIVE "query failed; see stdout/stderr/exit"
     fi
-  elif grep -Eq 'InvalidInstanceID\.NotFound|InvalidInstanceID\.Malformed' "$evidence_dir/aws-instances.stderr"; then
-    record aws instances PASS "describe-instances returned instance NotFound; see aws-instances.stderr"
-  else
-    record aws instances FAIL "describe-instances failed for an unexpected reason; see aws-instances.stderr"
-  fi
+  done < <(jq -r 'to_entries[]|select(.value.site=="aws")|[.key,.value.instance_id]|@tsv' "$nodes_json")
 }
 
 azure_inventory() {
+  applicable azure || { record azure scope NOT_APPLICABLE "no recorded azure nodes"; return; }
   command -v az >/dev/null 2>&1 || {
-    record azure cli SKIP "az CLI not found"
+    record azure cli INCONCLUSIVE "az CLI not found"
     return 0
   }
   local rg exists
   rg="$(jq -r '.azure.resource_group_name // empty' "$fabric_json")"
   [ -n "$rg" ] || {
-    record azure resource_group SKIP "missing fabric.azure.resource_group_name"
+    record azure resource_group INCONCLUSIVE "missing fabric.azure.resource_group_name"
     return 0
   }
-  exists="$(az group exists --name "$rg" 2>"$evidence_dir/azure-group-exists.stderr" || true)"
-  printf '%s\n' "$exists" >"$evidence_dir/azure-group-exists.txt"
+  if ! query "$evidence_dir/azure-group-exists.txt" az group exists --name "$rg"; then
+    record azure resource_group INCONCLUSIVE "existence query failed"; return
+  fi
+  exists="$(tr -d '\r\n' <"$evidence_dir/azure-group-exists.txt")"
   if [ "$exists" = "false" ]; then
     record azure resource_group PASS "$rg deleted"
   elif [ "$exists" = "true" ]; then
-    az resource list --resource-group "$rg" --output json >"$evidence_dir/azure-resources.json" 2>"$evidence_dir/azure-resources.stderr" || true
+    query "$evidence_dir/azure-resources.json" az resource list --resource-group "$rg" --output json || true
     record azure resource_group FAIL "$rg still exists"
   else
-    record azure resource_group FAIL "could not determine group existence"
+    record azure resource_group INCONCLUSIVE "could not determine group existence"
   fi
 }
 
 oci_inventory() {
+  applicable oci || { record oci scope NOT_APPLICABLE "no recorded oci nodes"; return; }
   command -v oci >/dev/null 2>&1 || {
-    record oci cli SKIP "oci CLI not found"
+    record oci cli INCONCLUSIVE "oci CLI not found"
     return 0
   }
   local region node id out state active_count=0 checked=0 unknown_count=0
   region="$(jq -r '.oci.region // empty' "$fabric_json")"
   [ -n "$region" ] || {
-    record oci region SKIP "missing fabric.oci.region"
+    record oci region INCONCLUSIVE "missing fabric.oci.region"
     return 0
   }
   while read -r node id; do
     [ -n "$id" ] || continue
     checked=$((checked + 1))
     out="$evidence_dir/oci-instance-${node}.json"
-    if oci compute instance get --region "$region" --instance-id "$id" >"$out" 2>"$evidence_dir/oci-instance-${node}.stderr"; then
-      state="$(jq -r '.data."lifecycle-state" // empty' "$out")"
-      if [ "$state" != "TERMINATED" ]; then
-        active_count=$((active_count + 1))
+    if query "$out" oci compute instance get --region "$region" --instance-id "$id"; then
+      if ! state="$(jq -er --arg id "$id" 'select(.data.id==$id)|.data."lifecycle-state"' "$out")"; then
+        unknown_count=$((unknown_count + 1)); continue
       fi
-    elif grep -Eqi 'NotAuthorizedOrNotFound|NotFound|404' "$evidence_dir/oci-instance-${node}.stderr"; then
-      true
+      case "$state" in
+        TERMINATED) ;;
+        PROVISIONING|RUNNING|STARTING|STOPPING|STOPPED|CREATING_IMAGE|MOVING|TERMINATING)
+          active_count=$((active_count + 1)) ;;
+        *) unknown_count=$((unknown_count + 1)) ;;
+      esac
     else
+      # NotAuthorizedOrNotFound/404 cannot distinguish absence from auth loss.
       unknown_count=$((unknown_count + 1))
     fi
   done < <(jq -r 'to_entries[] | select(.value.site == "oci") | [.key, (.value.instance_id // "")] | @tsv' "$nodes_json")
   if [ "$checked" -eq 0 ]; then
-    record oci instances SKIP "no oci instances in tofu output"
-  elif [ "$unknown_count" -gt 0 ]; then
-    record oci instances FAIL "could not verify instances=$unknown_count"
-  elif [ "$active_count" -eq 0 ]; then
-    record oci instances PASS "no non-terminated OCI instances observed"
-  else
+    record oci instances INCONCLUSIVE "no oci instances in tofu output"
+  elif [ "$active_count" -gt 0 ]; then
     record oci instances FAIL "non-terminated instances=$active_count"
+  elif [ "$unknown_count" -gt 0 ]; then
+    record oci instances INCONCLUSIVE "could not verify instances=$unknown_count"
+  else
+    record oci instances PASS "all recorded OCI instances observed terminated"
   fi
 }
 
 pve_inventory() {
-  local node id found=0 checked=0
+  applicable pve || { record pve scope NOT_APPLICABLE "no recorded pve nodes"; return; }
+  local node id found=0 checked=0 unknown_count=0
   command -v qm >/dev/null 2>&1 || {
-    record pve qm SKIP "qm command not found"
+    record pve qm INCONCLUSIVE "qm command not found"
     return 0
   }
   while read -r node id; do
     [ -n "$id" ] || continue
     checked=$((checked + 1))
-    if qm config "$id" >"$evidence_dir/pve-${node}-${id}.txt" 2>"$evidence_dir/pve-${node}-${id}.stderr"; then
+    if query "$evidence_dir/pve-$node-$id.txt" qm config "$id"; then
       found=$((found + 1))
+    elif grep -Eq "Configuration file .*qemu-server/${id}[.]conf.*does not exist" "$evidence_dir/pve-$node-$id.txt.stderr"; then
+      true
+    else
+      unknown_count=$((unknown_count + 1))
     fi
   done < <(jq -r 'to_entries[] | select(.value.site == "pve") | [.key, (.value.vm_id // "")] | @tsv' "$nodes_json")
   if [ "$checked" -eq 0 ]; then
-    record pve vms SKIP "no pve vm ids in tofu output"
-  elif [ "$found" -eq 0 ]; then
-    record pve vms PASS "no PVE VMID configs found"
-  else
+    record pve vms INCONCLUSIVE "no pve vm ids in tofu output"
+  elif [ "$found" -gt 0 ]; then
     record pve vms FAIL "existing VMIDs=$found"
+  elif [ "$unknown_count" -gt 0 ]; then
+    record pve vms INCONCLUSIVE "VMID acquisition failed=$unknown_count"
+  else
+    record pve vms PASS "all recorded PVE configs explicitly absent"
   fi
 }
 

@@ -411,16 +411,29 @@ client_ssh_probe() {
 }
 
 probe_stale_gate_on_aws_b() {
+  local probe_key raw rc=0
+  probe_key="cloudedge-demo-stale-probe-$(date -u +%s)-$$-$RANDOM"
+  raw="$WORKDIR/$probe_key.json"
   router_ssh aws-b "set -euo pipefail
     aws_b_nic=\$(sudo sqlite3 /var/lib/routerd/routerd.db \"select json_extract(status,'$.discoverySelfNICRef') from objects where api_version='mobility.routerd.net/v1alpha1' and kind='MobilityPool' and name='cloudedge';\")
     if [ -z \"\$aws_b_nic\" ]; then
-      echo 'stale probe skipped: aws-router-b discoverySelfNICRef is not resolved yet' >&2
-      exit 0
+      echo 'INCONCLUSIVE: aws-router-b discoverySelfNICRef is unavailable' >&2
+      exit 3
     fi
     now=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('cloudedge-demo-stale-probe-pathsig1','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityPathSig','prefix=10.77.60.10/32;nextHops=stale','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now') on conflict(idempotency_key) do nothing;\"
-    sudo $REMOTE_ROUTERCTL_BIN action import
-    sudo $REMOTE_ROUTERCTL_BIN action list -o json | jq -r '.[] | select(.idempotencyKey==\"cloudedge-demo-stale-probe-pathsig1\") | [.status,.resultMessage] | @tsv'"
+    sudo sqlite3 /var/lib/routerd/routerd.db \"insert into action_executions(idempotency_key,source,provider,provider_ref,action,target_json,parameters_json,undo_json,risk_level,status,created_at,updated_at) values('$probe_key','stale-gate-probe','aws','aws-lab','assign-secondary-ip',json_object('provider','aws','providerRef','aws-lab','region','$AWS_REGION','nicRef','\$aws_b_nic','address','10.77.60.10/32'),json_object('mobilityPathSig','prefix=10.77.60.10/32;nextHops=stale','mobilityCaptureHolder','aws-router-a'),'{}','medium','pending','\$now','\$now');\"
+    sudo $REMOTE_ROUTERCTL_BIN action import >&2
+    sudo $REMOTE_ROUTERCTL_BIN action list -o json" >"$raw" 2>"$raw.stderr" || rc=$?
+  printf 'probe_key=%s ssh_exit=%s\n' "$probe_key" "$rc" >"$raw.exit"
+  (( rc == 0 )) || return 3
+  # This row lacks assignment generation. It proves that fence, not pathSig.
+  if ! jq -e --arg key "$probe_key" '[.[] | select(.idempotencyKey==$key)] |
+      length==1 and .[0].status=="skipped" and .[0].resultMessage=="stale mobility assignment: missing generation"' "$raw" >/dev/null; then
+    echo "INCONCLUSIVE: current missing-generation fence unproven; evidence=$raw" >&2
+    if jq -e --arg key "$probe_key" 'any(.[]; .idempotencyKey==$key and .status=="succeeded")' "$raw" >/dev/null 2>&1; then return 1; fi
+    return 3
+  fi
+  printf 'missing-generation assignment fence PASS: key=%s evidence=%s\n' "$probe_key" "$raw"
 }
 
 main() {
@@ -465,14 +478,14 @@ main() {
   echo "Execute D5 migration actions"
   execute_provider_actions aws-a
   execute_provider_actions aws-b
-  echo "Probe stale pathSig gate on aws-router-b"
+  echo "Probe missing-generation assignment fence on aws-router-b"
   probe_stale_gate_on_aws_b
 
   echo "Verify D5 dataplane via aws-router-b"
   client_exec aws-b "ping -I $AWS_CLIENT_IP -c3 -W2 $ONPREM_CLIENT_IP"
   client_ssh_probe aws-b "$AWS_CLIENT_IP" "$(client_user onprem)" "$ONPREM_CLIENT_IP"
 
-  echo "CloudEdge Mobility demo PASS"
+  echo "CloudEdge Mobility demo PASS: D3/D5 connectivity and current missing-generation assignment fence; desired-pathSig fence not independently exercised"
 }
 
 main "$@"
