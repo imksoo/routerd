@@ -28,7 +28,8 @@ n=$(wc -l <"$FIXTURE_LOG")
 if [ "$FIXTURE" = ping-fails ] || { [ "$FIXTURE" = ping-recovers ] && [ "$n" -eq 1 ]; }; then exit 1; fi
 ''',
                 "ssh": '''echo hostname >>"$FIXTURE_LOG"
-if [ "$FIXTURE" = wrong-host ]; then echo wrong-host; else echo client-b; fi
+if [ "$FIXTURE" = wrong-host ]; then echo wrong-host
+else case " $* " in *"fixture@192.0.2.1"*) echo client-a;; *) echo client-b;; esac; fi
 ''',
                 "ip": 'echo route >>"$FIXTURE_LOG"; echo "192.0.2.2 dev samt0"\n',
                 "traceroute": 'echo traceroute >>"$FIXTURE_LOG"\n',
@@ -49,7 +50,7 @@ flow_evidence_dir="$evidence_dir/matrix/initial/flows"
 mkdir -p "$flow_evidence_dir"
 stopped_routers=()
 node_field() {
- case "$2" in private_ip) [ "$1" = client-a ] && echo 192.0.2.1 || echo 192.0.2.2;; name) echo "$1";; ssh_user) echo fixture;; site) echo aws;; esac
+ case "$2" in private_ip) [ "$1" = client-a ] && echo 192.0.2.1 || echo 192.0.2.2;; name) echo "$1";; ssh_user) echo fixture;; site) [ "$1" = client-a ] && echo aws || echo azure;; esac
 }
 ssh_node() {
  if [ "$FIXTURE" = management-missing ]; then return 255; fi
@@ -130,6 +131,48 @@ validation_deadline=0
 observe_flow initial client-a client-b client
 ''')
         self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(files["calls"], "")
+
+    def test_actual_client_and_cloud_matrices_share_identical_flows(self):
+        result, files = self.run_bash(self.flow_source() + functions("client_matrix", "setup_client_ssh") + '''
+clients=(client-a client-b); leaf_routers=(); full_cloud_ingress=0
+is_cloud_site() { return 0; }
+client_matrix initial
+cloud_ingress_matrix initial
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["calls"].splitlines(), ["ping", "hostname", "ping", "hostname"])
+        self.assertEqual(files["evidence/matrix/initial/summary.tsv"].count("PASS"), 2)
+        self.assertEqual(files["evidence/matrix/initial/cloud-ingress-summary.tsv"].count("PASS"), 2)
+
+    def test_optional_ping_does_not_strengthen_client_gate(self):
+        result, files = self.run_bash(self.flow_source() + '''
+observe_flow initial client-a client-b client hostname
+''', fixture="ping-fails")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(files["calls"].splitlines(), ["ping", "hostname"])
+        self.assertIn("FAIL_PING", files["evidence/matrix/initial/flows/client-client-a-client-b/attempts.tsv"])
+
+    def test_fault_state_change_invalidates_cached_pass_even_if_restored(self):
+        result, files = self.run_bash(self.flow_source() + '''
+observe_flow initial client-a client-b client
+stopped_routers=(router-a)
+rc=0; observe_flow initial client-a client-b client || rc=$?
+test "$rc" -eq 3
+stopped_routers=()
+observe_flow initial client-a client-b client
+''')
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(files["calls"].splitlines(), ["ping", "hostname"])
+
+    def test_router_management_failure_retains_inconclusive_classification(self):
+        result, files = self.run_bash(self.flow_source() + functions("router_origin_matrix", "cloud_ingress_matrix") + '''
+leaf_routers=(client-a client-b)
+node_is_stopped() { return 1; }
+router_origin_matrix initial
+''', fixture="management-missing")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(files["evidence/matrix/initial/router-origin-summary.tsv"].count("OBSERVATION_INCONCLUSIVE"), 2)
         self.assertEqual(files["calls"], "")
 
 

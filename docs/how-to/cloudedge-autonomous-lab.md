@@ -17,6 +17,17 @@ The harness is `scripts/cloudedge-labctl.sh`, with two helpers:
 
 `--help`, dry paths, and `down --expired` need **no cloud credentials**.
 
+
+## Observe convergence without repeating the whole test
+
+SAM waits for provider Ready before judging traffic. A validation invocation shares the existing 900-second provider convergence budget with its traffic observations. Only unsuccessful or missing required flow components are reacquired, at most three observations per component; successful components and identical cloud-ingress flows share evidence within that invocation and unchanged fault state. Successful flows do not run traceroute. Missing management-SSH completion is `OBSERVATION_INCONCLUSIVE` (exit 3), not an observed product ping failure. Raw attempts, including failures before recovery, remain under `matrix/<label>/flows.*/`.
+
+Diagnostic collection is separate from acceptance. The convergence loop does not run `doctor sam`; diagnostics collect it once. Each diagnostic snapshot reads status, applied BGP paths, and the global RIB once and derives summaries from those saved responses. Diagnostic collection failures do not change the traffic verdict.
+
+Cleanup inventory distinguishes lifecycle changes from identity mismatches. Matching AWS/OCI identities with disagreeing lifecycle observations may requery only that provider twice within the enclosing inventory invocation. Every raw attempt is retained. Wrong identity/tag/account, malformed responses and transport failures never prove absence. Other provider inventories still run; incomplete scopes retain a null count and cannot pass the zero-resource gate. Existing resource recovery and deletion safeguards are unchanged.
+
+Before another paid test, replay the affected flow and inventory fixtures locally: `test_sam_observation.py`, `test_inventory_resources.py`, and `test_inventory_driver.py` under `tools/release-qa-labs/tests/`. These do not create resources. Run `make cloudedge-representative-redundancy-offline-test` for the actual matrix/profile callers. Passing fixtures does not claim a new cloud deployment was tested.
+
 ## Lifecycle
 
 ```sh
