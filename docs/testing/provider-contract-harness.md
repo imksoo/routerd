@@ -1,5 +1,7 @@
 # Provider Contract Harness
 
+The [mandatory test and harness design rules](../operations/development.md#mandatory-test-and-harness-design-rules) apply to this layer and its reusable fixtures. Provider observation failures remain distinct from product violations; keep raw diagnostic and cleanup evidence.
+
 The provider contract harness is an intermediate test layer between pure planner
 unit tests and live AWS/Azure/OCI/PVE qualification.
 

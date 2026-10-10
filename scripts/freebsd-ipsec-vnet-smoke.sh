@@ -190,6 +190,7 @@ run_invalid_apply_diagnostic() {
   apply_pid=$!
   printf 'invalid_apply_pid=%s\n' "$apply_pid" >"$evidence/invalid-apply-process.meta"
   elapsed=0
+  diagnostic_terminated=0
   while [ "$elapsed" -lt 35 ]; do
     if ! kill -0 "$apply_pid" >/dev/null 2>&1; then
       break
@@ -199,6 +200,7 @@ run_invalid_apply_diagnostic() {
     echo "ipsec-vnet waiting=invalid-production-apply elapsed=${elapsed}s" >&3
   done
   if kill -0 "$apply_pid" >/dev/null 2>&1; then
+    diagnostic_terminated=1
     echo 'ipsec-vnet diagnostic=invalid-apply-still-live signal=QUIT' >&3
     ps -axo pid,ppid,pgid,sid,stat,command >"$evidence/invalid-apply-processes.before" 2>&1 || true
     {
@@ -236,6 +238,7 @@ run_invalid_apply_diagnostic() {
   else
     apply_rc=$?
   fi
+  if [ "$diagnostic_terminated" -eq 1 ]; then return 124; fi
   return "$apply_rc"
 }
 
@@ -376,10 +379,10 @@ else
 fi
 invalid_apply_finished=$(date +%s)
 printf 'ipsec-vnet invalid-production-apply rc=%s elapsed=%ss\n' "$invalid_apply_rc" "$((invalid_apply_finished - invalid_apply_started))" >&3
-if [ "$invalid_apply_rc" -eq 124 ]; then
-  echo 'invalid production apply timed out; redacted diagnostic follows' >&3
+if [ "$invalid_apply_rc" -eq 124 ] || [ "$invalid_apply_rc" -ge 125 ]; then
+  echo 'INCONCLUSIVE: invalid apply did not establish a normal rejection; redacted diagnostic follows' >&3
   sed "s/$psk/[REDACTED]/g" "$evidence/apply-invalid.log" >&3
-  exit 1
+  exit 3
 fi
 if [ "$invalid_apply_rc" -eq 0 ]; then
   echo 'invalid IKE proposal unexpectedly loaded' >&2
