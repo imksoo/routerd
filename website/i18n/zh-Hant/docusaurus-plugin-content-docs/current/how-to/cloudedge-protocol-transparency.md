@@ -139,3 +139,13 @@ export CE_PROTOCOL_NFS_COMMAND='...'
 SAM E2E工具逐位元組核對FTP、NFS和CIFS的讀取與寫入內容。故障切換傳輸使用已知的64 MiB資料，下載後同時核對大小和SHA-256。注入故障前，必須確認本次傳輸工作仍在執行且已收到部分資料；無法確認進度時，以未判定狀態停止，不注入故障或重試。保留啟動、結果和失敗嘗試的證據。可選的傳輸觀測和效能值與正常故障後matrix判定分開。部署使用本次專用目錄，傳播每個必要複製或設定步驟的失敗，並在重新啟動服務前比較已安裝的binary和設定與本次資料。
 
 L2 qualification需要同一provider和閾值設定的before與after觀測以及抑制機制記錄。before採集成功可進入下一操作，但儲存的彙總在after採集前仍為未判定；after的退出碼反映彙總結果。故障切換時長使用單調時鐘，journal關聯用UTC另行記錄。provider的VM停止實作處理`stop-active`；`drain`需要明確設定`CE_<PROVIDER>_DRAIN_INJECT_COMMAND`或`CE_DRAIN_INJECT_COMMAND`，on-premises停止也需要明確的node-stop command。僅停止keepalived不能證明node停止qualification。
+
+## Federation qualification 證據
+
+`scripts/cloudedge-federation-qualification.sh` 的 release qualification 要求正數 cycles 和全部 8 個場景。`--allow-skip` 允許開發用子集，其結果不會認定 release。每次嘗試使用新的證據目錄和 event ID，保留 command 的 stdout/stderr/退出碼；worker 在現有 `--duration` 預算內停止，預算包含 cleanup。失敗、觀測不足或 cleanup 未確認時，不重試，並停止後續故障和 cycle。遺留故障 marker 需要操作員在下一次嘗試前檢查。
+
+TTL refresh 將目前 receiver event 的 `ExpiresAt` 與 sender 的延長值對照，舊 delivered 行或缺失的 `staleTTL` 不能作為證明。subscription 失敗和恢復綁定本次 event ID 與 receiver 側注入後的時間。partition 隔離記錄正常 A/B baseline、A 故障期間本次 B 配送，以及限定 group/peer 的 SLO 違規、remediation 和設定閾值對應關係；相同閾值也是有效設定。security 使用正確簽章的損壞 body 和帶錯誤簽章的有效 body，要求預期 HTTP 400/401、receiver 未接收和本次有效 event 配送。transport error 和 5xx 不證明拒絕成功。
+
+OTel 可用性、sample 和 label 屬於診斷，缺失保持未判定，不替換成數值零或產品失敗。保存的 binary SHA-256 和產品 source commit 與 QA repository commit 分開記錄。已部署 source identity 不明或不匹配時，在 scenario 故障前停止。退出碼 1 表示觀測到的 assertion 失敗，2 表示無效輸入/setup，3 表示觀測或 provenance 不完整。這些修改通過 offline 邊界驗證，不代表 provider 或 release qualification 已完成。
+
+開發用 partition 子集未選擇 multi-group 時，不要求 B group。實機的 Go 是可選工具。`CE_BINARY_PROVENANCE_FILE` 可指定現有 prepared/release contract，將 `routerdArtifact.commit` 和 `execution.candidate_binary_hashes` 與本次 binary SHA-256 對照。runtime commit 顯示衝突或 hash 不匹配時保留未確認狀態，不會僅憑 commit 參數確認 identity。
