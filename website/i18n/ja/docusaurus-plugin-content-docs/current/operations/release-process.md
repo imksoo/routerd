@@ -25,6 +25,31 @@ routerd は日付ベースのリリース版番号を使います。
 試験のデバッグを目的としたクラウド全環境の再展開は行いません。
 詳細は [qualification 方針（英語）](/docs/operations/release-qualification-policy) を参照してください。
 
+## 実機試験を開始する前に
+
+レビュー済みの完全なcheckoutで `make release-qa-preflight-test` を実行し、
+続いて凍結予定の最終contract原本を検証します。
+
+```sh
+python3 scripts/release_certification.py validate-contract \
+  --contract prospective-contract.json --environment "$environment" \
+  --topology "$topology" --providers "$providers" > contract-validation.json
+```
+
+必須のオフライン試験の失敗・欠落・skip、コピーしたphaseの旧run ID、
+証跡の変更、管理IPなどが欠けた媒体保持型baselineを、認証driverの起動前に拒否します。
+ソース・fixtureのハッシュとcontractのSHA256を保存し、準備変更後には再実行して
+凍結原本と照合します。認証、qualification preflight、有料試験のprecheckも
+自動で同じゲートを実行します。ソース試験のPASSだけでは実環境やprivate callerの
+正しさを認証できません。
+
+失敗したrunは保存し、採取・判定・準備の欠陥を保存データと負例で再現してから
+修正・検証し、新しいrunを凍結します。既知の試験コードの不備を調べるために
+クラウドを繰り返し起動しません。製品改善の成果は、その手戻りの正当化にはなりません。
+製品バイナリが同一のQAだけの修正を理由に、4環境の製品試験を繰り返す必要はありません。
+[R1〜R12の原因分類・前提・失敗例・再試験基準](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md)
+を参照してください。実額や無駄になった費用は、経過時間から推測せず請求データで確認します。
+
 ## 自動リリース
 
 作業ツリーをクリーンにした状態で、リリース用ヘルパーを実行します。

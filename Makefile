@@ -78,6 +78,11 @@ check-release-prepare-only-test:
 release-certification-offline-test:
 	scripts/release-certification-offline-test.sh
 
+.PHONY: release-qa-preflight-test
+release-qa-preflight-test:
+	python3 scripts/release_qa_preflight.py --out /tmp/routerd-release-qa-offline-preflight.json
+	python3 -m unittest discover -s tools/release-qa-labs/tests -p test_release_qa_preflight.py -v
+
 build: webconsole-build
 	$(MAKE) build-daemons
 

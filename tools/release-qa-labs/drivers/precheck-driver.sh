@@ -10,6 +10,8 @@ source "$script_dir/common.sh"
 load_contract "$default_contract_path"
 release_repo="$(absolute_path "$(jq -er '.releaseRepo' "$run_env_path")")"
 require_command timeout
+python3 "$repo_root/scripts/release_qa_preflight.py" \
+  --contract "$contract_path" --out "$evidence_root/preflight/offline-regressions.json"
 python3 "$framework_root/qa_guard.py" contract \
   --contract "$contract_path" --release-repo "$release_repo" \
   --framework "$framework_root"

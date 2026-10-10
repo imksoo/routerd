@@ -22,6 +22,10 @@ Release qualification must not start unless all of the following are true:
 - `expiresAt` is later than the current UTC time.
 - The manifest environment, topology, provider set, and script revisions match
   the requested qualification run.
+- The mandatory offline regression gate and actual saved preparation checks
+  pass using the current reviewed QA source. Certification runs this gate
+  before its driver; qualification preflight repeats it. See the
+  [preparation failure record and procedure](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md).
 
 No certification, failed certification, blocked certification, mismatched
 certification, or expired certification is a hard stop.
@@ -33,13 +37,17 @@ certification, or expired certification is a hard stop.
 | Environment certification | PVE bridge missing, QGA dead, config disk broken, cloud-init broken, cloud quota missing | Infra failure |
 | Environment certification | Repair succeeds and all checks pass | Certified environment |
 | Release preflight | Manifest missing, expired, invalid, or mismatched | Infra failure / no-go |
+| Any phase | Invalid collector, stale observation, incorrect predicate or incomplete baseline | Test tooling defect; no valid product verdict |
 | Release qualification | routerd readiness fails on certified substrate | routerd product failure |
 | Release qualification | connectivity matrix fails on certified substrate | routerd product failure |
 | Release qualification | provider action check fails on certified substrate | routerd product failure |
 | Release qualification | PVE VM, bridge, QGA, config disk, cloud bootstrap, identity, or quota defect is discovered | Infra failure; stop qualification |
 
-Only failures observed after a passing preflight and within routerd readiness,
-matrix, or provider action checks count as routerd product failures.
+Only failures established by valid observations and predicates after a passing
+preflight, within routerd readiness, matrix, or provider action checks, count as
+routerd product failures. A passing certification does not make a later test-code
+defect a product defect. Preserve the original result and explain the root cause
+separately if its historical schema has no test-tooling classification.
 
 ## No repair during qualification
 

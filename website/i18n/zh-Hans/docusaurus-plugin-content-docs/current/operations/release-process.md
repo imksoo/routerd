@@ -23,6 +23,29 @@ routerd 采用以日期为基础的版本号。
 采集窗口和故障状态内。不得改写封存结果、在不同条件下沿用部分 PASS，或为了调试测试
 而重新部署全部云环境。参见 [qualification 策略（英语）](/docs/operations/release-qualification-policy)。
 
+## 开始实机验证之前
+
+在经过评审的完整 checkout 中执行 `make release-qa-preflight-test`，
+然后验证即将冻结的最终 contract 原始文件：
+
+```sh
+python3 scripts/release_certification.py validate-contract \
+  --contract prospective-contract.json --environment "$environment" \
+  --topology "$topology" --providers "$providers" > contract-validation.json
+```
+
+必需的离线测试失败、缺失或被跳过，复制的 phase 仍使用旧 run ID，证据发生变化，
+以及保留介质的 baseline 缺少管理 IP 等字段时，检查会在认证 driver 启动前拒绝运行。
+保存源码、fixture 的哈希和 contract 的 SHA256；准备内容有变化后重新执行，
+并与冻结文件核对。认证、qualification preflight 和付费测试的 precheck
+也会自动执行此检查。仅源码测试通过并不证明实环境或 private caller 正确。
+
+保留失败的 run，使用保存数据及负例复现采集、判定或准备缺陷，修复并验证后再冻结
+新的 run。不要反复创建云资源来调试已知的测试代码错误。产品改进不能成为这些返工
+的借口。产品二进制不变时，仅 QA 的修正本身不要求重新进行四环境产品验证。
+参见 [R1–R12 原因分类、前提、失败示例及重试条件](https://github.com/imksoo/routerd/blob/main/tools/release-qa-labs/qualification-lessons.md)。
+实际费用和浪费金额须核对账单，不能仅凭经过时间推断。
+
 ## 自动发布
 
 确保工作目录干净后，执行发布辅助命令：
