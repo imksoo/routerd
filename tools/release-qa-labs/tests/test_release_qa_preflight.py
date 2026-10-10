@@ -56,6 +56,25 @@ class PreparationInputTests(unittest.TestCase):
     def update_evidence(self, evidence):
         self.contract['execution']['baseline_builder_binding']['evidence'] = self.bound('builder.json', evidence)
 
+    def consumer(self, evidence):
+        execution = self.contract['execution']
+        source = self.root / 'consumer.py'
+        source.write_text('# saved consumer source\n')
+        ref = {'path': str(source), 'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}
+        execution['script_sha256'] = {ref['path']: ref['sha256']}
+        node = evidence['nodes'][0]
+        report = {'runId': 'new-run', 'success': True, 'machineMutations': [], 'formalQualification': False,
+                  'evaluator': ref, 'caller': ref, 'common': ref,
+                  'nodes': [{'node': 'node1', 'host': 'host1', 'vmid': 101, 'success': True,
+                    'guestAssessment': {'pass': True, 'checks': {'management_baseline': True}},
+                    'mediaAssessment': {'pass': True, 'checks': {'persistent_config': True}},
+                    'guest': node['guest'], 'media': node['media'],
+                    'baseline': evidence['generatedBaseline'], 'builderEvidence': execution['baseline_builder_binding']['evidence']}]}
+        return report
+
+    def bind_consumer(self, report):
+        self.contract['execution']['baseline_builder_binding']['actual_all10_prestop'] = self.bound('consumer.json', report)
+
     def test_new_phase_ids_and_bound_bytes_pass(self):
         self.plans()
         self.assertEqual(self.m.validate_preparation_inputs(self.contract)['plans'], 2)
@@ -129,8 +148,121 @@ class PreparationInputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'identity'):
             self.m.validate_preparation_inputs(self.contract)
 
+    def test_phased_rollout_requires_complete_actual_consumer(self):
+        self.plans()
+        e = self.baseline()
+        with self.assertRaisesRegex(ValueError, 'consumer replay'):
+            self.m.validate_preparation_inputs(self.contract)
+        self.bind_consumer(self.consumer(e))
+        self.assertEqual(self.m.validate_preparation_inputs(self.contract)['consumerNodes'], 1)
+        del self.contract['execution']['baseline_builder_binding']
+        with self.assertRaisesRegex(ValueError, 'baseline_builder_binding'):
+            self.m.validate_preparation_inputs(self.contract)
+
+    def test_consumer_empty_checks_wrong_baseline_and_unbound_source_fail(self):
+        for change in ('empty', 'failed', 'baseline', 'source', 'old-run'):
+            e = self.baseline()
+            report = self.consumer(e)
+            if change == 'empty':
+                report['nodes'][0]['guestAssessment']['checks'] = {}
+            elif change == 'failed':
+                report['nodes'][0]['guestAssessment']['checks']['management_baseline'] = False
+            elif change == 'baseline':
+                report['nodes'][0]['baseline'] = self.bound('other-baseline.json', [])
+            elif change == 'source':
+                Path(report['evaluator']['path']).write_text('# changed after replay\n')
+            else:
+                report['runId'] = 'old-run'
+            self.bind_consumer(report)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.m.validate_preparation_inputs(self.contract)
+
+    def test_consumer_failed_saved_transport_is_not_replaced_by_summary_pass(self):
+        for kind in ('guest', 'media'):
+            e = self.baseline()
+            report = self.consumer(e)
+            report['nodes'][0][kind] = self.bound(
+                'consumer-' + kind + '.json', {'returncode': 1, 'observed': {}})
+            self.bind_consumer(report)
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'consumer transport'):
+                self.m.validate_preparation_inputs(self.contract)
+
 
 class AdmissionTests(unittest.TestCase):
+    def private_contract(self, root, body='self.assertTrue(True)', decorator=''):
+        path = root / 'test_private_caller.py'
+        path.write_text('import unittest\nclass Caller(unittest.TestCase):\n'
+                        f' {decorator}\n def test_actual_path(self):\n  {body}\n')
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        return {'execution': {'qualification_plans': {'canary': {}, 'final': {}}, 'nodes': ['node'],
+                 'script_sha256': {str(path): digest}, 'selfprobe_plan': {},
+                 'offline_rehearsal': {'testFiles': [{'path': str(path), 'sha256': digest}],
+                   'coverage': {key: ['test_private_caller.Caller.test_actual_path'] for key in
+                     ['phase-contract', 'rollout-baseline', 'self-stimulus', 'positive-stimulus',
+                      'collector-health', 'controller-progress']}}}}
+
+    def test_actual_private_tests_execute_and_cannot_report_success_for_failure(self):
+        m = module('release_qa_preflight')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            contract = self.private_contract(root)
+            self.assertEqual(m.run_private_rehearsal(contract)['tests'], 1)
+            for body, decorator in [('self.fail("actual caller bug")', ''),
+                                    ('self.assertTrue(True)', '@unittest.skip("missing evidence")'),
+                                    ('__import__("socket").socket()', '')]:
+                contract = self.private_contract(root, body, decorator)
+                with self.subTest(body=body, decorator=decorator), self.assertRaises(ValueError):
+                    m.run_private_rehearsal(contract)
+
+    def test_private_test_coverage_and_bound_code_are_mandatory(self):
+        m = module('release_qa_preflight')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for change in ('missing', 'self', 'case', 'source', 'empty'):
+                contract = self.private_contract(root)
+                execution = contract['execution']
+                if change == 'missing':
+                    del execution['offline_rehearsal']
+                elif change == 'self':
+                    del execution['offline_rehearsal']['coverage']['self-stimulus']
+                elif change == 'case':
+                    execution['offline_rehearsal']['coverage']['self-stimulus'] = ['missing.Case.test_missing']
+                elif change == 'empty':
+                    execution['offline_rehearsal']['testFiles'] = []
+                else:
+                    (root / 'test_private_caller.py').write_text('# changed after freeze\n')
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    m.run_private_rehearsal(contract)
+
+    def test_actual_bad_plan_gate_leaves_driver_uncalled_and_writes_failure(self):
+        cert = module('release_certification')
+        prep = PreparationInputTests()
+        prep.setUp()
+        self.addCleanup(prep.doCleanups)
+        prep.plans()
+        prep.contract['providers'] = [{'name': 'pve'}]
+        prep.contract['execution']['qualification_plans']['final'] = prep.bound(
+            'final.json', {'runId': 'old-run', 'stage': 'final'})
+        path = prep.root / 'contract.json'
+        path.write_text(json.dumps(prep.contract))
+        out = prep.root / 'certificate.json'
+        with patch.object(cert, 'validate_contract', return_value='a' * 40), \
+             patch.object(cert, 'run_driver') as driver:
+            with self.assertRaisesRegex(cert.ContractError, 'identity'):
+                cert.command_certify('pve', ['--environment', 'test', '--topology', 'full',
+                    '--contract', str(path), '--driver', '/must-not-run', '--out', str(out)])
+            driver.assert_not_called()
+        self.assertFalse(out.exists())
+        self.assertEqual(json.loads(out.with_suffix('.offline-preflight.json').read_text())['status'], 'fail')
+
+    def test_network_and_process_attempts_fail_offline_suite(self):
+        m = module('release_qa_preflight')
+        for action in (lambda: m.socket.socket(), lambda: m.subprocess.Popen(['/bin/false'])):
+            suite = unittest.TestSuite([unittest.FunctionTestCase(action)])
+            with patch.object(m, 'load_suite', return_value=suite):
+                with self.assertRaisesRegex(ValueError, 'network or subprocess'):
+                    m.run_regressions()
+
     def test_failed_offline_gate_never_calls_certification_driver(self):
         cert = module('release_certification')
         contract = {'providers': [{'name': 'pve'}]}
