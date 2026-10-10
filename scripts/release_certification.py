@@ -437,16 +437,12 @@ def command_certify(component: str, argv: list[str]) -> int:
         contract, args.environment, args.topology, contract_provider_set
     )
 
-    started = rfc3339(utc_now())
-    driver_out = args.driver_out or args.out.with_suffix(".driver.json")
-    result = run_driver(args.driver, args.contract, driver_out, args.repair)
-    validate_driver_result(result, component, expected)
-
     certifiers: list[dict[str, Any]] = []
     checks: list[dict[str, Any]] = []
     repairs: list[dict[str, Any]] = []
     tool_versions: dict[str, str] = {}
     other_providers: list[str] = []
+    inherited_expiry = None
     if other_certification_path:
         other = load_json(other_certification_path)
         validate_document(other, CERT_SCHEMA)
@@ -464,20 +460,31 @@ def command_certify(component: str, argv: list[str]) -> int:
             other_providers,
             require_pass=True,
         )
-        if other["run"]["runId"] != contract["runId"]:
+        if other["run"] != contract:
             raise ContractError(
-                "input certification runId does not match the run contract"
+                "input certification run contract does not match (artifact/QA/execution identity)"
             )
+        inherited_expiry = parse_rfc3339(other["expiresAt"])
         certifiers.extend(other["certifiers"])
         checks.extend(other["checks"])
         repairs.extend(other["repairs"])
         tool_versions.update(other.get("toolVersions", {}))
+
+    started = rfc3339(utc_now())
+    driver_out = args.driver_out or args.out.with_suffix(".driver.json")
+    result = run_driver(args.driver, args.contract, driver_out, args.repair)
+    validate_driver_result(result, component, expected)
 
     certifiers.append(certifier_entry(component, result, started))
     checks.extend(result["checks"])
     repairs.extend(result["repairs"])
     tool_versions.update(result.get("toolVersions", {}))
     issued = utc_now()
+    expires = issued + dt.timedelta(seconds=validity)
+    if inherited_expiry is not None:
+        expires = min(expires, inherited_expiry)
+        if expires <= issued:
+            raise ContractError("input certification expired while the driver ran")
     manifest = {
         "schemaVersion": "release-environment-certification/v1",
         "manifestId": f"{contract['runId']}:{component}:{int(issued.timestamp())}",
@@ -485,7 +492,7 @@ def command_certify(component: str, argv: list[str]) -> int:
         "topology": args.topology,
         "status": certification_status(certifiers, checks),
         "issuedAt": rfc3339(issued),
-        "expiresAt": rfc3339(issued + dt.timedelta(seconds=validity)),
+        "expiresAt": rfc3339(expires),
         "routerdCommit": contract["routerdArtifact"]["commit"],
         "labsCommit": labs_commit,
         "providers": sorted(set(expected) | set(other_providers)),

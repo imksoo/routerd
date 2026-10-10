@@ -398,6 +398,7 @@ func TestControllerRendersNAT44DestinationAddressSet(t *testing.T) {
 }
 
 func TestControllerSkipsUnchangedExistingNftablesTable(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")

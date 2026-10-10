@@ -42,6 +42,10 @@ func (b *testEventBus) Subscribe(_ context.Context, _ bus.Subscription, buffer i
 
 func TestRunUsesOneWorkerForMultipleSubscriptions(t *testing.T) {
 	eventBus := &testEventBus{}
+	observer := &recordingResourceObserver{}
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	completed := make(chan struct{}, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var mu sync.Mutex
@@ -55,7 +59,7 @@ func TestRunUsesOneWorkerForMultipleSubscriptions(t *testing.T) {
 			{Topics: []string{"routerd.a"}},
 			{Topics: []string{"routerd.b"}},
 		},
-		ReconcileFunc: func(_ context.Context, event daemonapi.DaemonEvent) error {
+		ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			mu.Lock()
 			active++
 			if active > maxActive {
@@ -68,17 +72,24 @@ func TestRunUsesOneWorkerForMultipleSubscriptions(t *testing.T) {
 			}
 			mu.Unlock()
 			if event.Type != "routerd.controller.bootstrap" {
-				time.Sleep(20 * time.Millisecond)
+				entered <- struct{}{}
+				select {
+				case <-release:
+				case <-ctx.Done():
+				}
 			}
 			mu.Lock()
 			active--
 			mu.Unlock()
+			if event.Type != "routerd.controller.bootstrap" {
+				completed <- struct{}{}
+			}
 			return nil
 		},
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- (Runner{Bus: eventBus, Interval: time.Hour}).Run(ctx, controller)
+		done <- (Runner{Bus: eventBus, Interval: time.Hour, Observer: observer}).Run(ctx, controller)
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -95,25 +106,34 @@ func TestRunUsesOneWorkerForMultipleSubscriptions(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	deadline = time.Now().Add(time.Second)
-	for {
-		mu.Lock()
-		complete := events == 2
-		mu.Unlock()
-		if complete {
-			break
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("event reconcile did not start")
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("events were not reconciled")
+		release <- struct{}{}
+		select {
+		case <-completed:
+		case <-time.After(10 * time.Second):
+			t.Fatal("event reconcile did not finish")
 		}
-		time.Sleep(time.Millisecond)
 	}
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v", err)
 	}
+	observer.mu.Lock()
+	workers := len(observer.started)
+	observer.mu.Unlock()
+	if workers != 1 {
+		t.Fatalf("started workers = %d, want 1", workers)
+	}
 	mu.Lock()
 	defer mu.Unlock()
+	if events != 2 {
+		t.Fatalf("events = %d, want 2", events)
+	}
 	if bootstrap != 1 {
 		t.Fatalf("bootstrap = %d, want 1", bootstrap)
 	}
