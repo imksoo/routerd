@@ -19,11 +19,12 @@ func TestDistributeCaptures_EvenSpread(t *testing.T) {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	assignments := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments, len(addresses))
 	if len(assignments) != 20 {
 		t.Fatalf("expected 20 assignments, got %d", len(assignments))
 	}
 	counts := captureAssignmentCounts(assignments)
-	if counts["node-a"] == 0 || counts["node-b"] == 0 {
+	if counts["node-a"] != 10 || counts["node-b"] != 10 {
 		t.Fatalf("expected both nodes to get addresses: %v", counts)
 	}
 }
@@ -38,6 +39,7 @@ func TestDistributeCaptures_RespectsCapacity(t *testing.T) {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	assignments := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments, len(addresses))
 	counts := captureAssignmentCounts(assignments)
 	if counts["node-a"] > 5 {
 		t.Fatalf("node-a exceeded capacity: %d", counts["node-a"])
@@ -57,6 +59,7 @@ func TestDistributeCaptures_OverCapacity(t *testing.T) {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	assignments := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments, 6)
 	if len(assignments) != 6 {
 		t.Fatalf("expected 6 assigned (total capacity), got %d", len(assignments))
 	}
@@ -74,6 +77,8 @@ func TestDistributeCaptures_Deterministic(t *testing.T) {
 	}
 	assignments1 := distributeCaptures(addresses, nodes)
 	assignments2 := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments1, len(addresses))
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments2, len(addresses))
 	for addr, node := range assignments1 {
 		if assignments2[addr] != node {
 			t.Fatalf("non-deterministic: %s -> %s vs %s", addr, node, assignments2[addr])
@@ -97,6 +102,8 @@ func TestDistributeCaptures_MinimalRedistribution(t *testing.T) {
 	}
 	assignments3 := distributeCaptures(addresses, nodes3)
 	assignments2 := distributeCaptures(addresses, nodes2)
+	requireCaptureAssignmentCoverage(t, addresses, nodes3, assignments3, len(addresses))
+	requireCaptureAssignmentCoverage(t, addresses, nodes2, assignments2, len(addresses))
 	moved := 0
 	for addr, node3 := range assignments3 {
 		if node2, ok := assignments2[addr]; ok && node3 != node2 {
@@ -126,6 +133,7 @@ func TestDistributeCaptures_SingleNode(t *testing.T) {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	assignments := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments, len(addresses))
 	if got := captureAssignmentCounts(assignments)["node-a"]; got != 30 {
 		t.Fatalf("single node should get all: got %d", got)
 	}
@@ -141,6 +149,7 @@ func TestDistributeCaptures_UnlimitedCapacity(t *testing.T) {
 		addresses = append(addresses, fmt.Sprintf("10.0.0.%d", i))
 	}
 	assignments := distributeCaptures(addresses, nodes)
+	requireCaptureAssignmentCoverage(t, addresses, nodes, assignments, len(addresses))
 	if len(assignments) != 100 {
 		t.Fatalf("unlimited capacity nodes should assign all: got %d", len(assignments))
 	}
@@ -162,6 +171,8 @@ func TestDistributeCaptures_FailoverRedistribution(t *testing.T) {
 	}
 	assignmentsBefore := distributeCaptures(addresses, nodesAll)
 	assignmentsAfter := distributeCaptures(addresses, nodesSurvivors)
+	requireCaptureAssignmentCoverage(t, addresses, nodesAll, assignmentsBefore, len(addresses))
+	requireCaptureAssignmentCoverage(t, addresses, nodesSurvivors, assignmentsAfter, len(addresses))
 	for addr, nodeBefore := range assignmentsBefore {
 		nodeAfter, ok := assignmentsAfter[addr]
 		if !ok {
@@ -245,5 +256,32 @@ func TestDistributedLiveNodes_CompleteMarkersUseObservedLiveSet(t *testing.T) {
 	live := distributedLiveNodes(members["node-a"], members, markers)
 	if !live["node-a"] || !live["node-b"] || len(live) != 2 {
 		t.Fatalf("complete marker live nodes = %#v, want both observed nodes", live)
+	}
+}
+
+func requireCaptureAssignmentCoverage(t *testing.T, addresses []string, nodes []captureDistributionNode, got map[string]string, count int) {
+	t.Helper()
+	expected := map[string]bool{}
+	validNodes := map[string]bool{}
+	for _, a := range addresses {
+		expected[a] = true
+	}
+	for _, n := range nodes {
+		validNodes[n.NodeRef] = true
+	}
+	if len(got) != count {
+		t.Fatalf("capture assignments count=%d, want %d", len(got), count)
+	}
+	for a, n := range got {
+		if !expected[a] || !validNodes[n] {
+			t.Fatalf("unexpected capture assignment %s -> %s", a, n)
+		}
+	}
+	if count == len(expected) {
+		for a := range expected {
+			if _, ok := got[a]; !ok {
+				t.Fatalf("missing capture assignment %s", a)
+			}
+		}
 	}
 }

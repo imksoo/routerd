@@ -3,12 +3,14 @@
 package render
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
@@ -630,7 +632,7 @@ func TestFreeBSDTailscaleRCDPidfileOwnershipIsFailClosed(t *testing.T) {
 }
 
 func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
-	run := func(t *testing.T, serviceBody, tailscaleBody string) {
+	run := func(t *testing.T, serviceBody, tailscaleBody string, wantUp bool) {
 		t.Helper()
 		dir := t.TempDir()
 		binDir := filepath.Join(dir, "bin")
@@ -638,6 +640,24 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 			t.Fatal(err)
 		}
 		serviceLog := filepath.Join(dir, "service.log")
+		pidfile := filepath.Join(dir, "tailscaled.pid")
+		upMarker := filepath.Join(dir, "tailscale-up")
+		if err := os.WriteFile(filepath.Join(binDir, "procstat"), []byte("#!/bin/sh\nprintf 'PID COMM OSREL PATH\\n%s tailscaled 1400000 /usr/local/bin/tailscaled\\n' \"$2\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			data, err := os.ReadFile(pidfile)
+			if err != nil {
+				return
+			}
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil {
+				proc, err := os.FindProcess(pid)
+				if err == nil {
+					_ = proc.Kill()
+				}
+			}
+		})
 		if err := os.WriteFile(filepath.Join(binDir, "service"), []byte("#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$2\" >> \"$SERVICE_LOG\"\n"+serviceBody), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -650,21 +670,34 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 		script := string(FreeBSDTailscaleRCDScript(name, api.TailscaleNodeSpec{BinaryPath: tailscale}))
 		script = strings.Replace(script, "/var/run/routerd/tailscale", markerDir, 1)
 		script = strings.Replace(script, ". /etc/rc.subr\n", "", 1)
-		script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + 1", 1)
+		readyDeadline := "1"
+		if wantUp {
+			readyDeadline = "5"
+		}
+		script = strings.Replace(script, "$(date +%s) + 15", "$(date +%s) + "+readyDeadline, 1)
 		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 15", "timeout -k 1 1")
 		script = strings.ReplaceAll(script, "/usr/bin/timeout -k 2 45", "timeout -k 1 1")
 		end := strings.Index(script, "load_rc_config $name")
 		if end < 0 {
 			t.Fatalf("generated rc.d script lacks load_rc_config:\n%s", script)
 		}
-		cmd := exec.Command("sh", "-c", script[:end]+name+"_start\nexit $?\n")
-		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"))
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "sh", "-c", script[:end]+name+"_start\nexit $?\n")
+		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"), "TAILSCALED_PIDFILE="+pidfile, "TAILSCALE_UP_MARKER="+upMarker, "PROCSTAT_BIN="+filepath.Join(binDir, "procstat"))
 		err := cmd.Run()
 		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
 			t.Fatalf("timeout start exit = %v, want 124", err)
 		}
 		if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
 			t.Fatalf("ownership marker remains after bounded rollback: %v", err)
+		}
+		_, markerErr := os.Stat(upMarker)
+		if wantUp && markerErr != nil {
+			t.Fatalf("tailscale up was never reached before timeout: %v", markerErr)
+		}
+		if !wantUp && !os.IsNotExist(markerErr) {
+			t.Fatalf("service-start timeout unexpectedly reached tailscale up: %v", markerErr)
 		}
 		data, err := os.ReadFile(serviceLog)
 		if err != nil {
@@ -675,10 +708,10 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 		}
 	}
 	t.Run("service-start", func(t *testing.T) {
-		run(t, "case \"$2\" in onestatus) exit 1;; onestart) sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "exit 0\n")
+		run(t, "case \"$2\" in onestatus) exit 1;; onestart) sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "exit 0\n", false)
 	})
 	t.Run("tailscale-up", func(t *testing.T) {
-		run(t, "case \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) : >\"$SERVICE_STATE\"; sleep 5;; onestop) rm -f \"$SERVICE_STATE\";; *) exit 0;; esac\n", "sleep 5\n")
+		run(t, "case \"$2\" in onestatus) test -e \"$SERVICE_STATE\";; onestart) printf '%s\\n' \"$$\" >\"$TAILSCALED_PIDFILE\"; : >\"$SERVICE_STATE\"; exec sleep 30;; onestop) [ ! -r \"$TAILSCALED_PIDFILE\" ] || { read child <\"$TAILSCALED_PIDFILE\"; kill \"$child\" 2>/dev/null || true; }; rm -f \"$SERVICE_STATE\" \"$TAILSCALED_PIDFILE\";; *) exit 0;; esac\n", ": >\"$TAILSCALE_UP_MARKER\"\nexec sleep 30\n", true)
 	})
 }
 

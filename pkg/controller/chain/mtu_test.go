@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -224,16 +225,23 @@ func TestPathMTUControllerL2OwnerManifestIsPrivate(t *testing.T) {
 
 func TestPathMTUControllerDeleteRaceNeverDeletesTable(t *testing.T) {
 	g := &l2MSSGeneration{Table: "routerd_l2_deadbeef", Chain: "forward_deadbeef", Token: "secret", Digest: "digest", Handle: 7, State: "retired"}
-	owned := "table bridge " + g.Table + " { # handle 7\n chain " + g.Chain + " { comment \"" + render.NftablesL2MSSPrivateProofMarker + l2OwnerProof(*g) + "\"; }\n}"
+	owned := l2OwnerJSON(*g, 7)
 	var calls []string
-	foreignPreserved := true
+	replacement := map[uint64]string{8: "foreign replacement rules"}
+	deleteAttempts := 0
 	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
-		if args[0] == "-a" {
-			return []byte(owned), nil
+		if reflect.DeepEqual(args, []string{"--json", "-a", "list", "table", "bridge", g.Table}) {
+			return owned, nil
 		}
 		if args[0] == "delete" {
-			foreignPreserved = true // stale handle 7 cannot target replacement handle 8
+			deleteAttempts++
+			if !reflect.DeepEqual(args, []string{"delete", "table", "bridge", "handle", "7"}) {
+				// Model the dangerous alternate identity at the command boundary.
+				delete(replacement, 8)
+				t.Fatalf("delete targeted a replacement or table name: %#v", args)
+			}
+			delete(replacement, 7)
 			return []byte("No such file or directory"), fmt.Errorf("stale handle")
 		}
 		return nil, nil
@@ -241,8 +249,8 @@ func TestPathMTUControllerDeleteRaceNeverDeletesTable(t *testing.T) {
 	if _, err := c.deleteOwnedL2Table(t.Context(), "nft", g); err == nil {
 		t.Fatal("want fail-closed delete error")
 	}
-	if !foreignPreserved {
-		t.Fatal("foreign replacement was modified")
+	if deleteAttempts != 1 || len(replacement) != 1 || replacement[8] != "foreign replacement rules" {
+		t.Fatalf("delete attempts=%d replacement=%#v, want one stale-handle attempt preserving handle 8", deleteAttempts, replacement)
 	}
 	for _, call := range calls {
 		if strings.Contains(call, g.Table) && strings.HasPrefix(call, "delete") {

@@ -96,7 +96,7 @@ management_snapshot() {
   # Exact text comparison is intentional: the only host-network change this
   # driver may make is a fresh isolated bridge.  A changed management IPv4
   # address or default route is an unsafe, fail-closed result.
-  printf -v command 'ip -4 -o addr show dev %q; ip -4 route show default' "$underlay_bridge"
+  printf -v command 'ip -4 -o addr show dev %q && ip -4 route show default' "$underlay_bridge"
   remote_run "$command" "$out" || die "could not snapshot PVE management address/default route"
 }
 

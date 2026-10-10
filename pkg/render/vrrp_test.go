@@ -127,12 +127,18 @@ func TestKeepalivedConfigDefersGracefulVRRPAddressUntilRouterdReadiness(t *testi
 	got := string(data)
 	args := "--resource lan-gw-v4 --deferred-address 172.18.0.1/32 --deferred-interface ens19"
 	for _, state := range []string{"notify_master", "notify_backup", "notify_fault", "notify_stop"} {
-		if !strings.Contains(got, state+" \"/usr/local/sbin/routerd-vrrp-vmac ") || !strings.Contains(got, args) {
-			t.Fatalf("keepalived config missing graceful %s hook:\n%s", state, got)
+		matches := 0
+		for _, line := range strings.Split(got, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), state+" ") {
+				matches++
+				if !strings.Contains(line, state+" \"/usr/local/sbin/routerd-vrrp-vmac ") || !strings.Contains(line, args+" --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13") {
+					t.Fatalf("incomplete graceful %s hook: %s", state, line)
+				}
+			}
 		}
-	}
-	if !strings.Contains(got, args+" --parent ens18 --interface wan-vmac --mac 02:00:5e:00:01:13") {
-		t.Fatalf("graceful hook lost single VMAC arguments:\n%s", got)
+		if matches != 1 {
+			t.Fatalf("graceful %s hook count = %d", state, matches)
+		}
 	}
 	if !strings.Contains(got, "  no_virtual_ipaddress\n") {
 		t.Fatalf("graceful activation must keep the VIP out of keepalived:\n%s", got)

@@ -724,7 +724,7 @@ func TestEventedStoreDoesNotPublishTimestampOnlyStatusChange(t *testing.T) {
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default", map[string]any{
@@ -796,7 +796,7 @@ func TestEventedStoreDoesNotPublishMobilityObservationOnlyStatusRefresh(t *testi
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected mobility timestamp-only event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	if got := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")["discoveryLastScanAt"]; got != "2026-06-01T10:00:30Z" {
 		t.Fatalf("discoveryLastScanAt was not persisted: %v", got)
@@ -862,7 +862,7 @@ func TestEventedStoreDoesNotPublishIPAddressSetTTLOnlyStatusRefresh(t *testing.T
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected IPAddressSet TTL-only event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	if got := base.ObjectStatus(api.NetAPIVersion, "IPAddressSet", "public-dns")["minTTLSeconds"]; got != 120 {
 		t.Fatalf("minTTLSeconds was not persisted: %v", got)
@@ -970,7 +970,7 @@ func TestMobilityPoolObservationRefreshDoesNotPublishStatusEvent(t *testing.T) {
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected observation refresh event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	status := base.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["phase"] != "Watching" || status["discoveryObserved"] != 2 {
@@ -1004,7 +1004,7 @@ func TestMobilityPoolPendingWatchingObservationRefreshDoesNotPublishStatusEvent(
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected pending/watching observation refresh event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 }
 
@@ -1124,7 +1124,7 @@ func TestMobilityPoolTransitionDedupeAndNestedMapTypesDoNotPublishStatusEvent(t 
 	select {
 	case event := <-ch:
 		t.Fatalf("unexpected transition dedupe event: %#v", event)
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 }
 

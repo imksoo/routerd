@@ -4,6 +4,8 @@ package mobility
 
 import (
 	"context"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -103,12 +105,14 @@ func TestShardControllerEmitsEvents(t *testing.T) {
 		}
 		pools[ev.Payload["prefix"]] = append(pools[ev.Payload["prefix"]], ev.Payload["node"])
 	}
-	if len(pools["10.0.1.0/25"]) != 2 {
-		t.Fatalf("expected 2 nodes for 10.0.1.0/25, got %d", len(pools["10.0.1.0/25"]))
+	for prefix := range pools {
+		sort.Strings(pools[prefix])
 	}
-	if len(pools["10.0.2.0/25"]) != 1 {
-		t.Fatalf("expected 1 node for 10.0.2.0/25, got %d", len(pools["10.0.2.0/25"]))
+	want := map[string][]string{"10.0.1.0/25": {"oci-a", "oci-b"}, "10.0.2.0/25": {"aws-a"}}
+	if !reflect.DeepEqual(pools, want) {
+		t.Fatalf("shard prefix/node identities = %#v, want %#v", pools, want)
 	}
+
 }
 
 func TestResolveShardScopeReturnsAssignedPrefixes(t *testing.T) {

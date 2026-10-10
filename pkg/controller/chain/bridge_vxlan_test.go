@@ -643,6 +643,10 @@ func TestVXLANTunnelActiveDoesNotAdoptSameNameReplacement(t *testing.T) {
 			}
 			return nil, nil
 		}}
+	controller.DeleteLinkByIndex = func(index int) error {
+		mutated = true
+		return fmt.Errorf("unexpected netlink delete of foreign replacement index %d", index)
+	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -671,6 +675,10 @@ func TestVXLANTunnelGateTeardownPreservesSameNameReplacement(t *testing.T) {
 			mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
 			return nil, nil
 		}}
+	controller.DeleteLinkByIndex = func(index int) error {
+		mutated = true
+		return fmt.Errorf("unexpected netlink delete of foreign replacement index %d", index)
+	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -699,6 +707,10 @@ func TestVXLANTunnelOrphanCleanupPreservesSameNameReplacement(t *testing.T) {
 		}
 		mutated = mutated || strings.Contains(joined, " link set ") || strings.Contains(joined, " fdb del ") || strings.Contains(joined, " link delete ")
 		return nil, nil
+	}
+	controller.DeleteLinkByIndex = func(index int) error {
+		mutated = true
+		return fmt.Errorf("unexpected netlink delete of foreign replacement index %d", index)
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)

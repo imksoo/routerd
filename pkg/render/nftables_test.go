@@ -1638,8 +1638,17 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `chain mgmt_to_self`) || !strings.Contains(got, `counter accept`) {
-		t.Fatalf("nftables output does not keep mgmt self access open:\n%s", got)
+	start := strings.Index(got, "chain mgmt_to_self {")
+	if start < 0 {
+		t.Fatalf("missing protected management chain:\n%s", got)
+	}
+	end := strings.Index(got[start:], "\n  }")
+	if end < 0 || !strings.Contains(got[start:start+end], "counter accept") {
+		t.Fatalf("management self chain does not accept SSH:\n%s", got)
+	}
+	if !strings.Contains(got, `set if_mgmt { type ifname; elements = { "ens20" } }`) ||
+		!strings.Contains(got, "\n    iifname @if_mgmt jump mgmt_to_self\n") {
+		t.Fatalf("protected management interface set is not bound to its self chain:\n%s", got)
 	}
 }
 
