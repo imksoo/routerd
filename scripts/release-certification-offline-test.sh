@@ -130,11 +130,12 @@ done
 touch "$heartbeat"
 cat >"$out" <<JSON
 {
-  "status": "pass",
-  "classification": "none",
+  "status": "${QUALIFICATION_FIXTURE_STATUS:-pass}",
+  "classification": "${QUALIFICATION_FIXTURE_CLASSIFICATION:-none}",
   "checks": [{"name": "offline qualification", "result": "pass"}]
 }
 JSON
+exit "${QUALIFICATION_FIXTURE_EXIT:-0}"
 EOF
 
 cat >"$work/qualification-stale" <<'EOF'
@@ -506,6 +507,26 @@ mkdir -p "$work/pass-evidence"
   --heartbeat-stale 5s
 test -f "$work/pass-evidence/cleanup-called"
 test -f "$work/pass-evidence/inventory-zero"
+
+# Exercise the actual wrapper, schema and cleanup path. An unqualified
+# observation is not a product defect and is never converted into a PASS.
+mkdir -p "$work/inconclusive-evidence"
+if QUALIFICATION_FIXTURE_STATUS=fail QUALIFICATION_FIXTURE_CLASSIFICATION=observation_inconclusive \
+  QUALIFICATION_FIXTURE_EXIT=1 "$repo_root/scripts/release-qualification-smoke.sh" \
+  --certification "$work/certification.json" --release v20990101.0000 \
+  --out "$work/inconclusive-result.json" \
+  --qualification-command "$work/qualification-pass" \
+  --cleanup-command "$work/cleanup" --inventory-command "$work/inventory" \
+  --evidence-dir "$work/inconclusive-evidence" --ttl 15s --heartbeat-stale 5s; then
+  echo "inconclusive observation unexpectedly passed" >&2
+  exit 1
+fi
+python3 - "$work/inconclusive-result.json" <<'PY'
+import json, sys
+result = json.load(open(sys.argv[1], encoding="utf-8"))
+assert result["status"] == "fail" and result["classification"] == "observation_inconclusive", result
+assert result["cleanupExit"] == result["inventoryExit"] == 0, result
+PY
 
 mkdir -p "$work/stale-evidence"
 if "$repo_root/scripts/release-qualification-smoke.sh" \

@@ -11,6 +11,22 @@ The executable version, release tag, and release archive name use
 `vYYYYMMDD.HHmm` format.
 The date and time are calculated in `UTC` by default.
 
+## Qualification observations
+
+Qualification distinguishes observed product violations (`product_failure`)
+from incomplete or ambiguous evidence (`observation_inconclusive`) and execution
+failures (`infra_failure`). An inconclusive result retains `status: fail`; it
+does not establish a product defect or a passing qualification. Preserve each
+attempt, sender timestamps and results, including failures before a later
+success. Management RPC timing alone is not proof of stimulus timing.
+
+Reproduce saved failures and adjacent healthy examples first. Check the affected
+node in the existing environment, then state which additional tests the change
+requires and why. Additional observations must stay within the same deadline,
+capture window and fault state. Do not rewrite sealed results, reuse partial
+passes under different conditions, or start a new full cloud deployment merely
+to debug a test. See [the qualification policy](./release-qualification-policy.md).
+
 ## Automated release
 
 Use the release helper from a clean working tree:
