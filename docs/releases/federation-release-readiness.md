@@ -83,3 +83,5 @@ Summary: 2 actions are **ready** for auto-execute (retry-failed-deliveries, forc
 - [ ] Evidence committed to `docs/releases/evidence/`
 
 Development partition subsets that do not select multi-group require no B group. Go on the lab nodes is optional. `CE_BINARY_PROVENANCE_FILE` can point to an existing prepared/release contract: `routerdArtifact.commit` and `execution.candidate_binary_hashes` are bound to the current binary SHA-256. Conflicting runtime commit labels or mismatched hashes remain unconfirmed; a commit argument alone never establishes identity.
+
+The eventd digest comes from the selected systemd unit's MainPID executable (`/proc/<pid>/exe`), with the process and executable checked again after acquisition. A missing or changing process remains unconfirmed; a binary found on PATH does not prove the running service identity. An empty successful OTel label response remains diagnostic inconclusive.

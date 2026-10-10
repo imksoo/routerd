@@ -289,7 +289,7 @@ try:
     if not values or not all(math.isfinite(v) for v in values):raise ValueError("samples absent/nonfinite")
     print(max(values))
  elif kind=="labels":
-    if d.get("status")!="success" or not isinstance(d["data"],list) or not all(isinstance(x,str) for x in d["data"]):raise ValueError("labels unavailable")
+    if d.get("status")!="success" or not isinstance(d["data"],list) or not d["data"] or not all(isinstance(x,str) for x in d["data"]):raise ValueError("labels unavailable")
     forbidden={"event_id","subject","address","endpoint","error_message","raw_error","token","secret","credential"}
     check(not any(x.lower() in forbidden for x in d["data"]))
     print("pass")
@@ -302,22 +302,41 @@ except (ValueError,KeyError,TypeError,IndexError,AttributeError,OverflowError) a
 timestamp_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 remote_binary_info() {
-  local host=$1 binary_path=$2
-  ce_ssh "$host" "python3 - '$binary_path' <<'PYBIN'
-import pathlib,subprocess,shutil,hashlib,json,re,sys
-name=sys.argv[1];path=shutil.which(name) or name
-p=pathlib.Path(path);digest=hashlib.sha256(p.read_bytes()).hexdigest()
-version=None
-if p.name=='routerctl':
- r=subprocess.run([str(p),'version'],text=True,capture_output=True,timeout=5)
- if r.returncode==0:version=r.stdout.strip()
-build=''
-if shutil.which('go'):
- r=subprocess.run(['go','version','-m',str(p)],text=True,capture_output=True,timeout=5)
- if r.returncode==0:build=r.stdout
-match=re.search(r'vcs.revision=([0-9a-f]{40})',build) or re.search(r'(?:routerd/pkg/version|routerversion)[.]Commit=([0-9a-f]{40})',build) or re.search(r'\(([0-9a-f]{40})\)',version or '')
-label=re.search(r'\(([0-9a-f]{7,40})\)',version or '')
-print(json.dumps({'path':str(p),'sha256':digest,'version':version,'sourceCommit':match.group(1) if match else None,'runtimeCommitLabel':label.group(1) if label else None,'buildMetadata':build or None}))
+  local host=$1 binary_path=$2 unit=${3:-}
+  # Match routerctl's sudo PATH, and inspect the selected unit's actual main
+  # process for eventd. A PATH executable cannot stand in for that process.
+  ce_ssh "$host" "sudo python3 - '$binary_path' '$unit' <<'PYBIN'
+import pathlib,subprocess,shutil,hashlib,json,re,sys,os
+name,unit=sys.argv[1:];version=None;build='';pid=None
+result={'declaredBinary':name,'runtimeUnit':unit or None,'executionIdentityConfirmed':False,'path':None,'sha256':None,'version':None,'sourceCommit':None,'runtimeCommitLabel':None,'buildMetadata':None}
+try:
+ def mainpid():
+  response=subprocess.run(['systemctl','show','-p','MainPID','--value',unit],text=True,capture_output=True,timeout=5)
+  if response.returncode!=0 or not response.stdout.strip().isdigit():raise ValueError('unit MainPID unavailable')
+  value=int(response.stdout.strip())
+  if value<=0:raise ValueError('unit has no main process')
+  return value
+ if unit:
+  pid=mainpid();inspection=pathlib.Path('/proc')/str(pid)/'exe'
+  path=os.readlink(inspection);result['runtimePID']=pid
+ else:
+  path=shutil.which(name) or name;inspection=pathlib.Path(path)
+ result['path']=str(path);result['sha256']=hashlib.sha256(inspection.read_bytes()).hexdigest()
+ if not unit:
+  response=subprocess.run([str(inspection),'version'],text=True,capture_output=True,timeout=5)
+  if response.returncode==0:version=response.stdout.strip()
+ if shutil.which('go'):
+  response=subprocess.run(['go','version','-m',str(inspection)],text=True,capture_output=True,timeout=5)
+  if response.returncode==0:build=response.stdout
+ if unit:
+  if mainpid()!=pid:raise ValueError('unit MainPID changed during identity acquisition')
+  if os.readlink(inspection)!=path or hashlib.sha256(inspection.read_bytes()).hexdigest()!=result['sha256']:raise ValueError('unit executable changed during identity acquisition')
+ match=re.search(r'vcs.revision=([0-9a-f]{40})',build) or re.search(r'(?:routerd/pkg/version|routerversion)[.]Commit=([0-9a-f]{40})',build) or re.search(r'\(([0-9a-f]{40})\)',version or '')
+ label=re.search(r'\(([0-9a-f]{7,40})\)',version or '')
+ result.update(executionIdentityConfirmed=True,version=version,sourceCommit=match.group(1) if match else None,runtimeCommitLabel=label.group(1) if label else None,buildMetadata=build or None)
+except (OSError,ValueError,subprocess.SubprocessError) as e:
+ result['classification']='observation_inconclusive';result['reason']=str(e)
+print(json.dumps(result))
 PYBIN"
 }
 
@@ -444,8 +463,8 @@ collect_provenance() {
   local sender_routerctl_info receiver_routerctl_info sender_eventd_info receiver_eventd_info sender_digest receiver_digest
   sender_routerctl_info=$(read_snapshot sender-routerctl-binary false remote_binary_info "$CE_SENDER_SSH_HOST" "$ROUTERCTL") || return 3
   receiver_routerctl_info=$(read_snapshot receiver-routerctl-binary false remote_binary_info "$CE_RECEIVER_SSH_HOST" "$RECEIVER_ROUTERCTL") || return 3
-  sender_eventd_info=$(read_snapshot sender-eventd-binary false remote_binary_info "$CE_SENDER_SSH_HOST" routerd-eventd) || return 3
-  receiver_eventd_info=$(read_snapshot receiver-eventd-binary false remote_binary_info "$CE_RECEIVER_SSH_HOST" routerd-eventd) || return 3
+  sender_eventd_info=$(read_snapshot sender-eventd-binary false remote_binary_info "$CE_SENDER_SSH_HOST" routerd-eventd "$SENDER_EVENTD_UNIT") || return 3
+  receiver_eventd_info=$(read_snapshot receiver-eventd-binary false remote_binary_info "$CE_RECEIVER_SSH_HOST" routerd-eventd "$RECEIVER_EVENTD_UNIT") || return 3
   sender_digest=$(sender_ssh "sha256sum $SENDER_CONFIG") || return 3
   receiver_digest=$(receiver_ssh "sha256sum $RECEIVER_CONFIG") || return 3
   python3 - "$EVIDENCE_DIR/provenance.json" "$FULL_COMMIT" "$EXPECTED_PRODUCT_COMMIT" \
@@ -457,7 +476,8 @@ binaries=[json.loads(x) for x in data[:4]]
 digest=lambda x:x.split()[0] if x.split() else ''
 config=[digest(x) for x in data[4:6]]
 valid=lambda x:isinstance(x,str) and re.fullmatch('[0-9a-f]{64}',x) is not None
-artifact=all(valid(b.get('sha256')) for b in binaries) and all(valid(x) for x in config)
+execution=all(b.get('executionIdentityConfirmed') is True for b in binaries[2:])
+artifact=all(valid(b.get('sha256')) for b in binaries) and all(valid(x) for x in config) and execution
 # Reuse the existing prepared/release contract representation. The manifest is
 # local coordinator evidence; remote Go is optional. Bind its declared source
 # to each CURRENT binary digest, and preserve conflicts rather than guessing.
@@ -484,13 +504,14 @@ for i,b in enumerate(binaries):
   elif expected_hashes:hash_conflict=True
  conflict=hash_conflict or bool(bound and ((observed and observed!=bound) or (label and not bound.startswith(label))))
  b['manifestBinaryMatch']=False if hash_conflict else True if bound else None
- resolved=None if conflict else observed or bound
- b['sourceIdentityMethod']='conflict' if conflict else 'binary metadata' if observed else 'existing manifest + current binary SHA-256' if bound else 'unconfirmed'
+ runtime_confirmed=i<2 or b.get('executionIdentityConfirmed') is True
+ resolved=None if conflict or not runtime_confirmed else observed or bound
+ b['sourceIdentityMethod']='running executable unconfirmed' if not runtime_confirmed else 'conflict' if conflict else 'binary metadata' if observed else 'existing manifest + current binary SHA-256' if bound else 'unconfirmed'
  b['resolvedSourceCommit']=resolved;sources.append(resolved)
 source=all(isinstance(x,str) and re.fullmatch('[0-9a-f]{40}',x) for x in sources) and len(set(sources))==1
 match=bool(source and (not expected or sources[0].startswith(expected)))
 qualified=bool(artifact and match)
-result={'manifestBinding':manifest,'qaSourceCommit':qa,'expectedProductCommit':expected or None,'artifactIdentityObserved':artifact,'sourceIdentityVerified':match,'qualifiedProvenance':qualified,'classification':'pass' if qualified else 'observation_inconclusive','sender':{'sshTarget':sh,'nodeName':sn,'routerctl':binaries[0],'routerdEventd':binaries[2],'configDigest':config[0]},'receiver':{'sshTarget':rh,'nodeName':rn,'routerctl':binaries[1],'routerdEventd':binaries[3],'configDigest':config[1]}}
+result={'manifestBinding':manifest,'qaSourceCommit':qa,'expectedProductCommit':expected or None,'artifactIdentityObserved':artifact,'executionIdentityObserved':execution,'sourceIdentityVerified':match,'qualifiedProvenance':qualified,'classification':'pass' if qualified else 'observation_inconclusive','sender':{'sshTarget':sh,'nodeName':sn,'routerctl':binaries[0],'routerdEventd':binaries[2],'configDigest':config[0]},'receiver':{'sshTarget':rh,'nodeName':rn,'routerctl':binaries[1],'routerdEventd':binaries[3],'configDigest':config[1]}}
 json.dump(result,open(path,'w'),indent=2)
 raise SystemExit(0 if qualified else 3)
 PYPROV

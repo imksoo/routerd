@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -807,7 +808,6 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 }
 
 func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
-	requireLinuxRuntimeFixture(t)
 	store := mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
 			"phase":         "Unhealthy",
@@ -832,12 +832,36 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 			}},
 		}},
 	}}}
-	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	commandLog := filepath.Join(dir, "mutations")
+	// All reads and writes hit this fixture, never the host network.
+	ipScript := fmt.Sprintf("#!/bin/sh\ncase \"$1 $2 $3\" in\n 'link show dev'|'-4 route show'|'-4 rule show') exit 0 ;;\n '-4 route replace'|'-4 rule add'|'-4 rule del'|'-4 route flush') printf '%%s\\n' \"$*\" >> %q; exit 0 ;;\n *) exit 99 ;;\nesac\n", commandLog)
+	if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(ipScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
 	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
 		t.Fatal(err)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
 		t.Fatalf("route target should not create phantom EgressRoutePolicy status: %#v", status)
+	}
+
+	data, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-4 route replace default via 192.168.1.1 dev lo table 116 metric 50", "-4 rule add priority 40 fwmark 0x116 table 116"}
+	if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("enabled bootstrap operations = %#v, want %#v", got, want)
+	}
+	if err := os.WriteFile(commandLog, nil, 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	enabled := false
@@ -848,13 +872,21 @@ func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T)
 			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
-	controller = IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	controller = IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
 	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
 		t.Fatal(err)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
 		t.Fatalf("disabled healthcheck should not bootstrap route: %#v", status)
 	}
+	data, err = os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("disabled healthcheck mutated routes/rules: %q", data)
+	}
+
 }
 
 func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
