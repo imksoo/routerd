@@ -33,6 +33,12 @@ ENV:
 EOF
 }
 
+override_configured() {
+  local key
+  key="CE_PROTOCOL_$(ce_upper "$1")_COMMAND"
+  [[ -n "${!key:-}" ]]
+}
+
 run_override() {
   local op=$1 client=$2 server=$3 bytes=${4:-}
   local key cmd
@@ -96,7 +102,7 @@ echo bytes=$bytes"
 
 cmd_setup() {
   local client=$1 server=$2 bytes=${3:-104857600}
-  if run_override setup "$client" "$server" "$bytes"; then return 0; fi
+  if override_configured setup "$client" "$server" "$bytes"; then run_override setup "$client" "$server" "$bytes" || return $?; return 0; fi
   remote_install_packages "$client"
   remote_install_packages "$server"
   configure_server "$server" "$bytes"
@@ -105,7 +111,7 @@ cmd_setup() {
 
 cmd_ftp() {
   local mode=$1 client=$2 server=$3 bytes=${4:-104857600} ip user pass curl_opts=() size
-  if run_override "ftp-$mode" "$client" "$server" "$bytes"; then return 0; fi
+  if override_configured "ftp-$mode" "$client" "$server" "$bytes"; then run_override "ftp-$mode" "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   user=${CE_PROTOCOL_FTP_USER:-anonymous}
   pass=${CE_PROTOCOL_FTP_PASSWORD:-anonymous}
@@ -123,7 +129,7 @@ cmd_ftp() {
 
 cmd_nfs() {
   local client=$1 server=$2 bytes=${3:-104857600} ip mount_dir
-  if run_override nfs "$client" "$server" "$bytes"; then return 0; fi
+  if override_configured nfs "$client" "$server" "$bytes"; then run_override nfs "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   mount_dir="/tmp/cloudedge-nfs-$server"
   local mib=$(( (bytes + 1048575) / 1048576 ))
@@ -140,7 +146,7 @@ dd if=$(printf '%q' "$mount_dir")/client-write.bin of=/dev/null bs=1M status=non
 
 cmd_rpc() {
   local client=$1 server=$2 ip out port
-  if run_override rpc "$client" "$server" ""; then return 0; fi
+  if override_configured rpc "$client" "$server" ""; then run_override rpc "$client" "$server" "" || return $?; return 0; fi
   ip=$(server_ip "$server")
   out=$(ce_client_ssh "$client" "rpcinfo -p $(printf '%q' "$ip")")
   port=$(printf '%s\n' "$out" | awk '$5 ~ /mountd|nfs/ && $4 != "111" {print $4; exit}')
@@ -152,7 +158,7 @@ cmd_rpc() {
 
 cmd_bulk() {
   local client=$1 server=$2 bytes=${3:-${CE_PROTOCOL_BULK_BYTES:-104857600}} ip summary
-  if run_override bulk "$client" "$server" "$bytes"; then return 0; fi
+  if override_configured bulk "$client" "$server" "$bytes"; then run_override bulk "$client" "$server" "$bytes" || return $?; return 0; fi
   ip=$(server_ip "$server")
   if ce_client_ssh "$client" "command -v iperf3 >/dev/null 2>&1"; then
     ce_client_ssh "$client" "iperf3 -c $(printf '%q' "$ip") -n $(printf '%q' "$bytes") -J >/tmp/cloudedge-iperf3-client.json"
@@ -172,10 +178,15 @@ except Exception as e:
     print('iperf_parse_error=%s' % str(e).replace(' ', '_'))
 PY")
   else
-    ce_client_ssh "$client" "dd if=/dev/zero bs=1M count=16 status=none | ssh $(nested_ssh_opts) $(printf '%q' "$ip") 'cat >/tmp/cloudedge-bulk.bin'"
-    summary="bytes_sent=$bytes"
+    [[ "$bytes" =~ ^[1-9][0-9]*$ ]] || ce_die "invalid requested bulk bytes"
+    local mib=$(( (bytes + 1048575) / 1048576 )) received transfer
+    transfer="dd if=/dev/zero bs=1M count=$mib status=none | ssh $(nested_ssh_opts) $(printf '%q' "$ip") 'cat >/tmp/cloudedge-bulk.bin && wc -c </tmp/cloudedge-bulk.bin'"
+    received=$(ce_client_ssh "$client" "bash -o pipefail -c $(printf '%q' "$transfer")") || return $?
+    [[ "$received" =~ ^[0-9]+$ ]] || { echo "bulk receiver size unavailable" >&2; return 3; }
+    summary=$(printf 'bytes_sent=unknown\nbytes_received=%s\ntransfer_method=ssh-dd\n' "$received")
+    (( received >= bytes )) || { printf '%s\nbytes_requested=%s\n' "$summary" "$bytes"; return 3; }
   fi
-  printf 'bytes=%s\n' "$bytes"
+  printf 'bytes=%s\nbytes_requested=%s\n' "$bytes" "$bytes"
   printf '%s\n' "$summary"
   printf 'detail=bulk_ok\n'
 }
@@ -191,7 +202,7 @@ protocol_overlay_iface() {
 
 cmd_pmtu() {
   local client=$1 server=$2 ip size overlay_iface route_line overlay_mtu route_mtu advmss nft_mss iptables_mss mss mss_source
-  if run_override pmtu "$client" "$server" ""; then return 0; fi
+  if override_configured pmtu "$client" "$server" ""; then run_override pmtu "$client" "$server" "" || return $?; return 0; fi
   ip=$(server_ip "$server")
   size=${CE_PROTOCOL_PMTU_SIZE:-1300}
   ce_client_ssh "$client" "ping -M do -s $(printf '%q' "$size") -c3 -W2 $(printf '%q' "$ip") >/dev/null"
@@ -257,7 +268,7 @@ cmd_nested_ssh_peer() {
 
 cmd_source_preserved() {
   local client=$1 server=$2 expected peer
-  if run_override source-preserved "$client" "$server" ""; then return 0; fi
+  if override_configured source-preserved "$client" "$server" ""; then run_override source-preserved "$client" "$server" "" || return $?; return 0; fi
   expected=$(ce_site_ip "$client")
   peer=$(cmd_nested_ssh_peer "$client" "$server" | sed -n 's/^peer_ip=//p' | head -n1)
   [[ "$peer" == "$expected" ]] || ce_die "peer_ip=$peer expected=$expected"
@@ -267,7 +278,7 @@ cmd_source_preserved() {
 
 cmd_no_nat() {
   local client=$1 server=$2
-  if run_override no-nat "$client" "$server" ""; then return 0; fi
+  if override_configured no-nat "$client" "$server" ""; then run_override no-nat "$client" "$server" "" || return $?; return 0; fi
   cmd_source_preserved "$client" "$server" >/dev/null
   printf 'detail=no_nat_ok\n'
 }

@@ -46,12 +46,11 @@ EOF
 
 provider_upper() { ce_upper "$1"; }
 
-inject_override() {
+inject_override_command() {
   local provider=$1 upper cmd
   upper=$(provider_upper "$provider")
   cmd=$(ce_env_first "CE_${upper}_INJECT_COMMAND" "CE_INJECT_COMMAND" 2>/dev/null || true)
-  [[ -n "$cmd" ]] || return 1
-  bash -lc "$cmd"
+  printf '%s' "$cmd"
 }
 
 inject_aws() {
@@ -93,21 +92,20 @@ inject_oci() {
 }
 
 inject_onprem() {
-  if inject_override onprem; then
-    return 0
-  fi
   local cmd=${CE_ONPREM_REMOTE_INJECT_COMMAND:-"sudo systemctl stop keepalived || sudo service keepalived stop"}
   ce_router_ssh onprem active "$cmd"
   printf 'onprem_inject=remote-vrrp-stop\n'
 }
 
 cmd_inject() {
-  local provider=$1 fault=$2
+  local provider=$1 fault=$2 override
   case "$fault" in
     stop-active|drain) ;;
     *) ce_die "unsupported fault: $fault" ;;
   esac
-  if inject_override "$provider"; then
+  override=$(inject_override_command "$provider")
+  if [[ -n "$override" ]]; then
+    bash -lc "$override" || return $?
     return 0
   fi
   case "$provider" in
