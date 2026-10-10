@@ -104,19 +104,20 @@ mkdir -p "$(dirname "$out")"
 log "l2-loop: observing phase=$phase provider=$provider"
 
 observe_result="pass"
+observe_exit=0
 observe_output=""
-if ! observe_output=$("$L2_LOOP_RUNNER" observe "$phase" "$provider" 2>&1); then
-  observe_result="fail"
-fi
+observe_output=$("$L2_LOOP_RUNNER" observe "$phase" "$provider" 2>"$out.$phase.stderr.txt") || observe_exit=$?
+printf '%s\n' "$observe_output" >"$out.$phase.stdout.txt"
+[[ "$observe_exit" -eq 0 ]] || observe_result="fail"
 metrics_json=$(kv_to_json "$observe_output")
 
 python3 - "$out" "$phase" "$provider" "$observe_result" "$metrics_json" \
-  "$broadcast_threshold" "$stp_tcn_threshold" "$ping_loss_threshold" <<'PY'
-import json, os, sys
+  "$broadcast_threshold" "$stp_tcn_threshold" "$ping_loss_threshold" "$observe_exit" <<'PY'
+import json, math, os, sys
 
 (
     out, phase, provider, observe_result, metrics_s,
-    broadcast_threshold_s, stp_tcn_threshold_s, ping_loss_threshold_s,
+    broadcast_threshold_s, stp_tcn_threshold_s, ping_loss_threshold_s, observe_exit_s,
 ) = sys.argv[1:]
 
 metrics = json.loads(metrics_s)
@@ -124,24 +125,31 @@ broadcast_threshold = float(broadcast_threshold_s)
 stp_tcn_threshold = float(stp_tcn_threshold_s)
 ping_loss_threshold = float(ping_loss_threshold_s)
 
-def num(name, default=0.0):
-    value = metrics.get(name, default)
+def num(name):
+    value = metrics.get(name)
+    if isinstance(value, bool):
+        return None
     try:
-        return float(value)
-    except Exception:
-        return default
+        value = float(value)
+        return value if math.isfinite(value) and value >= 0 else None
+    except (ValueError, TypeError):
+        return None
 
 def passed(value):
     return "pass" if value else "fail"
 
+def measured(name, predicate):
+    value = num(name)
+    return "inconclusive" if value is None else passed(predicate(value))
+
 phase_checks = {
-    "broadcastStormAbsent": passed(num("broadcast_pps") <= broadcast_threshold),
-    "stpRstpStable": passed(num("stp_tcn_delta") <= stp_tcn_threshold),
-    "macFlapAbsent": passed(num("mac_flap_count") == 0),
-    "failoverPingStable": passed(num("ping_loss_percent") <= ping_loss_threshold),
+    "broadcastStormAbsent": measured("broadcast_pps", lambda value: value <= broadcast_threshold),
+    "stpRstpStable": measured("stp_tcn_delta", lambda value: value <= stp_tcn_threshold),
+    "macFlapAbsent": measured("mac_flap_count", lambda value: value == 0),
+    "failoverPingStable": measured("ping_loss_percent", lambda value: value <= ping_loss_threshold),
 }
 if observe_result != "pass":
-    phase_checks = {k: "fail" for k in phase_checks}
+    phase_checks = {k: "inconclusive" for k in phase_checks}
 phase_result = "pass" if all(v == "pass" for v in phase_checks.values()) else "fail"
 
 try:
@@ -158,6 +166,10 @@ phases.append({
     "result": phase_result,
     "checks": phase_checks,
     "metrics": metrics,
+    "classification": "observation_inconclusive" if "inconclusive" in phase_checks.values() else "none" if phase_result == "pass" else "measured_threshold_failure",
+    "observerExit": int(observe_exit_s),
+    "stdout": out + "." + phase + ".stdout.txt",
+    "stderr": out + "." + phase + ".stderr.txt",
 })
 phases.sort(key=lambda p: {"before": 0, "after": 1}.get(p.get("phase"), 99))
 

@@ -20,6 +20,8 @@ title: CloudEdge 自主实验室 (cloudedge-labctl)
 
 SAM在provider Ready之后判定通信。每次validation将原有的900秒provider收敛预算与流量观测共用。仅重新获取失败或缺失的必需项目，每项最多观测3次；成功项目和相同的cloud-ingress flow在同一次validation及相同故障状态内共享证据。成功flow不运行traceroute。无法确认管理SSH执行完成时，标记为 `OBSERVATION_INCONCLUSIVE`（退出码3），而不判定为产品ping失败。包含恢复前失败的原始记录保留在 `matrix/<label>/flows.*/`。
 
+L2 采集失败或指标缺失判为无法确定，并保留 stdout/stderr；只有成功采集后的数值零才有效。gateway unchanged 比较每个流在源主机上通信前后的路由，不是整个部署的基线。failover action 必须匹配本次故障开始时间、地址和 standby。恢复时间包含 coordinator/API/SSH/poll 开销，仅超过此上界不能证明产品退化；60 秒目标保持不变。netns 测试或 cleanup 失败时保留工作目录和 cleanup log。FreeBSD 同一网络栈内的 VXLAN ping 不能证明经过 WireGuard 的转发；该 smoke 报告配置、handshake、所有权和 restart 证据，并注明转发未经验证。IPC 请求在现有等待预算内设定期限，无法采集使用 exit 3。bus 慢 subscriber 测试使用检测阻塞的 watchdog，而非吞吐量门槛。
+
 诊断采集与验收判定分离。收敛等待循环不再反复执行 `doctor sam`，仅在诊断时采集一次。同一诊断快照中的 status、已应用 BGP 路径和 global RIB 各读取一次，摘要从保存的响应生成。诊断采集失败不改变流量判定。
 
 retained ARP检查中，监控HTTP的80ms timeout、100ms counter周期、400ms连续coverage以及每个区间的controller进度仅是诊断约束，不是验收条件。诊断失败不得停止pcap或sender采集。仍须保留完整的self ARP捕获、实际target command与packet对应、有效请求与TTL、完成的通信及process identity；缺少必要证据时判为证据不足。原始观测保留已有时间、target、command sequence和provider resource ID以供关联。
