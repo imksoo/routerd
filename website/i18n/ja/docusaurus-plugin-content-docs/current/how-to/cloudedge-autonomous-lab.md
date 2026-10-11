@@ -145,3 +145,18 @@ routerd.cloudedge.purpose
 - これは**ラボハーネス**であり、本番用のターンキーソリューションではありません。
 - 初期実装: 実際のプロバイダーごとの割り当て/teardown/ノードプッシュは `TODO(lab-operator)` のスタブか、デモパッケージの薄いラッパーです — run-id タグでフィルタリングした Terraform/OpenTofu またはプロバイダー CLI を接続してください。
 - 実際のアカウント ID / サブスクリプション ID / OCID / ENI/VNIC ID / 秘密情報 / 秘密鍵は決してコミットしないでください。`env.example` のようにプレースホルダーの論理アドレスを使用してください。
+
+## ゲスト準備の証跡
+
+provider CLI の導入は OpenTofu cloud-init と SAM 準備に分かれています。
+AWS は既存の代替導入を維持し、Azure/OCI は既存の cloud-init installer を使います。
+コマンド列は失敗時に停止します。準備は cloud-init の状態・出力を保存し、
+routerd 配置前に root のサービス PATH で必須 CLI を実行します。操作ホストの CLI
+や起動完了マーカーだけでは、ゲストの依存を確認できません。
+
+収束・warm-up の各試行は stdout/stderr、終了コード、UTC 時刻を保存します。
+診断は sudo で journal を読み、WireGuard の公開フィールドを採取します。
+GoBGP がない場合は JSON 解析せず取得不能を記録します。既存試験群の前提対応表は
+`tools/release-qa-labs/test-prerequisites.md` にあります。
+
+共通の cloud-init CLI 準備は各試行を保存します。取得には curl の一時障害再試行を使い、既知のネットワーク・パッケージロックによる導入失敗だけを最大3回まで局所再試行します。恒久エラーや再試行枯渇では失敗を保存して準備を停止します。クライアントの APT 準備は既存の4回を維持し、既知の一時障害に限って再試行します。シナリオ全体は繰り返しません。

@@ -93,7 +93,7 @@ cmd_observe() {
     stp=$(printf '%s\n' "$topology" | sed -n 's/^stp_tcn_delta=//p')
     bpdu_count=$(printf '%s\n' "$topology" | sed -n 's/^bpdu_count=//p')
   else errors=1; fi
-  macflap=$(l2_ssh "$provider" "set -e; raw=\$(journalctl -k --since '-2 min'); printf '%s\n' \"\$raw\" >&2; printf '%s\n' \"\$raw\" | grep -Eic 'flap|moving from|received packet on .* with own address' || test \$? -eq 1") || { macflap=unavailable; errors=1; }
+  macflap=$(l2_ssh "$provider" "set -e; raw=\$(sudo journalctl -k --since '-2 min'); printf '%s\n' \"\$raw\" >&2; printf '%s\n' \"\$raw\" | grep -Eic 'flap|moving from|received packet on .* with own address' || test \$? -eq 1") || { macflap=unavailable; errors=1; }
   blocked=$(l2_ssh "$provider" "set -e; raw=\$(bridge link show); printf '%s\n' \"\$raw\" | grep -Eic 'state (blocking|listening)' || test \$? -eq 1") || blocked=unavailable
   bpdu=unknown
   if [[ "$bpdu_count" =~ ^[0-9]+$ ]]; then bpdu=false; [[ "$bpdu_count" -eq 0 ]] || bpdu=true; fi

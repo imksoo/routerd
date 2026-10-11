@@ -6,6 +6,25 @@ and nftables rules inside test namespaces. Run them only on a disposable Ubuntu
 24.04-style host with `iproute2`, `keepalived`, `nftables`, and Python 3
 installed.
 
+Scenario prerequisites also include `timeout` (coreutils), `ping`
+(iputils-ping), `arping` (iputils-arping), and `iptables`. Go uses the repository
+toolchain when a case builds a driver. The disposable host must support the
+namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case.
+
+| Cases | Additional prerequisite |
+| --- | --- |
+| `keepalived-vip-failover`, `keepalived-no-spurious-restart` | keepalived; the latter also builds with Go |
+| `graceful-vrrp-activation` | arping; Go or `ROUTERD_GRACEFUL_VRRP_DRIVER` |
+| `ingress-conntrack-survive`, `forcefrag-df-forward`, `vxlan-l2-mss-clamp` | nftables; forcefrag also needs ping |
+| `sam-empty-forward-chain` | iptables/nftables; Go or `ROUTERD_SAM_FORWARD_PROBE` |
+| `arp-observer-ignore-member-mac`, standalone `vxlan-when-ha-active-standby` | Go builds the observer/controller |
+| `sam-proxy-arp-garp-transition`, `vxlan-l2-control-plane-transparency` | Common iproute2/Python/timeout and corresponding kernel facilities |
+| Standalone `vrrp-vmac-lan-address-lifecycle` | Explicit `ROUTERD_RUN_NETNS=1`; built vmac helper or `ROUTERD_VRRP_VMAC_BIN`; unshare/mount/ip/grep/sha256sum |
+| `render-compatibility` | make/Go; render golden target without root |
+
+`run-all.sh` selects its listed scenarios. It does not implicitly run standalone
+cases.
+
 Every script requires explicit root privileges and cleans up its namespaces and
 temporary files with a trap:
 

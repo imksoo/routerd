@@ -145,3 +145,16 @@ routerd.cloudedge.purpose
 - 这是**实验室线束**，不是生产就绪的交钥匙方案。
 - 初始实现：实际的逐提供商分配/清理/节点推送是 `TODO(lab-operator)` 的桩或演示包的薄层封装 — 请接入使用 run-id 标签过滤的 Terraform/OpenTofu 或提供商 CLI。
 - 绝不提交实际的账户 ID / 订阅 ID / OCID / ENI/VNIC ID / secret / 私钥。使用 `env.example` 中的占位逻辑地址。
+
+## 客户机准备证据
+
+provider CLI 安装由 OpenTofu cloud-init 和 SAM 准备共同定义。
+AWS 保留既有备用安装，Azure/OCI 使用既有 cloud-init installer。命令序列失败时
+停止。准备保存 cloud-init 状态和输出，并在部署 routerd 前通过 root 服务的 PATH
+执行必需 CLI。操作主机 CLI 或启动完成标记本身不能证明客户机依赖可用。
+
+收敛和 warm-up 每次尝试保存 stdout/stderr、退出码和 UTC 时间。诊断通过 sudo
+读取 journal，采集 WireGuard 公开字段。缺少 GoBGP 时记录无法获取，不进行 JSON
+解析。既有测试系列的前提对应表见 `tools/release-qa-labs/test-prerequisites.md`。
+
+共享的 cloud-init CLI 准备保存每次尝试。下载使用 curl 的临时故障重试；仅对已知网络或软件包锁导致的安装失败进行最多3次局部重试。永久错误或重试耗尽时保存失败并停止准备。客户端 APT 准备保留原有4次尝试，仅重试已知临时故障，不重复整个场景。

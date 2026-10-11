@@ -58,7 +58,7 @@ server_ip() {
 remote_install_packages() {
   local site=$1
   [[ "${CE_PROTOCOL_INSTALL:-1}" == "1" ]] || return 0
-  ce_client_ssh "$site" "if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get update -y >/dev/null && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y vsftpd nfs-kernel-server nfs-common rpcbind curl ftp lftp iperf3 >/dev/null; elif command -v pkg >/dev/null 2>&1; then sudo pkg install -y vsftpd nfs-utils rpcbind curl lftp iperf3 >/dev/null; fi"
+  ce_client_ssh "$site" "if command -v apt-get >/dev/null 2>&1; then sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y vsftpd nfs-kernel-server nfs-common rpcbind curl ftp lftp iperf3 python3; elif command -v pkg >/dev/null 2>&1; then sudo pkg install -y vsftpd nfs-utils rpcbind curl lftp iperf3; fi"
 }
 
 configure_server() {
@@ -89,13 +89,13 @@ pasv_max_port=$(printf '%q' "$passive_max")
 seccomp_sandbox=NO
 EOF
 fi
-sudo exportfs -ra >/dev/null 2>&1 || true
-sudo systemctl restart rpcbind 2>/dev/null || sudo service rpcbind restart 2>/dev/null || true
-sudo systemctl restart nfs-server 2>/dev/null || sudo systemctl restart nfs-kernel-server 2>/dev/null || sudo service nfs-kernel-server restart 2>/dev/null || true
-sudo systemctl restart vsftpd 2>/dev/null || sudo service vsftpd restart 2>/dev/null || true
+sudo exportfs -ra
+sudo systemctl restart rpcbind || sudo service rpcbind restart
+sudo systemctl restart nfs-server || sudo systemctl restart nfs-kernel-server || sudo service nfs-kernel-server restart
+sudo systemctl restart vsftpd || sudo service vsftpd restart
 pkill -f 'iperf3 -s' >/dev/null 2>&1 || true
-nohup iperf3 -s >/tmp/cloudedge-iperf3.log 2>&1 &
-echo bytes=$bytes"
+iperf3 -s -D >/tmp/cloudedge-iperf3.log 2>&1
+echo bytes=$bytes" || return "$?"
   printf 'ftp_passive_min=%s\n' "$passive_min"
   printf 'ftp_passive_max=%s\n' "$passive_max"
 }
@@ -103,9 +103,9 @@ echo bytes=$bytes"
 cmd_setup() {
   local client=$1 server=$2 bytes=${3:-104857600}
   if override_configured setup "$client" "$server" "$bytes"; then run_override setup "$client" "$server" "$bytes" || return $?; return 0; fi
-  remote_install_packages "$client"
-  remote_install_packages "$server"
-  configure_server "$server" "$bytes"
+  remote_install_packages "$client" || return "$?"
+  remote_install_packages "$server" || return "$?"
+  configure_server "$server" "$bytes" || return "$?"
   printf 'detail=setup client=%s server=%s bytes=%s\n' "$client" "$server" "$bytes"
 }
 

@@ -52,11 +52,13 @@ locals {
 
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
+    write_files:
+      - path: /usr/local/libexec/routerd-lab-cli-bootstrap
+        permissions: "0755"
+        content: ${jsonencode(file("${path.module}/../cli-bootstrap.sh"))}
     runcmd:
-      - [bash, -lc, "curl -fsSL 'https://azurecliprod.blob.core.windows.net/$root/deb_install.sh' -o /tmp/InstallAzureCLIDeb.sh"]
-      - [bash, -lc, 'bash /tmp/InstallAzureCLIDeb.sh']
-      - [bash, -lc, 'az version --output json']
-      - [bash, -lc, 'rm -f /tmp/InstallAzureCLIDeb.sh']
+      - set -e
+      - [/usr/local/libexec/routerd-lab-cli-bootstrap, azure]
   CLOUD_INIT
 }
 

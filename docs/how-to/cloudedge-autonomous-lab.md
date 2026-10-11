@@ -219,3 +219,19 @@ Only these require a human; everything else is automated:
   CLIs filtered by the run-id tag.
 - Never commit real account IDs / subscription IDs / OCIDs / ENI/VNIC IDs / secrets
   / private keys. Use placeholder logical addresses as in `env.example`.
+
+## Guest preparation evidence
+
+Provider CLI installation is split between OpenTofu cloud-init and SAM preparation.
+AWS retains its preparation fallback; Azure/OCI use their existing cloud-init
+installers. Their command lists stop on failure. Preparation saves cloud-init
+status/output and verifies the required CLI in the root service PATH before
+deploying routerd. Operator CLI availability or a boot completion marker alone
+does not prove the guest dependency.
+
+Existing convergence/warm-up attempts preserve stdout/stderr, exit and UTC times.
+Diagnostics use sudo journal reads and public WireGuard fields; missing GoBGP
+is recorded as unavailable rather than parsed as JSON. The map of prerequisites
+for existing test families is `tools/release-qa-labs/test-prerequisites.md`.
+
+The shared cloud-init CLI preparation retains every attempt. Downloads use curl transient retries; known network/package-lock installer failures retry locally up to three times. Permanent errors and exhausted attempts preserve the failure and stop preparation. Client APT preparation retains its existing four attempts, limited to known transient failures; it does not repeat the scenario.
