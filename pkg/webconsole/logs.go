@@ -409,36 +409,38 @@ func (h Handler) firewallDenyTimelineList(ctx context.Context, since time.Time, 
 	return store.DenyTimeline(ctx, since, until, bucket)
 }
 
-func (h Handler) conntrackTuningSummary(now time.Time, window time.Duration, autoApply bool) (conntracktuning.Summary, error) {
-	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
-		return conntracktuning.Analyze(conntracktuning.Inputs{Now: now, Window: window, AutoApply: autoApply}), nil
+func (h Handler) conntrackTuningSummary(ctx context.Context, now time.Time, window time.Duration, autoApply bool) (conntracktuning.Summary, error) {
+	if err := ctx.Err(); err != nil {
+		return conntracktuning.Summary{}, err
 	}
-	store, err := logstore.OpenFirewallLog(h.opts.FirewallLogPath)
+	inputs := conntracktuning.Inputs{Now: now, Window: window, AutoApply: autoApply}
+	if strings.TrimSpace(h.opts.FirewallLogPath) == "" {
+		return conntracktuning.Analyze(inputs), nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	store, err := logstore.OpenFirewallLogReadOnly(h.opts.FirewallLogPath)
+	if os.IsNotExist(err) {
+		return conntracktuning.Analyze(inputs), nil
+	}
 	if err != nil {
 		return conntracktuning.Summary{}, err
 	}
 	defer store.Close()
 	since := now.Add(-window)
-	firewallLogs, err := store.List(context.Background(), logstore.FirewallLogFilter{Since: since, Limit: 1000})
+	inputs.FirewallLogs, err = store.List(ctx, logstore.FirewallLogFilter{Since: since, Limit: 1000})
 	if err != nil {
 		return conntracktuning.Summary{}, err
 	}
-	dpiFlows, err := store.ListDPIFlows(context.Background(), logstore.DPIFlowFilter{Since: since, Limit: 5000})
+	inputs.DPIFlows, err = store.ListDPIFlows(ctx, logstore.DPIFlowFilter{Since: since, Limit: 5000})
 	if err != nil {
 		return conntracktuning.Summary{}, err
 	}
-	expiredFlows, err := store.ListExpiredFlows(context.Background(), logstore.ExpiredFlowFilter{Since: since, Limit: 5000})
+	inputs.ExpiredFlows, err = store.ListExpiredFlows(ctx, logstore.ExpiredFlowFilter{Since: since, Limit: 5000})
 	if err != nil {
 		return conntracktuning.Summary{}, err
 	}
-	return conntracktuning.Analyze(conntracktuning.Inputs{
-		DPIFlows:     dpiFlows,
-		FirewallLogs: firewallLogs,
-		ExpiredFlows: expiredFlows,
-		Now:          now,
-		Window:       window,
-		AutoApply:    autoApply,
-	}), nil
+	return conntracktuning.Analyze(inputs), nil
 }
 
 func enrichTrafficFlowsWithDNS(flows []logstore.TrafficFlow, queries []logstore.DNSQuery) []logstore.TrafficFlow {

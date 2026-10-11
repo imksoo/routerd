@@ -122,7 +122,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	}
 	var conntrackTuning *conntracktuning.Summary
 	if opts.IncludeConntrackTuning {
-		tuning, err := h.conntrackTuningSummary(time.Now().UTC(), 24*time.Hour, h.opts.Router != nil && h.opts.Router.Spec.Apply.AutoTuneConntrack)
+		tuning, err := h.conntrackTuningSummary(ctx, now, 24*time.Hour, h.opts.Router != nil && h.opts.Router.Spec.Apply.AutoTuneConntrack)
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else {
