@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261011.1822
+
 ### Fixed
 
 - Preserve declarative `DNSZone` records while resolving or filtering dynamic address references. An address unavailable during startup can now appear on a later reconciliation, and subsequent address changes remain observable instead of losing the original reference. (#1321)

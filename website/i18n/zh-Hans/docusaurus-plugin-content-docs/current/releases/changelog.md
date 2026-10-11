@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261011.1822
+
 ### 修复
 
 - 解析或筛选动态地址引用时，不再修改声明的 `DNSZone` 记录。保留原始引用，让启动时尚未获取的地址能在后续状态协调时加入 DNS，并持续反映之后的地址变化。 (#1321)

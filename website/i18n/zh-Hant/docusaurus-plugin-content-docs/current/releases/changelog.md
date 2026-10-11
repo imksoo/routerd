@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261011.1822
+
 ### 修正
 
 - 解析或篩選動態位址參照時，不再修改宣告的 `DNSZone` 記錄。保留原始參照，讓啟動時尚未取得的位址能在後續狀態調整時加入 DNS，並持續反映之後的位址變更。 (#1321)
