@@ -75,3 +75,5 @@ For a guest without Go, build `./tests/netns/sam-forward-probe` with
 `CGO_ENABLED=0` and set `ROUTERD_SAM_FORWARD_PROBE` to that executable. Select
 the iptables backend through `PATH`; do not change the host's alternatives.
 The test driver refuses to execute in the PID 1 network namespace.
+
+Host veth ends are registered for cleanup immediately after creation, before namespace moves or bridge attachment. The existing Go tests cover partial preparation and retained cleanup failures without root or namespace operations: `go test ./tests/netns`.

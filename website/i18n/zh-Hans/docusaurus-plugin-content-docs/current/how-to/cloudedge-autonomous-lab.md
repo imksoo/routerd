@@ -158,3 +158,5 @@ AWS 保留既有备用安装，Azure/OCI 使用既有 cloud-init installer。命
 解析。既有测试系列的前提对应表见 `tools/release-qa-labs/test-prerequisites.md`。
 
 共享的 cloud-init CLI 准备保存每次尝试。下载使用 curl 的临时故障重试；仅对已知网络或软件包锁导致的安装失败进行最多3次局部重试。永久错误或重试耗尽时保存失败并停止准备。客户端 APT 准备保留原有4次尝试，仅重试已知临时故障，不重复整个场景。
+
+performance 的局部重试保存每次 server/client 尝试的原始输出、退出码和时间。保留原有3次尝试和指标文件名，后续成功不删除失败尝试。

@@ -60,7 +60,7 @@ test "$(wc -l <calls)" = 1
     def test_required_protocol_setup_failures_do_not_report_success(self):
         source = (Path(__file__).resolve().parents[4] / "scripts/runners/cloudedge-protocol-runner.sh").read_text()
         start = source.index("configure_server() {")
-        end = source.index("\n}\n", start) + 3
+        end = source.index("\ncmd_setup()", start)
         function_source = source[start:end].replace("/etc/vsftpd.conf", "missing-vsftpd.conf").replace("/tmp/cloudedge-iperf3.log", "iperf3.log")
         for failure in ["exportfs", "vsftpd", "iperf3", "none"]:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
@@ -75,7 +75,7 @@ sudo() {
   return 0
 }
 pkill() { :; }
-iperf3() { echo iperf-start >>calls; [ "$FAILURE" != iperf3 ] || return 25; }
+iperf3() { echo iperf-start >>calls; if [ "$FAILURE" = iperf3 ]; then echo synthetic-iperf-startup-error >&2; return 25; fi; }
 ce_client_ssh() { bash -c "$2"; }
 export -f sudo pkill iperf3
 """
@@ -83,8 +83,36 @@ export -f sudo pkill iperf3
                 result=subprocess.run(["bash","-c",stub+function_source+'\nconfigure_server server 1024\necho setup-success\n'],cwd=tmp,env=env,text=True,capture_output=True)
                 self.assertEqual(result.returncode, {"exportfs":17,"vsftpd":27,"iperf3":25,"none":0}[failure], result.stdout+result.stderr)
                 self.assertEqual("setup-success" in result.stdout, failure=="none")
+                if failure=="iperf3": self.assertIn("synthetic-iperf-startup-error",result.stderr)
                 if failure in ["exportfs","vsftpd"]:
                     self.assertNotIn("iperf-start", (Path(tmp)/"calls").read_text())
+
+    def test_iperf_local_attempts_keep_failures_and_server_failure_prevents_client(self):
+        self.run_shell(["capture_ssh_evidence", "performance_iperf_attempt"], r"""
+server_rc=19; client_rc=1; client_calls=0
+ssh_node() {
+  if [ "$1" = dst ]; then echo raw-server-error >&2; return "$server_rc"; fi
+  client_calls=$((client_calls+1))
+  printf '{"client_exit":%s}\n' "$client_rc"
+  echo raw-client-stderr >&2
+  return "$client_rc"
+}
+rc=0; performance_iperf_attempt src dst command result.json 1 || rc=$?
+test "$rc" = 19; test "$client_calls" = 0
+grep -q raw-server-error result.json.attempt-1.server.stderr
+awk -F '\t' 'NR==2 {exit !($4==19)}' result.json.attempt-1.server.result.tsv
+server_rc=0
+rc=0; performance_iperf_attempt src dst command result.json 2 || rc=$?
+test "$rc" = 1; test "$client_calls" = 1
+grep -q '"client_exit":1' result.json.attempt-2.json
+grep -q raw-client-stderr result.json.attempt-2.stderr
+client_rc=0
+performance_iperf_attempt src dst command result.json 3
+grep -q '"client_exit":0' result.json
+grep -q '"client_exit":1' result.json.attempt-2.json
+awk -F '\t' 'NR==2 {exit !($4==1)}' result.json.attempt-2.result.tsv
+awk -F '\t' 'NR==2 {exit !($4==0)}' result.json.attempt-3.result.tsv
+""")
 
     def test_capture_keeps_nonzero_raw_outputs_and_timestamps(self):
         self.run_shell(["capture_ssh_evidence"], r"""

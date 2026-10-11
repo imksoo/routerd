@@ -94,7 +94,11 @@ sudo systemctl restart rpcbind || sudo service rpcbind restart
 sudo systemctl restart nfs-server || sudo systemctl restart nfs-kernel-server || sudo service nfs-kernel-server restart
 sudo systemctl restart vsftpd || sudo service vsftpd restart
 pkill -f 'iperf3 -s' >/dev/null 2>&1 || true
-iperf3 -s -D >/tmp/cloudedge-iperf3.log 2>&1
+iperf3 -s -D >/tmp/cloudedge-iperf3.log 2>&1 || {
+  iperf_exit=\$?
+  cat /tmp/cloudedge-iperf3.log >&2 || true
+  exit \$iperf_exit
+}
 echo bytes=$bytes" || return "$?"
   printf 'ftp_passive_min=%s\n' "$passive_min"
   printf 'ftp_passive_max=%s\n' "$passive_max"

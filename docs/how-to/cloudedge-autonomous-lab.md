@@ -235,3 +235,5 @@ is recorded as unavailable rather than parsed as JSON. The map of prerequisites
 for existing test families is `tools/release-qa-labs/test-prerequisites.md`.
 
 The shared cloud-init CLI preparation retains every attempt. Downloads use curl transient retries; known network/package-lock installer failures retry locally up to three times. Permanent errors and exhausted attempts preserve the failure and stop preparation. Client APT preparation retains its existing four attempts, limited to known transient failures; it does not repeat the scenario.
+
+Performance retries retain raw output, exit codes and timestamps for each server/client attempt. The existing three attempts and canonical metric filenames remain unchanged; a later successful attempt does not erase the failed attempt.
