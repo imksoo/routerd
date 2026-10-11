@@ -55,6 +55,7 @@ After this resource is applied, queries for `nas.lan.example.org` and `<dhcp-cli
 
 ## Notes
 
+- Different static hostnames may share an IPv4 or IPv6 address. All declared names retain their A / AAAA answers; the first static name declared for each address supplies its PTR answer. DHCP-derived names do not replace these static answers.
 - Choose a domain you control or one that is reserved for internal use (`example.org`, `home.arpa`, etc.). Do not invent suffixes that collide with the public DNS namespace (such as `.lan`).
 - If you keep DNSSEC enabled (`dnssec.enabled: true`), upstream DNSSEC validation continues to work for external queries; the local zone is unsigned by design.
 - For multiple internal subnets, declare one `reverseZones` entry per subnet so PTR lookups work in both directions.

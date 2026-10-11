@@ -90,6 +90,7 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 		for _, record := range spec.Records {
 			zone.addRecord(record.Hostname, record.IPv4, record.IPv6, uint32(record.TTL), zoneRecordSourceStatic)
 		}
+		zone.rebuildStaticPTR(spec.Records)
 		if spec.DHCPDerived.LeaseFile != "" {
 			zone.loadDnsmasqLeases(spec.DHCPDerived.LeaseFile)
 		}
@@ -291,11 +292,7 @@ func (z *zoneData) addRecordWithPriority(hostname, ipv4, ipv6 string, ttl uint32
 	if ttl == 0 {
 		ttl = z.TTL
 	}
-	fqdn := dns.Fqdn(hostname)
-	if !strings.HasSuffix(fqdn, z.Name) {
-		fqdn = dns.Fqdn(strings.TrimSuffix(hostname, ".") + "." + strings.TrimSuffix(z.Name, "."))
-	}
-	record := zoneRecord{Hostname: fqdn, TTL: ttl, Source: source}
+	record := zoneRecord{Hostname: z.recordName(hostname), TTL: ttl, Source: source}
 	if ipv4 != "" {
 		record.IPv4 = append(record.IPv4, ipv4)
 	}
@@ -303,6 +300,32 @@ func (z *zoneData) addRecordWithPriority(hostname, ipv4, ipv6 string, ttl uint32
 		record.IPv6 = append(record.IPv6, ipv6)
 	}
 	z.mergeRecordWithPriority(record, priority)
+}
+
+func (z *zoneData) recordName(hostname string) string {
+	fqdn := dns.Fqdn(hostname)
+	if !strings.HasSuffix(fqdn, z.Name) {
+		fqdn = dns.Fqdn(strings.TrimSuffix(hostname, ".") + "." + strings.TrimSuffix(z.Name, "."))
+	}
+	return fqdn
+}
+
+func (z *zoneData) rebuildStaticPTR(records []api.DNSZoneRecordSpec) {
+	// Repeated hostnames retain their existing last-record-wins behavior.
+	// Rebuild after all replacements so a surviving alias still has a PTR
+	// when the original PTR owner was moved to another address.
+	z.PTR = map[string]string{}
+	for _, declared := range records {
+		record := z.Records[strings.ToLower(z.recordName(declared.Hostname))]
+		for _, ip := range []string{declared.IPv4, declared.IPv6} {
+			if !contains(record.IPv4, ip) && !contains(record.IPv6, ip) {
+				continue
+			}
+			if ptr, err := dns.ReverseAddr(ip); err == nil && z.PTR[dns.Fqdn(ptr)] == "" {
+				z.PTR[dns.Fqdn(ptr)] = record.Hostname
+			}
+		}
+	}
 }
 
 func (z *zoneData) addLease(lease dhcpLeaseEvent, source zoneRecordSource) {
@@ -346,6 +369,7 @@ func (z *zoneData) mergeRecordWithPriority(record zoneRecord, priority zoneRecor
 	record.Hostname = dns.Fqdn(record.Hostname)
 	name := strings.ToLower(record.Hostname)
 	conflicts := map[string]zoneRecord{}
+	sharedStaticPTR := map[string]bool{}
 	if existing, exists := z.Records[name]; exists {
 		if existing.Source > priority ||
 			(existing.Source == priority && record.Source == zoneRecordSourceStickySnapshot) {
@@ -364,6 +388,12 @@ func (z *zoneData) mergeRecordWithPriority(record zoneRecord, priority zoneRecor
 		}
 		existingName := strings.ToLower(dns.Fqdn(target))
 		existing, exists := z.Records[existingName]
+		if exists && existing.Source == zoneRecordSourceStatic && record.Source == zoneRecordSourceStatic {
+			// Explicit static names may share an address. Keep both forward
+			// records, with the first declared static name owning the PTR.
+			sharedStaticPTR[dns.Fqdn(ptr)] = true
+			continue
+		}
 		if !exists || existing.Source >= priority {
 			return
 		}
@@ -375,7 +405,9 @@ func (z *zoneData) mergeRecordWithPriority(record zoneRecord, priority zoneRecor
 	z.Records[name] = record
 	for _, ip := range append(append([]string(nil), record.IPv4...), record.IPv6...) {
 		if ptr, err := dns.ReverseAddr(ip); err == nil {
-			z.PTR[dns.Fqdn(ptr)] = record.Hostname
+			if !sharedStaticPTR[dns.Fqdn(ptr)] {
+				z.PTR[dns.Fqdn(ptr)] = record.Hostname
+			}
 		}
 	}
 }
@@ -408,7 +440,13 @@ func (z *zoneData) deleteDynamic(ip string) {
 		}
 	}
 	if ptr, err := dns.ReverseAddr(ip); err == nil {
-		delete(z.PTR, dns.Fqdn(ptr))
+		ptrName := dns.Fqdn(ptr)
+		if target := z.PTR[ptrName]; target != "" {
+			if record, exists := z.Records[strings.ToLower(dns.Fqdn(target))]; exists && record.Source == zoneRecordSourceStatic {
+				return
+			}
+		}
+		delete(z.PTR, ptrName)
 	}
 }
 
