@@ -4,6 +4,8 @@ package webconsole
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -145,6 +147,9 @@ const reverseDNSLookupConcurrency = 8
 // picked up on a subsequent lookup once earlier results are cached.
 const reverseDNSPendingMax = 1000
 
+// Missing PTR records should be retried sooner than successful name lookups.
+const reverseDNSNegativeTTL = time.Minute
+
 type reverseDNSCache struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -236,14 +241,18 @@ func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lo
 			for address := range jobs {
 				select {
 				case <-ctx.Done():
-					results <- result{address: address}
 					continue
 				default:
 				}
 				names, err := lookup(ctx, address)
 				if err != nil {
-					results <- result{address: address}
-					continue
+					var dnsErr *net.DNSError
+					// Only authoritative not-found errors are negative cache entries.
+					// Cancellation and transient failures must be retried next request.
+					if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+						!errors.As(err, &dnsErr) || !dnsErr.IsNotFound || dnsErr.IsTimeout || dnsErr.IsTemporary {
+						continue
+					}
 				}
 				results <- result{address: address, name: normalizeReverseDNSName(names)}
 			}
@@ -266,7 +275,11 @@ func (c *reverseDNSCache) lookupMany(ctx context.Context, addresses []string, lo
 		close(results)
 	}()
 	for item := range results {
-		c.store(item.address, item.name, now.Add(c.ttl))
+		ttl := c.ttl
+		if item.name == "" {
+			ttl = min(ttl, reverseDNSNegativeTTL)
+		}
+		c.store(item.address, item.name, now.Add(ttl))
 		if item.name != "" {
 			out[item.address] = item.name
 		}
