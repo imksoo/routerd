@@ -20,6 +20,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 const (
@@ -406,19 +407,6 @@ func (s *SQLiteStore) ensureObjectColumns() error {
 }
 
 func (s *SQLiteStore) ensureArtifactsTable() error {
-	old, err := s.tableHasColumn("artifacts", "id")
-	if err != nil {
-		return err
-	}
-	newTable, err := s.tableHasColumn("artifacts", "artifact_id")
-	if err != nil {
-		return err
-	}
-	if old && !newTable {
-		if _, err := s.db.Exec(`ALTER TABLE artifacts RENAME TO artifacts_legacy`); err != nil {
-			return err
-		}
-	}
 	if _, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS artifacts (
   artifact_id TEXT PRIMARY KEY,
@@ -435,43 +423,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 `); err != nil {
 		return err
 	}
-	exists, err := s.tableExists("artifacts_legacy")
-	if err != nil || !exists {
-		return err
-	}
-	rows, err := s.db.Query(`SELECT id,kind,name,coalesce(owner,''),coalesce(attributes,'{}'),coalesce(source,''),generation,coalesce(observed_at,'') FROM artifacts_legacy`)
-	if err != nil {
-		return err
-	}
-	type legacyArtifact struct {
-		id, kind, name, owner, attrs, source, observed string
-		generation                                     sql.NullInt64
-	}
-	var legacyArtifacts []legacyArtifact
-	for rows.Next() {
-		var item legacyArtifact
-		if err := rows.Scan(&item.id, &item.kind, &item.name, &item.owner, &item.attrs, &item.source, &item.generation, &item.observed); err != nil {
-			return err
-		}
-		legacyArtifacts = append(legacyArtifacts, item)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, item := range legacyArtifacts {
-		ownerAPI, ownerKind, ownerName := splitOwner(item.owner)
-		if _, err := s.db.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
-VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET kind=excluded.kind,name=excluded.name,owner_api_version=excluded.owner_api_version,owner_kind=excluded.owner_kind,owner_name=excluded.owner_name,attributes=excluded.attributes,source=excluded.source,generation=excluded.generation,observed_at=excluded.observed_at`,
-			item.id, item.kind, item.name, ownerAPI, ownerKind, ownerName, item.attrs, item.source, item.generation, item.observed); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.Exec(`DROP TABLE artifacts_legacy`)
-	return err
+	return resource.MigrateLegacyArtifactsTable(s.db)
 }
 
 func (s *SQLiteStore) migrateLegacyStateTable() error {
@@ -1901,15 +1853,6 @@ func variablesFromObject(apiVersion, kind, name string, status objectStatus) map
 		}
 	}
 	return out
-}
-
-func splitOwner(owner string) (string, string, string) {
-	parts := strings.Split(owner, "/")
-	if len(parts) < 3 {
-		return "", "", ""
-	}
-	apiVersion := strings.Join(parts[:len(parts)-2], "/")
-	return apiVersion, parts[len(parts)-2], parts[len(parts)-1]
 }
 
 func DebugObjects(db *sql.DB) string {

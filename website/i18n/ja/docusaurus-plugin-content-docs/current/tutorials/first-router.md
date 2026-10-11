@@ -110,14 +110,22 @@ preview が想定どおりの NIC と生成物を示したときだけ、コン�
 sudo routerd apply --config first-router.yaml --once
 ```
 
-実験用ルーターを継続して動かすなら、確認済みのファイルを標準の場所に置いてサービスを
-起動します。
+一時的な実験でも、次の状態確認とクライアントの通信確認にはサービスの起動が必要です。
+one-shot apply は処理後に終了し、`routerctl` が接続する daemon は残りません。
+確認済みのファイルを標準の場所に置いてサービスを起動します。
 
 ```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
+sudo systemctl start routerd.service
 sudo systemctl is-active routerd.service
+```
+
+`active` と表示されてから次へ進みます。再起動後も実験用ルーターを自動で起動したい場合は、
+任意でサービスの自動起動を有効にします。
+
+```bash
+sudo systemctl enable routerd.service
 ```
 
 ## 4. 小さな通信経路を最後まで確認する
