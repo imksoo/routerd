@@ -12,6 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Preserve declarative `DNSZone` records while resolving or filtering dynamic address references. An address unavailable during startup can now appear on a later reconciliation, and subsequent address changes remain observable instead of losing the original reference. (#1321)
+
+### Validation scope
+
+- This fix addresses missing local A/AAAA records observed after an existing router restart. It does not add cloud-provider, native FreeBSD, symmetric failover, performance, or legacy-protocol qualification; the recommended stable milestone is unchanged.
+- Regression tests reproduce the failure on `f3bfca67` and pass after the fix. They cover typed, pointer, and map specifications; unresolved-to-recovered addresses, IPv4/IPv6 renumbering, BACKUP-to-MASTER filtering, and preservation of the declared input. These offline checks do not establish live packet or failover coverage.
+
 ## v20261011.0851
 
 ### Fixed

@@ -423,6 +423,9 @@ func clearFilteredDNSZoneStatusRefs(resources []api.Resource, retained map[strin
 			out = append(out, res)
 			continue
 		}
+		// Filtering is a derived view, including when invoked by read-only
+		// queries. Do not erase sources from the reusable declared records.
+		spec.Records = append([]api.DNSZoneRecordSpec(nil), spec.Records...)
 		for i := range spec.Records {
 			if !statusValueSourceRetained(spec.Records[i].IPv4From, retained) {
 				spec.Records[i].IPv4From = api.StatusValueSourceSpec{}
