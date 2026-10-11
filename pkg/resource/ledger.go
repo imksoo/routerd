@@ -245,18 +245,45 @@ CREATE TABLE IF NOT EXISTS access_logs (
 }
 
 func (l *SQLiteLedger) migrateLegacyArtifactsTable() error {
-	hasNew, err := l.tableHasColumn("artifacts", "artifact_id")
-	if err != nil || hasNew {
+	return MigrateLegacyArtifactsTable(l.db)
+}
+
+// MigrateLegacyArtifactsTable atomically upgrades the legacy ownership schema.
+// Both the ownership ledger and state store use this migration because they
+// share the artifacts table. Previously interrupted migrations fail closed.
+func MigrateLegacyArtifactsTable(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin legacy ownership migration: %w", err)
+	}
+	defer tx.Rollback()
+	var legacyTables int
+	if err := tx.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'artifacts_legacy'`).Scan(&legacyTables); err != nil {
+		return fmt.Errorf("check interrupted ownership migration: %w", err)
+	}
+	if legacyTables != 0 {
+		// Older versions could leave both tables after a partial migration.
+		// Their ownership may have diverged since then; do not guess which
+		// records are safe to restore or silently accept a partial ledger.
+		return fmt.Errorf("unfinished ownership migration: artifacts_legacy exists; recover the ownership ledger before retrying")
+	}
+	var hasNew, hasOld int
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('artifacts') WHERE name = 'artifact_id'`).Scan(&hasNew); err != nil {
 		return err
 	}
-	hasOld, err := l.tableHasColumn("artifacts", "id")
-	if err != nil || !hasOld {
+	if hasNew != 0 {
+		return nil
+	}
+	if err := tx.QueryRow(`SELECT count(*) FROM pragma_table_info('artifacts') WHERE name = 'id'`).Scan(&hasOld); err != nil {
 		return err
 	}
-	if _, err := l.db.Exec(`ALTER TABLE artifacts RENAME TO artifacts_legacy`); err != nil {
+	if hasOld == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`ALTER TABLE artifacts RENAME TO artifacts_legacy`); err != nil {
 		return err
 	}
-	if _, err := l.db.Exec(`CREATE TABLE artifacts (
+	if _, err := tx.Exec(`CREATE TABLE artifacts (
   artifact_id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -270,10 +297,11 @@ func (l *SQLiteLedger) migrateLegacyArtifactsTable() error {
 )`); err != nil {
 		return err
 	}
-	rows, err := l.db.Query(`SELECT id,kind,name,coalesce(owner,''),coalesce(attributes,'{}'),coalesce(source,''),generation,coalesce(observed_at,'') FROM artifacts_legacy`)
+	rows, err := tx.Query(`SELECT id,kind,name,coalesce(owner,''),coalesce(attributes,'{}'),coalesce(source,''),generation,coalesce(observed_at,'') FROM artifacts_legacy`)
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	type legacyArtifact struct {
 		id, kind, name, owner, attrs, source, observed string
 		generation                                     sql.NullInt64
@@ -282,12 +310,11 @@ func (l *SQLiteLedger) migrateLegacyArtifactsTable() error {
 	for rows.Next() {
 		var item legacyArtifact
 		if err := rows.Scan(&item.id, &item.kind, &item.name, &item.owner, &item.attrs, &item.source, &item.generation, &item.observed); err != nil {
-			return err
+			return fmt.Errorf("read legacy owned artifact: %w", err)
 		}
 		legacyArtifacts = append(legacyArtifacts, item)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return err
 	}
 	if err := rows.Close(); err != nil {
@@ -295,13 +322,18 @@ func (l *SQLiteLedger) migrateLegacyArtifactsTable() error {
 	}
 	for _, item := range legacyArtifacts {
 		ownerAPI, ownerKind, ownerName := splitOwner(item.owner)
-		if _, err := l.db.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
+		if _, err := tx.Exec(`INSERT INTO artifacts(artifact_id,kind,name,owner_api_version,owner_kind,owner_name,attributes,source,generation,observed_at)
 VALUES(?,?,?,?,?,?,?,?,?,?)`, item.id, item.kind, item.name, ownerAPI, ownerKind, ownerName, item.attrs, item.source, item.generation, item.observed); err != nil {
-			return err
+			return fmt.Errorf("copy legacy owned artifact %s: %w", item.id, err)
 		}
 	}
-	_, err = l.db.Exec(`DROP TABLE artifacts_legacy`)
-	return err
+	if _, err := tx.Exec(`DROP TABLE artifacts_legacy`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit legacy ownership migration: %w", err)
+	}
+	return nil
 }
 
 func (l *SQLiteLedger) tableExists(name string) (bool, error) {
