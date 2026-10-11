@@ -12,13 +12,15 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261011.0851
+
 ### Fixed
 
 - Preserve A and AAAA answers for explicitly configured static DNS names that share an address. Keep a deterministic PTR owner, preserve surviving aliases when a repeated hostname changes address, and prevent DHCP lease removal from deleting a static PTR. (#1319, #1320)
 
 ### Validation
 
-- Candidate `93302614` passed `make test`, race-enabled tests for four related packages, independent review, and PR CI. Applied the DNS helper to both routers in an existing HA pair: 32 configured-path UDP/TCP DNS checks and 1,200 client HTTPS requests passed; the VIP remained present during a 600-second observation. BGP, four DS-Lite paths, DHCP lease synchronization, and Web Console refresh were also checked.
+- Candidate `93302614` passed `make test`, race-enabled tests for four related packages, independent review, and PR CI. During the overall upgrade of an existing HA pair, 1,200 client HTTPS requests passed and the VIP remained present during a 600-second observation. After applying the candidate DNS helper to both routers, all 32 configured-path UDP/TCP DNS checks passed. BGP, four DS-Lite paths, DHCP lease synchronization, and Web Console refresh were also checked during the upgrade.
 - These observations cover the candidate helper on the preceding official release, not the newly rebuilt release archives or ISO. No additional cloud-provider, native FreeBSD, symmetric failover, performance, or legacy-protocol qualification is claimed. IPv6 PTR forwarding is not configured in the observed environment; its zone-table behavior is covered by regression tests. The recommended stable milestone is unchanged.
 
 ## v20261011.0040
