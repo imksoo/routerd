@@ -77,6 +77,9 @@ create_veth_pair() {
   VETH_COUNTER=$((VETH_COUNTER + 1))
   local host_a="${TEST_IF_ID}v${VETH_COUNTER}a" host_b="${TEST_IF_ID}v${VETH_COUNTER}b"
   ip link add "$host_a" type veth peer name "$host_b"
+  # Register both host ends before either namespace move can fail.
+  add_cleanup "if ip link show '$host_a' >/dev/null 2>&1; then ip link delete '$host_a'; fi"
+  add_cleanup "if ip link show '$host_b' >/dev/null 2>&1; then ip link delete '$host_b'; fi"
   ip link set "$host_a" netns "$ns_a"
   ip link set "$host_b" netns "$ns_b"
   ip -n "$ns_a" link set "$host_a" name "$if_a"
@@ -99,6 +102,8 @@ create_bridge_segment() {
     VETH_COUNTER=$((VETH_COUNTER + 1))
     local host_if="${TEST_IF_ID}b${VETH_COUNTER}a"
     ip link add "$host_if" type veth peer name "${host_if}p"
+    add_cleanup "if ip link show '$host_if' >/dev/null 2>&1; then ip link delete '$host_if'; fi"
+    add_cleanup "if ip link show '${host_if}p' >/dev/null 2>&1; then ip link delete '${host_if}p'; fi"
     ip link set "$host_if" master "$bridge"
     ip link set "$host_if" up
     ip link set "${host_if}p" netns "$ns"
