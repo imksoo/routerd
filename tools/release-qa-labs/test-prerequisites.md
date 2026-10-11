@@ -22,7 +22,7 @@ plans. An operator CLI check does not establish a guest CLI dependency.
 
 ## Existing dependency verification and failure evidence
 
-AWS/Azure/OCI cloud-init command lists use `set -e` so an installer or version
+AWS/Azure/OCI cloud-init invokes the shared lab CLI preparation script and uses `set -e` so an installer or version
 failure cannot be replaced by a final successful cleanup. Guest preparation saves
 cloud-init status and the owned lab's installer output, then verifies the selected
 CLI in the root service PATH before deploying routerd. The existing AWS fallback
@@ -37,5 +37,5 @@ change traffic verdicts.
 Run `make cloudedge-e2e-preflight-offline-test` and
 `make cloudedge-representative-redundancy-offline-test` for affected fixtures.
 These prove failure propagation/evidence behavior, not cloud installation or
-connectivity. Upstream installer/package/network/auth results and externally
+connectivity. The lab CLI preparation keeps each download/install/version attempt, retries known transient package/network failures locally, and propagates permanent errors or exhaustion. Client APT preparation uses its existing four-attempt policy with raw failure evidence and transient classification. Upstream installer/package/network/auth results and externally
 supplied plans require their own saved execution evidence.

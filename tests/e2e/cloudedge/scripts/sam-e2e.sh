@@ -342,6 +342,9 @@ if command -v cloud-init >/dev/null 2>&1; then
   cat /tmp/routerd-cloud-init-status.txt
   # The owned lab userdata only installs tools/firewall rules; retain installer output.
   sudo tail -n 200 /var/log/cloud-init-output.log || true
+  if sudo test -d /var/log/routerd-lab-cli-bootstrap; then
+    sudo sh -c 'for file in /var/log/routerd-lab-cli-bootstrap/*; do [ -f "$file" ] || continue; printf "\nbootstrap_log=%s\n" "$file"; cat "$file"; done'
+  fi
   if [ "$cloud_init_rc" -ne 0 ]; then
     sudo cloud-init status --long 2>&1 | tee -a /tmp/routerd-cloud-init-status.txt
     if [ -f /var/lib/cloud/instance/boot-finished ]; then
@@ -353,6 +356,11 @@ if command -v cloud-init >/dev/null 2>&1; then
   fi
 fi
 wait_for_apt() {
+  # Minimal guest images may not include fuser; apt's own lock timeout remains.
+  if ! command -v fuser >/dev/null 2>&1; then
+    echo "fuser unavailable; using apt DPkg::Lock::Timeout=300" >&2
+    return 0
+  fi
   local deadline=$((SECONDS + 300))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
@@ -365,24 +373,36 @@ wait_for_apt() {
   return 1
 }
 apt_update() {
-  wait_for_apt
+  wait_for_apt || return "$?"
   sudo apt-get -o DPkg::Lock::Timeout=300 update
 }
 apt_install() {
-  wait_for_apt
+  wait_for_apt || return "$?"
   sudo apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends "$@"
 }
 apt_retry() {
-  local attempt
-  for attempt in 1 2 3; do
-    if "$@"; then
-      return 0
+  # Preserve the existing four-attempt policy, scoped to one package operation.
+  local attempt rc started finished stdout stderr log_dir
+  log_dir="$(mktemp -d /tmp/routerd-e2e-apt.XXXXXXXX)"
+  echo "apt_attempt_evidence=$log_dir"
+  for attempt in 1 2 3 4; do
+    stdout="$log_dir/attempt-$attempt.stdout"
+    stderr="$log_dir/attempt-$attempt.stderr"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    rc=0; "$@" >"$stdout" 2>"$stderr" || rc=$?
+    finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    cat "$stdout"; cat "$stderr" >&2
+    printf 'attempt=%s started_at=%s finished_at=%s exit=%s command=%s\n' "$attempt" "$started" "$finished" "$rc" "$*" | tee "$log_dir/attempt-$attempt.result.txt"
+    [ "$rc" -eq 0 ] && return 0
+    if [ "$attempt" -eq 4 ] || [ "$rc" -eq 126 ] || [ "$rc" -eq 127 ] ||
+      grep -Eiq 'Permission denied|No space left|Unable to locate package|NO_PUBKEY|404 Not Found' "$stdout" "$stderr" ||
+      ! grep -Eiq 'Temporary failure resolving|Could not resolve host|Connection (timed out|refused|reset)|Could not get lock|Unable to acquire.*lock|Hash Sum mismatch|Failed to fetch|timed out waiting for apt/dpkg locks' "$stdout" "$stderr"; then
+      return "$rc"
     fi
-    echo "apt command failed on attempt ${attempt}: $*" >&2
-    sleep $((attempt * 5))
+    sleep "$((attempt * 5))"
   done
-  "$@"
 }
+
 ensure_aws_cli() {
   if command -v aws >/dev/null 2>&1; then
     aws --version
@@ -394,7 +414,7 @@ ensure_aws_cli() {
 
   local tmpdir
   tmpdir="$(mktemp -d)"
-  curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL \
+  curl --retry 5 --retry-delay 2 --retry-connrefused -fsSL \
     https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip \
     -o "$tmpdir/awscliv2.zip"
   unzip -q "$tmpdir/awscliv2.zip" -d "$tmpdir"
@@ -1711,8 +1731,8 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
   echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
-  apt_update
-  apt_install curl rpcbind nfs-kernel-server nfs-common samba smbclient cifs-utils vsftpd iperf3
+  apt_retry apt_update
+  apt_retry apt_install curl rpcbind nfs-kernel-server nfs-common samba smbclient cifs-utils vsftpd iperf3
 fi
 sudo mkdir -p /srv/routerd-e2e/ftp/pub /srv/routerd-e2e/nfs /srv/routerd-e2e/cifs /srv/routerd-e2e/http
 printf "ftp probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/ftp/pub/probe.txt >/dev/null
@@ -1747,7 +1767,7 @@ printf "ftp probe from %s\n" "$(hostname)" | sudo tee /srv/routerd-e2e/ftp/pub/p
    force user = nobody
 SMBEOF
         fi
-        sudo systemctl restart smbd || true
+        sudo systemctl restart smbd
         sudo systemctl restart nmbd || true
         sudo modprobe cifs >/dev/null 2>&1 || true
 
@@ -1810,8 +1830,8 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
   echo "iperf3 iperf3/start_daemon boolean false" | sudo debconf-set-selections || true
-  apt_update
-  apt_install iperf3
+  apt_retry apt_update
+  apt_retry apt_install iperf3
 fi
 sudo pkill iperf3 >/dev/null 2>&1 || true
 sudo iperf3 -s -D </dev/null >/dev/null 2>&1
@@ -1837,8 +1857,8 @@ setup_failover_transfer_services() {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if command -v apt-get >/dev/null 2>&1; then
-  apt_update
-  apt_install curl python3
+  apt_retry apt_update
+  apt_retry apt_install curl python3
 fi
         sudo mkdir -p /srv/routerd-e2e/http
         sudo dd if=/dev/zero of=/srv/routerd-e2e/http/failover-transfer.bin bs=1M count=64 status=none
@@ -2218,10 +2238,15 @@ REMOTE_DIAG
       | .[]
       | "status_bgp_router name=\(.name) prefixes=\(.prefixCount) truncated=\(.truncated) livenessMarkers=\(.livenessMarkerCount)"
     ' "$dir/${node}.status.json" >"$dir/${node}.bgp-status-summary.txt" 2>"$dir/${node}.bgp-status-summary.stderr" || true
-    ssh_node "$node" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied | jq .; else echo "routerd_bgp_control_socket_missing"; fi' >"$dir/${node}.bgp-applied.json" 2>"$dir/${node}.bgp-applied.stderr" || true
-    jq -r '
-      "routerd_bgp_applied paths=\((.paths // []) | length) static=\((.paths // []) | map(select((.source // "") == "static")) | length) mobility=\((.paths // []) | map(select((.source // "") | startswith("MobilityPool/"))) | length)"
-    ' "$dir/${node}.bgp-applied.json" >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
+    local applied_rc=0
+    capture_ssh_evidence "$node" "$dir/${node}.bgp-applied.json" "$dir/${node}.bgp-applied.stderr" "$dir/${node}.bgp-applied.result.tsv" 'if sudo test -S /run/routerd/bgp/control.sock; then sudo curl --fail --silent --show-error --unix-socket /run/routerd/bgp/control.sock http://routerd-bgp/v1/applied; else echo "routerd_bgp_control_socket_missing" >&2; exit 127; fi' || applied_rc=$?
+    if [ "$applied_rc" -eq 0 ]; then
+      jq -r '
+        "routerd_bgp_applied paths=\((.paths // []) | length) static=\((.paths // []) | map(select((.source // "") == "static")) | length) mobility=\((.paths // []) | map(select((.source // "") | startswith("MobilityPool/"))) | length)"
+      ' "$dir/${node}.bgp-applied.json" >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
+    else
+      printf 'routerd_bgp_applied unavailable exit=%s\n' "$applied_rc" >"$dir/${node}.bgp-applied-summary.txt"
+    fi
     local gobgp_rc=0
     capture_ssh_evidence "$node" "$dir/${node}.gobgp-global-rib.json" "$dir/${node}.gobgp-global-rib.stderr" "$dir/${node}.gobgp-global-rib.result.tsv" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j; else echo "gobgp_cli_unavailable" >&2; exit 127; fi' || gobgp_rc=$?
     if [ "$gobgp_rc" -eq 0 ]; then

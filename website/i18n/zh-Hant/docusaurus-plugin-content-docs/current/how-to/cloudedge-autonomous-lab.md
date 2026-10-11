@@ -156,3 +156,5 @@ AWS 保留既有備用安裝，Azure/OCI 使用既有 cloud-init installer。命
 收斂和 warm-up 每次嘗試儲存 stdout/stderr、退出碼和 UTC 時間。診斷透過 sudo
 讀取 journal，採集 WireGuard 公開欄位。缺少 GoBGP 時記錄無法取得，不進行 JSON
 解析。既有測試系列的前提對應表見 `tools/release-qa-labs/test-prerequisites.md`。
+
+共用的 cloud-init CLI 準備儲存每次嘗試。下載使用 curl 的暫時故障重試；僅對已知網路或套件鎖導致的安裝失敗進行最多3次局部重試。永久錯誤或重試耗盡時儲存失敗並停止準備。客戶端 APT 準備保留原有4次嘗試，僅重試已知暫時故障，不重複整個情境。

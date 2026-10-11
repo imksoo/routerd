@@ -69,15 +69,16 @@ locals {
 
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
+    write_files:
+      - path: /usr/local/libexec/routerd-lab-cli-bootstrap
+        permissions: "0755"
+        content: ${jsonencode(file("${path.module}/../cli-bootstrap.sh"))}
     runcmd:
       - set -e
 %{for command in local.oci_firewall_open_commands~}
       - [bash, -lc, ${jsonencode(command)}]
 %{endfor~}
-      - [bash, -lc, 'curl -fsSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o /tmp/oci-cli-install.sh']
-      - [bash, -lc, 'bash /tmp/oci-cli-install.sh --accept-all-defaults --install-dir /opt/oci-cli --exec-dir /usr/local/bin --script-dir /usr/local/bin']
-      - [bash, -lc, 'oci --version']
-      - [bash, -lc, 'rm -f /tmp/oci-cli-install.sh']
+      - [/usr/local/libexec/routerd-lab-cli-bootstrap, oci]
   CLOUD_INIT
 
   client_cloud_init = <<-CLOUD_INIT

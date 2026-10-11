@@ -15,17 +15,13 @@ locals {
 
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
-    package_update: true
-    packages: [curl, unzip]
+    write_files:
+      - path: /usr/local/libexec/routerd-lab-cli-bootstrap
+        permissions: "0755"
+        content: ${jsonencode(file("${path.module}/../cli-bootstrap.sh"))}
     runcmd:
       - set -e
-      - [bash, -lc, 'rm -rf /tmp/awscli-install /tmp/awscliv2.zip']
-      - [bash, -lc, 'mkdir -p /tmp/awscli-install']
-      - [bash, -lc, 'curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip']
-      - [bash, -lc, 'unzip -q /tmp/awscliv2.zip -d /tmp/awscli-install']
-      - [bash, -lc, '/tmp/awscli-install/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update']
-      - [bash, -lc, 'aws --version']
-      - [bash, -lc, 'rm -rf /tmp/awscli-install /tmp/awscliv2.zip']
+      - [/usr/local/libexec/routerd-lab-cli-bootstrap, aws]
   CLOUD_INIT
 }
 

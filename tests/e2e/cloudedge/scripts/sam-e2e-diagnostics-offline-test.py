@@ -23,38 +23,68 @@ class EvidenceTests(unittest.TestCase):
                                     text=True, capture_output=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_cloud_init_installer_failure_is_not_hidden_by_final_cleanup(self):
-        root = Path(__file__).resolve().parents[4]
-        for provider in ["aws", "azure", "oci"]:
-            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as tmp:
-                module = root / f"tools/release-qa-labs/terraform/modules/{provider}_leaf/main.tf"
-                block = module.read_text().split("router_cloud_init = <<-CLOUD_INIT", 1)[1].split("CLOUD_INIT", 1)[0]
-                # Same command quoting as cloud-init util.shellify. No cloud-init
-                # import is needed and the substitute bash cannot access the network.
-                commands = []
-                for line in block.splitlines():
-                    if line.strip() == "- set -e":
-                        commands.append("set -e")
-                    match = re.match(r"\s*- \[bash, -lc, '(.*)'\]", line)
-                    if match:
-                        commands.append(shlex.join(["bash", "-lc", match[1]]))
-                    match = re.match(r'\s*- \[bash, -lc, "(.*)"\]', line)
-                    if match:
-                        commands.append(shlex.join(["bash", "-lc", match[1]]))
-                base = Path(tmp)
-                (base / "bash").write_text('#!/bin/sh\necho "$2" >>"$TRACE"\ncase "$2" in curl*) echo installer-download-failed >&2; exit 19;; esac\nexit 0\n')
-                (base / "bash").chmod(0o755)
-                env = dict(os.environ, PATH=tmp, TRACE=str(base / "trace"))
-                result = subprocess.run(["/bin/sh", "-c", "\n".join(commands)], env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 19, result.stderr)
-                lines = (base / "trace").read_text().splitlines()
-                self.assertTrue(lines[-1].startswith("curl"), lines)
-                # Negative control: the original command list washes the failure
-                # to zero when the final rm succeeds.
-                (base / "trace").unlink()
-                result = subprocess.run(["/bin/sh", "-c", "\n".join(c for c in commands if c != "set -e")], env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0)
-                self.assertTrue((base / "trace").read_text().splitlines()[-1].startswith("rm "))
+    def test_failed_lock_wait_cannot_be_overwritten_by_apt_success(self):
+        self.run_shell(["apt_update", "apt_install"], r'''
+wait_for_apt() { return 17; }
+sudo() { echo apt-ran >apt-marker; return 0; }
+rc=0; apt_update || rc=$?
+[ "$rc" = 17 ]
+test ! -e apt-marker
+rc=0; apt_install curl || rc=$?
+[ "$rc" = 17 ]
+test ! -e apt-marker
+''')
+
+    def test_apt_retries_only_transient_failure_and_keeps_attempts(self):
+        self.run_shell(["apt_retry"], r"""
+mktemp() { mkdir -p apt-log; printf '%s\n' "$PWD/apt-log"; }
+sleep() { :; }
+calls=0
+operation() {
+  n=$(cat calls 2>/dev/null || echo 0); n=$((n+1)); echo "$n" >calls
+  if [ "$n" = 1 ]; then echo 'Could not get lock' >&2; return 100; fi
+  echo apt-success
+}
+apt_retry operation
+test "$(cat calls)" = 2
+grep -q 'exit=100' apt-log/attempt-1.result.txt
+grep -q 'Could not get lock' apt-log/attempt-1.stderr
+grep -q 'exit=0' apt-log/attempt-2.result.txt
+rm calls
+operation() { echo called >>calls; echo 'Unable to locate package' >&2; return 100; }
+rc=0; apt_retry operation || rc=$?
+test "$rc" = 100
+test "$(wc -l <calls)" = 1
+""")
+
+    def test_required_protocol_setup_failures_do_not_report_success(self):
+        source = (Path(__file__).resolve().parents[4] / "scripts/runners/cloudedge-protocol-runner.sh").read_text()
+        start = source.index("configure_server() {")
+        end = source.index("\n}\n", start) + 3
+        function_source = source[start:end].replace("/etc/vsftpd.conf", "missing-vsftpd.conf").replace("/tmp/cloudedge-iperf3.log", "iperf3.log")
+        for failure in ["exportfs", "vsftpd", "iperf3", "none"]:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                stub = r"""
+set -e
+sudo() {
+  printf '%s\n' "$*" >>calls
+  case "$FAILURE:$*" in
+    exportfs:exportfs*) return 17 ;;
+    vsftpd:*vsftpd*) return 27 ;;
+  esac
+  return 0
+}
+pkill() { :; }
+iperf3() { echo iperf-start >>calls; [ "$FAILURE" != iperf3 ] || return 25; }
+ce_client_ssh() { bash -c "$2"; }
+export -f sudo pkill iperf3
+"""
+                env=dict(os.environ,FAILURE=failure)
+                result=subprocess.run(["bash","-c",stub+function_source+'\nconfigure_server server 1024\necho setup-success\n'],cwd=tmp,env=env,text=True,capture_output=True)
+                self.assertEqual(result.returncode, {"exportfs":17,"vsftpd":27,"iperf3":25,"none":0}[failure], result.stdout+result.stderr)
+                self.assertEqual("setup-success" in result.stdout, failure=="none")
+                if failure in ["exportfs","vsftpd"]:
+                    self.assertNotIn("iperf-start", (Path(tmp)/"calls").read_text())
 
     def test_capture_keeps_nonzero_raw_outputs_and_timestamps(self):
         self.run_shell(["capture_ssh_evidence"], r"""
@@ -157,6 +187,25 @@ grep -q 'CHECK route-via-sam target=10.0.0.13' convergence/initial-control/1-lea
 grep -q 'dev ens5' convergence/initial-control/1-leaf-routes.stdout
 awk -F '\t' 'NR==2 {exit !($4==1)}' convergence/initial-control/1-leaf-routes.result.tsv
 """)
+
+    def test_applied_curl_error_is_not_hidden_by_a_json_pipeline(self):
+        self.run_shell(["capture_ssh_evidence", "collect_diagnostics"], r'''
+evidence_dir="$PWD"; routers=(leaf)
+ssh_node() {
+  printf '%s\n' "$2" >>requested-commands
+  if [[ "$2" == *'http://routerd-bgp/v1/applied'* ]]; then
+    echo synthetic-curl-error >&2; return 22
+  fi
+  echo '{}'
+}
+collect_diagnostics failure
+! grep -q 'http://routerd-bgp/v1/applied | jq' requested-commands
+test ! -s diagnostics/failure/leaf.bgp-applied.json
+grep -q synthetic-curl-error diagnostics/failure/leaf.bgp-applied.stderr
+grep -q 'unavailable exit=22' diagnostics/failure/leaf.bgp-applied-summary.txt
+awk -F '\t' 'NR==2 {exit !($4==22)}' diagnostics/failure/leaf.bgp-applied.result.tsv
+test ! -e diagnostics/failure/leaf.bgp-applied-summary.stderr
+''')
 
     def test_diagnostics_preserve_missing_gobgp_and_request_privileged_public_fields(self):
         self.run_shell(["capture_ssh_evidence", "collect_diagnostics"], r"""
