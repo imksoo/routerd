@@ -70,6 +70,7 @@ locals {
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+      - set -e
 %{for command in local.oci_firewall_open_commands~}
       - [bash, -lc, ${jsonencode(command)}]
 %{endfor~}

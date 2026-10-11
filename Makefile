@@ -185,6 +185,7 @@ cloudedge-poc-evidence-offline-test:
 
 cloudedge-e2e-preflight-offline-test:
 	./tests/e2e/cloudedge/scripts/sam-preflight-offline-test.sh
+	python3 ./tests/e2e/cloudedge/scripts/sam-e2e-diagnostics-offline-test.py
 
 cloudedge-pve-qga-offline-test:
 	bash ./tests/e2e/cloudedge/scripts/sam-pve-qga-addresses-offline-test.sh

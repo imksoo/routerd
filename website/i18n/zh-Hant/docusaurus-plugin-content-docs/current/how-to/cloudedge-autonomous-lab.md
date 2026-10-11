@@ -145,3 +145,14 @@ routerd.cloudedge.purpose
 - 這是**實驗室線束**，不是生產就緒的交鑰匙方案。
 - 初始實作：實際的逐提供者配置/清理/節點推送是 `TODO(lab-operator)` 的樁或展示套件的薄層封裝 — 請接入使用 run-id 標籤過濾的 Terraform/OpenTofu 或提供者 CLI。
 - 絕不提交實際的帳戶 ID / 訂閱 ID / OCID / ENI/VNIC ID / secret / 私鑰。使用 `env.example` 中的佔位邏輯位址。
+
+## 客戶機準備證據
+
+provider CLI 安裝由 OpenTofu cloud-init 和 SAM 準備共同定義。
+AWS 保留既有備用安裝，Azure/OCI 使用既有 cloud-init installer。命令序列失敗時
+停止。準備儲存 cloud-init 狀態與輸出，並在部署 routerd 前透過 root 服務的 PATH
+執行必要 CLI。操作主機 CLI 或啟動完成標記本身不能證明客戶機相依項可用。
+
+收斂和 warm-up 每次嘗試儲存 stdout/stderr、退出碼和 UTC 時間。診斷透過 sudo
+讀取 journal，採集 WireGuard 公開欄位。缺少 GoBGP 時記錄無法取得，不進行 JSON
+解析。既有測試系列的前提對應表見 `tools/release-qa-labs/test-prerequisites.md`。

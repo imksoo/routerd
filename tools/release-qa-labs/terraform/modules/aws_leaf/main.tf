@@ -18,6 +18,7 @@ locals {
     package_update: true
     packages: [curl, unzip]
     runcmd:
+      - set -e
       - [bash, -lc, 'rm -rf /tmp/awscli-install /tmp/awscliv2.zip']
       - [bash, -lc, 'mkdir -p /tmp/awscli-install']
       - [bash, -lc, 'curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip']

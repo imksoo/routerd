@@ -53,6 +53,7 @@ locals {
   router_cloud_init = <<-CLOUD_INIT
     #cloud-config
     runcmd:
+      - set -e
       - [bash, -lc, "curl -fsSL 'https://azurecliprod.blob.core.windows.net/$root/deb_install.sh' -o /tmp/InstallAzureCLIDeb.sh"]
       - [bash, -lc, 'bash /tmp/InstallAzureCLIDeb.sh']
       - [bash, -lc, 'az version --output json']

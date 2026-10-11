@@ -336,7 +336,13 @@ remote_prepare_script() {
   cat <<'REMOTE_PREPARE'
 set -e
 if command -v cloud-init >/dev/null 2>&1; then
-  if ! sudo cloud-init status --wait >/tmp/routerd-cloud-init-status.txt 2>&1; then
+  cloud_init_rc=0
+  sudo cloud-init status --wait >/tmp/routerd-cloud-init-status.txt 2>&1 || cloud_init_rc=$?
+  printf 'cloud_init_finished_at=%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$cloud_init_rc"
+  cat /tmp/routerd-cloud-init-status.txt
+  # The owned lab userdata only installs tools/firewall rules; retain installer output.
+  sudo tail -n 200 /var/log/cloud-init-output.log || true
+  if [ "$cloud_init_rc" -ne 0 ]; then
     sudo cloud-init status --long 2>&1 | tee -a /tmp/routerd-cloud-init-status.txt
     if [ -f /var/lib/cloud/instance/boot-finished ]; then
       echo "warning: cloud-init reported an error after boot-finished; continuing after external repair" >&2
@@ -397,9 +403,17 @@ ensure_aws_cli() {
   command -v aws
   aws --version
 }
+verify_provider_cli() {
+  local cli="${ROUTERD_E2E_PROVIDER_CLI:-}"
+  [ -n "$cli" ] || return 0
+  # Match routerd.service's executable search path, including sudo/root context.
+  sudo env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin \
+    sh -c 'printf "provider_cli=%s PATH=%s\n" "$1" "$PATH"; command -v "$1" || exit 127; case "$1" in az) "$1" version --output json ;; aws|oci) "$1" --version ;; *) exit 2 ;; esac' sh "$cli"
+}
 if [ "${ROUTERD_E2E_REQUIRE_AWS_CLI:-0}" = "1" ]; then
   ensure_aws_cli
 fi
+verify_provider_cli
 REMOTE_PREPARE
 }
 
@@ -1139,13 +1153,16 @@ required_staged_rrs() {
 
 deploy_one_router() {
   local cfg_dir="$1" node="$2"
-  local cfg require_aws_cli remote_dir artifact_sha cfg_sha key_sha=""
+  local cfg require_aws_cli provider_cli deployment_rc remote_dir artifact_sha cfg_sha key_sha=""
   {
     cfg="$cfg_dir/$node.yaml"
     [ -f "$cfg" ] || { echo "missing config for $node: $cfg" >&2; return 1; }
     require_aws_cli=0
+    provider_cli=""
     case "$node" in
-      aws-*) require_aws_cli=1 ;;
+      aws-*) require_aws_cli=1; provider_cli=aws ;;
+      azure-*) provider_cli=az ;;
+      oci-*) provider_cli=oci ;;
     esac
     echo "## install $node"
     artifact_sha=$(sha256sum "$artifact") || return 1
@@ -1163,7 +1180,9 @@ deploy_one_router() {
       key_sha=${key_sha%% *}
       scp_node "$evidence_dir/config-gen/secrets/eventd-cloudedge.key" "$node" "$remote_dir/eventd-cloudedge.key" || return 1
     fi
-    ssh_node "$node" "$(printf 'set -e\nexport ROUTERD_E2E_REQUIRE_AWS_CLI=%q\nexport DEPLOY_DIR=%q ARTIFACT_SHA=%q CFG_SHA=%q KEY_SHA=%q\n' "$require_aws_cli" "$remote_dir" "$artifact_sha" "$cfg_sha" "$key_sha"; cat <<'REMOTE_BIND'
+    deployment_rc=0
+    capture_ssh_evidence "$node" "$evidence_dir/deploy/${node}.command.stdout" \
+      "$evidence_dir/deploy/${node}.command.stderr" "$evidence_dir/deploy/${node}.command.result.tsv" "$(printf 'set -e\nexport ROUTERD_E2E_REQUIRE_AWS_CLI=%q ROUTERD_E2E_PROVIDER_CLI=%q\nexport DEPLOY_DIR=%q ARTIFACT_SHA=%q CFG_SHA=%q KEY_SHA=%q\n' "$require_aws_cli" "$provider_cli" "$remote_dir" "$artifact_sha" "$cfg_sha" "$key_sha"; cat <<'REMOTE_BIND'
 printf '%s  %s\n' "$ARTIFACT_SHA" "$DEPLOY_DIR/artifact.tar.gz" "$CFG_SHA" "$DEPLOY_DIR/router.yaml" | sha256sum -c -
 if [ -n "$KEY_SHA" ]; then printf '%s  %s\n' "$KEY_SHA" "$DEPLOY_DIR/eventd-cloudedge.key" | sha256sum -c -; fi
 REMOTE_BIND
@@ -1209,7 +1228,9 @@ command -v routerd
 command -v routerctl
 command -v jq
 REMOTE_DEPLOY
-    )" || return 1
+    )" || deployment_rc=$?
+    cat "$evidence_dir/deploy/${node}.command.stdout" "$evidence_dir/deploy/${node}.command.stderr"
+    [ "$deployment_rc" -eq 0 ] || return 1
   } >"$evidence_dir/deploy/${node}.txt" 2>&1 || return 1
   if ! wait_router_service_ready "$node"; then
     ssh_node "$node" 'sudo systemctl status routerd.service routerd-bgp.service --no-pager -l || true; ls -la /run/routerd 2>&1 || true; sudo routerctl get status -o json >/dev/null' \
@@ -1248,6 +1269,21 @@ ip -br addr show dev '$pve_capture_interface'" \
   done
 }
 
+capture_ssh_evidence() {
+  local node="$1" stdout="$2" stderr="$3" metadata="$4" command="$5"
+  local started finished rc=0
+  started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ssh_node "$node" "$command" >"$stdout" 2>"$stderr"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'node\tstarted_at\tfinished_at\texit\n%s\t%s\t%s\t%s\n' \
+    "$node" "$started" "$finished" "$rc" >"$metadata" || return 1
+  return "$rc"
+}
+
 warm_onprem_discovery() {
   local label="$1"
   local node pve_client_ips_text
@@ -1256,51 +1292,69 @@ warm_onprem_discovery() {
   [ -n "$pve_client_ips_text" ] || return 0
   for node in "${pve_leaf_routers[@]}"; do
     node_is_stopped "$node" && continue
-    ssh_node "$node" "while read -r ip; do
+    capture_ssh_evidence "$node" "$evidence_dir/convergence/${label}-${node}-onprem-warmup.txt" \
+      "$evidence_dir/convergence/${label}-${node}-onprem-warmup.stderr" \
+      "$evidence_dir/convergence/${label}-${node}-onprem-warmup.result.tsv" "while read -r ip; do
   [ -n \"\$ip\" ] || continue
-  timeout 3 ping -I '$pve_capture_interface' -c 2 -W 1 \"\$ip\" >/dev/null 2>&1 || true
+  probe_started=\"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+  probe_rc=0
+  timeout 3 ping -I '$pve_capture_interface' -c 2 -W 1 \"\$ip\" || probe_rc=\$?
+  printf 'PROBE node=%s interface=%s destination=%s started_at=%s finished_at=%s exit=%s\n' \
+    '$node' '$pve_capture_interface' \"\$ip\" \"\$probe_started\" \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"\$probe_rc\"
 done <<'IPS'
 $pve_client_ips_text
 IPS
-ip neigh show dev '$pve_capture_interface' || true" >"$evidence_dir/convergence/${label}-${node}-onprem-warmup.txt" 2>&1 || true
+ip neigh show dev '$pve_capture_interface' || true" || true
   done
 }
 
 wait_dataplane_control_gate() {
   local label="$1"
   local deadline=$((SECONDS + 300))
-  local ok=0
+  local ok=0 attempt=0
+  local probe_dir="$evidence_dir/convergence/${label}-control"
+  mkdir -p "$probe_dir"
   local client_ips_text local_client_ips_text remote_client_ips_text node node_site
   client_ips_text="$(jq -r 'to_entries[] | select(.value.role == "client") | .value.private_ip' "$nodes_json")"
   warm_onprem_discovery "$label"
   while [ "$SECONDS" -lt "$deadline" ]; do
+    attempt=$((attempt + 1))
     ok=1
     for node in "${leaf_routers[@]}"; do
       node_is_stopped "$node" && continue
       node_site="$(node_field "$node" site)"
       local_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site == $site) | .value.private_ip' "$nodes_json")"
       remote_client_ips_text="$(jq -r --arg site "$node_site" 'to_entries[] | select(.value.role == "client" and .value.site != $site) | .value.private_ip' "$nodes_json")"
-      if ! ssh_node "$node" "set -e
+      if ! capture_ssh_evidence "$node" "$probe_dir/${attempt}-${node}-routes.stdout" \
+        "$probe_dir/${attempt}-${node}-routes.stderr" "$probe_dir/${attempt}-${node}-routes.result.tsv" "set -e
+echo check=status
 command -v routerctl >/dev/null
-sudo routerctl get status -o json >/dev/null
+sudo routerctl get status -o json
 while read -r ip; do
   [ -n \"\$ip\" ] || continue
-  ip route get \"\$ip\" >/dev/null
+  printf 'CHECK route-exists target=%s\n' \"\$ip\"
+  ip route get \"\$ip\"
 done <<'IPS'
 $client_ips_text
 IPS
 while read -r ip; do
   [ -n \"\$ip\" ] || continue
-  ip route get \"\$ip\" | grep -q ' dev samt'
+  printf 'CHECK route-via-sam target=%s\n' \"\$ip\"
+  route=\"\$(ip route get \"\$ip\")\"
+  printf '%s\n' \"\$route\"
+  printf '%s\n' \"\$route\" | grep -q ' dev samt'
 done <<'IPS'
 $remote_client_ips_text
 IPS"; then
         ok=0
       fi
-      if ! ssh_node "$node" "set -e
+      if ! capture_ssh_evidence "$node" "$probe_dir/${attempt}-${node}-ownership.stdout" \
+        "$probe_dir/${attempt}-${node}-ownership.stderr" "$probe_dir/${attempt}-${node}-ownership.result.tsv" "set -e
 status=\"\$(sudo routerctl describe MobilityPool/cloudedge -o json)\"
+printf '%s\n' \"\$status\"
 while read -r ip; do
   [ -n \"\$ip\" ] || continue
+  printf 'CHECK local-owner target=%s/32\n' \"\$ip\"
   printf '%s\n' \"\$status\" | jq -e --arg addr \"\$ip/32\" '
     any(.resource.status.ownershipResolverControlPlaneOwnerTable[]?; .address == \$addr)
   ' >/dev/null
@@ -2101,8 +2155,8 @@ collect_diagnostics() {
   local node
   mkdir -p "$dir"
   for node in "${routers[@]}"; do
-    ssh_node "$node" 'sudo routerctl get status -o json' >"$dir/${node}.status.json" 2>"$dir/${node}.status.stderr" || true
-    ssh_node "$node" "$(cat <<REMOTE_DIAG
+    capture_ssh_evidence "$node" "$dir/${node}.status.json" "$dir/${node}.status.stderr" "$dir/${node}.status.result.tsv" 'sudo routerctl get status -o json' || true
+    capture_ssh_evidence "$node" "$dir/${node}.txt" "$dir/${node}.stderr" "$dir/${node}.result.tsv" "$(cat <<REMOTE_DIAG
 echo "stage=$label"
 echo "captured_at=\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 hostname
@@ -2127,10 +2181,17 @@ if command -v sqlite3 >/dev/null 2>&1 && sudo test -r /var/lib/routerd/routerd.d
 else
   echo "events_db_dump_unavailable"
 fi
+echo "--- wireguard"
+# Explicit public fields: wg show all dump would expose private keys.
+for field in latest-handshakes transfer endpoints allowed-ips; do
+  echo "wireguard_field=\$field"
+  sudo wg show all "\$field"
+  echo "wireguard_exit=\$?"
+done
 echo "--- journals"
-journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500
+sudo journalctl -u routerd.service -u routerd-bgp.service --since "30 minutes ago" --no-pager -n 500
 REMOTE_DIAG
-)" >"$dir/${node}.txt" 2>&1 || true
+)" || true
     jq '
       [
         .. | objects
@@ -2161,10 +2222,15 @@ REMOTE_DIAG
     jq -r '
       "routerd_bgp_applied paths=\((.paths // []) | length) static=\((.paths // []) | map(select((.source // "") == "static")) | length) mobility=\((.paths // []) | map(select((.source // "") | startswith("MobilityPool/"))) | length)"
     ' "$dir/${node}.bgp-applied.json" >"$dir/${node}.bgp-applied-summary.txt" 2>"$dir/${node}.bgp-applied-summary.stderr" || true
-    ssh_node "$node" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j 2>/dev/null | jq .; else echo "gobgp_cli_unavailable"; fi' >"$dir/${node}.gobgp-global-rib.json" 2>"$dir/${node}.gobgp-global-rib.stderr" || true
-    jq -r '
-      if type == "array" then "gobgp_global_rib entries=\(length)" else "gobgp_global_rib entries=unknown" end
-    ' "$dir/${node}.gobgp-global-rib.json" >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
+    local gobgp_rc=0
+    capture_ssh_evidence "$node" "$dir/${node}.gobgp-global-rib.json" "$dir/${node}.gobgp-global-rib.stderr" "$dir/${node}.gobgp-global-rib.result.tsv" 'if command -v gobgp >/dev/null 2>&1; then sudo gobgp -u /run/routerd/bgp/gobgp.sock global rib -j; else echo "gobgp_cli_unavailable" >&2; exit 127; fi' || gobgp_rc=$?
+    if [ "$gobgp_rc" -eq 0 ]; then
+      jq -r '
+        if type == "array" then "gobgp_global_rib entries=\(length)" else "gobgp_global_rib entries=unknown" end
+      ' "$dir/${node}.gobgp-global-rib.json" >"$dir/${node}.gobgp-global-rib-summary.txt" 2>"$dir/${node}.gobgp-global-rib-summary.stderr" || true
+    else
+      printf 'gobgp_global_rib unavailable exit=%s\n' "$gobgp_rc" >"$dir/${node}.gobgp-global-rib-summary.txt"
+    fi
   done
 }
 

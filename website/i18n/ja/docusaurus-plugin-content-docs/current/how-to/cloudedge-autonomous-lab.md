@@ -145,3 +145,16 @@ routerd.cloudedge.purpose
 - これは**ラボハーネス**であり、本番用のターンキーソリューションではありません。
 - 初期実装: 実際のプロバイダーごとの割り当て/teardown/ノードプッシュは `TODO(lab-operator)` のスタブか、デモパッケージの薄いラッパーです — run-id タグでフィルタリングした Terraform/OpenTofu またはプロバイダー CLI を接続してください。
 - 実際のアカウント ID / サブスクリプション ID / OCID / ENI/VNIC ID / 秘密情報 / 秘密鍵は決してコミットしないでください。`env.example` のようにプレースホルダーの論理アドレスを使用してください。
+
+## ゲスト準備の証跡
+
+provider CLI の導入は OpenTofu cloud-init と SAM 準備に分かれています。
+AWS は既存の代替導入を維持し、Azure/OCI は既存の cloud-init installer を使います。
+コマンド列は失敗時に停止します。準備は cloud-init の状態・出力を保存し、
+routerd 配置前に root のサービス PATH で必須 CLI を実行します。操作ホストの CLI
+や起動完了マーカーだけでは、ゲストの依存を確認できません。
+
+収束・warm-up の各試行は stdout/stderr、終了コード、UTC 時刻を保存します。
+診断は sudo で journal を読み、WireGuard の公開フィールドを採取します。
+GoBGP がない場合は JSON 解析せず取得不能を記録します。既存試験群の前提対応表は
+`tools/release-qa-labs/test-prerequisites.md` にあります。
