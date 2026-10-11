@@ -1792,7 +1792,11 @@ pasv_max_port=30010
 VSFTPEOF
         sudo systemctl restart vsftpd
         sudo pkill iperf3 >/dev/null 2>&1 || true
-        sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+        sudo iperf3 -s -D </dev/null >/tmp/routerd-e2e-iperf3-start.log 2>&1 || {
+  iperf_exit=$?
+  cat /tmp/routerd-e2e-iperf3-start.log >&2 || true
+  exit "$iperf_exit"
+}
         if command -v iptables >/dev/null 2>&1; then
           for rule in \
             "-p tcp --dport 21" \
@@ -1834,7 +1838,11 @@ if command -v apt-get >/dev/null 2>&1; then
   apt_retry apt_install iperf3
 fi
 sudo pkill iperf3 >/dev/null 2>&1 || true
-sudo iperf3 -s -D </dev/null >/dev/null 2>&1
+sudo iperf3 -s -D </dev/null >/tmp/routerd-e2e-iperf3-start.log 2>&1 || {
+  iperf_exit=$?
+  cat /tmp/routerd-e2e-iperf3-start.log >&2 || true
+  exit "$iperf_exit"
+}
 if command -v iptables >/dev/null 2>&1; then
   for rule in "-p tcp --dport 5201" "-p udp --dport 5201"; do
     sudo sh -c "iptables -C INPUT $rule -j ACCEPT 2>/dev/null || iptables -I INPUT 1 $rule -j ACCEPT"
@@ -1949,6 +1957,21 @@ legacy_protocol_matrix() {
   return "$status"
 }
 
+performance_iperf_attempt() {
+  local src="$1" dst="$2" command="$3" output="$4" attempt="$5" rc=0
+  local prefix="$output.attempt-$attempt"
+  local restart='set -e; sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; if sudo iperf3 -s -D </dev/null >/tmp/routerd-e2e-iperf3-start.log 2>&1; then :; else rc=$?; cat /tmp/routerd-e2e-iperf3-start.log >&2 || true; exit "$rc"; fi; sleep 2'
+  capture_ssh_evidence "$dst" "$prefix.server.stdout" "$prefix.server.stderr" "$prefix.server.result.tsv" "$restart" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat "$prefix.server.stderr" >&2
+    return "$rc"
+  fi
+  capture_ssh_evidence "$src" "$prefix.json" "$prefix.stderr" "$prefix.result.tsv" "$command" || rc=$?
+  # Keep the existing canonical filename for metric readers; never erase attempts.
+  cp "$prefix.json" "$output" || return "$?"
+  return "$rc"
+}
+
 performance_matrix() {
   [ "$performance_tests" -eq 1 ] || return 0
   local label="$1"
@@ -1976,16 +1999,14 @@ performance_matrix() {
         echo "## tcp iperf3"
         ok=0
         for attempt in 1 2 3; do
-          ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
-          ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-tcp.json" && { ok=1; break; }
+          performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-tcp.json" "$attempt" && { ok=1; break; }
           sleep 5
         done
         [ "$ok" -eq 1 ] || result=FAIL_TCP
         echo "## udp iperf3"
         ok=0
         for attempt in 1 2 3; do
-          ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
-          ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" >"$out/${src}_to_${dst}.iperf3-udp.json" && { ok=1; break; }
+          performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -u -b 10M -c '$dst_ip' -B '$src_ip' -t 5" "$out/${src}_to_${dst}.iperf3-udp.json" "$attempt" && { ok=1; break; }
           sleep 5
         done
         [ "$ok" -eq 1 ] || result=FAIL_UDP
@@ -2017,16 +2038,14 @@ performance_matrix() {
           echo "## tcp iperf3"
           ok=0
           for attempt in 1 2 3; do
-            ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
-            ssh_node "$src" "timeout 20s iperf3 -J -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-tcp.json" && { ok=1; break; }
+              performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-tcp.json" "$attempt" && { ok=1; break; }
             sleep 5
           done
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_TCP
           echo "## udp iperf3"
           ok=0
           for attempt in 1 2 3; do
-            ssh_node "$dst" 'sudo pkill -9 iperf3 >/dev/null 2>&1 || true; sleep 2; sudo iperf3 -s -D </dev/null >/dev/null 2>&1; sleep 2'
-            ssh_node "$src" "timeout 20s iperf3 -J -u -b 10M -c '$dst_public' -t 5" >"$out/${src}_to_${dst}.public-iperf3-udp.json" && { ok=1; break; }
+              performance_iperf_attempt "$src" "$dst" "timeout 20s iperf3 -J -u -b 10M -c '$dst_public' -t 5" "$out/${src}_to_${dst}.public-iperf3-udp.json" "$attempt" && { ok=1; break; }
             sleep 5
           done
           [ "$ok" -eq 1 ] || public_result=FAIL_PUBLIC_UDP
