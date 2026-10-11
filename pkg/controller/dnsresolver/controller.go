@@ -505,6 +505,9 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 }
 
 func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map[string]string, error) {
+	// Typed specs share slice storage with the declared router. Resolve only a
+	// private view so a pending source, recovery, or renumbering can be retried.
+	spec.Records = append([]api.DNSZoneRecordSpec(nil), spec.Records...)
 	var pending []map[string]string
 	for i := range spec.Records {
 		record := &spec.Records[i]
