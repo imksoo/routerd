@@ -97,13 +97,21 @@ dry-run 显示的管理接口、路由和将生成的文件都符合预期。
 sudo routerd apply --config first-router.yaml --once
 ```
 
-若要让实验路由器持续运行，请将确认过的文件放到标准位置并启动服务。
+即使只是临时实验，也必须先启动服务，才能进行后续的状态检查和客户端通信检查。
+one-shot apply 执行后就会退出，不会留下供 `routerctl` 连接的 daemon。
+请将确认过的文件放到标准位置并启动服务。
 
 ```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
+sudo systemctl start routerd.service
 sudo systemctl is-active routerd.service
+```
+
+确认显示 `active` 后再继续。若希望实验路由器在重启后自动启动，可以选择启用服务的自动启动：
+
+```bash
+sudo systemctl enable routerd.service
 ```
 
 ## 4. 完整检查这条小路径

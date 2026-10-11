@@ -109,14 +109,22 @@ from the console or a separate management path:
 sudo routerd apply --config first-router.yaml --once
 ```
 
-For a persistent lab router, copy the reviewed file into the installed location
-and start the service:
+Start the service before the status and client checks, even for a temporary
+lab. A one-shot apply exits without leaving a daemon for `routerctl`. Copy the
+reviewed file into the installed location and start the service:
 
 ```bash
 sudo install -d -m 0755 /usr/local/etc/routerd
 sudo install -m 0600 first-router.yaml /usr/local/etc/routerd/router.yaml
-sudo systemctl enable --now routerd.service
+sudo systemctl start routerd.service
 sudo systemctl is-active routerd.service
+```
+
+Continue only after the service reports `active`. To start the lab router
+automatically after a reboot, optionally enable the service:
+
+```bash
+sudo systemctl enable routerd.service
 ```
 
 ## 4. Check the whole small path
