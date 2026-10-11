@@ -20,12 +20,18 @@ for ns in "$LEFT" "$RIGHT"; do
 done
 
 VETH_COUNTER=$((VETH_COUNTER+1)); la="${TEST_IF_ID}m${VETH_COUNTER}a"; lb="${TEST_IF_ID}m${VETH_COUNTER}b"
-ip link add "$la" type veth peer name "$lb"; ip link set "$la" netns "$LEFT"; ip link set "$lb" netns "$LC"
+ip link add "$la" type veth peer name "$lb"
+add_cleanup "if ip link show '$la' >/dev/null 2>&1; then ip link delete '$la'; fi"
+add_cleanup "if ip link show '$lb' >/dev/null 2>&1; then ip link delete '$lb'; fi"
+ip link set "$la" netns "$LEFT"; ip link set "$lb" netns "$LC"
 ip -n "$LEFT" link set "$la" name lan0; ip -n "$LEFT" link set lan0 master br0; ip -n "$LEFT" link set lan0 up
 ip -n "$LC" link set "$lb" name eth0; ip -n "$LC" link set eth0 address 02:00:00:00:01:01; ip -n "$LC" link set eth0 up
 
 VETH_COUNTER=$((VETH_COUNTER+1)); ra="${TEST_IF_ID}m${VETH_COUNTER}a"; rb="${TEST_IF_ID}m${VETH_COUNTER}b"
-ip link add "$ra" type veth peer name "$rb"; ip link set "$ra" netns "$RIGHT"; ip link set "$rb" netns "$RC"
+ip link add "$ra" type veth peer name "$rb"
+add_cleanup "if ip link show '$ra' >/dev/null 2>&1; then ip link delete '$ra'; fi"
+add_cleanup "if ip link show '$rb' >/dev/null 2>&1; then ip link delete '$rb'; fi"
+ip link set "$ra" netns "$RIGHT"; ip link set "$rb" netns "$RC"
 ip -n "$RIGHT" link set "$ra" name lan0; ip -n "$RIGHT" link set lan0 master br0; ip -n "$RIGHT" link set lan0 up
 ip -n "$RC" link set "$rb" name eth0; ip -n "$RC" link set eth0 address 02:00:00:00:02:02; ip -n "$RC" link set eth0 up
 
