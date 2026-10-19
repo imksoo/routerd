@@ -310,6 +310,14 @@ spec:
     - 10.0.0.0/8
 ```
 
+DNS forwarders support a separate positive `queryTimeout` per upstream. The
+[NextDNS example](examples/dns-nextdns-failover.yaml) prefers NextDNS, then tries
+an explicitly configured Cloudflare DoH endpoint after a one-second timeout.
+Valid `NXDOMAIN` answers do not trigger failover; total upstream failure returns
+uncached `SERVFAIL`. The alternative does not apply NextDNS filtering/logging
+policies. See [DNS query deadlines](docs/concepts/dns-resolver.md#query-deadlines-and-explicit-alternatives)
+for inherited defaults and chained-resolver timeout budgets.
+
 ## Developer Build
 
 Source builds require Go 1.25.0 or newer; `go.mod` selects the Go 1.25.9

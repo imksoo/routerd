@@ -7052,6 +7052,9 @@
                         },
                         "type": "array"
                       },
+                      "queryTimeout": {
+                        "type": "string"
+                      },
                       "resolver": {
                         "type": "string"
                       },

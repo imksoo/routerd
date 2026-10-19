@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,9 +17,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/miekg/dns"
 	"github.com/quic-go/quic-go"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -34,9 +37,12 @@ const (
 	maxDNSMessageSize = 65535
 )
 
+var errTruncatedUpstreamResponse = errors.New("DNS upstream response is truncated")
+
 type upstreamPoolConfig struct {
 	ProbeInterval     time.Duration
 	ProbeTimeout      time.Duration
+	QueryTimeout      time.Duration
 	FailThreshold     int
 	PassThreshold     int
 	ViaInterface      string
@@ -71,6 +77,9 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 	if cfg.ProbeTimeout <= 0 {
 		cfg.ProbeTimeout = 3 * time.Second
 	}
+	if cfg.QueryTimeout <= 0 {
+		cfg.QueryTimeout = cfg.ProbeTimeout
+	}
 	if cfg.FailThreshold <= 0 {
 		cfg.FailThreshold = 3
 	}
@@ -91,7 +100,9 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 	return &upstreamPool{
 		upstreams: upstreams,
 		config:    cfg,
-		client:    &http.Client{Timeout: cfg.ProbeTimeout, Transport: &http.Transport{DialContext: (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}},
+		// Each exchange supplies its own deadline: ordinary queries and health
+		// probes may intentionally have different timeouts.
+		client: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}},
 	}, nil
 }
 
@@ -164,6 +175,9 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 	queryCtx, cancel := context.WithTimeout(ctx, p.config.ProbeTimeout)
 	defer cancel()
 	_, err := p.exchangeOne(queryCtx, upstream, dnsProbeQuery())
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		phase := p.markFailure(upstream, err)
 		if publish != nil && phase == upstreamDown {
@@ -180,9 +194,15 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(string, string, string, string, map[string]string)) ([]byte, error) {
 	var errs []string
 	for _, upstream := range p.attemptOrder() {
-		queryCtx, cancel := context.WithTimeout(ctx, p.config.ProbeTimeout)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, p.config.QueryTimeout)
 		resp, err := p.exchangeOne(queryCtx, upstream, query)
 		cancel()
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err == nil {
 			p.markSuccess(upstream)
 			return resp, nil
@@ -194,20 +214,71 @@ func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(
 }
 
 func (p *upstreamPool) exchangeOne(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
+	var resp []byte
+	var err error
 	switch upstream.Scheme {
 	case "https":
-		return p.exchangeDoH(ctx, upstream, query)
+		resp, err = p.exchangeDoH(ctx, upstream, query)
 	case "tls":
-		return p.exchangeDoT(ctx, upstream, query)
+		resp, err = p.exchangeDoT(ctx, upstream, query)
 	case "quic":
-		return p.exchangeDoQ(ctx, upstream, query)
+		resp, err = p.exchangeDoQ(ctx, upstream, query)
 	case "udp":
-		return p.exchangeUDP(ctx, upstream, query)
+		resp, err = p.exchangeUDP(ctx, upstream, query)
 	case "tcp":
-		return p.exchangeTCP(ctx, upstream, query)
+		resp, err = p.exchangeTCP(ctx, upstream, query)
 	default:
 		return nil, fmt.Errorf("unsupported DNS upstream scheme %q", upstream.Scheme)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUpstreamResponse(query, resp); err != nil {
+		if upstream.Scheme != "udp" || !errors.Is(err, errTruncatedUpstreamResponse) {
+			return nil, err
+		}
+		// Retry a valid truncated UDP response over TCP to the same server,
+		// within the original attempt deadline, before trying another provider.
+		resp, err = p.exchangeTCP(ctx, upstream, query)
+		if err != nil {
+			return nil, fmt.Errorf("retry truncated DNS response over TCP: %w", err)
+		}
+		if err := validateUpstreamResponse(query, resp); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func validateUpstreamResponse(query, response []byte) error {
+	var req, resp dns.Msg
+	if err := req.Unpack(query); err != nil {
+		return fmt.Errorf("invalid DNS query: %w", err)
+	}
+	if err := resp.Unpack(response); err != nil {
+		return fmt.Errorf("invalid DNS upstream response: %w", err)
+	}
+	if !resp.Response || resp.Id != req.Id || resp.Opcode != req.Opcode {
+		return fmt.Errorf("DNS upstream response header does not match query")
+	}
+	if len(req.Question) == 0 || len(resp.Question) != len(req.Question) {
+		return fmt.Errorf("DNS upstream response question does not match query")
+	}
+	for i, question := range req.Question {
+		answer := resp.Question[i]
+		if !strings.EqualFold(question.Name, answer.Name) || question.Qtype != answer.Qtype || question.Qclass != answer.Qclass {
+			return fmt.Errorf("DNS upstream response question does not match query")
+		}
+	}
+	if resp.Truncated {
+		return errTruncatedUpstreamResponse
+	}
+	// NXDOMAIN and NOERROR (including NODATA and filtered answers) are final
+	// DNS answers, not evidence that another provider should be queried.
+	if resp.Rcode != dns.RcodeSuccess && resp.Rcode != dns.RcodeNameError {
+		return fmt.Errorf("DNS upstream returned failure rcode %s (%d)", dns.RcodeToString[resp.Rcode], resp.Rcode)
+	}
+	return nil
 }
 
 func (p *upstreamPool) exchangeDoH(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
@@ -288,9 +359,8 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	defer conn.Close()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
+	stop := setExchangeDeadline(ctx, conn)
+	defer stop()
 	if _, err := conn.Write(query); err != nil {
 		return nil, err
 	}
@@ -327,12 +397,11 @@ func resolverForBootstrap(servers []string) *net.Resolver {
 	if len(cleaned) == 0 {
 		return net.DefaultResolver
 	}
-	var next int
+	var next atomic.Uint64
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			server := cleaned[next%len(cleaned)]
-			next++
+			server := cleaned[(next.Add(1)-1)%uint64(len(cleaned))]
 			dialer := net.Dialer{Control: interfaceControl("")}
 			return dialer.DialContext(ctx, "udp", server)
 		},
@@ -361,9 +430,8 @@ type deadlineConn interface {
 }
 
 func exchangeLengthPrefixed(ctx context.Context, conn deadlineConn, query []byte) ([]byte, error) {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
+	stop := setExchangeDeadline(ctx, conn)
+	defer stop()
 	if len(query) > maxDNSMessageSize {
 		return nil, fmt.Errorf("DNS query too large")
 	}
@@ -382,6 +450,15 @@ func exchangeLengthPrefixed(ctx context.Context, conn deadlineConn, query []byte
 		return nil, err
 	}
 	return resp, nil
+}
+
+func setExchangeDeadline(ctx context.Context, conn deadlineConn) func() bool {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	// A parent may be canceled before its deadline, including one with no
+	// deadline at all. Interrupt an in-flight socket read/write in that case.
+	return context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 }
 
 func (p *upstreamPool) attemptOrder() []*dnsUpstream {

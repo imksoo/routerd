@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -99,6 +100,11 @@ func validateDNSResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		}
 		if err := validateDNSResolverHealthcheck(res.ID(), spec.Healthcheck); err != nil {
 			return true, err
+		}
+		if spec.QueryTimeout != "" {
+			if timeout, err := time.ParseDuration(spec.QueryTimeout); err != nil || timeout <= 0 {
+				return true, fmt.Errorf("%s spec.queryTimeout must be a positive duration", res.ID())
+			}
 		}
 	case "DNSUpstream":
 		if res.APIVersion != api.NetAPIVersion {

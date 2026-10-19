@@ -164,6 +164,14 @@ user YAML の `DNSResolver.spec.sources` は受け付けません。旧来のイ
 `spec.zoneRefs` は local の `DNSZone` を応答し、`spec.upstreams` は `DNSUpstream` へ転送します。
 DNSSEC validation は `DNSForwarder.spec.dnssecValidate` に書きます。
 
+`DNSForwarder.spec.queryTimeout` は、上流 1 台への通常問い合わせの待ち時間を
+`1s` などの正の値で指定します。未指定時は `healthcheck.timeout` を継承し、
+既定値は `3s` です。同じ `upstreams` に明示した候補だけを順に試し、
+正当な `NXDOMAIN` 応答では切り替えません。全失敗時はキャッシュしない
+`SERVFAIL` を返し、別の転送元には進みません。候補数に応じて待ち時間が加算されるため、
+多段構成では外側に十分な待ち時間を確保してください。
+詳しくは [DNS リゾルバ](./concepts/dns-resolver.md)を参照してください。
+
 `DNSUpstream.spec.protocol` は `udp`、`tcp`、`dot`、`doh` のいずれかです。
 `addressFrom` では、`DHCPv6Information/<name>.dnsServers` などから UDP の上流 address を導出できます。
 `sourceInterface` は Linux で送信先 interface を束縛し、`bootstrap` は DoH/DoT のエンドポイント名の解決に使う補助 resolver です。

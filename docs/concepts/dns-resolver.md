@@ -54,7 +54,8 @@ A forwarder with `upstreams` sends matching queries to selected upstreams.
 Use `match: ["."]` for the default recursive path.
 
 The resolver supports DoH, DoT, TCP DNS, and plain UDP DNS.
-It tries upstreams by priority and falls back when a higher source fails.
+Within the matching source, it tries the explicitly listed upstreams by health
+and priority. If all fail, it returns `SERVFAIL` without moving to another source.
 
 ## Multiple listen profiles
 
@@ -166,6 +167,28 @@ spec:
   address: cloudflare-dns.com
   path: /dns-query
 ```
+
+## Query deadlines and explicit alternatives
+
+`DNSForwarder.spec.queryTimeout` is a positive duration (for example, `1s`)
+for each ordinary upstream query, independent of the background health check.
+When omitted, it retains the previous `healthcheck.timeout` behavior (`3s`
+when that field is also omitted). Healthy upstreams are tried before failing or
+unavailable ones; within each health group, the same forwarder's `upstreams`
+list determines priority.
+A timeout, transport error, or server failure can advance to the next endpoint.
+A valid answer, including `NXDOMAIN`, is returned unchanged rather than bypassed.
+
+If all candidates in a matching forward/upstream source fail, routerd returns
+`SERVFAIL`, not `NXDOMAIN`, and does not cache that failure. It does not continue
+into a different source: a private-zone query must not leak into a public
+default source. Declare any permitted alternatives in that same forwarder.
+DNSSEC validation failures also return `SERVFAIL`.
+
+Sequential deadlines add up: two candidates with `queryTimeout: 1s` can consume
+about two seconds before failure, plus local processing. In a LAN → core resolver
+chain, allow the outer resolver and client sufficient time for all inner attempts.
+See [the NextDNS example](../how-to/dns-private-upstream.md#nextdns-with-a-one-second-query-deadline).
 
 ## dnsmasq boundary
 

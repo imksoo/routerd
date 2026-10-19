@@ -31,6 +31,7 @@ rm -rf "$workdir"
 | `example-basic-ipv4-nat.yaml` | You have an isolated two-NIC lab and want a complete IPv4 WAN DHCP, LAN DHCP, external DNS advertisement, and NAT example. |
 | `dns-local-zone.yaml` | You want a local authoritative DNS zone with static records. |
 | `dns-private-upstream.yaml` | You need conditional DNS forwarding or private upstream resolvers. |
+| `dns-nextdns-failover.yaml` | You prefer NextDNS with a one-second per-query deadline and explicitly allow Cloudflare DoH as an alternative; NextDNS policies do not apply to that alternative. |
 | `guest-mode.yaml` | You want to inspect a MAC-based client policy. It controls traffic that reaches the router; it is not VLAN, Wi-Fi, or switch-port isolation. |
 | `dhcp-lease-sync-ha.yaml` | You want active-to-standby DHCP lease sync gated by a VRRP `VirtualAddress` role. |
 | `telemetry-export.yaml` | You want to send routerd telemetry to an OTLP collector. |

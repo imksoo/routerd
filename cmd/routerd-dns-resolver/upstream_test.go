@@ -265,7 +265,19 @@ func TestUpstreamPoolFallsBackToSecondUpstream(t *testing.T) {
 			if err != nil {
 				return
 			}
-			_, _ = ok.WriteTo(buf[:n], addr)
+			var req dns.Msg
+			if err := req.Unpack(buf[:n]); err != nil {
+				t.Error(err)
+				return
+			}
+			resp := new(dns.Msg)
+			resp.SetReply(&req)
+			wire, err := resp.Pack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, _ = ok.WriteTo(wire, addr)
 		}
 	}()
 
@@ -283,8 +295,9 @@ func TestUpstreamPoolFallsBackToSecondUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(resp) != string(query) {
-		t.Fatalf("response = %x, want %x", resp, query)
+	var answer dns.Msg
+	if err := answer.Unpack(resp); err != nil || !answer.Response || answer.Rcode != dns.RcodeSuccess {
+		t.Fatalf("response = %x, unpack error = %v", resp, err)
 	}
 	snapshot := pool.Snapshot()
 	if snapshot[0].Phase != upstreamDown || snapshot[1].Phase != upstreamHealthy {

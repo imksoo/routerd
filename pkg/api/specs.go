@@ -1381,6 +1381,7 @@ type DNSResolverSourceSpec struct {
 	BootstrapResolver     []string                   `yaml:"bootstrapResolver,omitempty" json:"bootstrapResolver,omitempty"`
 	BootstrapResolverFrom []StatusValueSourceSpec    `yaml:"bootstrapResolverFrom,omitempty" json:"bootstrapResolverFrom,omitempty"`
 	DNSSECValidate        bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
+	QueryTimeout          string                     `yaml:"queryTimeout,omitempty" json:"queryTimeout,omitempty"`
 	Healthcheck           DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 }
 
@@ -1390,6 +1391,7 @@ type DNSForwarderSpec struct {
 	ZoneRefs       []string                   `yaml:"zoneRefs,omitempty" json:"zoneRefs,omitempty"`
 	Upstreams      []string                   `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	DNSSECValidate bool                       `yaml:"dnssecValidate,omitempty" json:"dnssecValidate,omitempty"`
+	QueryTimeout   string                     `yaml:"queryTimeout,omitempty" json:"queryTimeout,omitempty"`
 	Healthcheck    DNSResolverHealthcheckSpec `yaml:"healthcheck,omitempty" json:"healthcheck,omitempty"`
 	When           ResourceWhenSpec           `yaml:"when,omitempty" json:"when,omitempty"`
 }
