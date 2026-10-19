@@ -726,6 +726,18 @@ routerd derives the health-check daemon, source binding, and socket mark from
 that route target automatically. Platform-specific socket mechanics stay inside
 the controller and renderer.
 
+Removing the route target's health-check reference also removes that derived
+binding. A standalone check without `sourceInterface`, `sourceAddress`, `via`,
+or `fwmark` follows the host's normal routing, which may use the management
+network. To continue monitoring a specific path independently of route
+selection, declare its binding explicitly on `HealthCheck`; removing a
+reference does not preserve the previous path.
+
+Daemon status snapshots replace the health check's current route observations,
+including clearing fields that the latest probe no longer reports. Historical
+events retain their `network.*` attributes; those old attributes must not be
+interpreted as the route of the current probe.
+
 `WebConsole.spec.listenAddressFrom` derives the HTTP listener address from
 another resource status, for example `Interface/mgmt.status.ipv4Addresses`.
 Use it instead of a literal `listenAddress` when the management address comes
