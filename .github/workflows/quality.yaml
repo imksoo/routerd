@@ -51,7 +51,8 @@ jobs:
 
   webconsole:
     name: Web Console
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 in the lockfile does not support Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     needs: detect-website-changes
     if: ${{ needs.detect-website-changes.outputs.webconsole == 'true' }}
     steps:
