@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261020.0028
+
 This follow-up retains the DNS failure handling, explicit upstream failover, and HealthCheck route-status fixes from `v20261020.0007`.
 
 ### Fixed

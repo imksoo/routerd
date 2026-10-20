@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261020.0028
+
 この後継版は、`v20261020.0007` のDNS失敗応答、明示した上流への切り替え、HealthCheck経路表示の修正を引き継ぎます。
 
 ### 修正

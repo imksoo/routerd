@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261020.0028
+
 此後續版本保留 `v20261020.0007` 的DNS失敗回覆、明確設定的替代上游切換，以及HealthCheck路由狀態修正。
 
 ### 修正
