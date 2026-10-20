@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261020.0007
+
 ### Added
 
 - Add optional `queryTimeout` for each DNS upstream attempt, independently of background health checks. For example, `queryTimeout: 1s` can prefer NextDNS and try an explicitly configured alternative within the same source after a one-second timeout. Omitting it preserves the previous effective timeout. Valid NXDOMAIN answers remain final; an alternative DNS provider does not inherit NextDNS filtering or logging policies. (#1331)

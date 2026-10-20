@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261020.0007
+
 ### 新增
 
 - 新增可选的 `queryTimeout`，可分别设置每个DNS上游查询的等待时间，与后台健康检查相互独立。例如，设置 `queryTimeout: 1s` 可优先使用NextDNS，超时一秒后再尝试同一来源中明确配置的备用DNS。未指定时保持原有的实际等待时间。有效的NXDOMAIN仍视为最终响应；备用DNS不会继承NextDNS的过滤或日志策略。 (#1331)
