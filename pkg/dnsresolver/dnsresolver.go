@@ -135,6 +135,15 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 		if strings.TrimSpace(spec.Sources[i].Healthcheck.Timeout) == "" {
 			spec.Sources[i].Healthcheck.Timeout = "3s"
 		}
+		if spec.Sources[i].QueryTimeout == "" {
+			spec.Sources[i].QueryTimeout = spec.Sources[i].Healthcheck.Timeout
+			// Older configs allow a non-positive probe timeout; the upstream
+			// pool treats it as the default. Preserve that effective deadline
+			// without changing the configured background health check.
+			if timeout, err := time.ParseDuration(spec.Sources[i].Healthcheck.Timeout); err == nil && timeout <= 0 {
+				spec.Sources[i].QueryTimeout = "3s"
+			}
+		}
 		if spec.Sources[i].Healthcheck.FailThreshold == 0 {
 			spec.Sources[i].Healthcheck.FailThreshold = 3
 		}
@@ -180,6 +189,9 @@ func Validate(spec api.DNSResolverSpec) error {
 		return fmt.Errorf("at least one source is required")
 	}
 	for _, source := range spec.Sources {
+		if timeout, err := time.ParseDuration(source.QueryTimeout); err != nil || timeout <= 0 {
+			return fmt.Errorf("source %q queryTimeout must be a positive duration", source.Name)
+		}
 		switch source.Kind {
 		case "zone":
 			if len(source.ZoneRef) == 0 {

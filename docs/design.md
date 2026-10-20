@@ -175,6 +175,17 @@ misconfiguration and is rejected by validation instead.
 
 For details, see [resource model](./concepts/resource-model.md) and [state and ownership](./concepts/state-and-ownership.md).
 
+DNS forwarding separates ordinary per-upstream `queryTimeout` from background
+health-check deadlines. The optional positive duration inherits
+`healthcheck.timeout` when absent (default `3s`). Only explicitly listed
+candidates in the same matching forwarder are tried; valid `NXDOMAIN` is
+preserved. Exhaustion or DNSSEC validation failure returns uncached `SERVFAIL`,
+never a fabricated negative answer or a fallthrough into a public source.
+Sequential candidate deadlines add up, so an outer resolver needs enough time
+for the inner chain. The [NextDNS example](./how-to/dns-private-upstream.md#nextdns-with-a-one-second-query-deadline)
+uses a one-second deadline and an explicit Cloudflare DoH alternative, which
+does not inherit NextDNS filtering/logging policy.
+
 ---
 
 ## 5. Event bus and controller chain

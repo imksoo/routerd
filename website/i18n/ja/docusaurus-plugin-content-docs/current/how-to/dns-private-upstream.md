@@ -139,6 +139,58 @@ DHCPv6 information-request で得た DNS サーバーを使うときの仕組み
     address: 8.8.8.8
 ```
 
+## NextDNS を優先し、1 秒で代替先を試す
+
+次のリソースを既存の `DNSResolver/lan-resolver` に接続します。
+ループバックだけで待ち受ける完全な設定例は
+[`examples/dns-nextdns-failover.yaml`](https://github.com/imksoo/routerd/blob/main/examples/dns-nextdns-failover.yaml)
+にあります。`YOUR_PROFILE_ID` は手元の設定だけで置き換えてください。
+
+```yaml
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: ["."]
+    queryTimeout: 1s
+    upstreams: [DNSUpstream/nextdns, DNSUpstream/cloudflare]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: nextdns
+  spec:
+    protocol: doh
+    address: dns.nextdns.io
+    path: /YOUR_PROFILE_ID
+    bootstrap: [1.1.1.1]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare
+  spec:
+    protocol: doh
+    address: cloudflare-dns.com
+    path: /dns-query
+    bootstrap: [1.1.1.1]
+```
+
+キャッシュにない問い合わせは、正常な NextDNS を優先します。
+1 秒で応答しない場合や通信が失敗した場合は、明示指定した Cloudflare DoH を試します。
+定期的なヘルスチェックの失敗回数がしきい値に達するまで待つ必要はありません。
+正当な `NXDOMAIN` などの応答では切り替えません。
+代替 DNS には **NextDNS のフィルタリング・ログ方針は適用されません**。
+
+`queryTimeout` は候補ごとの待ち時間なので、2 台の試行には約 2 秒とローカル処理時間が
+かかる場合があります。未指定時は従来の `healthcheck.timeout`、既定値は `3s` を使います。
+LAN → 中核リゾルバの構成では、外側の待ち時間を内側の全試行より長くしてください。
+全候補の失敗時はキャッシュしない `SERVFAIL` を返し、別の転送元や公開 DNS の
+既定転送先には進みません。
+
 ## プロバイダーの bootstrap
 
 一部のプライベート DNS プロバイダーは、リゾルバのエンドポイントを、そのプロバイダー自身のドメインで配布します。

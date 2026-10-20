@@ -137,6 +137,58 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
     address: 8.8.8.8
 ```
 
+## NextDNS with a one-second query deadline
+
+Use the following resources with an existing `DNSResolver/lan-resolver`.
+The complete, loopback-only example is
+[`examples/dns-nextdns-failover.yaml`](https://github.com/imksoo/routerd/blob/main/examples/dns-nextdns-failover.yaml).
+Replace `YOUR_PROFILE_ID` only in your local configuration.
+
+```yaml
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSForwarder
+  metadata:
+    name: default
+  spec:
+    resolver: DNSResolver/lan-resolver
+    match: ["."]
+    queryTimeout: 1s
+    upstreams: [DNSUpstream/nextdns, DNSUpstream/cloudflare]
+    healthcheck:
+      interval: 15s
+      timeout: 3s
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: nextdns
+  spec:
+    protocol: doh
+    address: dns.nextdns.io
+    path: /YOUR_PROFILE_ID
+    bootstrap: [1.1.1.1]
+- apiVersion: net.routerd.net/v1alpha1
+  kind: DNSUpstream
+  metadata:
+    name: cloudflare
+  spec:
+    protocol: doh
+    address: cloudflare-dns.com
+    path: /dns-query
+    bootstrap: [1.1.1.1]
+```
+
+For an uncached query, NextDNS is preferred when healthy. If it does not respond
+within one second, or the attempt fails, routerd tries the explicitly listed
+Cloudflare DoH endpoint. It does not wait for the background health-check
+failure threshold. A valid `NXDOMAIN` or other valid answer does not trigger a
+switch. Cloudflare does **not** apply your NextDNS filtering or logging policy.
+
+`queryTimeout` applies separately to each candidate; two attempts can take about
+two seconds plus local processing. Without it, `healthcheck.timeout` remains the
+query deadline (default `3s`). In a LAN → core chain, configure the outer timeout
+with room for the inner attempts. Exhausting the candidates returns uncached
+`SERVFAIL` without trying a different forwarder or public default source.
+
 ## Provider bootstrap
 
 Some private DNS providers serve their resolver endpoint from a domain that the resolver itself is going to use. If a host tries to resolve that provider name through the provider, the query loops or fails before the resolver is healthy.

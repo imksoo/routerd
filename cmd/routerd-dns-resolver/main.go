@@ -269,10 +269,12 @@ func buildRuntimeSources(config dnsresolver.RuntimeConfig) ([]runtimeSource, err
 		runtime := runtimeSource{Spec: source}
 		if source.Kind == "forward" || source.Kind == "upstream" {
 			timeout, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.Healthcheck.Timeout, "3s"))
+			queryTimeout, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.QueryTimeout, source.Healthcheck.Timeout, "3s"))
 			interval, _ := time.ParseDuration(stringutil.FirstNonEmpty(source.Healthcheck.Interval, "15s"))
 			pool, err := newUpstreamPool(source.Upstreams, upstreamPoolConfig{
 				ProbeInterval:     interval,
 				ProbeTimeout:      timeout,
+				QueryTimeout:      queryTimeout,
 				FailThreshold:     source.Healthcheck.FailThreshold,
 				PassThreshold:     source.Healthcheck.PassThreshold,
 				ViaInterface:      source.ViaInterface,
@@ -437,6 +439,16 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 	}
 	_ = w.WriteMsg(resp)
+	if err != nil && len(req.Question) > 0 {
+		client := w.RemoteAddr().String()
+		if host, _, splitErr := net.SplitHostPort(client); splitErr == nil {
+			client = host
+		}
+		d.publish("routerd.dns.query.failed", daemonapi.SeverityWarning, "DNSResolutionFailed", err.Error(), map[string]string{
+			"source": result.Upstream, "qname": req.Question[0].Name,
+			"qtype": dns.TypeToString[req.Question[0].Qtype], "clientAddress": client,
+		})
+	}
 	d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
 }
 
@@ -468,8 +480,9 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 				return resolveResult{Response: resp, Upstream: sourceName(source.Spec), ResponseCode: dns.RcodeToString[resp.Rcode]}, nil
 			}
 		case "forward", "upstream":
+			result := resolveResult{Upstream: sourceName(source.Spec)}
 			if source.Pool == nil {
-				continue
+				return result, fmt.Errorf("DNS source %q has no upstream pool", result.Upstream)
 			}
 			upstreamReq := req.Copy()
 			if source.Spec.DNSSECValidate {
@@ -477,19 +490,22 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			}
 			wire, err := upstreamReq.Pack()
 			if err != nil {
-				return resolveResult{}, err
+				return result, err
 			}
 			out, err := source.Pool.Exchange(context.Background(), wire, d.publish)
 			if err != nil {
-				continue
+				// Failover is limited to this source's explicitly configured
+				// upstreams. Falling through could leak a private query to a
+				// less-specific public source, or invent an NXDOMAIN response.
+				return result, fmt.Errorf("DNS source %q: %w", result.Upstream, err)
 			}
 			var resp dns.Msg
 			if err := resp.Unpack(out); err != nil {
-				return resolveResult{}, err
+				return result, err
 			}
 			if source.Spec.DNSSECValidate && !resp.AuthenticatedData {
 				d.publish("routerd.dns.resolver.dnssec.failed", daemonapi.SeverityWarning, "DNSSECValidationFailed", question.Name, map[string]string{"source": source.Spec.Name, "qname": question.Name})
-				continue
+				return result, fmt.Errorf("DNS source %q: DNSSEC validation failed", result.Upstream)
 			}
 			if config.Spec.Cache.Enabled {
 				d.cacheSet(cacheKey, out, dnsMessageTTL(&resp, config.Spec.Cache), config.Spec.Cache.MaxEntries, generation)

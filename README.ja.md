@@ -313,6 +313,14 @@ spec:
     - 10.0.0.0/8
 ```
 
+DNS 転送では、上流ごとの通常問い合わせ待ち時間を `queryTimeout` で指定できます。
+[NextDNS の設定例](examples/dns-nextdns-failover.yaml)では、NextDNS を優先し、
+1 秒で応答しない場合に明示指定した Cloudflare DoH を試します。
+正当な `NXDOMAIN` 応答では切り替えず、全候補の失敗時はキャッシュしない
+`SERVFAIL` を返します。代替 DNS には NextDNS のフィルタリング・ログ方針は
+適用されません。未指定時の互換動作と多段構成の待ち時間は
+[DNS リゾルバの説明](https://routerd.net/ja/docs/concepts/dns-resolver)を参照してください。
+
 ## 開発者向けビルド
 
 ソースからのビルドには Go 1.25.0 以降が必要です。`go.mod` は Go 1.25.9

@@ -237,6 +237,14 @@ user YAML; split old inline entries into `DNSForwarder` and `DNSUpstream`.
 `spec.upstreams` forwards to `DNSUpstream` resources. DNSSEC validation is
 declared on `DNSForwarder.spec.dnssecValidate`.
 
+`DNSForwarder.spec.queryTimeout` optionally sets a positive per-upstream query
+deadline such as `1s`. If omitted, ordinary queries inherit `healthcheck.timeout`
+(default `3s`). Alternatives must be listed explicitly in the same `upstreams`;
+timeouts or upstream failures can advance to the next candidate, but valid
+`NXDOMAIN` answers do not. Exhaustion returns uncached `SERVFAIL` without falling
+through to another forwarder. Candidate deadlines add up; outer resolvers in a
+chain need room for all inner attempts. See [DNS query deadlines](./concepts/dns-resolver.md#query-deadlines-and-explicit-alternatives).
+
 `DNSUpstream.spec.protocol` is `udp`, `tcp`, `dot`, or `doh`. `addressFrom`
 can derive UDP upstream addresses from resources such as
 `DHCPv6Information/<name>.dnsServers`. `sourceInterface` binds outgoing DNS

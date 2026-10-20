@@ -318,6 +318,7 @@ func (c Controller) attachForwarders(resolverName string, spec api.DNSResolverSp
 			Name:              resource.Metadata.Name,
 			Match:             append([]string(nil), forwarder.Match...),
 			DNSSECValidate:    forwarder.DNSSECValidate,
+			QueryTimeout:      forwarder.QueryTimeout,
 			Healthcheck:       forwarder.Healthcheck,
 			ZoneRef:           append([]string(nil), forwarder.ZoneRefs...),
 			BootstrapResolver: nil,

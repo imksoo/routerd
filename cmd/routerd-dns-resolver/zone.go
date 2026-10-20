@@ -487,6 +487,12 @@ func dnsCacheKey(localAddr string, req *dns.Msg) string {
 }
 
 func dnsMessageTTL(msg *dns.Msg, spec api.DNSResolverCacheSpec) time.Duration {
+	// Transient failures are not negative answers about a name's existence.
+	// In particular, never retain a downstream resolver's SERVFAIL using the
+	// configured NXDOMAIN/NODATA lifetime.
+	if msg == nil || (msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeNameError) {
+		return 0
+	}
 	ttl := uint32(60)
 	if len(msg.Answer) > 0 {
 		ttl = msg.Answer[0].Header().Ttl

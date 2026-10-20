@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://routerd.net/schemas/routerd-config-v1alpha1.schema.json
+# Replace YOUR_PROFILE_ID locally. The fallback does not apply NextDNS policies.
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: dns-nextdns-failover-example
+spec:
+  resources:
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSResolver
+    metadata:
+      name: lan-resolver
+    spec:
+      listen:
+      - addresses: [127.0.0.1]
+        port: 5053
+      cache:
+        enabled: true
+        negativeTTL: 30s
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSForwarder
+    metadata:
+      name: default
+    spec:
+      resolver: DNSResolver/lan-resolver
+      match: ["."]
+      queryTimeout: 1s
+      upstreams:
+      - DNSUpstream/nextdns
+      - DNSUpstream/cloudflare
+      healthcheck:
+        interval: 15s
+        timeout: 3s
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: nextdns
+    spec:
+      protocol: doh
+      address: dns.nextdns.io
+      path: /YOUR_PROFILE_ID
+      bootstrap: [1.1.1.1]
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: DNSUpstream
+    metadata:
+      name: cloudflare
+    spec:
+      protocol: doh
+      address: cloudflare-dns.com
+      path: /dns-query
+      bootstrap: [1.1.1.1]
