@@ -12,6 +12,17 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+This follow-up retains the DNS failure handling, explicit upstream failover, and HealthCheck route-status fixes from `v20261020.0007`.
+
+### Fixed
+
+- Pin the Web Console CI job to Ubuntu 24.04 because the locked Playwright 1.59.1 does not support Ubuntu 26.04.
+- Pin the native nDPI artifact build environment to Ubuntu 24.04 to address the `v20261020.0007` artifact's `x86-64-v3` requirement, which prevented it from starting on the target CPUs. The release smoke check now rejects native nDPI binaries whose ELF metadata declares `x86-64-v2`, `x86-64-v3`, or `x86-64-v4` as required.
+
+### Validation scope
+
+- Compatibility must be checked with the rebuilt native nDPI artifact's selftest and execution on the target CPUs; pinning the build environment alone does not establish host compatibility. The earlier DNS validation records below remain scoped to their original candidate binaries and observation windows.
+
 ## v20261020.0007
 
 ### Added

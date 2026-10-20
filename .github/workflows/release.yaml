@@ -159,7 +159,8 @@ jobs:
     name: Build native nDPI agent linux-amd64
     needs:
       - resolve-release
-    runs-on: ubuntu-latest
+    # Keep the native agent compatible with baseline x86-64 Ubuntu 24.04 hosts.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -177,7 +178,7 @@ jobs:
       - name: Install native nDPI build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y file libndpi-dev pkg-config
+          sudo apt-get install -y binutils file libndpi-dev pkg-config
 
       - name: Build native nDPI agent archive
         run: |
@@ -212,6 +213,12 @@ jobs:
           rm -rf "${work}"
           mkdir -p "${work}"
           tar -C "${work}" -xzf "dist/linux-amd64/${package}"
+          readelf --notes "${work}/bin/routerd-ndpi-agent" > "${work}/elf-notes.txt"
+          cat "${work}/elf-notes.txt"
+          if grep -Eq 'x86 ISA needed:.*x86-64-v[234]' "${work}/elf-notes.txt"; then
+            echo "native nDPI agent requires a CPU ISA newer than baseline x86-64" >&2
+            exit 1
+          fi
           "${work}/bin/routerd-ndpi-agent" selftest | grep -q '"libndpiLoaded":true'
 
       - name: Upload to draft release
