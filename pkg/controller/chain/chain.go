@@ -4340,8 +4340,11 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 	daemonObserved["health"] = observed.Health
 	next["observed"] = daemonObserved
 	if daemonObservedPromotesTopLevel(observed.Resource.Kind) && strings.TrimSpace(observed.Phase) != "" {
-		if observed.Resource.Kind == "HealthCheck" && strings.TrimSpace(fmt.Sprint(daemonObserved["lastResult"])) == healthcheck.ResultPassed {
-			clearRecoveredHealthCheckFailureStatus(next)
+		if observed.Resource.Kind == "HealthCheck" {
+			clearHealthCheckProbeRoute(next)
+			if strings.TrimSpace(fmt.Sprint(daemonObserved["lastResult"])) == healthcheck.ResultPassed {
+				clearRecoveredHealthCheckFailureStatus(next)
+			}
 		}
 		for key, value := range daemonObserved {
 			next[key] = value
@@ -4354,6 +4357,23 @@ func daemonObservedOnlyStatus(current, base map[string]any, observed daemonapi.R
 		delete(next, "reason")
 	}
 	return next
+}
+
+// Route evidence describes the latest probe, not a merge with earlier probes.
+// Optional fields disappear when a binding is removed or a route lookup fails.
+// Event-only network.* attributes remain in event history, not current status.
+func clearHealthCheckProbeRoute(status map[string]any) {
+	for _, key := range []string{
+		"via", "fwmark", "sourceInterface", "sourceAddress", "sourceOrigin",
+		"egressInterface", "nextHop", "outInterface", "routeSource", "tunnelLocal", "tunnelRemote",
+	} {
+		delete(status, key)
+	}
+	for key := range status {
+		if strings.HasPrefix(key, "network.") {
+			delete(status, key)
+		}
+	}
 }
 
 // clearRecoveredHealthCheckFailureStatus removes event-only failure details
