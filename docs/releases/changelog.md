@@ -12,6 +12,22 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Added
+
+- Add optional `queryTimeout` for each DNS upstream attempt, independently of background health checks. For example, `queryTimeout: 1s` can prefer NextDNS and try an explicitly configured alternative within the same source after a one-second timeout. Omitting it preserves the previous effective timeout. Valid NXDOMAIN answers remain final; an alternative DNS provider does not inherit NextDNS filtering or logging policies. (#1331)
+
+### Fixed
+
+- Return SERVFAIL instead of inventing NXDOMAIN when all configured DNS upstreams fail, and do not cache failure responses. Keep failover within the matched source's explicit upstream list, preventing unintended forwarding to another source. Validate response identity and retry truncated UDP responses over TCP to the same upstream within the original attempt deadline. (#1331)
+- Replace HealthCheck route status with the latest probe observation, removing obsolete bindings and stale `network.*` attributes from current status while retaining historical events. (#1330)
+- Make legacy SQLite ownership migration atomic and stop on evidence of an interrupted migration instead of accepting an uncertain ownership state. (#1327)
+- Do not negatively cache canceled or transient Web Console reverse-DNS failures. Make connection-tracking tuning summary reads cancelable and read-only, and clarify that the first-router tutorial must start the daemon before status checks. (#1327)
+
+### Validation scope
+
+- Integrated candidate `e5d7f978` passed 50 production DNS conditions on an existing HA pair and four isolated resolver cases covering timeout-to-alternative behavior, SERVFAIL with same-name recovery, valid NXDOMAIN without failover, and an actual Cloudflare DoH response after a controlled silent primary. During a roughly 176-second update observation, DNS passed 140/140 checks and external HTTP returned 204 on 35/35 checks; HA roles remained unchanged.
+- These observations cover the candidate binaries, not the newly rebuilt official release archives. Five-second sampling cannot exclude shorter interruptions, and this short validation does not establish that the approximately daily Android connectivity-switching symptom is resolved. The controlled upstream failure is not a reproduction of an actual NextDNS outage.
+
 ## v20261011.1822
 
 ### Fixed
