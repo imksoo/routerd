@@ -55,6 +55,14 @@ revoke、clean boot による空の admission store、別 active identity を区
 旧版／混在 RR、revoke、request failure では RR-only fallback を維持します。caller が応答を直接
 解釈せず、client/controller を使ってください。
 
+## 宣言したリソースの件数
+
+`Status.status.resourceCount` は、現在の実行時設定で宣言したリソースの件数です。
+`when` 条件を満たさないリソースや、それらを参照するために除外される関連リソースも含みます。
+起動時の観測、即時適用、適用失敗で集計範囲は変わりません。計画用に生成した項目は含みません。
+宣言を変更すると件数も変わりますが、冗長化の役割や観測方法だけでは変わりません。
+この値は構成の件数であり、リソースの稼働状態や通信の成功を示すものではありません。
+
 ## コントローラーの状態
 
 `Status.status.controllers` と `Controllers` エンドポイントは、コントローラーの設定上の

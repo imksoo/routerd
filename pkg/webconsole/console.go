@@ -23,7 +23,9 @@ import (
 )
 
 type Options struct {
-	Router                 *api.Router
+	Router *api.Router
+	// CurrentRouter supplies the current declaration for the status inventory count.
+	CurrentRouter          func() *api.Router
 	Store                  routerstate.Store
 	Result                 func() *apply.Result
 	Connections            func(limit int) (*observe.ConnectionTable, error)

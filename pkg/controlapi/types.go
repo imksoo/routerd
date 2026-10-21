@@ -576,10 +576,15 @@ func NewControllers(items []ControllerStatus) Controllers {
 	}
 }
 
-func NewStatus(result *apply.Result) Status {
+// NewStatus reports the declared resources in the current runtime configuration.
+// Apply results may describe a filtered graph, failed attempt, or derived plan.
+func NewStatus(result *apply.Result, router *api.Router) Status {
 	status := Status{
 		TypeMeta: TypeMeta{APIVersion: APIVersion, Kind: "Status"},
 		Metadata: ObjectMeta{Name: "routerd"},
+	}
+	if router != nil {
+		status.Status.ResourceCount = len(router.Spec.Resources)
 	}
 	if result == nil {
 		status.Status.Phase = "Unknown"
@@ -588,7 +593,6 @@ func NewStatus(result *apply.Result) Status {
 	status.Status.Phase = result.Phase
 	status.Status.Generation = result.Generation
 	status.Status.LastApplyTime = result.Timestamp
-	status.Status.ResourceCount = len(result.Resources)
 	return status
 }
 

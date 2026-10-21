@@ -548,7 +548,7 @@ func TestLogCommandsUseControlSocketByDefault(t *testing.T) {
 			if req.Subject != "status" {
 				t.Fatalf("subject = %q, want status", req.Subject)
 			}
-			result := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 7})
+			result := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 7}, nil)
 			get := controlapi.NewGetResult("status")
 			get.Status = &result.Status
 			get.Raw = result
