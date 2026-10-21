@@ -9,6 +9,8 @@ address before applying entry display limits. DS-Lite rows use the resource's
 observed innerLocalIPv4; shared addresses represent combined state, not unique
 tunnel attribution. Missing observations remain unknown, never an assumed zero.
 
+Lease synchronization records bounded failure diagnostics and recovery through the existing service logger, independently of the replaceable current resource status. Identical consecutive failures do not create repeated log entries or new bus events.
+
 This document is an introduction to routerd for operators and contributors. It covers the design intent and the major moving parts.
 For day-to-day usage, start with the [tutorials](./tutorials/getting-started.md) and the [how-to guides](./how-to/multi-wan.md).
 For resource definitions, see the [API reference](./api-v1alpha1.md).

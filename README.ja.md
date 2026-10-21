@@ -16,6 +16,8 @@ Linux amd64 と FreeBSD amd64 のビルド済みアーカイブは
 インストールとアップグレードは
 [日本語の導入手順](https://routerd.net/ja/docs/install-and-upgrade) を参照してください。
 
+リース同期の失敗理由は、復旧後もサービスログで確認できます。詳細は[リース同期の調査](https://routerd.net/ja/docs/how-to/dhcp-lease-sync)を参照してください。
+
 ## 最初は安全なラボから
 
 ネットワークに初めて触れる場合は、家庭・学校・職場で実際に使っている唯一の

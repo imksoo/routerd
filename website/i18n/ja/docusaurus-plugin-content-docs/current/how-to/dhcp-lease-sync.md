@@ -141,3 +141,28 @@ routerctl describe DHCPv4ServerLeaseSync/lan-v4-leases
 node が master ではない場合、`routerd serve` は `spec.when` によりこの resource を
 除外します。master で lease file が存在する場合、status は `Synced` へ進みます。
 lease file がまだ無い場合は、dnsmasq が作成するまで `Pending` のままです。
+
+## 復旧した同期失敗の調査
+
+3種類のリース同期では、既存のサービスログへ `DHCP lease synchronization failed` を記録します。
+リソース、失敗理由、転送元ファイル、転送先、コマンド名、エラー、処理の出力を確認できます。
+取得できた場合は、終了コードを `exitCode` に記録します。値が `-1` の場合は通常の終了コードがありません。
+時間切れは `timedOut`、キャンセルは `canceled` で区別します。設定の不備やファイル情報の取得失敗も記録します。
+
+同期が復旧した後も、次のコマンドでサービスログを確認できます。
+
+```sh
+journalctl -u routerd.service --since '1 hour ago' --no-pager | grep 'DHCP lease synchronization'
+```
+
+診断用の文字列は、各項目の末尾4096バイト以内を保持し、有効なUTF-8を維持します。
+切り詰めた項目には `<field>Truncated=true` を記録します。
+完全なコマンド引数、SSHオプション、リースの内容を明示的に記録する処理は追加しません。
+外部処理の診断出力にはパスや端末名が含まれ得るため、通常のログと同様にアクセスを管理してください。
+同じ失敗が連続する場合は、最初の1件を記録します。詳細が変わった場合や復旧後の再発は再び記録します。
+復旧時の記録は `DHCP lease synchronization recovered` です。
+失敗ログは状態の保存より先に出力するため、状態の保存に失敗しても元の転送エラーを記録できます。
+
+保存期間は既存のサービスログの設定に従います。新しいログファイル、常駐収集処理、状態変更イベントは追加しません。
+復旧後の現在の状態は、従来どおり `Synced` です。同期間隔、再試行、時間制限、転送動作も維持します。
+リース同期の失敗は相手機への状態コピーの問題であり、それだけでDHCP応答の失敗とは判断できません。
