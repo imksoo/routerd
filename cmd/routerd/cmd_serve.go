@@ -731,7 +731,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths("/run/routerd/dnsmasq.conf")); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath)); err != nil {
 				return err
 			}
 		}

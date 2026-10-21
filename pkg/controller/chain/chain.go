@@ -2280,7 +2280,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunPPPoESession, Logger: logger}
 	defaults, features := platform.Current()
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync}
 	nat44SessionSync := NAT44SessionSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunNAT44SessionSync}
