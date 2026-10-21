@@ -34,7 +34,7 @@ var (
 	defaultFreeBSDDHClientPath  = platformDefaults.FreeBSDDHClientConfigFile
 	defaultFreeBSDMPD5Path      = platformDefaults.FreeBSDMPD5ConfigFile
 	defaultFreeBSDPFPath        = platformDefaults.FreeBSDPFConfigFile
-	defaultNftablesPath         = platformDefaults.NftablesFile
+	defaultNftablesPath         = platformDefaults.ManagedNftablesFile()
 	defaultRouteNftablesPath    = platformDefaults.DefaultRouteNftablesFile
 	defaultTimesyncdPath        = platformDefaults.TimesyncdDropinFile
 	defaultLedgerPath           = platformDefaults.DBFile()

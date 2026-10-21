@@ -301,6 +301,8 @@ For details, see [reconcile loop behaviour](./operations/reconcile).
 
 ## 6. Operating the configuration file
 
+On Linux, apply and serve share `/run/routerd/nat44.nft` and honor the same explicit `--nftables-file` path. The file is regenerated from persistent router configuration after boot.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```

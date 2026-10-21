@@ -384,6 +384,8 @@ Managed daemons expose the same local contract:
 
 ## Platform Notes
 
+On Linux, apply and serve share `/run/routerd/nat44.nft` and honor the same explicit `--nftables-file` path. The file is regenerated from persistent router configuration after boot.
+
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
 the resource model but remain second-tier: some native renderers and service
 integration are groundwork rather than feature parity. The live ISO uses Ubuntu

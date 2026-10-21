@@ -152,6 +152,15 @@ func (d Defaults) FirewallLogFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/firewall-logs.db"
 }
 
+// ManagedNftablesFile returns the NAT artifact shared by apply and serve.
+// The canonical NftablesFile remains available for legacy ownership checks.
+func (d Defaults) ManagedNftablesFile() string {
+	if d.OS == OSLinux {
+		return strings.TrimRight(d.RuntimeDir, "/") + "/nat44.nft"
+	}
+	return d.NftablesFile
+}
+
 // DnsmasqLeaseFile returns the default managed dnsmasq lease file path.
 func (d Defaults) DnsmasqLeaseFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/dnsmasq/dnsmasq.leases"
