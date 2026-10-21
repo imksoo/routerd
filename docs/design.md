@@ -306,6 +306,8 @@ On Linux, one-shot apply and the continuous controller share
 so applying an unrelated change does not switch the DHCP/RA service between
 canonical and runtime config files. FreeBSD keeps its canonical config default.
 
+On Linux, apply and serve share `/run/routerd/nat44.nft` and honor the same explicit `--nftables-file` path. The file is regenerated from persistent router configuration after boot.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```

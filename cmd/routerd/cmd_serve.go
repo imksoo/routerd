@@ -581,7 +581,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
 		DnsmasqPort:            53,
 		DnsmasqListen:          []string{"127.0.0.1"},
-		NftablesPath:           "/run/routerd/nat44.nft",
+		NftablesPath:           *nftablesPath,
 		FirewallPath:           "/run/routerd/firewall.nft",
 		LedgerPath:             *ledgerPath,
 		NftCommand:             "nft",
