@@ -11,6 +11,8 @@ routerd 的版本歷程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261021.2005
+
 ### Fixed
 
 - DHCPv4 租約同步不再傳輸 SQLite 暫時共享記憶體索引，由接收端重新產生。資料庫或 WAL 的傳輸失敗仍會記錄為錯誤。 (#1354)

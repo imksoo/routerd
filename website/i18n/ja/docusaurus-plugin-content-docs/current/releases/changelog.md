@@ -11,6 +11,8 @@ routerd のリリース履歴です。形式は [Keep a Changelog](https://keepa
 
 ## Unreleased
 
+## v20261021.2005
+
 ### Fixed
 
 - DHCPv4のリース同期からSQLiteの一時的な共有メモリー索引を除外し、転送中の削除による失敗を防ぎます。
