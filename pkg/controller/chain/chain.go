@@ -6437,7 +6437,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var lines []string
+	var lines, ipv4Ifnames, ipv6Ifnames []string
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Server" {
 			continue
@@ -6455,6 +6455,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname)
+		ipv4Ifnames = append(ipv4Ifnames, ifname)
 		lines = append(lines, "dhcp-script=/usr/local/libexec/routerd/dhcp-event-relay")
 		start := stringutil.FirstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
 		end := stringutil.FirstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
@@ -6567,6 +6568,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
 		lines = append(lines, "interface="+ifname, "enable-ra")
+		ipv6Ifnames = append(ipv6Ifnames, ifname)
 		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
 		switch stringutil.FirstNonEmpty(spec.Mode, "stateless") {
 		case "stateful":
@@ -6605,6 +6607,7 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			ifname = spec.Interface
 		}
 		lines = append(lines, "interface="+ifname, "enable-ra")
+		ipv6Ifnames = append(ipv6Ifnames, ifname)
 		var params []string
 		mtu := chainFirstNonZero(raMTUByScope[resource.Metadata.Name], spec.MTU)
 		if mtu != 0 {
@@ -6647,7 +6650,11 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
+			ipv4Ifnames = append(ipv4Ifnames, ifname)
 		}
+	}
+	for _, ifname := range render.DnsmasqIPv6OnlyInterfaces(ipv4Ifnames, ipv6Ifnames) {
+		lines = append(lines, "no-dhcpv4-interface="+ifname)
 	}
 	return lines, nil
 }

@@ -358,6 +358,16 @@ controller-chain units explicitly.
 
 ---
 
+
+### DHCP address-family isolation
+
+Generated dnsmasq configuration disables DHCPv4 on interfaces used only for
+DHCPv6 or IPv6 router advertisements with `no-dhcpv4-interface`. This prevents
+irrelevant IPv4-address warnings when a broadcast also reaches an IPv6-only
+virtual interface. DHCPv6 and router advertisements remain enabled. Interfaces
+with an emitted DHCPv4 server scope or relay retain DHCPv4, including resources
+that use different aliases for the same OS interface.
+
 ## 8. Related documents
 
 - [What is routerd](./concepts/what-is-routerd.md)
