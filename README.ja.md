@@ -386,6 +386,8 @@ sudo routerctl plugin run <name> --dry-run
 
 ## プラットフォーム
 
+模擬適用と隔離環境での起動では、ログ保持処理を実行しません。外部のログデータベースの削除・転送・最適化と、既定のイベント履歴の削除も対象です。実際の削除が完了したという状態は記録しません。
+
 もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
 リソースモデルを使いますが、native renderer と service integration の一部は
 まだ groundwork で、機能同等ではありません。ライブ ISO は Ubuntu ベースで、

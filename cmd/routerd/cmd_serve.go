@@ -1279,6 +1279,7 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunBridge = true
 	opts.DryRunVXLANTunnel = true
 	opts.DryRunServiceUnit = true
+	opts.DryRunLogRetention = true
 	opts.DnsmasqConfig = dnsmasqConfigPath
 	sandboxDir := platformDefaults.RuntimeDir
 	if strings.TrimSpace(dnsmasqConfigPath) != "" {

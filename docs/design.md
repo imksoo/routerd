@@ -301,6 +301,8 @@ For details, see [reconcile loop behaviour](./operations/reconcile).
 
 ## 6. Operating the configuration file
 
+Dry-run apply and sandbox serve skip log retention, including external log databases, archival, vacuum, and default journal pruning. They do not report live retention as applied.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```
