@@ -145,3 +145,73 @@ When the node is not master, `routerd serve` filters the resource through
 `spec.when`. When the node is master and the lease file exists, status should
 move to `Synced`; if the lease file is missing, it stays `Pending` until dnsmasq
 creates it.
+
+## Callback recovery across routerd restarts
+
+The managed dnsmasq hook is a symlink to `routerd-dhcp-event-relay` with no
+additional arguments. It commits each callback to
+`<platform StateDir>/dhcp-events/pending.db` before exiting; it no longer needs
+a running control socket. Linux uses `/var/lib/routerd`, FreeBSD uses
+`/var/db/routerd`, and a serve sandbox uses its own platform state directory.
+Configuration paths, runtime socket paths, and `--state-file` do not redefine
+this shared directory. `--state-file` still selects only the main state DB.
+No additional service or dnsmasq configuration change is required.
+
+A manual relay invocation with explicit `--socket` keeps HTTP transport and
+uses the receiving daemon's queue. It does not write a second local queue or
+retry through a different transport. An unavailable socket therefore remains
+an explicit failure. Use this API mode to target a sandbox or a daemon with a
+custom socket, rather than inferring persistence paths from that socket.
+
+Bounds and ownership:
+
+- The producer has a 3-second operation deadline and a 4-second process ceiling.
+  SQLite lock waits are 100 milliseconds. Storage failures and queue exhaustion
+  return nonzero; a successful callback means a committed queue record.
+- The queue holds at most 4,096 pending callbacks. Its database ceiling is 8 MiB;
+  DELETE journaling also bounds the rollback journal by the database size.
+  MAC, IP, and interface fields allow 64 bytes each, hostname allows 253 bytes,
+  and the encoded payload allows 2,048 bytes.
+- The queue directory is mode 0700 and files are 0600, owned by the executing
+  user (root for production routerd/dnsmasq). Symlinks, hardlinked files,
+  nonprivate modes, or a different owner are rejected. Existing directories
+  are not silently chmodded. No queue is created by an idle serve startup.
+- One consumer in the existing serve process drains FIFO order. A file lock
+  excludes a second consumer without holding a SQLite transaction during event
+  processing. Failure retains the head and does not stop routing controllers.
+  Repair a full/unwritable/corrupt store before expecting the queue to drain.
+  Do not delete or replace the queue while routerd is running.
+- Pending callbacks are local to a node and are not replicated by lease sync.
+  Preserve the directory in backups; do not replay both nodes' queues on one
+  node. This is restart recovery, not delivery after destruction of that disk.
+
+Sticky metadata and the durable journal are processed before removal from the
+queue. A crash between journal commit and queue deletion may repeat a history
+record. Original observation times are preserved in `attributes.observedAt`;
+the journal's `createdAt` remains ingestion time. Equal-time retries do not
+extend sticky retention. Newer lease observations, including copied HA state
+and a different MAC on the same IP, prevent older metadata from taking over.
+`stickyHoldDays: 0` still records ordering metadata with `sticky_until=0` and
+never creates a held reservation.
+
+Callbacks captured before the consumer starts are historical. For IPv4, the
+consumer uses the same explicit/default `leaseFile` selection as dnsmasq. It
+forwards additions/renewals to live DNS only when MAC, IP, hostname, and lease
+validity still match; it forwards removal only when that IP has no active
+lease. Missing, unreadable, malformed, or oversized lease files retain the
+callback for a later attempt. A confirmed mismatch is journaled as
+`history-only-lease-state-changed`. With no configured DHCP source it is
+`history-only-no-dhcp-source`. Historical IPv6 identity mapping is not inferred
+from IPv4-style fields: such callbacks are journaled as
+`history-only-unverified-dhcpv6-identity`, without changing current metadata or
+DNS. Fresh IPv4/IPv6 callbacks retain normal delivery.
+
+Historical notifications carry `replayed=true` and never renew or withdraw
+mobility ownership. Ownership waits for a fresh observation or existing expiry
+processing; this change does not add a lease-file rescan to mobility discovery.
+Fresh DHCP notifications preserve their original observation time there too.
+These safeguards intentionally restore audit without applying uncertain old
+state to live consumers. Local subscriber delivery is still best effort; the
+queue does not provide acknowledgements from every DNS or mobility consumer.
+Callbacks lost before this version were never queued and cannot be recovered
+from this mechanism.
