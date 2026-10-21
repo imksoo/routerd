@@ -258,11 +258,12 @@ func (c FileSyncController) dhcpv4StickyLogFiles(resourceName string) []fileSync
 		if err != nil || spec.StickyHoldDays <= 0 {
 			return nil
 		}
+		// SQLite rebuilds its machine-local WAL index (-shm) from the WAL.
+		// It may vanish when the last connection closes; never replicate it.
 		path := defaultDHCPStickyLogFile()
 		return []fileSyncSource{
 			{Name: "stickyLog", Path: path},
 			{Name: "stickyLogWAL", Path: path + "-wal"},
-			{Name: "stickyLogSHM", Path: path + "-shm"},
 		}
 	}
 	return nil

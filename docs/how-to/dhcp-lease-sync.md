@@ -245,3 +245,5 @@ do not add a log file, background collector, or status-change event. Current
 resource status still changes to `Synced` on recovery. Sync cadence, retries,
 timeouts and transfer behavior are unchanged. A sync failure concerns copying
 state to the peer and does not by itself prove a DHCP response failure.
+
+DHCPv4 sticky lease synchronization copies the SQLite database and WAL, but excludes the transient, machine-local `-shm` index. SQLite reconstructs that index on the receiver. Database and WAL transfer failures remain errors; this does not provide an atomic snapshot of concurrent database writes.
