@@ -391,6 +391,8 @@ FreeBSDでは従来の設定パスを維持します。
 
 ## プラットフォーム
 
+Linuxでは、設定適用処理と常駐処理が`/run/routerd/nat44.nft`を共有します。`--nftables-file`の明示指定も両処理で使用します。このファイルは、永続化したルーター設定から起動後に再生成します。
+
 もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
 リソースモデルを使いますが、native renderer と service integration の一部は
 まだ groundwork で、機能同等ではありません。ライブ ISO は Ubuntu ベースで、

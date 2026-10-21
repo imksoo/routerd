@@ -55,6 +55,8 @@ routerd --version
 
 ## 更新する
 
+Linuxでは、設定適用処理と常駐処理が`/run/routerd/nat44.nft`を共有します。`--nftables-file`の明示指定も両処理で使用します。このファイルは、永続化したルーター設定から起動後に再生成します。
+
 更新時には、現行routerdが生成した`routerd.service`を保持します。
 `Managed by routerd`というコメントだけでは旧形式と判断しません。
 削除済みの`--controller-chain`を含むunitは移行対象です。
