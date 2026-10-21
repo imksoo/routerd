@@ -393,6 +393,8 @@ On Linux, apply and serve share `/run/routerd/nat44.nft` and honor the same expl
 
 Dry-run apply and sandbox serve skip log retention, including external log databases, archival, vacuum, and default journal pruning. They do not report live retention as applied. NTP client and server controllers also skip configuration writes and service operations in dry-run.
 
+BGP sockets and applied state use platform directories consistently. Explicit BGP paths in serve also reach immediate apply and the generated Linux daemon unit.
+
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
 the resource model but remain second-tier: some native renderers and service
 integration are groundwork rather than feature parity. The live ISO uses Ubuntu

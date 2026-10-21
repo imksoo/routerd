@@ -2,15 +2,24 @@
 
 package render
 
-import "github.com/imksoo/routerd/pkg/api"
+import (
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
+)
 
 const BGPUnitName = "routerd-bgp.service"
 
 func BGPSystemdSpec(socketPath string) api.SystemdUnitSpec {
+	defaults, _ := platform.Current()
+	_, control, state := defaults.BGPPaths()
+	return BGPSystemdSpecWithPaths(socketPath, control, state)
+}
+
+func BGPSystemdSpecWithPaths(socketPath, controlSocketPath, statePath string) api.SystemdUnitSpec {
 	noNewPrivileges := true
 	return api.SystemdUnitSpec{
 		Description:              "routerd BGP daemon",
-		ExecStart:                []string{"/usr/local/sbin/routerd-bgp", "daemon", "--socket", socketPath, "--control-socket", "/run/routerd/bgp/control.sock", "--state-file", "/var/lib/routerd/bgp/applied.json"},
+		ExecStart:                []string{"/usr/local/sbin/routerd-bgp", "daemon", "--socket", socketPath, "--control-socket", controlSocketPath, "--state-file", statePath},
 		Wants:                    []string{"network-online.target"},
 		After:                    []string{"network-online.target"},
 		WantedBy:                 []string{"multi-user.target"},

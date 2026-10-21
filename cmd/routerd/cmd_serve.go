@@ -502,18 +502,21 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	applyOpts := applyOptions{
-		ConfigPath:         *configPath,
-		StatusFile:         *statusFile,
-		NetplanPath:        *netplanPath,
-		DnsmasqConfigPath:  *dnsmasqConfigPath,
-		DnsmasqServicePath: runtimeDnsmasqServicePath(*dnsmasqServicePath),
-		NftablesPath:       *nftablesPath,
-		LedgerPath:         *ledgerPath,
-		StatePath:          *statePath,
-		SkipConfigCommit:   bootFallback.Used,
-		DryRun:             *sandbox,
-		SkipServiceManager: *sandbox,
-		Sandbox:            *sandbox,
+		ConfigPath:           *configPath,
+		StatusFile:           *statusFile,
+		NetplanPath:          *netplanPath,
+		DnsmasqConfigPath:    *dnsmasqConfigPath,
+		DnsmasqServicePath:   runtimeDnsmasqServicePath(*dnsmasqServicePath),
+		NftablesPath:         *nftablesPath,
+		LedgerPath:           *ledgerPath,
+		StatePath:            *statePath,
+		BGPSocketPath:        *bgpSocketPath,
+		BGPControlSocketPath: *bgpControlSocketPath,
+		BGPStatePath:         *bgpStatePath,
+		SkipConfigCommit:     bootFallback.Used,
+		DryRun:               *sandbox,
+		SkipServiceManager:   *sandbox,
+		Sandbox:              *sandbox,
 	}
 	if bootFallback.Used {
 		configYAML, ok, err := stateStore.GenerationConfig(bootFallback.Generation)
@@ -1128,9 +1131,7 @@ func publishVRRPTransitionSignals(ctx context.Context, signals <-chan os.Signal,
 }
 
 func bgpServeDefaultPaths(defaults platform.Defaults) (socket, controlSocket, state string) {
-	return filepath.Join(defaults.RuntimeDir, "bgp", "gobgp.sock"),
-		filepath.Join(defaults.RuntimeDir, "bgp", "control.sock"),
-		filepath.Join(defaults.StateDir, "bgp", "applied.json")
+	return defaults.BGPPaths()
 }
 
 const sandboxDefaultRouterYAML = `apiVersion: routerd.net/v1alpha1

@@ -35,6 +35,7 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -687,13 +688,15 @@ func (c *Controller) daemonSpec() manageddaemon.Spec {
 }
 
 func DefaultDaemonSpec() manageddaemon.Spec {
+	defaults, _ := platform.Current()
+	socket, controlSocket, state := defaults.BGPPaths()
 	return manageddaemon.Spec{
 		Name:              "routerd-bgp",
 		Binary:            "routerd-bgp",
 		UnitName:          "routerd-bgp.service",
-		SocketPath:        "/run/routerd/bgp/gobgp.sock",
-		ControlSocketPath: "/run/routerd/bgp/control.sock",
-		StatePath:         "/var/lib/routerd/bgp/applied.json",
+		SocketPath:        socket,
+		ControlSocketPath: controlSocket,
+		StatePath:         state,
 	}
 }
 

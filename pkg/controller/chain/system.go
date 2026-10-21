@@ -345,6 +345,24 @@ type SystemdUnitController struct {
 	// isolated controller tests; normal runtime uses platform.Current().
 	StateDir                    string
 	SynthesizeClientDaemonUnits bool
+	BGPSocketPath               string
+	BGPControlSocketPath        string
+	BGPStatePath                string
+}
+
+func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.SystemdUnitSpec {
+	socket, control, state := defaults.BGPPaths()
+	if c.BGPSocketPath != "" {
+		socket = c.BGPSocketPath
+		control = filepath.Join(filepath.Dir(socket), "control.sock")
+	}
+	if c.BGPControlSocketPath != "" {
+		control = c.BGPControlSocketPath
+	}
+	if c.BGPStatePath != "" {
+		state = c.BGPStatePath
+	}
+	return render.BGPSystemdSpecWithPaths(socket, control, state)
 }
 
 // RenderRouterdServiceSystemdUnit returns the routerd.service content that
@@ -391,7 +409,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if routerHasBGP(c.Router) {
-			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", render.BGPSystemdSpec("/run/routerd/bgp/gobgp.sock"), command); err != nil {
+			if err := c.reconcileLongLivedSystemdHelperUnit(ctx, render.BGPUnitName, "Router/"+c.Router.Metadata.Name+"/BGPRouter", c.bgpSystemdSpec(defaults), command); err != nil {
 				return err
 			}
 		} else {
