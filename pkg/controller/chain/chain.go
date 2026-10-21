@@ -2269,7 +2269,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
 	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
-	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits}
+	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}

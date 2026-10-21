@@ -310,6 +310,8 @@ On Linux, apply and serve share `/run/routerd/nat44.nft` and honor the same expl
 
 Dry-run apply and sandbox serve skip log retention, including external log databases, archival, vacuum, and default journal pruning. They do not report live retention as applied. NTP client and server controllers also skip configuration writes and service operations in dry-run.
 
+BGP sockets and applied state share platform defaults across serve, apply, the daemon, and service generation. Explicit serve paths are carried into immediate apply and the Linux unit.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```

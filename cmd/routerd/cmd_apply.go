@@ -70,26 +70,29 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 }
 
 type applyOptions struct {
-	ConfigPath          string
-	StatusFile          string
-	NetplanPath         string
-	DnsmasqConfigPath   string
-	DnsmasqServicePath  string
-	NftablesPath        string
-	LedgerPath          string
-	StatePath           string
-	OverrideClient      string
-	OverrideProfile     string
-	DryRun              bool
-	SkipServiceManager  bool
-	AllowMgmtLockout    bool
-	AnnounceDryRunToCLI bool
-	MgmtLockoutWriter   io.Writer
-	SkipConfigCommit    bool
-	ConfigYAMLOverride  string
-	Sandbox             bool
-	MutationGate        *sync.RWMutex
-	attemptHooks        *applyAttemptHooks
+	ConfigPath           string
+	StatusFile           string
+	NetplanPath          string
+	DnsmasqConfigPath    string
+	DnsmasqServicePath   string
+	NftablesPath         string
+	LedgerPath           string
+	StatePath            string
+	BGPSocketPath        string
+	BGPControlSocketPath string
+	BGPStatePath         string
+	OverrideClient       string
+	OverrideProfile      string
+	DryRun               bool
+	SkipServiceManager   bool
+	AllowMgmtLockout     bool
+	AnnounceDryRunToCLI  bool
+	MgmtLockoutWriter    io.Writer
+	SkipConfigCommit     bool
+	ConfigYAMLOverride   string
+	Sandbox              bool
+	MutationGate         *sync.RWMutex
+	attemptHooks         *applyAttemptHooks
 }
 
 func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
@@ -807,6 +810,9 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		LedgerPath:             defaultString(opts.LedgerPath, defaultLedgerPath),
 		NftCommand:             "nft",
 		ConntrackInterval:      30 * time.Second,
+		BGPSocketPath:          opts.BGPSocketPath,
+		BGPControlSocketPath:   opts.BGPControlSocketPath,
+		BGPStatePath:           opts.BGPStatePath,
 		MutationGate:           opts.MutationGate,
 	}
 	if opts.DryRun {

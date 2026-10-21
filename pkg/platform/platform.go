@@ -2,7 +2,10 @@
 
 package platform
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // OS identifies the host operating system family routerd is running on.
 type OS string
@@ -187,6 +190,14 @@ func DnsmasqLeaseCandidates(d Defaults, f Features) []string {
 		return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
 	}
 	return []string{d.DnsmasqLeaseFile(), d.RuntimeDnsmasqLeaseFile(), "/var/lib/misc/dnsmasq.leases"}
+}
+
+// BGPPaths returns the sockets and durable applied-state file shared by the
+// CLI, controller, and managed daemon.
+func (d Defaults) BGPPaths() (socket, controlSocket, state string) {
+	return filepath.Join(d.RuntimeDir, "bgp", "gobgp.sock"),
+		filepath.Join(d.RuntimeDir, "bgp", "control.sock"),
+		filepath.Join(d.StateDir, "bgp", "applied.json")
 }
 
 // ConfigFile returns the default router.yaml path.
