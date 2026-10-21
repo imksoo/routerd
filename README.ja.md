@@ -386,6 +386,8 @@ sudo routerctl plugin run <name> --dry-run
 
 ## プラットフォーム
 
+BGPのソケットと保存済み設定には、OSごとの配置先を一貫して使用します。常駐処理で明示指定したパスは、即時の設定適用とLinuxのサービス定義にも反映します。
+
 もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
 リソースモデルを使いますが、native renderer と service integration の一部は
 まだ groundwork で、機能同等ではありません。ライブ ISO は Ubuntu ベースで、

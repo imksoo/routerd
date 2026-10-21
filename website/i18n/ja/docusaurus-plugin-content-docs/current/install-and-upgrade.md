@@ -50,6 +50,8 @@ routerd --version
 
 ## 更新する
 
+BGPの保存済み設定は永続領域に置き、ソケットは実行時の領域に置きます。常駐処理で明示指定したパスは、即時の設定適用とLinuxのサービス定義にも反映します。
+
 更新時には、現行routerdが生成した`routerd.service`を保持します。
 `Managed by routerd`というコメントだけでは旧形式と判断しません。
 削除済みの`--controller-chain`を含むunitは移行対象です。

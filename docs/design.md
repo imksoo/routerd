@@ -301,6 +301,8 @@ For details, see [reconcile loop behaviour](./operations/reconcile).
 
 ## 6. Operating the configuration file
 
+BGP sockets and applied state share platform defaults across serve, apply, the daemon, and service generation. Explicit serve paths are carried into immediate apply and the Linux unit.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```

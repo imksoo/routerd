@@ -30,12 +30,14 @@ import (
 
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/version"
 )
 
-const defaultSocketPath = "/run/routerd/bgp/gobgp.sock"
-const defaultControlSocketPath = "/run/routerd/bgp/control.sock"
-const defaultStatePath = "/var/lib/routerd/bgp/applied.json"
+var defaultSocketPath, defaultControlSocketPath, defaultStatePath = func() (string, string, string) {
+	defaults, _ := platform.Current()
+	return defaults.BGPPaths()
+}()
 
 // Keep shutdown bounded even when a control request or a GoBGP peer goroutine
 // does not drain.  The service manager can then complete a host power-down

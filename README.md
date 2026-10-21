@@ -384,6 +384,8 @@ Managed daemons expose the same local contract:
 
 ## Platform Notes
 
+BGP sockets and applied state use platform directories consistently. Explicit BGP paths in serve also reach immediate apply and the generated Linux daemon unit.
+
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
 the resource model but remain second-tier: some native renderers and service
 integration are groundwork rather than feature parity. The live ISO uses Ubuntu
