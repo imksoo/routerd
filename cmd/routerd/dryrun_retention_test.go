@@ -43,6 +43,9 @@ func TestApplyDryRunPreservesExternalLogDatabase(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.LogRetentionSpec{Schedule: "daily", Vacuum: true, Signals: []string{"dnsQueries"}, Retention: "24h"}},
 	}}}
 	opts := applyChainControllerOptions(applyOptions{DryRun: true})
+	if !opts.DryRunNTP {
+		t.Fatal("apply dry-run did not disable NTP mutations")
+	}
 	opts.EnabledControllers = []string{"log-retention"}
 	runner := controllerchain.Runner{Router: router, Bus: bus.New(), Store: store, Opts: opts}
 	if err := runner.ReconcileOnce(context.Background()); err != nil {

@@ -1247,6 +1247,7 @@ type Options struct {
 	DryRunVXLANTunnel       bool
 	DryRunServiceUnit       bool
 	DryRunLogRetention      bool
+	DryRunNTP               bool
 	SuperviseClientDaemons  bool
 	// SkipLegacyClientUnits keeps a one-shot reconciliation from creating
 	// per-resource service units when client lifecycle belongs to routerd serve.
@@ -1275,6 +1276,11 @@ type Options struct {
 	ProviderInventoryRunner providerinventory.Runner
 	PeerGroupSyncClient     *mobilitycontroller.PeerGroupSyncClient
 	MutationGate            *sync.RWMutex
+}
+
+func ntpControllersForOptions(router *api.Router, eventBus *bus.Bus, store Store, opts Options) (NTPClientController, NTPServerController) {
+	return NTPClientController{Router: router, DeclaredRouter: router, Bus: eventBus, Store: store, DryRun: opts.DryRunNTP},
+		NTPServerController{Router: router, DeclaredRouter: router, Bus: eventBus, Store: store, DryRun: opts.DryRunNTP}
 }
 
 type Runner struct {
@@ -2251,6 +2257,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunVXLANTunnel = true
 		opts.DryRunServiceUnit = true
 		opts.DryRunLogRetention = true
+		opts.DryRunNTP = true
 	}
 	// Keep Runner.Opts immutable across generations. Standby dry-run flags are
 	// effective only for this generation and must not poison a later leader
@@ -2264,8 +2271,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
 	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
-	ntpClient := NTPClientController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store}
-	ntpServer := NTPServerController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store}
+	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
 	info := DHCPv6InformationController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, Logger: logger}
 	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}

@@ -384,7 +384,7 @@ Managed daemons expose the same local contract:
 
 ## Platform Notes
 
-Dry-run apply and sandbox serve skip log retention, including external log databases, archival, vacuum, and default journal pruning. They do not report live retention as applied.
+Dry-run apply and sandbox serve skip log retention, including external log databases, archival, vacuum, and default journal pruning. They do not report live retention as applied. NTP client and server controllers also skip configuration writes and service operations in dry-run.
 
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
 the resource model but remain second-tier: some native renderers and service
