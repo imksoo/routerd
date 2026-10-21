@@ -40,8 +40,9 @@ type Controller struct {
 	DryRun bool
 	Binary string
 
-	RuntimeDir string
-	StateDir   string
+	RuntimeDir    string
+	StateDir      string
+	DHCPHostsPath string
 }
 
 func (c Controller) Start(ctx context.Context) {
@@ -135,7 +136,11 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	servedZones := dnsResolverZoneRefs(spec)
 	autoRecords := c.hostnameRecordsForResolver(servedZones)
 	runtimeDir, _ := c.dirs()
-	hostData, hostReadErr := os.ReadFile(filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"))
+	hostsPath := c.DHCPHostsPath
+	if hostsPath == "" {
+		hostsPath = filepath.Join(runtimeDir, "dnsmasq-hosts.hosts")
+	}
+	hostData, hostReadErr := os.ReadFile(hostsPath)
 	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
 		return config, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}

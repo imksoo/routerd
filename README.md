@@ -382,6 +382,11 @@ Managed daemons expose the same local contract:
 - `GET /v1/events?since=<cursor>&wait=<duration>`
 - `POST /v1/commands/<command>`
 
+On Linux, one-shot apply and the continuous controller share
+`/run/routerd/dnsmasq.conf`. Both honor an explicit `--dnsmasq-file` path,
+so applying an unrelated change does not switch the DHCP/RA service between
+canonical and runtime config files. FreeBSD keeps its canonical config default.
+
 ## Platform Notes
 
 Ubuntu Server is the most exercised deployment target. NixOS and FreeBSD share
