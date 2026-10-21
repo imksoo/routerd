@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
@@ -48,6 +49,7 @@ type fileSyncTarget struct {
 }
 
 type FileSyncController struct {
+	Logger  *slog.Logger
 	Router  *api.Router
 	Store   Store
 	DryRun  bool
@@ -126,9 +128,10 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 			args := fileSyncRsyncArgs(source, target, len(job.Sources))
 			runCtx, cancel := fileSyncCommandContext(ctx)
 			out, err := run(runCtx, command, args...)
+			contextErr := runCtx.Err()
 			cancel()
 			if err != nil {
-				return c.save(job.APIVersion, job.Kind, job.Name, map[string]any{
+				failure := map[string]any{
 					"phase":   "Error",
 					"reason":  "SyncFailed",
 					"command": command,
@@ -137,7 +140,9 @@ func (c FileSyncController) reconcileJob(ctx context.Context, job fileSyncJob) e
 					"output":  strings.TrimSpace(string(out)),
 					"error":   err.Error(),
 					"dryRun":  false,
-				})
+				}
+				fileSyncCommandFailure(failure, err, contextErr)
+				return c.save(job.APIVersion, job.Kind, job.Name, failure)
 			}
 		}
 	}
@@ -170,10 +175,25 @@ func (c FileSyncController) now() time.Time {
 }
 
 func (c FileSyncController) save(apiVersion, kind, name string, status map[string]any) error {
+	var previous map[string]any
+	if c.Store != nil {
+		previous = c.Store.ObjectStatus(apiVersion, kind, name)
+	}
+	// Log before saving: a state-store failure must not hide the sync failure.
+	if status["phase"] == "Error" && !sameFileSyncFailure(previous, status) {
+		c.logFileSyncFailure(apiVersion, kind, name, status)
+	}
 	if c.Store == nil {
 		return nil
 	}
-	return c.Store.SaveObjectStatus(apiVersion, kind, name, status)
+	if err := c.Store.SaveObjectStatus(apiVersion, kind, name, status); err != nil {
+		return err
+	}
+	if previous["phase"] == "Error" && status["phase"] == "Synced" {
+		c.logger().Info("DHCP lease synchronization recovered",
+			"apiVersion", apiVersion, "kind", kind, "name", name)
+	}
+	return nil
 }
 
 func (c FileSyncController) fileSyncJobFromResource(resource api.Resource) (fileSyncJob, error) {

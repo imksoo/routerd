@@ -12,6 +12,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Retain bounded DHCP lease synchronization failure diagnostics in the service log after recovery, including source, target, exit status and timeout/cancellation cause. Suppress identical consecutive failures without changing synchronization or DHCP behavior. (#1351)
+
 ## v20261021.1524
 
 ### Fixed

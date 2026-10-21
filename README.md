@@ -17,6 +17,8 @@ Installation and upgrade are documented in
 Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
 
+Lease-sync failures retain bounded diagnostic details in the service log after recovery. See [DHCP lease synchronization](docs/how-to/dhcp-lease-sync.md#investigate-a-recovered-synchronization-failure).
+
 ## Start safely
 
 If you are new to routing, begin with an isolated Ubuntu Server VM or a spare

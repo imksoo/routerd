@@ -215,3 +215,33 @@ state to live consumers. Local subscriber delivery is still best effort; the
 queue does not provide acknowledgements from every DNS or mobility consumer.
 Callbacks lost before this version were never queued and cannot be recovered
 from this mechanism.
+
+## Investigate a recovered synchronization failure
+
+The existing routerd service log records `DHCP lease synchronization failed`
+for all three lease-sync kinds. It includes the resource, reason, source file,
+target, command name, error, and subprocess output. When available, `exitCode`
+contains the process exit status (`-1` means no normal exit code); `timedOut`
+and `canceled` distinguish the command context cause from an exit error.
+Invalid specifications and source-stat failures are also logged.
+
+Read the service journal after the resource has recovered:
+
+```sh
+journalctl -u routerd.service --since '1 hour ago' --no-pager | grep 'DHCP lease synchronization'
+```
+
+Each textual diagnostic field retains at most its last 4,096 bytes, preserving
+valid UTF-8; a `<field>Truncated=true` attribute marks truncation. Command
+arguments, SSH options and lease contents are not explicitly logged. Subprocess
+diagnostics may contain paths and host names, so apply normal log access controls.
+Identical consecutive failures are logged once; changed diagnostics and a failure
+after recovery are logged again. Successful recovery emits
+`DHCP lease synchronization recovered`. Logging happens before status persistence,
+so a failed status write does not hide the original transfer error.
+
+These records use the existing service logger and its retention settings; they
+do not add a log file, background collector, or status-change event. Current
+resource status still changes to `Synced` on recovery. Sync cadence, retries,
+timeouts and transfer behavior are unchanged. A sync failure concerns copying
+state to the peer and does not by itself prove a DHCP response failure.
