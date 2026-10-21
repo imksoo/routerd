@@ -19,10 +19,14 @@ type LogRetentionController struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
+	DryRun bool
 }
 
 func (c LogRetentionController) Reconcile(ctx context.Context) error {
-	if c.Router == nil || c.Store == nil {
+	// Dry-run must not open external log databases, archive records, vacuum,
+	// or prune the journal. Even an isolated state snapshot can reference
+	// live data files through resource settings and platform defaults.
+	if c.DryRun || c.Router == nil || c.Store == nil {
 		return nil
 	}
 	for _, res := range c.Router.Spec.Resources {
