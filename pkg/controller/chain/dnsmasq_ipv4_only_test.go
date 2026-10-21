@@ -36,6 +36,11 @@ func TestDnsmasqIPv4OnlyListenerConfig(t *testing.T) {
 				)
 			}
 			dir := t.TempDir()
+			r.Spec.Resources = append(r.Spec.Resources, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"},
+				Metadata: api.ObjectMeta{Name: "process-paths"},
+				Spec:     api.DHCPv4ServerSpec{LeaseFile: filepath.Join(dir, "state", "dnsmasq.leases")},
+			})
 			path := filepath.Join(dir, "dnsmasq.conf")
 			pid := filepath.Join(dir, "dnsmasq.pid")
 			changed, _, err := writeDnsmasqConfig(r, mapStore{}, path, pid, 0, nil)

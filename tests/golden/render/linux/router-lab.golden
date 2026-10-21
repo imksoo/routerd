@@ -4,6 +4,7 @@ dhcp-leasefile=/var/lib/routerd/dnsmasq/dnsmasq.leases
 port=0
 no-resolv
 bind-dynamic
+no-dhcpv6-interface=ens19
 interface=ens19
 except-interface=ds-transix
 except-interface=ens18

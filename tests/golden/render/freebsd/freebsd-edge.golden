@@ -4,6 +4,7 @@ dhcp-leasefile=/var/db/routerd/dnsmasq/dnsmasq.leases
 port=0
 no-resolv
 bind-dynamic
+no-dhcpv6-interface=vtnet1
 interface=vtnet1
 except-interface=vtnet0
 
