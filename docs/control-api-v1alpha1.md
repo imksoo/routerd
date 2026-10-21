@@ -86,6 +86,15 @@ Each accepted action publishes one exact event topic:
 | `renewed` | `routerd.dhcp.lease.renewed` |
 | `removed` | `routerd.dhcp.lease.removed` |
 
+## Resource count
+
+`Status.status.resourceCount` counts the resources declared in the current runtime
+configuration. It includes resources whose `when` conditions are false and those
+omitted because their dependencies were filtered. Startup observation, immediate apply, and failed attempts
+use the same scope; synthetic plan entries are excluded. The count changes when
+the declaration changes, not when the redundant role or the observation path
+changes. It is an inventory count, not proof of resource readiness or forwarding.
+
 ## Controller status
 
 `Status.status.controllers` and the `Controllers` endpoint include both the

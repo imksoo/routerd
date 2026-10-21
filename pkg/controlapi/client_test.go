@@ -103,7 +103,7 @@ func TestUnixClientRetriesTransientStartupErrors(t *testing.T) {
 		}
 		server := &http.Server{Handler: Handler{
 			Status: func(r *http.Request) (*Status, error) {
-				status := NewStatus(&apply.Result{Phase: "Healthy", Generation: 7})
+				status := NewStatus(&apply.Result{Phase: "Healthy", Generation: 7}, nil)
 				return &status, nil
 			},
 		}}

@@ -79,7 +79,7 @@ func sampleControllerStatus() controlapi.ControllerStatus {
 }
 
 func TestGetStatusJSONIncludesReconcileErrorHistory(t *testing.T) {
-	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11})
+	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11}, nil)
 	status.Status.Controllers = []controlapi.ControllerStatus{sampleControllerStatus()}
 	socketPath := startStatusTestServer(t, status)
 
@@ -107,7 +107,7 @@ func TestGetStatusJSONIncludesReconcileErrorHistory(t *testing.T) {
 }
 
 func TestGetStatusTableSummary(t *testing.T) {
-	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11})
+	status := controlapi.NewStatus(&apply.Result{Phase: "Healthy", Generation: 11}, nil)
 	status.Status.Controllers = []controlapi.ControllerStatus{sampleControllerStatus()}
 	socketPath := startStatusTestServer(t, status)
 

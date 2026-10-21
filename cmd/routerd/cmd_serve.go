@@ -734,7 +734,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath)); err != nil {
+			if err := startWebConsole(ctx, console, router, currentRouter, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath)); err != nil {
 				return err
 			}
 		}
@@ -748,7 +748,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	defer listener.Close()
 
 	statusHandler := func(r *http.Request) (*controlapi.Status, error) {
-		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore))
+		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore), currentRouter())
 		status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
 		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
 		status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
@@ -2141,10 +2141,11 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
+func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, currentRouter func() *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
 	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
 	handler := webconsole.New(webconsole.Options{
 		Router:                 router,
+		CurrentRouter:          currentRouter,
 		Store:                  store,
 		Result:                 cache.Load,
 		Connections:            observe.Connections,
