@@ -12,6 +12,12 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261021.1351
+
+### Fixed
+
+- Keep the status `resourceCount` aligned with the complete configured resource inventory after both daemon startup and conditional apply. For example, a standby configuration with 109 declarations and 78 currently eligible resources continues to report 109 declarations after apply. This changes the status calculation only; `when` evaluation and resource execution remain unchanged. (#1345)
+
 ## v20261021.1259
 
 ### Fixed
