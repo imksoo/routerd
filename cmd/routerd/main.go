@@ -29,7 +29,7 @@ var (
 	defaultConfigPath           = platformDefaults.ConfigFile()
 	defaultPluginDir            = platformDefaults.PluginDir
 	defaultNetplanPath          = platformDefaults.NetplanFile
-	defaultDnsmasqConfigPath    = platformDefaults.DnsmasqConfigFile
+	defaultDnsmasqConfigPath    = platformDefaults.ManagedDnsmasqConfigFile()
 	defaultDnsmasqServicePath   = platformDefaults.DnsmasqServiceFile
 	defaultFreeBSDDHClientPath  = platformDefaults.FreeBSDDHClientConfigFile
 	defaultFreeBSDMPD5Path      = platformDefaults.FreeBSDMPD5ConfigFile

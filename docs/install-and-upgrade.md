@@ -338,6 +338,11 @@ sudo ./install.sh --no-config-update
 
 ## Layout
 
+On Linux, one-shot apply and the continuous controller share
+`/run/routerd/dnsmasq.conf`. Both honor an explicit `--dnsmasq-file` path,
+so applying an unrelated change does not switch the DHCP/RA service between
+canonical and runtime config files. FreeBSD keeps its canonical config default.
+
 The release installer uses these paths:
 
 | Item | Linux | FreeBSD |
