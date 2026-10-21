@@ -204,3 +204,8 @@ func (d Defaults) BGPPaths() (socket, controlSocket, state string) {
 func (d Defaults) ConfigFile() string {
 	return d.SysconfDir + "/router.yaml"
 }
+
+// DHCPEventQueueFile is persistent and independent of control sockets and configuration paths.
+func (d Defaults) DHCPEventQueueFile() string {
+	return filepath.Join(d.StateDir, "dhcp-events", "pending.db")
+}

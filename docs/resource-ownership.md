@@ -125,3 +125,15 @@ Full configuration rollback is not a current goal. For changes that affect produ
 ## Legacy configurations
 
 Older experimental DHCPv6 packages and renderers have been removed. The current DHCPv6-PD path is `routerd-dhcpv6-client`. Examples that referenced `dhcpcd` or `dhcp6c` directly are no longer part of the supported configuration set; the legacy resources have been retired without aliases.
+
+## Pending DHCP callback journal
+
+`<platform StateDir>/dhcp-events/` is node-local persistent state owned by
+routerd and its privileged dnsmasq callback. `pending.db` (and its transient
+rollback journal) stores bounded pending callbacks; `pending.db.consumer` is
+the cross-process consumer lock. The directory is 0700 and files are 0600.
+Retain these files for restart recovery and backups; do not copy them through
+HA lease sync or delete them as runtime artifacts. The callback creates them
+on first use; idle serve startup does not create them. See
+[callback recovery](how-to/dhcp-lease-sync.md#callback-recovery-across-routerd-restarts)
+for limits and failure handling.

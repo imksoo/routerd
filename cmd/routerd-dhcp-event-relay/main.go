@@ -17,6 +17,8 @@ import (
 
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const (
@@ -49,22 +51,40 @@ func exitCodeWithHardTimeout(runFunc func() error, timeout time.Duration, stderr
 }
 
 func run(args []string) error {
-	socket := flag.String("socket", "/run/routerd/routerd.sock", "routerd control socket")
-	fs := flag.CommandLine
+	defaults, _ := platform.Current()
+	return runWithDefaults(args, os.Environ(), defaults)
+}
+
+func runWithDefaults(args, env []string, defaults platform.Defaults) error {
+	fs := flag.NewFlagSet("routerd-dhcp-event-relay", flag.ContinueOnError)
+	socket := fs.String("socket", defaults.SocketFile(), "explicit control socket: submit through the API instead of the local durable queue")
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	event, err := eventFromArgs(fs.Args(), os.Environ())
+	event, err := eventFromArgs(fs.Args(), env)
 	if err != nil {
 		return err
 	}
 	if event.Action == "" || event.IP == "" {
 		return fmt.Errorf("usage: routerd-dhcp-event-relay [add|old|del] MAC IP HOSTNAME")
 	}
-	body, _ := json.Marshal(event)
+	observedAt := time.Now().UTC()
+	explicitSocket := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "socket" {
+			explicitSocket = true
+		}
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
+	if !explicitSocket {
+		return dhcpeventqueue.Store(ctx, defaults.DHCPEventQueueFile(), event, observedAt)
+	}
+	body, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "unix", *socket)

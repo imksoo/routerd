@@ -5,6 +5,7 @@ package logstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,11 @@ type DHCPStickyLog struct {
 }
 
 func OpenDHCPStickyLog(path string) (*DHCPStickyLog, error) {
+	return OpenDHCPStickyLogContext(context.Background(), path)
+}
+
+// OpenDHCPStickyLogContext allows the asynchronous queue consumer to cancel storage work.
+func OpenDHCPStickyLogContext(ctx context.Context, path string) (*DHCPStickyLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -45,12 +51,12 @@ func OpenDHCPStickyLog(path string) (*DHCPStickyLog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	log := &DHCPStickyLog{db: db}
-	if err := log.Init(context.Background()); err != nil {
+	if err := log.Init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -92,14 +98,22 @@ func (l *DHCPStickyLog) Close() error {
 }
 
 func (l *DHCPStickyLog) RecordLeaseEvent(ctx context.Context, action, mac, ip, hostname string, holdDays int, now time.Time) error {
+	_, err := l.RecordLeaseEventIfCurrent(ctx, action, mac, ip, hostname, holdDays, now)
+	return err
+}
+
+// RecordLeaseEventIfCurrent ignores older observations for the same MAC/IP.
+// It returns false only when newer state already supersedes the event. Equal
+// timestamps remain publishable after a crash, but do not rewrite retention.
+func (l *DHCPStickyLog) RecordLeaseEventIfCurrent(ctx context.Context, action, mac, ip, hostname string, holdDays int, now time.Time) (bool, error) {
 	if l == nil || l.db == nil {
-		return nil
+		return true, nil
 	}
 	mac = strings.ToLower(strings.TrimSpace(mac))
 	ip = strings.TrimSpace(ip)
 	hostname = strings.TrimSpace(hostname)
 	if mac == "" || ip == "" {
-		return nil
+		return true, nil
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -108,32 +122,53 @@ func (l *DHCPStickyLog) RecordLeaseEvent(ctx context.Context, action, mac, ip, h
 	if strings.Contains(ip, ":") {
 		family = "ipv6"
 	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var latest int64
+	err = tx.QueryRowContext(ctx, "SELECT coalesce(max(max(allocated_at,released_at,last_request_at)),0) FROM dhcp_sticky_leases WHERE ip=?", ip).Scan(&latest)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if latest > now.UnixNano() {
+		return false, nil
+	}
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "removed":
 		var stickyUntil int64
 		if holdDays > 0 {
 			stickyUntil = now.Add(time.Duration(holdDays) * 24 * time.Hour).UnixNano()
 		}
-		_, err := l.db.ExecContext(ctx, `INSERT INTO dhcp_sticky_leases(mac,ip,hostname,family,released_at,sticky_until)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dhcp_sticky_leases(mac,ip,hostname,family,released_at,sticky_until)
 VALUES(?,?,?,?,?,?)
 ON CONFLICT(mac,ip) DO UPDATE SET
   hostname=coalesce(nullif(excluded.hostname,''),dhcp_sticky_leases.hostname),
   family=excluded.family,
   released_at=excluded.released_at,
-  sticky_until=excluded.sticky_until`,
+  sticky_until=excluded.sticky_until
+WHERE excluded.released_at > max(dhcp_sticky_leases.allocated_at,dhcp_sticky_leases.released_at,dhcp_sticky_leases.last_request_at)`,
 			mac, ip, hostname, family, now.UnixNano(), stickyUntil)
-		return err
+		if err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
 	default:
-		_, err := l.db.ExecContext(ctx, `INSERT INTO dhcp_sticky_leases(mac,ip,hostname,family,allocated_at,last_request_at,sticky_until)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dhcp_sticky_leases(mac,ip,hostname,family,allocated_at,last_request_at,sticky_until)
 VALUES(?,?,?,?,?,?,0)
 ON CONFLICT(mac,ip) DO UPDATE SET
   hostname=coalesce(nullif(excluded.hostname,''),dhcp_sticky_leases.hostname),
   family=excluded.family,
   allocated_at=CASE WHEN dhcp_sticky_leases.allocated_at = 0 THEN excluded.allocated_at ELSE dhcp_sticky_leases.allocated_at END,
   last_request_at=excluded.last_request_at,
-  sticky_until=0`,
+  sticky_until=0
+WHERE excluded.last_request_at > max(dhcp_sticky_leases.allocated_at,dhcp_sticky_leases.released_at,dhcp_sticky_leases.last_request_at)`,
 			mac, ip, hostname, family, now.UnixNano(), now.UnixNano())
-		return err
+		if err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
 	}
 }
 

@@ -6388,6 +6388,12 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 }
 
 func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, error) {
+	defaults, _ := platform.Current()
+	return DNSMasqLeaseFile(router, defaults.DnsmasqLeaseFile())
+}
+
+// DNSMasqLeaseFile shares explicit lease-file selection with callback recovery.
+func DNSMasqLeaseFile(router *api.Router, fallback string) (string, error) {
 	declared := ""
 	if router == nil {
 		router = &api.Router{}
@@ -6421,8 +6427,7 @@ func dnsmasqLeaseFile(router *api.Router, configPath, pidFile string) (string, e
 	if declared != "" {
 		return declared, nil
 	}
-	defaults, _ := platform.Current()
-	return defaults.DnsmasqLeaseFile(), nil
+	return fallback, nil
 }
 
 func dnsmasqListenAddresses(addresses []string) []string {

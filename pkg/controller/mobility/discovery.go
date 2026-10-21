@@ -566,6 +566,11 @@ func onPremObservationRefreshBefore(ttl time.Duration) time.Duration {
 
 func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObservation, bool) {
 	attrs := event.Attributes
+	if _, dhcp := daemonapi.DHCPLeaseActionFromEventType(event.Type); dhcp && attrs["replayed"] == "true" {
+		// Historical callbacks restore audit, not ownership. A new observation
+		// or normal expiry must drive ownership; replay cannot supersede it.
+		return onPremObservation{}, false
+	}
 	address := firstNonEmpty(attrs["address"], attrs["ip"], attrs["clientIP"], attrs["clientAddress"], event.Message)
 	out := onPremObservation{
 		Action:     "observed",
@@ -578,8 +583,10 @@ func onPremObservationFromDaemonEvent(event daemonapi.DaemonEvent) (onPremObserv
 	}
 	switch strings.TrimSpace(event.Type) {
 	case daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed:
+		out.ObservedAt = event.Time
 		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceDHCPv4Lease)
 	case daemonapi.EventDHCPLeaseRemoved:
+		out.ObservedAt = event.Time
 		out.Action = "expired"
 		out.SourceType = firstNonEmpty(out.SourceType, OnPremSourceDHCPv4Lease)
 	case OnPremARPObservedEvent:

@@ -89,6 +89,39 @@ func (b *Bus) Publish(ctx context.Context, event Event) error {
 	return b.publishLocal(ctx, event, storeErr)
 }
 
+// PublishDurable requires a successful journal write before local delivery.
+// Unlike Publish, it never suppresses a NonFatalPersistence error. Durable
+// producers must retain their pending record if this call returns an error.
+func (b *Bus) PublishDurable(ctx context.Context, event Event) error {
+	recorded, err := b.recordDurable(ctx, event)
+	if err != nil {
+		return err
+	}
+	return b.publishLocal(ctx, recorded, nil)
+}
+
+// RecordDurable preserves superseded observations in history without delivering
+// stale attributes to controllers that mutate live state from those attributes.
+func (b *Bus) RecordDurable(ctx context.Context, event Event) error {
+	_, err := b.recordDurable(ctx, event)
+	return err
+}
+
+func (b *Bus) recordDurable(ctx context.Context, event Event) (Event, error) {
+	if b.store == nil {
+		return event, fmt.Errorf("durable event publication requires a journal")
+	}
+	cursor, err := b.store.RecordBusEvent(ctx, event)
+	if err != nil {
+		return event, err
+	}
+	if cursor == "" {
+		return event, fmt.Errorf("event journal returned an empty cursor")
+	}
+	event.Cursor = cursor
+	return event, nil
+}
+
 // PersistsTo reports whether local notifications and a transactional producer
 // use the same journal. Non-comparable custom stores cannot establish identity.
 func (b *Bus) PersistsTo(store EventStore) bool {

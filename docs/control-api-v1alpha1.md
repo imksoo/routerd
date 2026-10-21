@@ -69,8 +69,12 @@ interpreting these responses themselves.
 `POST /api/control.routerd.net/v1alpha1/dhcp-lease-event` is a privileged,
 local hook endpoint for dnsmasq lease changes; it is not a remote-management or
 general-purpose event API. `routerd-dhcp-event-relay` runs once for each
-dnsmasq callback and normalizes dnsmasq's raw callback verbs before posting the
-event.
+dnsmasq callback and normalizes dnsmasq's raw callback verbs. The managed hook
+(with no flags) commits directly to a bounded local queue, so a routerd restart
+does not discard the callback. An explicitly supplied `--socket` retains the
+HTTP transport: the selected daemon commits to its queue before returning
+`accepted`. There is no simultaneous local enqueue or fallback, and an
+unreachable explicit socket still returns an error.
 
 Direct callers must send only the canonical `action` values `added`, `renewed`,
 or `removed`. The raw dnsmasq verbs `add`, `old`, and `del` are accepted only at
@@ -78,7 +82,21 @@ the relay boundary. `ip` is required; `mac`, `hostname`, and `interface` are
 optional. `interface` is the value reported by dnsmasq for the lease hook; raw
 environment variables are never forwarded through this API.
 
-Each accepted action publishes one exact event topic:
+The existing serve process drains accepted callbacks in commit order after its
+controllers have started. Queue/storage failure is an error, not acceptance.
+Delivery is at least once through sticky metadata and the durable event journal;
+a crash after journal commit but before queue deletion may duplicate history.
+`attributes.observedAt` preserves the original timestamp, while `createdAt`
+remains the journal ingestion time. Live subscriber delivery retains the bus
+contract and is not an acknowledgement from every downstream daemon.
+
+Historical callbacks are checked against current authoritative leases before
+live delivery. Superseded or unverifiable callbacks remain in history with
+`replayDisposition`; they do not mutate live DNS or ownership. See
+[restart recovery](how-to/dhcp-lease-sync.md#callback-recovery-across-routerd-restarts)
+for bounds, recovery behavior, and limitations.
+
+Each action uses one exact event topic:
 
 | Action | Topic |
 | --- | --- |

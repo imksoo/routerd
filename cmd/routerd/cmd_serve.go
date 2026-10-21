@@ -40,6 +40,7 @@ import (
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/observe"
@@ -696,6 +697,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		closeStateStore = false
 		return nil
 	}
+	go runDHCPEventQueue(ctx, platformDefaults.DHCPEventQueueFile(), dhcpStickyLogPath(), platformDefaults.DnsmasqLeaseFile(), currentRouter, controllerBus)
 	mutator := serveConfigMutator{
 		configPath:           *configPath,
 		statePath:            *statePath,
@@ -964,24 +966,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 		DHCPLeaseEvent: func(r *http.Request, req controlapi.DHCPLeaseEventRequest) (*controlapi.DHCPLeaseEventResult, error) {
-			topic, ok := daemonapi.DHCPLeaseEventType(req.Action)
-			if !ok {
+			if _, ok := daemonapi.DHCPLeaseEventType(req.Action); !ok {
 				return nil, controlapi.ErrBadRequest
 			}
-			if holdDays := dhcpStickyHoldDays(currentRouter(), req.IP); holdDays > 0 {
-				stickyLog, err := logstore.OpenDHCPStickyLog(dhcpStickyLogPath())
-				if err != nil {
-					return nil, err
-				}
-				defer stickyLog.Close()
-				if err := stickyLog.RecordLeaseEvent(r.Context(), req.Action, req.MAC, req.IP, req.Hostname, holdDays, time.Now().UTC()); err != nil {
-					return nil, err
-				}
-			}
-			if controllerBus != nil {
-				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay", Kind: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
-				event.Attributes = map[string]string{"mac": req.MAC, "ip": req.IP, "hostname": req.Hostname, "interface": req.Interface}
-				_ = controllerBus.Publish(r.Context(), event)
+			if err := dhcpeventqueue.Store(r.Context(), platformDefaults.DHCPEventQueueFile(), req, time.Now().UTC()); err != nil {
+				return nil, err
 			}
 			result := controlapi.NewDHCPLeaseEventResult()
 			return &result, nil
