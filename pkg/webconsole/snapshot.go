@@ -185,7 +185,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	return Snapshot{
 		GeneratedAt:      now,
 		ConsoleLinks:     cleanConsoleLinks(h.opts.ConsoleLinks),
-		Status:           statusWithControllers(result, controllers),
+		Status:           h.statusWithControllers(result, controllers),
 		Controllers:      controllers,
 		GatewayHealth:    gatewayHealth(resources),
 		Phases:           phaseCounts(resources),
@@ -208,8 +208,12 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	}
 }
 
-func statusWithControllers(result *apply.Result, controllers []controlapi.ControllerStatus) controlapi.Status {
-	status := controlapi.NewStatus(result)
+func (h Handler) statusWithControllers(result *apply.Result, controllers []controlapi.ControllerStatus) controlapi.Status {
+	router := h.opts.Router
+	if h.opts.CurrentRouter != nil {
+		router = h.opts.CurrentRouter()
+	}
+	status := controlapi.NewStatus(result, router)
 	status.Status.Controllers = controllers
 	return status
 }

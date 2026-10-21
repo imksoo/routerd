@@ -17,7 +17,7 @@ import (
 func TestStatusHandler(t *testing.T) {
 	handler := Handler{
 		Status: func(r *http.Request) (*Status, error) {
-			status := NewStatus(&apply.Result{Phase: "Healthy", Generation: 42})
+			status := NewStatus(&apply.Result{Phase: "Healthy", Generation: 42}, nil)
 			return &status, nil
 		},
 	}
