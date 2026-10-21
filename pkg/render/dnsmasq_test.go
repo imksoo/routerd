@@ -627,7 +627,6 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"enable-ra",
-		"no-dhcpv4-interface=ens19",
 		"dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h",
 		"ra-param=ens19,mtu:1454,0",
 		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:3d60:1220::3]",
@@ -808,7 +807,6 @@ func TestDnsmasqConfigSkipsIPv6ScopeUntilDelegatedPrefixExists(t *testing.T) {
 	got := string(data)
 	for _, unwanted := range []string{
 		"enable-ra",
-		"no-dhcpv4-interface=",
 		"constructor:ens19",
 		"option6:dns-server",
 		"fe80::2",

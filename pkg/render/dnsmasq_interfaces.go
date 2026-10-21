@@ -1,24 +1,59 @@
 // SPDX-License-Identifier: BSD-3-Clause
-
 package render
 
-import "sort"
+import (
+	"github.com/imksoo/routerd/pkg/api"
+	"sort"
+)
 
-// DnsmasqIPv6OnlyInterfaces returns emitted IPv6 listeners with no emitted
-// DHCPv4 server or relay. interface= enables both families in dnsmasq, so these
-// listeners need no-dhcpv4-interface= without disabling DHCPv6 or RA.
-// Compare resolved OS interface names, since resource aliases can overlap.
-func DnsmasqIPv6OnlyInterfaces(ipv4, ipv6 []string) []string {
-	v4 := make(map[string]bool, len(ipv4))
-	for _, name := range ipv4 {
-		v4[name] = true
+// dnsmasqIPv6OnlyFirewallInterfaces retains DHCPv4 whenever a server or relay
+// is declared, including currently pending scopes. The firewall must not depend
+// on transient VIP readiness. Compare OS names because aliases can overlap.
+func dnsmasqIPv6OnlyFirewallInterfaces(router *api.Router, aliases map[string]string) []string {
+	v4, v6 := map[string]bool{}, map[string]bool{}
+	delegated := map[string]string{}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind == "IPv6DelegatedAddress" {
+			spec, err := resource.IPv6DelegatedAddressSpec()
+			if err == nil {
+				delegated[resource.Metadata.Name] = aliases[spec.Interface]
+			}
+		}
 	}
-	seen := make(map[string]bool, len(ipv6))
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "DHCPv4Server":
+			spec, err := resource.DHCPv4ServerSpec()
+			if err == nil && spec.Interface != "" {
+				v4[aliases[spec.Interface]] = true
+			}
+		case "DHCPv4Relay":
+			spec, err := resource.DHCPv4RelaySpec()
+			if err == nil {
+				for _, iface := range spec.Interfaces {
+					v4[aliases[iface]] = true
+				}
+			}
+		case "DHCPv6Server":
+			spec, err := resource.DHCPv6ServerSpec()
+			if err == nil {
+				if spec.DelegatedAddress != "" {
+					v6[delegated[spec.DelegatedAddress]] = true
+				} else if spec.Interface != "" {
+					v6[defaultString(aliases[spec.Interface], spec.Interface)] = true
+				}
+			}
+		case "IPv6RouterAdvertisement":
+			spec, err := resource.IPv6RouterAdvertisementSpec()
+			if err == nil {
+				v6[defaultString(aliases[spec.Interface], spec.Interface)] = true
+			}
+		}
+	}
 	var out []string
-	for _, name := range ipv6 {
-		if name != "" && !v4[name] && !seen[name] {
+	for name := range v6 {
+		if name != "" && !v4[name] {
 			out = append(out, name)
-			seen[name] = true
 		}
 	}
 	sort.Strings(out)

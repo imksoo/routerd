@@ -157,7 +157,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	}
 	buf.WriteString("port=0\n")
 	buf.WriteString("no-resolv\n")
-	var renderedScopes, ipv4Scopes, ipv6Scopes []string
+	var renderedScopes []string
 	for _, res := range v4Pools {
 		spec, err := res.DHCPv4ServerSpec()
 		if err != nil {
@@ -171,7 +171,6 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			return nil, warnings, fmt.Errorf("%s references interface with empty ifname", res.ID())
 		}
 		renderedScopes = append(renderedScopes, ifname)
-		ipv4Scopes = append(ipv4Scopes, ifname)
 	}
 	for _, res := range v6Delegated {
 		spec, err := res.DHCPv6ServerSpec()
@@ -186,22 +185,14 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			return nil, warnings, fmt.Errorf("%s references delegated address with empty ifname", res.ID())
 		}
 		renderedScopes = append(renderedScopes, delegated.IfName)
-		ipv6Scopes = append(ipv6Scopes, delegated.IfName)
 	}
-	directV4, directV6 := directDnsmasqFamilyIfnames(router, aliases)
-	ipv4Scopes = append(ipv4Scopes, directV4...)
-	ipv6Scopes = append(ipv6Scopes, directV6...)
-	renderedScopes = append(renderedScopes, directV4...)
-	renderedScopes = append(renderedScopes, directV6...)
+	renderedScopes = append(renderedScopes, directDnsmasqIfnames(router, aliases)...)
 	buf.WriteString("bind-dynamic\n")
 	for _, ifname := range uniqueStrings(renderedScopes) {
 		buf.WriteString("interface=" + ifname + "\n")
 	}
 	for _, ifname := range dnsmasqExcludedInterfaces(aliases, renderedScopes) {
 		buf.WriteString("except-interface=" + ifname + "\n")
-	}
-	for _, ifname := range DnsmasqIPv6OnlyInterfaces(ipv4Scopes, ipv6Scopes) {
-		buf.WriteString("no-dhcpv4-interface=" + ifname + "\n")
 	}
 	if len(v6Delegated) > 0 {
 		buf.WriteString("enable-ra\n")
@@ -372,37 +363,43 @@ func hasDirectDnsmasqLANService(router *api.Router) bool {
 	return false
 }
 
-func directDnsmasqFamilyIfnames(router *api.Router, aliases map[string]string) ([]string, []string) {
-	var ipv4, ipv6 []string
+func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []string {
+	var ifnames []string
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
 		case "DHCPv4Server":
 			spec, err := res.DHCPv4ServerSpec()
 			if err == nil && spec.Interface != "" && !dnsmasqUsesScopeStyleDHCPv4(spec) && aliases[spec.Interface] != "" {
-				ipv4 = append(ipv4, aliases[spec.Interface])
+				ifnames = append(ifnames, aliases[spec.Interface])
 			}
-		case "DHCPv6Server":
-			spec, err := res.DHCPv6ServerSpec()
-			if err == nil && spec.Interface != "" && strings.TrimSpace(spec.DelegatedAddress) == "" {
-				ipv6 = append(ipv6, defaultString(aliases[spec.Interface], spec.Interface))
+		case "DHCPv6Server", "IPv6RouterAdvertisement":
+			var iface string
+			if res.Kind == "DHCPv6Server" {
+				spec, err := res.DHCPv6ServerSpec()
+				if err == nil && spec.Interface != "" {
+					iface = spec.Interface
+				}
+			} else {
+				spec, err := res.IPv6RouterAdvertisementSpec()
+				if err == nil {
+					iface = spec.Interface
+				}
 			}
-		case "IPv6RouterAdvertisement":
-			spec, err := res.IPv6RouterAdvertisementSpec()
-			if err == nil {
-				ipv6 = append(ipv6, defaultString(aliases[spec.Interface], spec.Interface))
+			if aliases[iface] != "" {
+				ifnames = append(ifnames, aliases[iface])
 			}
 		case "DHCPv4Relay":
 			spec, err := res.DHCPv4RelaySpec()
 			if err == nil {
 				for _, iface := range spec.Interfaces {
 					if aliases[iface] != "" {
-						ipv4 = append(ipv4, aliases[iface])
+						ifnames = append(ifnames, aliases[iface])
 					}
 				}
 			}
 		}
 	}
-	return uniqueStrings(ipv4), uniqueStrings(ipv6)
+	return uniqueStrings(ifnames)
 }
 
 func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) error {
