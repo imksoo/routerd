@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261021.2005
+
 ### Fixed
 
 - Exclude the transient SQLite shared-memory index from DHCPv4 sticky lease synchronization. The receiver rebuilds its own index; missing database or WAL transfers remain visible failures. (#1354)
