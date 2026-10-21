@@ -22,6 +22,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 - Preserve BGP socket, control socket, and persistent applied-state paths across serve, immediate apply, and generated service definitions; derive defaults from the platform directories. (#1339)
 - On the managed Linux firewall, drop duplicate IPv4 DHCP requests delivered to interfaces declared only for DHCPv6 or IPv6 router advertisements. Preserve declared DHCPv4 servers and relays, including shared interface aliases and pending scopes. The rule changes local input only and leaves dnsmasq configuration, DHCPv6, and router advertisements intact. (#1341)
 
+### Security
+
+- Update the Web Console build dependency Vite from 8.3.0 to 8.3.5 and regenerate the bundled assets. This addresses three development-server editor-launch advisories: GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, and GHSA-587h-7wmj-h5pm. Both full and production-only dependency audits report zero vulnerabilities. Type checking, reproducible asset generation, and the existing Playwright regression checks passed. (#1344)
+
 ### Validation scope
 
 - The local integration `346d6701` was deployed to an existing Linux HA pair. Two identical configuration reapplications per router preserved dnsmasq, BGP, HA control, and NAT configuration. During the final DHCP guard deployment and observation, all 1,032 IPv4/IPv6 HTTP/HTTPS checks returned 204. The active router recorded zero target warnings and seven DHCP acknowledgments during the first approximately six minutes.
