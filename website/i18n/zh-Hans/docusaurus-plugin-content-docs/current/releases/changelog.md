@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261021.1618
+
 ### 修复
 
 - DHCP 租约同步恢复后，服务日志仍保留有大小限制的失败诊断，包括源文件、目标、退出状态以及超时或取消原因。抑制连续重复错误，不改变同步或 DHCP 行为。 (#1351)
