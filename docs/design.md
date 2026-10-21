@@ -399,3 +399,5 @@ managed Linux firewall do not receive this workaround.
 - [API reference v1alpha1](./api-v1alpha1.md)
 - [Plugin protocol](./plugin-protocol.md)
 - [Supported platforms](./platforms.md)
+
+DHCPv4 sticky lease synchronization copies the SQLite database and WAL, but excludes the transient, machine-local `-shm` index. SQLite reconstructs that index on the receiver. Database and WAL transfer failures remain errors; this does not provide an atomic snapshot of concurrent database writes.

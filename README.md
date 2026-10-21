@@ -17,7 +17,7 @@ Installation and upgrade are documented in
 Release automation for maintainers is documented in
 [`docs/operations/release-process.md`](docs/operations/release-process.md).
 
-Lease-sync failures retain bounded diagnostic details in the service log after recovery. See [DHCP lease synchronization](docs/how-to/dhcp-lease-sync.md#investigate-a-recovered-synchronization-failure).
+Lease-sync failures retain bounded diagnostic details in the service log after recovery. SQLite shared-memory indexes are rebuilt on the receiver instead of being transferred. See [DHCP lease synchronization](docs/how-to/dhcp-lease-sync.md#investigate-a-recovered-synchronization-failure).
 
 ## Start safely
 
