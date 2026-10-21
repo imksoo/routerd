@@ -77,3 +77,26 @@ the iptables backend through `PATH`; do not change the host's alternatives.
 The test driver refuses to execute in the PID 1 network namespace.
 
 Host veth ends are registered for cleanup immediately after creation, before namespace moves or bridge attachment. The existing Go tests cover partial preparation and retained cleanup failures without root or namespace operations: `go test ./tests/netns`.
+
+## DHCP address-family isolation
+
+The Linux `dhcp-family-isolation.sh` test creates two isolated namespaces and
+an IPv6-only macvlan. It reproduces duplicate DHCPv4 delivery with dnsmasq 2.90,
+then loads the actual candidate renderer output. Completed DHCPv4 offer/ACK,
+DHCPv6 information reply containing the requested DNS server, a positive-lifetime
+RA, and the guard counter are required. Missing replies are acquisition failures;
+the log's absence alone cannot establish success. No production network is used.
+
+```sh
+go run ./tests/netns/dhcp-family-render > /tmp/routerd-dhcp-family.nft
+sudo ./tests/netns/dhcp-family-isolation.sh /usr/sbin/dnsmasq /tmp/routerd-dhcp-family.nft
+```
+
+The test needs `ip`, `nft`, `tcpdump`, Python 3 and an explicit dnsmasq binary.
+Its printed evidence directory retains source hashes, exchanges, packet capture,
+configuration, counters and cleanup results on success and failure. It never
+installs a daemon or writes network state outside its own namespaces/veth pair.
+The client emits finite test exchanges; waits are bounded acquisition watchdogs,
+not performance requirements. This covers DHCP/RA preservation, not HA failover
+or production application connectivity. Do not add `no-dhcpv4-interface`: in
+dnsmasq 2.90 it also suppresses IPv6 prefix construction.
