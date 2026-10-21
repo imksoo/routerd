@@ -82,10 +82,13 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := string(data)
-			for _, prohibited := range []string{"no-dhcp-interface=", "no-dhcpv4-interface=", "no-dhcpv6-interface="} {
+			for _, prohibited := range []string{"no-dhcp-interface=", "no-dhcpv4-interface=", "no-dhcpv6-interface=lan-vrrp"} {
 				if strings.Contains(got, prohibited) {
 					t.Fatalf("dnsmasq family exclusions break 2.90 IPv6 constructors: %s", got)
 				}
+			}
+			if strings.Contains(got, "no-dhcpv6-interface=lan-parent\n") != (tc.v4 && !tc.shared) {
+				t.Fatalf("IPv4-only listener exclusion mismatch:\n%s", got)
 			}
 
 			if !strings.Contains(got, "enable-ra\n") || !strings.Contains(got, "ra-param=lan-vrrp,mtu:1454,0\n") {

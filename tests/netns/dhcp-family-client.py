@@ -74,4 +74,4 @@ while time.monotonic()<deadline:
         break
 else:raise TimeoutError('no matching RA; observation incomplete')
 ra.close()
-print(json.dumps({'xid':hex(xid),'dhcpv4':'offer-and-ack','address':socket.inet_ntoa(ack[16:20]),'dhcpv6':'information-reply-with-DNS','ra':'positive-router-lifetime'}))
+print(json.dumps({'xid':hex(xid),'dhcpv4':'offer-and-ack','address':socket.inet_ntoa(ack[16:20]),'dhcpv6':'information-reply-with-DNS','ra':'positive-router-lifetime','ra_lifetime_seconds':struct.unpack('!H',packet[6:8])[0],'ra_source':peer[0]}))
