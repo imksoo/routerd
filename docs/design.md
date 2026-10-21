@@ -369,6 +369,22 @@ controller-chain units explicitly.
 
 ---
 
+
+### DHCP address-family isolation
+
+On Linux with a managed firewall, generated input rules drop IPv4 UDP packets
+to server port 67 on interfaces used only for DHCPv6 or IPv6 router
+advertisements. DHCPv4 servers and relays, including pending scopes and
+different aliases for the same OS interface, remain exempt. The rule precedes
+connection-state accepts and does not affect forwarded traffic, DHCPv4 client
+port 68, DHCPv6, or IPv6 router advertisements.
+
+Do not use `no-dhcpv4-interface` for this workaround: dnsmasq 2.90 checks the
+IPv4 address before this exclusion, and its IPv6 constructor also treats the
+exclusion as applying to IPv6. The input rule prevents the unwanted packet
+delivery without changing dnsmasq's IPv6 configuration. Platforms without the
+managed Linux firewall do not receive this workaround.
+
 ## 8. Related documents
 
 - [What is routerd](./concepts/what-is-routerd.md)
