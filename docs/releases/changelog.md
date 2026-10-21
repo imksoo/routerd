@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261021.1524
+
 ### Fixed
 
 - Preserve bounded, durable DHCP callback records across routerd restarts without extending the relay's 3-second operation or 4-second process limits. Drain callbacks in order, retain original observation times, and prevent historical callbacks from overwriting newer lease/DNS/ownership state. Explicit socket delivery remains available. (#1348)
