@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261021.1259
+
 ### Fixed
 
 - Use the same dnsmasq configuration path for immediate apply and continuous reconciliation. Preserve explicit configuration and DHCP host-file paths so unrelated or repeated applies do not restart dnsmasq because its service definition alternates between paths. (#1333)
