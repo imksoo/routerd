@@ -890,3 +890,43 @@ func dnsResolverRouterWithHostnameResources() *api.Router {
 		},
 	}}}
 }
+
+func TestRuntimeConfigUsesExplicitDHCPHostsPath(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "run")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"), []byte(
+		"fc:b2:14:8c:49:1a,172.18.1.127,MacBookProM5Max,12h\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "172.18.0.1"})
+	router.Spec.Resources[0].Spec = api.DNSZoneSpec{
+		Zone:        "lab.example",
+		DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
+	}
+	controller := Controller{
+		Router:        router,
+		Store:         mapStore{},
+		RuntimeDir:    filepath.Join(dir, "different-runtime"),
+		DHCPHostsPath: filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"),
+		StateDir:      filepath.Join(dir, "state"),
+	}
+	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec = resolverruntime.NormalizeSpec(spec)
+	config, err := controller.runtimeConfig("lan-resolver", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].DHCPHostRecords) != 1 {
+		t.Fatalf("runtime zones = %#v", config.Zones)
+	}
+	record := config.Zones[0].DHCPHostRecords[0]
+	if record.Hostname != "MacBookProM5Max" || record.IP != "172.18.1.127" {
+		t.Fatalf("runtime DHCP host record = %#v", record)
+	}
+}

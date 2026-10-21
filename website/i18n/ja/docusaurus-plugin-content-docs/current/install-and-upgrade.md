@@ -17,6 +17,11 @@ routerd はリリースアーカイブから導入します。ルーターホス
 
 :::
 
+Linuxでは、設定適用処理と常駐処理が`/run/routerd/dnsmasq.conf`を共有します。
+`--dnsmasq-file`で指定したパスも両処理で使用します。
+これにより、無関係な設定変更でDHCP・IPv6経路広告のサービスの参照先が往復することを防ぎます。
+FreeBSDでは従来の設定パスを維持します。
+
 ## Ubuntu Server への新規導入
 
 [GitHub Releases](https://github.com/imksoo/routerd/releases) で、使う版と CPU に

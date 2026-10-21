@@ -301,6 +301,11 @@ For details, see [reconcile loop behaviour](./operations/reconcile).
 
 ## 6. Operating the configuration file
 
+On Linux, one-shot apply and the continuous controller share
+`/run/routerd/dnsmasq.conf`. Both honor an explicit `--dnsmasq-file` path,
+so applying an unrelated change does not switch the DHCP/RA service between
+canonical and runtime config files. FreeBSD keeps its canonical config default.
+
 The routerd configuration file (default `/usr/local/etc/routerd/router.yaml`) is rolled out as follows.
 
 ```

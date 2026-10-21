@@ -152,6 +152,16 @@ func (d Defaults) FirewallLogFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/firewall-logs.db"
 }
 
+// ManagedDnsmasqConfigFile returns the config used by both apply and the
+// continuous controller. Keep the legacy canonical path available separately
+// for artifact ownership and migration checks.
+func (d Defaults) ManagedDnsmasqConfigFile() string {
+	if d.OS == OSLinux {
+		return strings.TrimRight(d.RuntimeDir, "/") + "/dnsmasq.conf"
+	}
+	return d.DnsmasqConfigFile
+}
+
 // DnsmasqLeaseFile returns the default managed dnsmasq lease file path.
 func (d Defaults) DnsmasqLeaseFile() string {
 	return strings.TrimRight(d.StateDir, "/") + "/dnsmasq/dnsmasq.leases"

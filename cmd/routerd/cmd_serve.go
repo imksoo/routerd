@@ -577,8 +577,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		SuperviseClientDaemons: true,
 		SuperviseDNSResolvers:  false,
 		DnsmasqCommand:         "dnsmasq",
-		DnsmasqConfig:          "/run/routerd/dnsmasq.conf",
-		DnsmasqPID:             "/run/routerd/dnsmasq.pid",
+		DnsmasqConfig:          *dnsmasqConfigPath,
+		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
 		DnsmasqPort:            53,
 		DnsmasqListen:          []string{"127.0.0.1"},
 		NftablesPath:           "/run/routerd/nat44.nft",
@@ -731,7 +731,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return webErr
 		}
 		if ok {
-			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths("/run/routerd/dnsmasq.conf")); err != nil {
+			if err := startWebConsole(ctx, console, router, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath)); err != nil {
 				return err
 			}
 		}

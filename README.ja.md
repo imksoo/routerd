@@ -384,6 +384,11 @@ sudo routerctl plugin run <name> --dry-run
 - `GET /v1/events?since=<cursor>&wait=<duration>`
 - `POST /v1/commands/<command>`
 
+Linuxでは、設定適用処理と常駐処理が`/run/routerd/dnsmasq.conf`を共有します。
+`--dnsmasq-file`で指定したパスも両処理で使用します。
+これにより、無関係な設定変更でDHCP・IPv6経路広告のサービスの参照先が往復することを防ぎます。
+FreeBSDでは従来の設定パスを維持します。
+
 ## プラットフォーム
 
 もっとも多く検証している対象は Ubuntu Server です。NixOS と FreeBSD は同じ
