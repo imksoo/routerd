@@ -11,6 +11,10 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+### 修复
+
+- DHCP 租约同步在跳过传输前比较文件内容。即使大小和修改时间相同，也会传输已更改的内容；WAL 消失后重试时，已写回数据库的更改不会被跳过。
+
 ## v20261021.2005
 
 ### Fixed

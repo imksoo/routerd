@@ -12,6 +12,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+### Fixed
+
+- Compare DHCP lease synchronization contents before skipping transfers. Equal-size files with matching modification times, including a checkpointed SQLite database retried after WAL disappearance, no longer remain stale after a successful sync.
+
 ## v20261021.2005
 
 ### Fixed

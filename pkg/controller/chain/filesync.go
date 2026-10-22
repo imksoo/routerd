@@ -495,7 +495,9 @@ func fileSyncTargetStatuses(targets []fileSyncTarget) []map[string]any {
 }
 
 func fileSyncRsyncArgs(source fileSyncSource, target fileSyncTarget, sourceCount int) []string {
-	args := []string{"-a", "--delay-updates"}
+	// Lease files can change without changing their size or rsync-visible mtime.
+	// Compare contents before deciding to skip a transfer, including retries.
+	args := []string{"-a", "--checksum", "--delay-updates"}
 	if !fileSyncHasRsyncOption(target.Options, "--timeout") {
 		args = append(args, "--timeout="+defaultFileSyncRsyncTimeoutSeconds)
 	}
