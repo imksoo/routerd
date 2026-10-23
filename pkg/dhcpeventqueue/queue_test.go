@@ -1,7 +1,6 @@
 //go:build linux || freebsd
 
 // SPDX-License-Identifier: BSD-3-Clause
-//
 package dhcpeventqueue
 
 import (
@@ -141,6 +140,9 @@ func TestCapacityAndSizeFailuresAreExplicit(t *testing.T) {
 	if err := q.Enqueue(context.Background(), lease("renewed"), time.Now()); !errors.Is(err, ErrFull) {
 		t.Fatalf("full error=%v", err)
 	}
+	if err := Store(context.Background(), q.path, lease("renewed"), time.Now()); !errors.Is(err, ErrFull) {
+		t.Fatalf("producer replaced capacity failure: %v", err)
+	}
 	if _, err := q.db.Exec("DELETE FROM pending"); err != nil {
 		t.Fatal(err)
 	}
@@ -173,10 +175,9 @@ func TestSQLiteLockAndCancelledContextCannotReportSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer q.db.Exec("ROLLBACK")
-	start := time.Now()
 	err := Store(context.Background(), path, lease("renewed"), time.Now())
-	if err == nil || time.Since(start) > time.Second {
-		t.Fatalf("lock wait not bounded: %s, %v", time.Since(start), err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("persistent contention must exhaust the operation budget: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

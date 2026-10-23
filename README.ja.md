@@ -381,7 +381,7 @@ Makefile は開発用です。
 - `routerd-pppoe-client`
 - `routerd-healthcheck`
 - `routerd-dns-resolver`
-- `routerd-dhcp-event-relay`
+- `routerd-dhcp-event-relay`：DHCP通知を保存します。SQLiteデータベースの一時的な競合は、既存の3秒の処理上限内で再試行します。
 - `routerd-firewall-logger`
 
 よく使う確認（`routerctl` は稼働中のローカル `routerd.service` を必要とします。明示的に

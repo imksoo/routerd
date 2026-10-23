@@ -4,6 +4,8 @@ title: Architecture overview
 
 # routerd architecture overview
 
+DHCP notification producers retry SQLite BUSY failures within one three-second operation budget, including queue initialization. Each failed transaction is rolled back and its connection closed before retry. The original observation time and payload are preserved. Permanent storage errors and exhausted deadlines remain explicit failures; the relay process retains its four-second hard limit. This reduces transient contention failures but does not reconstruct previously lost callbacks or guarantee storage during a persistent lock.
+
 Web Console Connections summarizes local IPv4 SNAT entries by translated
 address before applying entry display limits. DS-Lite rows use the resource's
 observed innerLocalIPv4; shared addresses represent combined state, not unique

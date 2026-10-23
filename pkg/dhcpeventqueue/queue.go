@@ -9,13 +9,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 const (
@@ -145,16 +147,43 @@ func (q *Queue) Enqueue(ctx context.Context, lease controlapi.DHCPLeaseEventRequ
 	return err
 }
 
-// Store bounds all SQLite work, including opening/initialization, for producers.
+// Store retries transient SQLite contention within one operation budget,
+// including opening/initialization. Each failed attempt is rolled back and
+// closed before retrying; observation time is never replaced by retry time.
 func Store(ctx context.Context, path string, lease controlapi.DHCPLeaseEventRequest, at time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, OperationTimeout)
 	defer cancel()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := storeOnce(ctx, path, lease, at)
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqlite3.SQLITE_BUSY {
+			return err
+		}
+		// Retry only BUSY, not full/corrupt/read-only/I/O failures whose cause
+		// or commit outcome cannot be made safe by repeating this operation.
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func storeOnce(ctx context.Context, path string, lease controlapi.DHCPLeaseEventRequest, at time.Time) error {
 	q, err := Open(ctx, path)
 	if err != nil {
-		return err
+		return fmt.Errorf("open DHCP event queue: %w", err)
 	}
 	defer q.Close()
-	return q.Enqueue(ctx, lease, at)
+	if err := q.Enqueue(ctx, lease, at); err != nil {
+		return fmt.Errorf("enqueue DHCP event: %w", err)
+	}
+	return nil
 }
 
 // ProcessOne holds a cross-process consumer lock, but no SQLite transaction,
