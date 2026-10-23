@@ -10,7 +10,38 @@ import (
 // is declared, including currently pending scopes. The firewall must not depend
 // on transient VIP readiness. Compare OS names because aliases can overlap.
 func dnsmasqIPv6OnlyFirewallInterfaces(router *api.Router, aliases map[string]string) []string {
+	v4, v6 := dnsmasqInterfaceFamilies(router, aliases)
+	return dnsmasqFamilyOnlyInterfaces(v6, v4)
+}
+
+// DnsmasqIPv4OnlyInterfaces excludes DHCPv6 and RA only where IPv4 service is
+// declared without IPv6 service intent. Pending IPv6 scopes still protect their
+// interfaces: dnsmasq 2.90 also applies exclusions when constructing IPv6 ranges.
+// An unresolved delegated scope prevents exclusions until its interface is known.
+func DnsmasqIPv4OnlyInterfaces(router *api.Router, aliases map[string]string) []string {
+	v4, v6 := dnsmasqInterfaceFamilies(router, aliases)
+	if router != nil {
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind == "DHCPv6Server" {
+				if spec, err := resource.DHCPv6ServerSpec(); err == nil {
+					for _, iface := range spec.ListenInterfaces {
+						v6[defaultString(aliases[iface], iface)] = true
+					}
+				}
+			}
+		}
+	}
+	if v6[""] {
+		return nil
+	}
+	return dnsmasqFamilyOnlyInterfaces(v4, v6)
+}
+
+func dnsmasqInterfaceFamilies(router *api.Router, aliases map[string]string) (map[string]bool, map[string]bool) {
 	v4, v6 := map[string]bool{}, map[string]bool{}
+	if router == nil {
+		return v4, v6
+	}
 	delegated := map[string]string{}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind == "IPv6DelegatedAddress" {
@@ -50,9 +81,13 @@ func dnsmasqIPv6OnlyFirewallInterfaces(router *api.Router, aliases map[string]st
 			}
 		}
 	}
+	return v4, v6
+}
+
+func dnsmasqFamilyOnlyInterfaces(included, excluded map[string]bool) []string {
 	var out []string
-	for name := range v6 {
-		if name != "" && !v4[name] {
+	for name := range included {
+		if name != "" && !excluded[name] {
 			out = append(out, name)
 		}
 	}

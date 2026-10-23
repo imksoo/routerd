@@ -6451,6 +6451,9 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		return nil, err
 	}
 	var lines []string
+	for _, ifname := range render.DnsmasqIPv4OnlyInterfaces(router, aliases) {
+		lines = append(lines, "no-dhcpv6-interface="+ifname)
+	}
 	for _, resource := range router.Spec.Resources {
 		if resource.Kind != "DHCPv4Server" {
 			continue

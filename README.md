@@ -68,6 +68,17 @@ exclusion as applying to IPv6. The input rule prevents the unwanted packet
 delivery without changing dnsmasq's IPv6 configuration. Platforms without the
 managed Linux firewall do not receive this workaround.
 
+IPv4-only dnsmasq service interfaces now receive `no-dhcpv6-interface` in both
+offline rendering and live reconciliation. This prevents duplicate DHCPv6
+requests from reaching a parent interface without an IPv6 scope. IPv4 service
+remains enabled. Interfaces declared for DHCPv6 or router advertisements,
+including pending delegated scopes and aliases of the same OS interface, are
+not excluded. Unresolved delegated interfaces conservatively prevent exclusion.
+This also disables RA on the excluded interface, so it is never applied to an
+interface with declared IPv6 service intent. Configuration changes can restart
+the managed dnsmasq process; verify DHCPv4, DHCPv6 and RA after upgrading.
+
+
 ## Quick Start
 
 Install from a release archive on an Ubuntu Server lab host:

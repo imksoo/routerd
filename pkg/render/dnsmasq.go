@@ -188,6 +188,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	}
 	renderedScopes = append(renderedScopes, directDnsmasqIfnames(router, aliases)...)
 	buf.WriteString("bind-dynamic\n")
+	for _, ifname := range DnsmasqIPv4OnlyInterfaces(router, aliases) {
+		fmt.Fprintf(&buf, "no-dhcpv6-interface=%s\n", ifname)
+	}
 	for _, ifname := range uniqueStrings(renderedScopes) {
 		buf.WriteString("interface=" + ifname + "\n")
 	}
