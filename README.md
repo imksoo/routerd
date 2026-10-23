@@ -365,7 +365,7 @@ Important binaries built by `make build` include:
 - `routerd-pppoe-client`
 - `routerd-healthcheck`
 - `routerd-dns-resolver`
-- `routerd-dhcp-event-relay`
+- `routerd-dhcp-event-relay`: commits DHCP notifications locally and retries temporary SQLite contention within the existing three-second operation limit.
 - `routerd-firewall-logger`
 
 Useful direct commands (the `routerctl` commands require a running local
