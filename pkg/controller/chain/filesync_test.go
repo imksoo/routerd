@@ -53,6 +53,7 @@ func TestDHCPv4ServerLeaseSyncRunsRsync(t *testing.T) {
 	}
 	wantArgs := []string{
 		"-a",
+		"--checksum",
 		"--delay-updates",
 		"--timeout=60",
 		"-e",
