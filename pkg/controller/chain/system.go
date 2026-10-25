@@ -671,6 +671,9 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		if err != nil {
 			return fmt.Errorf("render conntrackd config for %s: %w", resource.ID(), err)
 		}
+		if err := c.ensureStockConntrackdMasked(ctx, command); err != nil {
+			return fmt.Errorf("protect conntrackd sync for %s: %w", resource.ID(), err)
+		}
 		configPath := filepath.Join("/etc/conntrackd", "routerd-"+resource.Metadata.Name+".conf")
 		configChanged, err := writeFileIfChanged(configPath, data, 0644, c.DryRun)
 		if err != nil {

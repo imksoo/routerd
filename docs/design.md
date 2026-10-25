@@ -414,3 +414,21 @@ the managed dnsmasq process; verify DHCPv4, DHCPv6 and RA after upgrading.
 - [Supported platforms](./platforms.md)
 
 DHCPv4 sticky lease synchronization copies the SQLite database and WAL, but excludes the transient, machine-local `-shm` index. SQLite reconstructs that index on the receiver. Database and WAL transfer failures remain errors; this does not provide an atomic snapshot of concurrent database writes.
+
+### Distribution conntrackd service ownership
+
+In `mode: conntrackd`, routerd masks and stops the distribution
+`conntrackd.service` before starting its managed synchronization unit. A
+`Conflicts=` relationship alone allows a package log rotation restart to stop
+synchronization. Disabling the distribution unit alone does not block such a
+restart. The mask is verified, and an existing local unit file is never forcibly
+overwritten; a failure stops reconciliation. Dry-run does not change services.
+
+The `systemd.mask/conntrackd.service` ownership intent is retained when the
+resource is removed. This also preserves a pre-existing administrator mask.
+To return to the distribution daemon, first remove conntrackd-mode resources,
+stop and disable their `routerd-conntrackd@*.service` units, inspect the saved
+service state, then explicitly run `systemctl unmask conntrackd.service` and
+restore only the previously intended enable/start state. Never unmask it while
+routerd still owns synchronization. No packet-forwarding or conntrack kernel
+table setting is changed by this protection.

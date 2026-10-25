@@ -486,3 +486,5 @@ release archive には `share/doc/LICENSE` と
 ```sh
 make third-party-licenses
 ```
+
+通信追跡同期では、ログ整理に伴う標準サービスの再起動から管理用の同期を保護します。詳細は[同期サービスの所有権](docs/how-to/nat44-session-sync.md#distribution-conntrackd-service-ownership)を参照してください。

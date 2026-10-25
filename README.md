@@ -478,3 +478,5 @@ under `/usr/local/share/doc/routerd/` (`LICENSE` and
 ```sh
 make third-party-licenses
 ```
+
+Conntrackd-mode synchronization protects its managed daemon from distribution log rotation restarts. See [service ownership](docs/how-to/nat44-session-sync.md#distribution-conntrackd-service-ownership).

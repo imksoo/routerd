@@ -153,3 +153,20 @@ routerd serve --controllers nat44-session-sync --config router.yaml
 conntrackd mode では、runtime の `nf_conntrack_tcp_be_liberal` が `1` でない、
 または読み取れない場合に `routerctl doctor nat` が FAIL します。
 `--no-host` ではこのチェックを SKIP として報告します。
+
+### 標準の通信追跡同期サービスとの競合防止
+
+`mode: conntrackd` を使う場合、管理用の同期を開始する前に、標準の
+`conntrackd.service` を停止して起動禁止にします。競合設定だけでは、
+ログ整理に伴う標準サービスの再起動で管理用の同期が停止します。
+自動起動の無効化だけでも、明示的な再起動は防げません。
+禁止後の状態を検証し、失敗時は適用を成功扱いしません。
+既存の独自サービスファイルを強制上書きせず、模擬適用では変更しません。
+
+所有権の記録は `systemd.mask/conntrackd.service` です。
+資源を削除しても起動禁止は残し、管理者が先に設定した禁止も解除しません。
+標準サービスへ戻す場合は、対象の資源を除き、管理用サービスを停止・無効化します。
+変更前の状態を確認してから `systemctl unmask conntrackd.service` を実行し、
+元の自動起動・稼働状態だけを復元してください。
+管理用の同期が動作中のまま禁止を解除しないでください。
+この保護は通信転送やカーネルの通信追跡表の設定を変更しません。
