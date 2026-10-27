@@ -14,7 +14,10 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ### Fixed
 
-- Compare DHCP lease synchronization contents before skipping transfers. Equal-size files with matching modification times, including a checkpointed SQLite database retried after WAL disappearance, no longer remain stale after a successful sync.
+- Exclude IPv6 DHCP and router-advertisement handling from IPv4-only dnsmasq interfaces using `no-dhcpv6-interface`. Preserve interfaces with declared DHCPv6 or router-advertisement services, including pending delegated scopes and aliases of the same OS interface, in both live and offline rendering. (#1358)
+- Compare DHCP lease synchronization contents before skipping transfers. Equal-size files with matching modification times, including a checkpointed SQLite database retried after WAL disappearance, no longer remain stale after a successful sync. (#1360)
+- Retry transient `SQLITE_BUSY` failures in the persistent DHCP notification queue within the existing three-second operation deadline. Respect cancellation, roll back failed transactions, retain the original observation time, and avoid duplicate commits. (#1362)
+- Mask and stop the stock `conntrackd.service` before applying managed connection-tracking synchronization, preventing a logrotate-triggered stock-service restart from stopping the managed service. Require the stock service to be masked and inactive before proceeding; do not force-overwrite local service files or operate services during dry-run. Preserve existing masks and retain the guard after resource removal; restoring the stock service requires explicit administrator action. (#1364)
 
 ## v20261021.2005
 
