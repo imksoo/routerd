@@ -12,6 +12,8 @@ The software is at the v1alpha1 stage; releases may contain breaking changes.
 
 ## Unreleased
 
+## v20261027.1620
+
 ### Fixed
 
 - Exclude IPv6 DHCP and router-advertisement handling from IPv4-only dnsmasq interfaces using `no-dhcpv6-interface`. Preserve interfaces with declared DHCPv6 or router-advertisement services, including pending delegated scopes and aliases of the same OS interface, in both live and offline rendering. (#1358)

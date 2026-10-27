@@ -11,6 +11,8 @@ routerd 的版本历程。格式遵循 [Keep a Changelog](https://keepachangelog
 
 ## Unreleased
 
+## v20261027.1620
+
 ### 修复
 
 - 对仅用于IPv4的dnsmasq接口设置`no-dhcpv6-interface`，排除IPv6 DHCP和路由通告处理。保留已声明DHCPv6或路由通告服务的接口，包括等待委派前缀的范围，以及指向同一实际接口的别名。此规则同时适用于运行时和离线配置生成。 (#1358)
