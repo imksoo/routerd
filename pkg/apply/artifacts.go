@@ -138,6 +138,12 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	}
 	serviceContext := serviceDeclarationContext{owner: owner, res: res, targetOS: targetOS, features: features}
 	switch res.Kind {
+	case "NAT44SessionSync":
+		spec, err := res.NAT44SessionSyncSpec()
+		if err != nil || strings.TrimSpace(spec.Mode) != "conntrackd" || !features.HasSystemd {
+			return nil
+		}
+		return []resource.Intent{artifact("systemd.mask", "conntrackd.service", resource.ActionEnsure, "systemd", map[string]string{"retained": "true", "reason": "exclusive conntrackd synchronization ownership"})}
 	case "LogSink":
 		return []resource.Intent{artifact("routerd.logSink", res.Metadata.Name, resource.ActionEnsure, "eventlog", nil)}
 	case "Package":
