@@ -70,3 +70,27 @@ Implemented: shared typed Health routing observation/policy, priority nftables
 result publication after application, and a bounded DHCPv4 hardware-address read.
 Focused regression checks and their executed results are recorded below before
 publication. Remaining steps and real two-WAN communication are open.
+
+### Executed checks (2026-10-29 JST)
+
+Toolchain: Go 1.25.9 linux/amd64. No live router or production DB was changed.
+
+- PASS: `make check-routerd15-focused` (four complete local packages, focused
+  priority result/freshness regressions in chain, and vet of all five packages).
+- PASS: Race Detector for healthcheck, egressroute, dhcpv4client and dynamicconfig;
+  focused priority result/freshness checks in chain also pass with the detector.
+- PASS: `make build-daemons`, using the project's CGO_ENABLED=0 Linux build path.
+- NOT PASS: `make check-routerd15` includes the full chain suite. This environment
+  prohibits Unix sockets and Netlink access. The unchanged baseline reproduces
+  `TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck`,
+  `TestDaemonStatusControllerStoresARPObserverDiagnosticsSeparately`, and the
+  panic in `TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec`.
+  That baseline comparison establishes pre-existing failures here, not a full
+  passing suite on an unrestricted Linux host. The full gate is retained.
+- NOT RUN: actual two-WAN daemon/kernel forwarding, peer interoperability,
+  physical NIC qualification and production cutover. Shell command fixtures test
+  nft application ordering/failure propagation only; they do not execute nft.
+
+The managed runtime status tool and policy snapshot were unavailable in this
+session, so no VPN/private-lab readiness is assumed. Publication is a proposal
+branch and draft PR; GitHub Actions completion is not awaited.

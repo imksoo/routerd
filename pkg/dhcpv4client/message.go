@@ -157,6 +157,9 @@ func Decode(packet []byte) (Message, error) {
 	if string(packet[236:240]) != string([]byte{99, 130, 83, 99}) {
 		return Message{}, fmt.Errorf("missing DHCP magic cookie")
 	}
+	if packet[2] > 16 {
+		return Message{}, fmt.Errorf("DHCP hardware address exceeds chaddr field")
+	}
 	msg := Message{
 		Op:      packet[0],
 		XID:     binary.BigEndian.Uint32(packet[4:8]),

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -839,6 +840,12 @@ func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path
 
 func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context, nft, path string) error {
 	var chunks [][]byte
+	type policyStatus struct {
+		name      string
+		status    map[string]any
+		candidate *api.EgressRoutePolicyCandidate
+	}
+	var results []policyStatus
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
 			continue
@@ -851,18 +858,18 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			continue
 		}
 		if unsupportedPrioritySelection(spec) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
+			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{
 				"phase":   "Pending",
 				"reason":  egressroute.ReasonUnsupported,
 				"message": fmt.Sprintf("selection %q is reserved but not implemented", firstNonEmpty(spec.Selection, egressroute.SelectionHighestWeightReady)),
 				"dryRun":  c.DryRun,
-			})
+			}})
 			continue
 		}
 		healthy := c.availableDefaultRouteCandidates(spec)
 		active, ok := selectDefaultRouteCandidate(healthy)
 		if !ok {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun})
+			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun}})
 			continue
 		}
 		data, err := render.NftablesEgressRoutePolicyDefaultMarks(res.ID(), spec, active, healthy)
@@ -870,8 +877,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		chunks = append(chunks, data)
-		now := c.now()
-		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
 		status := map[string]any{
 			"phase":             "Applied",
 			"family":            firstNonEmpty(spec.Family, "ipv4"),
@@ -881,7 +886,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			"selectedSource":    active.Source,
 			"selectedWeight":    active.Weight,
 			"dryRun":            c.DryRun,
-			"updatedAt":         now.Format(time.RFC3339Nano),
 			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
 		}
 		if len(active.Targets) == 0 {
@@ -891,10 +895,27 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			status["selectedRouteTable"] = active.EffectiveTable()
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
-		c.addHADatapathStatus(res.Metadata.Name, active, previous, status, now)
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, status)
+		results = append(results, policyStatus{name: res.Metadata.Name, status: status, candidate: &active})
 	}
-	return c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+	applyErr := c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+	var statusErr error
+	for _, result := range results {
+		if applyErr != nil {
+			result.status["phase"] = "Error"
+			result.status["reason"] = "ApplyFailed"
+			result.status["error"] = applyErr.Error()
+		}
+		if applyErr == nil && result.candidate != nil {
+			now := c.now()
+			result.status["updatedAt"] = now.Format(time.RFC3339Nano)
+			previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", result.name)
+			c.addHADatapathStatus(result.name, *result.candidate, previous, result.status, now)
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", result.name, result.status); err != nil {
+			statusErr = errors.Join(statusErr, fmt.Errorf("save policy %s result: %w", result.name, err))
+		}
+	}
+	return errors.Join(applyErr, statusErr)
 }
 
 func (c IPv4PolicyRouteController) now() time.Time {
@@ -1246,77 +1267,19 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 	if name == "" {
 		return true
 	}
-	status := healthCheckEffectiveStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
-	switch fmt.Sprint(status["phase"]) {
-	case "Healthy":
-	case "Failing":
-		failed, ok := statusInt(status["consecutiveFailed"])
-		if !ok || failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
-			return false
+	var spec api.HealthCheckSpec
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind == "HealthCheck" && resource.Metadata.Name == name {
+			var err error
+			spec, err = resource.HealthCheckSpec()
+			if err != nil {
+				return false
+			}
+			break
 		}
-	case PhaseDisabled, PhaseStandby, PhaseNotApplicable:
-		return false
-	default:
-		return false
 	}
-	checkedAt, ok := parseStatusTimestamp(status["lastCheckedAt"])
-	if !ok {
-		return false
-	}
-	maxAge := c.healthCheckFreshness(name)
-	return time.Since(checkedAt) <= maxAge
-}
-
-func healthCheckEffectiveStatus(status map[string]any) map[string]any {
-	observed, ok := status["observed"].(map[string]any)
-	if !ok || len(observed) == 0 {
-		return status
-	}
-	return observed
-}
-
-func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {
-	freshness := 2 * time.Minute
-	if c.Router == nil {
-		return freshness
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
-			continue
-		}
-		spec, err := res.HealthCheckSpec()
-		if err != nil {
-			return freshness
-		}
-		interval := parseDurationDefault(spec.Interval, 30*time.Second)
-		timeout := parseDurationDefault(spec.Timeout, 3*time.Second)
-		candidate := interval*3 + timeout
-		if candidate > freshness {
-			return candidate
-		}
-		return freshness
-	}
-	return freshness
-}
-
-func (c IPv4PolicyRouteController) healthCheckUnhealthyThreshold(name string) int {
-	if c.Router == nil {
-		return 3
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
-			continue
-		}
-		spec, err := res.HealthCheckSpec()
-		if err != nil {
-			return 3
-		}
-		if spec.UnhealthyThreshold > 0 {
-			return spec.UnhealthyThreshold
-		}
-		return 3
-	}
-	return 3
+	observation := healthcheck.RoutingObservationFromStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
+	return observation.Usable(c.now(), spec)
 }
 
 func statusInt(value any) (int, bool) {
@@ -1433,7 +1396,9 @@ func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path,
 			return nil
 		}
 		if exists {
-			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
+			if out, err := exec.CommandContext(ctx, nft, "delete", "table", family, table).CombinedOutput(); err != nil {
+				return fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
+			}
 		}
 		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
@@ -1656,5 +1621,6 @@ func artifactIPv4Table(artifact resource.Artifact) (int, bool) {
 }
 
 func (c IPv4PolicyRouteController) linkExists(ctx context.Context, ifname string) bool {
-	return exec.CommandContext(ctx, "ip", "link", "show", "dev", ifname).Run() == nil
+	_, err := c.commandOutput(ctx, "ip", "link", "show", "dev", ifname)
+	return err == nil
 }

@@ -389,3 +389,14 @@ release:
 
 clean:
 	rm -rf bin dist
+
+.PHONY: check-routerd15
+check-routerd15:
+	go test ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain
+	go vet ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain
+
+.PHONY: check-routerd15-focused
+check-routerd15-focused:
+	go test ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig
+	go test ./pkg/controller/chain -run '^(TestPriorityPolicy|TestIPv4PolicyRouteHealthCheckRequiresFreshStatus)' -count=1
+	go vet ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain

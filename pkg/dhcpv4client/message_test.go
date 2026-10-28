@@ -50,3 +50,14 @@ func TestLeaseFromACK(t *testing.T) {
 		t.Fatalf("renewAt = %s", lease.RenewAt())
 	}
 }
+
+func TestDecodeRejectsHardwareAddressBeyondCHAddr(t *testing.T) {
+	for _, capacity := range []int{240, 1500} {
+		packet := make([]byte, 240, capacity)
+		packet[2] = 255
+		copy(packet[236:], []byte{99, 130, 83, 99})
+		if _, err := Decode(packet); err == nil {
+			t.Fatalf("accepted oversized hardware address with capacity %d", capacity)
+		}
+	}
+}

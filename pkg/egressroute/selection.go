@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -301,66 +302,21 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate) bool {
 }
 
 func (c Controller) healthCheckReady(name string) bool {
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)
-	switch fmt.Sprint(status["phase"]) {
-	case "Healthy":
-	case "Failing":
-		failed := statusInt(status["consecutiveFailed"])
-		if failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
-			return false
+	var spec api.HealthCheckSpec
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind == "HealthCheck" && resource.Metadata.Name == name {
+				var err error
+				spec, err = resource.HealthCheckSpec()
+				if err != nil {
+					return false
+				}
+				break
+			}
 		}
-	default:
-		return false
 	}
-	checkedAt := parseTime(fmt.Sprint(status["lastCheckedAt"]))
-	if checkedAt.IsZero() {
-		return false
-	}
-	return !c.now().After(checkedAt.Add(c.healthCheckFreshness(name)))
-}
-
-func (c Controller) healthCheckUnhealthyThreshold(name string) int {
-	if c.Router == nil {
-		return 3
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
-			continue
-		}
-		spec, err := resource.HealthCheckSpec()
-		if err != nil {
-			return 3
-		}
-		if spec.UnhealthyThreshold > 0 {
-			return spec.UnhealthyThreshold
-		}
-		return 3
-	}
-	return 3
-}
-
-func (c Controller) healthCheckFreshness(name string) time.Duration {
-	freshness := 2 * time.Minute
-	if c.Router == nil {
-		return freshness
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
-			continue
-		}
-		spec, err := resource.HealthCheckSpec()
-		if err != nil {
-			return freshness
-		}
-		interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
-		timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
-		candidate := interval*3 + timeout
-		if candidate > freshness {
-			return candidate
-		}
-		return freshness
-	}
-	return freshness
+	observation := healthcheck.RoutingObservationFromStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
+	return observation.Usable(c.now(), spec)
 }
 
 func (c Controller) sourceDisabled(source string) bool {
