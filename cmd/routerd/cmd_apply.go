@@ -21,8 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -35,6 +33,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
@@ -93,16 +92,6 @@ type applyOptions struct {
 	Sandbox              bool
 	MutationGate         *sync.RWMutex
 	attemptHooks         *applyAttemptHooks
-}
-
-func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
-	policy := router.Spec.Apply
-	if policy.Mode == "" {
-		policy.Mode = "strict"
-	}
-	policy.ProtectedInterfaces = compactStringList(policy.ProtectedInterfaces)
-	policy.ProtectedZones = compactStringList(policy.ProtectedZones)
-	return policy
 }
 
 func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
@@ -208,19 +197,6 @@ func beginConfigGeneration(store *routerstate.SQLiteStore, configYAML string, ef
 		return 0, false, err
 	}
 	return generation, changed, nil
-}
-
-func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logger *eventlog.Logger) error {
-	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
-		return nil
-	}
-	if err := config.AtomicWriteFile(opts.ConfigPath, []byte(configYAML)); err != nil {
-		return fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
-	}
-	if logger != nil {
-		logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config", map[string]string{"config": opts.ConfigPath})
-	}
-	return nil
 }
 
 func configCommitPhase(phase string) bool {
@@ -337,22 +313,6 @@ func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store stale
 	return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath}, nil
 }
 
-func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return staleObjectStatusesForDesired(configuredResourceStatusKeys(router), statuses)
-}
-
-func staleObjectStatusesForDesired(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return lifecycle.PlanStatusGC(desired, statuses).StatusDeletes
-}
-
-func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.SyntheticObjectStatus(status)
-}
-
-func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
-	return desiredObjectStatusKeysForOS(router, store, now, platform.CurrentOS())
-}
-
 func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {
@@ -406,23 +366,6 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 		}
 		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
-	return out
-}
-
-func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.ConfigResourceObjectStatus(status)
-}
-
-func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	var out []routerstate.ObjectStatus
-	for _, status := range statuses {
-		if api.IsRemovedLegacyKind(status.Kind) {
-			out = append(out, status)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return objectStatusID(out[i]) < objectStatusID(out[j])
-	})
 	return out
 }
 
@@ -782,20 +725,6 @@ func inventoryStatusMap(status inventory.Status) map[string]any {
 	return out
 }
 
-func compactStringList(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
 func acquireApplyClusterLease(ctx context.Context, router *api.Router, store any) (ha.Decision, string, error) {
 	resource, spec, ok, err := applyClusterResource(router)
 	if err != nil || !ok {
@@ -845,55 +774,4 @@ func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterS
 		return resource, spec, true, err
 	}
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
-}
-
-func loadTransientStateStore(path string) (routerstate.Store, error) {
-	store, err := routerstate.LoadReadOnly(path)
-	if err != nil {
-		return nil, err
-	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	snapshot := routerstate.NewMemory()
-	snapshot.Values = store.Variables()
-	return snapshot, nil
-}
-
-func cleanupLegacyFreeBSDStateDir() ([]string, error) {
-	if platformDefaults.OS != platform.OSFreeBSD {
-		return nil, nil
-	}
-	legacy := filepath.Clean(legacyFreeBSDStateDir)
-	current := filepath.Clean(platformDefaults.StateDir)
-	if legacy == "" || current == "" || legacy == current {
-		return nil, nil
-	}
-	info, err := os.Stat(legacy)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("stat legacy FreeBSD state dir %s: %w", legacy, err)
-	}
-	if !info.IsDir() {
-		return nil, nil
-	}
-	if err := os.MkdirAll(current, 0755); err != nil {
-		return nil, fmt.Errorf("create FreeBSD state dir %s: %w", current, err)
-	}
-	destination := filepath.Join(current, "legacy-var-lib-routerd-"+time.Now().UTC().Format("20060102T150405Z"))
-	for suffix := 0; ; suffix++ {
-		candidate := destination
-		if suffix > 0 {
-			candidate = fmt.Sprintf("%s-%d", destination, suffix)
-		}
-		err := os.Rename(legacy, candidate)
-		if err == nil {
-			return []string{legacy + " -> " + candidate}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("move legacy FreeBSD state dir %s to %s: %w", legacy, candidate, err)
-		}
-	}
 }

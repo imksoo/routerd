@@ -23,6 +23,7 @@ const (
 	optionServerID     uint16 = 2
 	optionORO          uint16 = 6
 	optionElapsedTime  uint16 = 8
+	optionStatusCode   uint16 = 13
 	optionDNSServers   uint16 = 23
 	optionDomainSearch uint16 = 24
 	optionIAPD         uint16 = 25
@@ -49,6 +50,8 @@ type Message struct {
 	SNTPServers   []netip.Addr
 	DomainSearch  []string
 	AFTRName      string
+	ElapsedTime   uint16
+	StatusCode    uint16
 }
 
 func EncodeMessage(msg Message) ([]byte, error) {
@@ -72,11 +75,23 @@ func EncodeMessage(msg Message) ([]byte, error) {
 	if messageCarriesIAPD(msg.Type) {
 		out = appendOption(out, optionIAPD, encodeIAPD(msg))
 	}
-	out = appendOption(out, optionElapsedTime, []byte{0, 0})
+	out = appendOption(out, optionElapsedTime, []byte{byte(msg.ElapsedTime >> 8), byte(msg.ElapsedTime)})
 	return out, nil
 }
 
 func DecodeMessage(payload []byte) (Message, error) {
+	return decodeMessage(payload, nil)
+}
+
+// DecodeMessageForIAID selects the configured association while preserving
+// unrelated usable options in a reply containing multiple IA_PD options.
+func DecodeMessageForIAID(payload []byte, iaid uint32) (Message, error) {
+	return decodeMessage(payload, &iaid)
+}
+
+// A configured client owns one IA_PD. Select its IAID at the receive boundary
+// rather than allowing an unrelated later IA to overwrite its lease.
+func decodeMessage(payload []byte, wantedIAID *uint32) (Message, error) {
 	if len(payload) < 4 {
 		return Message{}, fmt.Errorf("DHCPv6 payload too short")
 	}
@@ -98,8 +113,27 @@ func DecodeMessage(payload []byte) (Message, error) {
 			msg.DomainSearch = decodeDomainList(data)
 		case optionAFTRName:
 			msg.AFTRName = decodeDomainName(data)
+		case optionStatusCode:
+			if len(data) >= 2 {
+				msg.StatusCode = binary.BigEndian.Uint16(data[:2])
+			}
+		case optionElapsedTime:
+			if len(data) == 2 {
+				msg.ElapsedTime = binary.BigEndian.Uint16(data)
+			}
 		case optionIAPD:
-			return decodeIAPD(data, &msg)
+			var ia Message
+			if err := decodeIAPD(data, &ia); err != nil {
+				return nil
+			}
+			if wantedIAID != nil && ia.IAID != *wantedIAID {
+				return nil
+			}
+			if !ia.Prefix.IsValid() || msg.Prefix.IsValid() {
+				return nil
+			}
+			msg.IAID, msg.T1, msg.T2 = ia.IAID, ia.T1, ia.T2
+			msg.Prefix, msg.Preferred, msg.Valid = ia.Prefix, ia.Preferred, ia.Valid
 		}
 		return nil
 	})
@@ -210,12 +244,20 @@ func decodeIAPD(data []byte, msg *Message) error {
 	msg.IAID = binary.BigEndian.Uint32(data[0:4])
 	msg.T1 = binary.BigEndian.Uint32(data[4:8])
 	msg.T2 = binary.BigEndian.Uint32(data[8:12])
+	// RFC 9915 21.21: discard this IA, preserving unrelated message options.
+	if msg.T1 > 0 && msg.T2 > 0 && msg.T1 > msg.T2 {
+		return fmt.Errorf("IA_PD T1 exceeds T2")
+	}
 	return walkOptions(data[12:], func(code uint16, data []byte) error {
+		if code == optionStatusCode && len(data) >= 2 && binary.BigEndian.Uint16(data[:2]) != 0 {
+			return fmt.Errorf("IA_PD operation failed")
+		}
 		if code != optionIAPrefix {
 			return nil
 		}
-		if len(data) < 25 {
-			return fmt.Errorf("IA Prefix option too short")
+		// An unusable independent prefix must not discard another usable one.
+		if len(data) < 25 || data[8] > 128 || binary.BigEndian.Uint32(data[:4]) > binary.BigEndian.Uint32(data[4:8]) || msg.Prefix.IsValid() {
+			return nil
 		}
 		var raw [16]byte
 		copy(raw[:], data[9:25])

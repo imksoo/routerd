@@ -41,20 +41,21 @@ that unrelated controllers, front-end code or packaging have been fully reviewed
 
 ## Go inventory
 
-The inventory includes production files, not generated assets or *_test.go files.
+The table records the initial scope inventory (before removal), not current file counts.
+It includes production files, not generated assets or *_test.go files.
 "In progress" means selected bodies/call paths reviewed; it does not mean the
 package is fully audited. "Pending" means inventoried/scanned only.
 
 | Directory | Production files | Semantic review |
 | --- | ---: | --- |
-| `cmd/routerctl` | 26 | Pending |
+| `cmd/routerctl` | 26 | In progress |
 | `cmd/routerd` | 29 | In progress |
 | `cmd/routerd-arp-observer` | 4 | Pending |
 | `cmd/routerd-bgp` | 1 | Pending |
 | `cmd/routerd-dhcp-event-relay` | 1 | Pending |
 | `cmd/routerd-dhcp-fingerprint-watcher` | 1 | Pending |
-| `cmd/routerd-dhcpv4-client` | 4 | Pending |
-| `cmd/routerd-dhcpv6-client` | 3 | Pending |
+| `cmd/routerd-dhcpv4-client` | 4 | In progress |
+| `cmd/routerd-dhcpv6-client` | 3 | In progress |
 | `cmd/routerd-dns-resolver` | 9 | Pending |
 | `cmd/routerd-dpi-classifier` | 1 | Pending |
 | `cmd/routerd-eventd` | 1 | Pending |
@@ -62,7 +63,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `cmd/routerd-healthcheck` | 1 | In progress |
 | `cmd/routerd-ndpi-agent` | 4 | Pending |
 | `cmd/routerd-pppoe-client` | 4 | Pending |
-| `cmd/routerd-ra-observer` | 4 | Pending |
+| `cmd/routerd-ra-observer` | 4 | In progress |
 | `cmd/routerd-schema` | 1 | Pending |
 | `cmd/routerd-vrrp-vmac` | 1 | Pending |
 | `internal/cmd/specgen` | 1 | Pending |
@@ -89,7 +90,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/controller/eventfederation` | 1 | Pending |
 | `pkg/controller/eventsubscription` | 1 | Pending |
 | `pkg/controller/firewall` | 1 | Pending |
-| `pkg/controller/framework` | 1 | Pending |
+| `pkg/controller/framework` | 1 | In progress |
 | `pkg/controller/ingressservice` | 1 | Pending |
 | `pkg/controller/mobility` | 37 | Pending |
 | `pkg/controller/mobilityfib` | 1 | Pending |
@@ -135,14 +136,14 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/observabilitypipeline` | 1 | Pending |
 | `pkg/observe` | 2 | Pending |
 | `pkg/otel` | 3 | Pending |
-| `pkg/pdclient` | 4 | Pending |
+| `pkg/pdclient` | 4 | In progress |
 | `pkg/platform` | 5 | Pending |
 | `pkg/plugin` | 6 | In progress |
 | `pkg/pppoeclient` | 1 | Pending |
 | `pkg/provideraction` | 4 | Pending |
 | `pkg/providercontract` | 1 | Pending |
 | `pkg/providerinventory` | 2 | Pending |
-| `pkg/raobserver` | 1 | Pending |
+| `pkg/raobserver` | 1 | In progress |
 | `pkg/render` | 32 | In progress |
 | `pkg/resource` | 3 | Pending |
 | `pkg/resourcequery` | 2 | Pending |
@@ -199,3 +200,78 @@ The audit remains in progress. This checkpoint is not a release or a claim that
 all packages meet every AGENTS.md rule. In particular, remaining status-map
 consumers, worker lifetimes, protocol exchanges, static preparation and non-Go
 surfaces still need semantic review and corresponding implementation.
+
+## Further implementation and whole-suite findings
+
+- Trace the actual CLI entrypoints, all init/global references and method bodies
+  before deleting free functions. This conservative source call graph found 140
+  unreachable routerd functions and 110 unreachable routerctl functions after
+  the first checkpoint. Remove those old apply/inspection branches and tests
+  that only exercised them. Active controller and inspection API paths remain.
+  Reachability analysis is not a semantic audit of all reachable code.
+- DHCPv6-PD now has one prefix-exchange retry owner for Solicit, Request, Renew
+  and Rebind. A lost Request retries the same transaction with updated elapsed
+  time, then returns to discovery after its bounded attempt budget. Match client,
+  selected server and IAID; the daemon receive path selects its configured IA.
+  Zero timers receive delayed renewal/rebinding times, zero-validity prefixes
+  withdraw, and Solicit carries the configured prefix-length hint.
+- Discard an unusable IA/prefix at its option boundary while retaining independent
+  DNS data. The relevant rules are RFC 9915 sections 14.2, 16 and 21.21–21.22:
+  <https://www.rfc-editor.org/rfc/rfc9915.html>.
+- RA parsing now obeys declared IPv6 length, source/hop/code/checksum and option
+  framing requirements. Ethernet padding is excluded; an invalid independent PIO
+  does not erase valid route/DNS options. See RFC 4861 section 6.1.2:
+  <https://www.rfc-editor.org/rfc/rfc4861.html#section-6.1.2>.
+- Share DHCPv4 Ethernet/IP/UDP framing checks between Linux packet capture and
+  FreeBSD BPF. Reject short/truncated/fragmented lengths rather than replacing an
+  invalid IP total length with capture length or slicing past it.
+- DHCP workers own cancellation for stop commands and process signals, with
+  bounded HTTP shutdown. Remove the unused config-update success stub and reject
+  reload of immutable supervisor-supplied settings. RA observer rejects unknown
+  commands instead of acknowledging them as executed.
+- Full local execution completed after the metadata-fixture repair. That attempt
+  had 98 passing packages, 16 failing packages and 13 without tests. The failures
+  exposed the lost DB-format explanation and the retained derived-host plan;
+  repair the error boundary and make the rollback test require the complete plan.
+  Make trace-contract tests explicitly sample spans, independent of the host's
+  sampler setting (the baseline reproduced that environment-dependent failure).
+  Selection/status unit fixtures now own link observations instead of requiring
+  a host iproute2 command. None of these changes establishes real forwarding.
+
+### Known open implementation work
+
+These are source findings, not merely VM-test omissions:
+
+- The legacy state-variable Set/Delete contract can still suppress write errors.
+  Replace that contract and update PD observation producers and ingress drains
+  together; typed Health and error-returning SQLite operations do not finish it.
+- Review DHCPv4 renewal/rebinding/expiry and command ownership as a complete
+  exchange. Frame bounds and worker cancellation do not establish that exchange.
+- The minimal PD model selects one prefix in its configured IA. Multiple-prefix
+  updates/revocations, information-request reliability, and complete server status
+  handling still require a coherent implementation and independent-peer checks.
+- Continue semantic review of the pending inventory, including config preparation,
+  remaining observation-map consumers, recovery/pending operations, web console,
+  scripts and packaging. Do not label the project fully rewritten or compliant
+  while these are open.
+
+### Verification of the further implementation
+
+- PASS: expanded `make check-routerd15-focused`, including full protocol/worker,
+  resource-query and framework packages, plus command/chain selection, apply,
+  schema-error, dry-run rollback and withdrawal regressions; `go vet ./...`.
+- PASS: generated configuration/control/OpenAPI schema consistency.
+- PASS: Race Detector for 15 core/worker packages and selected real command/chain
+  regressions (2 additional packages). These are local fixtures, not live peers.
+- PASS: project Linux daemon/provider builds and static linking checks.
+- PASS: FreeBSD daemon/provider cross-builds and test compilation via
+  `make check-freebsd-cross-compile`. `/bin/true` runs no FreeBSD test bodies;
+  this is compilation evidence only.
+- NOT PASS: whole native suite. After the identified logic/fixture corrections,
+  complete cmd/routerd and chain reruns still fail on Unix sockets and unavailable
+  host link/Netlink observations. The installer also requires missing ShellCheck.
+  Keep the unrestricted full test and real-peer gates; do not add blanket skips.
+
+The final report must still say that the repository-wide rewrite and semantic
+review are incomplete. The known open implementation work above is not resolved
+by successful compilation, race checks or this audit document.

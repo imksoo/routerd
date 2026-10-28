@@ -4,10 +4,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,7 +126,7 @@ func TestDaemonTickRetransmitsSolicit(t *testing.T) {
 	daemon := &dhcpv6Daemon{opts: options{resource: "wan-pd"}, client: client}
 	daemon.initTelemetry()
 
-	now = client.NextSolicitRetryAt()
+	now = client.NextRetryAt()
 	if err := daemon.tick(context.Background()); err != nil {
 		t.Fatalf("daemon tick: %v", err)
 	}
@@ -246,4 +251,25 @@ type daemonMemoryTransport struct {
 func (m *daemonMemoryTransport) Send(_ context.Context, packet pdclient.OutboundPacket) error {
 	m.sent = append(m.sent, packet)
 	return nil
+}
+
+func TestStopCommandCancelsTheDaemonOwner(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := t.TempDir()
+	client, err := pdclient.New(pdclient.Config{Resource: "wan-pd", Interface: "wan0", ClientDUID: []byte{1}, IAID: 7}, &daemonMemoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &dhcpv6Daemon{opts: options{leaseFile: filepath.Join(dir, "lease.json"), eventFile: filepath.Join(dir, "events.jsonl")}, client: client, cancel: cancel}
+	d.cond = sync.NewCond(&d.mu)
+	response := httptest.NewRecorder()
+	d.handleCommand(response, httptest.NewRequest(http.MethodPost, "/v1/commands/stop", strings.NewReader("")))
+	var result daemonapi.CommandResult
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || !result.Accepted || ctx.Err() != context.Canceled {
+		t.Fatalf("stop did not cancel the worker: %+v", result)
+	}
 }

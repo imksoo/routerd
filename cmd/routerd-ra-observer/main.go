@@ -193,6 +193,28 @@ func (d *daemon) recordAdvertisement(adv raobserver.Advertisement) {
 	d.mu.Unlock()
 }
 
+func (d *daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req daemonapi.CommandRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid command request", http.StatusBadRequest)
+		return
+	}
+	result := daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command}
+	if req.Command != daemonapi.CommandStop || d.cancel == nil {
+		result.Message = "unsupported command or observer is not running"
+		w.WriteHeader(http.StatusBadRequest)
+	} else {
+		result.Accepted = true
+		result.Message = "accepted"
+		defer d.cancel()
+	}
+	writeHTTPJSON(w, result)
+}
+
 func (d *daemon) serve(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0755); err != nil {
 		return err
@@ -209,18 +231,7 @@ func (d *daemon) serve(ctx context.Context) error {
 		writeHTTPJSON(w, d.status())
 	})
 	mux.HandleFunc("/v1/events", d.handleEvents)
-	mux.HandleFunc("/v1/commands", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		var req daemonapi.CommandRequest
-		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
-		if req.Command == daemonapi.CommandStop {
-			go d.cancel()
-		}
-		writeHTTPJSON(w, daemonapi.CommandResult{TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult}, Command: req.Command, Accepted: true, Message: "accepted"})
-	})
+	mux.HandleFunc("/v1/commands", d.handleCommand)
 	server := &http.Server{Handler: mux}
 	go func() {
 		<-ctx.Done()

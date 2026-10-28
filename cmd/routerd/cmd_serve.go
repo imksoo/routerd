@@ -507,7 +507,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		StatusFile:           *statusFile,
 		NetplanPath:          *netplanPath,
 		DnsmasqConfigPath:    *dnsmasqConfigPath,
-		DnsmasqServicePath:   runtimeDnsmasqServicePath(*dnsmasqServicePath),
+		DnsmasqServicePath:   *dnsmasqServicePath,
 		NftablesPath:         *nftablesPath,
 		LedgerPath:           *ledgerPath,
 		StatePath:            *statePath,
@@ -2473,15 +2473,6 @@ func statusStringMap(status map[string]any, key string) string {
 	}
 }
 
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
 // startControllerRuntime keeps a stop request ahead of synchronous bootstrap.
 // A controller start is normally quick, but systemd may request another
 // routerd restart while that bootstrap is applying a generated service unit.
@@ -2537,15 +2528,6 @@ type serveMutationAdmission struct {
 	mu                   *sync.Mutex
 	stopping             *atomic.Bool
 	runtimeMutationError func() error
-}
-
-// runGracefulStopWhenIdle runs the optional mobility handoff only when no
-// admitted configuration transaction is active.  The process must always be
-// able to leave on SIGTERM; a blocked transaction is less harmful than
-// extending host shutdown indefinitely.
-func runGracefulStopWhenIdle(mu *sync.Mutex, handoff func() error) (bool, error) {
-	ran, _, err := runGracefulStopWhenIdleBounded(mu, 0, handoff)
-	return ran, err
 }
 
 // runGracefulStopWhenIdleBounded runs an optional handoff only while no
@@ -2719,21 +2701,6 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	return result, nil
 }
 
-func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Prefixes(spec.IfName)
-	}
-	return out
-}
-
 func ipv6Prefixes(ifname string) []string {
 	if platformDefaults.OS == platform.OSFreeBSD {
 		return freeBSDIPv6Prefixes(ifname)
@@ -2750,21 +2717,6 @@ func ipv6Prefixes(ifname string) []string {
 		}
 	}
 	return prefixes
-}
-
-func observedIPv6AddressesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Addresses(spec.IfName)
-	}
-	return out
 }
 
 func ipv6Addresses(ifname string) []string {
@@ -2867,35 +2819,4 @@ func parseFreeBSDIfconfigIPv6Entries(out string) ([]string, []ipv6AddressEntry) 
 		}
 	}
 	return prefixes, entries
-}
-
-func observedDNSServersByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = resolvectlDNS(spec.IfName)
-	}
-	return out
-}
-
-func resolvectlDNS(ifname string) []string {
-	out, err := exec.Command("resolvectl", "dns", ifname).CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	fields := strings.Fields(strings.ReplaceAll(string(out), ":", " "))
-	var servers []string
-	for _, field := range fields {
-		addr, err := netip.ParseAddr(field)
-		if err == nil {
-			servers = append(servers, addr.String())
-		}
-	}
-	return servers
 }

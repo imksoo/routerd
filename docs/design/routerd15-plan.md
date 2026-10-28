@@ -87,6 +87,9 @@ Implemented across existing callers:
   not execute controllers, generate simulated events, create a temporary DB, or
   open ownership data for writing. Apply reacquires observations before effects.
 - Cancellation passed to policy route observations and delayed derived events.
+- Repository-wide command reachability cleanup, shared IPv4 frame bounds,
+  DHCPv6-PD request retry/identity/timer fixes, validated RA reception and worker
+  stop/signal ownership. The audit lists remaining protocol and state-write gaps.
 - Example inventory tests use their own loopback metadata endpoints and fake
   provider CLIs; Azure inventory honors its configured metadata endpoint.
 

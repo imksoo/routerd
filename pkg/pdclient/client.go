@@ -28,10 +28,6 @@ const (
 const (
 	solicitInitialRetransmissionTimeout = time.Second
 	solicitMaxRetransmissionTimeout     = time.Hour
-	renewInitialRetransmissionTimeout   = 10 * time.Second
-	renewMaxRetransmissionTimeout       = 10 * time.Minute
-	rebindInitialRetransmissionTimeout  = 10 * time.Second
-	rebindMaxRetransmissionTimeout      = 10 * time.Minute
 )
 
 type Config struct {
@@ -106,12 +102,12 @@ type Client struct {
 
 	lastTransaction     uint32
 	lastInfoTransaction uint32
-	advertise           Message
 	lastMessage         Message
-	solicitRetryAt      time.Time
-	solicitRetryTimeout time.Duration
-	leaseRetryAt        time.Time
-	leaseRetryTimeout   time.Duration
+	retryAt             time.Time
+	retryTimeout        time.Duration
+	exchangeStarted     time.Time
+	exchangeAttempts    int
+	infoPending         bool
 }
 
 func New(config Config, transport Transport) (*Client, error) {
@@ -127,11 +123,14 @@ func New(config Config, transport Transport) (*Client, error) {
 	if config.WantPrefix == 0 {
 		config.WantPrefix = 60
 	}
+	if config.WantPrefix < 1 || config.WantPrefix > 128 {
+		return nil, fmt.Errorf("prefix length must be between 1 and 128")
+	}
 	return &Client{Config: config, Transport: transport, State: StateIdle}, nil
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	return c.send(ctx, StateSoliciting, Message{Type: MessageSolicit})
+	return c.send(ctx, StateSoliciting, Message{Type: MessageSolicit, Prefix: netip.PrefixFrom(netip.IPv6Unspecified(), c.Config.WantPrefix)})
 }
 
 func (c *Client) Tick(ctx context.Context) error {
@@ -141,23 +140,27 @@ func (c *Client) Tick(ctx context.Context) error {
 func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin time.Duration) error {
 	now := c.now()
 	c.prunePreviousPrefixes(now)
-	if c.State == StateSoliciting && !c.solicitRetryAt.IsZero() && !now.Before(c.solicitRetryAt) {
-		return c.retransmitSolicit(ctx, now)
+	if (c.State == StateSoliciting || c.State == StateRequesting) && !c.retryAt.IsZero() && !now.Before(c.retryAt) {
+		if c.State == StateRequesting && c.exchangeAttempts >= 10 {
+			return c.Start(ctx)
+		}
+		return c.retransmit(ctx, now)
 	}
 	if c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding {
-		if c.Lease.Valid > 0 && !now.Before(c.Lease.ExpiresAt()) {
+		if !now.Before(c.Lease.ExpiresAt()) {
 			c.State = StateExpired
 			c.Lease = Lease{}
+			c.clearRetry()
 			return nil
-		}
-		if c.State == StateBound && c.Lease.T1 > 0 && !now.Before(c.Lease.RenewAt().Add(-renewMargin)) {
-			return c.Renew(ctx)
 		}
 		if (c.State == StateBound || c.State == StateRenewing) && c.Lease.T2 > 0 && !now.Before(c.Lease.RebindAt().Add(-rebindMargin)) {
 			return c.Rebind(ctx)
 		}
-		if (c.State == StateRenewing || c.State == StateRebinding) && !c.leaseRetryAt.IsZero() && !now.Before(c.leaseRetryAt) {
-			return c.retransmitLeaseExchange(ctx, now)
+		if c.State == StateBound && c.Lease.T1 > 0 && !now.Before(c.Lease.RenewAt().Add(-renewMargin)) {
+			return c.Renew(ctx)
+		}
+		if (c.State == StateRenewing || c.State == StateRebinding) && !c.retryAt.IsZero() && !now.Before(c.retryAt) {
+			return c.retransmit(ctx, now)
 		}
 	}
 	if c.State == StateIdle || c.State == StateExpired {
@@ -166,26 +169,8 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 	return nil
 }
 
-// NextSolicitRetryAt returns the next scheduled Solicit retransmission. The
-// transaction ID remains unchanged for every retransmission in the exchange.
-func (c *Client) NextSolicitRetryAt() time.Time {
-	if c.State != StateSoliciting {
-		return time.Time{}
-	}
-	return c.solicitRetryAt
-}
-
-// NextRetryAt returns the next retransmission deadline for the active DHCPv6
-// exchange. Renew and Rebind keep using the unexpired lease while retrying.
-func (c *Client) NextRetryAt() time.Time {
-	if c.State == StateSoliciting {
-		return c.solicitRetryAt
-	}
-	if c.State == StateRenewing || c.State == StateRebinding {
-		return c.leaseRetryAt
-	}
-	return time.Time{}
-}
+// NextRetryAt returns the deadline for the one active prefix exchange.
+func (c *Client) NextRetryAt() time.Time { return c.retryAt }
 
 func (c *Client) Renew(ctx context.Context) error {
 	if !c.Lease.Prefix.IsValid() {
@@ -237,6 +222,7 @@ func (c *Client) InfoRequest(ctx context.Context) error {
 		return err
 	}
 	c.lastInfoTransaction = xid
+	c.infoPending = true
 	return c.Transport.Send(ctx, OutboundPacket{
 		Interface: c.Config.Interface,
 		Message:   msg,
@@ -245,7 +231,7 @@ func (c *Client) InfoRequest(ctx context.Context) error {
 }
 
 func (c *Client) Handle(ctx context.Context, payload []byte) error {
-	msg, err := DecodeMessage(payload)
+	msg, err := DecodeMessageForIAID(payload, c.Config.IAID)
 	if err != nil {
 		return err
 	}
@@ -253,34 +239,35 @@ func (c *Client) Handle(ctx context.Context, payload []byte) error {
 }
 
 func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
-	if msg.TransactionID == c.lastInfoTransaction && msg.Type == MessageReply {
-		if len(msg.ClientDUID) > 0 && !bytes.Equal(msg.ClientDUID, c.Config.ClientDUID) {
-			return nil
+	if len(msg.ServerDUID) == 0 || !bytes.Equal(msg.ClientDUID, c.Config.ClientDUID) {
+		return nil
+	}
+	if c.infoPending && msg.TransactionID == c.lastInfoTransaction && msg.Type == MessageReply {
+		if msg.StatusCode == 0 {
+			c.acceptInformation(msg)
+			c.infoPending = false
 		}
-		c.acceptInformation(msg)
 		return nil
 	}
-	if msg.TransactionID != c.lastTransaction {
+	if msg.TransactionID != c.lastTransaction || msg.StatusCode != 0 || msg.IAID != c.Config.IAID || !msg.Prefix.IsValid() {
 		return nil
 	}
-	if len(msg.ServerDUID) == 0 {
+	if msg.Preferred > msg.Valid || (msg.T1 > 0 && msg.T2 > 0 && msg.T1 > msg.T2) {
 		return nil
 	}
-	if len(msg.ClientDUID) > 0 && !bytes.Equal(msg.ClientDUID, c.Config.ClientDUID) {
+	if (c.State == StateRequesting || c.State == StateRenewing) && !bytes.Equal(msg.ServerDUID, c.lastMessage.ServerDUID) {
 		return nil
 	}
 
 	switch {
 	case c.State == StateSoliciting && msg.Type == MessageAdvertise:
-		c.advertise = msg
+		if msg.Valid == 0 {
+			return nil
+		}
 		return c.send(ctx, StateRequesting, Message{
 			Type:       MessageRequest,
 			ServerDUID: msg.ServerDUID,
 			Prefix:     msg.Prefix,
-			T1:         msg.T1,
-			T2:         msg.T2,
-			Preferred:  msg.Preferred,
-			Valid:      msg.Valid,
 		})
 	case (c.State == StateRequesting || c.State == StateRenewing || c.State == StateRebinding) && msg.Type == MessageReply:
 		c.acceptReply(msg)
@@ -302,11 +289,30 @@ func (c *Client) acceptInformation(msg Message) {
 
 func (c *Client) acceptReply(msg Message) {
 	now := c.now()
+	if msg.Valid == 0 {
+		if c.Lease.Prefix == msg.Prefix {
+			c.Lease = Lease{}
+			c.State = StateExpired
+			c.clearRetry()
+		}
+		c.PreviousPrefixes = slices.DeleteFunc(c.PreviousPrefixes, func(p PreviousPrefix) bool { return p.Prefix == msg.Prefix })
+		return
+	}
 	c.rememberPreviousPrefix(msg.Prefix, now)
 	t1 := seconds(msg.T1)
 	t2 := seconds(msg.T2)
 	valid := seconds(msg.Valid)
 	preferred := seconds(msg.Preferred)
+	base := preferred
+	if base == 0 {
+		base = valid
+	}
+	if t2 == 0 {
+		t2 = max(base*4/5, t1)
+	}
+	if t1 == 0 {
+		t1 = min(base/2, t2*5/8)
+	}
 	c.Lease = Lease{
 		Prefix:     msg.Prefix,
 		ServerDUID: append([]byte(nil), msg.ServerDUID...),
@@ -319,7 +325,7 @@ func (c *Client) acceptReply(msg Message) {
 		RenewedAt:  now,
 	}
 	c.State = StateBound
-	c.clearLeaseRetry()
+	c.clearRetry()
 }
 
 func (c *Client) rememberPreviousPrefix(next netip.Prefix, now time.Time) {
@@ -381,12 +387,6 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	if !msg.Prefix.IsValid() && (msg.Type == MessageRenew || msg.Type == MessageRebind || msg.Type == MessageRelease) {
 		msg.Prefix = c.Lease.Prefix
 	}
-	if msg.Type == MessageRenew || msg.Type == MessageRebind || msg.Type == MessageRelease {
-		msg.T1 = uint32(c.Lease.T1 / time.Second)
-		msg.T2 = uint32(c.Lease.T2 / time.Second)
-		msg.Preferred = uint32(c.Lease.Preferred / time.Second)
-		msg.Valid = uint32(c.Lease.Valid / time.Second)
-	}
 	payload, err := EncodeMessage(msg)
 	if err != nil {
 		return err
@@ -394,81 +394,51 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 	c.lastTransaction = xid
 	c.State = next
 	c.lastMessage = msg
-	if next == StateSoliciting {
-		c.solicitRetryTimeout = c.nextSolicitRetryTimeout(0)
-		c.solicitRetryAt = c.now().Add(c.solicitRetryTimeout)
-	} else {
-		c.clearSolicitRetry()
-	}
-	if next == StateRenewing || next == StateRebinding {
-		c.leaseRetryTimeout = c.nextLeaseRetryTimeout(next, 0)
-		c.leaseRetryAt = c.now().Add(c.leaseRetryTimeout)
-	} else {
-		c.clearLeaseRetry()
+	c.clearRetry()
+	c.exchangeStarted = c.now()
+	c.exchangeAttempts = 1
+	switch next {
+	case StateSoliciting, StateRequesting, StateRenewing, StateRebinding:
+		c.retryTimeout = c.nextRetryTimeout(next, 0)
+		c.retryAt = c.exchangeStarted.Add(c.retryTimeout)
 	}
 	return c.sendMessage(ctx, msg, payload)
 }
 
-func (c *Client) retransmitSolicit(ctx context.Context, now time.Time) error {
-	if c.State != StateSoliciting || c.lastMessage.Type != MessageSolicit || c.lastMessage.TransactionID != c.lastTransaction {
-		return nil
-	}
+// Retransmission preserves the transaction and advances the deadline even on a
+// send error. A temporary transport failure must not create an immediate loop.
+func (c *Client) retransmit(ctx context.Context, now time.Time) error {
+	elapsed := max(time.Duration(0), now.Sub(c.exchangeStarted)) / (10 * time.Millisecond)
+	c.lastMessage.ElapsedTime = uint16(min(elapsed, 65535))
 	payload, err := EncodeMessage(c.lastMessage)
 	if err != nil {
 		return err
 	}
-	if err := c.sendMessage(ctx, c.lastMessage, payload); err != nil {
-		return err
-	}
-	c.solicitRetryTimeout = c.nextSolicitRetryTimeout(c.solicitRetryTimeout)
-	c.solicitRetryAt = now.Add(c.solicitRetryTimeout)
-	return nil
+	c.exchangeAttempts++
+	c.retryTimeout = c.nextRetryTimeout(c.State, c.retryTimeout)
+	c.retryAt = now.Add(c.retryTimeout)
+	return c.sendMessage(ctx, c.lastMessage, payload)
 }
 
 func (c *Client) sendMessage(ctx context.Context, msg Message, payload []byte) error {
-	return c.Transport.Send(ctx, OutboundPacket{
-		Interface: c.Config.Interface,
-		Message:   msg,
-		Payload:   payload,
-	})
+	return c.Transport.Send(ctx, OutboundPacket{Interface: c.Config.Interface, Message: msg, Payload: payload})
 }
 
-func (c *Client) clearSolicitRetry() {
-	c.solicitRetryAt = time.Time{}
-	c.solicitRetryTimeout = 0
+func (c *Client) clearRetry() {
+	c.retryAt = time.Time{}
+	c.retryTimeout = 0
+	c.exchangeAttempts = 0
 }
 
-func (c *Client) retransmitLeaseExchange(ctx context.Context, now time.Time) error {
-	want := MessageRenew
-	if c.State == StateRebinding {
-		want = MessageRebind
+func (c *Client) nextRetryTimeout(state State, previous time.Duration) time.Duration {
+	switch state {
+	case StateSoliciting:
+		return c.nextSolicitRetryTimeout(previous)
+	case StateRequesting:
+		return c.nextExchangeRetryTimeout(previous, time.Second, 30*time.Second, false)
+	default:
+		return c.nextExchangeRetryTimeout(previous, 10*time.Second, 10*time.Minute, false)
 	}
-	if (c.State != StateRenewing && c.State != StateRebinding) || c.lastMessage.Type != want || c.lastMessage.TransactionID != c.lastTransaction {
-		return nil
-	}
-	payload, err := EncodeMessage(c.lastMessage)
-	if err != nil {
-		return err
-	}
-	if err := c.sendMessage(ctx, c.lastMessage, payload); err != nil {
-		return err
-	}
-	c.leaseRetryTimeout = c.nextLeaseRetryTimeout(c.State, c.leaseRetryTimeout)
-	c.leaseRetryAt = now.Add(c.leaseRetryTimeout)
-	return nil
-}
-
-func (c *Client) clearLeaseRetry() {
-	c.leaseRetryAt = time.Time{}
-	c.leaseRetryTimeout = 0
-}
-
-func (c *Client) nextLeaseRetryTimeout(state State, previous time.Duration) time.Duration {
-	initial, maximum := renewInitialRetransmissionTimeout, renewMaxRetransmissionTimeout
-	if state == StateRebinding {
-		initial, maximum = rebindInitialRetransmissionTimeout, rebindMaxRetransmissionTimeout
-	}
-	return c.nextExchangeRetryTimeout(previous, initial, maximum, false)
 }
 
 // nextSolicitRetryTimeout follows the RFC 8415 retransmission shape: a

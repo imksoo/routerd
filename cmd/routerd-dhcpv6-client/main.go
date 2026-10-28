@@ -15,21 +15,22 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/sys/unix"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventfile"
 	routerotel "github.com/imksoo/routerd/pkg/otel"
 	"github.com/imksoo/routerd/pkg/pdclient"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sys/unix"
 )
 
 const daemonKind = "routerd-dhcpv6-client"
@@ -140,7 +141,13 @@ func daemonCommand(args []string, _ io.Writer) error {
 	}
 	daemon.telemetry = telemetry
 	daemon.initTelemetry()
-	return daemon.Run(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	err = daemon.Run(ctx)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func onceCommand(args []string, stdout io.Writer) error {
@@ -194,6 +201,7 @@ func onceCommand(args []string, stdout io.Writer) error {
 }
 
 type dhcpv6Daemon struct {
+	cancel     context.CancelFunc
 	opts       options
 	ifi        *net.Interface
 	clientDUID []byte
@@ -345,6 +353,9 @@ func (d *dhcpv6Daemon) initTelemetry() {
 }
 
 func (d *dhcpv6Daemon) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	d.cancel = cancel
+	defer cancel()
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
@@ -360,7 +371,13 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer listener.Close()
-	defer server.Close()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			_ = server.Close()
+		}
+	}()
 	go func() { _ = server.Serve(listener) }()
 
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv6 client daemon started", nil)
@@ -426,7 +443,7 @@ func (d *dhcpv6Daemon) startClient(ctx context.Context) error {
 }
 
 func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error {
-	msg, err := pdclient.DecodeMessage(payload)
+	msg, err := pdclient.DecodeMessageForIAID(payload, d.client.Config.IAID)
 	if err != nil {
 		return nil
 	}
@@ -558,7 +575,6 @@ func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	mux.HandleFunc("/v1/healthz", d.handleHealthz)
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	mux.HandleFunc("/v1/config/update", d.handleConfigUpdate)
 	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
 }
 
@@ -637,7 +653,13 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		err = d.client.InfoRequest(ctx)
 		infoRequestSent = err == nil
 	case daemonapi.CommandReload:
+		err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
 	case daemonapi.CommandStop:
+		if d.cancel == nil {
+			err = errors.New("daemon is not running")
+		} else {
+			defer d.cancel()
+		}
 	case daemonapi.CommandStart:
 		err = d.client.Start(ctx)
 	case daemonapi.CommandFlush:
@@ -666,15 +688,6 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	d.publish(daemonapi.EventCommandExecuted, daemonapi.SeverityInfo, "CommandExecuted", command, map[string]string{"command": command})
 	writeHTTPJSON(w, result)
-}
-
-func (d *dhcpv6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request) {
-	writeHTTPJSON(w, daemonapi.CommandResult{
-		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult},
-		Command:  "config/update",
-		Accepted: true,
-		Message:  "accepted; dynamic config apply is pending Phase 1",
-	})
 }
 
 func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {

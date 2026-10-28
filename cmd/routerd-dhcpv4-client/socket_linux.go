@@ -6,12 +6,12 @@ package main
 
 import (
 	"context"
-	"encoding/binary"
 	"net"
 	"os"
 	"syscall"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/dhcpv4client"
 	"golang.org/x/sys/unix"
 )
 
@@ -150,33 +150,11 @@ func (c *linuxDHCPv4PacketConn) dhcpPayload(frame []byte) ([]byte, net.IP) {
 	if len(c.hwaddr) > 0 && len(frame) >= 12 && net.HardwareAddr(frame[6:12]).String() == c.hwaddr.String() {
 		return nil, nil
 	}
-	if binary.BigEndian.Uint16(frame[12:14]) != etherTypeIPv4 {
+	payload, source := dhcpv4client.EthernetReply(frame)
+	if len(payload) == 0 {
 		return nil, nil
 	}
-	ip := frame[ethHeaderLen:]
-	ihl := int(ip[0]&0x0f) * 4
-	if ihl < 20 || len(ip) < ihl+8 || ip[9] != unix.IPPROTO_UDP {
-		return nil, nil
-	}
-	total := int(binary.BigEndian.Uint16(ip[2:4]))
-	if total <= 0 || total > len(ip) {
-		total = len(ip)
-	}
-	ip = ip[:total]
-	udp := ip[ihl:]
-	if len(udp) < 8 {
-		return nil, nil
-	}
-	srcPort := binary.BigEndian.Uint16(udp[0:2])
-	dstPort := binary.BigEndian.Uint16(udp[2:4])
-	if srcPort != 67 || dstPort != 68 {
-		return nil, nil
-	}
-	udpLen := int(binary.BigEndian.Uint16(udp[4:6]))
-	if udpLen < 8 || udpLen > len(udp) {
-		return nil, nil
-	}
-	return udp[8:udpLen], net.IPv4(ip[12], ip[13], ip[14], ip[15])
+	return payload, net.IP(source.AsSlice())
 }
 
 func (c *linuxDHCPv4PacketConn) WriteToUDP(buf []byte, addr *net.UDPAddr) (int, error) {

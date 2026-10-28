@@ -36,7 +36,7 @@ func TestClientSolicitRequestReply(t *testing.T) {
 	if client.State != StateSoliciting {
 		t.Fatalf("state = %s", client.State)
 	}
-	if got := transport.last().Message; got.Type != MessageSolicit || got.TransactionID != 0x010203 || got.Prefix.IsValid() {
+	if got := transport.last().Message; got.Type != MessageSolicit || got.TransactionID != 0x010203 || got.Prefix.String() != "::/60" {
 		t.Fatalf("solicit = %+v", got)
 	}
 
@@ -106,7 +106,7 @@ func TestClientSolicitRetransmitsWithSameTransactionAndBoundedBackoff(t *testing
 		t.Fatalf("start: %v", err)
 	}
 
-	firstRetry := client.NextSolicitRetryAt()
+	firstRetry := client.NextRetryAt()
 	if !firstRetry.After(now.Add(solicitInitialRetransmissionTimeout)) || firstRetry.After(now.Add(1100*time.Millisecond)) {
 		t.Fatalf("first retry = %s, want just over 1s", firstRetry.Sub(now))
 	}
@@ -129,17 +129,17 @@ func TestClientSolicitRetransmitsWithSameTransactionAndBoundedBackoff(t *testing
 		t.Fatalf("retry transaction ID = %06x, want 010203", got)
 	}
 	wantSecondInterval := 2 * firstRetry.Sub(startedAt)
-	if got := client.NextSolicitRetryAt().Sub(now); got != wantSecondInterval {
+	if got := client.NextRetryAt().Sub(now); got != wantSecondInterval {
 		t.Fatalf("second retry interval = %s, want %s", got, wantSecondInterval)
 	}
 
-	client.solicitRetryTimeout = solicitMaxRetransmissionTimeout
-	now = client.NextSolicitRetryAt()
-	client.solicitRetryAt = now
+	client.retryTimeout = solicitMaxRetransmissionTimeout
+	now = client.NextRetryAt()
+	client.retryAt = now
 	if err := client.Tick(context.Background()); err != nil {
 		t.Fatalf("capped retry tick: %v", err)
 	}
-	if got := client.NextSolicitRetryAt().Sub(now); got != solicitMaxRetransmissionTimeout {
+	if got := client.NextRetryAt().Sub(now); got != solicitMaxRetransmissionTimeout {
 		t.Fatalf("capped retry interval = %s, want %s", got, solicitMaxRetransmissionTimeout)
 	}
 }
@@ -229,7 +229,7 @@ func TestClientRetransmitsRenewAndRebindWhileLeaseRemainsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	renewXID := transport.last().Message.TransactionID
-	if client.State != StateRenewing || client.NextRetryAt().Sub(now) != renewInitialRetransmissionTimeout {
+	if client.State != StateRenewing || client.NextRetryAt().Sub(now) != 10*time.Second {
 		t.Fatalf("renew state/retry = %s %s", client.State, client.NextRetryAt().Sub(now))
 	}
 	now = client.NextRetryAt()
@@ -245,7 +245,7 @@ func TestClientRetransmitsRenewAndRebindWhileLeaseRemainsValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	rebindXID := transport.last().Message.TransactionID
-	if client.State != StateRebinding || rebindXID == renewXID || client.NextRetryAt().Sub(now) != rebindInitialRetransmissionTimeout {
+	if client.State != StateRebinding || rebindXID == renewXID || client.NextRetryAt().Sub(now) != 10*time.Second {
 		t.Fatalf("rebind state/xid/retry = %s %06x %s", client.State, rebindXID, client.NextRetryAt().Sub(now))
 	}
 	now = client.NextRetryAt()
@@ -450,4 +450,82 @@ func (m *memoryTransport) last() OutboundPacket {
 		return OutboundPacket{}
 	}
 	return m.sent[len(m.sent)-1]
+}
+
+// The real encoder/decoder and client state machine exchange payloads through
+// the transport boundary. A lost Request must keep its exchange and recover.
+func TestRequestLossRecoversWithMatchingIAAndServer(t *testing.T) {
+	now := time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC)
+	xid := uint32(100)
+	transport := &memoryTransport{}
+	client, err := New(Config{Resource: "wan-pd", Interface: "wan0", ClientDUID: []byte{0, 3, 0, 1, 2, 0, 0, 0, 0, 1}, IAID: 7, Now: func() time.Time { return now }, Random: func() float64 { return .5 }, Transaction: func() (uint32, error) { xid++; return xid, nil }}, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := client.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	server := []byte{0, 3, 0, 1, 2, 0, 0, 0, 0, 2}
+	msg := Message{Type: MessageAdvertise, TransactionID: client.lastTransaction, ClientDUID: client.Config.ClientDUID, ServerDUID: server, IAID: 7, Prefix: netip.MustParsePrefix("2001:db8:7::/56"), Preferred: 90, Valid: 120}
+	if err := client.Handle(ctx, mustPayload(t, msg)); err != nil {
+		t.Fatal(err)
+	}
+	requestXID := client.lastTransaction
+	now = client.NextRetryAt()
+	if err := client.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := DecodeMessage(transport.last().Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Type != MessageRequest || retry.TransactionID != requestXID || retry.ElapsedTime == 0 {
+		t.Fatalf("invalid Request retry: %+v", retry)
+	}
+	msg.Type = MessageReply
+	msg.TransactionID = requestXID
+	wrongServer := msg
+	wrongServer.ServerDUID = []byte{9}
+	if err := client.Handle(ctx, mustPayload(t, wrongServer)); err != nil {
+		t.Fatal(err)
+	}
+	if client.State != StateRequesting {
+		t.Fatal("unselected server acquired lease")
+	}
+	wrongIA := msg
+	wrongIA.IAID = 8
+	payload := mustPayload(t, wrongIA)
+	payload = appendOption(payload, optionIAPD, encodeIAPD(msg))
+	if err := client.Handle(ctx, payload); err != nil {
+		t.Fatal(err)
+	}
+	if client.State != StateBound || client.Lease.IAID != 7 || client.Lease.T1 <= 0 || client.Lease.T2 <= client.Lease.T1 {
+		t.Fatalf("lease did not recover: %+v", client.Lease)
+	}
+	if err := client.Renew(ctx); err != nil {
+		t.Fatal(err)
+	}
+	msg.TransactionID = client.lastTransaction
+	msg.Preferred = 0
+	msg.Valid = 0
+	if err := client.Handle(ctx, mustPayload(t, msg)); err != nil {
+		t.Fatal(err)
+	}
+	if client.State != StateExpired || client.Lease.Prefix.IsValid() {
+		t.Fatal("revoked prefix remained bound")
+	}
+}
+
+func TestInvalidIADoesNotDiscardIndependentDNS(t *testing.T) {
+	msg := Message{Type: MessageReply, TransactionID: 1, ClientDUID: []byte{1}, IAID: 7, T1: 20, T2: 10, Prefix: netip.MustParsePrefix("2001:db8::/56"), Preferred: 60, Valid: 120}
+	dns := netip.MustParseAddr("2001:db8::53").As16()
+	payload := appendOption(mustPayload(t, msg), optionDNSServers, dns[:])
+	got, err := DecodeMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Prefix.IsValid() || len(got.DNSServers) != 1 || got.DNSServers[0] != netip.AddrFrom16(dns) {
+		t.Fatalf("IA scope was not preserved: %+v", got)
+	}
 }

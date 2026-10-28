@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/storage"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
@@ -278,6 +279,9 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 	result, err := runApplyChainOnce(context.Background(), router, opts, io.Discard, m.logger)
 	if err == nil {
 		return result, nil
+	}
+	if errors.Is(err, storage.ErrSchemaVersion) {
+		return nil, errors.New("unsupported routerd state database format; select a fresh routerd 1.5 database for cutover")
 	}
 	return nil, err
 }

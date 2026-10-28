@@ -20,7 +20,6 @@ var version = routerversion.String()
 const (
 	routerdDnsmasqService       = "routerd-dnsmasq.service"
 	defaultKeepalivedConfigPath = "/etc/keepalived/keepalived.conf"
-	freebsdSysrcStateKey        = "freebsd.applyFreeBSDConfig.lastSysrcKeys"
 )
 
 var (

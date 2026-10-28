@@ -4,147 +4,18 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/config"
-	"github.com/imksoo/routerd/pkg/controlapi"
-	"github.com/imksoo/routerd/pkg/lifecycle"
-	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func deleteCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	filePath := fs.String("f", "", "router config file whose resources should be deleted")
-	ledgerPath := fs.String("ledger-file", defaultLedgerPath, "routerd ownership ledger file")
-	statePath := fs.String("state-file", defaultStatePath, "routerd state database file")
-	dryRun := fs.Bool("dry-run", false, "show what would be deleted without changing host state")
-	force := fs.Bool("force", false, "delete stale state even when the kind is no longer in the current schema")
-	apiVersion := fs.String("api-version", "", "apiVersion to use with --force when a stale kind is ambiguous")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	targets, err := deleteTargets(fs.Args(), *filePath, *statePath, *force, *apiVersion)
-	if err != nil {
-		return err
-	}
-	if len(targets) == 0 {
-		return errors.New("delete requires <kind>/<name> or -f <router.yaml>")
-	}
-	result, err := performDeleteTargets(targets, *statePath, *ledgerPath, *dryRun)
-	if err != nil {
-		return err
-	}
-	prefix := ""
-	if result.DryRun {
-		prefix = "would "
-	}
-	for _, artifact := range result.Artifacts {
-		fmt.Fprintf(stdout, "%sdelete owned artifact %s\n", prefix, artifact)
-	}
-	for _, item := range result.Deleted {
-		fmt.Fprintf(stdout, "%sdelete %s\n", prefix, item)
-	}
-	return nil
-}
-
-func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, dryRun bool) (controlapi.DeleteResult, error) {
-	stateStore, err := routerstate.Load(statePath)
-	if err != nil {
-		return controlapi.DeleteResult{}, err
-	}
-	ledger, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		return controlapi.DeleteResult{}, err
-	}
-	defer func() { _ = ledger.Close() }()
-	result := controlapi.DeleteResult{TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"}, DryRun: dryRun}
-	for _, target := range targets {
-		owner := target.APIVersion + "/" + target.Kind + "/" + target.Name
-		owned, err := ledger.All()
-		if err != nil {
-			return result, err
-		}
-		plan := lifecycle.PlanDeleteTargetGC(lifecycle.GCPlanInput{
-			LedgerArtifacts: owned,
-			TargetOwnerIDs:  map[string]bool{owner: true},
-		})
-		for _, removal := range plan.ArtifactRemovals {
-			artifact := removal.Artifact
-			label := artifact.Kind + "/" + artifact.Name
-			if !dryRun {
-				cleaned, err := cleanupLedgerOwnedArtifact(artifact)
-				if err != nil {
-					return result, fmt.Errorf("%s cleanup %s/%s: %w", owner, artifact.Kind, artifact.Name, err)
-				}
-				if cleaned != "" {
-					label = cleaned
-				}
-			}
-			result.Artifacts = append(result.Artifacts, label)
-		}
-		if !dryRun {
-			if err := ledger.Forget(plan.LedgerForgets); err != nil {
-				return result, err
-			}
-			if deleter, ok := stateStore.(routerstate.ObjectDeleteStore); ok {
-				if err := deleter.DeleteObject(target.APIVersion, target.Kind, target.Name); err != nil {
-					return result, err
-				}
-			}
-			if recorder, ok := stateStore.(routerstate.EventRecorder); ok {
-				_ = recorder.RecordEvent(target.APIVersion, target.Kind, target.Name, "Normal", "Deleted", "resource deleted by routerd delete")
-			}
-		}
-		result.Deleted = append(result.Deleted, owner)
-	}
-	if !dryRun {
-
-	}
-	return result, nil
-}
 
 type deleteTarget struct {
 	APIVersion string
 	Kind       string
 	Name       string
-}
-
-func deleteTargets(args []string, filePath, statePath string, force bool, apiVersion string) ([]deleteTarget, error) {
-	if filePath != "" {
-		if len(args) != 0 {
-			return nil, errors.New("delete accepts either -f or <kind>/<name>, not both")
-		}
-		router, err := config.Load(filePath)
-		if err != nil {
-			return nil, err
-		}
-		targets := make([]deleteTarget, 0, len(router.Spec.Resources))
-		for _, res := range router.Spec.Resources {
-			targets = append(targets, deleteTarget{APIVersion: res.APIVersion, Kind: res.Kind, Name: res.Metadata.Name})
-		}
-		return targets, nil
-	}
-	if len(args) != 1 {
-		return nil, errors.New("delete requires exactly one <kind>/<name> target")
-	}
-	target, err := deleteTargetFromArg(args[0])
-	if err != nil {
-		if !force {
-			return nil, err
-		}
-		target, err = forceDeleteTargetFromArg(args[0], statePath, apiVersion)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return []deleteTarget{target}, nil
 }
 
 func deleteTargetFromArg(arg string) (deleteTarget, error) {

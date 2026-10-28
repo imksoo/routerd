@@ -13,6 +13,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/imksoo/routerd/pkg/dhcpv4client"
 	"golang.org/x/sys/unix"
 )
 
@@ -153,7 +154,7 @@ func (c *bpfPacketConn) collectPackets(data []byte) {
 			return
 		}
 		frame := data[hdrLen : hdrLen+capLen]
-		if payload, ok := dhcpv4PayloadFromEthernet(frame); ok {
+		if payload, _ := dhcpv4client.EthernetReply(frame); len(payload) > 0 {
 			c.pending = append(c.pending, append([]byte(nil), payload...))
 		}
 		next := bpfWordAlign(hdrLen + capLen)
@@ -162,28 +163,6 @@ func (c *bpfPacketConn) collectPackets(data []byte) {
 		}
 		data = data[next:]
 	}
-}
-
-func dhcpv4PayloadFromEthernet(frame []byte) ([]byte, bool) {
-	if len(frame) < 14+20+8 || binary.BigEndian.Uint16(frame[12:14]) != 0x0800 {
-		return nil, false
-	}
-	ip := frame[14:]
-	ihl := int(ip[0]&0x0f) * 4
-	if ihl < 20 || len(ip) < ihl+8 || ip[9] != 17 {
-		return nil, false
-	}
-	udp := ip[ihl:]
-	srcPort := binary.BigEndian.Uint16(udp[0:2])
-	dstPort := binary.BigEndian.Uint16(udp[2:4])
-	if !((srcPort == 67 && dstPort == 68) || (srcPort == 68 && dstPort == 67)) {
-		return nil, false
-	}
-	udpLen := int(binary.BigEndian.Uint16(udp[4:6]))
-	if udpLen < 8 || udpLen > len(udp) {
-		return nil, false
-	}
-	return udp[8:udpLen], true
 }
 
 func ethernetIPv4UDPBroadcast(src net.HardwareAddr, payload []byte) []byte {

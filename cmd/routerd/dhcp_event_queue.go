@@ -78,10 +78,6 @@ func runDHCPEventQueue(ctx context.Context, path, stickyPath, defaultLeaseFile s
 	}
 }
 
-func processDHCPLeaseEvent(ctx context.Context, pending dhcpeventqueue.Event, stickyPath string, holdDays int, eventBus *bus.Bus) error {
-	return processDHCPLeaseEventDisposition(ctx, pending, stickyPath, holdDays, eventBus, "", false)
-}
-
 func processDHCPLeaseEventDisposition(ctx context.Context, pending dhcpeventqueue.Event, stickyPath string, holdDays int, eventBus *bus.Bus, disposition string, replayed bool) error {
 	req := pending.Lease
 	topic, ok := daemonapi.DHCPLeaseEventType(req.Action)

@@ -32,7 +32,8 @@ needed, select a fresh DB path, and start all routerd/worker binaries from the
 same revision with the rewritten configuration. Do not mix old and new workers:
 Health IPC now includes a typed `routing` observation required by the consumer.
 A Health worker restart restores display history and re-probes before declaring
-reachability. Keep independent console access during network qualification.
+reachability. DHCP worker stop commands cancel the owning daemon; configuration
+changes are applied by the supervisor restarting workers with new arguments. Keep independent console access during network qualification.
 
 The fresh database does not contain the old ownership ledger, pending provider
 actions, DHCP callback queue, or historical events. Resolve or explicitly retire

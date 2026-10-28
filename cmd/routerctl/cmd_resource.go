@@ -410,10 +410,6 @@ func writeStatusSummaryTable(stdout io.Writer, status controlapi.StatusStatus) e
 	return w.Flush()
 }
 
-func parseShowTarget(target string) (string, string, error) {
-	return parseResourceTarget("show", target)
-}
-
 func parseResourceTarget(verb, target string) (string, string, error) {
 	kind, name, hasName := strings.Cut(target, "/")
 	kind = canonicalShowKind(kind)
@@ -565,35 +561,6 @@ func canonicalShowKind(kind string) string {
 	return kind
 }
 
-func showAPIVersionForKnownKind(kind string) string {
-	switch kind {
-	case "Inventory":
-		return api.RouterAPIVersion
-	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
-		return api.SystemAPIVersion
-	case "Telemetry":
-		return api.ObservabilityAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
-		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile", "ProviderActionPolicy":
-		return api.HybridAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "BGPRouter", "BGPPeer", "BFD", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44FlowDNATPinhole", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "TrafficFlowLog":
-		return api.NetAPIVersion
-	default:
-		return ""
-	}
-}
-
-func resourceSelectionError(resources []api.Resource, kind, name string) error {
-	if !resourceKindExists(resources, kind) {
-		return fmt.Errorf("unknown resource kind %q", kind)
-	}
-	if name != "" {
-		return fmt.Errorf("%s/%s not found", kind, name)
-	}
-	return fmt.Errorf("no %s resources found", kind)
-}
-
 func selectResources(resources []api.Resource, kind, name string) []api.Resource {
 	var selected []api.Resource
 	for _, res := range resources {
@@ -609,13 +576,4 @@ func selectResources(resources []api.Resource, kind, name string) []api.Resource
 		return selected[i].Metadata.Name < selected[j].Metadata.Name
 	})
 	return selected
-}
-
-func resourceKindExists(resources []api.Resource, kind string) bool {
-	for _, res := range resources {
-		if res.Kind == kind {
-			return true
-		}
-	}
-	return false
 }

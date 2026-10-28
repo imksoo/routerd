@@ -790,6 +790,12 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 		},
 	}
 	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
+	controller.CommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "ip" && strings.Join(args, " ") == "link show dev lo" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("fixture has no link for %s %v", name, args)
+	}
 	effective := controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{"ipv4-default/dslite-balanced": true})
 	spec, err := effective.Spec.Resources[2].EgressRoutePolicySpec()
 	if err != nil {
@@ -979,6 +985,7 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: eventedStore{Store: base, Bus: eventBus}, Bus: eventBus, DryRun: true}
+	controller.CommandOutput = loopbackPolicyLinkObservation
 
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1034,6 +1041,7 @@ func TestIPv4PolicyRoutePriorityDryRunDoesNotChurnUnchangedFallback(t *testing.T
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: eventedStore{Store: base, Bus: eventBus}, Bus: eventBus, DryRun: true}
+	controller.CommandOutput = loopbackPolicyLinkObservation
 
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
@@ -1077,6 +1085,7 @@ func TestIPv4PolicyRoutePublishesHADatapathConvergence(t *testing.T) {
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, DeclaredRouter: router, Store: store, DryRun: true, OperatingSystem: platform.OSLinux, Now: func() time.Time { return now }}
+	controller.CommandOutput = loopbackPolicyLinkObservation
 	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
 		t.Fatal(err)
 	}
@@ -1125,6 +1134,7 @@ func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	controller.CommandOutput = loopbackPolicyLinkObservation
 	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
 		t.Fatal(err)
 	}
@@ -1150,6 +1160,7 @@ func TestIPv4PolicyRoutePrioritySelectionSkipsDisabled(t *testing.T) {
 	}}}
 	store := mapStore{}
 	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
+	controller.CommandOutput = loopbackPolicyLinkObservation
 	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
 		t.Fatal(err)
 	}
@@ -1564,4 +1575,16 @@ func countLedgerFDs(t *testing.T, path string) int {
 		}
 	}
 	return count
+}
+
+// These selection/status tests own their link observations and never execute
+// host commands. Actual Netlink/packet behavior belongs to integration fixtures.
+func loopbackPolicyLinkObservation(ctx context.Context, name string, args ...string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if name == "ip" && strings.Join(args, " ") == "link show dev lo" {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("fixture has no observation for %s %v", name, args)
 }

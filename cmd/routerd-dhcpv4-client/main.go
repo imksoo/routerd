@@ -13,10 +13,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -151,10 +153,17 @@ func daemonCommand(args []string) error {
 	d.telemetry = telemetry
 	d.leaseGauge, _ = telemetry.Meter.Int64Gauge("routerd.dhcpv4.client.lease.state")
 	d.renewCounter, _ = telemetry.Meter.Int64Counter("routerd.dhcpv4.client.renew")
-	return d.Run(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	err = d.Run(ctx)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 type dhcpv4Daemon struct {
+	cancel     context.CancelFunc
 	opts       options
 	ifi        *net.Interface
 	conn       dhcpv4PacketConn
@@ -192,6 +201,9 @@ func newDaemon(opts options) (*dhcpv4Daemon, error) {
 }
 
 func (d *dhcpv4Daemon) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	d.cancel = cancel
+	defer cancel()
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
@@ -203,7 +215,13 @@ func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer listener.Close()
-	defer server.Close()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			_ = server.Close()
+		}
+	}()
 	go func() { _ = server.Serve(listener) }()
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv4 client daemon started", nil)
 	if err := d.acquire(ctx); err != nil {
@@ -254,7 +272,7 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 		deadline = time.Now().Add(30 * time.Second)
 	}
 	buf := make([]byte, 1500)
-	for time.Now().Before(deadline) {
+	for time.Now().Before(deadline) && ctx.Err() == nil {
 		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 		n, _, err := d.conn.ReadFromUDP(buf)
 		if err != nil {
@@ -285,6 +303,9 @@ func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
 		if msg.MessageType() == dhcpv4client.MessageNAK {
 			return errors.New("DHCPv4 server returned NAK")
 		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	return context.DeadlineExceeded
 }
@@ -528,7 +549,13 @@ func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		d.mu.Unlock()
 		err = d.saveLease()
 	case daemonapi.CommandReload:
+		err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
 	case daemonapi.CommandStop:
+		if d.cancel == nil {
+			err = errors.New("daemon is not running")
+		} else {
+			defer d.cancel()
+		}
 	default:
 		err = fmt.Errorf("unknown command %q", command)
 	}
