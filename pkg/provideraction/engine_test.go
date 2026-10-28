@@ -53,10 +53,7 @@ func executorPlugin(provider string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
 		Metadata: api.ObjectMeta{Name: provider + "-executor"},
-		Spec: map[string]any{
-			"executable":   "/bin/true",
-			"capabilities": []any{CapabilityExecuteProviderAction},
-		},
+		Spec:     api.PluginSpec{Executable: "/bin/true", Capabilities: []string{CapabilityExecuteProviderAction}},
 	}
 }
 
@@ -1104,11 +1101,7 @@ func TestExecuteEndToEndWithRealExecutor(t *testing.T) {
 	plug := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
 		Metadata: api.ObjectMeta{Name: "aws-executor"},
-		Spec: map[string]any{
-			"executable":   bin,
-			"timeout":      "10s",
-			"capabilities": []any{CapabilityExecuteProviderAction},
-		},
+		Spec:     api.PluginSpec{Executable: bin, Timeout: "10s", Capabilities: []string{CapabilityExecuteProviderAction}},
 	}
 	e := newEngine(t, store, RunExecutor, []api.Resource{plug})
 	id := importOne(t, store, e, "k1")

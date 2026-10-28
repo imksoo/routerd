@@ -276,7 +276,7 @@ func TestSAMEnrollmentClientPersistsRRSetWhenOptionalDirectTopologyIsMalformed(t
 	now := time.Date(2026, 6, 29, 1, 0, 0, 0, time.UTC)
 	store := newSAMEnrollmentClientTestStore()
 	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
-	peerGroup.Spec = map[string]any{"nodes": "not-a-node-list"}
+	peerGroup.Spec = api.InterfaceSpec{}
 	client := &fakeSAMEnrollmentJoinClient{now: now, peerGroup: &peerGroup}
 	controller := testSAMEnrollmentClientController(store, client, now, "nonce-a")
 	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)

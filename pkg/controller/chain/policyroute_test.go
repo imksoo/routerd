@@ -619,7 +619,7 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 		api.NetAPIVersion + "/HealthCheck/hc-c": {"phase": "Unhealthy", "lastCheckedAt": now},
 	}
 	controller := IPv4PolicyRouteController{Router: router, Store: store}
-	data, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{}))
+	data, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{}))
 	if err != nil {
 		t.Fatalf("render policy routes: %v", err)
 	}
@@ -790,7 +790,7 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 		},
 	}
 	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
-	effective := controller.effectivePolicyRouteRouter(map[string]bool{"ipv4-default/dslite-balanced": true})
+	effective := controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{"ipv4-default/dslite-balanced": true})
 	spec, err := effective.Spec.Resources[2].EgressRoutePolicySpec()
 	if err != nil {
 		t.Fatal(err)
@@ -905,14 +905,14 @@ func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}}
-	inactive, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{}))
+	inactive, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{}))
 	if err != nil {
 		t.Fatalf("render inactive policy routes: %v", err)
 	}
 	if strings.Contains(string(inactive), "0x110") {
 		t.Fatalf("inactive target candidate should not render marks:\n%s", inactive)
 	}
-	active, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(map[string]bool{"lan-default/dslite": true}))
+	active, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{"lan-default/dslite": true}))
 	if err != nil {
 		t.Fatalf("render active policy routes: %v", err)
 	}
@@ -1183,7 +1183,11 @@ func TestIPv4PolicyRoutePriorityReportsUnsupportedSelection(t *testing.T) {
 func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 	dir := t.TempDir()
 	ledgerPath := filepath.Join(dir, "artifacts.json")
-	ledger := resource.NewLedger()
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
 	if err := ledger.Remember([]resource.Artifact{
 		{
 			Kind:  "linux.ipv4.fwmarkRule",
@@ -1218,9 +1222,6 @@ func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
 			Attributes: map[string]string{"table": "111"},
 		},
 	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.Save(ledgerPath); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{

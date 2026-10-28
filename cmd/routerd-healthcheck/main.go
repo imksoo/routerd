@@ -366,7 +366,8 @@ func (d *daemon) restoreState() error {
 	if state.Phase == "" {
 		state.Phase = healthcheck.PhaseUnknown
 	}
-	d.state = state
+	// History survives a restart; current reachability must be observed again.
+	d.state = healthcheck.State{Phase: healthcheck.PhaseUnknown, History: state.History}
 	return nil
 }
 
@@ -579,6 +580,7 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 		}
 	}
 	resourceStatus := daemonapi.ResourceStatus{
+		Routing:  &api.HealthObservation{Phase: d.state.Phase, CheckedAt: d.state.LastCheckedAt, ConsecutiveFailed: d.state.ConsecutiveFailed},
 		Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: d.opts.resource},
 		Phase:    d.state.Phase,
 		Health:   health,

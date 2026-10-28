@@ -24,7 +24,7 @@ import (
 
 var runCleanupCommand = runLogged
 
-func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
+func filterRouterByWhen(router *api.Router, store resourcequery.StateStore) *api.Router {
 	return resourcequery.FilterRouterByWhen(router, store)
 }
 
@@ -32,15 +32,15 @@ func resourceWhen(res api.Resource) api.ResourceWhenSpec {
 	return resourcequery.ResourceWhen(res)
 }
 
-func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
+func resourceWhenMatches(when api.ResourceWhenSpec, store resourcequery.StateStore) bool {
 	return resourcequery.ResourceWhenMatches(when, store)
 }
 
-func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) bool {
+func stateMatch(store resourcequery.StateStore, name string, match api.StateMatchSpec) bool {
 	return resourcequery.StateMatch(store, name, match)
 }
 
-func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
+func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store resourcequery.StateStore) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
@@ -102,7 +102,7 @@ func loadPlanLedger(path string, transient bool) (resource.Ledger, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return resource.LoadLedger(path)
+	return resource.OpenSQLiteLedgerReadOnly(path)
 }
 
 func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {
@@ -166,9 +166,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		if err := ledger.Forget(removedArtifacts); err != nil {
 			return removed, err
 		}
-		if err := ledger.Save(ledgerPath); err != nil {
-			return removed, err
-		}
+
 	}
 	return removed, nil
 }
@@ -407,13 +405,11 @@ func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation 
 	if err := ledger.Remember(artifacts); err != nil {
 		return 0, err
 	}
-	if err := ledger.Save(ledgerPath); err != nil {
-		return 0, err
-	}
+
 	return len(adoptedArtifactsForResult(artifacts)), nil
 }
 
-func recordLastAppliedPath(router *api.Router, store routerstate.Store, path string) error {
+func recordLastAppliedPath(router *api.Router, store resourcequery.StateStore, path string) error {
 	if path == "" {
 		return nil
 	}

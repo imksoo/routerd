@@ -55,7 +55,7 @@ func TestMalformedRuleDoesNotStopOtherRules(t *testing.T) {
 	controller.Router.Spec.Resources = append([]api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
 		Metadata: api.ObjectMeta{Name: "malformed"},
-		Spec:     "not-an-event-rule-spec",
+		Spec:     api.InterfaceSpec{},
 	}}, controller.Router.Spec.Resources...)
 	if err := controller.Reconcile(context.Background(), testEvent("routerd.a")); err != nil {
 		t.Fatalf("Reconcile returned malformed rule error: %v", err)

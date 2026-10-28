@@ -31,7 +31,7 @@ func TestStatusResourceCountAcrossObservationPaths(t *testing.T) {
 	}
 	for _, role := range []string{"backup", "master"} {
 		t.Run(role, func(t *testing.T) {
-			store := routerstate.NewJSON()
+			store := routerstate.NewMemory()
 			store.Set("test-role", role, "fixture")
 			effective := resourcequery.FilterRouterByWhen(router, store)
 			wantEffective := 3

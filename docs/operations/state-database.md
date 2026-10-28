@@ -20,6 +20,26 @@ routerd persists state and events in SQLite. Each managed daemon additionally ke
 | HealthCheck state | `/var/lib/routerd/healthcheck/<name>/state.json` |
 | Per-daemon events | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
+## routerd 1.5 proposal format
+
+This proposal branch uses one new schema, identified by SQLite `user_version`
+1500, for state and managed-artifact ownership. Persistent paths always use
+SQLite; the old JSON backend and prototype migrations are removed. Opening an
+older database fails with an explicit format error. No automatic reset occurs.
+
+For an authorized cutover, stop the old daemons, retain a complete backup if
+needed, select a fresh DB path, and start all routerd/worker binaries from the
+same revision with the rewritten configuration. Do not mix old and new workers:
+Health IPC now includes a typed `routing` observation required by the consumer.
+A Health worker restart restores display history and re-probes before declaring
+reachability. Keep independent console access during network qualification.
+
+The fresh database does not contain the old ownership ledger, pending provider
+actions, DHCP callback queue, or historical events. Resolve or explicitly retire
+those operations before switching; config alone cannot reconstruct unfinished
+external effects. Existing ownership must be inventoried so removal or adoption
+is deliberate. This is an operator cutover procedure, not a daemon migration.
+
 ## Events table
 
 The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl get events` over running `sqlite3` against the database directly:

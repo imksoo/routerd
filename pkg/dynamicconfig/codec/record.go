@@ -16,7 +16,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -207,14 +206,13 @@ func DecodeAll(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.D
 	return parts, nil
 }
 
-// DecodeResources decodes persisted JSON resources through YAML so Resource
-// specs regain their concrete API types while retaining JSON compatibility.
+// DecodeResources decodes persisted JSON resources into concrete API types.
 func DecodeResources(raw string) ([]api.Resource, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
 	var resources []api.Resource
-	if err := yaml.Unmarshal([]byte(raw), &resources); err != nil {
+	if err := json.Unmarshal([]byte(raw), &resources); err != nil {
 		return nil, err
 	}
 	return resources, nil

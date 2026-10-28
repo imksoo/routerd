@@ -19,16 +19,14 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/storage"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/resource"
 )
 
 const (
 	stateAPIVersion = "state.routerd.net/v1alpha1"
 	stateKind       = "StateVariable"
 )
-
-var ErrSchemaNotInitialized = errors.New("routerd state database schema is not initialized")
 
 const (
 	stateWALAutoCheckpointPages = 4096
@@ -93,11 +91,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		eventJournalMaxRows:  defaultEventJournalMaxRows,
 		eventJournalMaxBytes: defaultEventJournalMaxPayloadBytes,
 	}
-	if err := store.init(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := store.migrateLegacyJSON(); err != nil {
+	if err := storage.Initialize(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -133,398 +127,12 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := storage.Check(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &SQLiteStore{path: path, db: db, now: time.Now}, nil
 }
-
-func (s *SQLiteStore) init() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS generations (
-  generation INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  phase TEXT,
-  warnings TEXT,
-  config_hash TEXT,
-  config_yaml TEXT
-);
-CREATE TABLE IF NOT EXISTS objects (
-  api_version TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  uid TEXT,
-  resource_version INTEGER NOT NULL DEFAULT 1,
-  observed_generation INTEGER,
-  last_applied_path TEXT,
-  status TEXT,
-  created_at TEXT NOT NULL,
-  modified_at TEXT NOT NULL,
-  PRIMARY KEY(api_version, kind, name)
-);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  api_version TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  message TEXT NOT NULL,
-  generation INTEGER,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS events_type ON events(type, id);
-CREATE TABLE IF NOT EXISTS event_consumer_cursors (
-  consumer TEXT PRIMARY KEY,
-  cursor INTEGER NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS access_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts TEXT,
-  user TEXT,
-  method TEXT,
-  path TEXT,
-  status_code INTEGER,
-  duration_ms INTEGER,
-  generation INTEGER
-);
-CREATE TABLE IF NOT EXISTS dynamic_config_parts (
-  id INTEGER PRIMARY KEY,
-  source TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  observed_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  digest TEXT NOT NULL,
-  resources_json TEXT,
-  directives_json TEXT,
-  actionplans_json TEXT,
-  mobility_dataplane_json TEXT,
-  arp_observer_intents_json TEXT,
-  fib_verdicts_json TEXT,
-  status TEXT NOT NULL,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(source, generation)
-);
-CREATE TABLE IF NOT EXISTS sam_enrollment_revoked_identities (
-  identity_digest TEXT PRIMARY KEY,
-  claim_source TEXT NOT NULL,
-  revoked_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS plugin_runs (
-  id INTEGER PRIMARY KEY,
-  plugin TEXT NOT NULL,
-  trigger_type TEXT NOT NULL,
-  trigger_topic TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  exit_code INTEGER,
-  status TEXT NOT NULL,
-  stdout_digest TEXT,
-  stderr TEXT,
-  error TEXT
-);
-CREATE TABLE IF NOT EXISTS federation_events (
-  id TEXT PRIMARY KEY,
-  group_name TEXT NOT NULL,
-  source_node TEXT,
-  type TEXT NOT NULL,
-  subject TEXT,
-  dedupe_key TEXT,
-  payload TEXT,
-  observed_at INTEGER,
-  expires_at INTEGER,
-  recorded_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
-CREATE TABLE IF NOT EXISTS event_deliveries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id TEXT NOT NULL,
-  peer TEXT NOT NULL,
-  status TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_attempt_at INTEGER,
-  last_error TEXT,
-  delivered_at INTEGER,
-  UNIQUE(event_id, peer)
-);
-CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
-CREATE TABLE IF NOT EXISTS event_subscription_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  subscription TEXT NOT NULL,
-  event_id TEXT NOT NULL,
-  event_group TEXT NOT NULL,
-  plugin TEXT NOT NULL,
-  status TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  dynamic_source TEXT,
-  dynamic_generation INTEGER,
-  error TEXT,
-  UNIQUE(subscription, event_id)
-);
-CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
-CREATE TABLE IF NOT EXISTS action_executions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  source TEXT,
-  provider TEXT NOT NULL,
-  provider_ref TEXT,
-  action TEXT NOT NULL,
-  target_json TEXT,
-  parameters_json TEXT,
-  undo_json TEXT,
-  risk_level TEXT,
-  status TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  executed_at TEXT,
-  result_message TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
-`); err != nil {
-		return err
-	}
-	if err := s.migrateLegacyStateTable(); err != nil {
-		return err
-	}
-	if err := s.ensureObjectColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureGenerationColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureDynamicConfigPartColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureArtifactsTable(); err != nil {
-		return err
-	}
-	if err := s.ensureActionExecutionColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventDeliveryColumns(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ensureDynamicConfigPartColumns additively adds columns introduced after the
-// dynamic_config_parts table shipped, so existing databases upgrade in place.
-func (s *SQLiteStore) ensureDynamicConfigPartColumns() error {
-	columns := map[string]string{
-		// actionplans_json persists plugin-proposed, display-only ActionPlans so
-		// EventSubscription-driven runs stay reviewable. routerd never executes
-		// them; missing/empty column simply means no action plans.
-		"actionplans_json": "TEXT",
-		// mobility_dataplane_json is the typed internal desired-state channel
-		// from mobility planning to the local SAM dataplane.
-		"mobility_dataplane_json": "TEXT",
-		// arp_observer_intents_json is the typed internal bootstrap channel from
-		// normalized on-prem mobility discovery to the ARP observer supervisor.
-		"arp_observer_intents_json": "TEXT",
-		"fib_verdicts_json":         "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("dynamic_config_parts", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE dynamic_config_parts ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureGenerationColumns() error {
-	columns := map[string]string{
-		"config_yaml": "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("generations", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE generations ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureEventColumns() error {
-	columns := map[string]string{
-		"topic":                "TEXT",
-		"source_kind":          "TEXT",
-		"source_instance":      "TEXT",
-		"resource_api_version": "TEXT",
-		"resource_kind":        "TEXT",
-		"resource_name":        "TEXT",
-		"severity":             "TEXT",
-		"attributes":           "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("events", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE events ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	_, err := s.db.Exec(`
-CREATE INDEX IF NOT EXISTS events_topic ON events(topic, id);
-CREATE INDEX IF NOT EXISTS events_resource ON events(resource_kind, resource_name, id);
-`)
-	return err
-}
-
-func (s *SQLiteStore) ensureObjectColumns() error {
-	hasLastAppliedPath, err := s.tableHasColumn("objects", "last_applied_path")
-	if err != nil {
-		return err
-	}
-	if !hasLastAppliedPath {
-		if _, err := s.db.Exec(`ALTER TABLE objects ADD COLUMN last_applied_path TEXT`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureArtifactsTable() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS artifacts (
-  artifact_id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  owner_api_version TEXT,
-  owner_kind TEXT,
-  owner_name TEXT,
-  attributes TEXT,
-  source TEXT,
-  generation INTEGER,
-  observed_at TEXT
-);
-`); err != nil {
-		return err
-	}
-	return resource.MigrateLegacyArtifactsTable(s.db)
-}
-
-func (s *SQLiteStore) migrateLegacyStateTable() error {
-	exists, err := s.tableExists("state")
-	if err != nil || !exists {
-		return err
-	}
-	rows, err := s.db.Query(`SELECT key,coalesce(value,''),status,coalesce(reason,''),since,updated_at FROM state ORDER BY key`)
-	if err != nil {
-		return err
-	}
-	type legacyState struct {
-		key   string
-		value Value
-	}
-	var legacyRows []legacyState
-	for rows.Next() {
-		var key, since, updated string
-		var value Value
-		if err := rows.Scan(&key, &value.Value, &value.Status, &value.Reason, &since, &updated); err != nil {
-			return err
-		}
-		value.Since, _ = time.Parse(time.RFC3339Nano, since)
-		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-		legacyRows = append(legacyRows, legacyState{key: key, value: value})
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, row := range legacyRows {
-		if err := s.put(row.key, row.value); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.Exec(`DROP TABLE state`)
-	return err
-}
-
-func (s *SQLiteStore) tableExists(name string) (bool, error) {
-	var found string
-	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-func (s *SQLiteStore) tableHasColumn(table, column string) (bool, error) {
-	exists, err := s.tableExists(table)
-	if err != nil || !exists {
-		return false, err
-	}
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
-func (s *SQLiteStore) migrateLegacyJSON() error {
-	legacy := filepath.Join(filepath.Dir(s.path), "state.json")
-	if _, err := os.Stat(legacy); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM objects`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return nil
-	}
-	jsonStore, err := LoadJSON(legacy)
-	if err != nil {
-		return err
-	}
-	for key, value := range jsonStore.Variables() {
-		if err := s.put(key, value); err != nil {
-			return err
-		}
-	}
-	return os.Rename(legacy, legacy+".migrated")
-}
-
-func (s *SQLiteStore) Save(path string) error { return nil }
 
 func (s *SQLiteStore) Get(name string) Value {
 	s.mu.RLock()
@@ -645,14 +253,19 @@ func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, i
 	}
 	status := objectStatus{}
 	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &status)
+		if err := json.Unmarshal([]byte(raw), &status); err != nil {
+			return nil, 0, fmt.Errorf("decode %s/%s status: %w", kind, name, err)
+		}
 	}
 	return status, generation.Int64, nil
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	data, _ := json.Marshal(status)
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("encode %s/%s status: %w", ref.Kind, ref.Name, err)
+	}
 	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
 		return err
 	} else if same {
@@ -661,7 +274,7 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 		return nil
 	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
-	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
+	_, err = s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
@@ -829,7 +442,7 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	now := s.now().UTC()
 	if part.ObservedAt.IsZero() {
@@ -852,7 +465,7 @@ func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []DynamicConfigPartRecord{}, nil
+		return []DynamicConfigPartRecord{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
 	if err != nil {
@@ -866,7 +479,7 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []DynamicConfigPartRecord{}, nil
+		return []DynamicConfigPartRecord{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
 	if err != nil {
@@ -889,7 +502,7 @@ func (s *SQLiteStore) RecordSAMEnrollmentRevokedIdentity(claimSource, identityDi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if revokedAt.IsZero() {
 		revokedAt = s.now().UTC()
@@ -911,7 +524,7 @@ func (s *SQLiteStore) HasSAMEnrollmentRevokedIdentity(identityDigest string) (bo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return false, nil
+		return false, sql.ErrConnDone
 	}
 	var found int
 	err := s.db.QueryRow(`SELECT 1 FROM sam_enrollment_revoked_identities WHERE identity_digest = ?`, identityDigest).Scan(&found)
@@ -945,7 +558,7 @@ func (s *SQLiteStore) RecordPluginRun(run PluginRunRecord) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	if run.StartedAt.IsZero() {
 		run.StartedAt = s.now().UTC()
@@ -963,7 +576,7 @@ func (s *SQLiteStore) CompletePluginRun(id int64, completedAt time.Time, exitCod
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if completedAt.IsZero() {
 		completedAt = s.now().UTC()
@@ -981,7 +594,7 @@ func (s *SQLiteStore) ListPluginRuns(plugin string) ([]PluginRunRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []PluginRunRecord{}, nil
+		return []PluginRunRecord{}, sql.ErrConnDone
 	}
 	query := `SELECT id,plugin,trigger_type,coalesce(trigger_topic,''),started_at,coalesce(completed_at,''),exit_code,status,coalesce(stdout_digest,''),coalesce(stderr,''),coalesce(error,'') FROM plugin_runs`
 	var args []any
@@ -1053,7 +666,7 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`INSERT INTO generations(started_at,warnings,config_hash) VALUES(?,'[]',?)`, now, configHash)
@@ -1078,7 +691,7 @@ func (s *SQLiteStore) BeginGenerationIfChanged(configHash, configYAML string) (i
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, false, nil
+		return 0, false, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`
@@ -1131,7 +744,7 @@ func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if generation == 0 {
 		generation = s.generation
@@ -1147,7 +760,7 @@ func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if generation == 0 {
 		generation = s.generation
@@ -1177,7 +790,7 @@ func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []GenerationRecord{}, nil
+		return []GenerationRecord{}, sql.ErrConnDone
 	}
 	if limit <= 0 {
 		limit = 100
@@ -1211,7 +824,7 @@ func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return "", false, nil
+		return "", false, sql.ErrConnDone
 	}
 	var value sql.NullString
 	err := s.db.QueryRow(`SELECT config_yaml FROM generations WHERE generation = ?`, generation).Scan(&value)
@@ -1245,7 +858,7 @@ func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
 }
@@ -1254,7 +867,7 @@ func (s *SQLiteStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	status, _, err := s.loadStatus(apiVersion, kind, name)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1289,14 +902,7 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []ObjectStatus{}, nil
-	}
-	exists, err := s.tableExists("objects")
-	if err != nil {
-		return nil, fmt.Errorf("inspect routerd state database schema: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("%w: required objects table is missing", ErrSchemaNotInitialized)
+		return []ObjectStatus{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
@@ -1328,7 +934,7 @@ func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
 	return err
@@ -1338,7 +944,7 @@ func (s *SQLiteStore) Backup(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -1352,7 +958,7 @@ func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	uid := apiVersion + "/" + kind + "/" + name
@@ -1381,7 +987,7 @@ func (s *SQLiteStore) IntegrityCheck() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return "", nil
+		return "", sql.ErrConnDone
 	}
 	var result string
 	if err := s.db.QueryRow(`PRAGMA integrity_check`).Scan(&result); err != nil {
@@ -1394,7 +1000,7 @@ func (s *SQLiteStore) Vacuum() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`VACUUM`)
 	return err
@@ -1404,7 +1010,7 @@ func (s *SQLiteStore) BackupTo(dest string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("backup destination %s already exists", dest)
@@ -1419,7 +1025,7 @@ func (s *SQLiteStore) CountEventsOlderThan(cutoff time.Time) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	var count int64
 	err := s.db.QueryRow(`SELECT count(*) FROM events WHERE created_at < ?`, cutoff.UTC().Format(time.RFC3339Nano)).Scan(&count)
@@ -1430,7 +1036,7 @@ func (s *SQLiteStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	formattedCutoff := cutoff.UTC().Format(time.RFC3339Nano)
 	var deleted int64
@@ -1463,7 +1069,7 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	message = boundedJournalText(message, maxJournalMessageBytes)
 	payloadBytes := journalPayloadBytes(apiVersion, kind, name, eventType, reason, message)
@@ -1484,7 +1090,7 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return "", nil
+		return "", sql.ErrConnDone
 	}
 	bounded, attrs := boundedJournalEvent(event)
 	payloadBytes := busEventJournalPayloadBytes(bounded, attrs)
@@ -1574,7 +1180,7 @@ func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []StoredEvent{}, nil
+		return []StoredEvent{}, sql.ErrConnDone
 	}
 	limit := query.Limit
 	if limit <= 0 {
@@ -1652,7 +1258,7 @@ func (s *SQLiteStore) LoadOrInitializeEventConsumerCursor(consumer string) (int6
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
@@ -1669,7 +1275,7 @@ func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
 ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,

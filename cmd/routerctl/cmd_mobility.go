@@ -695,7 +695,7 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 	return router, nil
 }
 
-func leafResource(apiVersion, kind, name string, spec any) api.Resource {
+func leafResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
 }
 

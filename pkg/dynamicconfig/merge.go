@@ -11,7 +11,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/platform"
-	"gopkg.in/yaml.v3"
 )
 
 type EffectiveResult struct {
@@ -77,10 +76,7 @@ func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, po
 	if err := config.ValidateForOS(&startup, targetOS); err != nil {
 		return api.Router{}, EffectiveResult{}, err
 	}
-	effective, err := cloneRouter(startup)
-	if err != nil {
-		return api.Router{}, EffectiveResult{}, err
-	}
+	effective := startup.Clone()
 	result := EffectiveResult{}
 
 	startupIDs := map[resourceIdentity]api.Resource{}
@@ -178,10 +174,7 @@ func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, po
 			if existing := addedDynamicIDs[id]; existing != "" {
 				return api.Router{}, result, fmt.Errorf("dynamic resource conflicts with another dynamic resource: source=%q resource=%s existingSource=%q", part.Spec.Source, res.ID(), existing)
 			}
-			resCopy, err := cloneResource(res)
-			if err != nil {
-				return api.Router{}, result, err
-			}
+			resCopy := res.Clone()
 			effective.Spec.Resources = append(effective.Spec.Resources, resCopy)
 			addedDynamicIDs[id] = part.Spec.Source
 			result.AddedResources = append(result.AddedResources, AddedResource{
@@ -313,28 +306,4 @@ func joinSortedMapKeys(values map[string]bool, sep string) string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, sep)
-}
-
-func cloneRouter(router api.Router) (api.Router, error) {
-	data, err := yaml.Marshal(router)
-	if err != nil {
-		return api.Router{}, fmt.Errorf("clone startup config: %w", err)
-	}
-	var out api.Router
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return api.Router{}, fmt.Errorf("clone startup config: %w", err)
-	}
-	return out, nil
-}
-
-func cloneResource(resource api.Resource) (api.Resource, error) {
-	data, err := yaml.Marshal(resource)
-	if err != nil {
-		return api.Resource{}, fmt.Errorf("clone dynamic resource %s: %w", resource.ID(), err)
-	}
-	var out api.Resource
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return api.Resource{}, fmt.Errorf("clone dynamic resource %s: %w", resource.ID(), err)
-	}
-	return out, nil
 }

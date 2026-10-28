@@ -469,48 +469,6 @@ func TestApplyChainControllerOptionsSkipLegacyClientUnits(t *testing.T) {
 	}
 }
 
-func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
-	}}}
-
-	got, err := routerWithDryRunLeaseFiles(router, dir)
-	if err != nil {
-		t.Fatalf("sandbox DHCP lease paths: %v", err)
-	}
-	want := filepath.Join(dir, "dnsmasq.leases")
-	for _, resource := range got.Spec.Resources {
-		switch resource.Kind {
-		case "DHCPv4Server":
-			spec, err := resource.DHCPv4ServerSpec()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if spec.LeaseFile != want {
-				t.Fatalf("DHCPv4 dry-run lease file = %q, want %q", spec.LeaseFile, want)
-			}
-		case "DHCPv6Server":
-			spec, err := resource.DHCPv6ServerSpec()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if spec.LeaseFile != want {
-				t.Fatalf("DHCPv6 dry-run lease file = %q, want %q", spec.LeaseFile, want)
-			}
-		}
-	}
-
-	original, err := router.Spec.Resources[0].DHCPv4ServerSpec()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if original.LeaseFile != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("dry-run mutated input lease file = %q", original.LeaseFile)
-	}
-}
-
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")
@@ -525,11 +483,12 @@ func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 		},
 	}
 	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
-		DryRun:     true,
-		StatePath:  statePath,
-		LedgerPath: ledgerPath,
-		StatusFile: statusPath,
-		ConfigPath: filepath.Join(dir, "router.yaml"),
+		attemptHooks: &applyAttemptHooks{configureControllers: func(*controllerchain.Options) { t.Fatal("plan entered controller execution") }},
+		DryRun:       true,
+		StatePath:    statePath,
+		LedgerPath:   ledgerPath,
+		StatusFile:   statusPath,
+		ConfigPath:   filepath.Join(dir, "router.yaml"),
 	}, io.Discard, &eventlog.Logger{})
 	if err != nil {
 		t.Fatalf("dry-run apply: %v", err)
@@ -862,46 +821,11 @@ func TestLoadTransientStateStoreOpensExistingSQLiteReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load transient read-only sqlite: %v", err)
 	}
-	if _, ok := transient.(*routerstate.JSONStore); !ok {
+	if _, ok := transient.(*routerstate.MemoryStore); !ok {
 		t.Fatalf("transient store type = %T, want JSON snapshot", transient)
 	}
 	if got := transient.Get("manual.mode"); got.Status != routerstate.StatusSet || got.Value != "keep" {
 		t.Fatalf("snapshot manual.mode = %+v, want keep", got)
-	}
-}
-
-func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(configPath, []byte(testRouterYAML("json-state-router")), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	store := routerstate.New()
-	store.Set("manual.mode", "keep", "seed")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save json state: %v", err)
-	}
-
-	for _, name := range []string{"plan", "observe"} {
-		t.Run(name, func(t *testing.T) {
-			var stdout strings.Builder
-			statusPath := filepath.Join(dir, name+"-status.json")
-			err := configCommand([]string{
-				"--config", configPath,
-				"--state-file", statePath,
-				"--status-file", statusPath,
-			}, &stdout, name)
-			if err != nil {
-				t.Fatalf("%s with json state: %v", name, err)
-			}
-			if stdout.String() == "" {
-				t.Fatalf("%s produced empty output", name)
-			}
-			if _, err := os.Stat(statusPath); err != nil {
-				t.Fatalf("%s status file: %v", name, err)
-			}
-		})
 	}
 }
 
@@ -2217,21 +2141,23 @@ func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	ledgerPath := filepath.Join(dir, "artifacts.json")
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8::/60"}), "test")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save state: %v", err)
+	store, err := routerstate.OpenSQLite(statePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ledger := resource.NewLedger()
+	defer store.Close()
+	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8::/60"}), "test")
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
 	if err := ledger.Remember([]resource.Artifact{{
 		Kind:  "file",
 		Name:  "/tmp/routerd-test",
 		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
 	}}); err != nil {
 		t.Fatal(err)
-	}
-	if err := ledger.Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
 	}
 
 	var out strings.Builder
@@ -2272,8 +2198,10 @@ func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite state: %v", err)
 	}
-	if err := resource.NewLedger().Save(ledgerPath); err != nil {
+	if ledger, err := resource.LoadLedger(ledgerPath); err != nil {
 		t.Fatalf("save ledger: %v", err)
+	} else if err := ledger.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	var out strings.Builder
@@ -3877,7 +3805,7 @@ exit 0
 		}},
 	}}}
 
-	store := routerstate.New()
+	store := routerstate.NewMemory()
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:1234:5678::/64"}), "test")
 	changed, err := applyDSLiteTunnelsWithState(router, store)
 	if err != nil {
@@ -4076,74 +4004,6 @@ func TestReplaceManagedPPPoEBlocks(t *testing.T) {
 	}
 }
 
-func TestRenderEgressRoutePolicyDefaultMarks(t *testing.T) {
-	data, err := renderEgressRoutePolicyDefaultMarks(
-		"test/default",
-		api.EgressRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.10.0/24"},
-			DestinationCIDRs: []string{"0.0.0.0/0"},
-		},
-		api.EgressRoutePolicyCandidate{Name: "pppoe", Mark: 273},
-		[]api.EgressRoutePolicyCandidate{
-			{Name: "dslite", Mark: 272},
-			{Name: "pppoe", Mark: 273},
-		},
-	)
-	if err != nil {
-		t.Fatalf("render default route policy marks: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"add table ip routerd_default_route",
-		"flush table ip routerd_default_route",
-		"table ip routerd_default_route",
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
-		"ct mark != 0x0 ct mark != { 0x110, 0x111 } meta mark set 0x111 ct mark set meta mark",
-		"ct mark 0x0 meta mark set 0x111 ct mark set meta mark",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestRenderEgressRoutePolicyDefaultMarksTargetCandidateActive(t *testing.T) {
-	data, err := renderEgressRoutePolicyDefaultMarks(
-		"test/default",
-		api.EgressRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.10.0/24"},
-			DestinationCIDRs: []string{"0.0.0.0/0"},
-		},
-		api.EgressRoutePolicyCandidate{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
-			{Name: "transix-a", Mark: 256},
-			{Name: "transix-b", Mark: 257},
-			{Name: "transix-c", Mark: 258},
-		}},
-		[]api.EgressRoutePolicyCandidate{
-			{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
-				{Name: "transix-a", Mark: 256},
-				{Name: "transix-b", Mark: 257},
-				{Name: "transix-c", Mark: 258},
-			}},
-		},
-	)
-	if err != nil {
-		t.Fatalf("render default route policy marks: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x100, 0x101, 0x102 } meta mark set ct mark",
-		"ct mark != 0x0 ct mark != { 0x100, 0x101, 0x102 } meta mark set 0x0 ct mark set meta mark",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "ct mark 0x0 meta mark set 0x") {
-		t.Fatalf("target candidate should leave new flows unmarked for EgressRoutePolicy hashing:\n%s", got)
-	}
-}
-
 func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
 	eventBus := bus.New()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -4170,107 +4030,6 @@ func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("VRRP signal forwarder did not stop")
-	}
-}
-
-func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.T) {
-	candidate, ok := selectIPv4DefaultRouteCandidate([]api.EgressRoutePolicyCandidate{
-		{Name: "preferred", Priority: 10, HealthCheck: "preferred-check"},
-		{Name: "fallback", Priority: 20},
-	}, map[string]bool{"preferred-check": false})
-	if !ok {
-		t.Fatal("candidate not selected")
-	}
-	if candidate.Name != "fallback" {
-		t.Fatalf("candidate = %s, want fallback", candidate.Name)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingTargetDevices(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
-			{Interface: "ds-lite-a"},
-			{Interface: "ds-lite-b"},
-		}},
-		{Name: "wan", Priority: 20, Interface: "wan", HealthCheck: "wan-check"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"ds-lite-a": "ds-lite-a",
-		"ds-lite-b": "ds-lite-b",
-	}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     &api.Router{},
-		Aliases:    aliases,
-		Health:     map[string]bool{"wan-check": true},
-		LinkExists: func(ifname string) bool { return ifname == "ens18" },
-	}, candidates)
-	if len(available) != 1 || available[0].Name != "wan" {
-		t.Fatalf("available candidates = %+v, want wan only", available)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesKeepsTargetWithAnyDevice(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
-			{Interface: "ds-lite-a"},
-			{Interface: "ds-lite-b"},
-		}},
-		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"ds-lite-a": "ds-lite-a",
-		"ds-lite-b": "ds-lite-b",
-	}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     &api.Router{},
-		Aliases:    aliases,
-		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-b" },
-	}, candidates)
-	if len(available) != 2 || available[0].Name != "dslite" {
-		t.Fatalf("available candidates = %+v, want dslite first", available)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{{Interface: "ds-lite-a"}}},
-		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"lan":       "ens19",
-		"ds-lite-a": "ds-lite-a",
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "ds-lite-a"},
-			Spec: api.DSLiteTunnelSpec{
-				Interface:             "wan",
-				LocalAddressSource:    "delegatedAddress",
-				LocalDelegatedAddress: "lan-ipv6",
-				LocalAddressSuffix:    "::3",
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
-			Spec: api.IPv6DelegatedAddressSpec{
-				PrefixDelegation: "wan-pd",
-				Interface:        "lan",
-				AddressSuffix:    "::3",
-			},
-		},
-	}}}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     router,
-		Aliases:    aliases,
-		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-a" },
-	}, candidates)
-	if len(available) != 1 || available[0].Name != "wan" {
-		t.Fatalf("available candidates = %+v, want wan only", available)
 	}
 }
 
@@ -4354,57 +4113,6 @@ func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
 		if got := dnsServerAddress(input); got != want {
 			t.Fatalf("dnsServerAddress(%q) = %q, want %q", input, got, want)
 		}
-	}
-}
-
-func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-				Metadata: api.ObjectMeta{Name: "transix"},
-				Spec: api.DSLiteTunnelSpec{
-					Interface:     "wan",
-					TunnelName:    "ds-transix",
-					RemoteAddress: "2404:8e00::feed:100",
-				},
-			},
-		}},
-	}
-	target, family, err := resolveHealthCheckTarget(router, api.HealthCheckSpec{
-		Interface:    "transix",
-		TargetSource: "dsliteRemote",
-	}, map[string]string{"transix": "ds-transix"})
-	if err != nil {
-		t.Fatalf("resolve target: %v", err)
-	}
-	if target != "2404:8e00::feed:100" || family != "ipv6" {
-		t.Fatalf("target/family = %s/%s, want 2404:8e00::feed:100/ipv6", target, family)
-	}
-}
-
-func TestHealthCheckPingSourceUsesDSLiteLocalAddress(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-				Metadata: api.ObjectMeta{Name: "transix"},
-				Spec: api.DSLiteTunnelSpec{
-					Interface:          "wan",
-					TunnelName:         "ds-transix",
-					LocalAddressSource: "static",
-					LocalAddress:       "2001:db8::3",
-					RemoteAddress:      "2001:db8::100",
-				},
-			},
-		}},
-	}
-	source := healthCheckPingSource(router, api.HealthCheckSpec{
-		Interface:    "transix",
-		TargetSource: "dsliteRemote",
-	}, map[string]string{"wan": "ens18", "transix": "ds-transix"})
-	if source != "2001:db8::3" {
-		t.Fatalf("ping source = %q, want 2001:db8::3", source)
 	}
 }
 
@@ -4626,63 +4334,6 @@ func TestConflictingManagedIPv6AddressesPreservesAllDesiredPrefixes(t *testing.T
 	}
 }
 
-func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-ipv6", LocalAddressSuffix: "::100"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	for _, want := range []string{"2001:db8:3d60:1220::3", "2001:db8:3d60:1220::100"} {
-		if !targets.DesiredByInterface["ens19"][want] {
-			t.Fatalf("desired targets = %#v, missing %s", targets.DesiredByInterface, want)
-		}
-	}
-	for _, suffix := range []string{"::3", "::100"} {
-		addr := netip.MustParseAddr(suffix)
-		if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(addr)] {
-			t.Fatalf("suffix targets = %#v, missing %s", targets.SuffixesByInterface, suffix)
-		}
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsRestorePreviousLANPrefixButNotDSLiteSource(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::21", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "wan-source", LocalAddressSuffix: "::23"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		CurrentPrefix: "2001:db8:3d60:1220::/60",
-		PreviousPrefixes: []routerstate.PDPreviousPrefix{
-			{Prefix: "2001:db8:3d60:1240::/60", ExpiresAt: time.Now().UTC().Add(time.Hour)},
-		},
-	}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !targets.DesiredByInterface["ens19"]["2001:db8:3d60:1240::3"] {
-		t.Fatalf("previous LAN target missing: %#v", targets.DesiredByInterface)
-	}
-	for _, forbidden := range []string{"2001:db8:3d60:1240::21", "2001:db8:3d60:1240::23"} {
-		if targets.DesiredByInterface["ens19"][forbidden] {
-			t.Fatalf("previous WAN/DS-Lite /128 target retained: %s in %#v", forbidden, targets.DesiredByInterface)
-		}
-	}
-}
-
 func TestApplyIPv6DelegatedAddressesRestoresDeprecatedPreviousLANPrefixFromState(t *testing.T) {
 	if platformDefaults.OS != platform.OSLinux {
 		t.Skip("Linux command fixture")
@@ -4696,7 +4347,7 @@ func TestApplyIPv6DelegatedAddressesRestoresDeprecatedPreviousLANPrefixFromState
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
 	}}}
-	store := routerstate.New()
+	store := routerstate.NewMemory()
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
 		CurrentPrefix: "2001:db8:3d60:1220::/60",
 		PreviousPrefixes: []routerstate.PDPreviousPrefix{
@@ -4728,27 +4379,6 @@ func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
 	name, args = deprecatedIPv6LocalAddressCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1", 299)
 	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 299 alias"; got != want {
 		t.Fatalf("FreeBSD command = %q, want %q", got, want)
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsTrackSuffixWithoutCurrentPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	if len(targets.DesiredByInterface["ens19"]) != 0 {
-		t.Fatalf("desired targets = %#v, want none without current prefix", targets.DesiredByInterface)
-	}
-	if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(netip.MustParseAddr("::3"))] {
-		t.Fatalf("suffix targets = %#v, want ::3 tracked for stale cleanup", targets.SuffixesByInterface)
 	}
 }
 
@@ -4818,7 +4448,7 @@ func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 		Metadata: api.ObjectMeta{Name: "wan-pd"},
 		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
-	store := routerstate.New()
+	store := routerstate.NewMemory()
 	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
 		LastPrefix: "2001:db8:3d60:1240::/60",
 	}), "test")
@@ -5163,7 +4793,7 @@ func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
 	}
 }
 
-func testResourceWithSpecWhen(kind string, spec any) api.Resource {
+func testResourceWithSpecWhen(kind string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{Kind: kind},
 		Metadata: api.ObjectMeta{Name: "test"},

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func TestPriorityPolicyPublishesOnlyAfterNftResult(t *testing.T) {
@@ -92,5 +93,23 @@ func TestPriorityPolicyReportsFailedWithdrawal(t *testing.T) {
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "wan"); status["phase"] != "Error" {
 		t.Fatalf("withdrawal status=%#v", status)
+	}
+}
+
+func TestPolicyCleanupDoesNotQueryKernelWithoutStaleOwnedRoutes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ledger.db")
+	ledger, err := resource.LoadLedger(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	controller := IPv4PolicyRouteController{Router: &api.Router{}, LedgerPath: path, CommandOutput: func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("queried kernel without a stale owned resource")
+		return nil, nil
+	}}
+	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), nil); err != nil {
+		t.Fatal(err)
 	}
 }

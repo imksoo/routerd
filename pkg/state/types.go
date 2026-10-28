@@ -3,10 +3,8 @@
 package state
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -25,16 +23,19 @@ type Value struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-type Store interface {
+type Reader interface {
 	Get(name string) Value
+	Age(name string) time.Duration
+	Now() time.Time
+	Variables() map[string]Value
+}
+
+type Store interface {
+	Reader
 	Set(name, value, reason string) Value
 	Unset(name, reason string) Value
 	Forget(name, reason string) Value
 	Delete(name string)
-	Age(name string) time.Duration
-	Now() time.Time
-	Save(path string) error
-	Variables() map[string]Value
 }
 
 type GenerationStore interface {
@@ -189,17 +190,17 @@ type Event struct {
 	CreatedAt  time.Time `json:"createdAt" yaml:"createdAt"`
 }
 
-type JSONStore struct {
+type MemoryStore struct {
 	Values map[string]Value `json:"variables"`
 	now    func() time.Time
 }
 
 func New() Store {
-	return NewJSON()
+	return NewMemory()
 }
 
-func NewJSON() *JSONStore {
-	return &JSONStore{Values: map[string]Value{}, now: time.Now}
+func NewMemory() *MemoryStore {
+	return &MemoryStore{Values: map[string]Value{}, now: time.Now}
 }
 
 func Load(path string) (Store, error) {
@@ -209,15 +210,12 @@ func Load(path string) (Store, error) {
 func LoadReadOnly(path string) (Store, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return NewJSON(), nil
+		return NewMemory(), nil
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return NewJSON(), nil
+		return NewMemory(), nil
 	} else if err != nil {
 		return nil, err
-	}
-	if filepath.Ext(path) == ".json" {
-		return LoadJSON(path)
 	}
 	return OpenSQLiteReadOnlyImmutable(path)
 }
@@ -228,56 +226,24 @@ func LoadReadOnly(path string) (Store, error) {
 func LoadReadOnlyLive(path string) (Store, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return NewJSON(), nil
+		return NewMemory(), nil
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return NewJSON(), nil
+		return NewMemory(), nil
 	} else if err != nil {
 		return nil, err
-	}
-	if filepath.Ext(path) == ".json" {
-		return LoadJSON(path)
 	}
 	return OpenSQLiteReadOnly(path)
 }
 
-func LoadJSON(path string) (*JSONStore, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return NewJSON(), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	store := NewJSON()
-	if err := json.Unmarshal(data, store); err != nil {
-		return nil, err
-	}
-	if store.Values == nil {
-		store.Values = map[string]Value{}
-	}
-	return store, nil
-}
-
 func Open(path string) (Store, error) {
 	if path == "" {
-		return NewJSON(), nil
-	}
-	if filepath.Ext(path) == ".json" {
-		return LoadJSON(path)
+		return NewMemory(), nil
 	}
 	return OpenSQLite(path)
 }
 
-func (s *JSONStore) Save(path string) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
-}
-
-func (s *JSONStore) Get(name string) Value {
+func (s *MemoryStore) Get(name string) Value {
 	value, ok := s.Values[name]
 	if !ok || value.Status == "" {
 		now := s.now().UTC()
@@ -286,26 +252,26 @@ func (s *JSONStore) Get(name string) Value {
 	return value
 }
 
-func (s *JSONStore) Set(name, value, reason string) Value {
+func (s *MemoryStore) Set(name, value, reason string) Value {
 	if value == "" {
 		return s.Unset(name, reason)
 	}
 	return s.set(name, StatusSet, value, reason)
 }
 
-func (s *JSONStore) Unset(name, reason string) Value {
+func (s *MemoryStore) Unset(name, reason string) Value {
 	return s.set(name, StatusUnset, "", reason)
 }
 
-func (s *JSONStore) Forget(name, reason string) Value {
+func (s *MemoryStore) Forget(name, reason string) Value {
 	return s.set(name, StatusUnknown, "", reason)
 }
 
-func (s *JSONStore) Delete(name string) {
+func (s *MemoryStore) Delete(name string) {
 	delete(s.Values, name)
 }
 
-func (s *JSONStore) set(name, status, value, reason string) Value {
+func (s *MemoryStore) set(name, status, value, reason string) Value {
 	now := s.now().UTC()
 	current := s.Get(name)
 	since := current.Since
@@ -317,15 +283,15 @@ func (s *JSONStore) set(name, status, value, reason string) Value {
 	return next
 }
 
-func (s *JSONStore) Age(name string) time.Duration {
+func (s *MemoryStore) Age(name string) time.Duration {
 	return s.now().UTC().Sub(s.Get(name).Since)
 }
 
-func (s *JSONStore) Now() time.Time {
+func (s *MemoryStore) Now() time.Time {
 	return s.now().UTC()
 }
 
-func (s *JSONStore) Variables() map[string]Value {
+func (s *MemoryStore) Variables() map[string]Value {
 	out := map[string]Value{}
 	for key, value := range s.Values {
 		out[key] = value
@@ -333,7 +299,7 @@ func (s *JSONStore) Variables() map[string]Value {
 	return out
 }
 
-func (s *JSONStore) DeleteObject(apiVersion, kind, name string) error {
+func (s *MemoryStore) DeleteObject(apiVersion, kind, name string) error {
 	for key := range s.Values {
 		ref := objectRefForKey(key)
 		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == name {

@@ -1,0 +1,201 @@
+# routerd 1.5 repository-wide rewrite audit
+
+Status: in progress. This is a coverage record, not a declaration of compliance.
+The user expanded the task from example fixes to the entire repository. Source
+inventory and compilation do not establish semantic audit or interoperability.
+
+## Scope and completion
+
+Review all production paths and their callers against AGENTS.md, including Go
+commands/packages, web console, scripts, tests, schemas, packaging and operator
+documentation. Preserve required product functions. Rewrite the paths violating
+those rules; do not manufacture churn in code that already serves its function.
+Completion requires the semantic review of all scope, corrected call paths and
+appropriate local/communication checks. No remaining row marked pending may be
+reported as audited or compliant.
+
+## Cross-cutting work
+
+- Closed concrete resource-spec contract: implemented; all consumers must compile.
+  JSON is decoded to a concrete spec at the boundary. Internal spec retrieval
+  cannot silently reinterpret a map through JSON.
+- Configuration ownership: generated ordinary field copies replace YAML cloning.
+  Generation follows concrete Go definitions and is checked through the Makefile.
+- Health: typed daemon observation and typed persistence read; remove the second
+  event-based writer of current health. This requires updated IPC on both ends.
+- MTU: explicit resource handling replaces reflective field-name guessing.
+- Old standalone IPv4/Health application paths: remove unreachable functions and
+  tests whose only subject was those superseded paths; retain active FreeBSD paths.
+- State: closed stores and invalid encodings report errors rather than success.
+- Persistence: one schema 1500 shared by status and ownership. Remove old JSON
+  backends, additive migrations and no-op Save calls; reject old DBs explicitly.
+- Planning: read-only current observations and existing synchronous planners;
+  remove temporary writable SQLite and simulated controller/event execution.
+- Cancellation: policy observations retain their caller context; delayed derived
+  publication checks its owner context and logs errors.
+- Inventory example: controlled metadata endpoints/CLI fixtures prevent accidental
+  instance metadata access during ordinary tests.
+
+Each item still requires its executed checks below. These changes do not establish
+that unrelated controllers, front-end code or packaging have been fully reviewed.
+
+## Go inventory
+
+The inventory includes production files, not generated assets or *_test.go files.
+"In progress" means selected bodies/call paths reviewed; it does not mean the
+package is fully audited. "Pending" means inventoried/scanned only.
+
+| Directory | Production files | Semantic review |
+| --- | ---: | --- |
+| `cmd/routerctl` | 26 | Pending |
+| `cmd/routerd` | 29 | In progress |
+| `cmd/routerd-arp-observer` | 4 | Pending |
+| `cmd/routerd-bgp` | 1 | Pending |
+| `cmd/routerd-dhcp-event-relay` | 1 | Pending |
+| `cmd/routerd-dhcp-fingerprint-watcher` | 1 | Pending |
+| `cmd/routerd-dhcpv4-client` | 4 | Pending |
+| `cmd/routerd-dhcpv6-client` | 3 | Pending |
+| `cmd/routerd-dns-resolver` | 9 | Pending |
+| `cmd/routerd-dpi-classifier` | 1 | Pending |
+| `cmd/routerd-eventd` | 1 | Pending |
+| `cmd/routerd-firewall-logger` | 3 | Pending |
+| `cmd/routerd-healthcheck` | 1 | In progress |
+| `cmd/routerd-ndpi-agent` | 4 | Pending |
+| `cmd/routerd-pppoe-client` | 4 | Pending |
+| `cmd/routerd-ra-observer` | 4 | Pending |
+| `cmd/routerd-schema` | 1 | Pending |
+| `cmd/routerd-vrrp-vmac` | 1 | Pending |
+| `internal/cmd/specgen` | 1 | Pending |
+| `internal/freebsdpcap` | 1 | Pending |
+| `internal/hostcmd` | 1 | Pending |
+| `internal/mapsort` | 1 | Pending |
+| `internal/statusvalue` | 1 | Pending |
+| `internal/stringutil` | 1 | Pending |
+| `pkg/api` | 13 | In progress |
+| `pkg/apply` | 5 | Pending |
+| `pkg/bgp` | 1 | Pending |
+| `pkg/bgpdaemon` | 2 | Pending |
+| `pkg/bus` | 1 | Pending |
+| `pkg/config` | 22 | Pending |
+| `pkg/conntrack` | 1 | Pending |
+| `pkg/conntracktuning` | 1 | Pending |
+| `pkg/controlapi` | 5 | Pending |
+| `pkg/controller/bfd` | 1 | Pending |
+| `pkg/controller/bgp` | 7 | Pending |
+| `pkg/controller/chain` | 34 | In progress |
+| `pkg/controller/conntrackobserver` | 1 | Pending |
+| `pkg/controller/dhcpv4client` | 1 | Pending |
+| `pkg/controller/dnsresolver` | 1 | Pending |
+| `pkg/controller/eventfederation` | 1 | Pending |
+| `pkg/controller/eventsubscription` | 1 | Pending |
+| `pkg/controller/firewall` | 1 | Pending |
+| `pkg/controller/framework` | 1 | Pending |
+| `pkg/controller/ingressservice` | 1 | Pending |
+| `pkg/controller/mobility` | 37 | Pending |
+| `pkg/controller/mobilityfib` | 1 | Pending |
+| `pkg/controller/nat44` | 1 | Pending |
+| `pkg/controller/pppoesession` | 1 | Pending |
+| `pkg/controller/provideraction` | 1 | Pending |
+| `pkg/controller/vrrp` | 2 | Pending |
+| `pkg/daemonapi` | 2 | Pending |
+| `pkg/derived` | 1 | In progress |
+| `pkg/dhcpeventqueue` | 3 | Pending |
+| `pkg/dhcpfingerprint` | 1 | Pending |
+| `pkg/dhcpv4client` | 2 | Pending |
+| `pkg/dnsresolver` | 1 | Pending |
+| `pkg/dpi` | 2 | Pending |
+| `pkg/dynamicconfig` | 2 | In progress |
+| `pkg/dynamicconfig/codec` | 2 | Pending |
+| `pkg/egressroute` | 1 | In progress |
+| `pkg/eventconsumer` | 1 | Pending |
+| `pkg/eventd` | 7 | Pending |
+| `pkg/eventfile` | 1 | Pending |
+| `pkg/eventlog` | 2 | Pending |
+| `pkg/eventrule` | 1 | Pending |
+| `pkg/federation` | 2 | Pending |
+| `pkg/federationguard` | 1 | Pending |
+| `pkg/firewallbackend` | 1 | Pending |
+| `pkg/ha` | 1 | Pending |
+| `pkg/healthcheck` | 10 | In progress |
+| `pkg/hostdeps` | 1 | Pending |
+| `pkg/hybrid` | 1 | Pending |
+| `pkg/ingressdrain` | 1 | Pending |
+| `pkg/inventory` | 1 | Pending |
+| `pkg/ipsec` | 1 | Pending |
+| `pkg/lan` | 1 | Pending |
+| `pkg/lan/dhcpv4server` | 1 | Pending |
+| `pkg/lifecycle` | 3 | Pending |
+| `pkg/lock` | 2 | Pending |
+| `pkg/logstore` | 7 | Pending |
+| `pkg/manageddaemon` | 1 | Pending |
+| `pkg/mobilityconfig` | 4 | Pending |
+| `pkg/netconfigbackend` | 1 | Pending |
+| `pkg/nflog` | 2 | Pending |
+| `pkg/nftstate` | 1 | Pending |
+| `pkg/observabilitypipeline` | 1 | Pending |
+| `pkg/observe` | 2 | Pending |
+| `pkg/otel` | 3 | Pending |
+| `pkg/pdclient` | 4 | Pending |
+| `pkg/platform` | 5 | Pending |
+| `pkg/plugin` | 6 | In progress |
+| `pkg/pppoeclient` | 1 | Pending |
+| `pkg/provideraction` | 4 | Pending |
+| `pkg/providercontract` | 1 | Pending |
+| `pkg/providerinventory` | 2 | Pending |
+| `pkg/raobserver` | 1 | Pending |
+| `pkg/render` | 32 | In progress |
+| `pkg/resource` | 3 | Pending |
+| `pkg/resourcequery` | 2 | Pending |
+| `pkg/sam` | 1 | Pending |
+| `pkg/samenrollment` | 1 | Pending |
+| `pkg/servicemgr` | 1 | Pending |
+| `pkg/source/daemon` | 1 | Pending |
+| `pkg/state` | 12 | In progress |
+| `pkg/status` | 2 | Pending |
+| `pkg/subprocessio` | 1 | Pending |
+| `pkg/sysctlprofile` | 2 | Pending |
+| `pkg/tailscale` | 1 | Pending |
+| `pkg/version` | 1 | Pending |
+| `pkg/vrf` | 1 | Pending |
+| `pkg/vxlan` | 1 | Pending |
+| `pkg/webconsole` | 25 | Pending |
+| `pkg/wireguard` | 1 | Pending |
+
+## Other surfaces
+
+- Web console source and generated assets: pending semantic review.
+- Shell/Python test and lab tools: pending semantic review.
+- Build, installation, packaging, release and platform integration: pending.
+- Schemas/examples/operator documentation: update contracts changed here; complete
+  surface review remains pending.
+- Real daemon/kernel communication: blocked by current Unix socket/Netlink
+  restrictions; PVE/private-lab readiness has not been established.
+
+## Executed checks
+
+Record completed commands and failures for each published checkpoint. Do not turn
+missing environment capabilities or an incomplete suite into a passing gate.
+
+## Executed evidence for the cross-cutting checkpoint
+
+Go 1.25.9, Linux/amd64, CGO_ENABLED=0 for project release builds. Checks apply
+to the committed source tree; no live router or production data was changed.
+
+- PASS: full focused packages in `make check-routerd15-focused` (configuration,
+  spec copies/decoding, dynamic config/codecs, rendering, plugins, SQLite state
+  and ownership, Health, advisory selection, derived events and worker status).
+- PASS: selected command/chain tests for read-only planning, canonical config
+  commit, priority result publication and typed-route expiry/withdrawal.
+- PASS: schema generation and schema consistency checks.
+- Full test execution is not established. The earlier full attempt hit denied
+  Unix-socket/Netlink operations (also reproduced on the baseline), then automatic
+  approval review stopped a metadata request from an example test. The example
+  test now uses owned loopback metadata servers and fake provider CLIs, and its
+  full package passes. No permission bypass was used.
+- NOT RUN: unrestricted Unix/Netlink integration, independent-peer traffic,
+  two-WAN forwarding/failure/recovery, PVE VM and physical NIC qualification.
+
+The audit remains in progress. This checkpoint is not a release or a claim that
+all packages meet every AGENTS.md rule. In particular, remaining status-map
+consumers, worker lifetimes, protocol exchanges, static preparation and non-Go
+surfaces still need semantic review and corresponding implementation.

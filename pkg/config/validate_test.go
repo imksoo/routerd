@@ -586,7 +586,7 @@ func invalidMixedResourceWhen() api.ResourceWhenSpec {
 	}
 }
 
-func testResource(apiVersion, kind, name string, spec any) api.Resource {
+func testResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
 		Metadata: api.ObjectMeta{Name: name},
@@ -1486,7 +1486,7 @@ func TestValidateFreeBSDIPv4PolicyRouteSetIsRejected(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec: api.RouterSpec{Resources: []api.Resource{
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: map[string]any{}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4PolicyRouteSet"}, Metadata: api.ObjectMeta{Name: "legacy-policy"}, Spec: nil},
 		}},
 	}
 	err := ValidateForOS(router, platform.OSFreeBSD)

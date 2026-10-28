@@ -155,43 +155,6 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 	return &out, warnings, nil
 }
 
-// routerWithDryRunLeaseFiles prevents a dry-run from creating the normal
-// dnsmasq lease directory. A dry-run renders and validates dnsmasq, but its
-// generated lease path must remain inside the temporary artifact directory.
-func routerWithDryRunLeaseFiles(router *api.Router, artifactDir string) (*api.Router, error) {
-	if router == nil {
-		return nil, errors.New("router is nil")
-	}
-	artifactDir = strings.TrimSpace(artifactDir)
-	if artifactDir == "" {
-		return nil, errors.New("dry-run artifact directory is empty")
-	}
-
-	out := *router
-	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
-	leaseFile := filepath.Join(artifactDir, "dnsmasq.leases")
-	for i := range out.Spec.Resources {
-		resource := out.Spec.Resources[i]
-		switch resource.Kind {
-		case "DHCPv4Server":
-			spec, err := resource.DHCPv4ServerSpec()
-			if err != nil {
-				return nil, err
-			}
-			spec.LeaseFile = leaseFile
-			out.Spec.Resources[i].Spec = spec
-		case "DHCPv6Server":
-			spec, err := resource.DHCPv6ServerSpec()
-			if err != nil {
-				return nil, err
-			}
-			spec.LeaseFile = leaseFile
-			out.Spec.Resources[i].Spec = spec
-		}
-	}
-	return &out, nil
-}
-
 func routerConfigYAML(router *api.Router, opts applyOptions) (string, error) {
 	if strings.TrimSpace(opts.ConfigYAMLOverride) != "" {
 		return opts.ConfigYAMLOverride, nil
@@ -596,7 +559,6 @@ func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts 
 }
 
 func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, outcome *applyAttemptOutcome) (_ *apply.Result, err error) {
-	candidate := router
 	var optionWarnings []string
 	var configYAML string
 	if !opts.DryRun {
@@ -617,41 +579,36 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
-	if opts.DryRun && !opts.Sandbox {
-		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
+	if opts.DryRun {
+		outcome.Stage = "plan"
+		result, err := planApply(router, opts)
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = os.RemoveAll(dryRunDir) }()
-		opts.DnsmasqConfigPath = filepath.Join(dryRunDir, "dnsmasq.conf")
-		opts.NftablesPath = filepath.Join(dryRunDir, "nat44.nft")
-		router, err = routerWithDryRunLeaseFiles(router, dryRunDir)
-		if err != nil {
-			return nil, err
+		outcome.Result = result
+		result.Warnings = append(result.Warnings, optionWarnings...)
+		outcome.Stage = "output"
+		if opts.AnnounceDryRunToCLI {
+			announcement := fmt.Sprintf("dry-run apply plan for %s\n", opts.ConfigPath)
+			if n, err := io.WriteString(stdout, announcement); err != nil {
+				return result, err
+			} else if n != len(announcement) {
+				return result, io.ErrShortWrite
+			}
 		}
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return result, err
+		}
+		outcome.Stage = "complete"
+		return result, nil
 	}
-
 	statePath := defaultString(opts.StatePath, defaultStatePath)
 	outcome.Stage = "open-state"
-	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
+	stateStore, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
-	if opts.DryRun {
-		outcome.Stage = "snapshot"
-		manifest, err := describeApplySnapshot(candidate, stateStore, time.Now().UTC(), platformDefaults.OS)
-		if err != nil {
-			return nil, err
-		}
-		if logger != nil {
-			data, err := json.Marshal(manifest)
-			if err != nil {
-				return nil, err
-			}
-			logger.Emit(eventlog.LevelDebug, "apply", "dry-run evaluation inputs acquired", map[string]string{"manifest": string(data)})
-		}
-	}
+	defer stateStore.Close()
 
 	effectiveRouter := filterRouterByWhen(router, stateStore)
 	var generation int64
@@ -719,8 +676,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
-	// Dry-run has its own temporary SQLite store. Give transactional status
-	// producers the same journal there without recording into production state.
 	eventBus := bus.NewWithStore(stateStore)
 	eventBus.SetLogger(slog.Default())
 	controllerOpts := applyChainControllerOptions(opts)
@@ -773,14 +728,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return result, err
 	}
 	outcome.Stage = "output"
-	if opts.DryRun && opts.AnnounceDryRunToCLI {
-		announcement := fmt.Sprintf("dry-run apply plan for %s\n", opts.ConfigPath)
-		if n, err := io.WriteString(stdout, announcement); err != nil {
-			return result, err
-		} else if n != len(announcement) {
-			return result, io.ErrShortWrite
-		}
-	}
+
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
@@ -825,73 +773,6 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		controllerOpts.DryRunServiceUnit = true
 	}
 	return controllerOpts
-}
-
-func openApplyChainStateStore(path string, dryRun bool) (*routerstate.SQLiteStore, func(), error) {
-	path = defaultString(path, defaultStatePath)
-	if !dryRun {
-		store, err := routerstate.OpenSQLite(path)
-		if err != nil {
-			return nil, nil, err
-		}
-		return store, func() { _ = store.Close() }, nil
-	}
-	dir, err := os.MkdirTemp("", "routerd-apply-dryrun-*")
-	if err != nil {
-		return nil, nil, err
-	}
-	cleanupDir := func() { _ = os.RemoveAll(dir) }
-	store, err := routerstate.OpenSQLite(filepath.Join(dir, "routerd.db"))
-	if err != nil {
-		cleanupDir()
-		return nil, nil, err
-	}
-	cleanup := func() {
-		_ = store.Close()
-		cleanupDir()
-	}
-	if err := copyApplyStateSnapshot(path, store); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	return store, cleanup, nil
-}
-
-func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
-	src, err := routerstate.LoadReadOnlyLive(path)
-	if err != nil {
-		return err
-	}
-	if closer, ok := src.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	if sqlite, ok := src.(*routerstate.SQLiteStore); ok {
-		return sqlite.CopyEvaluationStateTo(dst)
-	}
-	for key, value := range src.Variables() {
-		switch value.Status {
-		case routerstate.StatusSet:
-			dst.Set(key, value.Value, value.Reason)
-		case routerstate.StatusUnset:
-			dst.Unset(key, value.Reason)
-		default:
-			dst.Forget(key, value.Reason)
-		}
-	}
-	lister, ok := src.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
-	}
-	for _, status := range statuses {
-		if err := dst.SaveObjectStatus(status.APIVersion, status.Kind, status.Name, status.Status); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func inventoryStatusMap(status inventory.Status) map[string]any {
@@ -974,7 +855,7 @@ func loadTransientStateStore(path string) (routerstate.Store, error) {
 	if closer, ok := store.(interface{ Close() error }); ok {
 		defer func() { _ = closer.Close() }()
 	}
-	snapshot := routerstate.NewJSON()
+	snapshot := routerstate.NewMemory()
 	snapshot.Values = store.Variables()
 	return snapshot, nil
 }

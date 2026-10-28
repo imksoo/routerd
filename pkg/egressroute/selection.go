@@ -16,7 +16,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
@@ -34,6 +33,7 @@ const (
 )
 
 type Store interface {
+	HealthObservation(string) (api.HealthObservation, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
@@ -315,7 +315,13 @@ func (c Controller) healthCheckReady(name string) bool {
 			}
 		}
 	}
-	observation := healthcheck.RoutingObservationFromStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
+	observation, err := c.Store.HealthObservation(name)
+	if err != nil {
+		if c.Logger != nil {
+			c.Logger.Error("read Health observation", "resource", name, "error", err)
+		}
+		return false
+	}
 	return observation.Usable(c.now(), spec)
 }
 

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -59,9 +58,6 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 		}
 		if resource.Spec == nil {
 			return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult status.resources[%d].spec is required", i)
-		}
-		if isUntypedMap(resource.Spec) {
-			return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult status.resources[%d].spec decoded as untyped map; decode plugin output with yaml.Unmarshal", i)
 		}
 	}
 	for i, directive := range result.Status.Directives {
@@ -131,13 +127,4 @@ func dynamicPartName(source string, generation int64) string {
 		name = "dynamic"
 	}
 	return fmt.Sprintf("%s-%d", name, generation)
-}
-
-func isUntypedMap(value any) bool {
-	switch value.(type) {
-	case map[string]any, map[any]any:
-		return true
-	}
-	typ := reflect.TypeOf(value)
-	return typ != nil && typ.Kind() == reflect.Map
 }

@@ -212,6 +212,7 @@ func TestProviderPrivateIPInventoryPluginAWSResolvesSelfFromIMDS(t *testing.T) {
 	}))
 	defer imds.Close()
 	bin := fakeBinDir(t)
+	writeExecutable(t, filepath.Join(bin, "ip"), "#!/bin/sh\nexit 1\n")
 	writeExecutable(t, filepath.Join(bin, "aws"), `#!/bin/sh
 case "$*" in
   *"--network-interface-ids eni-router-b"*)
@@ -910,6 +911,18 @@ func runInventoryPluginWithEnv(t *testing.T, fakeBin, stdin string, extraEnv []s
 	cmd := exec.CommandContext(ctx, "./provider-private-ip-inventory")
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Every metadata/ARM request in this fixture stays on an owned loopback server.
+	// Specific metadata tests override these defaults with their own mock server.
+	metadata := httptest.NewServer(http.NotFoundHandler())
+	defer metadata.Close()
+	cmd.Env = append(cmd.Env,
+		"ROUTERD_PROVIDER_INVENTORY_AWS_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_BASE="+metadata.URL,
+		"ROUTERD_PROVIDER_INVENTORY_AZURE_ARM_BASE="+metadata.URL,
+		"AWS_CLI_PATH="+filepath.Join(fakeBin, "aws"),
+		"AZ_CLI_PATH="+filepath.Join(fakeBin, "az"),
+		"OCI_CLI_PATH="+filepath.Join(fakeBin, "oci"))
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out

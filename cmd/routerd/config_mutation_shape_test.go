@@ -19,10 +19,10 @@ import (
 
 func TestRuntimeShapeChangedRejectsLifecycleResources(t *testing.T) {
 	current := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: map[string]any{"listen": []any{"127.0.0.1"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}}}}},
 	}}}
 	next := &api.Router{Spec: api.RouterSpec{Resources: append([]api.Resource(nil), current.Spec.Resources...)}}
-	next.Spec.Resources[0].Spec = map[string]any{"listen": []any{"127.0.0.2"}}
+	next.Spec.Resources[0].Spec = api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.2"}}}}
 
 	changed, resources := runtimeShapeChanged(current, next)
 	if !changed || len(resources) != 1 {

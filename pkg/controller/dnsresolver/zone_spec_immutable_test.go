@@ -18,7 +18,7 @@ import (
 // generated runtime files across recovery and renumbering, without a host
 // daemon or live network. This does not claim DNS packet or HA coverage.
 func TestReconcileDNSZoneSourcesSurviveRecoveryAndRenumbering(t *testing.T) {
-	for _, representation := range []string{"typed", "pointer", "map"} {
+	for _, representation := range []string{"typed", "pointer", "json"} {
 		t.Run(representation, func(t *testing.T) {
 			declaredRecord := api.DNSZoneRecordSpec{
 				Hostname: "router",
@@ -33,16 +33,14 @@ func TestReconcileDNSZoneSourcesSurviveRecoveryAndRenumbering(t *testing.T) {
 			switch representation {
 			case "pointer":
 				router.Spec.Resources[0].Spec = &zoneSpec
-			case "map":
-				data, err := json.Marshal(zoneSpec)
+			case "json":
+				data, err := json.Marshal(router.Spec.Resources[0])
 				if err != nil {
 					t.Fatal(err)
 				}
-				var generic map[string]any
-				if err := json.Unmarshal(data, &generic); err != nil {
+				if err := json.Unmarshal(data, &router.Spec.Resources[0]); err != nil {
 					t.Fatal(err)
 				}
-				router.Spec.Resources[0].Spec = generic
 			}
 			dir := t.TempDir()
 			store := mapStore{}

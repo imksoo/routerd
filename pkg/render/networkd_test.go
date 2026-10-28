@@ -233,7 +233,7 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
-func netResource(kind, name string, spec any) api.Resource {
+func netResource(kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{
 			APIVersion: api.NetAPIVersion,

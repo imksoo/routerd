@@ -122,9 +122,7 @@ func adoptCommand(args []string, stdout io.Writer) (err error) {
 		if err := ledger.Remember(artifacts); err != nil {
 			return err
 		}
-		if err := ledger.Save(*ledgerPath); err != nil {
-			return err
-		}
+
 		result.AdoptedArtifacts = adoptedArtifactsForResult(artifacts)
 		result.AdoptionCandidates = nil
 	}

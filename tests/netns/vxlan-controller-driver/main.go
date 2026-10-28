@@ -69,3 +69,8 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// This forwarding fixture has no Health daemon.
+func (s *store) HealthObservation(string) (api.HealthObservation, error) {
+	return api.HealthObservation{}, nil
+}

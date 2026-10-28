@@ -2,7 +2,10 @@
 
 package daemonapi
 
-import "time"
+import (
+	"github.com/imksoo/routerd/pkg/api"
+	"time"
+)
 
 const (
 	APIVersion = "daemon.routerd.net/v1alpha1"
@@ -172,13 +175,14 @@ type Condition struct {
 }
 
 type ResourceStatus struct {
-	Resource   ResourceRef       `json:"resource"`
-	Phase      string            `json:"phase"`
-	Health     string            `json:"health"`
-	Since      time.Time         `json:"since,omitempty"`
-	Conditions []Condition       `json:"conditions"`
-	Observed   map[string]string `json:"observed,omitempty"`
-	Warnings   []string          `json:"warnings,omitempty"`
+	Routing    *api.HealthObservation `json:"routing,omitempty"`
+	Resource   ResourceRef            `json:"resource"`
+	Phase      string                 `json:"phase"`
+	Health     string                 `json:"health"`
+	Since      time.Time              `json:"since,omitempty"`
+	Conditions []Condition            `json:"conditions"`
+	Observed   map[string]string      `json:"observed,omitempty"`
+	Warnings   []string               `json:"warnings,omitempty"`
 }
 
 type DaemonEvent struct {

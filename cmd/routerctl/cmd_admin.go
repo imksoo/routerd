@@ -472,16 +472,12 @@ func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
 		if err != nil {
 			return err
 		}
-		if err := store.Save(statePath); err != nil {
-			return err
-		}
+
 		return writeJSON(stdout, state)
 	}
 	if err := ingressdrain.Undrain(store, service, backend); err != nil {
 		return err
 	}
-	if err := store.Save(statePath); err != nil {
-		return err
-	}
+
 	return writeJSON(stdout, map[string]any{"service": service, "backend": backend, "drained": false})
 }

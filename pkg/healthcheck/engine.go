@@ -6,12 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/net/icmp"
@@ -21,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
@@ -46,7 +43,6 @@ const (
 )
 
 type Store interface {
-	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
@@ -61,8 +57,6 @@ type ProbeResult struct {
 	// lookup runs in the controller path so it is hookable by tests).
 	ProbeEvidence
 }
-
-type ProbeFunc func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult
 
 type State struct {
 	Phase             string    `json:"phase"`
@@ -99,101 +93,6 @@ type Evaluation struct {
 	State  State
 	Result string
 	Event  daemonapi.DaemonEvent
-	Status map[string]any
-}
-
-type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Probe  ProbeFunc
-	Now    func() time.Time
-	Logger *slog.Logger
-
-	mu    sync.Mutex
-	state map[string]*State
-}
-
-type ProbeDaemon interface {
-	Run(ctx context.Context, resource api.Resource) error
-	Status(ctx context.Context) (daemonapi.DaemonStatus, error)
-}
-
-func (c *Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.healthcheck.*.*"}}, 64)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "HealthCheck" {
-				continue
-			}
-			c.saveEventStatus(event)
-		}
-	}()
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" {
-			continue
-		}
-		if _, err := resource.HealthCheckSpec(); err == nil {
-			continue
-		}
-		resource := resource
-		go c.runResource(ctx, resource)
-	}
-}
-
-func (c *Controller) runResource(ctx context.Context, resource api.Resource) {
-	spec, err := resource.HealthCheckSpec()
-	if err != nil {
-		if c.Logger != nil {
-			c.Logger.Warn("healthcheck spec decode failed", "resource", resource.Metadata.Name, "error", err)
-		}
-		return
-	}
-	interval := durationOr(spec.Interval, 30*time.Second)
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	if err := c.ProbeOnce(ctx, resource, spec); err != nil && c.Logger != nil {
-		c.Logger.Warn("healthcheck probe failed", "resource", resource.Metadata.Name, "error", err)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.ProbeOnce(ctx, resource, spec); err != nil && c.Logger != nil {
-				c.Logger.Warn("healthcheck probe failed", "resource", resource.Metadata.Name, "error", err)
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec) error {
-	spec = ResolveSpecWithStoreForResource(c.Router, c.Store, resource.Metadata.Name, spec)
-	timeout := durationOr(spec.Timeout, 3*time.Second)
-	if timeout <= 0 {
-		timeout = 3 * time.Second
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	probe := c.Probe
-	if probe == nil {
-		probe = Probe
-	}
-	result := probe(probeCtx, spec)
-	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
-		result.Timeout = true
-		if result.FailureKind == "" {
-			result.FailureKind = FailureKindTimeout
-		}
-	}
-	result.ProbeEvidence = EnrichEvidence(probeCtx, spec, result.ProbeEvidence)
-	return c.applyResult(ctx, resource, spec, result)
 }
 
 // EnrichEvidence fills route / tunnel information into the evidence
@@ -218,65 +117,6 @@ func EnrichEvidence(ctx context.Context, spec api.HealthCheckSpec, ev ProbeEvide
 		}
 	}
 	return ev
-}
-
-func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec, result ProbeResult) error {
-	state := c.resourceState(resource.Metadata.Name)
-	now := c.now()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	previous := *state
-	evaluation := ApplyResult(resource, spec, previous, result, now)
-	*state = evaluation.State
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, evaluation.Status); err != nil {
-		return err
-	}
-	if previous.Phase == evaluation.State.Phase && previous.LastResult == evaluation.State.LastResult {
-		return nil
-	}
-	return c.Bus.Publish(ctx, evaluation.Event)
-}
-
-func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
-	var current map[string]any
-	if c.Store != nil {
-		current = c.Store.ObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name)
-		if existing, ok := parseStatusTime(current["lastCheckedAt"]); ok && existing.After(event.Time) {
-			return
-		}
-	}
-	status := map[string]any{}
-	for key, value := range event.Attributes {
-		status[key] = value
-	}
-	if phase := event.Attributes["phase"]; phase != "" {
-		status["phase"] = phase
-	}
-	if result := event.Attributes["result"]; result != "" {
-		status["lastResult"] = result
-	}
-	status["lastCheckedAt"] = event.Time.UTC().Format(time.RFC3339Nano)
-	if current != nil && fmt.Sprint(current["phase"]) == fmt.Sprint(status["phase"]) && fmt.Sprint(current["lastTransitionAt"]) != "" {
-		status["lastTransitionAt"] = current["lastTransitionAt"]
-	} else if status["lastTransitionAt"] == nil {
-		status["lastTransitionAt"] = event.Time.UTC().Format(time.RFC3339Nano)
-	}
-	if event.Message != "" {
-		status["message"] = event.Message
-	}
-	_ = c.Store.SaveObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name, status)
-}
-
-func parseStatusTime(value any) (time.Time, bool) {
-	text, ok := value.(string)
-	if !ok || strings.TrimSpace(text) == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, text)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed, true
 }
 
 // FwMarkRef describes a routing resource that can supply a socket mark for a
@@ -758,12 +598,13 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 		}
 		if state.ConsecutiveFailed >= unhealthyThreshold(spec) {
 			transition(&state, PhaseUnhealthy, now)
-		} else {
+		} else if state.Phase == PhaseHealthy || state.Phase == PhaseFailing {
 			transition(&state, PhaseFailing, now)
+		} else {
+			transition(&state, PhaseUnknown, now)
 		}
 	}
 	state.History = appendHistory(state.History, recordFromResult(spec, result, nextResult, now))
-	status := StatusMap(state)
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: DaemonKind + "-" + resource.Metadata.Name, Kind: DaemonKind, Instance: resource.Metadata.Name}, "routerd.healthcheck."+resource.Metadata.Name+"."+nextResult, daemonapi.SeverityInfo)
 	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: resource.Metadata.Name}
 	event.Reason = "HealthCheckProbe"
@@ -788,7 +629,6 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 	} {
 		if value != "" {
 			event.Attributes[key] = value
-			status[key] = value
 		}
 	}
 	for key, value := range evidenceAttributes(result.ProbeEvidence) {
@@ -797,7 +637,7 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 	addTimeAttribute(event.Attributes, "lastSuccessAt", state.LastSuccessTime)
 	addTimeAttribute(event.Attributes, "lastFailureAt", state.LastFailureTime)
 	addTimeAttribute(event.Attributes, "firstFailureAt", state.FirstFailureTime)
-	return Evaluation{State: state, Result: nextResult, Event: event, Status: status}
+	return Evaluation{State: state, Result: nextResult, Event: event}
 }
 
 // evidenceAttributes returns a map keyed with OTel-style network.* names so
@@ -940,33 +780,6 @@ func transition(state *State, phase string, now time.Time) {
 		state.Phase = phase
 		state.LastTransitionAt = now
 	}
-}
-
-func (c *Controller) resourceState(name string) *State {
-	c.init()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	state := c.state[name]
-	if state == nil {
-		state = &State{Phase: PhaseUnknown}
-		c.state[name] = state
-	}
-	return state
-}
-
-func (c *Controller) init() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state == nil {
-		c.state = map[string]*State{}
-	}
-}
-
-func (c *Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
 }
 
 func durationOr(value string, fallback time.Duration) time.Duration {

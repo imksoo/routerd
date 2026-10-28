@@ -1233,7 +1233,7 @@ func TestSAMTransportProfileMalformedDirectGroupKeepsRRFallback(t *testing.T) {
 		api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 			Metadata: api.ObjectMeta{Name: "cloudedge-direct-leaves"},
-			Spec:     map[string]any{"nodes": "not-a-node-list"},
+			Spec:     api.InterfaceSpec{},
 		},
 	)
 

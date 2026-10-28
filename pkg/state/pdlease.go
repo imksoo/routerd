@@ -68,7 +68,7 @@ func DecodePDLease(value string) (PDLease, bool) {
 	return lease, true
 }
 
-func PDLeaseFromStore(store Store, base string) (PDLease, bool) {
+func PDLeaseFromStore(store interface{ Get(string) Value }, base string) (PDLease, bool) {
 	return DecodePDLease(store.Get(base + ".lease").Value)
 }
 

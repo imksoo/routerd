@@ -187,7 +187,7 @@ def aws_imds_self_interface(local_ips):
 def azure_imds_ipv4s():
     try:
         doc = json.loads(http_text(
-            "http://169.254.169.254/metadata/instance/network/interface?api-version=2021-02-01",
+            azure_imds_base() + "/metadata/instance/network/interface?api-version=2021-02-01",
             headers={"Metadata": "true"},
             timeout=1.0,
         ))
@@ -490,7 +490,7 @@ def aws_inventory(spec):
             self_nic = imds_self.get("nicRef", "")
             subnet = subnet or imds_self.get("subnetRef", "")
             self_private_ips = imds_self.get("privateIPs") or []
-        if not local_ips:
+        if not local_ips and not self_nic:
             raise ValueError("AWS selfNicRef is empty and no local private IP could be discovered")
     if not self_nic:
         local_ips = local_ipv4s() or [ip for ip in [aws_imds_ipv4()] if ip]

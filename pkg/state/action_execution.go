@@ -69,53 +69,6 @@ type ActionExecutionFilter struct {
 	Provider string
 }
 
-// ensureActionExecutionColumns is the additive migration for the
-// action_executions journal. It creates the table when a pre-existing database
-// lacks it (backward compatible: a database without the table simply gets it
-// created here) and is the place to add future columns via tableHasColumn
-// checks, mirroring the other ensure*Columns migrations.
-func (s *SQLiteStore) ensureActionExecutionColumns() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS action_executions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  source TEXT,
-  provider TEXT NOT NULL,
-  provider_ref TEXT,
-  action TEXT NOT NULL,
-  target_json TEXT,
-  parameters_json TEXT,
-  undo_json TEXT,
-  risk_level TEXT,
-  status TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  executed_at TEXT,
-  result_message TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
-`); err != nil {
-		return err
-	}
-	// Additive column for the executor's Observed facts (e.g.
-	// priorSourceDestCheck). Backward compatible: a pre-existing table without it
-	// gets the column added; a table created fresh above does not yet have it, so
-	// we add it here either way via the tableHasColumn guard.
-	hasObserved, err := s.tableHasColumn("action_executions", "observed_json")
-	if err != nil {
-		return err
-	}
-	if !hasObserved {
-		if _, err := s.db.Exec(`ALTER TABLE action_executions ADD COLUMN observed_json TEXT`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ImportAction inserts an action into the journal as pending, keyed by its
 // idempotency key. A repeated key never creates a duplicate execution row.
 // Already-succeeded rows remain idempotent. Failed or skipped rows are requeued
@@ -125,7 +78,7 @@ func (s *SQLiteStore) ImportAction(rec ActionExecutionRecord) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return false, nil
+		return false, sql.ErrConnDone
 	}
 	if strings.TrimSpace(rec.IdempotencyKey) == "" {
 		return false, fmt.Errorf("action import requires idempotencyKey")
@@ -208,7 +161,7 @@ func (s *SQLiteStore) GetActionByID(id int64) (ActionExecutionRecord, bool, erro
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return ActionExecutionRecord{}, false, nil
+		return ActionExecutionRecord{}, false, sql.ErrConnDone
 	}
 	row := s.db.QueryRow(`SELECT `+actionExecutionColumns+` FROM action_executions WHERE id = ?`, id)
 	rec, err := scanActionExecution(row.Scan)
@@ -227,7 +180,7 @@ func (s *SQLiteStore) GetActionByIdempotencyKey(key string) (ActionExecutionReco
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return ActionExecutionRecord{}, false, nil
+		return ActionExecutionRecord{}, false, sql.ErrConnDone
 	}
 	row := s.db.QueryRow(`SELECT `+actionExecutionColumns+` FROM action_executions WHERE idempotency_key = ?`, key)
 	rec, err := scanActionExecution(row.Scan)
@@ -246,7 +199,7 @@ func (s *SQLiteStore) ListActions(filter ActionExecutionFilter) ([]ActionExecuti
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []ActionExecutionRecord{}, nil
+		return []ActionExecutionRecord{}, sql.ErrConnDone
 	}
 	query := `SELECT ` + actionExecutionColumns + ` FROM action_executions`
 	var conds []string
@@ -288,7 +241,7 @@ func (s *SQLiteStore) ApproveAction(id int64, approvedBy string, now time.Time) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if now.IsZero() {
 		now = s.now().UTC()
@@ -308,7 +261,7 @@ func (s *SQLiteStore) BeginActionExecution(id int64, now time.Time) (bool, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return false, nil
+		return false, sql.ErrConnDone
 	}
 	if now.IsZero() {
 		now = s.now().UTC()
@@ -332,7 +285,7 @@ func (s *SQLiteStore) RequeueStaleRunningActions(cutoff, now time.Time) (int, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	if cutoff.IsZero() {
 		return 0, fmt.Errorf("stale running cutoff is required")
@@ -364,7 +317,7 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	switch status {
 	case ActionSucceeded, ActionFailed, ActionSkipped:
@@ -399,7 +352,7 @@ func (s *SQLiteStore) MarkActionSkippedByIdempotencyKey(key, message string, now
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -419,7 +372,7 @@ func (s *SQLiteStore) MarkActionRolledBack(id int64, message string, now time.Ti
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if now.IsZero() {
 		now = s.now().UTC()

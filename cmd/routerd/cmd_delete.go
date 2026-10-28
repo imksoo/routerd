@@ -105,12 +105,7 @@ func performDeleteTargets(targets []deleteTarget, statePath, ledgerPath string, 
 		result.Deleted = append(result.Deleted, owner)
 	}
 	if !dryRun {
-		if err := ledger.Save(ledgerPath); err != nil {
-			return result, err
-		}
-		if err := stateStore.Save(statePath); err != nil {
-			return result, err
-		}
+
 	}
 	return result, nil
 }

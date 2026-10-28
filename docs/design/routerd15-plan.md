@@ -64,33 +64,38 @@ one upstream and restore it. Observe routes/nftables and the traffic path; repea
 with worker restart and stale observations. Record actual setup and revision.
 This cloud session has not established that VM access and does not claim this gate.
 
-## Initial checkpoint
+## Repository-wide implementation checkpoint
 
-Implemented: shared typed Health routing observation/policy, priority nftables
-result publication after application, and a bounded DHCPv4 hardware-address read.
-Focused regression checks and their executed results are recorded below before
-publication. Remaining steps and real two-WAN communication are open.
+The scope is now the whole repository, rather than only Health/PBR. The coverage
+record in [routerd15-audit.md](routerd15-audit.md) explicitly distinguishes source
+inventory, semantic review, implementation and executed checks. Pending packages
+are not declared compliant.
 
-### Executed checks (2026-10-29 JST)
+Implemented across existing callers:
 
-Toolchain: Go 1.25.9 linux/amd64. No live router or production DB was changed.
+- Concrete ResourceSpec types at YAML/JSON boundaries, shared generated decoding
+  and ordinary deep copies; no JSON fallback to recover internal spec types.
+- Typed current Health observation from the worker to persistence and routing;
+  one current-status owner; worker restart restores history without asserting
+  previous reachability; failure grace requires a previously healthy path.
+- Explicit MTU resource handling; removal of unreachable standalone IPv4/Health
+  apply paths and obsolete skipped inspection tests.
+- One SQLite schema (user_version 1500) shared by state and the ownership ledger;
+  no JSON persistence backend, migration chain, or no-op Save contract. Closed
+  stores and invalid status encodings report errors.
+- Read-only apply planning, including dynamic parts and when filtering. Plan does
+  not execute controllers, generate simulated events, create a temporary DB, or
+  open ownership data for writing. Apply reacquires observations before effects.
+- Cancellation passed to policy route observations and delayed derived events.
+- Example inventory tests use their own loopback metadata endpoints and fake
+  provider CLIs; Azure inventory honors its configured metadata endpoint.
 
-- PASS: `make check-routerd15-focused` (four complete local packages, focused
-  priority result/freshness regressions in chain, and vet of all five packages).
-- PASS: Race Detector for healthcheck, egressroute, dhcpv4client and dynamicconfig;
-  focused priority result/freshness checks in chain also pass with the detector.
-- PASS: `make build-daemons`, using the project's CGO_ENABLED=0 Linux build path.
-- NOT PASS: `make check-routerd15` includes the full chain suite. This environment
-  prohibits Unix sockets and Netlink access. The unchanged baseline reproduces
-  `TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck`,
-  `TestDaemonStatusControllerStoresARPObserverDiagnosticsSeparately`, and the
-  panic in `TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec`.
-  That baseline comparison establishes pre-existing failures here, not a full
-  passing suite on an unrestricted Linux host. The full gate is retained.
-- NOT RUN: actual two-WAN daemon/kernel forwarding, peer interoperability,
-  physical NIC qualification and production cutover. Shell command fixtures test
-  nft application ordering/failure propagation only; they do not execute nft.
+No released version, full semantic audit, or real network qualification is claimed.
 
-The managed runtime status tool and policy snapshot were unavailable in this
-session, so no VPN/private-lab readiness is assumed. Publication is a proposal
-branch and draft PR; GitHub Actions completion is not awaited.
+## Validation
+
+Use go.mod's Go 1.25.9 toolchain and the Makefile targets. `check-routerd15`
+retains the complete test/vet gate; `check-routerd15-focused` is a separate local
+regression gate, never a substitute for full acceptance. Current executed results
+and environment restrictions are tracked in the audit record. GitHub Actions
+completion is not awaited.

@@ -77,6 +77,7 @@ func (c *Controller) Start(ctx context.Context) {
 	}
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
 	go func() {
+		defer c.StopTimers()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		c.reconcileLogged(ctx, false)
@@ -152,7 +153,6 @@ func (c *Controller) reconcileResource(ctx context.Context, resource api.Resourc
 }
 
 func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec api.DerivedEventSpec, state *derivedState, target bool) error {
-	_ = ctx
 	pending := PendingRetracting
 	if target {
 		pending = PendingAsserting
@@ -167,28 +167,38 @@ func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec a
 	if delay == 0 {
 		state.asserted = target
 		state.pendingTransition = PendingNone
-		return c.publish(context.Background(), resource, spec, state, target)
+		return c.publish(ctx, resource, spec, state, target)
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if state.timer != timer {
+		if state.timer != timer || ctx.Err() != nil {
 			return
 		}
 		stillTarget := c.target(spec) == target
 		if !stillTarget {
 			c.cancelPending(state)
-			_ = c.saveStatus(resource, state)
+			if err := c.saveStatus(resource, state); err != nil {
+				c.logTimerError(err)
+			}
 			return
 		}
 		state.timer = nil
 		state.asserted = target
 		state.pendingTransition = PendingNone
-		_ = c.publish(context.Background(), resource, spec, state, target)
+		if err := c.publish(ctx, resource, spec, state, target); err != nil {
+			c.logTimerError(err)
+		}
 	})
 	state.timer = timer
 	return c.saveStatus(resource, state)
+}
+
+func (c *Controller) logTimerError(err error) {
+	if c.Logger != nil {
+		c.Logger.Warn("derived event hysteresis failed", "error", err)
+	}
 }
 
 func (c *Controller) publish(ctx context.Context, resource api.Resource, spec api.DerivedEventSpec, state *derivedState, asserted bool) error {

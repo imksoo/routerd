@@ -95,13 +95,6 @@ func TestDynamicConfigPartFromResultRejectsInvalidOutput(t *testing.T) {
 			},
 			want: "metadata.name is required",
 		},
-		{
-			name: "untyped resource spec",
-			mutate: func(result *PluginResult) {
-				result.Status.Resources[0].Spec = map[string]any{"destination": "10.0.0.0/24"}
-			},
-			want: "untyped map",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

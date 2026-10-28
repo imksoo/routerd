@@ -3069,25 +3069,14 @@ func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error)
 }
 
 func specAs[T any](r Resource) (T, error) {
-	spec, ok := r.Spec.(T)
-	if !ok {
-		if ptr, ok := r.Spec.(*T); ok && ptr != nil {
-			return *ptr, nil
-		}
-		var zero T
-		if r.Spec == nil {
-			return zero, fmt.Errorf("%s has unexpected spec type <nil>", r.ID())
-		}
-		data, err := json.Marshal(r.Spec)
-		if err != nil {
-			return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
-		}
-		if err := json.Unmarshal(data, &zero); err != nil {
-			return zero, fmt.Errorf("%s has unexpected spec type %T: %w", r.ID(), r.Spec, err)
-		}
-		return zero, nil
+	if spec, ok := r.Spec.(T); ok {
+		return spec, nil
 	}
-	return spec, nil
+	if spec, ok := any(r.Spec).(*T); ok && spec != nil {
+		return *spec, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
 }
 
 func BoolDefault(value *bool, fallback bool) bool {

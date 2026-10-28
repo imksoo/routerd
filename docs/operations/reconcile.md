@@ -18,7 +18,13 @@ routerctl apply -f router.yaml --replace
 
 For a remote router, confirm that the management connection (SSH, console, hypervisor console) will survive the change before running `apply`.
 
-On a live router, `plan` and `observe` read the state database as a transient snapshot; when the daemon is writing SQLite WAL pages concurrently, that snapshot can be slightly stale, so treat it as advisory preflight input rather than a rollback record.
+On this proposal branch, `plan` and apply's `--dry-run` read live SQLite WAL
+state through read-only handles and compute the effective configuration without
+running controllers. They do not copy a writable DB, create simulated events,
+start daemons, or apply artifacts. Missing databases are empty observations;
+unrecognized schemas are errors. Host and DB observations may change while a
+plan is computed, so the result is advisory rather than an atomic snapshot or
+a rollback record. Apply observes again before making changes.
 
 ## Long-running mode
 

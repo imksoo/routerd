@@ -138,3 +138,22 @@ func testController(store mapStore, hysteresis string, emitInitial bool) *Contro
 		Store: store,
 	}
 }
+
+func TestCanceledOwnerDoesNotPublishDelayedTransition(t *testing.T) {
+	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+	controller := testController(store, "20ms", false)
+	defer controller.StopTimers()
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := controller.Reconcile(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
+	if err := controller.Reconcile(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	time.Sleep(60 * time.Millisecond)
+	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 0 {
+		t.Fatal("canceled controller published delayed assertion")
+	}
+}

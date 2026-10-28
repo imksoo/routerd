@@ -674,7 +674,7 @@ spec:
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: "cloudedge-direct"},
-		Spec:     map[string]any{"nodes": "not-a-node-list"},
+		Spec:     api.InterfaceSpec{},
 	})
 
 	controller := WireGuardController{Router: router}

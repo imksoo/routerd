@@ -5,6 +5,7 @@ package state
 import (
 	"database/sql"
 	"errors"
+	"github.com/imksoo/routerd/internal/storage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,17 +28,9 @@ func TestListObjectStatusesReportsUninitializedSchema(t *testing.T) {
 		t.Fatalf("close sqlite: %v", err)
 	}
 
-	store, err := OpenSQLiteReadOnly(path)
-	if err != nil {
-		t.Fatalf("open read-only sqlite: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	_, err = store.ListObjectStatuses()
-	if !errors.Is(err, ErrSchemaNotInitialized) {
-		t.Fatalf("ListObjectStatuses error = %v, want ErrSchemaNotInitialized", err)
-	}
-	if strings.Contains(err.Error(), "SQL logic error") || strings.Contains(err.Error(), "no such table") {
-		t.Fatalf("ListObjectStatuses leaked raw SQLite error: %v", err)
+	_, err = OpenSQLiteReadOnly(path)
+	if !errors.Is(err, storage.ErrSchemaVersion) {
+		t.Fatalf("uninitialized schema accepted: %v", err)
 	}
 }
 
@@ -92,143 +85,6 @@ func TestSQLiteStoreConfiguresWALCheckpoint(t *testing.T) {
 	}
 	if journalSizeLimit != stateJournalSizeLimitBytes {
 		t.Fatalf("journal_size_limit = %d, want %d", journalSizeLimit, stateJournalSizeLimitBytes)
-	}
-}
-
-func TestSQLiteStoreMigratesLegacyJSONAndRenames(t *testing.T) {
-	dir := t.TempDir()
-	legacy := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(legacy, []byte(`{
-  "variables": {
-    "ipv6PrefixDelegation.wan-pd.lease": {
-      "status": "set",
-      "value": "{\"lastPrefix\":\"2001:db8:1200:1210::/60\"}",
-      "since": "2026-04-28T00:00:00Z",
-      "updatedAt": "2026-04-28T00:00:00Z"
-    }
-  }
-}
-`), 0644); err != nil {
-		t.Fatalf("write legacy state: %v", err)
-	}
-
-	store, err := OpenSQLite(filepath.Join(dir, "routerd.db"))
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-	lease, ok := DecodePDLease(store.Get("ipv6PrefixDelegation.wan-pd.lease").Value)
-	if !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
-		t.Fatalf("lease = %+v ok=%v", lease, ok)
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy state still present: %v", err)
-	}
-	if _, err := os.Stat(legacy + ".migrated"); err != nil {
-		t.Fatalf("migrated state missing: %v", err)
-	}
-}
-
-func TestSQLiteStoreMigratesTwoTableSQLiteState(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open fixture db: %v", err)
-	}
-	_, err = db.Exec(`CREATE TABLE state(key TEXT PRIMARY KEY, value TEXT, status TEXT, reason TEXT, since TEXT, updated_at TEXT);
-INSERT INTO state(key,value,status,reason,since,updated_at) VALUES('ipv6PrefixDelegation.wan-pd.lease','{"lastPrefix":"2001:db8:1200:1210::/60"}','set','test','2026-04-28T00:00:00Z','2026-04-28T00:00:00Z');`)
-	if err != nil {
-		t.Fatalf("seed fixture db: %v", err)
-	}
-	_ = db.Close()
-
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-	lease, ok := DecodePDLease(store.Get("ipv6PrefixDelegation.wan-pd.lease").Value)
-	if !ok || lease.LastPrefix != "2001:db8:1200:1210::/60" {
-		t.Fatalf("lease = %+v ok=%v", lease, ok)
-	}
-	db, err = sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("reopen fixture db: %v", err)
-	}
-	defer db.Close()
-	var tableName string
-	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='state'`).Scan(&tableName)
-	if err == nil {
-		t.Fatal("legacy state table still exists")
-	}
-}
-
-func TestSQLiteStoreAddsLastAppliedPathColumn(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "routerd.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("open fixture db: %v", err)
-	}
-	_, err = db.Exec(`CREATE TABLE objects (
-  api_version TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  uid TEXT,
-  resource_version INTEGER NOT NULL DEFAULT 1,
-  observed_generation INTEGER,
-  status TEXT,
-  created_at TEXT NOT NULL,
-  modified_at TEXT NOT NULL,
-  PRIMARY KEY(api_version, kind, name)
-);
-INSERT INTO objects(api_version,kind,name,uid,status,created_at,modified_at)
-VALUES('net.routerd.net/v1alpha1','DHCPv6PrefixDelegation','wan-pd','net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd','{}','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z');`)
-	if err != nil {
-		t.Fatalf("seed fixture db: %v", err)
-	}
-	_ = db.Close()
-
-	store, err := OpenSQLite(path)
-	if err != nil {
-		t.Fatalf("open sqlite store: %v", err)
-	}
-	defer store.Close()
-
-	db, err = sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatalf("reopen fixture db: %v", err)
-	}
-	defer db.Close()
-	rows, err := db.Query(`PRAGMA table_info(objects)`)
-	if err != nil {
-		t.Fatalf("table info: %v", err)
-	}
-	defer rows.Close()
-	found := false
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			t.Fatalf("scan column: %v", err)
-		}
-		if name == "last_applied_path" {
-			found = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("scan columns: %v", err)
-	}
-	if !found {
-		t.Fatal("objects.last_applied_path column was not added")
-	}
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM objects WHERE api_version = 'net.routerd.net/v1alpha1' AND kind = 'DHCPv6PrefixDelegation' AND name = 'wan-pd'`).Scan(&count); err != nil {
-		t.Fatalf("count existing object: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("existing objects count = %d, want 1", count)
 	}
 }
 
@@ -818,7 +674,7 @@ func TestSQLiteStorePluginRunsListNewestFirstAndFilter(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
+func TestSQLiteStoreClosedOperationsReportFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := OpenSQLite(path)
 	if err != nil {
@@ -844,21 +700,21 @@ func TestSQLiteStoreClosedAccessIsBenign(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("second close sqlite store: %v", err)
 	}
-	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"state": "stopping"}); err != nil {
+	if err := store.SaveObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan", map[string]any{"state": "stopping"}); !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("save object status after close: %v", err)
 	}
 	if got := store.ObjectStatus("net.routerd.net/v1alpha1", "Interface", "wan"); len(got) != 0 {
 		t.Fatalf("object status after close = %+v, want empty", got)
 	}
 	statuses, err := store.ListObjectStatuses()
-	if err != nil {
+	if !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("list object statuses after close: %v", err)
 	}
 	if len(statuses) != 0 {
 		t.Fatalf("object statuses after close = %+v, want empty", statuses)
 	}
 	configYAML, ok, err := store.GenerationConfig(generation)
-	if err != nil {
+	if !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("generation config after close: %v", err)
 	}
 	if ok || configYAML != "" {

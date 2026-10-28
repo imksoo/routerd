@@ -181,8 +181,8 @@ func TestProbeOnceUpdatesStateHistory(t *testing.T) {
 	if len(d2.state.History) != 2 {
 		t.Fatalf("restored history len = %d", len(d2.state.History))
 	}
-	if d2.state.LastEvidence.NextHop != "192.0.2.1" {
-		t.Errorf("restored nextHop = %q", d2.state.LastEvidence.NextHop)
+	if d2.state.Phase != healthcheck.PhaseUnknown || !d2.state.LastCheckedAt.IsZero() {
+		t.Fatalf("restored diagnostic history became current reachability: %#v", d2.state)
 	}
 }
 

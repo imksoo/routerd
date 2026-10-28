@@ -5,7 +5,7 @@ package api
 type ResourceKindSchema struct {
 	APIVersion string
 	Kind       string
-	Spec       any
+	Spec       ResourceSpec
 }
 
 func ConfigResourceKinds() []ResourceKindSchema {
@@ -97,5 +97,21 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{FirewallAPIVersion, "FirewallRule", FirewallRuleSpec{}},
 		{FirewallAPIVersion, "FirewallEventLog", FirewallEventLogSpec{}},
 		{NetAPIVersion, "Hostname", HostnameSpec{}},
+	}
+}
+
+// Runtime-only variants are produced internally and are rejected by static
+// configuration validation. They still use the same typed internal contract.
+func runtimeResourceKinds() []ResourceKindSchema {
+	return []ResourceKindSchema{
+		{SystemAPIVersion, "KernelModule", KernelModuleSpec{}},
+		{NetAPIVersion, "NetworkAdoption", NetworkAdoptionSpec{}},
+		{SystemAPIVersion, "Inventory", InventorySpec{}},
+		{NetAPIVersion, "Bridge", BridgeSpec{}},
+		{NetAPIVersion, "VXLANSegment", VXLANSegmentSpec{}},
+		{MobilityAPIVersion, "SAMRRSet", SAMRRSetSpec{}},
+		{NetAPIVersion, "IPv4StaticRoute", IPv4StaticRouteSpec{}},
+		{NetAPIVersion, "IPv6StaticRoute", IPv6StaticRouteSpec{}},
+		{MobilityAPIVersion, "SAMPeerGroup", SAMPeerGroupSpec{}},
 	}
 }

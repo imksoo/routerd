@@ -331,10 +331,7 @@ func controllerRouter(policy api.ProviderActionPolicySpec) *api.Router {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
 				Metadata: api.ObjectMeta{Name: "aws-executor"},
-				Spec: map[string]any{
-					"executable":   "/bin/true",
-					"capabilities": []any{enginepkg.CapabilityExecuteProviderAction},
-				},
+				Spec:     api.PluginSpec{Executable: "/bin/true", Capabilities: []string{enginepkg.CapabilityExecuteProviderAction}},
 			},
 		}},
 	}

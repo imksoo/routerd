@@ -391,12 +391,21 @@ clean:
 	rm -rf bin dist
 
 .PHONY: check-routerd15
-check-routerd15:
-	go test ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain
-	go vet ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain
+check-routerd15: check-spec
+	go test ./...
+	go vet ./...
 
 .PHONY: check-routerd15-focused
-check-routerd15-focused:
-	go test ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig
-	go test ./pkg/controller/chain -run '^(TestPriorityPolicy|TestIPv4PolicyRouteHealthCheckRequiresFreshStatus)' -count=1
-	go vet ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/dynamicconfig ./pkg/controller/chain
+check-routerd15-focused: check-spec
+	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/derived ./cmd/routerd-healthcheck ./examples/cloudedge-mobility-demo/plugins
+	go test ./cmd/routerd ./pkg/controller/chain -run '^(TestRunApplyChainOnce(DryRun|PlansBackup|Commits)|TestApplyCommandDryRun|TestRunDispatchesApplyDryRun|TestFaultDryRun|TestServeConfigMutator(SandboxApply|ApplyReplace)|TestPriorityPolicy|TestIPv4PolicyRouteHealthCheckRequiresFreshStatus|TestTypedRouteExpiry)' -count=1
+	go vet ./...
+
+.PHONY: generate-spec check-spec
+generate-spec:
+	go run ./internal/cmd/specgen
+check-spec:
+	go run ./internal/cmd/specgen -check
+
+test: check-spec
+generate-schema: generate-spec

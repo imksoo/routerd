@@ -85,6 +85,7 @@ type dnsmasqSystemdState struct {
 }
 
 type Store interface {
+	HealthObservation(string) (api.HealthObservation, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
@@ -130,6 +131,12 @@ func (s mobilityStore) MergeObjectStatus(apiVersion, kind, name string, updates 
 	return s.evented.MergeObjectStatus(apiVersion, kind, name, updates)
 }
 
+func (s mobilityStore) HealthObservation(name string) (api.HealthObservation, error) {
+	return s.evented.HealthObservation(name)
+}
+func (s eventSubscriptionStore) HealthObservation(name string) (api.HealthObservation, error) {
+	return s.evented.HealthObservation(name)
+}
 func (s mobilityStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return s.evented.ObjectStatus(apiVersion, kind, name)
 }
@@ -471,6 +478,10 @@ func resourceOwnerController(kind string) string {
 	}
 }
 
+func (s eventedStore) HealthObservation(name string) (api.HealthObservation, error) {
+	return s.Store.HealthObservation(name)
+}
+
 func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	if s.Store == nil {
 		return nil
@@ -535,14 +546,6 @@ func (s eventedStore) Now() time.Time {
 		return time.Now().UTC()
 	}
 	return store.Now()
-}
-
-func (s eventedStore) Save(path string) error {
-	store, ok := s.Store.(routerstate.Store)
-	if !ok {
-		return nil
-	}
-	return store.Save(path)
 }
 
 func (s eventedStore) Variables() map[string]routerstate.Value {
@@ -2381,7 +2384,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
-	health := healthcheck.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	nat := nat44.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand, Logger: logger}
 	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.currentRouter(), store), Logger: logger}
 	bfd := bfdcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
@@ -2427,9 +2429,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			if err := observabilityPipeline.Start(ctx); err != nil {
 				return nil, DaemonStatusController{}, err
 			}
-		}
-		if r.controllerEnabled("healthcheck") {
-			health.Start(ctx)
 		}
 		if r.controllerEnabled("conntrack-observer") {
 			conntrackObs.Start(ctx)
@@ -4318,6 +4317,15 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				for key, value := range observed.Observed {
 					next[key] = value
 				}
+			}
+			if observed.Resource.Kind == "HealthCheck" {
+				if observed.Routing == nil {
+					if c.Logger != nil {
+						c.Logger.Warn("Health snapshot has no typed routing observation", "resource", observed.Resource.Name)
+					}
+					continue
+				}
+				next["routing"] = *observed.Routing
 			}
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
 				return err

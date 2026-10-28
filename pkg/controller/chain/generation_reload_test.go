@@ -211,7 +211,7 @@ func lifecycleTestRouter(name, dnsName string) *api.Router {
 		Spec: api.RouterSpec{Resources: []api.Resource{{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"},
 			Metadata: api.ObjectMeta{Name: dnsName},
-			Spec:     map[string]any{"listen": []any{"127.0.0.1:53"}},
+			Spec:     api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1:53"}}}},
 		}}},
 	}
 }

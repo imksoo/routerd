@@ -10,7 +10,7 @@ import (
 // Requirement: declared IPv6 service intent, including pending scopes and OS
 // aliases, must never be excluded merely because it cannot render a range yet.
 func TestDnsmasqIPv4OnlyInterfaces(t *testing.T) {
-	resource := func(kind, name string, spec any) api.Resource {
+	resource := func(kind, name string, spec api.ResourceSpec) api.Resource {
 		return api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
 	}
 	for _, tc := range []struct {
