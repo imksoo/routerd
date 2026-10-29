@@ -170,7 +170,9 @@ establish independent RR/leaf interoperability.
   protocol evidence cannot be promoted to PASS by a result override. Remaining
   collectors still need complete parse/measurement identity; capture
   uses bare PIDs; exact address/account/source identities are not always checked.
-  E2E deployment ignores stop failures and can write private YAML with ambient mode.
+  The isolated E2E deployment now rejects unconfirmed unit stops, and generated
+  secret-bearing YAML is replaced atomically with private permissions; offline
+  production-body regressions pass. Native deployment remains unqualified.
 - The FreeBSD lifecycle harness now drives the actual serve/ApplyAPI and uses a
   direct-child launcher with durable exclusive intent and acknowledged Wait.
   Epair cleanup checks both endpoint identities and confirms absence; failed

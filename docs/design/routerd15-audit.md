@@ -852,3 +852,25 @@ two-connection regressions cover concurrent capacity,
 writer admission, read-only coexistence and failed paired writes. Linux daemon
 and provider-executor builds pass the static-link check. Native packet
 forwarding is a separate qualification gate.
+
+## Isolated E2E deployment admission and private generation
+
+The E2E deployment body now rejects a failed unit inventory or stop operation,
+then requires inactive/failed state and zero MainPID/ControlPID before replacing
+router binaries or configuration. The original body ignored failed stops and
+could treat a failed inventory pipeline as an empty successful observation.
+Config-generation failure now propagates through the command-substitution caller
+instead of returning a deployable output path.
+
+Generated secret-bearing YAML is replaced through a private temporary inode and
+atomic rename, including retries from an earlier 0644 output file. Its directories
+are private and generated WireGuard key files retain 0600 permissions. A failed
+renderer leaves the preceding YAML intact. Router names must be safe output
+filenames before key generation.
+
+The frozen four-script checkpoint passes the complete generation and reuse
+fixtures, all 11 diagnostics tests, the representative-redundancy offline entry
+point, shell syntax and ShellCheck. The stop regression executes the actual
+remote function with intercepted systemctl/sudo calls; it performs no host service,
+SSH, PVE or cloud mutation. This closes those concrete harness findings, not the
+remaining native process/route/evidence qualification work.
