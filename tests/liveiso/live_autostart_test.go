@@ -72,7 +72,7 @@ func TestLiveISOInstallsUbuntuPackagesIntoSquashFS(t *testing.T) {
 
 func TestLiveISONormalizesTemporaryDirectoryPermissions(t *testing.T) {
 	script := liveISOScript(t)
-	want := `run_root install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"`
+	want := `install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"`
 	if !strings.Contains(script, want) {
 		t.Fatalf("Ubuntu live ISO must normalize temporary directories with sticky permissions: missing %q", want)
 	}
@@ -184,8 +184,9 @@ func TestLiveISODisablesBootstrapDHCPBeforeRouterdStarts(t *testing.T) {
 	if configIdx < 0 || disableIdx < 0 || prepareIdx < 0 || setupIdx < 0 {
 		t.Fatal("missing config restore, bootstrap DHCP teardown, unit preparation, or static routerd ordering marker")
 	}
-	if !(configIdx < disableIdx && disableIdx < prepareIdx && prepareIdx < setupIdx) {
-		t.Fatal("bootstrap DHCP must be disabled and routerd.service prepared after config restore and before routerd starts")
+	validateIdx := strings.Index(script, "\n/usr/local/sbin/routerd validate --config \"${config_file}\"\n")
+	if !(configIdx < validateIdx && validateIdx < prepareIdx && prepareIdx < disableIdx && disableIdx < setupIdx) {
+		t.Fatal("validation and service preparation must succeed before bootstrap DHCP is disabled")
 	}
 }
 
@@ -473,7 +474,7 @@ func TestLiveISOUsesValidatedConfigCache(t *testing.T) {
 		"restore_validated_config_cache()",
 		"restored config from validated cache (fetch failed)",
 		"fetch_url \"${config_url}\" \"${tmp}\" || { restore_validated_config_cache && return 0; return 1; }",
-		"cache_validated_config || true",
+		"cache_validated_config || { rm -f \"${tmp}\"; return 1; }",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO validated config cache missing %q", needle)

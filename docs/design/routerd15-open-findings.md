@@ -129,10 +129,12 @@ unjournaled IPv6 host routes and destructive foreign FreeBSD GIF handling.
 
 - Installer restart/rollback ordering can restore binaries under a partially
   restarted process. Required failed stops must retain exact recovery state.
-- Live ISO recursive cleanup can traverse leftover host bind mounts and chown
-  strips package setuid bits. Use a private mount namespace, explicit ownership,
-  pre-walk mount refusal and failure-preserving cleanup. Firstboot must validate
-  before caching config or removing bootstrap management DHCP.
+- Live ISO builder uses a private mount namespace, exact workdir ownership,
+  pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
+  all-root image rewriting are removed; old mode-damaged caches are rejected.
+  Firstboot validates before caching and before service generation/DHCP removal.
+  Actual shell-body failure regressions pass. Native image construction, package
+  modes in a built image and VM boot are not yet qualified here.
 - Release QA lifecycle ownership is implemented: lock before state/auth changes,
   durable STARTING admission before child effects, native birth/session checks
   with pidfd signaling, exact consumed-input pins and acknowledged stop before

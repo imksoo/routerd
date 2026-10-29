@@ -52,8 +52,9 @@ At boot, the live setup service:
 7. Installs the fetched `router.yaml` or extracts a supported config bundle.
 8. Falls back to the last validated cache, then to the built-in sample config
    when no external config is available.
-9. Removes the bootstrap systemd-networkd DHCP profile and starts
-   `routerd.service`.
+9. Validates the restored configuration and prepares `routerd.service`. Only
+   after both succeed does it remove the bootstrap systemd-networkd DHCP profile
+   and allow `routerd.service` to start. Failure retains bootstrap management.
 
 Supported bundle URLs currently end in `.tar.zst`, `.tzst`, `.tar.gz`, `.tgz`,
 or `.tar`. Bundles must contain `router.yaml` at the archive root. Optional
@@ -72,14 +73,37 @@ Secret files are installed under `/usr/local/etc/routerd/secrets` with mode
 `0600`; the directory itself is mode `0700`. Keep the config filesystem
 root-only at the hypervisor/storage layer because it contains private keys.
 
-After a successful fetch and checksum verification, the installed `router.yaml`
-is cached under `/var/lib/routerd/validated-config/router.yaml`. If a later boot
+After a successful fetch, checksum verification and configuration validation,
+the installed `router.yaml` is cached under
+`/var/lib/routerd/validated-config/router.yaml`. Invalid input cannot overwrite
+that cache. If a later boot
 cannot fetch `routerd.config_url`, the live ISO restores that validated cache.
+The cached configuration is validated again before installation.
 
 The ISO's default DHCP profile exists only so first boot can reach
 `routerd.config_url`. After config restore, the setup service removes that
 profile before starting routerd, so routerd's own `DHCPv4Client`,
 `IPv4StaticAddress`, and route resources become the network authority.
+
+## Building the image
+
+`make live-iso` runs the builder as root inside a private mount namespace using
+`unshare` (and `sudo` when needed). The builder requires mount namespace support;
+there is no fallback into the caller's namespace. Package ownership and
+setuid/setgid modes are preserved. The chroot gets a private `/run`, without the
+host's service-manager sockets.
+
+One build holds the work-directory lock. Only a work directory carrying this
+builder's exact ownership marker can be removed on reuse, and a mounted path
+below it causes refusal before recursive traversal. Failed unmounts remain
+errors; the builder neither lazily detaches them nor walks through them for
+cleanup. Use a new work directory when an older build has no ownership marker.
+
+Rootfs caches now use format `routerd-live-rootfs-v2`. Rebuild older caches;
+their recursive ownership changes may already have discarded package modes.
+The release and quality workflows use the new exact cache key. Local shell
+failure tests cover refusal and firstboot ordering; native ISO building and VM
+boot remain separate qualification steps.
 
 ## Scope
 

@@ -2,6 +2,26 @@
 # SPDX-License-Identifier: BSD-3-Clause
 set -euo pipefail
 
+# Build mounts must never propagate into the caller's namespace. The original
+# native namespace identity is checked after unshare rather than trusted in an
+# environment flag. All rootfs customization runs as root to preserve package
+# ownership and setuid/setgid modes.
+if [ "${1:-}" = --private-mount-build ]; then
+    original_mount_scope=${2:?missing original mount namespace}
+    shift 2
+    if [ "$(id -u)" -ne 0 ] || [ "$(readlink /proc/self/ns/mnt)" = "${original_mount_scope}" ]; then
+        echo "live ISO build requires a private root mount namespace" >&2
+        exit 2
+    fi
+else
+    original_mount_scope=$(readlink /proc/self/ns/mnt)
+    if [ "$(id -u)" -eq 0 ]; then
+        exec unshare --mount --propagation private -- /bin/bash "$0" --private-mount-build "${original_mount_scope}" "$@"
+    else
+        exec sudo -E -- unshare --mount --propagation private -- /bin/bash "$0" --private-mount-build "${original_mount_scope}" "$@"
+    fi
+fi
+
 version=${VERSION:-$(awk '/^VERSION[[:space:]]*\?=/{print $3; exit}' Makefile)}
 git_commit=${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || true)}
 distbase=${DISTBASE:-dist}
@@ -23,18 +43,9 @@ require()
     fi
 }
 
-run_root()
-{
-    if [ "$(id -u)" -eq 0 ]; then
-        "$@"
-    else
-        sudo "$@"
-    fi
-}
-
 chroot_run()
 {
-    run_root chroot "${rootfs}" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"
+    chroot "${rootfs}" /usr/bin/env DEBIAN_FRONTEND=noninteractive "$@"
 }
 
 checksum_file()
@@ -50,15 +61,69 @@ checksum_file()
     fi
 }
 
+live_mounts=()
 cleanup_mounts()
 {
-    if [ -n "${rootfs:-}" ] && [ -d "${rootfs}" ]; then
-        for mountpoint in dev/pts dev proc sys run; do
-            if mountpoint -q "${rootfs}/${mountpoint}" 2>/dev/null; then
-                run_root umount -lf "${rootfs}/${mountpoint}" || true
-            fi
-        done
+    local index failed=0
+    local remaining=()
+    for ((index=${#live_mounts[@]}-1; index>=0; index--)); do
+        if ! umount -- "${live_mounts[index]}"; then
+            echo "failed to unmount owned build mount: ${live_mounts[index]}" >&2
+            remaining=("${live_mounts[index]}" "${remaining[@]}")
+            failed=1
+        fi
+    done
+    live_mounts=("${remaining[@]}")
+    return "${failed}"
+}
+
+finish_live_build()
+{
+    local result=$?
+    trap - EXIT INT TERM
+    if ! cleanup_mounts; then
+        result=1
     fi
+    exit "${result}"
+}
+
+refuse_live_mounts()
+{
+    python3 - "${1:-${workdir}}" <<'PY'
+import os
+from pathlib import Path
+import re
+import sys
+
+target = Path(sys.argv[1]).absolute()
+if target == Path('/') or target == Path.cwd() or target in Path.cwd().parents:
+    raise SystemExit('refusing live build cleanup of the repository or its parent')
+for line in Path('/proc/self/mountinfo').read_text().splitlines():
+    fields = line.split()
+    if len(fields) < 6:
+        raise SystemExit('incomplete mount observation; retaining live build workdir')
+    mount = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[4])
+    if mount == os.fspath(target) or mount.startswith(os.fspath(target) + '/'):
+        raise SystemExit('mounted path below live build workdir; refusing recursive cleanup: ' + mount)
+PY
+}
+
+prepare_live_workdir()
+{
+    # Run this before chmod, traversal or deletion. A retained host bind mount
+    # from an older interrupted build must survive without any recursive walk.
+    refuse_live_mounts || return 1
+    local marker="${workdir}/.routerd-live-build"
+    local expected="routerd-live-build-v1 ${workdir}"
+    if [ -e "${workdir}" ]; then
+        if [ -L "${workdir}" ] || [ ! -f "${marker}" ] || [ -L "${marker}" ] || [ "$(cat "${marker}")" != "${expected}" ]; then
+            echo "refusing to remove an unowned live build workdir: ${workdir}" >&2
+            return 1
+        fi
+        rm -rf -- "${workdir}" || return 1
+    fi
+    mkdir -p -- "${workdir}" || return 1
+    printf '%s\n' "${expected}" > "${marker}"
 }
 
 rootfs_only=false
@@ -69,19 +134,22 @@ for arg in "$@"; do
 done
 
 require debootstrap
+require python3
+require flock
 if [ "${rootfs_only}" = false ]; then
     require mksquashfs
     require grub-mkrescue
     require xorriso
 fi
 
-trap cleanup_mounts EXIT INT TERM
-
-if [ -d "${workdir}" ]; then
-    chmod -R u+w "${workdir}" 2>/dev/null || true
-fi
-rm -rf "${workdir}"
-mkdir -p "${workdir}" "${outdir}"
+workdir=$(realpath -m -- "${workdir}")
+mkdir -p -- "$(dirname "${workdir}")" "${outdir}"
+exec {live_lock_fd}>>"${workdir}.lock"
+flock -n "${live_lock_fd}" || { echo "another live ISO build owns ${workdir}" >&2; exit 1; }
+trap finish_live_build EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+prepare_live_workdir
 
 iso_root="${workdir}/iso-root"
 rootfs="${workdir}/rootfs"
@@ -92,12 +160,15 @@ rootfs_cache=${ROOTFS_CACHE_TAR:-}
 
 if [ -n "${rootfs_cache}" ] && [ -f "${rootfs_cache}" ]; then
     tar -xf "${rootfs_cache}" -C "${workdir}"
+    if [ ! -f "${rootfs}/etc/routerd-live-rootfs-format" ] || [ "$(cat "${rootfs}/etc/routerd-live-rootfs-format")" != routerd-live-rootfs-v2 ]; then
+        echo "rootfs cache predates preserved package ownership; rebuild it" >&2
+        exit 1
+    fi
     mkdir -p "${workdir}/rootfs/dev"
     echo "restored rootfs from cache (skipping debootstrap + apt-get)"
 else
 
-run_root debootstrap --variant=minbase --arch="${ubuntu_arch}" "${ubuntu_suite}" "${rootfs}" "${ubuntu_mirror}"
-run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
+debootstrap --variant=minbase --arch="${ubuntu_arch}" "${ubuntu_suite}" "${rootfs}" "${ubuntu_mirror}"
 
 install -d "${rootfs}/etc/apt/apt.conf.d"
 cat > "${rootfs}/etc/apt/apt.conf.d/99routerd-live" <<'EOF'
@@ -119,22 +190,28 @@ EOF
 rm -f "${rootfs}/etc/resolv.conf"
 cp /etc/resolv.conf "${rootfs}/etc/resolv.conf"
 
-for dir in dev proc sys run; do
-    run_root mount --bind "/${dir}" "${rootfs}/${dir}"
+for dir in dev proc sys; do
+    mount --bind "/${dir}" "${rootfs}/${dir}"
+    live_mounts+=("${rootfs}/${dir}")
 done
+# Never expose the host service-manager sockets to package maintainer scripts.
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs "${rootfs}/run"
+live_mounts+=("${rootfs}/run")
 if [ -d "${rootfs}/dev/pts" ]; then
-    run_root mount --bind /dev/pts "${rootfs}/dev/pts"
+    mount --bind /dev/pts "${rootfs}/dev/pts"
+    live_mounts+=("${rootfs}/dev/pts")
 fi
 
 chroot_run apt-get update
 chroot_run apt-get install -y --no-install-recommends "${ubuntu_base_package_list[@]}" "${ubuntu_package_list[@]}"
 chroot_run apt-get clean
-run_root rm -rf "${rootfs}/var/lib/apt/lists/"*
+refuse_live_mounts "${rootfs}/var/lib/apt/lists"
+rm -rf "${rootfs}/var/lib/apt/lists/"*
 cleanup_mounts
-run_root chown -R "$(id -u):$(id -g)" "${rootfs}"
-chmod -R u+w "${rootfs}"
+refuse_live_mounts
 
 if [ -n "${rootfs_cache}" ]; then
+    printf '%s\n' routerd-live-rootfs-v2 > "${rootfs}/etc/routerd-live-rootfs-format"
     tar -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
     echo "saved rootfs cache at ${rootfs_cache}"
 fi
@@ -144,7 +221,7 @@ fi
 # Debian rootfs caches do not guarantee the standard sticky permissions for
 # temporary directories. Normalize them immediately before further image
 # customization so both cached and fresh Live ISO builds are safe.
-run_root install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"
+install -d -o root -g root -m 1777 "${rootfs}/tmp" "${rootfs}/var/tmp"
 
 if [ "${rootfs_only}" = true ]; then
     echo "rootfs-only mode: done"
@@ -749,15 +826,17 @@ install_config_bundle()
 cache_validated_config()
 {
     [ -f "${config_file}" ] || return 1
-    install -d -m 0700 "${validated_cache_dir}"
-    install -m 0600 "${config_file}" "${validated_cache_file}"
+    /usr/local/sbin/routerd validate --config "${config_file}" || return 1
+    install -d -m 0700 "${validated_cache_dir}" || return 1
+    install -m 0600 "${config_file}" "${validated_cache_file}" || return 1
     log "cached validated config at ${validated_cache_file}"
 }
 
 restore_validated_config_cache()
 {
     [ -f "${validated_cache_file}" ] || return 1
-    install -m 0600 "${validated_cache_file}" "${config_file}"
+    /usr/local/sbin/routerd validate --config "${validated_cache_file}" || return 1
+    install -m 0600 "${validated_cache_file}" "${config_file}" || return 1
     log "restored config from validated cache (fetch failed)"
 }
 
@@ -777,7 +856,7 @@ restore_cloudinit_config()
     fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
     verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
-    cache_validated_config || true
+    cache_validated_config || { rm -f "${tmp}"; return 1; }
     rm -f "${tmp}"
     bootstrap_config_url=${config_url}
     log "restored ${config_file} from cloud-init config_url"
@@ -809,7 +888,7 @@ restore_provider_config()
     fetch_url "${config_url}" "${tmp}" || { restore_validated_config_cache && return 0; return 1; }
     verify_sha256 "${tmp}" "${config_sha256}" || { rm -f "${tmp}"; return 1; }
     install_config_bundle "${tmp}" "${config_url}" || { rm -f "${tmp}"; return 1; }
-    cache_validated_config || true
+    cache_validated_config || { rm -f "${tmp}"; return 1; }
     rm -f "${tmp}"
     bootstrap_config_url=${config_url}
     log "restored ${config_file} from IMDS config_url"
@@ -890,8 +969,10 @@ if ! restore_config_disk_config && ! restore_cloudinit_configs && ! restore_prov
     fi
 fi
 
-disable_bootstrap_dhcp
+# Invalid input or a failed unit render must retain bootstrap management.
+/usr/local/sbin/routerd validate --config "${config_file}"
 prepare_routerd_service
+disable_bootstrap_dhcp
 
 if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
     systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true
@@ -976,7 +1057,7 @@ install -m 0644 "${initrd_image}" "${iso_root}/casper/initrd"
 # shellcheck disable=SC2016 # dpkg-query expands this format string inside the chroot.
 chroot_run dpkg-query -W --showformat='${Package} ${Version}\n' > "${iso_root}/casper/filesystem.manifest"
 printf '%s' "$(du -sx --block-size=1 "${rootfs}" | awk '{print $1}')" > "${iso_root}/casper/filesystem.size"
-run_root mksquashfs "${rootfs}" "${iso_root}/casper/filesystem.squashfs" -noappend -comp xz -all-root >/dev/null
+mksquashfs "${rootfs}" "${iso_root}/casper/filesystem.squashfs" -noappend -comp xz >/dev/null
 (cd "${iso_root}" && find . -type f ! -name md5sum.txt -print0 | sort -z | xargs -0 md5sum > md5sum.txt.new && mv md5sum.txt.new md5sum.txt)
 
 cat > "${iso_root}/boot/grub/grub.cfg" <<EOF
