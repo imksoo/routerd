@@ -800,3 +800,23 @@ four-package vet and FreeBSD/amd64 test compilation. Real SQLite tests cover
 world changes, foreign presence, lost acknowledgement, reopen and key/payload
 mismatch. Full BGP/state race checks also pass. Actual kernel reboot and packet
 forwarding remain unrun; FreeBSD deletion still lacks a full-tuple atomic CAS.
+
+
+### FreeBSD lifecycle harness ownership
+
+The native lifecycle script now drives routerd serve and its ApplyAPI for
+main-config restart, idempotence and empty-desired stop. A small test-only child
+launcher records exclusive durable intent and retains the actual unreaped child
+handle; disk/request PIDs cannot select a signal target. TERM/KILL completion
+requires Wait acknowledgement. Epair deletion validates both endpoints' boot,
+jail, index, MAC and private description, then verifies absence. Unacknowledged
+cleanup retains work/evidence and cannot publish success. Unsupported targets
+exit as not-run before effects. The exact production dnsmasq receipt decoder is
+exercised by its offline shell-boundary regression.
+
+All five actual child/shell-admission race tests, scoped vet, FreeBSD test
+compilation, shell syntax and ShellCheck pass on the isolated source. This is
+preparation for native VM evidence, not execution of BPF/DHCP/PD/DNS traffic in
+this environment. A separate primary-source review also found that FreeBSD14.3
+IPv4 address add is not atomically exclusive against unrelated writers; the
+shared Static/Mobility native contract now records that limitation explicitly.

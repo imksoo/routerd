@@ -417,7 +417,7 @@ check-routerd15-recovery:
 
 .PHONY: check-routerd15-robustness
 check-routerd15-robustness:
-	go test ./tests/liveiso -count=1
+	go test ./tests/liveiso ./tools/freebsd-lifecycle-runtime -count=1
 	go test ./pkg/sam ./pkg/vxlan ./pkg/routeradvertisement ./examples/plugins/aws-provider-executor ./examples/plugins/azure-provider-executor ./examples/plugins/oci-provider-executor ./pkg/subprocessio ./pkg/provideraction ./pkg/providerinventory ./pkg/eventd ./pkg/eventfile ./pkg/eventlog ./pkg/federation ./pkg/federationguard ./pkg/controller/eventsubscription ./pkg/controller/eventfederation ./pkg/controller/provideraction ./pkg/controller/bfd ./pkg/controller/vrrp ./pkg/ha ./pkg/observabilitypipeline ./pkg/observe ./pkg/conntrack ./pkg/conntracktuning ./pkg/dpi ./pkg/nflog ./pkg/dhcpfingerprint ./pkg/wireguard ./pkg/otel ./pkg/status ./pkg/logstore ./pkg/bgp
 	go test ./pkg/controller/pppoesession -run '^(TestStatusEndpoint|TestDaemonProjection)' -count=1
 	go test ./pkg/controlapi -run '^(TestControllerRuntime|TestApplyRejectsUnknown|TestClientRejectsTrailing|TestClientChecksEncoded)' -count=1

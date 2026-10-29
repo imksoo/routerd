@@ -4,7 +4,25 @@ The routerd 1.5 native address and route owners distinguish desired configuratio
 native observations and durable operation receipts. An `Applied` display field or
 a matching address/route is not an acquisition receipt. Existing foreign objects
 must be removed or managed explicitly outside routerd before acquisition; ordinary
-reconciliation does not overwrite them.
+reconciliation does not intentionally overwrite an observed foreign tuple.
+
+Linux IPv4 acquisition uses the kernel's exclusive address-add operation.
+FreeBSD 14.3 has an important API limit: both the ifconfig ioctl and default
+Netlink paths implement IPv4 address creation as create-or-replace. The kernel
+explicitly does not honor `NLM_F_EXCL` for this operation. A pre-read can reject
+an observed foreign address, but another writer can insert one between that read
+and our add, and the FreeBSD call can then replace it. The routerd scope lock
+coordinates routerd processes, not unrelated native writers. Do not interpret a
+FreeBSD IPv4 address receipt as proof of atomic exclusive acquisition against
+such writers. This shared limitation applies to ordinary and Mobility addresses;
+it is not fixed by another pre-check or a speculative CLI flag. See the
+[14.3 kernel implementation](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netlink/route/iface.c#L1324)
+and [ifconfig add path](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sbin/ifconfig/af_inet.c#L401).
+The inspected source blob hashes were respectively
+`d98385a4c23e26ce9c52161af635f72ef1616312` and
+`e21956cfc4fd29e24d8678c1d01f16378daf03ff`.
+FreeBSD route deletion likewise lacks an atomic full-tuple compare-and-delete;
+current native checks reduce, but cannot remove, that unrelated-writer race.
 
 `serve`, one-shot apply and rollback share an exclusive native-operation lock for
 the actual boot and network namespace or FreeBSD jail. Different config, database

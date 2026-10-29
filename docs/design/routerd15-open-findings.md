@@ -171,9 +171,18 @@ establish independent RR/leaf interoperability.
   collectors still need complete parse/measurement identity; capture
   uses bare PIDs; exact address/account/source identities are not always checked.
   E2E deployment ignores stop failures and can write private YAML with ambient mode.
-- Native harness cleanup has unowned PID/route/config deletion and lost-baseline
-  windows. Correct those actual paths; kernel-mechanism fixtures and string-anchor
-  lints must not be reported as whole-product qualification.
+- The FreeBSD lifecycle harness now drives the actual serve/ApplyAPI and uses a
+  direct-child launcher with durable exclusive intent and acknowledged Wait.
+  Epair cleanup checks both endpoint identities and confirms absence; failed
+  cleanup preserves evidence and cannot publish PASS. Its five offline boundary
+  tests pass, but actual BPF/DHCP/PD/DNS VM execution remains unrun. Other native
+  harnesses still need actual PID/route/config ownership review; mechanism
+  fixtures and string-anchor lints are not whole-product qualification.
+- FreeBSD 14.3 IPv4 address add is create-or-replace through both ioctl and
+  Netlink; the kernel does not implement exclusive-add flags. Ordinary and
+  Mobility prechecks cannot prevent an unrelated writer inserting the same
+  address before our add. This is a native API limitation, not established
+  foreign-safe acquisition. See [native ownership](../reference/native-ownership.md).
 
 Native Unix/raw/Netlink, Linux/FreeBSD peer traffic, PVE and real provider effects
 remain separate unestablished gates in this cloud environment. No production
