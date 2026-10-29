@@ -35,21 +35,28 @@ regressions through the production helpers, without provider calls.
 
 ## BGP ownership and current observations
 
-- Controller gRPC policy writes race daemon dynamic-path policy refresh. The
-  latter reconstructs only static-peer intent, omitting dynamic-peer policies;
-  GoBGP reset can therefore remove assignments/default to accept. Establish one
-  native policy owner with complete typed intent and safe assignment ordering.
-- Static AddPath still lacks pending-before-native intent; failed final save can
-  lose its UUID and leave an advertisement outside restart cleanup. Reuse the
-  actual daemon's recovery boundary rather than a second controller cache.
-- Policy statement order is semantically significant and must not be sorted away
-  during drift comparison. Named standard communities accepted by config must
-  restore through the same encoder as initial application.
-- Mobility verdict read errors and native address-list errors become empty or
-  partial FIB inputs. Capture one errorful native snapshot and honor cancellation.
-- The watcher and periodic RPCs mutate shared remote connection fields without
-  one lifetime owner. Accepted community send/accept/set.in settings also lack
-  implementation consumers; implement or reject unsupported intent explicitly.
+Implemented in the daemon policy/path checkpoint:
+
+- The daemon owns complete static/dynamic policy intent and local path changes.
+  Both import and export use neighbor-scoped global assignments, default reject,
+  and a reject guard during policy replacement. Statement order is preserved.
+- Static and dynamic AddPath record pending intent before effects. Exact source
+  identifiers and the shared path encoder preserve other sources and peer paths
+  during lost-UUID recovery. The private journal is format 3; earlier formats
+  are rejected. See [BGP ownership](../reference/bgp-ownership.md) for cutover.
+- Required Mobility/FIB and native address reads return errors rather than empty
+  inputs. Watch cancellation owns its RPC subscription; it cannot close a shared
+  connection. Startup waits for daemon restoration before controller BGP calls.
+- Community send modes have consumers. Unsupported `communities.accept` and
+  `communities.set.in` are rejected; prefix-length bounds require an allowlist.
+  Control requests and acknowledgements use complete, bounded typed decoding.
+
+Loopback GoBGP export, edit/withdraw and exact-source recovery regressions pass.
+These are production-server tests, not independent-peer qualification. Native
+kernel FIB ownership remains open: remove installed/source-known replicas,
+serialize watch/reconcile/teardown through one owner, journal exact native
+operations, and retain uncertainty where the kernel cannot prove ownership.
+The BGP controller watcher must also acknowledge exit before owner replacement.
 
 ## Native effects and lifetime
 

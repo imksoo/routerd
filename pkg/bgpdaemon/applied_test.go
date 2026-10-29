@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
@@ -19,14 +21,12 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 			ListenPort:       179,
 			Families:         []string{"ipv4-unicast"},
 			UseMultiplePaths: true,
-			ImportPolicy:     AppliedImportPolicy{LocalPreference: 200},
 		},
 		Peers: map[string]AppliedPeer{
 			"10.0.0.2": {
 				Address:       "10.0.0.2",
 				ASN:           64513,
 				TimersProfile: "fast",
-				ImportPolicy:  AppliedImportPolicy{LocalPreference: 201},
 			},
 		},
 		Paths: []AppliedPath{StaticAppliedPath("10.20.0.0/24", nil), {
@@ -53,9 +53,6 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 	if got.Version != AppliedVersion || got.Global.ASN != 64512 || got.Peers["10.0.0.2"].TimersProfile != "fast" {
 		t.Fatalf("applied config = %#v", got)
 	}
-	if got.Global.ImportPolicy.LocalPreference != 200 || got.Peers["10.0.0.2"].ImportPolicy.LocalPreference != 201 {
-		t.Fatalf("import local preferences = global=%d peer=%d, want 200/201", got.Global.ImportPolicy.LocalPreference, got.Peers["10.0.0.2"].ImportPolicy.LocalPreference)
-	}
 	if len(got.Paths) != 2 {
 		t.Fatalf("paths = %#v, want static path plus mobility path", got.Paths)
 	}
@@ -67,14 +64,35 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 	}
 }
 
-func TestReadAppliedTreatsEmptyStateAsMissing(t *testing.T) {
+func TestAppliedJournalRejectsLengthSelectorWithoutPrefixFilter(t *testing.T) {
+	config := AppliedConfig{Version: AppliedVersion, Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, Policy: PolicyIntent{RouterName: "edge", Scopes: []PolicyScope{{Name: "peer", Neighbors: []string{"192.0.2.2/32"}, ExportPolicyName: "peer-export", Spec: api.BGPImportPolicySpec{AllowedPrefixLengthMin: 32}}}}}
+	path := filepath.Join(t.TempDir(), "applied.json")
+	if err := WriteApplied(path, config); err == nil {
+		t.Fatal("unsupported native policy selector was journaled")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("rejected selector created a checkpoint: %v", err)
+	}
+	body, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := ReadApplied(path); err == nil || found {
+		t.Fatalf("unsupported persisted selector became a native restore fact: found=%t err=%v", found, err)
+	}
+}
+
+func TestReadAppliedRejectsEmptyExistingState(t *testing.T) {
 	for _, data := range []string{"", " \n\t"} {
 		path := filepath.Join(t.TempDir(), "applied.json")
 		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
 		config, ok, err := ReadApplied(path)
-		if err != nil || ok || !reflect.DeepEqual(config, AppliedConfig{}) {
+		if err == nil || ok || !reflect.DeepEqual(config, AppliedConfig{}) {
 			t.Fatalf("ReadApplied(empty) = config=%#v ok=%t err=%v", config, ok, err)
 		}
 	}
@@ -141,7 +159,7 @@ func TestValidateRejectsTransitionForNonDirectPeer(t *testing.T) {
 		Global:                     AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"},
 		PendingDirectPeerAdditions: []string{"10.0.0.2"},
 		PendingDirectPeerRemovals:  []string{"10.0.0.3"},
-		PendingStaticPathRemovals:  nil,
+		PendingPathRemovals:        nil,
 		Peers:                      map[string]AppliedPeer{"10.0.0.2": {Address: "10.0.0.2", ASN: 64512}},
 	}
 	if err := Validate(config); err == nil {
@@ -152,7 +170,7 @@ func TestValidateRejectsTransitionForNonDirectPeer(t *testing.T) {
 func TestPendingDynamicPathIntentRoundTripAndValidation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
 	intent := AppliedPath{Source: "MobilityPool/pool/node/a", Prefix: "10.77.60.11/32", Attrs: AppliedPathAttrs{Communities: []string{"64512:11"}}}
-	config := AppliedConfig{Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingDynamicPathAdds: []AppliedPath{intent}}
+	config := AppliedConfig{Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingPathAdds: []AppliedPath{intent}}
 	if err := Validate(config); err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +178,10 @@ func TestPendingDynamicPathIntentRoundTripAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, found, err := ReadApplied(path)
-	if err != nil || !found || len(got.PendingDynamicPathAdds) != 1 || len(got.Paths) != 0 {
+	if err != nil || !found || len(got.PendingPathAdds) != 1 || len(got.Paths) != 0 {
 		t.Fatalf("pending journal=%#v found=%t error=%v", got, found, err)
 	}
-	config.PendingDynamicPathAdds[0].UUID = EncodeUUID([]byte{1})
+	config.PendingPathAdds[0].UUID = EncodeUUID([]byte{1})
 	if err := Validate(config); err == nil {
 		t.Fatal("pending intent accepted an acknowledged UUID")
 	}
@@ -187,7 +205,7 @@ func TestReadAppliedRejectsPreviousNativeIdentityFormat(t *testing.T) {
 
 func TestReadAppliedDoesNotDiscardIncompletePendingOwnership(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
-	config := AppliedConfig{Version: AppliedVersion, Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingDynamicPathAdds: []AppliedPath{{Source: "MobilityPool/pool/node/a"}}}
+	config := AppliedConfig{Version: AppliedVersion, Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingPathAdds: []AppliedPath{{Source: "MobilityPool/pool/node/a"}}}
 	data, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)

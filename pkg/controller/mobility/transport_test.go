@@ -859,6 +859,9 @@ func TestSAMTransportProfileDirectMeshKeepsEmptyOwnershipLeafAndRRFallback(t *te
 	if len(empty.ImportPolicy.AllowedPrefixes) != 0 {
 		t.Fatalf("empty direct leaf allowlist = %#v, want no advertised mobility prefix", empty.ImportPolicy.AllowedPrefixes)
 	}
+	if empty.ImportPolicy.AllowedPrefixLengthMin != 0 || empty.ImportPolicy.AllowedPrefixLengthMax != 0 {
+		t.Fatalf("empty direct leaf emitted a prefix length selector without a prefix filter: %#v", empty.ImportPolicy)
+	}
 	if empty.ImportPolicy.LocalPreference != mobilityconfig.DefaultSAMTransportDirectLocalPreference || empty.ImportPolicy.NextHopRewrite != "peer-address" {
 		t.Fatalf("empty direct leaf transport policy = %#v, want direct session policy", empty.ImportPolicy)
 	}

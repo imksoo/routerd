@@ -68,7 +68,7 @@ func TestGoBGPDynamicIdentifiersReplaceAndWithdrawExactLocalOwner(t *testing.T) 
 	server := realDynamicPathServer(t)
 	ctx := context.Background()
 	add := func(identifier, peerASN, med uint32) *gobgpapi.Path {
-		path, err := pathFromAppliedPath(bgpdaemon.AppliedPath{Source: "MobilityPool/identity/node/a", Prefix: "10.77.60.11/32", Attrs: bgpdaemon.AppliedPathAttrs{NextHop: "192.0.2.2", MED: med}})
+		path, err := bgpdaemon.PathFromAppliedPath(bgpdaemon.AppliedPath{Source: "MobilityPool/identity/node/a", Prefix: "10.77.60.11/32", Attrs: bgpdaemon.AppliedPathAttrs{NextHop: "192.0.2.2", MED: med}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +134,7 @@ func (s *interruptedDynamicPathServer) SetPolicies(ctx context.Context, req *gob
 func dynamicJournal(t *testing.T) (string, bgpdaemon.AppliedConfig) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "journal", "applied.json")
-	initial := bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1", ListenPort: -1}}
+	initial := bgpdaemon.AppliedConfig{Policy: bgpdaemon.PolicyIntent{RouterName: "test"}, Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1", ListenPort: -1}}
 	if err := bgpdaemon.WriteApplied(path, initial); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func interruptDynamicUUIDWrite(t *testing.T, server *localPathServer, statePath 
 	fault := &interruptedDynamicPathServer{localPathServer: server}
 	fault.beforeAdd = func() {
 		stored, found, err := bgpdaemon.ReadApplied(statePath)
-		if err != nil || !found || len(stored.PendingDynamicPathAdds) != 1 || stored.PendingDynamicPathAdds[0].UUID != "" {
+		if err != nil || !found || len(stored.PendingPathAdds) != 1 || stored.PendingPathAdds[0].UUID != "" {
 			t.Fatalf("native Add preceded durable intent: %#v found=%t err=%v", stored, found, err)
 		}
 	}
@@ -170,7 +170,7 @@ func interruptDynamicUUIDWrite(t *testing.T, server *localPathServer, statePath 
 		t.Fatal(err)
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.PendingDynamicPathAdds) != 1 {
+	if err != nil || len(stored.PendingPathAdds) != 1 {
 		t.Fatalf("lost pending native effect: %#v error=%v", stored, err)
 	}
 }
@@ -201,7 +201,7 @@ func TestDynamicPathRecoveryListsOnlyDurableNativeEffects(t *testing.T) {
 		t.Fatalf("recovered listing=%#v", listed)
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.PendingDynamicPathAdds) != 0 || len(stored.Paths) != 2 {
+	if err != nil || len(stored.PendingPathAdds) != 0 || len(stored.Paths) != 2 {
 		t.Fatalf("recovered journal=%#v error=%v", stored, err)
 	}
 	if paths := nativePathIdentities(t, server); len(paths) != 2 {
@@ -211,7 +211,7 @@ func TestDynamicPathRecoveryListsOnlyDurableNativeEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := nativePathIdentities(t, server)
-	if len(paths) != 1 || paths[0].identifier != dynamicPathIdentifier(foreign.Source) {
+	if len(paths) != 1 || paths[0].identifier != bgpdaemon.NativePathIdentifier(foreign.Source) {
 		t.Fatalf("withdrawal changed another source: %#v", paths)
 	}
 }
@@ -228,7 +228,7 @@ func TestDynamicPendingPathWithdrawsOrphanWithoutUUID(t *testing.T) {
 		t.Fatalf("unrecorded-UUID native path survived delete: %#v", paths)
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.Paths) != 0 || len(stored.PendingDynamicPathAdds) != 0 {
+	if err != nil || len(stored.Paths) != 0 || len(stored.PendingPathAdds) != 0 {
 		t.Fatalf("withdrawn journal=%#v error=%v", stored, err)
 	}
 }
@@ -249,7 +249,7 @@ func TestPendingNativeAddErrorsAreNotListedAsAbsent(t *testing.T) {
 		t.Fatalf("unresolved native operation looked absent: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.PendingDynamicPathAdds) != 1 || len(stored.Paths) != 0 {
+	if err != nil || len(stored.PendingPathAdds) != 1 || len(stored.Paths) != 0 {
 		t.Fatalf("unresolved journal=%#v error=%v", stored, err)
 	}
 }
@@ -264,11 +264,11 @@ func TestDynamicPathPolicyFailureRetainsPendingRecovery(t *testing.T) {
 		t.Fatalf("policy failure=%v", err)
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.PendingDynamicPathAdds) != 1 || len(stored.Paths) != 0 {
+	if err != nil || len(stored.PendingPathAdds) != 1 || len(stored.Paths) != 0 {
 		t.Fatalf("policy failure lost recovery: %#v error=%v", stored, err)
 	}
 	fault.policyErr = nil
-	if _, err := recoverPendingDynamicPaths(context.Background(), fault, statePath, stored, path.Source); err != nil {
+	if _, err := recoverPendingPaths(context.Background(), fault, statePath, stored, path.Source); err != nil {
 		t.Fatal(err)
 	}
 	if paths := nativePathIdentities(t, server); len(paths) != 1 {
@@ -298,10 +298,10 @@ func TestControllerCheckpointPreservesDaemonDynamicOwnership(t *testing.T) {
 	}
 	checkpoint(stale)
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.PendingDynamicPathAdds) != 1 {
+	if err != nil || len(stored.PendingPathAdds) != 1 {
 		t.Fatalf("stale controller erased pending effect: %#v error=%v", stored, err)
 	}
-	applied, err := recoverPendingDynamicPaths(context.Background(), server, statePath, stored, path.Source)
+	applied, err := recoverPendingPaths(context.Background(), server, statePath, stored, path.Source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,10 +334,10 @@ func TestDaemonRestartReplaysPendingDynamicPathBeforeServingControl(t *testing.T
 		t.Fatal(err)
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.Paths) != 1 || stored.Paths[0].UUID == "" || len(stored.PendingDynamicPathAdds) != 0 {
+	if err != nil || len(stored.Paths) != 1 || stored.Paths[0].UUID == "" || len(stored.PendingPathAdds) != 0 {
 		t.Fatalf("restart checkpoint=%#v error=%v", stored, err)
 	}
-	if paths := nativePathIdentities(t, server); len(paths) != 1 || paths[0].identifier != dynamicPathIdentifier(owned.Source) {
+	if paths := nativePathIdentities(t, server); len(paths) != 1 || paths[0].identifier != bgpdaemon.NativePathIdentifier(owned.Source) {
 		t.Fatalf("restart native ownership=%#v", paths)
 	}
 	if _, err := deleteDynamicPath(context.Background(), server, statePath, owned); err != nil {
@@ -355,14 +355,14 @@ func TestInitialControllerCheckpointCannotPublishUnappliedDynamicPath(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &fakePathServer{}
+	server := realDynamicPathServer(t)
 	recorder := httptest.NewRecorder()
 	controlHandler(statePath, server, &sync.Mutex{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/v1/applied", bytes.NewReader(wire)))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("initial checkpoint=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	stored, _, err := bgpdaemon.ReadApplied(statePath)
-	if err != nil || len(stored.Paths) != 0 || len(server.added) != 0 {
+	if err != nil || len(stored.Paths) != 0 || len(nativePathIdentities(t, server)) != 0 {
 		t.Fatalf("controller fabricated a dynamic effect: %#v error=%v", stored, err)
 	}
 }
@@ -377,7 +377,7 @@ func TestDynamicPathListingRejectsUnknownOrInvalidJournal(t *testing.T) {
 				}
 			}
 			recorder := httptest.NewRecorder()
-			controlHandler(path, &fakePathServer{}, &sync.Mutex{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/paths?source=MobilityPool/owner/node/a", nil))
+			controlHandler(path, realDynamicPathServer(t), &sync.Mutex{}).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/paths?source=MobilityPool/owner/node/a", nil))
 			if recorder.Code < 400 {
 				t.Fatalf("unknown journal fabricated absent path: status=%d body=%s", recorder.Code, recorder.Body.String())
 			}

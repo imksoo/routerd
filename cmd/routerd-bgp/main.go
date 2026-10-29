@@ -4,8 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,7 +16,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -170,13 +167,6 @@ func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logge
 type pathServer interface {
 	AddPath(context.Context, *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error)
 	DeletePath(context.Context, *gobgpapi.DeletePathRequest) error
-}
-
-type policyPathServer interface {
-	pathServer
-	SetPolicies(context.Context, *gobgpapi.SetPoliciesRequest) error
-	SetPolicyAssignment(context.Context, *gobgpapi.SetPolicyAssignmentRequest) error
-	ResetPeer(context.Context, *gobgpapi.ResetPeerRequest) error
 }
 
 // observedPathServer is intentionally separate from pathServer.  The control
@@ -347,11 +337,11 @@ func nativePath(path *gobgpapi.Path) (*gobgpapiutil.Path, error) {
 	return out, nil
 }
 
-func serveControlSocket(socketPath, statePath string, paths pathServer) (*http.Server, error) {
+func serveControlSocket(socketPath, statePath string, paths policyOwnerServer) (*http.Server, error) {
 	return serveControlSocketWithStateLock(socketPath, statePath, paths, &sync.Mutex{})
 }
 
-func serveControlSocketWithStateLock(socketPath, statePath string, paths pathServer, appliedStateMu sync.Locker) (*http.Server, error) {
+func serveControlSocketWithStateLock(socketPath, statePath string, paths policyOwnerServer, appliedStateMu sync.Locker) (*http.Server, error) {
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen control socket: %w", err)
@@ -365,8 +355,9 @@ func serveControlSocketWithStateLock(socketPath, statePath string, paths pathSer
 	return server, nil
 }
 
-func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Locker) http.Handler {
+func controlHandler(statePath string, paths policyOwnerServer, appliedStateMu sync.Locker) http.Handler {
 	mux := http.NewServeMux()
+	registerOwnedRoutes(mux, statePath, paths, appliedStateMu)
 	// All applied.json access through this control socket is serialized. Path
 	// requests are read-modify-write transactions; without this gate a request
 	// which read state before routerd stored a direct-peer transition fence could
@@ -384,7 +375,7 @@ func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Lock
 			writeJSON(w, config)
 		case http.MethodPut:
 			var config bgpdaemon.AppliedConfig
-			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			if err := decodeControlRequest(w, r, &config); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -397,24 +388,21 @@ func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Lock
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			// The controller owns global/peer/static intent. Only this daemon's
-			// path transaction may acknowledge or replace a dynamic effect.
-			static := make([]bgpdaemon.AppliedPath, 0, len(config.Paths))
-			for _, path := range bgpdaemon.Normalize(config).Paths {
-				if path.Source == bgpdaemon.AppliedPathSourceStatic {
-					static = append(static, path)
-				}
-			}
-			config.Paths, config.PendingDynamicPathAdds = static, nil
+			// Only the daemon's native transactions may acknowledge policy or
+			// local paths. A controller transport checkpoint cannot invent them.
+			config.Paths, config.PendingPathAdds, config.PendingPathRemovals = nil, nil, nil
+			config.Policy, config.PendingPolicy = bgpdaemon.PolicyIntent{}, nil
 			if found {
-				config.Paths = append(config.Paths, bgpdaemon.NonStaticPaths(current.Paths)...)
-				config.PendingDynamicPathAdds = current.PendingDynamicPathAdds
+				config.Paths = current.Paths
+				config.PendingPathAdds = current.PendingPathAdds
+				config.PendingPathRemovals = current.PendingPathRemovals
+				config.Policy, config.PendingPolicy = current.Policy, current.PendingPolicy
 			}
 			if err := bgpdaemon.Validate(config); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := validateNativeDynamicPathOwners(config); err != nil {
+			if err := validateNativePathOwners(config); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -446,14 +434,14 @@ func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Lock
 				return
 			}
 			source := strings.TrimSpace(r.URL.Query().Get("source"))
-			config, err = recoverPendingDynamicPaths(r.Context(), paths, statePath, config, source)
+			config, err = recoverPendingPaths(r.Context(), paths, statePath, config, source)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			out := config.Paths
+			out := append(make([]bgpdaemon.AppliedPath, 0, len(config.Paths)), config.Paths...)
 			if source != "" {
-				out = nil
+				out = make([]bgpdaemon.AppliedPath, 0)
 				for _, path := range config.Paths {
 					if path.Source == source {
 						out = append(out, path)
@@ -462,7 +450,7 @@ func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Lock
 			}
 			writeJSON(w, out)
 		case http.MethodPost:
-			path, err := decodePathRequest(r)
+			path, err := decodePathRequest(w, r)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
@@ -508,6 +496,9 @@ func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Lock
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if observed == nil {
+			observed = make([]bgpdaemon.ObservedPath, 0)
+		}
 		writeJSON(w, observed)
 	})
 	return mux
@@ -518,7 +509,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths policyPathServer, statePath string, logger *slog.Logger) error {
+func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths policyOwnerServer, statePath string, logger *slog.Logger) error {
 	pending, err := bgpdaemon.RemovalPending(statePath)
 	if err != nil {
 		return fmt.Errorf("read BGP removal intent: %w", err)
@@ -539,10 +530,11 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 	if err := server.StartBgp(ctx, &gobgpapi.StartBgpRequest{Global: appliedGlobal(applied.Global)}); err != nil {
 		return fmt.Errorf("restore BGP global: %w", err)
 	}
-	if err := applyAppliedPolicies(ctx, paths, applied); err != nil {
+	withheldDirectPeers := pendingDirectPeerTransitions(applied)
+	applied, err = refreshOwnedPathPolicies(ctx, paths, statePath, applied)
+	if err != nil {
 		return fmt.Errorf("restore BGP policy: %w", err)
 	}
-	withheldDirectPeers := pendingDirectPeerTransitions(applied)
 	for _, peer := range sortedPeers(applied.Peers) {
 		if withheldDirectPeers[peer.Address] {
 			logger.Warn("skip pending direct peer transition during BGP restore", "peer", peer.Address)
@@ -555,7 +547,8 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 	if err := restoreAppliedPaths(ctx, paths, &applied); err != nil {
 		return err
 	}
-	if err := refreshDynamicPathPolicies(ctx, paths, applied); err != nil {
+	applied, err = refreshOwnedPathPolicies(ctx, paths, statePath, applied)
+	if err != nil {
 		return fmt.Errorf("restore BGP dynamic policy refresh: %w", err)
 	}
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
@@ -567,12 +560,11 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 
 func pendingDirectPeerTransitions(applied bgpdaemon.AppliedConfig) map[string]bool {
 	out := map[string]bool{}
-	// During an import-policy replacement the persisted peer definitions still
-	// describe the pre-change allowlist. Do not revive a direct high-preference
-	// session from that snapshot; routerd will reinstall the desired policy,
-	// reset inbound state, and then add it again. RR remains the safe path while
-	// that transaction is unfinished.
-	if applied.PendingImportPolicyReset {
+	// A pending policy target has not acknowledged its native replacement and
+	// route refresh. Keep direct accelerators withheld while startup recovers
+	// that target; the controller re-adds them from current transport intent.
+	// RR peers remain the forwarding path during this recovery.
+	if applied.PendingPolicy != nil {
 		for address, peer := range applied.Peers {
 			if peer.PreserveImportPrefixes {
 				out[address] = true
@@ -592,37 +584,19 @@ func pendingDirectPeerTransitions(applied bgpdaemon.AppliedConfig) map[string]bo
 	return out
 }
 
-func applyAppliedPolicies(ctx context.Context, server policyPathServer, applied bgpdaemon.AppliedConfig) error {
-	policies, assignment := appliedPolicies(applied)
-	if len(assignment.GetPolicies()) == 0 {
-		if err := server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
-			return fmt.Errorf("apply BGP import policy assignment: %w", err)
-		}
-	}
-	if err := server.SetPolicies(ctx, policies); err != nil {
-		return fmt.Errorf("apply BGP policies: %w", err)
-	}
-	if len(assignment.GetPolicies()) > 0 {
-		if err := server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
-			return fmt.Errorf("apply BGP import policy assignment: %w", err)
-		}
-	}
-	return nil
-}
-
 func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdaemon.AppliedConfig) error {
 	if applied == nil {
 		return nil
 	}
 	normalized := bgpdaemon.Normalize(*applied)
-	for _, pending := range normalized.PendingDynamicPathAdds {
+	for _, pending := range normalized.PendingPathAdds {
 		normalized.Paths = append(withoutAppliedPath(normalized.Paths, bgpdaemon.AppliedPathKey(pending)), pending)
 	}
-	if err := validateNativeDynamicPathOwners(normalized); err != nil {
+	if err := validateNativePathOwners(normalized); err != nil {
 		return err
 	}
 	for i, appliedPath := range normalized.Paths {
-		path, err := pathFromAppliedPath(appliedPath)
+		path, err := bgpdaemon.PathFromAppliedPath(appliedPath)
 		if err != nil {
 			return fmt.Errorf("restore BGP path %s/%s: %w", appliedPath.Source, appliedPath.Prefix, err)
 		}
@@ -632,7 +606,7 @@ func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdae
 		}
 		normalized.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
 	}
-	normalized.PendingDynamicPathAdds = nil
+	normalized.PendingPathAdds = nil
 	*applied = bgpdaemon.Normalize(normalized)
 	return nil
 }
@@ -663,6 +637,10 @@ func appliedGlobal(global bgpdaemon.AppliedGlobal) *gobgpapi.Global {
 }
 
 func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *gobgpapi.Peer {
+	send := peer.SendCommunity
+	if send == 0 {
+		send = 3
+	}
 	peerType := gobgpapi.PeerType_PEER_TYPE_EXTERNAL
 	if global.ASN != 0 && peer.ASN == global.ASN {
 		peerType = gobgpapi.PeerType_PEER_TYPE_INTERNAL
@@ -673,7 +651,7 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			PeerAsn:         peer.ASN,
 			AuthPassword:    peer.Password,
 			Type:            peerType,
-			SendCommunity:   3,
+			SendCommunity:   send,
 		},
 		Timers: &gobgpapi.Timers{Config: timers(peer.TimersProfile)},
 		AfiSafis: []*gobgpapi.AfiSafi{
@@ -693,20 +671,6 @@ func appliedPeer(peer bgpdaemon.AppliedPeer, global bgpdaemon.AppliedGlobal) *go
 			RouteReflectorClient:    true,
 			RouteReflectorClusterId: strings.TrimSpace(peer.RouteReflectorClusterID),
 		}
-	}
-	applyPolicy := &gobgpapi.ApplyPolicy{}
-	if len(appliedExportPolicyPrefixes(peer.ExportPolicy)) > 0 && strings.TrimSpace(peer.ExportPolicyName) != "" {
-		applyPolicy.ExportPolicy = &gobgpapi.PolicyAssignment{
-			Name:          strings.TrimSpace(peer.Address),
-			Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT,
-			DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT,
-			Policies: []*gobgpapi.Policy{{
-				Name: strings.TrimSpace(peer.ExportPolicyName),
-			}},
-		}
-	}
-	if applyPolicy.ExportPolicy != nil {
-		out.ApplyPolicy = applyPolicy
 	}
 	return out
 }
@@ -739,330 +703,10 @@ func afiSafi(family *gobgpapi.Family) *gobgpapi.AfiSafi {
 	}
 }
 
-func appliedPolicies(config bgpdaemon.AppliedConfig) (*gobgpapi.SetPoliciesRequest, *gobgpapi.PolicyAssignment) {
-	config = bgpdaemon.Normalize(config)
-	req := &gobgpapi.SetPoliciesRequest{}
-	assignment := &gobgpapi.PolicyAssignment{
-		Name:          "global",
-		Direction:     gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT,
-		DefaultAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
-	}
-	if scopes := appliedEffectiveImportPolicyScopes(config); len(scopes) > 0 {
-		name := "routerd-restore-import-effective"
-		appendAppliedEffectiveImportPolicy(req, name, scopes)
-		assignment.Policies = []*gobgpapi.Policy{{Name: name}}
-	}
-	for _, policy := range appliedExportPolicies(config) {
-		prefixes := appliedExportPolicyPrefixes(policy.Spec)
-		if len(prefixes) == 0 {
-			continue
-		}
-		prefixSetName := policy.Name + "-prefixes"
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-			Name:        prefixSetName,
-			Prefixes:    prefixes,
-		})
-		req.Policies = append(req.Policies, &gobgpapi.Policy{
-			Name: policy.Name,
-			Statements: []*gobgpapi.Statement{{
-				Name: appliedPolicyStatementName(policy.Name, "allow-export"),
-				Conditions: &gobgpapi.Conditions{PrefixSet: &gobgpapi.MatchSet{
-					Type: gobgpapi.MatchSet_TYPE_ANY,
-					Name: prefixSetName,
-				}},
-				Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT},
-			}},
-		})
-	}
-	return req, assignment
-}
-
-func cleanCommunityPolicyValues(values []string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
-}
-
-type appliedImportPolicyScope struct {
-	Name            string
-	Neighbors       []string
-	Spec            bgpdaemon.AppliedImportPolicy
-	RejectImportAll bool
-}
-
-func appliedEffectiveImportPolicyScopes(config bgpdaemon.AppliedConfig) []appliedImportPolicyScope {
-	dynamicPrefixes := appliedDynamicPathPrefixes(config.Paths)
-	addresses := make([]string, 0, len(config.Peers))
-	for address := range config.Peers {
-		addresses = append(addresses, address)
-	}
-	sort.Strings(addresses)
-	var scopes []appliedImportPolicyScope
-	for _, address := range addresses {
-		peer := config.Peers[address]
-		address = strings.TrimSpace(peer.Address)
-		neighbor := appliedNeighborSetAddress(address)
-		if neighbor == "" {
-			continue
-		}
-		spec := peer.ImportPolicy
-		// Keep a prefixless per-peer rule such as the direct-mesh
-		// local-preference/next-hop policy.  The controller chooses the global
-		// default only when the peer has no import policy at all.
-		if !appliedImportPolicyConfigured(spec) && !peer.PreserveImportPrefixes && !peer.RejectImportAll {
-			spec = config.Global.ImportPolicy
-		}
-		if !peer.PreserveImportPrefixes {
-			spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
-		}
-		if !appliedImportPolicyConfigured(spec) && !peer.RejectImportAll {
-			continue
-		}
-		scopes = append(scopes, appliedImportPolicyScope{
-			Name:            "routerd-restore-import-effective-peer-" + stringutil.ConservativeName(address, "peer"),
-			Neighbors:       []string{neighbor},
-			Spec:            spec,
-			RejectImportAll: peer.RejectImportAll,
-		})
-	}
-	return scopes
-}
-
-func appliedNeighborSetAddress(value string) string {
-	address, err := netip.ParseAddr(strings.TrimSpace(value))
-	if err != nil {
-		return ""
-	}
-	return netip.PrefixFrom(address, address.BitLen()).String()
-}
-
-func appendAppliedEffectiveImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName string, scopes []appliedImportPolicyScope) {
-	statements := make([]*gobgpapi.Statement, 0, len(scopes)*3)
-	for _, scope := range scopes {
-		neighborSetName := scope.Name + "-neighbors"
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR,
-			Name:        neighborSetName,
-			List:        append([]string(nil), scope.Neighbors...),
-		})
-		statements = append(statements, appliedEffectiveImportPolicyStatements(req, scope, neighborSetName)...)
-	}
-	req.Policies = append(req.Policies, &gobgpapi.Policy{Name: policyName, Statements: statements})
-}
-
-func appliedEffectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, scope appliedImportPolicyScope, neighborSetName string) []*gobgpapi.Statement {
-	prefixes := appliedPolicyPrefixes(scope.Spec)
-	prefixSetName := scope.Name + "-prefixes"
-	if len(prefixes) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-			Name:        prefixSetName,
-			Prefixes:    prefixes,
-		})
-	}
-	requiredSetName := scope.Name + "-required-communities"
-	requiredCommunities := cleanCommunityPolicyValues(scope.Spec.RequiredCommunities)
-	if len(requiredCommunities) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
-			Name:        requiredSetName,
-			List:        requiredCommunities,
-		})
-	}
-	forbiddenSetName := scope.Name + "-forbidden-communities"
-	forbiddenCommunities := cleanCommunityPolicyValues(scope.Spec.ForbiddenCommunities)
-	if len(forbiddenCommunities) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY,
-			Name:        forbiddenSetName,
-			List:        forbiddenCommunities,
-		})
-	}
-	neighborSet := func() *gobgpapi.MatchSet {
-		return &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: neighborSetName}
-	}
-	if scope.RejectImportAll {
-		return []*gobgpapi.Statement{{
-			Name:       appliedPolicyStatementName(scope.Name, "reject-all-import"),
-			Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
-			Actions:    &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
-		}}
-	}
-	var statements []*gobgpapi.Statement
-	if len(forbiddenCommunities) > 0 {
-		statements = append(statements, &gobgpapi.Statement{
-			Name: appliedPolicyStatementName(scope.Name, "reject-forbidden-community"),
-			Conditions: &gobgpapi.Conditions{
-				NeighborSet:  neighborSet(),
-				CommunitySet: &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: forbiddenSetName},
-			},
-			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
-		})
-	}
-	acceptConditions := &gobgpapi.Conditions{NeighborSet: neighborSet()}
-	if len(prefixes) > 0 {
-		acceptConditions.PrefixSet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: prefixSetName}
-	}
-	if len(requiredCommunities) > 0 {
-		acceptConditions.CommunitySet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ALL, Name: requiredSetName}
-	}
-	statements = append(statements, &gobgpapi.Statement{
-		Name:       appliedPolicyStatementName(scope.Name, "allow-import"),
-		Conditions: acceptConditions,
-		Actions: &gobgpapi.Actions{
-			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
-			Nexthop:     appliedNextHopAction(scope.Spec),
-			LocalPref:   appliedLocalPreferenceAction(scope.Spec),
-		},
-	})
-	statements = append(statements, &gobgpapi.Statement{
-		Name:       appliedPolicyStatementName(scope.Name, "reject-unmatched-import"),
-		Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
-		Actions:    &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
-	})
-	return statements
-}
-
-func appliedDynamicPathPrefixes(paths []bgpdaemon.AppliedPath) []string {
-	var out []string
-	for _, path := range bgpdaemon.Normalize(bgpdaemon.AppliedConfig{Paths: paths}).Paths {
-		if path.Source == bgpdaemon.AppliedPathSourceStatic {
-			continue
-		}
-		if strings.TrimSpace(path.Prefix) == "" {
-			continue
-		}
-		out = append(out, path.Prefix)
-	}
-	return mergeStringSets(out)
-}
-
-func mergeStringSets(groups ...[]string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, group := range groups {
-		for _, value := range group {
-			value = strings.TrimSpace(value)
-			if value == "" || seen[value] {
-				continue
-			}
-			seen[value] = true
-			out = append(out, value)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-type appliedExportPolicy struct {
-	Name string
-	Spec bgpdaemon.AppliedExportPolicy
-}
-
-func appliedExportPolicies(config bgpdaemon.AppliedConfig) []appliedExportPolicy {
-	byName := map[string]bgpdaemon.AppliedExportPolicy{}
-	dynamicPrefixes := appliedDynamicPathPrefixes(config.Paths)
-	for _, peer := range config.Peers {
-		name := strings.TrimSpace(peer.ExportPolicyName)
-		if name == "" {
-			continue
-		}
-		spec := peer.ExportPolicy
-		spec.AllowedPrefixes = mergeStringSets(spec.AllowedPrefixes, dynamicPrefixes)
-		if len(appliedExportPolicyPrefixes(spec)) == 0 {
-			continue
-		}
-		byName[name] = spec
-	}
-	var names []string
-	for name := range byName {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	policies := make([]appliedExportPolicy, 0, len(names))
-	for _, name := range names {
-		policies = append(policies, appliedExportPolicy{Name: name, Spec: byName[name]})
-	}
-	return policies
-}
-
-func appliedPolicyStatementName(policyName, suffix string) string {
-	return strings.TrimSpace(policyName) + "-" + suffix
-}
-
-func appliedPolicyPrefixes(spec bgpdaemon.AppliedImportPolicy) []*gobgpapi.Prefix {
-	var out []*gobgpapi.Prefix
-	for _, value := range spec.AllowedPrefixes {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-		if err != nil {
-			continue
-		}
-		prefix = prefix.Masked()
-		minLen, maxLen := appliedImportPolicyLengthBounds(spec, prefix)
-		out = append(out, &gobgpapi.Prefix{IpPrefix: prefix.String(), MaskLengthMin: uint32(minLen), MaskLengthMax: uint32(maxLen)})
-	}
-	return out
-}
-
-func appliedImportPolicyConfigured(spec bgpdaemon.AppliedImportPolicy) bool {
-	return len(appliedPolicyPrefixes(spec)) > 0 ||
-		len(cleanCommunityPolicyValues(spec.RequiredCommunities)) > 0 ||
-		len(cleanCommunityPolicyValues(spec.ForbiddenCommunities)) > 0 ||
-		strings.TrimSpace(spec.NextHopRewrite) != "" ||
-		spec.LocalPreference != 0
-}
-
-func appliedImportPolicyLengthBounds(spec bgpdaemon.AppliedImportPolicy, prefix netip.Prefix) (int, int) {
-	minLen := prefix.Bits()
-	maxLen := int(appliedPrefixMaxLength(prefix))
-	if spec.AllowedPrefixLengthMin > 0 {
-		minLen = spec.AllowedPrefixLengthMin
-	}
-	if spec.AllowedPrefixLengthMax > 0 {
-		maxLen = spec.AllowedPrefixLengthMax
-	}
-	return minLen, maxLen
-}
-
-func appliedExportPolicyPrefixes(spec bgpdaemon.AppliedExportPolicy) []*gobgpapi.Prefix {
-	return appliedPolicyPrefixes(bgpdaemon.AppliedImportPolicy{AllowedPrefixes: spec.AllowedPrefixes})
-}
-
-func appliedPrefixMaxLength(prefix netip.Prefix) uint32 {
-	if prefix.Addr().Is6() {
-		return 128
-	}
-	return 32
-}
-
-func appliedNextHopAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.NexthopAction {
-	if strings.TrimSpace(spec.NextHopRewrite) == "unchanged" {
-		return &gobgpapi.NexthopAction{Unchanged: true}
-	}
-	return &gobgpapi.NexthopAction{PeerAddress: true}
-}
-
-func appliedLocalPreferenceAction(spec bgpdaemon.AppliedImportPolicy) *gobgpapi.LocalPrefAction {
-	if spec.LocalPreference == 0 {
-		return nil
-	}
-	return &gobgpapi.LocalPrefAction{Value: spec.LocalPreference}
-}
-
-func decodePathRequest(r *http.Request) (bgpdaemon.AppliedPath, error) {
+func decodePathRequest(w http.ResponseWriter, r *http.Request) (bgpdaemon.AppliedPath, error) {
 	defer r.Body.Close()
 	var path bgpdaemon.AppliedPath
-	if err := json.NewDecoder(r.Body).Decode(&path); err != nil {
+	if err := decodeControlRequest(w, r, &path); err != nil {
 		return bgpdaemon.AppliedPath{}, err
 	}
 	return validateDynamicMobilityPath(path)
@@ -1072,10 +716,6 @@ func decodeDeletePathRequest(r *http.Request) (bgpdaemon.AppliedPath, error) {
 	path := bgpdaemon.AppliedPath{
 		Source: strings.TrimSpace(r.URL.Query().Get("source")),
 		Prefix: strings.TrimSpace(r.URL.Query().Get("prefix")),
-	}
-	if path.Source == "" && path.Prefix == "" && r.Body != nil {
-		defer r.Body.Close()
-		_ = json.NewDecoder(r.Body).Decode(&path)
 	}
 	return validateDynamicMobilityPath(path)
 }
@@ -1101,7 +741,15 @@ func validateDynamicMobilityPath(path bgpdaemon.AppliedPath) (bgpdaemon.AppliedP
 	return path, nil
 }
 
-func upsertDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, *bgpdaemon.AppliedPath, error) {
+func upsertDynamicPath(ctx context.Context, server policyOwnerServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, *bgpdaemon.AppliedPath, error) {
+	path, err := validateDynamicMobilityPath(path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
+	return upsertOwnedPath(ctx, server, statePath, path)
+}
+
+func upsertOwnedPath(ctx context.Context, server policyOwnerServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, *bgpdaemon.AppliedPath, error) {
 	if err := ctx.Err(); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
@@ -1115,14 +763,20 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err := bgpdaemon.Validate(applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	path, err = validateDynamicMobilityPath(path)
-	if err != nil {
+	if applied.PendingPolicy != nil {
+		applied, err = refreshOwnedPathPolicies(ctx, server, statePath, applied)
+		if err != nil {
+			return applied, nil, err
+		}
+	}
+	path = bgpdaemon.NormalizeAppliedPath(path)
+	if err := bgpdaemon.ValidateAppliedPath(path); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
 	path.UUID = ""
 	key := bgpdaemon.AppliedPathKey(path)
 	pending := false
-	for _, intent := range applied.PendingDynamicPathAdds {
+	for _, intent := range applied.PendingPathAdds {
 		pending = pending || bgpdaemon.AppliedPathKey(intent) == key
 	}
 	if !pending {
@@ -1132,14 +786,14 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 			}
 		}
 	}
-	applied.PendingDynamicPathAdds = append(withoutAppliedPath(applied.PendingDynamicPathAdds, key), path)
-	if err := validateNativeDynamicPathOwners(applied); err != nil {
+	applied.PendingPathAdds = append(withoutAppliedPath(applied.PendingPathAdds, key), path)
+	if err := validateNativePathOwners(applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	applied, err = finishDynamicPathAdd(ctx, server, statePath, applied, path)
+	applied, err = finishPathAdd(ctx, server, statePath, applied, path)
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
@@ -1151,13 +805,13 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 	return applied, nil, fmt.Errorf("completed dynamic path %s is missing from applied state", key)
 }
 
-// finishDynamicPathAdd retries the same native identity, replacing an orphan
+// finishPathAdd retries the same native identity, replacing an orphan
 // from an earlier successful AddPath whose returned UUID was never persisted.
-func finishDynamicPathAdd(ctx context.Context, server pathServer, statePath string, applied bgpdaemon.AppliedConfig, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+func finishPathAdd(ctx context.Context, server policyOwnerServer, statePath string, applied bgpdaemon.AppliedConfig, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return applied, err
 	}
-	reqPath, err := pathFromAppliedPath(path)
+	reqPath, err := bgpdaemon.PathFromAppliedPath(path)
 	if err != nil {
 		return applied, err
 	}
@@ -1170,36 +824,51 @@ func finishDynamicPathAdd(ctx context.Context, server pathServer, statePath stri
 	}
 	path.UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
 	key := bgpdaemon.AppliedPathKey(path)
-	applied.Paths = append(withoutAppliedPath(applied.Paths, key), path)
-	applied.PendingDynamicPathAdds = withoutAppliedPath(applied.PendingDynamicPathAdds, key)
-	applied = bgpdaemon.Normalize(applied)
-	if !applied.PendingImportPolicyReset {
-		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-			return applied, err
-		}
+	applied, err = refreshOwnedPathPolicies(ctx, server, statePath, applied)
+	if err != nil {
+		return applied, err
 	}
+	applied.Paths = append(withoutAppliedPath(applied.Paths, key), path)
+	applied.PendingPathAdds = withoutAppliedPath(applied.PendingPathAdds, key)
+	applied = bgpdaemon.Normalize(applied)
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return applied, err
 	}
 	return applied, nil
 }
 
-func recoverPendingDynamicPaths(ctx context.Context, server pathServer, statePath string, applied bgpdaemon.AppliedConfig, source string) (bgpdaemon.AppliedConfig, error) {
-	if len(applied.PendingDynamicPathAdds) == 0 {
+func recoverPendingPaths(ctx context.Context, server policyOwnerServer, statePath string, applied bgpdaemon.AppliedConfig, source string) (bgpdaemon.AppliedConfig, error) {
+	var err error
+	for _, path := range append([]bgpdaemon.AppliedPath(nil), applied.PendingPathRemovals...) {
+		if source != "" && source != path.Source {
+			continue
+		}
+		applied, err = deleteOwnedPath(ctx, server, statePath, path)
+		if err != nil {
+			return applied, err
+		}
+	}
+	if applied.PendingPolicy != nil {
+		applied, err = refreshOwnedPathPolicies(ctx, server, statePath, applied)
+		if err != nil {
+			return applied, err
+		}
+	}
+	if len(applied.PendingPathAdds) == 0 {
 		return applied, nil
 	}
 	if err := bgpdaemon.Validate(applied); err != nil {
 		return applied, err
 	}
-	if err := validateNativeDynamicPathOwners(applied); err != nil {
+	if err := validateNativePathOwners(applied); err != nil {
 		return applied, err
 	}
-	pending := append([]bgpdaemon.AppliedPath(nil), applied.PendingDynamicPathAdds...)
+	pending := append([]bgpdaemon.AppliedPath(nil), applied.PendingPathAdds...)
 	for _, path := range pending {
 		if source != "" && source != path.Source {
 			continue
 		}
-		next, err := finishDynamicPathAdd(ctx, server, statePath, applied, path)
+		next, err := finishPathAdd(ctx, server, statePath, applied, path)
 		if err != nil {
 			return applied, fmt.Errorf("recover pending dynamic path %s: %w", path.Prefix, err)
 		}
@@ -1220,23 +889,12 @@ func withoutAppliedPath(paths []bgpdaemon.AppliedPath, key string) []bgpdaemon.A
 
 // GoBGP's local path key is Identifier plus prefix. Reserve zero for static
 // paths and retain each dynamic source's identity across a lost UUID/restart.
-func dynamicPathIdentifier(source string) uint32 {
-	digest := sha256.Sum256([]byte(source))
-	id := binary.BigEndian.Uint32(digest[:4])
-	if id == 0 {
-		return 1
-	}
-	return id
-}
 
-func validateNativeDynamicPathOwners(applied bgpdaemon.AppliedConfig) error {
+func validateNativePathOwners(applied bgpdaemon.AppliedConfig) error {
 	owners := map[string]string{}
-	for _, group := range [][]bgpdaemon.AppliedPath{applied.Paths, applied.PendingDynamicPathAdds} {
+	for _, group := range [][]bgpdaemon.AppliedPath{applied.Paths, applied.PendingPathAdds} {
 		for _, path := range group {
-			if !bgpdaemon.IsMobilityPathSource(path.Source) {
-				continue
-			}
-			key := fmt.Sprintf("%s/%d", path.Prefix, dynamicPathIdentifier(path.Source))
+			key := fmt.Sprintf("%s/%d", path.Prefix, bgpdaemon.NativePathIdentifier(path.Source))
 			if owner := owners[key]; owner != "" && owner != path.Source {
 				return fmt.Errorf("dynamic BGP native identity collision between %s and %s for %s", owner, path.Source, path.Prefix)
 			}
@@ -1246,7 +904,15 @@ func validateNativeDynamicPathOwners(applied bgpdaemon.AppliedConfig) error {
 	return nil
 }
 
-func deleteDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+func deleteDynamicPath(ctx context.Context, server policyOwnerServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+	path, err := validateDynamicMobilityPath(path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	return deleteOwnedPath(ctx, server, statePath, path)
+}
+
+func deleteOwnedPath(ctx context.Context, server policyOwnerServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
 	if err := ctx.Err(); err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
@@ -1260,11 +926,11 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err := bgpdaemon.Validate(applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
-	path, err = validateDynamicMobilityPath(path)
-	if err != nil {
+	path = bgpdaemon.NormalizeAppliedPath(path)
+	if err := bgpdaemon.ValidateAppliedPath(path); err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
-	if err := validateNativeDynamicPathOwners(applied); err != nil {
+	if err := validateNativePathOwners(applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
 	key := bgpdaemon.AppliedPathKey(path)
@@ -1275,16 +941,25 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 			recorded = &applied.Paths[i]
 		}
 	}
-	for _, intent := range applied.PendingDynamicPathAdds {
+	for _, intent := range applied.PendingPathAdds {
+		pending = pending || bgpdaemon.AppliedPathKey(intent) == key
+	}
+	for _, intent := range applied.PendingPathRemovals {
 		pending = pending || bgpdaemon.AppliedPathKey(intent) == key
 	}
 	if recorded == nil && !pending {
 		return applied, nil
 	}
+	applied.Paths = withoutAppliedPath(applied.Paths, key)
+	applied.PendingPathAdds = withoutAppliedPath(applied.PendingPathAdds, key)
+	applied.PendingPathRemovals = append(withoutAppliedPath(applied.PendingPathRemovals, key), path)
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return applied, err
+	}
 	// Native source identity is stable across lost or stale returned UUIDs.
 	// GoBGP confirms this exact local withdrawal idempotently, preserving
 	// another local source and peer-origin paths for the same prefix.
-	native, err := pathFromAppliedPath(path)
+	native, err := bgpdaemon.PathFromAppliedPath(path)
 	if err != nil {
 		return applied, err
 	}
@@ -1292,12 +967,12 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 		return applied, err
 	}
 	applied.Paths = withoutAppliedPath(applied.Paths, key)
-	applied.PendingDynamicPathAdds = withoutAppliedPath(applied.PendingDynamicPathAdds, key)
+	applied.PendingPathAdds = withoutAppliedPath(applied.PendingPathAdds, key)
+	applied.PendingPathRemovals = withoutAppliedPath(applied.PendingPathRemovals, key)
 	applied = bgpdaemon.Normalize(applied)
-	if !applied.PendingImportPolicyReset {
-		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-			return applied, err
-		}
+	applied, err = refreshOwnedPathPolicies(ctx, server, statePath, applied)
+	if err != nil {
+		return applied, err
 	}
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return applied, err
@@ -1305,51 +980,12 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 	return applied, nil
 }
 
-func refreshDynamicPathPolicies(ctx context.Context, server pathServer, applied bgpdaemon.AppliedConfig) error {
-	policyServer, ok := server.(policyPathServer)
-	if !ok {
-		return nil
+func refreshOwnedPathPolicies(ctx context.Context, server policyOwnerServer, statePath string, applied bgpdaemon.AppliedConfig) (bgpdaemon.AppliedConfig, error) {
+	target := applied.Policy
+	if applied.PendingPolicy != nil {
+		target = *applied.PendingPolicy
 	}
-	if err := applyAppliedPolicies(ctx, policyServer, applied); err != nil {
-		return err
-	}
-	for _, address := range dynamicExportPolicyPeerAddresses(applied) {
-		if err := policyServer.ResetPeer(ctx, &gobgpapi.ResetPeerRequest{
-			Address:   address,
-			Soft:      true,
-			Direction: gobgpapi.ResetPeerRequest_DIRECTION_OUT,
-		}); err != nil {
-			return fmt.Errorf("soft reset export policy for peer %s: %w", address, err)
-		}
-	}
-	return nil
-}
-
-func dynamicExportPolicyPeerAddresses(applied bgpdaemon.AppliedConfig) []string {
-	applied = bgpdaemon.Normalize(applied)
-	if len(appliedDynamicPathPrefixes(applied.Paths)) == 0 {
-		return nil
-	}
-	withheld := pendingDirectPeerTransitions(applied)
-	var addresses []string
-	for address, peer := range applied.Peers {
-		if withheld[address] {
-			continue
-		}
-		if strings.TrimSpace(peer.ExportPolicyName) == "" {
-			continue
-		}
-		peerAddress := strings.TrimSpace(peer.Address)
-		if peerAddress == "" {
-			peerAddress = strings.TrimSpace(address)
-		}
-		if peerAddress == "" {
-			continue
-		}
-		addresses = append(addresses, peerAddress)
-	}
-	sort.Strings(addresses)
-	return addresses
+	return reconcilePolicyConfig(ctx, server, statePath, applied, target)
 }
 
 func httpStatusForPathError(err error) int {
@@ -1361,112 +997,6 @@ func httpStatusForPathError(err error) int {
 		return http.StatusConflict
 	}
 	return http.StatusBadRequest
-}
-
-func localPath(prefix string) (*gobgpapi.Path, error) {
-	return pathFromAppliedPath(bgpdaemon.StaticAppliedPath(prefix, nil))
-}
-
-func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, error) {
-	appliedPath = bgpdaemon.NormalizeAppliedPath(appliedPath)
-	parsed, err := netip.ParsePrefix(appliedPath.Prefix)
-	if err != nil {
-		return nil, err
-	}
-	parsed = parsed.Masked()
-	nlri := ipAddressNLRI(parsed)
-	attrs := []*gobgpapi.Attribute{originAttribute()}
-	nextHop := "0.0.0.0"
-	if parsed.Addr().Is6() {
-		nextHop = "::"
-	}
-	if appliedPath.Attrs.NextHop != "" {
-		nextHop = appliedPath.Attrs.NextHop
-	}
-	attrs = append(attrs, nextHopAttribute(nextHop))
-	if appliedPath.Attrs.LocalPref > 0 {
-		attrs = append(attrs, localPrefAttribute(appliedPath.Attrs.LocalPref))
-	}
-	if appliedPath.Attrs.MED > 0 {
-		attrs = append(attrs, medAttribute(appliedPath.Attrs.MED))
-	}
-	communities, err := standardCommunities(appliedPath.Attrs.Communities)
-	if err != nil {
-		return nil, err
-	}
-	if len(communities) > 0 {
-		attrs = append(attrs, communitiesAttribute(communities))
-	}
-	path := &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}
-	if bgpdaemon.IsMobilityPathSource(appliedPath.Source) {
-		path.Identifier = dynamicPathIdentifier(appliedPath.Source)
-	}
-	return path, nil
-}
-
-func ipAddressNLRI(prefix netip.Prefix) *gobgpapi.NLRI {
-	return &gobgpapi.NLRI{Nlri: &gobgpapi.NLRI_Prefix{Prefix: &gobgpapi.IPAddressPrefix{
-		Prefix: prefix.Addr().String(), PrefixLen: uint32(prefix.Bits()),
-	}}}
-}
-
-func originAttribute() *gobgpapi.Attribute {
-	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Origin{Origin: &gobgpapi.OriginAttribute{Origin: 0}}}
-}
-
-func nextHopAttribute(nextHop string) *gobgpapi.Attribute {
-	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_NextHop{NextHop: &gobgpapi.NextHopAttribute{NextHop: nextHop}}}
-}
-
-func localPrefAttribute(localPref uint32) *gobgpapi.Attribute {
-	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_LocalPref{LocalPref: &gobgpapi.LocalPrefAttribute{LocalPref: localPref}}}
-}
-
-func medAttribute(med uint32) *gobgpapi.Attribute {
-	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_MultiExitDisc{MultiExitDisc: &gobgpapi.MultiExitDiscAttribute{Med: med}}}
-}
-
-func communitiesAttribute(communities []uint32) *gobgpapi.Attribute {
-	return &gobgpapi.Attribute{Attr: &gobgpapi.Attribute_Communities{Communities: &gobgpapi.CommunitiesAttribute{Communities: communities}}}
-}
-
-func standardCommunities(values []string) ([]uint32, error) {
-	var out []uint32
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if strings.Contains(value, ":") {
-			left, right, ok := strings.Cut(value, ":")
-			if !ok {
-				return nil, fmt.Errorf("invalid standard community %q", value)
-			}
-			hi, err := strconv.ParseUint(strings.TrimSpace(left), 10, 16)
-			if err != nil {
-				return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
-			}
-			lo, err := strconv.ParseUint(strings.TrimSpace(right), 10, 16)
-			if err != nil {
-				return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
-			}
-			out = append(out, uint32(hi)<<16|uint32(lo))
-			continue
-		}
-		community, err := strconv.ParseUint(value, 10, 32)
-		if err != nil {
-			return nil, fmt.Errorf("invalid standard community %q: %w", value, err)
-		}
-		out = append(out, uint32(community))
-	}
-	return out, nil
-}
-
-func familyForPrefix(prefix netip.Prefix) *gobgpapi.Family {
-	if prefix.Addr().Is6() {
-		return ipv6Family()
-	}
-	return ipv4Family()
 }
 
 func ipv4Family() *gobgpapi.Family {

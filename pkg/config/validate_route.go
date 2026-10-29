@@ -108,6 +108,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if err := validateBGPCommunities(res.ID(), "spec.communities", spec.Communities); err != nil {
 			return true, err
 		}
+		if len(spec.Communities.Set.Out) > 0 {
+			return true, fmt.Errorf("%s spec.communities.set.out is not supported on BGPPeer; configure originated communities on BGPRouter", res.ID())
+		}
 		if _, err := validateBGPPrefixList(res.ID(), "spec.importPolicy.allowedPrefixes", spec.ImportPolicy.AllowedPrefixes); err != nil {
 			return true, err
 		}

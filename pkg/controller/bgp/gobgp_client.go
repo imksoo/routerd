@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	gobgpapi "github.com/osrg/gobgp/v4/api"
@@ -22,8 +24,10 @@ import (
 
 type remoteGoBGPServer struct {
 	daemon manageddaemon.Spec
+	mu     sync.Mutex
 	conn   *grpc.ClientConn
 	client gobgpapi.GoBgpServiceClient
+	closed bool
 }
 
 func newRemoteGoBGPServer(daemon manageddaemon.Spec) GoBGPServer {
@@ -33,6 +37,9 @@ func newRemoteGoBGPServer(daemon manageddaemon.Spec) GoBGPServer {
 func (s *remoteGoBGPServer) Serve() {}
 
 func (s *remoteGoBGPServer) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
 	if s.conn != nil {
 		_ = s.conn.Close()
 	}
@@ -41,6 +48,11 @@ func (s *remoteGoBGPServer) Stop() {
 }
 
 func (s *remoteGoBGPServer) api(ctx context.Context) (gobgpapi.GoBgpServiceClient, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, errors.New("managed GoBGP client is stopped")
+	}
 	if s.client != nil {
 		return s.client, nil
 	}
@@ -94,28 +106,45 @@ func (s *remoteGoBGPServer) AppliedConfig(ctx context.Context) (bgpdaemon.Applie
 		return bgpdaemon.AppliedConfig{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return bgpdaemon.AppliedConfig{}, errors.New(string(bytes.TrimSpace(data)))
+	return readAppliedResponse(resp)
+}
+
+func (s *remoteGoBGPServer) ReconcilePolicy(ctx context.Context, intent bgpdaemon.PolicyIntent) error {
+	data, err := json.Marshal(intent)
+	if err != nil {
+		return err
 	}
-	var config bgpdaemon.AppliedConfig
-	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+	_, err = s.writeApplied(ctx, http.MethodPost, "/v1/policy", data)
+	return err
+}
+
+func (s *remoteGoBGPServer) ReconcileStaticPaths(ctx context.Context, paths []bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+	data, err := json.Marshal(paths)
+	if err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
-	return bgpdaemon.Normalize(config), nil
+	return s.writeApplied(ctx, http.MethodPut, "/v1/static-paths", data)
 }
 
 func (s *remoteGoBGPServer) SaveAppliedConfig(ctx context.Context, config bgpdaemon.AppliedConfig) error {
-	if err := s.daemon.Validate(); err != nil {
-		return err
-	}
 	data, err := json.Marshal(bgpdaemon.Normalize(config))
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://routerd-bgp/v1/applied", bytes.NewReader(data))
+	_, err = s.writeApplied(ctx, http.MethodPut, "/v1/applied", data)
+	return err
+}
+
+func (s *remoteGoBGPServer) writeApplied(ctx context.Context, method, path string, data []byte) (bgpdaemon.AppliedConfig, error) {
+	if err := s.daemon.Validate(); err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	if len(data) > maxBGPControlBodyBytes {
+		return bgpdaemon.AppliedConfig{}, errors.New("BGP control request exceeds body limit")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://routerd-bgp"+path, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return bgpdaemon.AppliedConfig{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Close = true
@@ -123,14 +152,40 @@ func (s *remoteGoBGPServer) SaveAppliedConfig(ctx context.Context, config bgpdae
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return bgpdaemon.AppliedConfig{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		return errors.New(string(bytes.TrimSpace(data)))
+	return readAppliedResponse(resp)
+}
+
+const maxBGPControlBodyBytes = 4 << 20
+
+// An acknowledgement is the complete typed response, not just its status line.
+func readAppliedResponse(resp *http.Response) (bgpdaemon.AppliedConfig, error) {
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBGPControlBodyBytes+1))
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, err
 	}
-	return nil
+	if len(data) > maxBGPControlBodyBytes {
+		return bgpdaemon.AppliedConfig{}, errors.New("BGP control response exceeds body limit")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return bgpdaemon.AppliedConfig{}, fmt.Errorf("BGP control returned HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(data))
+	}
+	var config *bgpdaemon.AppliedConfig
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
+	if config == nil {
+		return bgpdaemon.AppliedConfig{}, errors.New("BGP control returned null applied configuration")
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return bgpdaemon.AppliedConfig{}, errors.New("BGP control returned trailing data")
+	}
+	return bgpdaemon.Normalize(*config), nil
 }
 
 func (s *remoteGoBGPServer) GetBgp(ctx context.Context, req *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error) {
@@ -203,87 +258,6 @@ func (s *remoteGoBGPServer) ListPeer(ctx context.Context, req *gobgpapi.ListPeer
 			return err
 		}
 		fn(resp.GetPeer())
-	}
-}
-
-func (s *remoteGoBGPServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPoliciesRequest) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = client.SetPolicies(ctx, req)
-	return err
-}
-
-func (s *remoteGoBGPServer) SetPolicyAssignment(ctx context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = client.SetPolicyAssignment(ctx, req)
-	return err
-}
-
-func (s *remoteGoBGPServer) ListDefinedSet(ctx context.Context, req *gobgpapi.ListDefinedSetRequest, fn func(*gobgpapi.DefinedSet)) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	stream, err := client.ListDefinedSet(ctx, req)
-	if err != nil {
-		return err
-	}
-	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fn(resp.GetDefinedSet())
-	}
-}
-
-func (s *remoteGoBGPServer) ListPolicy(ctx context.Context, req *gobgpapi.ListPolicyRequest, fn func(*gobgpapi.Policy)) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	stream, err := client.ListPolicy(ctx, req)
-	if err != nil {
-		return err
-	}
-	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fn(resp.GetPolicy())
-	}
-}
-
-func (s *remoteGoBGPServer) ListPolicyAssignment(ctx context.Context, req *gobgpapi.ListPolicyAssignmentRequest, fn func(*gobgpapi.PolicyAssignment)) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	stream, err := client.ListPolicyAssignment(ctx, req)
-	if err != nil {
-		return err
-	}
-	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		fn(resp.GetAssignment())
 	}
 }
 
@@ -365,23 +339,6 @@ func (s *remoteGoBGPServer) ListDynamicNeighbor(ctx context.Context, req *gobgpa
 	}
 }
 
-func (s *remoteGoBGPServer) AddPath(ctx context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
-	client, err := s.api(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return client.AddPath(ctx, req)
-}
-
-func (s *remoteGoBGPServer) DeletePath(ctx context.Context, req *gobgpapi.DeletePathRequest) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = client.DeletePath(ctx, req)
-	return err
-}
-
 func (s *remoteGoBGPServer) ListPath(ctx context.Context, req *gobgpapi.ListPathRequest, fn func(*gobgpapi.Destination)) error {
 	client, err := s.api(ctx)
 	if err != nil {
@@ -404,13 +361,14 @@ func (s *remoteGoBGPServer) ListPath(ctx context.Context, req *gobgpapi.ListPath
 }
 
 func (s *remoteGoBGPServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchEventRequest, fn func(*gobgpapi.WatchEventResponse) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	client, err := s.api(ctx)
 	if err != nil {
 		return err
 	}
 	stream, err := client.WatchEvent(ctx, req)
 	if err != nil {
-		s.Stop()
 		return err
 	}
 	for {
@@ -419,7 +377,6 @@ func (s *remoteGoBGPServer) WatchEvent(ctx context.Context, req *gobgpapi.WatchE
 			return nil
 		}
 		if err != nil {
-			s.Stop()
 			return err
 		}
 		if err := fn(resp); err != nil {

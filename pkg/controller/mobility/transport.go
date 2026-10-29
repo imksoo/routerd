@@ -381,8 +381,15 @@ func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowe
 	if len(cleanStrings(base.AllowedPrefixes)) == 0 {
 		base.AllowedPrefixes = cleanStrings(defaultAllowedPrefixes)
 	}
-	base.AllowedPrefixLengthMin = 32
-	base.AllowedPrefixLengthMax = 32
+	if len(base.AllowedPrefixes) > 0 {
+		base.AllowedPrefixLengthMin = 32
+		base.AllowedPrefixLengthMax = 32
+	} else {
+		// A signed leaf with no owned prefix still keeps its transport and
+		// explicit reject-routes marker. There is no prefix filter to bound.
+		base.AllowedPrefixLengthMin = 0
+		base.AllowedPrefixLengthMax = 0
+	}
 	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(peerNode)
 	base.RequiredCommunities = mergeTransportPolicyStrings(base.RequiredCommunities, []string{nodeCommunity})
 	var forbidden []string

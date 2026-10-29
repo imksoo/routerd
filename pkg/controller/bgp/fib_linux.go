@@ -32,7 +32,10 @@ func defaultFIBSyncer() FIBSyncer {
 	return &netlinkFIBSyncer{installed: map[string]kernelBGPRoute{}, retainOnMissing: map[string]bool{}}
 }
 
-func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+func (s *netlinkFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+	if err := ctx.Err(); err != nil {
+		return FIBSyncResult{}, err
+	}
 	if s.installed == nil {
 		s.installed = map[string]kernelBGPRoute{}
 	}
@@ -44,7 +47,10 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		return FIBSyncResult{}, fmt.Errorf("list current BGP routes: %w", err)
 	}
 	s.installed = kernel
-	localAddresses := localIPv4Addresses()
+	localAddresses, err := localIPv4Addresses()
+	if err != nil {
+		return FIBSyncResult{}, fmt.Errorf("observe local BGP addresses: %w", err)
+	}
 	localHostPrefixes := localIPv4HostPrefixes(localAddresses)
 	result := FIBSyncResult{
 		Installed:                    map[string]bool{},
@@ -64,7 +70,7 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		if route.PreferredSource == "" {
 			route.PreferredSource = inferPreferredSource(route.Prefix, localAddresses)
 		}
-		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource) {
+		if route.PreferredSource != "" && !preferredSourceIsLocal(route.PreferredSource, localAddresses) {
 			result.PreferredSourceSkipped[route.Prefix] = true
 			result.PreferredSourceSkippedReason[route.Prefix] = "LocalAddressMissing"
 			route.PreferredSource = ""
@@ -83,6 +89,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		route := normalizeFIBRoute(desired[key])
 		if installed, ok := s.installed[key]; ok && equalFIBRoute(installed.FIB, route) {
 			installed.FIB = route
@@ -108,6 +117,9 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 		}
 	}
 	for key, route := range s.installed {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		if _, ok := desired[key]; ok {
 			continue
 		}
@@ -165,16 +177,16 @@ type localIPv4Address struct {
 	Prefix  netip.Prefix
 }
 
-func localIPv4Addresses() []localIPv4Address {
+func localIPv4Addresses() ([]localIPv4Address, error) {
 	var out []localIPv4Address
 	links, err := netlink.LinkList()
 	if err != nil {
-		return out
+		return nil, err
 	}
 	for _, link := range links {
 		addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read addresses on %s: %w", link.Attrs().Name, err)
 		}
 		for _, local := range addrs {
 			if local.IP == nil {
@@ -192,7 +204,7 @@ func localIPv4Addresses() []localIPv4Address {
 			out = append(out, localIPv4Address{Address: addr, Prefix: prefix})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func localIPv4HostPrefixes(addresses []localIPv4Address) map[string]bool {
@@ -229,12 +241,12 @@ func inferPreferredSource(routePrefix string, addresses []localIPv4Address) stri
 	return best.Address.String()
 }
 
-func preferredSourceIsLocal(value string) bool {
+func preferredSourceIsLocal(value string, addresses []localIPv4Address) bool {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	if err != nil || !addr.Is4() {
 		return false
 	}
-	for _, local := range localIPv4Addresses() {
+	for _, local := range addresses {
 		if local.Address == addr {
 			return true
 		}

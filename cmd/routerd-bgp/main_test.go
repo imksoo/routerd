@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -19,10 +20,12 @@ import (
 
 	gobgpapi "github.com/osrg/gobgp/v4/api"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 )
 
 type fakePathServer struct {
+	policyOwner       *localPathServer
 	added             []*gobgpapi.AddPathRequest
 	deleted           []*gobgpapi.DeletePathRequest
 	policyRequests    []*gobgpapi.SetPoliciesRequest
@@ -34,6 +37,46 @@ type fakePathServer struct {
 	releaseAdd        <-chan struct{}
 	observed          []bgpdaemon.ObservedPath
 	observedErr       error
+}
+
+func newFakePathServer(t *testing.T) *fakePathServer {
+	t.Helper()
+	return &fakePathServer{policyOwner: realDynamicPathServer(t)}
+}
+
+func (s *fakePathServer) AddPolicy(ctx context.Context, req *gobgpapi.AddPolicyRequest) error {
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.AddPolicy(ctx, req)
+}
+
+func (s *fakePathServer) ListPolicy(ctx context.Context, req *gobgpapi.ListPolicyRequest, fn func(*gobgpapi.Policy)) error {
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.ListPolicy(ctx, req, fn)
+}
+
+func (s *fakePathServer) ListDefinedSet(ctx context.Context, req *gobgpapi.ListDefinedSetRequest, fn func(*gobgpapi.DefinedSet)) error {
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.ListDefinedSet(ctx, req, fn)
+}
+
+func (s *fakePathServer) ListPolicyAssignment(ctx context.Context, req *gobgpapi.ListPolicyAssignmentRequest, fn func(*gobgpapi.PolicyAssignment)) error {
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.ListPolicyAssignment(ctx, req, fn)
+}
+
+func (s *fakePathServer) ListPeer(ctx context.Context, req *gobgpapi.ListPeerRequest, fn func(*gobgpapi.Peer)) error {
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.ListPeer(ctx, req, fn)
 }
 
 type blockingControlShutdowner struct {
@@ -110,19 +153,28 @@ func (s *fakePathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathR
 	return nil
 }
 
-func (s *fakePathServer) SetPolicies(_ context.Context, req *gobgpapi.SetPoliciesRequest) error {
+func (s *fakePathServer) SetPolicies(ctx context.Context, req *gobgpapi.SetPoliciesRequest) error {
 	s.policyRequests = append(s.policyRequests, req)
-	return nil
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.SetPolicies(ctx, req)
 }
 
-func (s *fakePathServer) SetPolicyAssignment(_ context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
+func (s *fakePathServer) SetPolicyAssignment(ctx context.Context, req *gobgpapi.SetPolicyAssignmentRequest) error {
 	s.policyAssignments = append(s.policyAssignments, req.GetAssignment())
-	return nil
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.SetPolicyAssignment(ctx, req)
 }
 
-func (s *fakePathServer) ResetPeer(_ context.Context, req *gobgpapi.ResetPeerRequest) error {
+func (s *fakePathServer) ResetPeer(ctx context.Context, req *gobgpapi.ResetPeerRequest) error {
 	s.resetRequests = append(s.resetRequests, req)
-	return nil
+	if s.policyOwner == nil {
+		return fmt.Errorf("test native policy owner is unavailable")
+	}
+	return s.policyOwner.ResetPeer(ctx, req)
 }
 
 func (s *fakePathServer) ListObservedPaths(context.Context) ([]bgpdaemon.ObservedPath, error) {
@@ -135,20 +187,16 @@ func (s *fakePathServer) ListObservedPaths(context.Context) ([]bgpdaemon.Observe
 func TestAppliedPoliciesRestoreNeighborScopedGlobalImportPolicy(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address: "192.168.1.38",
-		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: []string{"10.250.0.0/24"},
-			NextHopRewrite:  "peer-address",
-		},
 	}
-	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
-		Peers: map[string]bgpdaemon.AppliedPeer{
-			"192.168.1.38": peer,
-		},
-	})
-	if len(req.GetPolicies()) != 1 || len(req.GetDefinedSets()) != 2 {
-		t.Fatalf("restore policies = policies:%d definedSets:%d, want one global policy with neighbor and prefix sets", len(req.GetPolicies()), len(req.GetDefinedSets()))
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "routerd-restore-import-effective-peer-192-168-1-38", Neighbors: []string{"192.168.1.38/32"}, ExportPolicyName: "peer-export",
+		Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}, NextHopRewrite: "peer-address"},
+	}}}, nil)
+	req, assignment := plan.SetPolicies, plan.GlobalImportAssignment
+	if len(req.GetPolicies()) != 3 || len(req.GetDefinedSets()) != 2 {
+		t.Fatalf("restore policies = policies:%d definedSets:%d, want guard/export/global policies and neighbor/prefix sets", len(req.GetPolicies()), len(req.GetDefinedSets()))
 	}
-	policy := req.GetPolicies()[0]
+	policy := policyRequestNamed(t, req, "routerd-restore-import-effective")
 	if policy.GetName() != "routerd-restore-import-effective" {
 		t.Fatalf("policy name = %q, want effective global import policy", policy.GetName())
 	}
@@ -157,7 +205,7 @@ func TestAppliedPoliciesRestoreNeighborScopedGlobalImportPolicy(t *testing.T) {
 		t.Fatalf("next-hop action = %#v, want peer-address rewrite", action)
 	}
 	if assignment.GetName() != "global" || assignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_IMPORT ||
-		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT || len(assignment.GetPolicies()) != 1 ||
+		assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT || len(assignment.GetPolicies()) != 1 ||
 		assignment.GetPolicies()[0].GetName() != "routerd-restore-import-effective" {
 		t.Fatalf("global import policy assignment = %#v, want effective policy", assignment)
 	}
@@ -177,48 +225,41 @@ func TestAppliedPeerRestoresPassiveMode(t *testing.T) {
 	}
 }
 
-func TestAppliedPeerRestoresDefaultActiveCompatibility(t *testing.T) {
+func TestAppliedPeerRestoresDefaultActiveMode(t *testing.T) {
 	peer := appliedPeer(
 		bgpdaemon.AppliedPeer{Address: "192.0.2.2", ASN: 64512},
 		bgpdaemon.AppliedGlobal{ASN: 64512},
 	)
 	if peer.Transport != nil {
-		t.Fatalf("restored default active peer transport = %#v, want nil for pre-passiveMode compatibility", peer.Transport)
+		t.Fatalf("restored default active peer transport = %#v, want normal active-mode default", peer.Transport)
 	}
 }
 
 func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
-	peer := bgpdaemon.AppliedPeer{
-		Address: "10.99.0.2",
-		ASN:     64512,
-		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes:      []string{"10.77.60.0/24"},
-			RequiredCommunities:  []string{"64512:301"},
-			ForbiddenCommunities: []string{"64512:302"},
-		},
-	}
-	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
-		Peers: map[string]bgpdaemon.AppliedPeer{"10.99.0.2": peer},
-	})
 	scopeName := "routerd-restore-import-effective-peer-10-99-0-2"
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+		Name: scopeName, Neighbors: []string{"10.99.0.2/32"}, ExportPolicyName: "peer-export",
+		Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}, RequiredCommunities: []string{"64512:301"}, ForbiddenCommunities: []string{"64512:302"}},
+	}}}, nil)
+	req := plan.SetPolicies
 	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_DEFINED_TYPE_NEIGHBOR, scopeName+"-neighbors", "10.99.0.2/32") {
 		t.Fatalf("defined sets = %#v, want neighbor set", req.GetDefinedSets())
 	}
-	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-required-communities", "64512:301") {
+	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-required-communities", "^64512:301$") {
 		t.Fatalf("defined sets = %#v, want required community set", req.GetDefinedSets())
 	}
-	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-forbidden-communities", "64512:302") {
+	if !appliedPolicyRequestHasDefinedSet(req, gobgpapi.DefinedType_DEFINED_TYPE_COMMUNITY, scopeName+"-forbidden-communities", "^64512:302$") {
 		t.Fatalf("defined sets = %#v, want forbidden community set", req.GetDefinedSets())
 	}
-	if len(req.GetPolicies()) != 1 || len(req.GetPolicies()[0].GetStatements()) != 3 {
-		t.Fatalf("policies = %#v, want reject-forbidden, allow-import, then terminal reject", req.GetPolicies())
+	if len(req.GetPolicies()) != 3 || len(policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()) != 4 {
+		t.Fatalf("policies = %#v, want guard and scoped reject/allow/reject plus explicit local allow", req.GetPolicies())
 	}
-	reject := req.GetPolicies()[0].GetStatements()[0]
+	reject := policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()[0]
 	if reject.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
 		reject.GetConditions().GetCommunitySet().GetType() != gobgpapi.MatchSet_TYPE_ANY {
 		t.Fatalf("reject statement = %#v, want forbidden community reject", reject)
 	}
-	allow := req.GetPolicies()[0].GetStatements()[1]
+	allow := policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()[1]
 	if allow.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT ||
 		allow.GetConditions().GetNeighborSet().GetName() != scopeName+"-neighbors" ||
 		allow.GetConditions().GetPrefixSet().GetName() == "" ||
@@ -228,24 +269,15 @@ func TestAppliedPoliciesRestorePeerImportPolicyWithCommunities(t *testing.T) {
 }
 
 func TestAppliedPoliciesPreservePrefixlessPeerImportPreference(t *testing.T) {
-	peer := bgpdaemon.AppliedPeer{
-		Address: "10.99.0.2",
-		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			NextHopRewrite:  "peer-address",
-			LocalPreference: 200,
-		},
-	}
-	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
-		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: []string{"192.0.2.0/24"},
-			LocalPreference: 100,
-		}},
-		Peers: map[string]bgpdaemon.AppliedPeer{"10.99.0.2": peer},
-	})
-	if len(req.GetPolicies()) != 1 || len(req.GetPolicies()[0].GetStatements()) != 2 {
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "peer-import", Neighbors: []string{"10.99.0.2/32"}, ExportPolicyName: "peer-export",
+		Spec: api.BGPImportPolicySpec{NextHopRewrite: "peer-address", LocalPreference: 200},
+	}}}, nil)
+	req := plan.SetPolicies
+	if len(req.GetPolicies()) != 3 || len(policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()) != 3 {
 		t.Fatalf("restore policies = %#v, want prefixless peer policy with allow and terminal reject", req)
 	}
-	allow := req.GetPolicies()[0].GetStatements()[0]
+	allow := policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()[0]
 	if allow.GetConditions().GetPrefixSet() != nil ||
 		allow.GetActions().GetLocalPref().GetValue() != 200 ||
 		!allow.GetActions().GetNexthop().GetPeerAddress() {
@@ -254,32 +286,27 @@ func TestAppliedPoliciesPreservePrefixlessPeerImportPreference(t *testing.T) {
 }
 
 func TestAppliedPoliciesRestoreRejectsRoutesFromEmptyOwnershipDirectPeer(t *testing.T) {
-	peer := bgpdaemon.AppliedPeer{
-		Address:                "10.99.0.3",
-		PreserveImportPrefixes: true,
-		RejectImportAll:        true,
-		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			NextHopRewrite:  "peer-address",
-			LocalPreference: 200,
-		},
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "routerd-restore-import-effective-peer-10-99-0-3", Neighbors: []string{"10.99.0.3/32"}, ExportPolicyName: "peer-export",
+		PreserveImportPrefixes: true, RejectImportAll: true,
+		Spec: api.BGPImportPolicySpec{NextHopRewrite: "peer-address", LocalPreference: 200},
+	}}}, nil)
+	req, assignment := plan.SetPolicies, plan.GlobalImportAssignment
+	if len(req.GetPolicies()) != 3 || len(req.GetDefinedSets()) != 1 || len(policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()) != 2 {
+		t.Fatalf("restored empty-ownership direct policy = %#v, want scoped reject plus explicit local allow", req)
 	}
-	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
-		Global: bgpdaemon.AppliedGlobal{ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: []string{"10.77.60.0/24"},
-		}},
-		Peers: map[string]bgpdaemon.AppliedPeer{peer.Address: peer},
-	})
-	if len(req.GetPolicies()) != 1 || len(req.GetDefinedSets()) != 1 || len(req.GetPolicies()[0].GetStatements()) != 1 {
-		t.Fatalf("restored empty-ownership direct policy = %#v, want one neighbor-scoped reject statement", req)
-	}
-	statement := req.GetPolicies()[0].GetStatements()[0]
+	statement := policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()[0]
 	if statement.GetName() != "routerd-restore-import-effective-peer-10-99-0-3-reject-all-import" ||
 		statement.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
 		statement.GetConditions().GetNeighborSet().GetName() != "routerd-restore-import-effective-peer-10-99-0-3-neighbors" {
 		t.Fatalf("restored empty-ownership direct statement = %#v", statement)
 	}
-	if assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT {
-		t.Fatalf("global assignment = %#v, want default accept for local paths", assignment)
+	if assignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT {
+		t.Fatalf("global assignment = %#v, want unknown peers rejected", assignment)
+	}
+	local := policyRequestNamed(t, req, "routerd-restore-import-effective").GetStatements()[1]
+	if local.GetConditions().GetRouteType() != gobgpapi.Conditions_ROUTE_TYPE_LOCAL || local.GetActions().GetRouteAction() != gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT {
+		t.Fatalf("local route acceptance must be explicit: %#v", local)
 	}
 }
 
@@ -287,23 +314,16 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	peer := bgpdaemon.AppliedPeer{
 		Address: "10.252.0.18",
 		ASN:     64512,
-		ImportPolicy: bgpdaemon.AppliedImportPolicy{
-			AllowedPrefixes: []string{"10.252.0.0/24"},
-		},
-		ExportPolicyName: "routerd-lan-export-10-252-0-2",
-		ExportPolicy: bgpdaemon.AppliedExportPolicy{
-			AllowedPrefixes: []string{"192.168.123.129/32"},
-		},
 	}
-	req, assignment := appliedPolicies(bgpdaemon.AppliedConfig{
-		Peers: map[string]bgpdaemon.AppliedPeer{
-			"10.252.0.18": peer,
-		},
-		Paths: []bgpdaemon.AppliedPath{{
-			Source: "MobilityPool/svnet1/node/pve-rt08",
-			Prefix: "192.168.123.132/32",
-		}},
-	})
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "routerd-restore-import-effective-peer-10-252-0-18", Neighbors: []string{"10.252.0.18/32"},
+		Spec:             api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.252.0.0/24"}},
+		ExportPolicyName: "routerd-lan-export-10-252-0-2", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"192.168.123.129/32"}},
+	}}}, []bgpdaemon.AppliedPath{{
+		Source: "MobilityPool/svnet1/node/pve-rt08",
+		Prefix: "192.168.123.132/32",
+	}})
+	req, assignment := plan.SetPolicies, plan.GlobalImportAssignment
 	if !appliedPolicyRequestHasStatement(req, "routerd-restore-import-effective", "routerd-restore-import-effective-peer-10-252-0-18-allow-import") {
 		t.Fatalf("restore policies = %#v, want import policy", req)
 	}
@@ -323,13 +343,27 @@ func TestAppliedPoliciesRestorePeerExportPolicy(t *testing.T) {
 	if restoredPeer.GetApplyPolicy().GetImportPolicy() != nil {
 		t.Fatalf("restored peer import policy = %#v, want no ineffective import assignment", restoredPeer.GetApplyPolicy().GetImportPolicy())
 	}
-	exportAssignment := restoredPeer.GetApplyPolicy().GetExportPolicy()
+	if restoredPeer.GetApplyPolicy().GetExportPolicy() != nil {
+		t.Fatal("restored peer attached ineffective export policy")
+	}
+	exportAssignment := plan.GlobalExportAssignment
 	if exportAssignment.GetDirection() != gobgpapi.PolicyDirection_POLICY_DIRECTION_EXPORT ||
 		exportAssignment.GetDefaultAction() != gobgpapi.RouteAction_ROUTE_ACTION_REJECT ||
 		len(exportAssignment.GetPolicies()) != 1 ||
 		exportAssignment.GetPolicies()[0].GetName() != "routerd-lan-export-10-252-0-2" {
 		t.Fatalf("restored peer export policy = %#v, want export assignment", exportAssignment)
 	}
+}
+
+func policyRequestNamed(t *testing.T, req *gobgpapi.SetPoliciesRequest, name string) *gobgpapi.Policy {
+	t.Helper()
+	for _, policy := range req.GetPolicies() {
+		if policy.GetName() == name {
+			return policy
+		}
+	}
+	t.Fatalf("missing named policy %q in %#v", name, req)
+	return nil
 }
 
 func appliedPolicyRequestHasPrefix(req *gobgpapi.SetPoliciesRequest, setName, prefix string) bool {
@@ -361,22 +395,11 @@ func appliedPolicyRequestHasDefinedSet(req *gobgpapi.SetPoliciesRequest, typ gob
 }
 
 func TestAppliedPoliciesRestoreMultipleImportPoliciesWithUniqueStatements(t *testing.T) {
-	req, _ := appliedPolicies(bgpdaemon.AppliedConfig{
-		Peers: map[string]bgpdaemon.AppliedPeer{
-			"192.168.1.38": {
-				Address: "192.168.1.38",
-				ImportPolicy: bgpdaemon.AppliedImportPolicy{
-					AllowedPrefixes: []string{"10.250.0.0/24"},
-				},
-			},
-			"192.168.1.53": {
-				Address: "192.168.1.53",
-				ImportPolicy: bgpdaemon.AppliedImportPolicy{
-					AllowedPrefixes: []string{"10.250.0.0/24"},
-				},
-			},
-		},
-	})
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{
+		{Name: "routerd-restore-import-effective-peer-192-168-1-38", Neighbors: []string{"192.168.1.38/32"}, ExportPolicyName: "peer-a-export", Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}},
+		{Name: "routerd-restore-import-effective-peer-192-168-1-53", Neighbors: []string{"192.168.1.53/32"}, ExportPolicyName: "peer-b-export", Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/24"}}},
+	}}, nil)
+	req := plan.SetPolicies
 	assertAppliedPolicyStatementNamesUnique(t, req)
 	if !appliedPolicyRequestHasStatement(req, "routerd-restore-import-effective", "routerd-restore-import-effective-peer-192-168-1-38-allow-import") {
 		t.Fatalf("restore policies = %#v, want statement scoped to 192.168.1.38", req)
@@ -398,7 +421,13 @@ func TestAppliedPeerEbgpMultihop(t *testing.T) {
 }
 
 func TestAppliedPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
-	prefixes := appliedPolicyPrefixes(bgpdaemon.AppliedImportPolicy{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}})
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "prefixes", Scopes: []bgpdaemon.PolicyScope{{Name: "peer", Neighbors: []string{"192.0.2.1/32"}, ExportPolicyName: "peer-export", Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}}}}}, nil)
+	var prefixes []*gobgpapi.Prefix
+	for _, set := range plan.SetPolicies.GetDefinedSets() {
+		if set.GetName() == "peer-prefixes" {
+			prefixes = set.GetPrefixes()
+		}
+	}
 	if !appliedPrefixSetAllows(prefixes, "10.77.60.0/24") || !appliedPrefixSetAllows(prefixes, "10.77.60.11/32") {
 		t.Fatalf("applied prefixes = %#v, want IPv4 prefix and more-specific accepted", prefixes)
 	}
@@ -481,7 +510,7 @@ func TestAppliedPeerRestoresInternalRouteReflectorClient(t *testing.T) {
 
 func TestPendingDirectPeerTransitionsWithholdOnlyDirectPeers(t *testing.T) {
 	applied := bgpdaemon.AppliedConfig{
-		PendingImportPolicyReset:   true,
+		PendingPolicy:              &bgpdaemon.PolicyIntent{RouterName: "pending"},
 		PendingDirectPeerAdditions: []string{"10.0.0.3"},
 		PendingDirectPeerRemovals:  []string{"10.0.0.4"},
 		Peers: map[string]bgpdaemon.AppliedPeer{
@@ -502,20 +531,23 @@ func TestPendingDirectPeerTransitionsWithholdOnlyDirectPeers(t *testing.T) {
 	}
 }
 
-func TestDynamicExportPolicySkipsWithheldDirectPeers(t *testing.T) {
+func TestDynamicExportPolicyUsesTypedScopesInsteadOfPendingPeerHistory(t *testing.T) {
 	applied := bgpdaemon.AppliedConfig{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1", ListenPort: -1},
+		Policy: bgpdaemon.PolicyIntent{RouterName: "typed", Scopes: []bgpdaemon.PolicyScope{{
+			Name: "rr", Neighbors: []string{"10.0.0.3/32"}, ExportPolicyName: "rr-export",
+			ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.22/32"}},
+		}}},
 		PendingDirectPeerRemovals: []string{"10.0.0.2"},
 		Peers: map[string]bgpdaemon.AppliedPeer{
 			"10.0.0.2": {
 				Address:                "10.0.0.2",
+				ASN:                    64513,
 				PreserveImportPrefixes: true,
-				ExportPolicyName:       "direct-export",
-				ExportPolicy:           bgpdaemon.AppliedExportPolicy{AllowedPrefixes: []string{"10.77.60.22/32"}},
 			},
 			"10.0.0.3": {
-				Address:          "10.0.0.3",
-				ExportPolicyName: "rr-export",
-				ExportPolicy:     bgpdaemon.AppliedExportPolicy{AllowedPrefixes: []string{"10.77.60.22/32"}},
+				Address: "10.0.0.3",
+				ASN:     64513,
 			},
 		},
 		Paths: []bgpdaemon.AppliedPath{{
@@ -523,13 +555,22 @@ func TestDynamicExportPolicySkipsWithheldDirectPeers(t *testing.T) {
 			Prefix: "10.77.60.22/32",
 		}},
 	}
-	if got := dynamicExportPolicyPeerAddresses(applied); len(got) != 1 || got[0] != "10.0.0.3" {
-		t.Fatalf("dynamic export reset peers = %#v, want only non-transition RR peer", got)
+	server := realDynamicPathServer(t)
+	applied, err := reconcilePolicyConfig(context.Background(), server, filepath.Join(t.TempDir(), "applied.json"), applied, applied.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := policyPlanMatches(context.Background(), server, bgpdaemon.BuildPolicyPlan(applied.Policy, applied.Paths)); err != nil || !matches {
+		t.Fatalf("native plan did not match current typed scopes: %t %v", matches, err)
+	}
+	var retired *gobgpapi.Policy
+	if err := server.ListPolicy(context.Background(), &gobgpapi.ListPolicyRequest{Name: "direct-export"}, func(policy *gobgpapi.Policy) { retired = policy }); err != nil || retired != nil {
+		t.Fatalf("pending retired peer history revived an export policy: policy=%v err=%v", retired, err)
 	}
 }
 
 func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T) {
-	server := &fakePathServer{}
+	server := newFakePathServer(t)
 	applied := bgpdaemon.AppliedConfig{
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 		Paths: []bgpdaemon.AppliedPath{bgpdaemon.StaticAppliedPath("10.20.0.0/24", nil), {
@@ -560,17 +601,18 @@ func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T
 }
 
 func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
-	server := &fakePathServer{}
+	server := newFakePathServer(t)
+	statePath := filepath.Join(t.TempDir(), "applied.json")
 	applied := bgpdaemon.AppliedConfig{
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Policy: bgpdaemon.PolicyIntent{RouterName: "restore", Scopes: []bgpdaemon.PolicyScope{{
+			Name: "lan-peer", Neighbors: []string{"10.252.0.2/32"}, ExportPolicyName: "routerd-lan-export-10-252-0-2",
+			ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"192.168.123.208/32"}},
+		}}},
 		Peers: map[string]bgpdaemon.AppliedPeer{
 			"10.252.0.2": {
-				Address:          "10.252.0.2",
-				ASN:              64512,
-				ExportPolicyName: "routerd-lan-export-10-252-0-2",
-				ExportPolicy: bgpdaemon.AppliedExportPolicy{
-					AllowedPrefixes: []string{"192.168.123.208/32"},
-				},
+				Address: "10.252.0.2",
+				ASN:     64512,
 			},
 		},
 		Paths: []bgpdaemon.AppliedPath{{
@@ -582,8 +624,17 @@ func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
 	if err := restoreAppliedPaths(context.Background(), server, &applied); err != nil {
 		t.Fatalf("restore paths: %v", err)
 	}
-	if err := refreshDynamicPathPolicies(context.Background(), server, applied); err != nil {
+	if err := server.policyOwner.AddPeer(context.Background(), &gobgpapi.AddPeerRequest{Peer: &gobgpapi.Peer{
+		Conf: &gobgpapi.PeerConf{NeighborAddress: "10.252.0.2", PeerAsn: 64512}, Transport: &gobgpapi.Transport{PassiveMode: true},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	if applied, err = refreshOwnedPathPolicies(context.Background(), server, statePath, applied); err != nil {
 		t.Fatalf("refresh dynamic policies: %v", err)
+	}
+	if matches, err := policyPlanMatches(context.Background(), server, bgpdaemon.BuildPolicyPlan(applied.Policy, applied.Paths)); err != nil || !matches {
+		t.Fatalf("native policy owner did not publish restored complete plan: matches=%t err=%v", matches, err)
 	}
 	if len(server.policyRequests) != 1 {
 		t.Fatalf("SetPolicies calls = %d, want restore policy refresh", len(server.policyRequests))
@@ -592,11 +643,11 @@ func TestRestoreAppliedRefreshesDynamicExportPolicy(t *testing.T) {
 		t.Fatalf("restored policies = %#v, want dynamic mobility prefix in export policy", server.policyRequests[0])
 	}
 	if len(server.resetRequests) != 1 {
-		t.Fatalf("ResetPeer calls = %d, want outbound soft reset for restored dynamic export policy", len(server.resetRequests))
+		t.Fatalf("ResetPeer calls = %d, want soft inbound/outbound reset for restored policy", len(server.resetRequests))
 	}
 	reset := server.resetRequests[0]
-	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_OUT {
-		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_BOTH {
+		t.Fatalf("ResetPeer request = %#v, want soft inbound/outbound reset for 10.252.0.2", reset)
 	}
 }
 
@@ -604,13 +655,15 @@ func TestControlSocketSerializesAppliedStateTransactions(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{
+		Policy: bgpdaemon.PolicyIntent{RouterName: "test"},
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 	}); err != nil {
 		t.Fatalf("write initial applied: %v", err)
 	}
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
-	paths := &fakePathServer{addStarted: started, releaseAdd: release}
+	paths := newFakePathServer(t)
+	paths.addStarted, paths.releaseAdd = started, release
 	socketPath := filepath.Join(dir, "control.sock")
 	stateLock := &notifyingStateMutex{attempts: make(chan struct{}, 2)}
 	server, err := serveControlSocketWithStateLock(socketPath, statePath, paths, stateLock)
@@ -684,6 +737,7 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	initial := bgpdaemon.AppliedConfig{
+		Policy: bgpdaemon.PolicyIntent{RouterName: "test"},
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 		Paths:  []bgpdaemon.AppliedPath{bgpdaemon.StaticAppliedPath("10.20.0.0/24", nil)},
 	}
@@ -691,7 +745,7 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 		t.Fatalf("write initial applied: %v", err)
 	}
 	socketPath := filepath.Join(dir, "control.sock")
-	paths := &fakePathServer{}
+	paths := newFakePathServer(t)
 	server, err := serveControlSocket(socketPath, statePath, paths)
 	if err != nil {
 		t.Fatalf("serve control socket: %v", err)
@@ -730,7 +784,7 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 		t.Fatalf("DELETE /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
 	}
 	resp.Body.Close()
-	if len(paths.deleted) != 1 || paths.deleted[0].GetPath().GetIdentifier() != dynamicPathIdentifier(body.Source) || len(paths.deleted[0].GetUuid()) != 0 {
+	if len(paths.deleted) != 1 || paths.deleted[0].GetPath().GetIdentifier() != bgpdaemon.NativePathIdentifier(body.Source) || len(paths.deleted[0].GetUuid()) != 0 {
 		t.Fatalf("dynamic withdrawal did not use exact native source identity: %#v", paths.deleted)
 	}
 	applied, _, err := bgpdaemon.ReadApplied(statePath)
@@ -749,6 +803,7 @@ func TestControlObservedPathAPIReadsLiveRIBNotAppliedPathJournal(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{
+		Policy: bgpdaemon.PolicyIntent{RouterName: "test"},
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 		Paths: []bgpdaemon.AppliedPath{{
 			Source: "MobilityPool/demo/node/router-a",
@@ -758,7 +813,7 @@ func TestControlObservedPathAPIReadsLiveRIBNotAppliedPathJournal(t *testing.T) {
 		t.Fatalf("write applied state: %v", err)
 	}
 	socketPath := filepath.Join(dir, "control.sock")
-	paths := &fakePathServer{observed: []bgpdaemon.ObservedPath{{
+	paths := &fakePathServer{policyOwner: realDynamicPathServer(t), observed: []bgpdaemon.ObservedPath{{
 		Prefix:      "10.77.60.11/32",
 		PeerAddress: "10.99.0.2",
 		Best:        true,
@@ -810,46 +865,42 @@ func TestControlPathAPIUpsertRefreshesDynamicExportPolicy(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	initial := bgpdaemon.AppliedConfig{
+		Policy: bgpdaemon.PolicyIntent{RouterName: "test", Scopes: []bgpdaemon.PolicyScope{{
+			Name: "lan-peer", Neighbors: []string{"10.252.0.2/32"}, Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.252.0.0/24"}},
+			ExportPolicyName: "routerd-lan-export-10-252-0-2", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"192.168.123.208/32"}},
+		}}},
 		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 		Peers: map[string]bgpdaemon.AppliedPeer{
 			"10.252.0.2": {
 				Address: "10.252.0.2",
 				ASN:     64512,
-				ImportPolicy: bgpdaemon.AppliedImportPolicy{
-					AllowedPrefixes: []string{"10.252.0.0/24"},
-				},
-				ExportPolicyName: "routerd-lan-export-10-252-0-2",
-				ExportPolicy: bgpdaemon.AppliedExportPolicy{
-					AllowedPrefixes: []string{"192.168.123.208/32"},
-				},
 			},
 		},
 	}
 	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
 		t.Fatalf("write initial applied: %v", err)
 	}
-	socketPath := filepath.Join(dir, "control.sock")
-	paths := &fakePathServer{}
-	server, err := serveControlSocket(socketPath, statePath, paths)
-	if err != nil {
-		t.Fatalf("serve control socket: %v", err)
+	paths := newFakePathServer(t)
+	if err := paths.policyOwner.AddPeer(context.Background(), &gobgpapi.AddPeerRequest{Peer: &gobgpapi.Peer{
+		Conf: &gobgpapi.PeerConf{NeighborAddress: "10.252.0.2", PeerAsn: 64512}, Transport: &gobgpapi.Transport{PassiveMode: true},
+	}}); err != nil {
+		t.Fatal(err)
 	}
-	defer server.Shutdown(context.Background())
-	client := unixHTTPClient(socketPath)
-	defer client.CloseIdleConnections()
 
 	body := bgpdaemon.AppliedPath{
 		Source: "MobilityPool/svnet1/node/pve-rt08",
 		Prefix: "192.168.123.132/32",
 		Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200},
 	}
-	resp := doJSON(t, client, http.MethodPost, "/v1/paths", body)
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		t.Fatalf("POST /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
+	wire, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
 	}
-	resp.Body.Close()
+	response := httptest.NewRecorder()
+	controlHandler(statePath, paths, &sync.Mutex{}).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/paths", bytes.NewReader(wire)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("POST /v1/paths status=%d body=%s", response.Code, response.Body.String())
+	}
 	if len(paths.policyRequests) == 0 {
 		t.Fatalf("SetPolicies calls = 0, want dynamic policy refresh")
 	}
@@ -858,22 +909,29 @@ func TestControlPathAPIUpsertRefreshesDynamicExportPolicy(t *testing.T) {
 		t.Fatalf("refreshed policies = %#v, want dynamic mobility prefix in export policy", lastPolicyRequest)
 	}
 	if len(paths.resetRequests) != 1 {
-		t.Fatalf("ResetPeer calls = %d, want one outbound soft reset", len(paths.resetRequests))
+		t.Fatalf("ResetPeer calls = %d, want one inbound/outbound soft reset", len(paths.resetRequests))
 	}
 	reset := paths.resetRequests[0]
-	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_OUT {
-		t.Fatalf("ResetPeer request = %#v, want soft outbound reset for 10.252.0.2", reset)
+	if reset.GetAddress() != "10.252.0.2" || !reset.GetSoft() || reset.GetDirection() != gobgpapi.ResetPeerRequest_DIRECTION_BOTH {
+		t.Fatalf("ResetPeer request = %#v, want soft inbound/outbound reset for 10.252.0.2", reset)
+	}
+	stored, _, err := bgpdaemon.ReadApplied(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if matches, err := policyPlanMatches(context.Background(), paths, bgpdaemon.BuildPolicyPlan(stored.Policy, stored.Paths)); err != nil || !matches {
+		t.Fatalf("published state lacks its matching native policy plan: %t %v", matches, err)
 	}
 }
 
 func TestControlPathAPIRejectsNonMobilityAndNonHostPaths(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
-	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"}}); err != nil {
+	if err := bgpdaemon.WriteApplied(statePath, bgpdaemon.AppliedConfig{Policy: bgpdaemon.PolicyIntent{RouterName: "test"}, Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1"}}); err != nil {
 		t.Fatalf("write applied: %v", err)
 	}
 	socketPath := filepath.Join(dir, "control.sock")
-	server, err := serveControlSocket(socketPath, statePath, &fakePathServer{})
+	server, err := serveControlSocket(socketPath, statePath, newFakePathServer(t))
 	if err != nil {
 		t.Fatalf("serve control socket: %v", err)
 	}
@@ -897,6 +955,7 @@ func TestUpsertDynamicPathReplacesNativeIdentityDespiteStaleUUID(t *testing.T) {
 	statePath := filepath.Join(dir, "applied.json")
 	source := "MobilityPool/demo/node/aws-router-a"
 	initial := bgpdaemon.AppliedConfig{
+		Policy:  bgpdaemon.PolicyIntent{RouterName: "test"},
 		Version: bgpdaemon.AppliedVersion,
 		Global:  bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
 		Paths: []bgpdaemon.AppliedPath{{
@@ -909,7 +968,7 @@ func TestUpsertDynamicPathReplacesNativeIdentityDespiteStaleUUID(t *testing.T) {
 	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
 		t.Fatalf("write initial applied: %v", err)
 	}
-	server := &fakePathServer{}
+	server := newFakePathServer(t)
 	_, got, err := upsertDynamicPath(context.Background(), server, statePath, bgpdaemon.AppliedPath{
 		Source: source,
 		Prefix: "10.77.60.11/32",
@@ -921,40 +980,49 @@ func TestUpsertDynamicPathReplacesNativeIdentityDespiteStaleUUID(t *testing.T) {
 	if got == nil || got.UUID == "" || got.UUID == bgpdaemon.EncodeUUID([]byte{9}) {
 		t.Fatalf("upserted path = %#v, want fresh UUID", got)
 	}
-	if len(server.deleted) != 0 || len(server.added) != 1 || server.added[0].GetPath().GetIdentifier() != dynamicPathIdentifier(source) {
+	if len(server.deleted) != 0 || len(server.added) != 1 || server.added[0].GetPath().GetIdentifier() != bgpdaemon.NativePathIdentifier(source) {
 		t.Fatalf("native replacement: delete/add = %d/%d, request=%#v", len(server.deleted), len(server.added), server.added)
 	}
 }
 
-func TestDynamicPathUpdateDefersPolicyRefreshBehindImportResetFence(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "applied.json")
+func TestDynamicPathUpdateCompletesPendingTypedPolicyBeforePublication(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "applied.json")
+	target := bgpdaemon.PolicyIntent{RouterName: "pending", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "current-peer", Neighbors: []string{"192.0.2.2/32"}, ExportPolicyName: "current-export",
+		Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"192.0.2.0/24"}},
+	}}}
 	initial := bgpdaemon.AppliedConfig{
-		Version:                  bgpdaemon.AppliedVersion,
-		PendingImportPolicyReset: true,
-		Global:                   bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
-		Peers:                    map[string]bgpdaemon.AppliedPeer{},
+		Version: bgpdaemon.AppliedVersion,
+		Policy:  bgpdaemon.PolicyIntent{RouterName: "old"}, PendingPolicy: &target,
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: -1},
 	}
 	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
-		t.Fatalf("write initial applied: %v", err)
+		t.Fatal(err)
 	}
-	server := &fakePathServer{}
+	server := newFakePathServer(t)
 	path := bgpdaemon.AppliedPath{Source: "MobilityPool/demo/node/aws-router-a", Prefix: "10.77.60.11/32"}
 	applied, updated, err := upsertDynamicPath(context.Background(), server, statePath, path)
 	if err != nil || updated == nil {
-		t.Fatalf("upsert behind import reset fence: applied=%#v updated=%#v err=%v", applied, updated, err)
+		t.Fatalf("upsert pending policy: updated=%#v err=%v", updated, err)
 	}
-	if len(server.policyRequests) != 0 || len(server.resetRequests) != 0 {
-		t.Fatalf("dynamic update refreshed policy behind import reset fence: policy=%d resets=%d", len(server.policyRequests), len(server.resetRequests))
+	if applied.PendingPolicy != nil || applied.Policy.RouterName != "pending" {
+		t.Fatalf("upsert acknowledged an incomplete/old policy: %#v", applied)
 	}
-	if !applied.PendingImportPolicyReset {
-		t.Fatalf("dynamic update cleared import reset fence: %#v", applied)
+	if len(server.policyRequests) != 2 || appliedPolicyRequestHasPrefix(server.policyRequests[0], "current-export-prefixes", path.Prefix) || !appliedPolicyRequestHasPrefix(server.policyRequests[1], "current-export-prefixes", path.Prefix) {
+		t.Fatalf("current policy did not include new path: %#v", server.policyRequests)
 	}
-	if _, err := deleteDynamicPath(context.Background(), server, statePath, path); err != nil {
-		t.Fatalf("delete behind import reset fence: %v", err)
+	if matches, err := policyPlanMatches(context.Background(), server, bgpdaemon.BuildPolicyPlan(target, applied.Paths)); err != nil || !matches {
+		t.Fatalf("upsert published without exact native policy: %t %v", matches, err)
 	}
-	if len(server.policyRequests) != 0 || len(server.resetRequests) != 0 {
-		t.Fatalf("dynamic delete refreshed policy behind import reset fence: policy=%d resets=%d", len(server.policyRequests), len(server.resetRequests))
+	applied, err = deleteDynamicPath(context.Background(), server, statePath, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(server.policyRequests) != 3 || len(bgpdaemon.NonStaticPaths(applied.Paths)) != 0 {
+		t.Fatalf("delete did not refresh the typed policy: %#v", applied)
+	}
+	if matches, err := policyPlanMatches(context.Background(), server, bgpdaemon.BuildPolicyPlan(target, applied.Paths)); err != nil || !matches {
+		t.Fatalf("delete published without exact native policy: %t %v", matches, err)
 	}
 }
 
