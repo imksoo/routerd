@@ -22,6 +22,7 @@ configure_yes=0
 configure_apply=1
 completed=0
 service_failed=0
+service_recovery_started=0
 backup_dir=
 
 usage()
@@ -139,11 +140,12 @@ restore_backup_target()
     backup=$1
     target=$2
     tmp="${target}.restore.$$"
-    rm -f "${tmp}"
-    install -d -m 0755 "$(dirname "${target}")"
+    rm -f "${tmp}" || return 1
+    install -d -m 0755 "$(dirname "${target}")" || return 1
     if ln "${backup}" "${tmp}" 2>/dev/null || cp -p "${backup}" "${tmp}"; then
-        mv -f "${tmp}" "${target}"
-        return 0
+        if mv -f "${tmp}" "${target}"; then
+            return 0
+        fi
     fi
     rm -f "${tmp}"
     echo "warning: failed to restore ${target} from ${backup}" >&2
@@ -169,7 +171,7 @@ rollback()
     if [ -f "${backup_dir}/remove.list" ]; then
         while IFS= read -r target; do
             [ -n "${target}" ] || continue
-            rm -f "${target}"
+            rm -f "${target}" || failed=1
         done < "${backup_dir}/remove.list"
     fi
     return "${failed}"
@@ -177,14 +179,39 @@ rollback()
 
 cleanup()
 {
-    status=$?
+    status=$1
+    trap - EXIT HUP INT TERM
+    retain_backup=0
     if [ "${completed}" -ne 1 ]; then
-        rollback
+        if [ "${service_recovery_started}" -eq 1 ]; then
+            echo "install interrupted after service recovery began; preserving installed files" >&2
+        elif ! rollback; then
+            echo "error: rollback failed; retaining recovery files at ${backup_dir}" >&2
+            retain_backup=1
+            [ "${status}" -ne 0 ] || status=1
+        fi
     fi
-    if [ -n "${backup_dir}" ] && [ -d "${backup_dir}" ]; then
-        rm -rf "${backup_dir}"
+    if [ "${retain_backup}" -eq 0 ] && [ -n "${backup_dir}" ] && [ -d "${backup_dir}" ]; then
+        if ! rm -rf "${backup_dir}"; then
+            echo "error: could not remove installer recovery directory ${backup_dir}" >&2
+            [ "${status}" -ne 0 ] || status=1
+        fi
     fi
     exit "${status}"
+}
+
+run_service_recovery()
+{
+    # A failing service-manager command can already have started a process.
+    # Commit this boundary before invoking it, including interruption windows.
+    service_recovery_started=1
+    service_touched=1
+    if "$@"; then
+        return 0
+    fi
+    echo "error: service recovery command failed: $*" >&2
+    service_failed=1
+    return 0
 }
 
 atomic_install()
@@ -639,9 +666,15 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
         wait_for_routerd_helper_unit_files_to_settle
     fi
 
-    systemctl daemon-reload
+    if ! systemctl daemon-reload; then
+        echo "error: could not reload routerd helper services" >&2
+        [ "${service_recovery_started}" -eq 1 ] || return 1
+        service_failed=1
+        return 0
+    fi
     if ! unit_listing=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null); then
         echo "error: could not inspect running routerd helper services" >&2
+        [ "${service_recovery_started}" -eq 1 ] || return 1
         service_failed=1
         return 0
     fi
@@ -650,12 +683,7 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
         [ "${unit}" = "routerd.service" ] && continue
         reason=$(routerd_helper_unit_restart_reason "${unit}") || continue
         echo "restarting ${unit}: ${reason}"
-        if systemctl restart "${unit}"; then
-            service_touched=1
-        else
-            echo "error: failed to restart ${unit}" >&2
-            service_failed=1
-        fi
+        run_service_recovery systemctl restart "${unit}"
     done
 }
 
@@ -1164,7 +1192,7 @@ write_dns_upstream()
             endpoint=${endpoint#*://}
             case "${protocol}" in
                 udp|tcp) ;;
-                tls|dot) protocol=dot ;;
+                tls|dot) protocol='dot' ;;
                 https|doh) protocol=doh ;;
                 *) echo "unsupported DNS upstream protocol: ${protocol}" >&2; return 1 ;;
             esac
@@ -1958,7 +1986,10 @@ fi
 
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/routerd-install.XXXXXX")
 touch "${backup_dir}/restore.list" "${backup_dir}/remove.list"
-trap cleanup EXIT HUP INT TERM
+trap 'cleanup $?' EXIT
+trap 'cleanup 129' HUP
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 
 if [ -x "${bindir}/routerd" ]; then
     mode=upgrade
@@ -2075,8 +2106,7 @@ case "${os}" in
                     if [ "${dry_run}" -eq 1 ]; then
                         echo "dry-run: systemctl restart routerd.service"
                     else
-                        systemctl restart routerd.service
-                        service_touched=1
+                        run_service_recovery systemctl restart routerd.service
                     fi
                 fi
                 if [ "${dry_run}" -eq 0 ]; then
@@ -2114,15 +2144,13 @@ case "${os}" in
                         if [ "${dry_run}" -eq 1 ]; then
                             echo "dry-run: service routerd restart"
                         else
-                            service routerd restart
-                            service_touched=1
+                            run_service_recovery service routerd restart
                         fi
                     else
                         if [ "${dry_run}" -eq 1 ]; then
                             echo "dry-run: service routerd onestart"
                         else
-                            service routerd onestart
-                            service_touched=1
+                            run_service_recovery service routerd onestart
                         fi
                     fi
                 else

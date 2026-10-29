@@ -30,3 +30,15 @@ func TestRunExecutorRejectsSuccessFromUnknownEnvelope(t *testing.T) {
 		})
 	}
 }
+
+func TestRunExecutorAcceptsUnknownOutcomeWithCapturedFacts(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "executor")
+	wire := `{"apiVersion":"provideraction.routerd.net/v1alpha1","kind":"ExecuteActionResult","status":{"status":"outcomeUnknown","observed":{"priorSourceDestCheck":"true"},"error":"write reply lost"}}`
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\ncat >/dev/null\nprintf '%s' '"+wire+"'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	result, _, err := RunExecutor(t.Context(), executorSpec(executable), NewExecuteActionRequest(ExecuteActionRequestSpec{Mode: ModeExecute, Action: "ensure-forwarding-enabled", Provider: "aws", IdempotencyKey: "key"}))
+	if err != nil || result.Status.Status != ResultOutcomeUnknown || result.Status.Observed["priorSourceDestCheck"] != "true" {
+		t.Fatalf("unknown provider result lost its facts: %+v %v", result, err)
+	}
+}

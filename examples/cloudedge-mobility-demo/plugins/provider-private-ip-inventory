@@ -57,6 +57,12 @@ def run_json(argv, timeout=None):
     return json.loads(proc.stdout)
 
 
+def required_array(value, description):
+    if not isinstance(value, list):
+        raise ValueError(description + " must be an observed JSON array")
+    return value
+
+
 def resolve_cli(name, env_var):
     override = os.environ.get(env_var, "").strip()
     if override:
@@ -384,11 +390,11 @@ def azure_arm_get(token, resource_path, api_version, params=None):
 def azure_arm_get_paged_values(token, resource_path, api_version, params=None):
     values = []
     doc = azure_arm_get(token, resource_path, api_version, params=params)
-    values.extend(doc.get("value") or [])
+    values.extend(required_array(doc.get("value"), "Azure inventory value"))
     next_link = doc.get("nextLink", "")
     while next_link:
         doc = azure_arm_get(token, next_link, "")
-        values.extend(doc.get("value") or [])
+        values.extend(required_array(doc.get("value"), "Azure inventory value"))
         next_link = doc.get("nextLink", "")
     return values
 
@@ -451,15 +457,16 @@ def aws_eni_instance_metadata(region, subnet):
 
 def aws_route_table_captured_addresses(region, route_table_ref, self_nic, prefix):
     if not route_table_ref or not self_nic:
-        return []
-    try:
-        doc = aws_cli(region, ["ec2", "describe-route-tables",
-                               "--route-table-ids", route_table_ref])
-    except Exception:
-        return []
+        raise ValueError("AWS route-table inventory requires routeTableRef and selfNicRef")
+    doc = aws_cli(region, ["ec2", "describe-route-tables",
+                           "--route-table-ids", route_table_ref])
+    tables = required_array(doc.get("RouteTables"), "AWS RouteTables")
+    matching = [table for table in tables if table.get("RouteTableId") == route_table_ref]
+    if len(matching) != 1:
+        raise ValueError("AWS route-table inventory did not return the requested table " + route_table_ref)
     out = []
-    for table in doc.get("RouteTables") or []:
-        for route in table.get("Routes") or []:
+    for table in matching:
+        for route in required_array(table.get("Routes"), "AWS table Routes"):
             address = route.get("DestinationCidrBlock", "")
             if route.get("NetworkInterfaceId", "") != self_nic:
                 continue
@@ -556,8 +563,7 @@ def aws_inventory(spec):
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
     if strategy == "route-table":
         captured = aws_route_table_captured_addresses(region, route_table_ref, self_nic, prefix)
-        if captured:
-            self_info["capturedAddresses"] = captured
+        self_info["capturedAddresses"] = captured
     if self_resource_ref:
         self_info["resourceRef"] = self_resource_ref
         self_info["resourceType"] = "router-nic"
@@ -707,27 +713,25 @@ def azure_inventory_cli(spec):
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
-    if strategy == "route-table" and route_table_name and next_hop_ip:
-        try:
-            routes = az_cli(["network", "route-table", "route", "list",
-                             "--resource-group", resource_group,
-                             "--route-table-name", route_table_name])
-            captured = []
-            for route in routes or []:
-                address = route.get("addressPrefix") or route.get("address_prefix") or ""
-                hop_type = route.get("nextHopType") or route.get("next_hop_type") or ""
-                hop_ip = route.get("nextHopIpAddress") or route.get("next_hop_ip_address") or ""
-                if hop_type and hop_type != "VirtualAppliance":
-                    continue
-                if hop_ip != next_hop_ip:
-                    continue
-                if not address_in_prefix(address, prefix):
-                    continue
-                captured.append(address)
-            if captured:
-                self_info["capturedAddresses"] = sorted(set(captured))
-        except Exception:
-            pass
+    if strategy == "route-table":
+        if not route_table_name or not next_hop_ip:
+            raise ValueError("Azure route-table inventory requires routeTableRef/name and nextHopIPAddress")
+        routes = az_cli(["network", "route-table", "route", "list",
+                         "--resource-group", resource_group,
+                         "--route-table-name", route_table_name])
+        captured = []
+        for route in required_array(routes, "Azure route list"):
+            address = route.get("addressPrefix") or route.get("address_prefix") or ""
+            hop_type = route.get("nextHopType") or route.get("next_hop_type") or ""
+            hop_ip = route.get("nextHopIpAddress") or route.get("next_hop_ip_address") or ""
+            if hop_type and hop_type != "VirtualAppliance":
+                continue
+            if hop_ip != next_hop_ip:
+                continue
+            if not address_in_prefix(address, prefix):
+                continue
+            captured.append(address)
+        self_info["capturedAddresses"] = sorted(set(captured))
     if self_resource_ref:
         self_info["resourceRef"] = self_resource_ref
         self_info["resourceType"] = "router-nic"
@@ -845,28 +849,26 @@ def azure_inventory_rest(spec):
                 entry["instanceState"] = instance_state
             ips.append(entry)
     self_info = {"nicRef": self_nic, "subnetRef": subnet, "privateIPs": sorted(set(self_private_ips))}
-    if strategy == "route-table" and route_table_name and next_hop_ip:
-        try:
-            route_path = rg_path + "/providers/Microsoft.Network/routeTables/{}/routes".format(
-                urllib.parse.quote(route_table_name, safe=""),
-            )
-            captured = []
-            for route in azure_arm_get_paged_values(token, route_path, "2023-09-01"):
-                props = route.get("properties") or {}
-                address = route.get("addressPrefix") or props.get("addressPrefix") or ""
-                hop_type = route.get("nextHopType") or props.get("nextHopType") or ""
-                hop_ip = route.get("nextHopIpAddress") or props.get("nextHopIpAddress") or ""
-                if hop_type and hop_type != "VirtualAppliance":
-                    continue
-                if hop_ip != next_hop_ip:
-                    continue
-                if not address_in_prefix(address, prefix):
-                    continue
-                captured.append(address)
-            if captured:
-                self_info["capturedAddresses"] = sorted(set(captured))
-        except Exception:
-            pass
+    if strategy == "route-table":
+        if not route_table_name or not next_hop_ip:
+            raise ValueError("Azure route-table inventory requires routeTableRef/name and nextHopIPAddress")
+        route_path = rg_path + "/providers/Microsoft.Network/routeTables/{}/routes".format(
+            urllib.parse.quote(route_table_name, safe=""),
+        )
+        captured = []
+        for route in azure_arm_get_paged_values(token, route_path, "2023-09-01"):
+            props = route.get("properties") or {}
+            address = route.get("addressPrefix") or props.get("addressPrefix") or ""
+            hop_type = route.get("nextHopType") or props.get("nextHopType") or ""
+            hop_ip = route.get("nextHopIpAddress") or props.get("nextHopIpAddress") or ""
+            if hop_type and hop_type != "VirtualAppliance":
+                continue
+            if hop_ip != next_hop_ip:
+                continue
+            if not address_in_prefix(address, prefix):
+                continue
+            captured.append(address)
+        self_info["capturedAddresses"] = sorted(set(captured))
     if self_resource_ref:
         self_info["resourceRef"] = self_resource_ref
         self_info["resourceType"] = "router-nic"

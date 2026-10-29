@@ -425,7 +425,7 @@ spec:
 
 func TestInstallFailsWhenServiceRecoveryFails(t *testing.T) {
 	requireLinuxSystemdFixture(t)
-	for _, scenario := range []string{"missing-status-socket", "scheduled-restart-timeout", "helper-restart-failure"} {
+	for _, scenario := range []string{"missing-status-socket", "scheduled-restart-timeout", "helper-restart-failure", "primary-restart-failure", "post-restart-reload-failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			pkg := filepath.Join(dir, "package")
@@ -446,6 +446,14 @@ func TestInstallFailsWhenServiceRecoveryFails(t *testing.T) {
 			writeExecutable(t, filepath.Join(binDir, "readlink"), fmt.Sprintf("#!/bin/sh\necho '%s/sbin/routerd-bgp (deleted)'\n", prefix))
 			writeExecutable(t, filepath.Join(binDir, "systemctl"), `#!/bin/sh
 case "$*" in
+  "restart routerd.service")
+    [ "$INSTALL_SCENARIO" != "primary-restart-failure" ]; exit $? ;;
+  "daemon-reload")
+    if [ "$INSTALL_SCENARIO" = "post-restart-reload-failure" ]; then
+      if [ -f "$INSTALL_RELOAD_MARKER" ]; then exit 1; fi
+      touch "$INSTALL_RELOAD_MARKER"
+    fi
+    exit 0 ;;
   "is-active --quiet routerd.service")
     [ "$INSTALL_SCENARIO" != "helper-restart-failure" ]; exit $? ;;
   *routerd-self-restart-*)
@@ -466,6 +474,7 @@ esac
 			out, err := runInstallWithEnv(t, pkg, prefix, []string{
 				"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 				"INSTALL_SCENARIO=" + scenario,
+				"INSTALL_RELOAD_MARKER=" + filepath.Join(dir, "reload.marker"),
 				"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
 				"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + filepath.Join(dir, "systemd"),
 				"ROUTERD_INSTALL_STATUS_SOCKET=" + filepath.Join(dir, "missing.sock"),

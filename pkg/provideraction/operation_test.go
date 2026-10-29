@@ -196,3 +196,56 @@ func TestUnresolvedProviderOperationFencesDifferentKeyAndRollback(t *testing.T) 
 		})
 	}
 }
+
+func TestExplicitProviderUnknownRetainsFactsAndCannotBeReimported(t *testing.T) {
+	store := mustStore(t)
+	runner := &fakeRunner{result: ExecuteActionResult{Status: ExecuteActionResultStatus{Status: ResultOutcomeUnknown, Observed: map[string]string{"priorSourceDestCheck": "true"}, Error: "write reply lost"}}}
+	engine := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, engine, "explicit-unknown")
+	if err := engine.Approve(id, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Execute(t.Context(), id, allowPolicy()); err == nil {
+		t.Fatal("unknown write reported success")
+	}
+	if _, err := engine.ImportFromDynamicParts(); err != nil {
+		t.Fatal(err)
+	}
+	row, _, err := store.GetActionByID(id)
+	if err != nil || row.Status != state.ActionOutcomeUnknown || row.Observed["priorSourceDestCheck"] != "true" {
+		t.Fatalf("unknown outcome lost durable facts: %+v %v", row, err)
+	}
+	if err := engine.Execute(t.Context(), id, allowPolicy()); err == nil || runner.calls != 1 {
+		t.Fatalf("unknown write replayed: calls=%d err=%v", runner.calls, err)
+	}
+	if err := engine.Rollback(t.Context(), id, allowPolicy()); err == nil || runner.calls != 1 {
+		t.Fatalf("unknown write was undone: calls=%d err=%v", runner.calls, err)
+	}
+}
+
+func TestExplicitUnknownUndoKeepsForwardFactsAndBlocksAnotherAttempt(t *testing.T) {
+	store := mustStore(t)
+	runner := &fakeRunner{result: succeededResult()}
+	runner.result.Status.Observed = map[string]string{"priorSourceDestCheck": "true"}
+	engine := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	id := importOne(t, store, engine, "explicit-unknown-undo")
+	if err := engine.Approve(id, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Execute(t.Context(), id, allowPolicy()); err != nil {
+		t.Fatal(err)
+	}
+	runner.result.Status.Status = ResultOutcomeUnknown
+	runner.result.Status.Error = "undo reply lost"
+	if err := engine.Rollback(t.Context(), id, allowPolicy()); err == nil {
+		t.Fatal("unknown undo reported success")
+	}
+	row, _, err := store.GetActionByID(id)
+	if err != nil || row.Status != state.ActionRollbackUnknown || row.Observed["priorSourceDestCheck"] != "true" {
+		t.Fatalf("unknown undo lost original forward facts: %+v %v", row, err)
+	}
+	restarted := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
+	if err := restarted.Rollback(t.Context(), id, allowPolicy()); err == nil || runner.calls != 2 {
+		t.Fatalf("unknown undo replayed: calls=%d err=%v", runner.calls, err)
+	}
+}

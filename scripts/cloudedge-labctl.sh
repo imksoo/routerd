@@ -5,11 +5,9 @@
 # An agent (or operator) drives the full lab lifecycle without reading runbooks:
 #   up -> deploy -> smoke -> failover -> evidence collect -> down
 #
-# Non-cloud logic (run-id/tag convention, TTL/teardown guard, evidence assembly,
-# connectivity matrix orchestration, fault primitives) is fully implemented here.
-# Real per-provider provisioning either WRAPS the existing lab package
-# (examples/cloudedge-mobility-demo/*) or is clearly marked with TODO(lab-operator)
-# stubs for Terraform/CLI wiring. Running --help / dry paths needs NO credentials.
+# Run-id/tag planning, evidence assembly and connectivity orchestration are
+# available here. Provisioning, node deployment, fault injection and teardown
+# have no live backend; those commands reject CE_DRY_RUN=0.
 #
 # Human gates (NOT automated here): budget approval, credential/permission grant,
 # final merge approval, production rollout. See docs/how-to/cloudedge-autonomous-lab.md.
@@ -22,9 +20,6 @@ REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 
 # Where lab state (run manifests) lives. Overridable for tests.
 CE_STATE_DIR="${CE_STATE_DIR:-${TMPDIR:-/tmp}/cloudedge-labctl}"
-# DEMO_DIR is referenced by provider wrappers (run-demo.sh reuse) once wired.
-# shellcheck disable=SC2034
-DEMO_DIR="${CE_DEMO_DIR:-$REPO_ROOT/examples/cloudedge-mobility-demo}"
 SCHEMA_FILE="$SCRIPT_DIR/cloudedge-evidence-schema.json"
 MATRIX_SCRIPT="$SCRIPT_DIR/cloudedge-connectivity-matrix.sh"
 
@@ -35,6 +30,7 @@ CE_PURPOSE="${CE_PURPOSE:-cloudedge-sam-failover-lab}"
 # DRY_RUN=1 (default for safety on cloud-touching ops unless --commit/credentials).
 # When set, provider mutations only print what they WOULD do.
 DRY_RUN="${CE_DRY_RUN:-1}"
+case "$DRY_RUN" in 0|1) ;; *) printf '%s\n' 'CE_DRY_RUN must be 0 or 1' >&2; exit 1 ;; esac
 
 log()  { printf '%s %s\n' "[$(date -u +%H:%M:%SZ)]" "$*" >&2; }
 die()  { printf '%s: %s\n' "$SELF" "$*" >&2; exit 1; }
@@ -148,6 +144,7 @@ order_providers() {
   case "$order" in
     declared|"")
       printf '%s\n' "$providers"
+      return 0
       ;;
     cost-optimized|slow-first)
       # Start non-billable/on-prem and historically slower providers first so
@@ -198,15 +195,12 @@ USAGE:
               brought-up lab in place for inspection (default: a failed/interrupted
               'up' auto-tears-down; a clean 'up' always persists until 'down'/TTL).
 
-Prints the run-id on stdout. Per-provider start either wraps the existing lab env
-or is a clearly-marked TODO(lab-operator) stub. No credentials are needed for --help.
+Prints a simulation run-id on stdout. Live provisioning is unavailable and fails
+before writing a manifest. No credentials are needed for --help or simulation.
 EOF
 }
 
 provider_start() {
-  # TODO(lab-operator): wire real allocation (Terraform/OpenTofu or provider CLI).
-  # First pass: wrap the pre-provisioned lab from examples/cloudedge-mobility-demo,
-  # tagging existing resources with the run-id tag set. Stubbed when DRY_RUN=1.
   local provider=$1 run_id=$2 ttl_expires=$3
   local tags; tags=$(cloudedge_tags "$run_id" "$ttl_expires" "$provider")
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -214,24 +208,8 @@ provider_start() {
     printf '        %s\n' "$tags" >&2
     return 0
   fi
-  case "$provider" in
-    aws)
-      have aws || die "aws CLI not found (provider=aws)"
-      # TODO(lab-operator): aws ec2 create-tags / run-instances against lab AMIs.
-      log "aws: TODO(lab-operator) real allocation not wired; tag-only against env refs"
-      ;;
-    azure)
-      have az || die "az CLI not found (provider=azure)"
-      log "azure: TODO(lab-operator) real allocation not wired; tag-only against env refs"
-      ;;
-    oci)
-      have oci || die "oci CLI not found (provider=oci)"
-      log "oci: TODO(lab-operator) real allocation not wired; tag-only against env refs"
-      ;;
-    onprem)
-      log "onprem: no cloud allocation; uses pre-provisioned lab node(s)"
-      ;;
-  esac
+  log "up: live provisioning is unsupported (provider=$provider); no resources were allocated"
+  return 1
 }
 
 cmd_up() {
@@ -257,6 +235,7 @@ cmd_up() {
   esac
   validate_providers "$providers"
   providers=$(order_providers "$providers" "$provider_order")
+  [[ "$DRY_RUN" == "1" ]] || die "up: live provisioning is unsupported; no manifest was created"
   [[ -n "$scenario" ]] || scenario="$profile"
 
   # Validate --ttl up-front and hard-fail before any provider_start. duration_to_secs
@@ -312,8 +291,8 @@ USAGE:
                  --build wins if both given; its source identity remains unconfirmed.
   --run-id ID    Target the nodes of this run (default: latest manifest).
 
-Node push wraps examples/cloudedge-mobility-demo deployment conventions, or is a
-TODO(lab-operator) stub. Build is local and needs no credentials; '--help' is dry.
+Live node deployment is unavailable and fails before building or writing state.
+Simulation describes the build and deployment plan; '--help' needs no credentials.
 EOF
 }
 
@@ -328,6 +307,7 @@ cmd_deploy() {
       *) die "deploy: unknown argument: $1" ;;
     esac
   done
+  [[ "$DRY_RUN" == "1" ]] || die "deploy: live node deployment is unsupported; no build or node push was performed"
 
   if [[ -n "$build_path" ]]; then
     [[ -e "$build_path" ]] || die "deploy: --build path not found: $build_path"
@@ -347,29 +327,12 @@ path,requested,requested_sha,actual,tree,dry=sys.argv[1:]
 json.dump({"requestedRef":requested,"requestedSourceCommit":requested_sha,"actualSourceCommit":actual,"actualSourceTree":tree,"requestedCommitUsed":False,"buildPerformed":False,"dryRun":dry=="1"},open(path,"w"),indent=2)
 PYBUILD
     log "deploy: current source commit=$actual_source tree=$source_tree; requested=$commit"
-    if [[ "$DRY_RUN" == "1" ]]; then
-      log "[dry] would run: make -C $REPO_ROOT dist (source=$actual_source); build not performed"
-    else
-      ( cd "$REPO_ROOT" && CGO_ENABLED=0 make dist ) || die "deploy: make dist failed"
-      source_status=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal) || die "deploy: post-build source status unavailable"
-      [[ "$(git -C "$REPO_ROOT" rev-parse HEAD)" == "$actual_source" ]] && [[ -z "$source_status" ]] || die "deploy: source changed during build"
-      python3 - "$CE_STATE_DIR/deploy-build-provenance.json" <<'PYBUILD'
-import json,sys
-path=sys.argv[1];data=json.load(open(path));data.update(requestedCommitUsed=True,buildPerformed=True);json.dump(data,open(path,"w"),indent=2)
-PYBUILD
-    fi
+    log "[dry] would run: make -C $REPO_ROOT dist (source=$actual_source); build not performed"
   else
     die "deploy: one of --build <path> or --commit <ref> is required"
   fi
 
-  # TODO(lab-operator): push artifact to each node and restart routerd /
-  # routerd-eventd. The demo package already encodes this in run-demo.sh
-  # (install_secret_and_config); reuse it once node SSH targets are in env.
-  if [[ "$DRY_RUN" == "1" ]]; then
-    log "[dry] would push dist to lab nodes and restart routerd + routerd-eventd@cloudedge"
-  else
-    log "deploy: TODO(lab-operator) node push not wired in first pass; reuse run-demo.sh install path"
-  fi
+  log "[dry] would push dist to lab nodes and restart routerd + routerd-eventd@cloudedge"
 }
 
 # =============================================================================
@@ -431,8 +394,8 @@ USAGE:
   --node NAME     Specific node (default: the provider's active router).
 
 Each fault is a primitive an agent injects, then re-runs 'smoke' to verify recovery.
-Real injection wraps demo/provider tooling or is a TODO(lab-operator) stub; the
-fault is always logged. '--help' is dry and needs no credentials.
+Live fault injection is unavailable and fails without reporting an injected fault.
+Simulation logs the planned fault; '--help' needs no credentials.
 EOF
 }
 
@@ -462,29 +425,7 @@ cmd_failover() {
     return 0
   fi
 
-  # TODO(lab-operator): wire real injection. Mapping for the first pass:
-  case "$fault" in
-    stop-active)
-      # aws ec2 stop-instances / az vm deallocate / oci compute instance action STOP
-      log "stop-active: TODO(lab-operator) provider stop not wired; see reset-lab.sh for CLI shape"
-      ;;
-    drain)
-      # Re-apply <provider> config with maintenance.drain=true (run-demo.sh *-drain.yaml).
-      log "drain: TODO(lab-operator) reuse run-demo.sh *-drain.yaml apply path"
-      ;;
-    heartbeat-stop)
-      # ssh node: sudo systemctl stop routerd-eventd@cloudedge.service
-      log "heartbeat-stop: TODO(lab-operator) ssh stop routerd-eventd not wired"
-      ;;
-    executor-fail)
-      # Revoke/scope-down the instance identity so provider mutation is denied.
-      log "executor-fail: TODO(lab-operator) identity scope-down not wired"
-      ;;
-    stale-replay)
-      # Insert a stale-epoch action_executions row (see probe_stale_gate_on_aws_b).
-      log "stale-replay: TODO(lab-operator) reuse run-demo.sh probe_stale_gate_on_aws_b"
-      ;;
-  esac
+  die "failover: live fault injection is unsupported; no fault was injected"
 }
 
 # =============================================================================
@@ -500,7 +441,7 @@ USAGE:
                          [--cloud-ingress-matrix-json <file>]
                          [--provider-state-json <file>] [--timing-json <file>]
                          [--protocol-json <file>] [--l2-loop-json <file>]
-                         [--result pass|fail]
+                         [--result pass|fail] [--required-assertions <JSON-array>]
 
   --out DIR        Evidence bundle output directory (required).
   --run-id ID      Run id (default: latest manifest). Sets runId in the JSON.
@@ -519,7 +460,9 @@ USAGE:
                   Protocol transparency JSON from cloudedge-protocol-probe.sh.
   --l2-loop-json F
                   L2 loop/STP stability JSON from cloudedge-l2-loop-probe.sh.
-  --result R       Force overall result; default derived from inputs.
+  --result R       An explicit fail can lower the result; pass requires evidence.
+  --required-assertions JSON
+                  Names which must each have passing evidence for this scenario.
 
 Writes <out>/result.json validating against cloudedge-evidence-schema.json plus a
 summary. Pure assembly: no credentials needed. '--help' is dry.
@@ -802,7 +745,7 @@ cmd_evidence() {
   local sub="${1:-}"; [[ "$sub" == "-h" || "$sub" == "--help" ]] && { evidence_usage; exit 0; }
   [[ "$sub" == "collect" ]] || { evidence_usage >&2; die "evidence: expected subcommand 'collect'"; }
   shift
-  local out="" run_id="" scenario="" commit="" matrix_json="" cloud_ingress_matrix_json="" provider_state_json="" timing_json="" protocol_json="" l2_loop_json="" forced_result=""
+  local out="" run_id="" scenario="" commit="" matrix_json="" cloud_ingress_matrix_json="" provider_state_json="" timing_json="" protocol_json="" l2_loop_json="" forced_result="" required_assertions='[]'
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out) out="${2:-}"; shift 2 ;;
@@ -816,11 +759,13 @@ cmd_evidence() {
       --protocol-json) protocol_json="${2:-}"; shift 2 ;;
       --l2-loop-json) l2_loop_json="${2:-}"; shift 2 ;;
       --result) forced_result="${2:-}"; shift 2 ;;
+      --required-assertions) required_assertions="${2:-}"; shift 2 ;;
       -h|--help) evidence_usage; exit 0 ;;
       *) die "evidence: unknown argument: $1" ;;
     esac
   done
   [[ -n "$out" ]] || { evidence_usage >&2; die "evidence collect: --out is required"; }
+  case "$forced_result" in ''|pass|fail) ;; *) die "evidence: --result must be pass or fail" ;; esac
 
   [[ -n "$run_id" ]] || run_id=$(latest_run_id || true)
   [[ -n "$run_id" ]] || run_id=$(cloudedge_run_id "${scenario:-adhoc}")
@@ -886,35 +831,22 @@ cmd_evidence() {
   # real journal/epoch evidence is the lab operator's wire-up (TODO).
   local a_epoch="na" a_reassign="na" a_residue="na" a_stale="na"
 
-  local result="$forced_result"
-  if [[ -z "$result" ]]; then
-    if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" || "$failover_recovery" == "fail" || "$protocol_transparency" == "fail" || "$ftp_active_passive" == "fail" || "$nfs_rpc" == "fail" || "$bulk_transfer_pmtu" == "fail" || "$protocol_src_pres" == "fail" || "$protocol_no_nat" == "fail" || "$l2_loop_free" == "fail" || "$broadcast_storm_absent" == "fail" || "$stp_rstp_stable" == "fail" || "$mac_flap_absent" == "fail" || "$failover_ping_stable" == "fail" || "$l2_mechanism_recorded" == "fail" ]]; then
-      result="fail"
-    elif [[ "$matrix_overall" == "pass" && "$directed_matrix" == "pass" ]]; then
-      result="pass"
-    else
-      result="fail"   # no positive evidence => not a pass
-    fi
+  local result
+  if [[ "$matrix_overall" == "fail" || "$directed_matrix" == "fail" || "$src_pres" == "fail" || "$gw_ok" == "fail" || "$no_nat" == "fail" || "$failover_recovery" == "fail" || "$protocol_transparency" == "fail" || "$ftp_active_passive" == "fail" || "$nfs_rpc" == "fail" || "$bulk_transfer_pmtu" == "fail" || "$protocol_src_pres" == "fail" || "$protocol_no_nat" == "fail" || "$l2_loop_free" == "fail" || "$broadcast_storm_absent" == "fail" || "$stp_rstp_stable" == "fail" || "$mac_flap_absent" == "fail" || "$failover_ping_stable" == "fail" || "$l2_mechanism_recorded" == "fail" ]]; then
+    result="fail"
+  elif [[ "$matrix_overall" == "pass" && "$directed_matrix" == "pass" ]]; then
+    result="pass"
+  else
+    result="fail"   # no positive evidence => not a pass
   fi
 
   if [[ "$aws_ps" == fail || "$oci_ps" == fail || "$az_ps" == fail || "$onprem_ps" == fail ]]; then
     result=fail
   fi
 
-  local result_file="$out/result.json"
-  cat > "$result_file" <<EOF
-{
-  "runId": "$run_id",
-  "commit": "$commit",
-  "scenario": "$scenario",
-  "result": "$result",
-  "providers": {
-    "aws":    { "dataplane": "$aws_dp",    "providerState": "$aws_ps" },
-    "oci":    { "dataplane": "$oci_dp",    "providerState": "$oci_ps" },
-    "azure":  { "dataplane": "$az_dp",     "providerState": "$az_ps" },
-    "onprem": { "dataplane": "$onprem_dp", "providerState": "$onprem_ps" }
-  },
-  "assertions": [
+  local assertions_json
+  assertions_json=$(cat <<EOF
+[
     { "name": "directed_ping_ssh_matrix", "result": "$directed_matrix" },
     { "name": "ownership_epoch_bumped", "result": "$a_epoch" },
     { "name": "allow_reassignment_maintained_until_success", "result": "$a_reassign" },
@@ -936,7 +868,41 @@ cmd_evidence() {
     { "name": "l2_suppression_mechanism_recorded", "result": "$l2_mechanism_recorded" },
     { "name": "old_holder_residue_absent", "result": "$a_residue" },
     { "name": "stale_action_fenced", "result": "$a_stale" }
-  ],
+]
+EOF
+)
+  # An explicit pass never promotes missing/failed proof. A scenario may require
+  # more assertions than the generic matrix collector knows how to establish.
+  result=$(python3 - "$result" "$forced_result" "$required_assertions" "$assertions_json" <<'PY'
+import json, sys
+result, forced, raw_required, raw_assertions = sys.argv[1:]
+required = json.loads(raw_required)
+if not isinstance(required, list) or any(not isinstance(name, str) or not name for name in required):
+    raise SystemExit("required assertions must be a JSON array of names")
+assertions = {item["name"]: item["result"] for item in json.loads(raw_assertions)}
+missing = [name for name in required if assertions.get(name) != "pass"]
+if missing:
+    print("required assertions lack passing evidence: " + ", ".join(missing), file=sys.stderr)
+if missing or forced == "fail":
+    result = "fail"
+print(result)
+PY
+)
+
+  local result_file="$out/result.json"
+  cat > "$result_file" <<EOF
+{
+  "runId": "$run_id",
+  "commit": "$commit",
+  "scenario": "$scenario",
+  "result": "$result",
+  "providers": {
+    "aws":    { "dataplane": "$aws_dp",    "providerState": "$aws_ps" },
+    "oci":    { "dataplane": "$oci_dp",    "providerState": "$oci_ps" },
+    "azure":  { "dataplane": "$az_dp",     "providerState": "$az_ps" },
+    "onprem": { "dataplane": "$onprem_dp", "providerState": "$onprem_ps" }
+  },
+  "assertions": $assertions_json,
   "timings": $timings_obj,
   "qualificationTimings": $qualification_timings_obj,
   "protocols": $protocols_obj,
@@ -1052,9 +1018,9 @@ USAGE:
   $SELF down --expired          Tear down ANY run whose ttl_expires_at is in the past.
   $SELF down --force            Skip confirmation (implied for automation).
 
-Safe with no lab present: '--expired' is a no-op exit 0. Real teardown wraps
-reset-lab.sh / provider CLIs filtered by the run-id tag, or is a TODO(lab-operator)
-stub. '--help' is dry and needs no credentials.
+Safe with no manifest present: '--expired' is a no-op exit 0. Live teardown is
+unavailable and fails while retaining manifests. Simulation retains manifests too.
+'--help' needs no credentials.
 EOF
 }
 
@@ -1076,14 +1042,11 @@ teardown_run() {
   log "down: tearing down run_id=$run_id"
   if [[ "$DRY_RUN" == "1" ]]; then
     log "[dry] would filter cloud resources by tag routerd.cloudedge.run_id=$run_id and delete/stop them"
-  else
-    # TODO(lab-operator): for each provider, query resources by the run-id tag and
-    # stop/delete them. The CLI shapes are in reset-lab.sh (aws ec2 stop-instances,
-    # az vm deallocate, oci compute instance action STOP, secondary-IP unassign).
-    log "down: TODO(lab-operator) tag-filtered provider teardown not wired; reuse reset-lab.sh shapes"
+    log "[dry] retaining manifest; provider teardown was not performed"
+    return 0
   fi
-  [[ -f "$mf" ]] && rm -f "$mf" && log "down: removed manifest for $run_id"
-  return 0
+  log "down: live provider teardown is unsupported; retaining manifest $mf"
+  return 1
 }
 
 cmd_down() {
@@ -1099,7 +1062,7 @@ cmd_down() {
   done
 
   if [[ "$expired" == "1" ]]; then
-    local now mf rid exp any="0"
+    local now mf rid exp any="0" failed=0
     now=$(date -u +%s)
     if ! ls "$CE_STATE_DIR"/*.manifest >/dev/null 2>&1; then
       log "down --expired: no lab manifests; nothing to do"
@@ -1113,11 +1076,12 @@ cmd_down() {
       exp_s=$(date -u -d "$exp" +%s 2>/dev/null || date -u -j -f %Y-%m-%dT%H:%M:%SZ "$exp" +%s 2>/dev/null || echo 0)
       if [[ "$exp_s" != "0" && "$exp_s" -lt "$now" ]]; then
         log "down --expired: $rid expired at $exp"
-        teardown_run "$rid"; any="1"
+        teardown_run "$rid" || failed=1
+        any="1"
       fi
     done
     [[ "$any" == "1" ]] || log "down --expired: no expired runs"
-    return 0
+    return "$failed"
   fi
 
   if [[ -z "$run_id" ]]; then
@@ -1148,10 +1112,10 @@ USAGE:
   $SELF <command> [options]
 
 COMMANDS:
-  up        Allocate/start a lab; stamp run-id + cost tags.
-  deploy    Build static routerd (make dist) and push to nodes.
+  up        Plan lab allocation and tags (simulation only).
+  deploy    Plan routerd build and node deployment (simulation only).
   smoke     Run the connectivity matrix (--matrix d3).
-  failover  Inject a fault (stop-active|drain|heartbeat-stop|executor-fail|stale-replay).
+  failover  Plan a fault (simulation only).
   evidence  collect --out <dir>: assemble bundle + emit schema-valid result JSON.
   down      Teardown guard (--run-id <id> | --expired | --force).
   version   Print version.
@@ -1159,8 +1123,9 @@ COMMANDS:
 
 Run '$SELF <command> --help' for command-specific options.
 
-SAFETY: cloud mutations are DRY by default (CE_DRY_RUN=1). Human gates (budget,
-credentials, merge, production) are NOT automated. See
+Live allocation, deployment, fault injection and teardown are unsupported and
+return failure. CE_DRY_RUN=1 plans those operations and preserves teardown state.
+Human gates (budget, credentials, merge, production) are NOT automated. See
 docs/how-to/cloudedge-autonomous-lab.md.
 EOF
 }

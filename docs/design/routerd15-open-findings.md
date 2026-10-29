@@ -7,29 +7,31 @@ or cloud qualification. A passing existing suite does not close them.
 
 ## Provider action and observation boundary
 
-- Real SDK executors report ambiguous mutating-command failures as `failed`.
-  Import then requeues them and clears prior facts. Add explicit wire uncertainty,
-  preserve reported prior facts, and connect it to existing forward/undo unknown
-  fences. Azure must not retry writes or refresh authentication and replay them;
-  read-only retries can remain. Bound the three real CLI runners.
-- AWS retries a failed replace as create without knowing the first outcome.
-  Select the write from an authoritative pre-read instead.
-- Azure route deletion ignores changed destination prefixes; ipconfig deletion
-  can remove a same-name configuration for another address. OCI compares route
-  destinations by host rather than exact normalized CIDR/type. Guard the exact
-  resource identity; OCI full route-set updates need provider CAS/etag and strict
-  observation, preserving unrelated routes.
-- The distributed inventory plugin converts required AWS/Azure route-read errors
-  into successful missing capture observations. Distinguish failed required
-  capture collection from successful empty results and optional enrichment.
+Implemented in the provider/packaging follow-up checkpoint:
+
+- SDK executors report ambiguous writes as `outcomeUnknown`, preserving known
+  prior facts and fencing automatic forward/undo replay. CLI runners have bounded
+  output/lifetime and process-group cleanup; mutation retries are disabled.
+- AWS uses an authoritative route read to select one create/replace operation.
+  Azure guards exact route/ipconfig identity, binds NIC writes to its observed
+  ARM subscription/resource group/name, and rejects null required observations.
+  OCI preserves complete route-rule fields, compares exact destination/type and
+  uses the observed ETag for a conditional full-set update. AWS/Azure CLI writes
+  still lack atomic tuple CAS against unrelated external writers; that limitation
+  and actual cloud qualification remain open.
+- The inventory plugin fails required route reads/incomplete responses; a complete
+  alternative Azure read remains useful. Failed collection preserves the prior
+  capture fact. Real CLI-process/wire/SQLite regressions and peer review passed;
+  no cloud mutation was executed.
+
 - Distributed capture generations and leases are local fences. No existing
   provider-enforced cross-node epoch authorizes automatic dead-member takeover.
   Preserve conservative ownership until an actual exclusive-authority contract
   exists. Remove unfenced transition-confirmation fallbacks coherently.
 
-Temporary overlays reproduced core prior-fact loss, AWS fallback-after-timeout,
-Azure foreign route/ipconfig deletion and OCI broader-prefix deletion through
-actual production helpers, without provider calls.
+The earlier overlay reproductions for prior-fact loss, AWS fallback-after-timeout,
+Azure foreign deletion and OCI broader-prefix deletion are now permanent
+regressions through the production helpers, without provider calls.
 
 ## BGP ownership and current observations
 

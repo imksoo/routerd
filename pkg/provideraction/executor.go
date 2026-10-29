@@ -133,7 +133,7 @@ func RunExecutor(ctx context.Context, spec api.PluginSpec, req ExecuteActionRequ
 		return result, outcome, err
 	}
 	switch result.Status.Status {
-	case ResultSucceeded, ResultFailed, ResultSkipped:
+	case ResultSucceeded, ResultFailed, ResultSkipped, ResultOutcomeUnknown:
 	default:
 		err := fmt.Errorf("executor %s returned invalid status %q", spec.Executable, result.Status.Status)
 		outcome.Error = err.Error()

@@ -558,6 +558,9 @@ func (e *Engine) Execute(ctx context.Context, id int64, policy api.ProviderActio
 			return fmt.Errorf("%w; journaling failed: %w", failure, err)
 		}
 		return failure
+	case ResultOutcomeUnknown:
+		failure := fmt.Errorf("execute action %d: provider outcome unknown: %s", id, result.Status.Error)
+		return errors.Join(failure, e.store.MarkActionResult(id, state.ActionOutcomeUnknown, result.Status.Message, result.Status.Error, result.Status.Observed, executedAt))
 	default:
 		errMsg := fmt.Sprintf("executor returned invalid status %q", result.Status.Status)
 		if markErr := e.store.MarkActionResult(id, state.ActionOutcomeUnknown, "invalid executor status", errMsg, nil, executedAt); markErr != nil {

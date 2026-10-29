@@ -48,6 +48,9 @@ const (
 	ResultSucceeded = "succeeded"
 	ResultFailed    = "failed"
 	ResultSkipped   = "skipped"
+	// ResultOutcomeUnknown means a provider write may have happened. Its
+	// observed facts remain useful, but the operation must not be replayed.
+	ResultOutcomeUnknown = "outcomeUnknown"
 )
 
 // TypeMeta is the apiVersion/kind envelope for the wire objects. It is defined
@@ -97,7 +100,7 @@ type ExecuteActionResult struct {
 
 // ExecuteActionResultStatus is the executor result body.
 type ExecuteActionResultStatus struct {
-	// Status is "succeeded", "failed", or "skipped".
+	// Status is succeeded, failed (no uncertain effect), skipped, or outcomeUnknown.
 	Status string `json:"status" yaml:"status"`
 	// Message is a human-readable summary (for dry-run, "would <action>").
 	Message string `json:"message,omitempty" yaml:"message,omitempty"`
