@@ -19,7 +19,7 @@ import (
 type FIBIntentReader func(context.Context) ([]FIBRoute, error)
 
 type FIBStore interface {
-	ReadBGPFIB(context.Context) (bgpstate.FIBJournal, bool, error)
+	ReadBGPFIB(context.Context, string) (bgpstate.FIBJournal, bool, error)
 	SaveBGPFIB(context.Context, bgpstate.FIBJournal) error
 }
 
@@ -40,6 +40,7 @@ type fibSnapshot struct {
 // The backend observes native state and performs only exclusive adds and exact
 // withdrawals. The journal and all recovery decisions have this one owner.
 type fibBackend interface {
+	KernelScope(context.Context) (string, error)
 	Snapshot(context.Context) (fibSnapshot, error)
 	Prepare(context.Context, FIBRoute, fibSnapshot) ([]bgpstate.NativeFIBRoute, string, error)
 	Add(context.Context, bgpstate.NativeFIBRoute) error
@@ -50,6 +51,10 @@ type nativeFIBSyncer struct{ backend fibBackend }
 
 func newFIBSyncResult() FIBSyncResult {
 	return FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}, PreferredSource: map[string]string{}, PreferredSourceSkipped: map[string]bool{}, PreferredSourceSkippedReason: map[string]string{}}
+}
+
+func (s *nativeFIBSyncer) KernelScope(ctx context.Context) (string, error) {
+	return s.backend.KernelScope(ctx)
 }
 
 func (s *nativeFIBSyncer) ClearBGP(ctx context.Context, store FIBStore) error {
@@ -68,11 +73,18 @@ func (s *nativeFIBSyncer) SyncBGP(ctx context.Context, store FIBStore, routes []
 	if store == nil {
 		return result, fmt.Errorf("BGP FIB journal is unavailable")
 	}
-	journal, found, err := store.ReadBGPFIB(ctx)
+	scope, err := s.KernelScope(ctx)
+	if err != nil {
+		return result, err
+	}
+	journal, found, err := store.ReadBGPFIB(ctx, scope)
 	if err != nil {
 		return result, fmt.Errorf("read BGP FIB journal: %w", err)
 	}
 	if found {
+		if journal.KernelScope != scope {
+			return result, fmt.Errorf("BGP FIB journal belongs to another kernel network identity")
+		}
 		if err := bgpstate.ValidateFIBJournal(journal); err != nil {
 			return result, err
 		}
@@ -84,8 +96,8 @@ func (s *nativeFIBSyncer) SyncBGP(ctx context.Context, store FIBStore, routes []
 	if snapshot.KernelScope == "" {
 		return result, fmt.Errorf("BGP FIB native identity is unavailable")
 	}
-	if found && journal.KernelScope != snapshot.KernelScope && (len(journal.Applied) > 0 || journal.Pending != nil) {
-		return result, fmt.Errorf("BGP FIB journal belongs to another kernel network identity")
+	if snapshot.KernelScope != scope {
+		return result, fmt.Errorf("BGP FIB journal or native observation belongs to another kernel network identity")
 	}
 	journal.KernelScope = snapshot.KernelScope
 	if journal.Applied == nil {

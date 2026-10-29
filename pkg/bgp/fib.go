@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -49,15 +50,16 @@ func EqualNativeFIBRoute(a, b NativeFIBRoute) bool {
 }
 
 func ValidateFIBJournal(j FIBJournal) error {
-	if (!strings.HasPrefix(j.KernelScope, "linux:") && !strings.HasPrefix(j.KernelScope, "freebsd:")) || strings.TrimSpace(j.KernelScope) != j.KernelScope {
-		return fmt.Errorf("BGP FIB kernel identity is missing")
+	table, err := fibScopeTable(j.KernelScope)
+	if err != nil {
+		return err
 	}
 	if j.Applied == nil {
 		return fmt.Errorf("BGP FIB receipt observation is missing")
 	}
 	seen := []NativeFIBRoute{}
 	for _, r := range j.Applied {
-		if err := validateNativeFIBRoute(r, j.KernelScope); err != nil {
+		if err := validateNativeFIBRoute(r, j.KernelScope, table); err != nil {
 			return err
 		}
 		for _, previous := range seen {
@@ -71,7 +73,7 @@ func ValidateFIBJournal(j FIBJournal) error {
 		if p.Action != "add" && p.Action != "withdraw" {
 			return fmt.Errorf("unsupported BGP FIB operation %q", p.Action)
 		}
-		if err := validateNativeFIBRoute(p.Route, j.KernelScope); err != nil {
+		if err := validateNativeFIBRoute(p.Route, j.KernelScope, table); err != nil {
 			return err
 		}
 		if p.Action == "add" {
@@ -94,7 +96,30 @@ func ValidateFIBJournal(j FIBJournal) error {
 	return nil
 }
 
-func validateNativeFIBRoute(r NativeFIBRoute, scope string) error {
+func fibScopeTable(scope string) (int, error) {
+	if strings.TrimSpace(scope) != scope {
+		return 0, fmt.Errorf("BGP FIB kernel identity is invalid")
+	}
+	if strings.HasPrefix(scope, "linux:") && len(scope) > len("linux:") {
+		return 254, nil
+	}
+	if strings.HasPrefix(scope, "freebsd:") {
+		at := strings.LastIndex(scope, ":fib:")
+		if at > len("freebsd:") {
+			fib, err := strconv.Atoi(scope[at+len(":fib:"):])
+			if err == nil && fib >= 0 {
+				return fib, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("BGP FIB kernel identity is missing or invalid")
+}
+
+func validateNativeFIBRoute(r NativeFIBRoute, scope string, table int) error {
+	if r.Table != table {
+		return fmt.Errorf("BGP FIB receipt table differs from its kernel scope")
+	}
+
 	if strings.HasPrefix(scope, "linux:") {
 		if r.Table != 254 || r.Protocol != 186 || r.Metric != 200 {
 			return fmt.Errorf("invalid Linux BGP FIB receipt selectors")

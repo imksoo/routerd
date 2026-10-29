@@ -47,8 +47,12 @@ func bgpNetlinkHandle(ctx context.Context) (*netlink.Handle, error) {
 	return handle, nil
 }
 
-func (netlinkFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
-	scope, err := platform.KernelNetworkScope(ctx)
+func (netlinkFIBBackend) KernelScope(ctx context.Context) (string, error) {
+	return platform.KernelNetworkScope(ctx)
+}
+
+func (b netlinkFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
+	scope, err := b.KernelScope(ctx)
 	if err != nil {
 		return fibSnapshot{}, err
 	}

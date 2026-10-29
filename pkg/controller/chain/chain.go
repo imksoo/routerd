@@ -501,12 +501,12 @@ func (s eventedStore) ReadObjectStatus(apiVersion, kind, name string) (map[strin
 	return reader.ReadObjectStatus(apiVersion, kind, name)
 }
 
-func (s eventedStore) ReadBGPFIB(ctx context.Context) (bgpstate.FIBJournal, bool, error) {
+func (s eventedStore) ReadBGPFIB(ctx context.Context, scope string) (bgpstate.FIBJournal, bool, error) {
 	reader, ok := s.Store.(bgpcontroller.FIBStore)
 	if !ok {
 		return bgpstate.FIBJournal{}, false, errors.New("BGP FIB journal is unavailable")
 	}
-	return reader.ReadBGPFIB(ctx)
+	return reader.ReadBGPFIB(ctx, scope)
 }
 func (s eventedStore) SaveBGPFIB(ctx context.Context, journal bgpstate.FIBJournal) error {
 	writer, ok := s.Store.(bgpcontroller.FIBStore)

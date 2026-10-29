@@ -11,7 +11,7 @@ import (
 
 // Unrelated controller fixtures have no BGP receipts. Real FIB effects and
 // persistence failures are exercised with SQLite, never this display map.
-func (mapStore) ReadBGPFIB(context.Context) (bgp.FIBJournal, bool, error) {
+func (mapStore) ReadBGPFIB(context.Context, string) (bgp.FIBJournal, bool, error) {
 	return bgp.FIBJournal{}, false, nil
 }
 

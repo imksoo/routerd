@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
+	"github.com/imksoo/routerd/pkg/manageddaemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -35,6 +36,10 @@ func (b *observedFIBBackend) index() int {
 	}
 	return 7
 }
+func (b *observedFIBBackend) KernelScope(ctx context.Context) (string, error) {
+	return b.scope, ctx.Err()
+}
+
 func (b *observedFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return fibSnapshot{}, err
@@ -108,7 +113,7 @@ func newFIBOwnerFixture(t *testing.T) (*routerstate.SQLiteStore, *observedFIBBac
 	backend := &observedFIBBackend{scope: "linux:fixture:network"}
 	backend.beforeEffect = func(action string, route bgpstate.NativeFIBRoute) {
 		t.Helper()
-		journal, found, err := store.ReadBGPFIB(t.Context())
+		journal, found, err := store.ReadBGPFIB(t.Context(), backend.scope)
 		if err != nil || !found || journal.Pending == nil || journal.Pending.Action != action || !bgpstate.EqualNativeFIBRoute(journal.Pending.Route, route) {
 			t.Fatalf("native %s was not preceded by its exact pending intent: %+v, found=%v err=%v", action, journal, found, err)
 		}
@@ -144,7 +149,7 @@ func TestFIBOwnerPreservesForeignProtocolRoutesAcrossRestartReplacementAndRemova
 	if !reflect.DeepEqual(b.effects, want) {
 		t.Fatalf("native operations=%v, want %v", b.effects, want)
 	}
-	journal, found, err := store.ReadBGPFIB(t.Context())
+	journal, found, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || !found || len(journal.Applied) != 0 || journal.Pending != nil {
 		t.Fatalf("completed journal=%+v %v %v", journal, found, err)
 	}
@@ -185,7 +190,7 @@ func TestFIBOwnerUnconfirmedAddPresentIsUnknownAndFencedAfterRestart(t *testing.
 	if _, err := syncFIBFixture(t.Context(), s, failing, fibDesired("192.0.2.1")); err == nil {
 		t.Fatal("missing final checkpoint failure")
 	}
-	journal, _, err := store.ReadBGPFIB(t.Context())
+	journal, _, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || journal.Pending == nil || len(journal.Applied) != 0 {
 		t.Fatalf("unconfirmed write lost pending: %+v %v", journal, err)
 	}
@@ -193,7 +198,7 @@ func TestFIBOwnerUnconfirmedAddPresentIsUnknownAndFencedAfterRestart(t *testing.
 	if err := restarted.ClearBGP(t.Context(), store); err == nil || !strings.Contains(err.Error(), "unknown prior outcome") {
 		t.Fatalf("unconfirmed write was treated as owned: %v", err)
 	}
-	journal, _, err = store.ReadBGPFIB(t.Context())
+	journal, _, err = store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || journal.Pending == nil || !journal.Pending.Unknown || len(b.effects) != 1 {
 		t.Fatalf("uncertainty not retained: %+v effects=%v err=%v", journal, b.effects, err)
 	}
@@ -222,7 +227,7 @@ func TestFIBOwnerFailedAddAbsentRetriesAndFailedWithdrawKeepsReceipt(t *testing.
 	if err := s.ClearBGP(t.Context(), store); err == nil {
 		t.Fatal("missing withdrawal failure")
 	}
-	journal, _, err := store.ReadBGPFIB(t.Context())
+	journal, _, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || journal.Pending == nil || journal.Pending.Action != "withdraw" || len(journal.Applied) != 1 {
 		t.Fatalf("failed withdrawal forgot ownership: %+v %v", journal, err)
 	}
@@ -268,12 +273,21 @@ func TestFIBOwnerPreferredSourceUsesOneCompleteAddressSnapshot(t *testing.T) {
 	if err != nil || result.PreferredSource["10.77.60.11/32"] != "10.77.60.4" {
 		t.Fatalf("captured preferred source=%+v %v", result, err)
 	}
-	b.scope = "linux:another-boot:network"
-	if err := s.ClearBGP(t.Context(), store); err == nil || !strings.Contains(err.Error(), "another kernel") {
-		t.Fatalf("reused interface index in another kernel accepted: %v", err)
+	oldScope := b.scope
+	original, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(b.effects) != 1 {
-		t.Fatal("kernel scope mismatch mutated native state")
+	b.scope = "linux:another-boot:network"
+	if err := s.ClearBGP(t.Context(), store); err != nil {
+		t.Fatalf("current-world removal inspected another kernel's receipts: %v", err)
+	}
+	if len(b.effects) != 1 || len(b.routes) != 1 {
+		t.Fatal("another scope's receipt authorized native deletion")
+	}
+	retained, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil || !reflect.DeepEqual(original, retained) {
+		t.Fatalf("old world's receipt changed: %+v %v", retained, err)
 	}
 }
 
@@ -316,7 +330,7 @@ func TestFIBOwnerIndependentNativeHopsRetainPartialWithdrawalOwnership(t *testin
 	if err := s.ClearBGP(t.Context(), store); err == nil {
 		t.Fatal("missing second-hop withdrawal failure")
 	}
-	journal, _, err := store.ReadBGPFIB(t.Context())
+	journal, _, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || len(journal.Applied) != 1 || journal.Pending == nil || journal.Pending.Route.NextHops[0].Gateway != "192.0.2.2" {
 		t.Fatalf("partial native withdrawal lost remaining ownership: %+v %v", journal, err)
 	}
@@ -364,7 +378,7 @@ func TestFIBOwnerRechecksNativeConflictAfterPendingJournalWait(t *testing.T) {
 	if len(b.effects) != 0 || len(b.routes) != 1 {
 		t.Fatalf("foreign route overwritten after journal wait: %v %+v", b.effects, b.routes)
 	}
-	journal, _, err := store.ReadBGPFIB(t.Context())
+	journal, _, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || journal.Pending != nil || len(journal.Applied) != 0 {
 		t.Fatalf("known unissued add left uncertain ownership: %+v %v", journal, err)
 	}
@@ -387,7 +401,7 @@ func TestFIBOwnerRechecksGatewayTopologyAndAuthorityAfterPendingJournalWait(t *t
 	if len(b.effects) != 0 {
 		t.Fatal("revoked authority caused native add")
 	}
-	journal, _, err := store.ReadBGPFIB(t.Context())
+	journal, _, err := store.ReadBGPFIB(t.Context(), b.scope)
 	if err != nil || journal.Pending != nil {
 		t.Fatalf("unissued authority failure became unknown: %+v %v", journal, err)
 	}
@@ -415,5 +429,125 @@ func TestControllerRechecksActualRIBAfterFIBPendingJournalWait(t *testing.T) {
 	}
 	if len(b.effects) != 0 {
 		t.Fatal("empty actual RIB installed stale path")
+	}
+}
+
+func TestFIBOwnerReacquiresAfterRebootUsingOnlyCurrentWorldJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := &observedFIBBackend{scope: "linux:old-boot:network"}
+	owner := &nativeFIBSyncer{backend: backend}
+	if _, err := syncFIBFixture(t.Context(), owner, store, fibDesired("192.0.2.1")); err != nil {
+		t.Fatal(err)
+	}
+	oldScope := backend.scope
+	oldJournal, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	backend.scope = "linux:new-boot:network"
+	backend.routes = nil
+	current := &nativeFIBSyncer{backend: backend}
+	result, err := syncFIBFixture(t.Context(), current, restarted, fibDesired("192.0.2.1"))
+	if err != nil || !result.Installed["10.77.60.11/32"] {
+		t.Fatalf("reboot reacquisition=%+v %v", result, err)
+	}
+	currentJournal, found, err := restarted.ReadBGPFIB(t.Context(), backend.scope)
+	if err != nil || !found || len(currentJournal.Applied) != 1 {
+		t.Fatalf("current-world receipt=%+v %v %v", currentJournal, found, err)
+	}
+	if err := current.ClearBGP(t.Context(), restarted); err != nil {
+		t.Fatal(err)
+	}
+	retained, found, err := restarted.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil || !found || !reflect.DeepEqual(retained, oldJournal) {
+		t.Fatalf("reboot/withdraw rewrote old world's authority: %+v %v %v", retained, found, err)
+	}
+	if len(backend.routes) != 0 || !reflect.DeepEqual(backend.effects, []string{"add 10.77.60.11/32", "add 10.77.60.11/32", "withdraw 10.77.60.11/32"}) {
+		t.Fatalf("current-world effect sequence=%v routes=%+v", backend.effects, backend.routes)
+	}
+}
+
+func TestFIBOwnerNewWorldDoesNotInheritLostPendingOrAdoptForeignPresence(t *testing.T) {
+	store, b, owner := newFIBOwnerFixture(t)
+	oldScope := b.scope
+	failing := &failFIBCheckpointStore{FIBStore: store, failAt: 2}
+	if _, err := syncFIBFixture(t.Context(), owner, failing, fibDesired("192.0.2.1")); err == nil {
+		t.Fatal("missing lost final receipt")
+	}
+	oldJournal, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil || oldJournal.Pending == nil {
+		t.Fatalf("old pending=%+v %v", oldJournal, err)
+	}
+	oldNative := append([]fibObservedRoute(nil), b.routes...)
+	b.scope = "linux:new-boot:network"
+	// The same native tuple in another scope is foreign. The old world's pending
+	// effect is neither evidence for adoption nor an operation to replay here.
+	if _, err := syncFIBFixture(t.Context(), owner, store, fibDesired("192.0.2.1")); err == nil || !strings.Contains(err.Error(), "unowned") {
+		t.Fatalf("foreign matching route was adopted: %v", err)
+	}
+	if len(b.effects) != 1 {
+		t.Fatalf("old pending replayed into new world: %v", b.effects)
+	}
+	b.routes = nil
+	if _, err := syncFIBFixture(t.Context(), owner, store, fibDesired("192.0.2.1")); err != nil {
+		t.Fatalf("new world inherited old pending fence: %v", err)
+	}
+	currentScope := b.scope
+	currentJournal, _, err := store.ReadBGPFIB(t.Context(), currentScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil || !reflect.DeepEqual(retained, oldJournal) {
+		t.Fatalf("new world changed old pending: %+v %v", retained, err)
+	}
+	b.scope = oldScope
+	b.routes = oldNative
+	if err := owner.ClearBGP(t.Context(), store); err == nil || !strings.Contains(err.Error(), "unknown prior outcome") {
+		t.Fatalf("return to old world forgot uncertainty: %v", err)
+	}
+	if len(b.effects) != 2 {
+		t.Fatalf("old uncertain operation was replayed: %v", b.effects)
+	}
+	unchanged, _, err := store.ReadBGPFIB(t.Context(), currentScope)
+	if err != nil || !reflect.DeepEqual(unchanged, currentJournal) {
+		t.Fatalf("old-world recovery changed new-world receipt: %+v %v", unchanged, err)
+	}
+}
+
+func TestBGPRemovalChecksOnlyCurrentWorldOwnershipWithoutNativeRIB(t *testing.T) {
+	store, b, owner := newFIBOwnerFixture(t)
+	if _, err := syncFIBFixture(t.Context(), owner, store, fibDesired("192.0.2.1")); err != nil {
+		t.Fatal(err)
+	}
+	oldScope := b.scope
+	oldJournal, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.scope = "linux:new-boot:network"
+	b.failRead = errors.New("a full native RIB is unavailable")
+	controller := &Controller{Store: store, FIB: owner, Daemon: manageddaemon.Spec{StatePath: filepath.Join(t.TempDir(), "applied.json")}}
+	if err := controller.Remove(t.Context(), func(context.Context) error {
+		t.Fatal("old-world receipt authorized stopping a current-world helper")
+		return nil
+	}); err != nil {
+		t.Fatalf("no-current-world removal required full RIB: %v", err)
+	}
+	retained, _, err := store.ReadBGPFIB(t.Context(), oldScope)
+	if err != nil || !reflect.DeepEqual(retained, oldJournal) || len(b.effects) != 1 {
+		t.Fatalf("unrelated authority removed: %+v effects=%v err=%v", retained, b.effects, err)
 	}
 }

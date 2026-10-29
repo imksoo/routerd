@@ -782,3 +782,21 @@ seven-package vet and FreeBSD/amd64 routerd test compilation. Actual SQLite
 trigger failures on both revocation writes, reopen/retry, nonce rotation,
 replay rejection and physically read-only GET are exercised. These checks do
 not establish independent RR/leaf interoperability or native forwarding.
+
+
+### Kernel-scoped BGP FIB recovery
+
+Native BGP FIB receipts use a strict SHA-256 key of the current kernel scope;
+the payload must match that key and, on FreeBSD, the actual FIB/table. A new
+kernel world starts from its own receipt and exclusive native add. Previous
+worlds, ambiguous operations and old unscoped rows are retained untouched and
+are never used as current ownership evidence. Returning to an old world still
+fences its unknown pending operation. A stopped controller generation cannot
+remove the next generation's receipt or native effects.
+
+The isolated `feeb740` plus exact scoped source projection passes focused BGP,
+removal, generation and systemd tests, including race repetition three times,
+four-package vet and FreeBSD/amd64 test compilation. Real SQLite tests cover
+world changes, foreign presence, lost acknowledgement, reopen and key/payload
+mismatch. Full BGP/state race checks also pass. Actual kernel reboot and packet
+forwarding remain unrun; FreeBSD deletion still lacks a full-tuple atomic CAS.

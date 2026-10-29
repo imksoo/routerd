@@ -24,6 +24,22 @@ type freeBSDFIBBackend struct{}
 
 func defaultFIBSyncer() FIBSyncer { return &nativeFIBSyncer{backend: freeBSDFIBBackend{}} }
 
+func freeBSDKernelFIBScope(ctx context.Context) (string, int, error) {
+	scope, err := platform.KernelNetworkScope(ctx)
+	if err != nil {
+		return "", 0, err
+	}
+	fib, err := unix.SysctlUint32("net.my_fibnum")
+	if err != nil {
+		return "", 0, err
+	}
+	return fmt.Sprintf("%s:fib:%d", scope, fib), int(fib), nil
+}
+func (freeBSDFIBBackend) KernelScope(ctx context.Context) (string, error) {
+	scope, _, err := freeBSDKernelFIBScope(ctx)
+	return scope, err
+}
+
 func freeBSDRIB(ctx context.Context) ([]route.Message, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -40,11 +56,7 @@ func freeBSDRIB(ctx context.Context) ([]route.Message, error) {
 }
 
 func (freeBSDFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
-	scope, err := platform.KernelNetworkScope(ctx)
-	if err != nil {
-		return fibSnapshot{}, err
-	}
-	fib, err := unix.SysctlUint32("net.my_fibnum")
+	scope, fib, err := freeBSDKernelFIBScope(ctx)
 	if err != nil {
 		return fibSnapshot{}, err
 	}
@@ -56,7 +68,7 @@ func (freeBSDFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
 	if err != nil {
 		return fibSnapshot{}, err
 	}
-	out := fibSnapshot{KernelScope: fmt.Sprintf("%s:fib:%d", scope, fib), Routes: observed}
+	out := fibSnapshot{KernelScope: scope, Routes: observed}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return fibSnapshot{}, err

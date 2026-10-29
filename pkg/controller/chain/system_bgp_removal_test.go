@@ -35,6 +35,8 @@ type removalFIB struct {
 	clears  int
 }
 
+func (*removalFIB) KernelScope(context.Context) (string, error) { return "linux:fixture:network", nil }
+
 func (*removalFIB) SyncBGP(context.Context, bgpcontroller.FIBStore, []bgpcontroller.FIBRoute, bgpcontroller.FIBIntentReader) (bgpcontroller.FIBSyncResult, error) {
 	return bgpcontroller.FIBSyncResult{}, nil
 }

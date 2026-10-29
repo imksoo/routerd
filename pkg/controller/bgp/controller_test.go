@@ -48,7 +48,7 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
-func (s mapStore) ReadBGPFIB(context.Context) (bgpstate.FIBJournal, bool, error) {
+func (s mapStore) ReadBGPFIB(context.Context, string) (bgpstate.FIBJournal, bool, error) {
 	return bgpstate.FIBJournal{}, false, nil
 }
 func (s mapStore) SaveBGPFIB(context.Context, bgpstate.FIBJournal) error {
@@ -1526,6 +1526,8 @@ type fakeFIB struct {
 	guardPreferredSource  bool
 	localPreferredSources map[string]bool
 }
+
+func (*fakeFIB) KernelScope(context.Context) (string, error) { return "linux:fixture:network", nil }
 
 func (f *fakeFIB) ClearBGP(context.Context, FIBStore) error {
 	f.clearCalls++

@@ -71,6 +71,10 @@ type heldFIBSyncer struct {
 	release chan struct{}
 }
 
+func (*heldFIBSyncer) KernelScope(context.Context) (string, error) {
+	return "linux:fixture:network", nil
+}
+
 func (s *heldFIBSyncer) SyncBGP(ctx context.Context, _ FIBStore, _ []FIBRoute, _ FIBIntentReader) (FIBSyncResult, error) {
 	close(s.entered)
 	<-s.release

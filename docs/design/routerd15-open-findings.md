@@ -58,9 +58,12 @@ withdrawal, current RIB/Mobility/native rechecks after persistence and explicit
 unknown-present fencing for both operations. Watcher and in-flight mutation exit
 are acknowledged before connection replacement. Protocol-only adoption, display
 fallback and duplicate retention caches are removed. Actual kernel qualification
-and automatic reacquisition after a kernel-scope change/reboot remain open; the
-current journal safely fences that mismatch. FreeBSD's delete API also lacks an
-atomic full-tuple CAS against unrelated external writers.
+remains unqualified. The SQL journal is now keyed by the current kernel scope,
+including the actual FreeBSD FIB; old worlds and pending operations remain
+untouched, while the new world can acquire only through exclusive native add.
+A present foreign route is not adopted. Real SQL two-world/reopen regressions
+pass, but actual reboot/forwarding qualification remains unrun. FreeBSD's delete
+API also lacks an atomic full-tuple CAS against unrelated external writers.
 
 ## Native effects and lifetime
 

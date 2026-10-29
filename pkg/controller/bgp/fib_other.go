@@ -4,12 +4,19 @@
 
 package bgp
 
-import "context"
+import (
+	"context"
+	"github.com/imksoo/routerd/pkg/platform"
+)
 
 type noopFIBSyncer struct{}
 
 func defaultFIBSyncer() FIBSyncer {
 	return noopFIBSyncer{}
+}
+
+func (noopFIBSyncer) KernelScope(ctx context.Context) (string, error) {
+	return platform.KernelNetworkScope(ctx)
 }
 
 func (noopFIBSyncer) SyncBGP(_ context.Context, _ FIBStore, routes []FIBRoute, _ FIBIntentReader) (FIBSyncResult, error) {

@@ -26,7 +26,7 @@ func TestStoppedBGPActorCannotRemoveNextGenerationFIB(t *testing.T) {
 	if _, err := syncFIBFixture(t.Context(), current, store, fibDesired("192.0.2.2")); err != nil {
 		t.Fatal(err)
 	}
-	receipt, _, err := store.ReadBGPFIB(t.Context())
+	receipt, _, err := store.ReadBGPFIB(t.Context(), backend.scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestStoppedBGPActorCannotRemoveNextGenerationFIB(t *testing.T) {
 	if err := old.Remove(t.Context(), func(context.Context) error { stops++; return nil }); err == nil || !strings.Contains(err.Error(), "generation has stopped") {
 		t.Fatalf("stopped actor removal admission=%v", err)
 	}
-	after, _, err := store.ReadBGPFIB(t.Context())
+	after, _, err := store.ReadBGPFIB(t.Context(), backend.scope)
 	if err != nil || !reflect.DeepEqual(receipt, after) || len(backend.effects) != effectCount || stops != 0 {
 		t.Fatalf("stale generation changed current ownership: stops=%d effects=%v receipt=%+v err=%v", stops, backend.effects, after, err)
 	}

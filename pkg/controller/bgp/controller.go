@@ -87,6 +87,7 @@ func policyIntent(routerName string, peers map[string]desiredPeer, dynamicPeers 
 }
 
 type FIBSyncer interface {
+	KernelScope(context.Context) (string, error)
 	SyncBGP(ctx context.Context, store FIBStore, routes []FIBRoute, current FIBIntentReader) (FIBSyncResult, error)
 	ClearBGP(ctx context.Context, store FIBStore) error
 }
@@ -434,14 +435,24 @@ func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return statErr
 	}
-	if os.IsNotExist(statErr) && !pending && c.removal == removalCompleted {
-		return nil
+	if c.FIB == nil {
+		c.FIB = defaultFIBSyncer()
 	}
-	fibJournal, fibFound, err := c.Store.ReadBGPFIB(ctx)
+	scope, err := c.FIB.KernelScope(ctx)
+	if err != nil {
+		return fmt.Errorf("read BGP FIB removal kernel identity: %w", err)
+	}
+	fibJournal, fibFound, err := c.Store.ReadBGPFIB(ctx, scope)
 	if err != nil {
 		return fmt.Errorf("read BGP FIB removal ownership: %w", err)
 	}
+	if fibFound && fibJournal.KernelScope != scope {
+		return fmt.Errorf("BGP FIB removal journal belongs to another kernel network identity")
+	}
 	fibOwned := fibFound && (len(fibJournal.Applied) > 0 || fibJournal.Pending != nil)
+	if os.IsNotExist(statErr) && !pending && c.removal == removalCompleted && !fibOwned {
+		return nil
+	}
 	managed := fibOwned || c.removal == removalInProgress || c.started || c.Server != nil
 	if c.ManagedHelperPath != "" {
 		_, helperErr := os.Stat(c.ManagedHelperPath)
@@ -463,9 +474,14 @@ func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context
 	if err := stop(ctx); err != nil {
 		return fmt.Errorf("stop removed BGP daemon: %w", err)
 	}
-	if c.FIB == nil {
-		c.FIB = defaultFIBSyncer()
+	currentScope, err := c.FIB.KernelScope(ctx)
+	if err != nil {
+		return err
 	}
+	if currentScope != scope {
+		return fmt.Errorf("BGP FIB kernel identity changed while stopping the daemon")
+	}
+
 	if err := c.FIB.ClearBGP(ctx, c.Store); err != nil {
 		return fmt.Errorf("clear removed BGP FIB: %w", err)
 	}

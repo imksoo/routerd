@@ -46,12 +46,28 @@ topology before acting. A restarted pending add or delete with matching presence
 is uncertain and is not replayed. Withdrawal and shutdown preserve their records
 until native absence and actual watcher/in-flight-operation exit are acknowledged.
 
-The current single journal fences a different kernel scope. This also fences
-automatic reacquisition after an ordinary reboot; that recovery remains an open
-implementation item. Do not clear another namespace's authority based on absence
-in the current namespace. Native FreeBSD deletion also lacks an atomic complete
-tuple compare-and-delete against unrelated external writers; a complete immediate
-read detects known ambiguity but does not eliminate that native API limitation.
+Each actual kernel network scope has a separate SQLite object named
+`Router/bgp-fib-<sha256(scope)>`. The scope includes Linux boot and network
+namespace identity, or FreeBSD boot, jail and actual FIB identity. Reads request
+one scope explicitly and reject a stored payload whose scope differs from its
+key. Reconciliation and removal inspect only the current scope. Old-world
+receipts, including pending effects, remain untouched; absence in this namespace
+does not prove that another namespace or kernel is gone.
+
+After an ordinary reboot, the new scope can acquire routes with new exclusive
+adds. A matching native route already present in the current scope is foreign
+unless that scope has its own receipt. It is never adopted using an old scope's
+receipt or pending operation.
+
+This is a private SQLite layout cutover. There is no reader or migration for the
+previous unscoped `Router/bgp-fib` row. Before changing releases while old native
+routes remain, complete withdrawal with their old owner, stop that owner, and
+preserve any required diagnostic state. Do not delete an active owner's records
+to bypass a collision or uncertainty fence.
+
+Native FreeBSD deletion lacks an atomic complete tuple compare-and-delete
+against unrelated external writers. A complete immediate read detects known
+ambiguity but does not eliminate that native API limitation.
 
 ## Validation limits
 
