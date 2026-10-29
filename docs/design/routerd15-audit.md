@@ -91,7 +91,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/controller/eventsubscription` | 1 | Pending |
 | `pkg/controller/firewall` | 1 | Pending |
 | `pkg/controller/framework` | 1 | In progress |
-| `pkg/controller/ingressservice` | 1 | Pending |
+| `pkg/controller/ingressservice` | 1 | In progress |
 | `pkg/controller/mobility` | 37 | Pending |
 | `pkg/controller/mobilityfib` | 1 | Pending |
 | `pkg/controller/nat44` | 1 | Pending |
@@ -120,7 +120,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/healthcheck` | 10 | In progress |
 | `pkg/hostdeps` | 1 | Pending |
 | `pkg/hybrid` | 1 | Pending |
-| `pkg/ingressdrain` | 1 | Pending |
+| `pkg/ingressdrain` | 1 | In progress |
 | `pkg/inventory` | 1 | Pending |
 | `pkg/ipsec` | 1 | Pending |
 | `pkg/lan` | 1 | Pending |
@@ -242,9 +242,6 @@ surfaces still need semantic review and corresponding implementation.
 
 These are source findings, not merely VM-test omissions:
 
-- The legacy state-variable Set/Delete contract can still suppress write errors.
-  Replace that contract and update PD observation producers and ingress drains
-  together; typed Health and error-returning SQLite operations do not finish it.
 - Review DHCPv4 renewal/rebinding/expiry and command ownership as a complete
   exchange. Frame bounds and worker cancellation do not establish that exchange.
 - The minimal PD model selects one prefix in its configured IA. Multiple-prefix
@@ -275,3 +272,27 @@ These are source findings, not merely VM-test omissions:
 The final report must still say that the repository-wide rewrite and semantic
 review are incomplete. The known open implementation work above is not resolved
 by successful compilation, race checks or this audit document.
+
+## State-variable write contract
+
+Replace Set/Unset/Forget results with `(Value, error)` and make Delete return an
+error. SQLite read-only/closed/failed mutations cannot return an applied value.
+The evented adapter reports unavailable persistence instead of fabricating a
+value. Memory stores keep the same consuming contract with explicitly transient
+writes; remove the last obsolete Save methods from the affected fixtures.
+
+Propagate those errors through every production variable-write caller: the PD
+observation recorder fails its apply operation, and ingress drain/undrain fails
+its control request when persistence fails. Ingress drain observation now depends
+on Reader and evaluates expiry without deleting operator intent as a read side
+effect. Invalid persisted JSON also fails status listing instead of becoming a
+successful synthetic error-status map.
+
+This resolves the previously listed variable-write error finding. It does not
+close the remaining protocol, ownership, preparation or inventory review items.
+
+State-write contract checks: PASS for the expanded focused Makefile gate and
+`go vet ./...`, all native package/test compilation, Race Detector on state,
+ingress drain/controller and web console, and the PD write-failure regression
+through the real command producer. Read-only/closed SQLite and corrupted JSON
+fixtures exercise actual persistence failures; they do not qualify peer traffic.

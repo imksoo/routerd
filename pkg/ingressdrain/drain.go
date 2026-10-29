@@ -48,7 +48,9 @@ func Drain(store routerstate.Store, service, backend string, duration time.Durat
 	if err != nil {
 		return State{}, err
 	}
-	store.Set(Key(service, backend), string(data), "IngressServiceBackendDrained")
+	if _, err := store.Set(Key(service, backend), string(data), "IngressServiceBackendDrained"); err != nil {
+		return State{}, err
+	}
 	return state, nil
 }
 
@@ -61,11 +63,11 @@ func Undrain(store routerstate.Store, service, backend string) error {
 	if service == "" || backend == "" {
 		return fmt.Errorf("service and backend are required")
 	}
-	store.Delete(Key(service, backend))
-	return nil
+	return store.Delete(Key(service, backend))
 }
 
-func Current(store routerstate.Store, service, backend string) (State, bool) {
+// Current evaluates expiry without changing the operator-owned drain record.
+func Current(store routerstate.Reader, service, backend string) (State, bool) {
 	if store == nil {
 		return State{}, false
 	}
@@ -84,7 +86,6 @@ func Current(store routerstate.Store, service, backend string) (State, bool) {
 		state.Backend = backend
 	}
 	if expired(store.Now().UTC(), state.DrainedUntil) {
-		store.Delete(Key(service, backend))
 		return State{}, false
 	}
 	return state, true

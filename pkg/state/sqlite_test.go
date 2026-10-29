@@ -314,7 +314,7 @@ func TestOpenSQLiteReadOnlyImmutableReadsReadonlyDirectoryState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite store: %v", err)
 	}
-	if got := store.Set("manual.mode", "keep", "seed"); got.Status != StatusSet || got.Value != "keep" {
+	if got, err := store.Set("manual.mode", "keep", "seed"); err != nil || got.Status != StatusSet || got.Value != "keep" {
 		t.Fatalf("seed state = %+v, want keep", got)
 	}
 	if err := store.Close(); err != nil {
@@ -838,4 +838,58 @@ func objectResourceVersion(t *testing.T, store *SQLiteStore, apiVersion, kind, n
 		t.Fatalf("resource version: %v", err)
 	}
 	return version
+}
+
+func TestSQLiteVariableWritesReportReadOnlyAndClosedFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	writer, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if _, err := writer.Set("manual.mode", "before", "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenSQLiteReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, err := reader.Set("manual.mode", "after", "fixture"); err == nil || value.Status == StatusSet {
+		t.Fatalf("failed write reported as applied: %+v %v", value, err)
+	}
+	if err := reader.Delete("manual.mode"); err == nil {
+		t.Fatal("read-only deletion reported success")
+	}
+	if got := writer.Get("manual.mode"); got.Value != "before" {
+		t.Fatalf("failed write changed value: %+v", got)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Unset("manual.mode", "fixture"); !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("closed unset: %v", err)
+	}
+	if _, err := reader.Forget("manual.mode", "fixture"); !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("closed forget: %v", err)
+	}
+	if err := reader.Delete("manual.mode"); !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("closed delete: %v", err)
+	}
+}
+
+func TestObjectStatusListingReportsInvalidPersistedJSON(t *testing.T) {
+	store, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus("fixture", "Fixture", "broken", map[string]any{"phase": "Pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec("UPDATE objects SET status='{' WHERE kind='Fixture'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListObjectStatuses(); err == nil {
+		t.Fatal("corrupted status was returned as a successful observation")
+	}
 }

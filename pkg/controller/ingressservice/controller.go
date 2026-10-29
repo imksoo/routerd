@@ -170,7 +170,7 @@ func (c *Controller) reconcileResource(ctx context.Context, name string, spec ap
 }
 
 func (c *Controller) currentDrain(service, backend string) (ingressdrain.State, bool) {
-	store, ok := c.Store.(routerstate.Store)
+	store, ok := c.Store.(routerstate.Reader)
 	if !ok {
 		return ingressdrain.State{}, false
 	}

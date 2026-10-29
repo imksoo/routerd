@@ -153,11 +153,11 @@ func (s *SQLiteStore) Get(name string) Value {
 	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 }
 
-func (s *SQLiteStore) Set(name, value, reason string) Value {
+func (s *SQLiteStore) Set(name, value, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	if value == "" {
 		return s.setLocked(name, StatusUnset, "", reason)
@@ -165,44 +165,47 @@ func (s *SQLiteStore) Set(name, value, reason string) Value {
 	return s.setLocked(name, StatusSet, value, reason)
 }
 
-func (s *SQLiteStore) Unset(name, reason string) Value {
+func (s *SQLiteStore) Unset(name, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	return s.setLocked(name, StatusUnset, "", reason)
 }
 
-func (s *SQLiteStore) Forget(name, reason string) Value {
+func (s *SQLiteStore) Forget(name, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	return s.setLocked(name, StatusUnknown, "", reason)
 }
 
-func (s *SQLiteStore) Delete(name string) {
+func (s *SQLiteStore) Delete(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return
+		return sql.ErrConnDone
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
 	deleteStatusField(status, ref.Field)
 	if len(status) == 0 {
-		_, _ = s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, ref.APIVersion, ref.Kind, ref.Name)
-		return
+		_, err := s.db.Exec(`DELETE FROM objects WHERE api_version=? AND kind=? AND name=?`, ref.APIVersion, ref.Kind, ref.Name)
+		return err
 	}
-	_ = s.saveStatus(ref, status)
+	return s.saveStatus(ref, status)
 }
 
-func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
+func (s *SQLiteStore) setLocked(name, status, value, reason string) (Value, error) {
 	now := s.now().UTC()
 	current := s.getLocked(name)
 	since := current.Since
@@ -210,8 +213,10 @@ func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
 		since = now
 	}
 	next := Value{Status: status, Value: value, Reason: reason, Since: since, UpdatedAt: now}
-	_ = s.put(name, next)
-	return next
+	if err := s.put(name, next); err != nil {
+		return Value{}, err
+	}
+	return next, nil
 }
 
 func (s *SQLiteStore) getLocked(name string) Value {
@@ -917,7 +922,7 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
-			item.Status = map[string]any{"error": err.Error()}
+			return nil, fmt.Errorf("decode %s/%s status: %w", item.Kind, item.Name, err)
 		}
 		item.Owner = statusvalue.Field(item.Status, "owner")
 		item.ManagedBy = statusvalue.Field(item.Status, "managedBy")

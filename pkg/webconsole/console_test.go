@@ -55,14 +55,16 @@ func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
 	}
 }
 
-func (s fakeStore) Get(string) routerstate.Value                            { return routerstate.Value{} }
-func (s fakeStore) Set(string, string, string) routerstate.Value            { return routerstate.Value{} }
-func (s fakeStore) Unset(string, string) routerstate.Value                  { return routerstate.Value{} }
-func (s fakeStore) Forget(string, string) routerstate.Value                 { return routerstate.Value{} }
-func (s fakeStore) Delete(string)                                           {}
-func (s fakeStore) Age(string) time.Duration                                { return 0 }
-func (s fakeStore) Now() time.Time                                          { return time.Now() }
-func (s fakeStore) Save(string) error                                       { return nil }
+func (s fakeStore) Get(string) routerstate.Value { return routerstate.Value{} }
+func (s fakeStore) Set(string, string, string) (routerstate.Value, error) {
+	return routerstate.Value{}, nil
+}
+func (s fakeStore) Unset(string, string) (routerstate.Value, error)  { return routerstate.Value{}, nil }
+func (s fakeStore) Forget(string, string) (routerstate.Value, error) { return routerstate.Value{}, nil }
+func (s fakeStore) Delete(string) error                              { return nil }
+func (s fakeStore) Age(string) time.Duration                         { return 0 }
+func (s fakeStore) Now() time.Time                                   { return time.Now() }
+
 func (s fakeStore) Variables() map[string]routerstate.Value                 { return nil }
 func (s fakeStore) LatestGeneration() int64                                 { return s.latest }
 func (s fakeStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) { return s.resources, nil }

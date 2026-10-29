@@ -41,6 +41,11 @@ those operations before switching; config alone cannot reconstruct unfinished
 external effects. Existing ownership must be inventoried so removal or adoption
 is deliberate. This is an operator cutover procedure, not a daemon migration.
 
+State-variable writes now report persistence errors to their operation owner.
+PD observation saves and ingress drain/undrain requests fail when their change
+cannot be stored. Expired drain records are inactive when read; observing expiry
+does not delete operator intent. An explicit undrain removes the record.
+
 ## Events table
 
 The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl get events` over running `sqlite3` against the database directly:

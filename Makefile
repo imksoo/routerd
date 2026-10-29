@@ -397,8 +397,8 @@ check-routerd15: check-spec
 
 .PHONY: check-routerd15-focused
 check-routerd15-focused: check-spec
-	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/pdclient ./pkg/raobserver ./pkg/pppoeclient ./pkg/resourcequery ./pkg/controller/framework ./pkg/derived ./cmd/routerd-healthcheck ./cmd/routerd-dhcpv4-client ./cmd/routerd-dhcpv6-client ./cmd/routerd-ra-observer ./examples/cloudedge-mobility-demo/plugins
-	go test ./cmd/routerd ./pkg/controller/chain -run '^(TestRunApplyChainOnce(DryRun|PlansBackup|Commits)|TestApplyCommandDryRun|TestRunDispatchesApplyDryRun|TestFaultDryRun|TestServeConfigMutator(SandboxApply|ApplyReplace)|TestPriorityPolicy|TestIPv4PolicyRoute|TestIPv6HostPolicy|TestTypedRouteExpiry|TestRollbackToGenerationDryRun|TestServeConfigMutatorPlanExplainsUnsupportedStateSchema|TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec)' -count=1
+	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/pdclient ./pkg/raobserver ./pkg/pppoeclient ./pkg/resourcequery ./pkg/controller/framework ./pkg/ingressdrain ./pkg/controller/ingressservice ./pkg/webconsole ./pkg/derived ./cmd/routerd-healthcheck ./cmd/routerd-dhcpv4-client ./cmd/routerd-dhcpv6-client ./cmd/routerd-ra-observer ./examples/cloudedge-mobility-demo/plugins
+	go test ./cmd/routerd ./pkg/controller/chain -run '^(TestRunApplyChainOnce(DryRun|PlansBackup|Commits)|TestApplyCommandDryRun|TestRunDispatchesApplyDryRun|TestFaultDryRun|TestServeConfigMutator(SandboxApply|ApplyReplace)|TestPriorityPolicy|TestIPv4PolicyRoute|TestIPv6HostPolicy|TestTypedRouteExpiry|TestPDObservationPropagatesPersistenceFailure|TestRollbackToGenerationDryRun|TestServeConfigMutatorPlanExplainsUnsupportedStateSchema|TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec)' -count=1
 	go vet ./...
 
 .PHONY: generate-spec check-spec

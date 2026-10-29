@@ -30,12 +30,14 @@ type Reader interface {
 	Variables() map[string]Value
 }
 
+// Store returns mutation errors to the operation owner. Persistent stores commit
+// before returning a successful value; memory stores explicitly remain transient.
 type Store interface {
 	Reader
-	Set(name, value, reason string) Value
-	Unset(name, reason string) Value
-	Forget(name, reason string) Value
-	Delete(name string)
+	Set(name, value, reason string) (Value, error)
+	Unset(name, reason string) (Value, error)
+	Forget(name, reason string) (Value, error)
+	Delete(name string) error
 }
 
 type GenerationStore interface {
@@ -252,26 +254,27 @@ func (s *MemoryStore) Get(name string) Value {
 	return value
 }
 
-func (s *MemoryStore) Set(name, value, reason string) Value {
+func (s *MemoryStore) Set(name, value, reason string) (Value, error) {
 	if value == "" {
 		return s.Unset(name, reason)
 	}
 	return s.set(name, StatusSet, value, reason)
 }
 
-func (s *MemoryStore) Unset(name, reason string) Value {
+func (s *MemoryStore) Unset(name, reason string) (Value, error) {
 	return s.set(name, StatusUnset, "", reason)
 }
 
-func (s *MemoryStore) Forget(name, reason string) Value {
+func (s *MemoryStore) Forget(name, reason string) (Value, error) {
 	return s.set(name, StatusUnknown, "", reason)
 }
 
-func (s *MemoryStore) Delete(name string) {
+func (s *MemoryStore) Delete(name string) error {
 	delete(s.Values, name)
+	return nil
 }
 
-func (s *MemoryStore) set(name, status, value, reason string) Value {
+func (s *MemoryStore) set(name, status, value, reason string) (Value, error) {
 	now := s.now().UTC()
 	current := s.Get(name)
 	since := current.Since
@@ -280,7 +283,7 @@ func (s *MemoryStore) set(name, status, value, reason string) Value {
 	}
 	next := Value{Status: status, Value: value, Reason: reason, Since: since, UpdatedAt: now}
 	s.Values[name] = next
-	return next
+	return next, nil
 }
 
 func (s *MemoryStore) Age(name string) time.Duration {

@@ -83,6 +83,8 @@ Implemented across existing callers:
 - One SQLite schema (user_version 1500) shared by state and the ownership ledger;
   no JSON persistence backend, migration chain, or no-op Save contract. Closed
   stores and invalid status encodings report errors.
+- Error-returning state-variable writes, propagated through PD observations and
+  ingress drain operations; expiry observation does not delete drain intent.
 - Read-only apply planning, including dynamic parts and when filtering. Plan does
   not execute controllers, generate simulated events, create a temporary DB, or
   open ownership data for writing. Apply reacquires observations before effects.

@@ -51,6 +51,14 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 	}
 
 	var changes []stateChange
+	recordState := func(name, value, reason string) error {
+		next, err := store.Set(name, value, reason)
+		if err != nil {
+			return fmt.Errorf("save PD observation %s: %w", name, err)
+		}
+		changes = append(changes, stateChange{Name: name, Value: next})
+		return nil
+	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
@@ -80,7 +88,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			}
 		}
 		if ifname := aliases[spec.Interface]; ifname != "" {
-			changes = append(changes, stateChange{Name: base + ".uplinkIfname", Value: store.Set(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface")})
+			if err := recordState(base+".uplinkIfname", ifname, res.ID()+": observed uplink interface"); err != nil {
+				return changes, err
+			}
+
 			identity := observedPrefixDelegationIdentity(ifname, client, spec.IAID)
 			if identity.IAID != "" {
 				lease.IAID = identity.IAID
@@ -95,10 +106,19 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				lease.ExpectedDUID = expected
 			}
 		}
-		changes = append(changes, stateChange{Name: base + ".client", Value: store.Set(base+".client", client, res.ID()+": configured DHCPv6-PD client")})
-		changes = append(changes, stateChange{Name: base + ".profile", Value: store.Set(base+".profile", profile, res.ID()+": configured DHCPv6-PD profile")})
+		if err := recordState(base+".client", client, res.ID()+": configured DHCPv6-PD client"); err != nil {
+			return changes, err
+		}
+
+		if err := recordState(base+".profile", profile, res.ID()+": configured DHCPv6-PD profile"); err != nil {
+			return changes, err
+		}
+
 		if prefixLength > 0 {
-			changes = append(changes, stateChange{Name: base + ".prefixLength", Value: store.Set(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length")})
+			if err := recordState(base+".prefixLength", strconv.Itoa(prefixLength), res.ID()+": configured prefix length"); err != nil {
+				return changes, err
+			}
+
 		}
 
 		var observedPrefix, observedIfname string
@@ -145,7 +165,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 				_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Warning", "PrefixMissing", "delegated IPv6 prefix is not observable")
 			}
 			lease.CurrentPrefix = ""
-			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": no delegated prefix observable")})
+			if err := recordState(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": no delegated prefix observable"); err != nil {
+				return changes, err
+			}
+
 			continue
 		}
 		observedAt := store.Now().Format(time.RFC3339)
@@ -161,7 +184,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 			lease.CurrentPrefix = ""
 			lease.LastPrefix = observedPrefix
 			lease.LastObservedAt = observedAt
-			changes = append(changes, stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": stale delegated prefix without transaction evidence")})
+			if err := recordState(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": stale delegated prefix without transaction evidence"); err != nil {
+				return changes, err
+			}
+
 			continue
 		}
 		lease.CurrentPrefix = observedPrefix
@@ -170,10 +196,13 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		if recorder, ok := store.(routerstate.EventRecorder); ok && previousPrefix != observedPrefix {
 			_ = recorder.RecordEvent(res.APIVersion, res.Kind, res.Metadata.Name, "Normal", "PrefixObserved", "observed delegated IPv6 prefix "+observedPrefix)
 		}
-		changes = append(changes,
-			stateChange{Name: base + ".lease", Value: store.Set(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease")},
-			stateChange{Name: base + ".downstreamIfname", Value: store.Set(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix")},
-		)
+		if err := recordState(base+".lease", routerstate.EncodePDLease(lease), res.ID()+": observed delegated prefix lease"); err != nil {
+			return changes, err
+		}
+		if err := recordState(base+".downstreamIfname", observedIfname, res.ID()+": observed delegated prefix"); err != nil {
+			return changes, err
+		}
+
 	}
 	return changes, nil
 }

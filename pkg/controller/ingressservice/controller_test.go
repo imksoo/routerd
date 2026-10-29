@@ -44,26 +44,27 @@ func (s mapStore) Get(name string) routerstate.Value {
 	return value
 }
 
-func (s mapStore) Set(name, value, reason string) routerstate.Value {
+func (s mapStore) Set(name, value, reason string) (routerstate.Value, error) {
 	next := routerstate.Value{Status: routerstate.StatusSet, Value: value, Reason: reason, Since: testNow, UpdatedAt: testNow}
 	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
-	return next
+	return next, nil
 }
 
-func (s mapStore) Unset(name, reason string) routerstate.Value {
+func (s mapStore) Unset(name, reason string) (routerstate.Value, error) {
 	next := routerstate.Value{Status: routerstate.StatusUnset, Reason: reason, Since: testNow, UpdatedAt: testNow}
 	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
-	return next
+	return next, nil
 }
 
-func (s mapStore) Forget(name, reason string) routerstate.Value {
+func (s mapStore) Forget(name, reason string) (routerstate.Value, error) {
 	next := routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: testNow, UpdatedAt: testNow}
 	s[api.RouterAPIVersion+"/State/"+name] = map[string]any{"value": next}
-	return next
+	return next, nil
 }
 
-func (s mapStore) Delete(name string) {
+func (s mapStore) Delete(name string) error {
 	delete(s, api.RouterAPIVersion+"/State/"+name)
+	return nil
 }
 
 func (s mapStore) Age(name string) time.Duration {
@@ -71,8 +72,6 @@ func (s mapStore) Age(name string) time.Duration {
 }
 
 func (s mapStore) Now() time.Time { return testNow }
-
-func (s mapStore) Save(string) error { return nil }
 
 func (s mapStore) Variables() map[string]routerstate.Value {
 	return nil
@@ -162,7 +161,7 @@ func TestReconcileIngressServiceUndrainRestoresBackend(t *testing.T) {
 	}
 }
 
-func TestReconcileIngressServiceExpiresDrain(t *testing.T) {
+func TestReconcileIngressServiceIgnoresExpiredDrain(t *testing.T) {
 	store := mapStore{}
 	state := ingressdrain.State{
 		Service:      "api",
@@ -186,8 +185,8 @@ func TestReconcileIngressServiceExpiresDrain(t *testing.T) {
 	if status["phase"] != "Active" || status["drainedBackends"] != 0 {
 		t.Fatalf("status = %#v", status)
 	}
-	if current := store.Get(ingressdrain.Key("api", "cp-01")); current.Status == routerstate.StatusSet {
-		t.Fatalf("expired drain was not deleted: %#v", current)
+	if current := store.Get(ingressdrain.Key("api", "cp-01")); current.Status != routerstate.StatusSet || current.Value != string(data) {
+		t.Fatalf("drain observation changed persisted intent: %#v", current)
 	}
 }
 

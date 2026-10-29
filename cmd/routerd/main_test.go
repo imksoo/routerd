@@ -3082,3 +3082,20 @@ func setMissingSAMForwardChainIPTables(t *testing.T) {
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
+
+func TestPDObservationPropagatesPersistenceFailure(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "routerd15-closed-write-fixture"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "networkd"}},
+	}}}
+	changes, err := recordObservedPrefixDelegationState(router, store)
+	if !errors.Is(err, sql.ErrConnDone) || len(changes) != 0 {
+		t.Fatalf("failed PD observation was acknowledged: %+v %v", changes, err)
+	}
+}

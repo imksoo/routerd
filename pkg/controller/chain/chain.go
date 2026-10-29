@@ -490,7 +490,7 @@ func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 func (s eventedStore) Get(name string) routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
+	store, ok := s.Store.(routerstate.Reader)
 	if !ok {
 		now := time.Now().UTC()
 		return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
@@ -498,42 +498,37 @@ func (s eventedStore) Get(name string) routerstate.Value {
 	return store.Get(name)
 }
 
-func (s eventedStore) Set(name, value, reason string) routerstate.Value {
+func (s eventedStore) Set(name, value, reason string) (routerstate.Value, error) {
 	store, ok := s.Store.(routerstate.Store)
 	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Value: value, Reason: reason, Since: now, UpdatedAt: now}
+		return routerstate.Value{}, errors.New("state-variable persistence is unavailable")
 	}
 	return store.Set(name, value, reason)
 }
-
-func (s eventedStore) Unset(name, reason string) routerstate.Value {
+func (s eventedStore) Unset(name, reason string) (routerstate.Value, error) {
 	store, ok := s.Store.(routerstate.Store)
 	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
+		return routerstate.Value{}, errors.New("state-variable persistence is unavailable")
 	}
 	return store.Unset(name, reason)
 }
-
-func (s eventedStore) Forget(name, reason string) routerstate.Value {
+func (s eventedStore) Forget(name, reason string) (routerstate.Value, error) {
 	store, ok := s.Store.(routerstate.Store)
 	if !ok {
-		now := time.Now().UTC()
-		return routerstate.Value{Status: routerstate.StatusUnknown, Reason: reason, Since: now, UpdatedAt: now}
+		return routerstate.Value{}, errors.New("state-variable persistence is unavailable")
 	}
 	return store.Forget(name, reason)
 }
-
-func (s eventedStore) Delete(name string) {
+func (s eventedStore) Delete(name string) error {
 	store, ok := s.Store.(routerstate.Store)
-	if ok {
-		store.Delete(name)
+	if !ok {
+		return errors.New("state-variable persistence is unavailable")
 	}
+	return store.Delete(name)
 }
 
 func (s eventedStore) Age(name string) time.Duration {
-	store, ok := s.Store.(routerstate.Store)
+	store, ok := s.Store.(routerstate.Reader)
 	if !ok {
 		return 0
 	}
@@ -541,7 +536,7 @@ func (s eventedStore) Age(name string) time.Duration {
 }
 
 func (s eventedStore) Now() time.Time {
-	store, ok := s.Store.(routerstate.Store)
+	store, ok := s.Store.(routerstate.Reader)
 	if !ok {
 		return time.Now().UTC()
 	}
@@ -549,7 +544,7 @@ func (s eventedStore) Now() time.Time {
 }
 
 func (s eventedStore) Variables() map[string]routerstate.Value {
-	store, ok := s.Store.(routerstate.Store)
+	store, ok := s.Store.(routerstate.Reader)
 	if !ok {
 		return nil
 	}
