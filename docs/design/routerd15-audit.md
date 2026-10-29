@@ -385,3 +385,38 @@ with AGENTS.md. Keep the complete test gate and independent-peer/target-OS gates
 This environment denies AF_UNIX and raw socket operations, and has no established
 PVE access. Chromium download returned HTML rather than an archive, so the added
 browser regression has not run. Cross-compilation is not target-OS execution.
+
+### Validation of implementation checkpoint e9e317f
+
+The published source is `e9e317f7c6022af29f916c77c4f2b7625c7c9012`.
+Local Git and the published GitHub tree were compared before these final checks.
+Go 1.25.9 was restored after the executor restart; checks used `GOMAXPROCS=2`
+and `GOFLAGS=-p=2`. No GitHub Actions wait was used.
+
+- PASS: expanded `make check-routerd15-focused`, including the new actual DHCP
+  effect/removal/eligibility paths, config concurrency, read failures, nft retry,
+  PF flag consistency and BGP removal. Its final `go vet ./...` passed.
+- PASS: `make check-spec check-schema` for generated specs and all three schemas.
+- PASS: targeted Race Detector checks for DHCPv4/v6 producer and controller
+  ownership, lifecycle/conditional reads/config mutation, nft/PF recovery,
+  ICMP/BGP removal and DNS reload/cache/log/TLS/lifetime paths. The final DHCPv4
+  nil-router/unmanaged-history/deadline guards were rechecked after restoration.
+- PASS: Linux project daemon/provider builds with `CGO_ENABLED=0` and
+  `make check-linux-static`; the built daemon reports commit `e9e317f`.
+- PASS: complete `make check-freebsd-cross-compile`, including project
+  daemon/provider binaries and all test compilation. `/bin/true` executes no
+  FreeBSD test body.
+- PASS: frontend typecheck/production build, real patch application for config
+  diffs, focused actual-installer restart/config preservation checks, and CI's
+  ShellCheck arguments over 19 scripts with official ShellCheck 0.10.0.
+- NOT PASS: complete native `go test ./... -timeout 180s`: 102 packages passed,
+  14 failed, and 11 had no test files. All 51 top-level failures are AF_UNIX
+  restrictions, including delayed startup/ARP tests whose server cannot create
+  its Unix socket. Existing Netlink-dependent unit fixtures now own their link
+  or FIB observations; required route/effect assertions were retained.
+- NOT EXECUTED: real netns shell acceptance suites, independent DHCP/DNS/BGP
+  peers, native supervisor/kernel recovery, native FreeBSD execution and browser
+  regression. The Go `tests/netns` package checks shell fixtures, not forwarding.
+
+These results establish a substantial implementation checkpoint, not completion
+of the repository-wide audit, real communication qualification or release.
