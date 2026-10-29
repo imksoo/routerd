@@ -25,11 +25,12 @@ import (
 type Options struct {
 	Router *api.Router
 	// CurrentRouter supplies one consistent declaration for each response.
-	CurrentRouter          func() *api.Router
-	Store                  routerstate.Store
-	Result                 func() *apply.Result
-	Connections            func(limit int) (*observe.ConnectionTable, error)
-	VPNStatus              func() (VPNStatus, error)
+	CurrentRouter func() *api.Router
+	Store         routerstate.Store
+	Result        func() *apply.Result
+	Connections   func(limit int) (*observe.ConnectionTable, error)
+	// VPNStatus implementations must return when ctx is cancelled.
+	VPNStatus              func(context.Context) (VPNStatus, error)
 	Title                  string
 	BasePath               string
 	ConsoleLinks           []ConsoleLink
@@ -131,9 +132,9 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "api/v1/clients":
 		h.clients(w, r)
 	case "api/v1/vpn":
-		h.vpn(w)
+		h.vpn(w, r)
 	case "api/v1/routes":
-		h.routes(w)
+		h.routes(w, r)
 	case "api/v1/sam":
 		h.sam(w)
 	case "api/v1/bgp":

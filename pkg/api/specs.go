@@ -1197,7 +1197,7 @@ type IPv6RAAddressSpec struct {
 
 type DHCPv6PrefixDelegationSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
-	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
+	Client    string `yaml:"client,omitempty" json:"client,omitempty" jsonschema:"enum=routerd-dhcpv6-client"`
 	// Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.
 	Profile      string           `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int              `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
@@ -2001,6 +2001,9 @@ type ResolvedMobilityPoolMember struct {
 }
 
 type MobilityStaticHandover struct {
+	// ID identifies one transfer attempt. Use a new ID after rollback so a
+	// previous release cannot authorize a later transfer of the same address.
+	ID          string `yaml:"id" json:"id" jsonschema:"required,minLength=1"`
 	Address     string `yaml:"address" json:"address"`
 	FromNodeRef string `yaml:"fromNodeRef" json:"fromNodeRef"`
 	ToNodeRef   string `yaml:"toNodeRef" json:"toNodeRef"`

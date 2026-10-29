@@ -15,7 +15,7 @@ import (
 func TestContractRuntimeShapeKindsHaveLifecycleOrExplicitException(t *testing.T) {
 	want := strings.Fields(`RouterdCluster DHCPv4Client DHCPv4Server DHCPv6Client DHCPv6Server
 		DHCPv6PrefixDelegation PPPoESession HealthCheck DNSResolver DSLiteTunnel EventGroup
-		EventSubscription WebConsole SAMTransportProfile MobilityPool ServiceUnit`)
+		EventSubscription EventRule DerivedEvent Plugin WebConsole SAMTransportProfile MobilityPool ServiceUnit`)
 	var got []string
 	exceptions := map[string]string{
 		"ServiceUnit":  "derived service units have runtime state, but are not declared config resources",

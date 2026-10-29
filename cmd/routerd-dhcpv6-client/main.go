@@ -601,10 +601,18 @@ func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/status", d.handleStatus)
+	mux.HandleFunc("/v1/lease", d.handleLease)
 	mux.HandleFunc("/v1/healthz", d.handleHealthz)
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
 	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
+}
+
+func (d *dhcpv6Daemon) handleLease(w http.ResponseWriter, _ *http.Request) {
+	d.mu.Lock()
+	snapshot := d.client.Snapshot()
+	d.mu.Unlock()
+	writeHTTPJSON(w, snapshot)
 }
 
 func (d *dhcpv6Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {

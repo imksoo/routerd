@@ -121,18 +121,12 @@ func (c Controller) collectPoolReconcileState(res api.Resource, spec api.Mobilit
 	selfCaptureInterface := strings.TrimSpace(api.ResolveInterfaceIfName(c.Router, pool.Self.Capture.Interface))
 	captureGate := sam.EvaluateCaptureGate(pool.Self.Capture, captureGateObservation(c.Store, pool.Self.Capture))
 	pool.SelfCaptureInterface = selfCaptureInterface
-	releaseEvents, err := c.recordBGPStaticHandoverReleaseEvents(pool, facts.Events, now)
-	if err != nil {
-		return state, err
-	}
-	events := append(facts.Events, releaseEvents...)
 	actionHistory, err := providerActionHistoryForPool(c.Store, res.Metadata.Name, pool.SelfNode, now)
 	if err != nil {
 		return state, err
 	}
 	livenessMarkerPrefix, _ := c.selfLivenessMarkerPrefix(pool.Spec.GroupRef)
 	runtime := poolRuntimeSnapshotFromFacts(pool, facts, c.StartedAt, now)
-	runtime.Events = events
 	runtime.Provider = ProviderSnapshot{
 		Profiles:            cloudProviderProfiles(c.Router),
 		ActionHistory:       actionHistory,

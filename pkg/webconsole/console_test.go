@@ -115,7 +115,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Connections: func(limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Count: 3, Max: 262144}, nil
 		},
-		VPNStatus: func() (VPNStatus, error) {
+		VPNStatus: func(context.Context) (VPNStatus, error) {
 			return VPNStatus{Tailscale: &TailscaleStatus{HostName: "homert02", BackendState: "Running"}}, nil
 		},
 		DNSQueryLogPath:    queryLog,
@@ -535,7 +535,7 @@ func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
 }
 
 func TestHandlerServesVPNStatus(t *testing.T) {
-	handler := New(Options{VPNStatus: func() (VPNStatus, error) {
+	handler := New(Options{VPNStatus: func(context.Context) (VPNStatus, error) {
 		return VPNStatus{
 			WireGuard: []WireGuardInterfaceStatus{{
 				Name:       "wg0",
@@ -1879,7 +1879,7 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 		DHCPFingerprintLogPath: fingerprintLogPath,
 		DHCPLeasePaths:         []string{leasePath},
 	})
-	snapshot := handler.Snapshot(SnapshotOptions{
+	snapshot := handler.Snapshot(context.Background(), SnapshotOptions{
 		EventLimit:            -1,
 		ConnectionsLimit:      -1,
 		FirewallLimit:         -1,

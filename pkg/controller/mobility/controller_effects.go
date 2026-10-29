@@ -96,56 +96,6 @@ func onPremL2OwnershipPending(self memberPlanInfo, placement PlacementDecision, 
 	return true, "onprem-l2 ownership discovery has not observed any local clients"
 }
 
-func (c Controller) recordBGPStaticHandoverReleaseEvents(pool NormalizedMobilityPool, events []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
-	if len(pool.Spec.StaticHandovers) == 0 {
-		return nil, nil
-	}
-	if !pool.Prefix.IsValid() {
-		return nil, fmt.Errorf("MobilityPool/%s normalized prefix is required", pool.Name)
-	}
-	existing := map[string]bool{}
-	for _, ev := range events {
-		if ev.Type != ExpiredEventType || strings.TrimSpace(ev.SourceNode) != strings.TrimSpace(pool.SelfNode) {
-			continue
-		}
-		address, ok := normalizeLeaseAddress(firstNonEmpty(ev.Payload["address"], ev.Subject), pool.Prefix)
-		if ok {
-			existing[address] = true
-		}
-	}
-	var emitted []routerstate.EventRecord
-	for _, handover := range pool.Spec.StaticHandovers {
-		if strings.TrimSpace(handover.FromNodeRef) != strings.TrimSpace(pool.SelfNode) {
-			continue
-		}
-		address, ok := normalizeLeaseAddress(handover.Address, pool.Prefix)
-		if !ok || existing[address] {
-			continue
-		}
-		ev := routerstate.EventRecord{
-			ID:         "mobility:bgp-static-release:" + pool.Name + ":" + pool.SelfNode + ":" + safeName(address),
-			Group:      pool.Spec.GroupRef,
-			SourceNode: pool.SelfNode,
-			Type:       ExpiredEventType,
-			Subject:    address,
-			DedupeKey:  "mobility:bgp-static-release:" + pool.Name + ":" + pool.SelfNode + ":" + address,
-			Payload: map[string]string{
-				"address":    address,
-				"pool":       pool.Name,
-				"sourceType": staticHandoverType,
-			},
-			ObservedAt: now.UTC(),
-			RecordedAt: now.UTC(),
-			ExpiresAt:  now.UTC().Add(DefaultLeaseTTL),
-		}
-		if err := c.Store.RecordFederationEvent(ev); err != nil {
-			return nil, fmt.Errorf("record BGP static handover release %q: %w", ev.ID, err)
-		}
-		emitted = append(emitted, ev)
-	}
-	return emitted, nil
-}
-
 // poolWithDiscoveredSelfCapture applies the typed discovery observation only
 // to the normalized local overlay. The API spec remains immutable after the
 // normalizer boundary, so no second spec-to-planner conversion is needed.

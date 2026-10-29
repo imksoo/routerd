@@ -21,13 +21,13 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	stickyLeases, err := h.dhcpStickyLeaseList(logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
+	stickyLeases, err := h.dhcpStickyLeaseList(r.Context(), logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	leases = annotateDHCPLeasesWithSticky(leases, stickyLeases, now)
-	neighbors, err := neighborList()
+	neighbors, err := neighborList(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -51,7 +51,7 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	dhcpFingerprints, err := h.dhcpFingerprintList(logstore.DHCPFingerprintFilter{Since: clientSince, Limit: 1000})
+	dhcpFingerprints, err := h.dhcpFingerprintList(r.Context(), logstore.DHCPFingerprintFilter{Since: clientSince, Limit: 1000})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

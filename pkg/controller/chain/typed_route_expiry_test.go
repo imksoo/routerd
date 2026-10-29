@@ -68,8 +68,8 @@ func TestTypedRouteExpiryWithdrawsOwnedRoute(t *testing.T) {
 					Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 						command := name + " " + strings.Join(args, " ")
 						commands = append(commands, command)
-						if strings.HasPrefix(command, "ip route show") {
-							return []byte("192.0.2.0/24 dev lan0 proto static metric 90\n"), nil
+						if strings.HasPrefix(command, "ip -j -d -4 route show") {
+							return []byte(`[{"dst":"192.0.2.0/24","dev":"lan0","protocol":"boot","metric":90}]`), nil
 						}
 						return nil, nil
 					},

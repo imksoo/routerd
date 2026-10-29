@@ -145,6 +145,10 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if spec.Interface == "" {
 			return true, fmt.Errorf("%s spec.interface is required", res.ID())
 		}
+		if !api.ValidIPv6PDClient(spec.Client) {
+			return true, fmt.Errorf("%s spec.client %q is unsupported; use routerd-dhcpv6-client or omit client", res.ID(), spec.Client)
+		}
+
 		switch spec.Profile {
 		case "", api.IPv6PDProfileDefault, api.IPv6PDProfileNTTNGNDirectHikariDenwa, api.IPv6PDProfileNTTHGWLANPD:
 		default:

@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func TestConsoleUsesCurrentDeclarationAfterApply(t *testing.T) {
 	if reads != 2 {
 		t.Fatalf("declaration reads = %d, want one per request", reads)
 	}
-	snapshot := handler.Snapshot(SnapshotOptions{
+	snapshot := handler.Snapshot(context.Background(), SnapshotOptions{
 		EventLimit: -1, ConnectionsLimit: -1, FirewallLimit: -1,
 		DNSQueryLimit: -1, TrafficFlowLimit: -1, SkipDHCPLeases: true,
 	})

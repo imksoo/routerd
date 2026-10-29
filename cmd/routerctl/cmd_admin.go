@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
@@ -134,18 +135,31 @@ func applyCommand(args []string, stdout io.Writer) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{CandidateYAML: candidate, Replace: *replace, NoReconcile: *noReconcile})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for apply; start routerd serve or check --socket: %w", err)
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd apply failed: %w", apiErr)
+		}
+		return fmt.Errorf("routerd apply request failed; outcome is unconfirmed: %w", err)
 	}
 	if err := writeJSON(stdout, result); err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(result.Result.Phase), "Drifted") {
-		return commandExitError{
-			Code: 1,
-			Err:  errors.New("apply finished with phase Drifted; canonical config was not committed"),
-		}
+	return mutationResultError("apply", &result.Result)
+}
+
+func mutationResultError(operation string, result *apply.Result) error {
+	if result == nil {
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s returned no mutation result", operation)}
 	}
-	return nil
+	phase := strings.TrimSpace(result.Phase)
+	switch phase {
+	case "Healthy", "Applied", "Committed", "Standby":
+		return nil
+	case "Blocked", "Drifted":
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s finished with phase %s; canonical config was not committed", operation, phase)}
+	default:
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s finished with phase %q; requested mutation was not confirmed", operation, phase)}
+	}
 }
 
 func deleteCommand(args []string, stdout io.Writer) error {
@@ -178,9 +192,19 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force, NoReconcile: *noReconcile})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for delete; start routerd serve or check --socket: %w", err)
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd delete failed: %w", apiErr)
+		}
+		return fmt.Errorf("routerd delete request failed; outcome is unconfirmed: %w", err)
 	}
-	return writeJSON(stdout, result)
+	if err := writeJSON(stdout, result); err != nil {
+		return err
+	}
+	if *dryRun {
+		return nil
+	}
+	return mutationResultError("delete", result.Result)
 }
 
 func readCandidateYAML(path string, stdin io.Reader) (string, error) {

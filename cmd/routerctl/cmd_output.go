@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -61,26 +60,22 @@ func writeDescribeStatus(w io.Writer, row showResource) {
 		fmt.Fprintf(w, "Service Manager:\t%s\n", displayCell(stringValue(row.State["serviceManager"])))
 		return
 	}
-	lease, ok := describePDLease(row.State)
-	if ok {
+	if row.PDLease != nil {
+		live := row.PDLease.Live(time.Now().UTC())
+		lease := &live
 		fmt.Fprintf(w, "Currently observable:\t%s\n", yesNo(lease.CurrentPrefix != ""))
 		fmt.Fprintf(w, "Current delegated prefix:\t%s\n", displayCell(lease.CurrentPrefix))
 		fmt.Fprintf(w, "Last delegated prefix:\t%s\n", displayCell(lease.LastPrefix))
 		fmt.Fprintf(w, "Client DUID:\t%s\n", displayCell(stringutil.FirstNonEmpty(lease.DUIDText, lease.DUID)))
 		fmt.Fprintf(w, "Expected DUID:\t%s\n", displayCell(lease.ExpectedDUID))
 		fmt.Fprintf(w, "IAID:\t%s\n", displayCell(lease.IAID))
-		fmt.Fprintf(w, "Last Reply at:\t%s\n", displayCell(lease.LastReplyAt))
-		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(lease.LastObservedAt))
-		fmt.Fprintf(w, "Last Solicit at:\t%s\n", displayCell(lease.LastSolicitAt))
-		fmt.Fprintf(w, "Last Request at:\t%s\n", displayCell(lease.LastRequestAt))
-		fmt.Fprintf(w, "Last Renew at:\t%s\n", displayCell(lease.LastRenewAt))
-		fmt.Fprintf(w, "Last Rebind at:\t%s\n", displayCell(lease.LastRebindAt))
-		fmt.Fprintf(w, "Last Release at:\t%s\n", displayCell(lease.LastReleaseAt))
-		fmt.Fprintf(w, "T1:\t%s\n", displayLeaseSeconds(lease.T1))
-		fmt.Fprintf(w, "T2:\t%s\n", displayLeaseSeconds(lease.T2))
-		fmt.Fprintf(w, "Preferred lifetime:\t%s\n", displayLeaseSeconds(lease.PLTime))
-		fmt.Fprintf(w, "Valid lifetime:\t%s\n", displayLeaseSeconds(lease.VLTime))
-		if timing := pdLeaseTiming(lease, time.Now().UTC()); len(timing) > 0 {
+		fmt.Fprintf(w, "Last Reply at:\t%s\n", displayCell(displayPDTime(lease.LastReplyAt)))
+		fmt.Fprintf(w, "Last observed at:\t%s\n", displayCell(displayPDTime(lease.LastObservedAt)))
+		fmt.Fprintf(w, "T1:\t%s\n", displayLeaseSeconds(lease.T1Seconds))
+		fmt.Fprintf(w, "T2:\t%s\n", displayLeaseSeconds(lease.T2Seconds))
+		fmt.Fprintf(w, "Preferred lifetime:\t%s\n", displayLeaseSeconds(lease.PreferredSeconds))
+		fmt.Fprintf(w, "Valid lifetime:\t%s\n", displayLeaseSeconds(lease.ValidSeconds))
+		if timing := pdLeaseTiming(*lease, time.Now().UTC()); len(timing) > 0 {
 			fmt.Fprintf(w, "Next T1 at:\t%s\n", displayCell(timing["t1At"]))
 			fmt.Fprintf(w, "Next T2 at:\t%s\n", displayCell(timing["t2At"]))
 			fmt.Fprintf(w, "Valid lifetime expires at:\t%s\n", displayCell(timing["expiresAt"]))
@@ -143,31 +138,35 @@ func stringValue(value any) string {
 	return ""
 }
 
-func describePDLease(state map[string]any) (routerstate.PDLease, bool) {
-	if state == nil {
-		return routerstate.PDLease{}, false
+func displayPDTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
 	}
-	lease, ok := state["lease"].(routerstate.PDLease)
-	return lease, ok
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func pdLeaseTiming(lease routerstate.PDLease, now time.Time) map[string]string {
-	base, ok := parseRFC3339Time(lease.LastReplyAt)
-	if !ok {
+	if lease.LastReplyAt.IsZero() {
 		return nil
 	}
 	out := map[string]string{}
-	if seconds, ok := parseLeaseSeconds(lease.T1); ok {
-		out["t1At"] = base.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339)
+	for _, field := range []struct {
+		key     string
+		seconds uint32
+	}{{"t1At", lease.T1Seconds}, {"t2At", lease.T2Seconds}} {
+		if !lease.LeaseUpdatedAt.IsZero() && field.seconds > 0 && field.seconds != 0xffffffff {
+			out[field.key] = lease.LeaseUpdatedAt.Add(time.Duration(field.seconds) * time.Second).UTC().Format(time.RFC3339)
+		}
 	}
-	if seconds, ok := parseLeaseSeconds(lease.T2); ok {
-		out["t2At"] = base.Add(time.Duration(seconds) * time.Second).UTC().Format(time.RFC3339)
+	if lease.ValidSeconds == 0xffffffff {
+		out["remaining"] = "infinite"
+		return out
 	}
-	if seconds, ok := parseLeaseSeconds(lease.VLTime); ok {
-		expiresAt := base.Add(time.Duration(seconds) * time.Second).UTC()
-		out["expiresAt"] = expiresAt.Format(time.RFC3339)
+	if lease.ValidSeconds > 0 {
+		expires := lease.LastReplyAt.Add(time.Duration(lease.ValidSeconds) * time.Second)
+		out["expiresAt"] = expires.UTC().Format(time.RFC3339)
 		if !now.IsZero() {
-			remaining := expiresAt.Sub(now).Round(time.Second)
+			remaining := expires.Sub(now).Round(time.Second)
 			if remaining <= 0 {
 				out["remaining"] = "expired"
 			} else {
@@ -178,38 +177,11 @@ func pdLeaseTiming(lease routerstate.PDLease, now time.Time) map[string]string {
 	return out
 }
 
-func parseRFC3339Time(value string) (time.Time, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}, false
+func displayLeaseSeconds(value uint32) string {
+	if value == 0xffffffff {
+		return "infinite"
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
-		t, err := time.Parse(layout, value)
-		if err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
-}
-
-func parseLeaseSeconds(value string) (int64, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, false
-	}
-	seconds, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || seconds < 0 {
-		return 0, false
-	}
-	return seconds, true
-}
-
-func displayLeaseSeconds(value string) string {
-	seconds, ok := parseLeaseSeconds(value)
-	if !ok {
-		return "-"
-	}
-	return fmt.Sprintf("%ds", seconds)
+	return fmt.Sprintf("%ds", value)
 }
 
 func yesNo(value bool) string {
@@ -262,14 +234,14 @@ func specSummary(spec any) string {
 	return strings.Join(parts, ",")
 }
 
-func stateSummary(state map[string]any) string {
+func stateSummary(state map[string]any, lease *routerstate.PDLease) string {
+	if lease != nil {
+		live := lease.Live(time.Now().UTC())
+		lease = &live
+		return "current=" + displayCell(lease.CurrentPrefix) + ",last=" + displayCell(lease.LastPrefix)
+	}
 	if len(state) == 0 {
 		return "-"
-	}
-	if leaseValue, ok := state["lease"]; ok {
-		if lease, ok := leaseValue.(routerstate.PDLease); ok {
-			return "current=" + displayCell(lease.CurrentPrefix) + ",last=" + displayCell(lease.LastPrefix)
-		}
 	}
 	return fmt.Sprintf("%d values", len(state))
 }

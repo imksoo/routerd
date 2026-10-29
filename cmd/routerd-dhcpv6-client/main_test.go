@@ -439,3 +439,22 @@ func TestDaemonKeepsTheRetryOwnerAfterTransportFailure(t *testing.T) {
 		t.Fatal("same worker did not recover through scheduled retry")
 	}
 }
+
+func TestLeaseEndpointReturnsCompleteTypedAssociation(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	client, err := pdclient.New(pdclient.Config{Resource: "wan-pd", Interface: "wan0", ClientDUID: []byte{1}, IAID: 7, Now: func() time.Time { return now }}, &daemonMemoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Restore(pdclient.Snapshot{Resource: "wan-pd", Interface: "wan0", ClientDUID: "01", ServerDUID: "02", IAID: 7, State: pdclient.StateBound, CurrentPrefix: "2001:db8:1::/56", LeaseUpdatedAt: now, T1Seconds: 30, T2Seconds: 60, Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1::/56", Preferred: 90, Valid: 120, AcquiredAt: now}, {Prefix: "2001:db8:2::/56", Preferred: 100, Valid: 180, AcquiredAt: now}}})
+	daemon := &dhcpv6Daemon{client: client}
+	response := httptest.NewRecorder()
+	daemon.handleLease(response, httptest.NewRequest(http.MethodGet, "/v1/lease", nil))
+	var snapshot pdclient.Snapshot
+	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Resource != "wan-pd" || len(snapshot.Prefixes) != 2 || snapshot.CurrentPrefix != "2001:db8:1::/56" || !snapshot.Prefixes[1].AcquiredAt.Equal(now) {
+		t.Fatalf("typed IPC flattened association: %+v", snapshot)
+	}
+}

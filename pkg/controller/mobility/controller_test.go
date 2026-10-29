@@ -1445,8 +1445,8 @@ func TestControllerBGPModeRejectsEventGroupSiteAlias(t *testing.T) {
 	}
 	bgp := &fakeBGPPaths{}
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+	if err := controller.Reconcile(context.Background()); err == nil || !strings.Contains(err.Error(), `self node "aws-router" is not a member`) {
+		t.Fatalf("Reconcile error = %v, want exact SAMNodeSet membership error", err)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
 	if status["phase"] != "Degraded" || !strings.Contains(fmt.Sprint(status["reason"]), `self node "aws-router" is not a member`) {
@@ -3619,14 +3619,15 @@ func TestControllerBGPModeProviderTrapRIBStartupIsConservative(t *testing.T) {
 	now := time.Date(2026, 6, 2, 10, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := plannedPoolSpec()
-	spec.StaticHandovers = []api.MobilityStaticHandover{{
-		Address:     "10.88.60.10/32",
-		FromNodeRef: "azure-router",
-		ToNodeRef:   "onprem-router",
-	}}
+	spec.Members = append(spec.Members, api.ResolvedMobilityPoolMember{NodeRef: "remote-router", Site: "remote", Role: "cloud"})
+	intent := api.MobilityStaticHandover{ID: "rib-hold-remote-owner", Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "remote-router"}
+	spec.StaticHandovers = []api.MobilityStaticHandover{intent}
+	proof := handoverReleaseFixture(intent, now)
+	proof.ExpiresAt = now.Add(DefaultLeaseTTL)
+	recordEvent(t, store, proof)
 	router := routerWithBGPRouter(planningRouterForNode("azure-router", spec))
 	saveBGPStatus(t, store, map[string][]string{"10.88.60.10/32": {"10.99.0.1"}}, []map[string]any{
-		bgpOwnerPrefix("10.88.60.10/32", "10.99.0.1", "onprem-router"),
+		bgpOwnerPrefix("10.88.60.10/32", "10.99.0.1", "remote-router"),
 	}, nil)
 	bgp := &fakeBGPPaths{}
 	controller := Controller{Router: router, Store: store, BGPPaths: bgp, Now: func() time.Time { return now }}
@@ -4335,7 +4336,7 @@ func TestControllerBGPModeStaticHandoverSwitchesAdvertisementSource(t *testing.T
 	}
 
 	spec.Members[0].StaticOwnedAddresses = nil
-	spec.StaticHandovers = []api.MobilityStaticHandover{{Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
+	spec.StaticHandovers = []api.MobilityStaticHandover{{ID: "cloudedge-static-10-to-azure", Address: "10.88.60.10/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"}}
 	controller.Router = staticRouter("onprem-router", spec)
 	controller.Now = func() time.Time { return base.Add(time.Minute) }
 	if err := controller.Reconcile(context.Background()); err != nil {
@@ -4343,6 +4344,10 @@ func TestControllerBGPModeStaticHandoverSwitchesAdvertisementSource(t *testing.T
 	}
 	if len(bgp.deletes) != 1 || bgp.deletes[0].Source != onpremSource || bgp.deletes[0].Prefix != "10.88.60.10/32" {
 		t.Fatalf("handover deletes = %#v, want onprem withdraw", bgp.deletes)
+	}
+	ackStoredNativeHandover(t, store)
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 
 	controller.Router = staticRouter("azure-router", spec)

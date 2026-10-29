@@ -639,7 +639,7 @@ func enrollmentPolicyNodeSet(router *api.Router, ref string, policy api.SAMEnrol
 // resources. Called from effectiveRouterForReconcile so all controllers
 // see the generated resources and each independently reconciles its own
 // resource types.
-func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
+func resolveWireGuardSAMResources(router *api.Router, now time.Time) (*api.Router, error) {
 	if router == nil {
 		return router, nil
 	}
@@ -707,7 +707,7 @@ func resolveWireGuardSAMResources(router *api.Router) (*api.Router, error) {
 					}
 					return nil, fmt.Errorf("%s spec.wireGuard.interface %q does not match WireGuardInterface %q", ref, want, iface)
 				}
-				nodeSet, _, _, _, err := enrollmentPolicyNodeSet(router, ref, policy, time.Now().UTC())
+				nodeSet, _, _, _, err := enrollmentPolicyNodeSet(router, ref, policy, now.UTC())
 				if err != nil {
 					if source.Optional {
 						continue

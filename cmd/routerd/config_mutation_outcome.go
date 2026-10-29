@@ -6,17 +6,16 @@ import (
 	"errors"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 )
 
 // mutateRuntime runs under the caller's exclusive mutation gate through reload,
 // apply, persistence and any acknowledged restoration. Post-rename failures keep
 // the requested runtime; a restoration error never proves that the old one runs.
-func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (_ *apply.Result, err error) {
+func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (outcome applyAttemptOutcome, err error) {
 	previous := m.getRouter()
 	shapeChanged, _ := runtimeShapeChanged(previous, next)
-	outcome := applyAttemptOutcome{Stage: "runtime-reload", Canonical: canonicalNotRequested}
+	outcome = applyAttemptOutcome{Stage: "runtime-reload", Canonical: canonicalNotRequested}
 	if m.activeRuntime != nil {
 		outcome.Runtime.Active = m.activeRuntime()
 	}
@@ -32,12 +31,12 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 	}()
 	if shapeChanged {
 		outcome.Runtime, err = m.reloadRuntimeOutcome(next)
-		m.publishConfirmedRuntime(outcome.Runtime.Active)
 		if err != nil {
-			return nil, err
+			m.publishConfirmedRuntime(outcome.Runtime.Active)
+			return outcome, err
 		}
 		if !outcome.Runtime.Active.Known || !outcome.Runtime.Active.Available {
-			return nil, errors.New("reload did not confirm an active runtime")
+			return outcome, errors.New("reload did not confirm an active runtime")
 		}
 	}
 	runtimeOutcome := outcome.Runtime
@@ -45,8 +44,15 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 	outcome.Runtime = runtimeOutcome
 	// Standby is an intentional successful runtime update without a canonical
 	// commit; preserve the existing HA contract on this normal path as well.
-	if outcome.Canonical == canonicalReplaced || err == nil {
-		if !shapeChanged {
+	standby := err == nil && outcome.Result != nil && outcome.Result.Phase == "Standby"
+	if err == nil && !standby && (outcome.Canonical != canonicalReplaced || !outcome.DurabilityConfirmed) {
+		outcome.Stage = "canonical-confirmation"
+		err = errors.New("apply did not acknowledge durable canonical configuration replacement")
+	}
+	if outcome.Canonical == canonicalReplaced || standby {
+		if shapeChanged {
+			m.publishConfirmedRuntime(outcome.Runtime.Active)
+		} else {
 			if updateErr := m.updateConfirmedRuntime(next); updateErr != nil {
 				if err == nil {
 					outcome.Stage = "runtime-publish"
@@ -69,9 +75,9 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 		outcome.Runtime.Active = m.activeRuntime()
 	}
 	if err != nil {
-		return outcome.Result, err
+		return outcome, err
 	}
-	return outcome.Result, nil
+	return outcome, nil
 }
 
 func (m serveConfigMutator) publishConfirmedRuntime(active controllerchain.RuntimeSnapshot) {

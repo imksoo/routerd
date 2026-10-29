@@ -5,7 +5,8 @@ spec:
     - nodeRef: onprem-router
       staticOwnedAddresses: []
   staticHandovers:
-    - address: 10.77.60.10/32
+    - id: client-10-to-aws-attempt-1
+      address: 10.77.60.10/32
       fromNodeRef: onprem-router
       toNodeRef: aws-router-a
 

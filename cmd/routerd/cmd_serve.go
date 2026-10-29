@@ -2687,6 +2687,10 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	if err := outcome.finish(store, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
 	}
+	if !scheduled && !opts.DryRun && !configCommitPhase(result.Phase) {
+		outcome.Stage = "observe-result"
+		return result, fmt.Errorf("reconcile finished with phase %s; desired router state was not confirmed", result.Phase)
+	}
 	outcome.Stage = "output"
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return result, err

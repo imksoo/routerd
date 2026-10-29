@@ -145,12 +145,13 @@ func decodePoolPreviousState(status map[string]any) PreviousPoolState {
 
 // PoolPlan is the single typed result consumed by effectors.
 type PoolPlan struct {
-	Placement       PlacementDecision
-	Addresses       []AddressDecision
-	BGPPaths        []bgpdaemon.AppliedPath
-	ProviderActions []dynamicconfig.ActionPlan
-	LocalDataplane  dynamicconfig.MobilityDataplanePlan
-	FIBVerdicts     []dynamicconfig.FIBVerdict
+	Placement        PlacementDecision
+	Addresses        []AddressDecision
+	BGPPaths         []bgpdaemon.AppliedPath
+	ProviderActions  []dynamicconfig.ActionPlan
+	LocalDataplane   dynamicconfig.MobilityDataplanePlan
+	FIBVerdicts      []dynamicconfig.FIBVerdict
+	HandoverReleases []api.MobilityStaticHandover
 }
 
 func ReconcilePool(snapshot PoolRuntimeSnapshot) (PoolPlan, error) {
@@ -160,6 +161,10 @@ func ReconcilePool(snapshot PoolRuntimeSnapshot) (PoolPlan, error) {
 	pool := snapshot.Pool
 	if !pool.Prefix.IsValid() {
 		return PoolPlan{}, fmt.Errorf("MobilityPool/%s normalized prefix is required", pool.Name)
+	}
+	releases, err := planStaticHandoverReleases(snapshot)
+	if err != nil {
+		return PoolPlan{}, err
 	}
 	placement, _ := EvaluatePlacementFromObservations(pool.Self, pool.Members, snapshot.PlacementObservations, snapshot.Now)
 	decisions, err := resolveAddressOwnership(snapshot)
@@ -191,6 +196,8 @@ func ReconcilePool(snapshot PoolRuntimeSnapshot) (PoolPlan, error) {
 	plan.Addresses = decisions
 	plan.LocalDataplane.Routes = append(plan.LocalDataplane.Routes, localInventoryRoutes...)
 	plan.FIBVerdicts = fibVerdicts
+	plan.HandoverReleases = releases
+	plan.LocalDataplane = planHandoverNativeWithdrawals(snapshot, plan.LocalDataplane)
 	return plan, nil
 }
 

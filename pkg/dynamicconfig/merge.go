@@ -76,7 +76,14 @@ func BuildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, po
 	if err := config.ValidateForOS(&startup, targetOS); err != nil {
 		return api.Router{}, EffectiveResult{}, err
 	}
-	effective := startup.Clone()
+	return buildEffectiveConfigForOS(startup.Clone(), parts, policies, now, targetOS)
+}
+
+func buildEffectiveConfigForOS(startup api.Router, parts []DynamicConfigPart, policies []DynamicOverridePolicy, now time.Time, targetOS platform.OS) (api.Router, EffectiveResult, error) {
+	effective := startup
+	// The resource list belongs to this observation. Static resource values are
+	// immutable prepared input; mask removal must not overwrite that input list.
+	effective.Spec.Resources = append([]api.Resource(nil), startup.Spec.Resources...)
 	result := EffectiveResult{}
 
 	startupIDs := map[resourceIdentity]api.Resource{}

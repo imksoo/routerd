@@ -301,7 +301,7 @@ spec:
 		{NodeRef: "rr-a", RouteReflector: true, SAMEndpoint: "10.10.0.2", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-a", Endpoint: "203.0.113.10:51820", AllowedIPs: []string{"10.99.0.2/32", "10.10.0.2/32"}}},
 		{NodeRef: "rr-b", RouteReflector: true, SAMEndpoint: "10.10.0.3", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-b", Endpoint: "203.0.113.11:51820", AllowedIPs: []string{"10.99.0.3/32", "10.10.0.3/32"}}},
 	})
-	effective, err := resolveWireGuardSAMResources(router)
+	effective, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ spec:
 		{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "leafpub-b", Endpoint: "198.51.100.32:51820", AllowedIPs: []string{"10.20.0.32/32"}}},
 	})
 	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ spec:
 		t.Fatalf("fingerprint-mismatched direct peer was generated: %#v", resources)
 	}
 
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +634,7 @@ spec:
 		t.Fatalf("explicit RR-name peer was not retained by the normal merge: %#v", peer)
 	}
 
-	effective, err := resolveWireGuardSAMResources(router)
+	effective, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1452,7 +1452,7 @@ func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
 		t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
 	}
 	assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 1)
-	resolved, err := resolveWireGuardSAMResources(effective)
+	resolved, err := resolveWireGuardSAMResources(effective, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("resolveWireGuardSAMResources: %v", err)
 	}
@@ -1493,7 +1493,7 @@ func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
 				t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
 			}
 			assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 2)
-			resolved, err := resolveWireGuardSAMResources(effective)
+			resolved, err := resolveWireGuardSAMResources(effective, time.Now().UTC())
 			if err != nil {
 				t.Fatalf("resolveWireGuardSAMResources: %v", err)
 			}
@@ -1904,7 +1904,7 @@ spec:
               endpoint: 198.51.100.2:51820
               allowedIPs: [10.99.70.2/32]
 `)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1979,7 +1979,7 @@ spec:
         interface: wg-sam
         address: 10.99.70.99/32
 `)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2044,12 +2044,12 @@ spec:
               endpoint: 198.51.100.2:51820
               allowedIPs: [10.99.70.2/32]
 `)
-	first, err := resolveWireGuardSAMResources(router)
+	first, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := wireGuardResourceSnapshot(t, first)
-	second, err := resolveWireGuardSAMResources(first)
+	second, err := resolveWireGuardSAMResources(first, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2081,7 +2081,7 @@ spec:
 }
 
 func TestResolveWireGuardSAMResourcesNilRouter(t *testing.T) {
-	resolved, err := resolveWireGuardSAMResources(nil)
+	resolved, err := resolveWireGuardSAMResources(nil, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2104,7 +2104,7 @@ spec:
         privateKey: priv
 `)
 	before := wireGuardResourceSnapshot(t, router)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

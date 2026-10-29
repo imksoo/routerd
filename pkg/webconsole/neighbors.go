@@ -3,41 +3,48 @@
 package webconsole
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-func neighborList() ([]NeighborEntry, error) {
+func neighborList(ctx context.Context) ([]NeighborEntry, error) {
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		return freeBSDNeighborList()
+		return freeBSDNeighborList(ctx)
 	}
-	out, err := exec.Command("ip", "-j", "neigh", "show").Output()
+	out, err := commandOutputTimeout(ctx, 2*time.Second, "ip", "-j", "neigh", "show")
 	if err != nil {
 		return nil, err
 	}
 	return parseIPNeighborJSON(out)
 }
 
-func freeBSDNeighborList() ([]NeighborEntry, error) {
+func freeBSDNeighborList(ctx context.Context) ([]NeighborEntry, error) {
 	var combined []NeighborEntry
 	var errs []string
-	if out, err := exec.Command("arp", "-an").Output(); err == nil {
+	if out, err := commandOutputTimeout(ctx, 2*time.Second, "arp", "-an"); err == nil {
 		combined = append(combined, parseFreeBSDARP(out)...)
 	} else {
 		errs = append(errs, err.Error())
 	}
-	if out, err := exec.Command("ndp", "-an").Output(); err == nil {
+	if err := ctx.Err(); err != nil {
+		return combined, err
+	}
+	if out, err := commandOutputTimeout(ctx, 2*time.Second, "ndp", "-an"); err == nil {
 		combined = append(combined, parseFreeBSDNDP(out)...)
 	} else {
 		errs = append(errs, err.Error())
 	}
-	if len(combined) == 0 && len(errs) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
+	if err := ctx.Err(); err != nil {
+		return combined, err
+	}
+	if len(errs) > 0 {
+		return combined, fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
 	sort.Slice(combined, func(i, j int) bool {
 		if combined[i].IfName != combined[j].IfName {

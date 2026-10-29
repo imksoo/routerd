@@ -14,19 +14,30 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 )
 
-func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
+func (h Handler) dhcpFingerprintList(ctx context.Context, filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.DHCPFingerprintLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenDHCPFingerprintLog(h.opts.DHCPFingerprintLogPath)
+	store, err := logstore.OpenDHCPFingerprintLogReadOnly(h.opts.DHCPFingerprintLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
-func (h Handler) dhcpStickyLeaseList(filter logstore.DHCPStickyFilter) ([]logstore.DHCPStickyLease, error) {
+func (h Handler) dhcpStickyLeaseList(ctx context.Context, filter logstore.DHCPStickyFilter) ([]logstore.DHCPStickyLease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.DHCPStickyLogPath) == "" {
 		return nil, nil
 	}
@@ -41,7 +52,9 @@ func (h Handler) dhcpStickyLeaseList(filter logstore.DHCPStickyFilter) ([]logsto
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
 func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStickyLease, now time.Time) []DHCPLease {

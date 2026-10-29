@@ -130,7 +130,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(firewallPolicies, func(i, j int) bool { return firewallPolicies[i].Metadata.Name < firewallPolicies[j].Metadata.Name })
 	sort.Slice(firewallLogs, func(i, j int) bool { return firewallLogs[i].Metadata.Name < firewallLogs[j].Metadata.Name })
-	sort.Slice(firewallRules, func(i, j int) bool { return firewallRules[i].Metadata.Name < firewallRules[j].Metadata.Name })
+	sortFirewallRules(firewallRules)
 	sort.Slice(firewallFlowPinholes, func(i, j int) bool {
 		return firewallFlowPinholes[i].Metadata.Name < firewallFlowPinholes[j].Metadata.Name
 	})
@@ -893,7 +893,7 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(logs, func(i, j int) bool { return logs[i].Metadata.Name < logs[j].Metadata.Name })
-	sort.Slice(rules, func(i, j int) bool { return rules[i].Metadata.Name < rules[j].Metadata.Name })
+	sortFirewallRules(rules)
 	sort.Slice(flowPinholes, func(i, j int) bool { return flowPinholes[i].Metadata.Name < flowPinholes[j].Metadata.Name })
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 	var buf bytes.Buffer

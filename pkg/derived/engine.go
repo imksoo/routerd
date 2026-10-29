@@ -67,9 +67,11 @@ type Engine interface {
 	Reconcile(ctx context.Context, resource api.Resource, reader Reader) ([]daemonapi.DaemonEvent, error)
 }
 
-func (c *Controller) Start(ctx context.Context) {
+func (c *Controller) Start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
+		close(done)
+		return done
 	}
 	interval := c.Interval
 	if interval == 0 {
@@ -77,6 +79,7 @@ func (c *Controller) Start(ctx context.Context) {
 	}
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
 	go func() {
+		defer close(done)
 		defer c.StopTimers()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -98,6 +101,7 @@ func (c *Controller) Start(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
 func (c *Controller) reconcileLogged(ctx context.Context, emitInitial bool) {
@@ -107,6 +111,9 @@ func (c *Controller) reconcileLogged(ctx context.Context, emitInitial bool) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, emitInitial bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.init()
 	c.pruneRemovedResources()
 	for _, resource := range c.Router.Spec.Resources {
@@ -202,6 +209,9 @@ func (c *Controller) logTimerError(err error) {
 }
 
 func (c *Controller) publish(ctx context.Context, resource api.Resource, spec api.DerivedEventSpec, state *derivedState, asserted bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	now := c.now()
 	suffix := ".retracted"
 	phase := PhaseRetracted
@@ -215,6 +225,9 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, spec ap
 	state.asserted = asserted
 	state.pendingTransition = PendingNone
 	if err := c.saveStatusWithPhase(resource, state, phase); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-derived", Kind: "routerd-derived", Instance: resource.Metadata.Name}, spec.Topic+suffix, daemonapi.SeverityInfo)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // RuntimeSnapshot describes the confirmed controller generation, independently
@@ -133,7 +134,11 @@ func (r *Runner) UpdateRuntimeRouter(router *api.Router) error {
 	if r.runtimeFenced || !r.runtimeSnapshot.Known || !r.runtimeSnapshot.Available {
 		return ErrRuntimeMutationStopped
 	}
-	r.setRuntimeRouter(router)
+	prepared, err := prepareRouterConfig(router, platform.CurrentOS())
+	if err != nil {
+		return err
+	}
+	r.publishPreparedRouter(prepared)
 	r.runtimeSnapshot.Router = router
 	return nil
 }
@@ -142,12 +147,6 @@ func (r *Runner) currentRouter() *api.Router {
 	r.routerMu.RLock()
 	defer r.routerMu.RUnlock()
 	return r.Router
-}
-
-func (r *Runner) setRuntimeRouter(router *api.Router) {
-	r.routerMu.Lock()
-	defer r.routerMu.Unlock()
-	r.Router = router
 }
 
 func (r *Runner) runtimeReloadChannel() chan generationReload {

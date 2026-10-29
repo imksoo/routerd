@@ -53,7 +53,31 @@ invalid persisted object JSON stops conditional reconciliation; it is not a new
 DHCPv6 worker snapshots now retain a `prefixes` collection with individual
 lifetimes and a lease-update timestamp. Current/previous selected prefixes are
 derived views for LAN renumbering. The old single-prefix snapshot is not a
-supported restart format on this branch. DHCPv4 lease-effect ownership includes
+supported restart format on this branch. The supported PD client is
+`routerd-dhcpv6-client`, also selected when `client` is omitted. External-client
+selectors such as `networkd`, `dhcp6c` and `dhcpcd` are rejected: they did not
+select an external lifecycle in the existing implementation. Rewrite those
+selectors at cutover; this revision does not infer lease authority from an OS
+address or a client-name label.
+
+The controller stores one typed PD
+observation in the object's `status.observation`; generic status updates cannot
+replace it. Inspection exposes `pdLease` as a typed control API field. Conditional
+status views are derived on read, so an expired lease is not revived by a stale
+display projection. Source identity, observation timestamps and explicit release
+govern whether a daemon snapshot may update that observation. Lease transitions
+and their required EventRule input history commit together.
+The complete association is authoritative for live prefixes; local address
+receipts retain cleanup identity and cannot revive a prefix the client revoked.
+
+LAN addresses inherit the remaining upstream preferred and valid lifetimes in
+the kernel. A renewal refreshes the same address's deadline; stopping the daemon
+cannot turn a finite lease into an unlimited address. Protocol infinite
+lifetimes remain supported. DS-Lite uses the exact LAN-owned /128 when shared;
+its separately derived source has a durable pending/applied receipt and its own
+bounded lifetime. Preserve those receipts through failed withdrawal or restart.
+
+DHCPv4 lease-effect ownership includes
 pending address, gateway and DNS operations in current state, so a restart can
 finish interrupted effects and exact withdrawal. Preserve these records while
 cleanup is pending.
@@ -63,6 +87,22 @@ owning supervisor has stopped the helper and the owned FIB cleanup succeeds.
 Worker restart refuses to restore advertisements while that operation exists.
 Do not discard the operation to force an apparently successful removal; correct
 the reported supervisor/kernel failure and let the same owner retry.
+
+The BGP helper's applied-state journal is version 2 on this branch. Dynamic path
+additions persist their source and native GoBGP identifier before the live add;
+the returned UUID is acknowledged only after the final save. A restart can
+complete or withdraw an interrupted add without treating the path as absent.
+Version 1 files are rejected. At an authorized cutover, stop the old helper and
+retire its old journal before starting the matching new binaries; do not replace
+a journal while its helper is running or discard pending effects during repair.
+
+Mobility SAM, routes and addresses also retain pending acquisitions and applied
+ownership. A static handover needs a new `staticHandovers[].id` shared by its
+participants. Its finite release proof is published only after BGP withdrawal,
+the current desired plan and all three native owners agree on that transfer.
+Receipt/read/cleanup failures withhold release and remain retryable. Retain the
+source during handover; use a fresh ID after rollback. See the
+[Phase F procedure](https://github.com/imksoo/routerd/blob/proposal/routerd15-kiss-runtime/examples/cloudedge-mobility-demo/phase-f/README.md).
 
 ## Events table
 
@@ -119,7 +159,12 @@ handover completion events are not yet proven in a real environment.
 
 ## Backup philosophy
 
-The state database holds **observed** state — it is not a substitute for the configuration. The authoritative description of intent lives in the YAML configuration, version-controlled in git. If a host is rebuilt, restoring the configuration and letting routerd reconcile is preferred over restoring the SQLite database.
+The YAML configuration holds operator intent. The state database also holds
+required ownership and unfinished operations, alongside observations and history.
+Preserve that state while repairing the same running router: restoring YAML alone
+cannot identify every external effect that needs cleanup. Rebuilding on a fresh
+host uses rewritten configuration and an explicit inventory and retirement of
+old effects, as described in the cutover procedure above.
 
 If you want history of operational events for forensic purposes, export or take periodic snapshots of `routerd.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db`. The controller event journal currently lives in `routerd.db`; preserve the complete database when event history is required.
 

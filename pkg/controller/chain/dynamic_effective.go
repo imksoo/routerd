@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/hybrid"
@@ -24,6 +25,7 @@ type dynamicConfigPartLister interface {
 }
 
 type dynamicRouteSAMView struct {
+	DeclaredRouter    *api.Router
 	EffectiveRouter   *api.Router
 	RouteRouter       *api.Router
 	HybridLowerings   []hybrid.HybridLowering
@@ -54,45 +56,89 @@ func BuildDynamicRouteSAMObjectStatusRouters(startup *api.Router, store any, now
 	return []*api.Router{view.EffectiveRouter, view.RouteRouter}, nil
 }
 
+// dynamicRouteSAMObservation is the typed view of one SQLite read. Expiry and
+// payload validation are repeated for each observation; static preparation is not.
+type dynamicRouteSAMObservation struct {
+	hasGeneric bool
+	parts      []dynamicconfig.DynamicConfigPart
+	mobility   dynamicconfig.MobilityDataplanePlan
+}
+
+func observeDynamicRouteSAM(lister dynamicConfigPartLister, now time.Time, targetOS platform.OS) (dynamicRouteSAMObservation, error) {
+	var records []routerstate.DynamicConfigPartRecord
+	if lister != nil {
+		var err error
+		records, err = lister.ListDynamicConfigParts()
+		if err != nil {
+			return dynamicRouteSAMObservation{}, fmt.Errorf("list dynamic config parts: %w", err)
+		}
+	}
+	observation := dynamicRouteSAMObservation{hasGeneric: hasDynamicConfigResources(records, now)}
+	if observation.hasGeneric {
+		var err error
+		observation.parts, err = genericDynamicConfigPartsFromRecords(records, now)
+		if err != nil {
+			return dynamicRouteSAMObservation{}, err
+		}
+	}
+	var err error
+	observation.mobility, err = mobilityDataplanePlanFromRecords(records, now, targetOS)
+	if err != nil {
+		return dynamicRouteSAMObservation{}, err
+	}
+	return observation, nil
+}
+
 func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
 	if startup == nil {
 		return dynamicRouteSAMView{}, fmt.Errorf("startup router is required")
 	}
-	effective := *startup
-	var records []routerstate.DynamicConfigPartRecord
-	if lister, ok := store.(dynamicConfigPartLister); ok {
-		var err error
-		records, err = lister.ListDynamicConfigParts()
+	lister, _ := store.(dynamicConfigPartLister)
+	observation, err := observeDynamicRouteSAM(lister, now, targetOS)
+	if err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	// This standalone boundary also serves plans and status queries. Retain its
+	// external admission check before accepting generic runtime payloads.
+	if observation.hasGeneric {
+		if err := config.ValidateForOS(startup, targetOS); err != nil {
+			return dynamicRouteSAMView{}, err
+		}
+	}
+	prepared, err := prepareRouterConfig(startup, targetOS)
+	if err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	base, err := prepared.routerForDynamicObservation(observation, now)
+	if err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	return prepared.buildDynamicRouteSAMView(base, observation, now)
+}
+
+func (p *preparedRouterConfig) routerForDynamicObservation(observation dynamicRouteSAMObservation, now time.Time) (*api.Router, error) {
+	if observation.hasGeneric {
+		// Validate the complete declared graph before when selection, like
+		// PlanEffective. Lower SAM resources after masks and gating so no
+		// generated static peer survives withdrawal of its owning source.
+		merged, _, err := p.startup.BuildEffective(observation.parts, now.UTC())
 		if err != nil {
-			return dynamicRouteSAMView{}, fmt.Errorf("list dynamic config parts: %w", err)
+			return nil, err
 		}
-		if hasDynamicConfigResources(records, now) {
-			parts, err := genericDynamicConfigPartsFromRecords(records)
-			if err != nil {
-				return dynamicRouteSAMView{}, err
-			}
-			policies, err := dynamicconfig.ExtractDynamicOverridePolicies(*startup)
-			if err != nil {
-				return dynamicRouteSAMView{}, err
-			}
-			merged, _, err := dynamicconfig.BuildEffectiveConfigForOS(*startup, parts, policies, now.UTC(), targetOS)
-			if err != nil {
-				return dynamicRouteSAMView{}, err
-			}
-			effective = merged
+		return &merged, nil
+	}
+	return p.staticSAM, nil
+}
+
+func (p *preparedRouterConfig) buildDynamicRouteSAMView(base *api.Router, observation dynamicRouteSAMObservation, now time.Time) (dynamicRouteSAMView, error) {
+	effective := *base
+	if observation.hasGeneric || p.timedSAM {
+		resolved, err := resolveWireGuardSAMResources(&effective, now)
+		if err != nil {
+			return dynamicRouteSAMView{}, err
 		}
+		effective = *resolved
 	}
-	resolved, err := resolveWireGuardSAMResources(&effective)
-	if err != nil {
-		return dynamicRouteSAMView{}, err
-	}
-	effective = *resolved
-
-	mobilityDataplane, err := mobilityDataplanePlanFromRecords(records, now, targetOS)
-	if err != nil {
-		return dynamicRouteSAMView{}, err
-	}
-
 	routeRouter := effective
 	hybridLowerings := []hybrid.HybridLowering(nil)
 	if hybrid.HasHybridRoutes(&effective) {
@@ -103,12 +149,12 @@ func buildDynamicRouteSAMView(startup *api.Router, store any, now time.Time, tar
 		routeRouter = expanded
 		hybridLowerings = lowerings
 	}
-
 	return dynamicRouteSAMView{
+		DeclaredRouter:    p.declared,
 		EffectiveRouter:   &effective,
 		RouteRouter:       &routeRouter,
 		HybridLowerings:   hybridLowerings,
-		MobilityDataplane: mobilityDataplane,
+		MobilityDataplane: observation.mobility,
 	}, nil
 }
 
@@ -139,6 +185,7 @@ func mobilityDataplanePlanFromRecords(records []routerstate.DynamicConfigPartRec
 	capturesByID := map[string]dynamicconfig.LocalCaptureIntent{}
 	routesByID := map[string]dynamicconfig.MobilityIPv4RouteIntent{}
 	addressesByID := map[string]dynamicconfig.MobilityIPv4AddressIntent{}
+	withdrawals := []dynamicconfig.MobilityWithdrawalRequest{}
 	poolScopes := map[string]netip.Prefix{}
 	activeRecords, invalidPools := codec.ActiveMobilityPoolPlanRecords(records, now)
 	if len(invalidPools) != 0 {
@@ -192,6 +239,12 @@ func mobilityDataplanePlanFromRecords(records []routerstate.DynamicConfigPartRec
 				return dynamicconfig.MobilityDataplanePlan{}, err
 			}
 		}
+		for _, request := range plan.Withdrawals {
+			if request.FromNodeRef != source.NodeRef {
+				return dynamicconfig.MobilityDataplanePlan{}, fmt.Errorf("withdrawal %q source node differs from typed plan source", request.ID)
+			}
+			withdrawals = append(withdrawals, request)
+		}
 		for _, address := range plan.StaticAddresses {
 			address.ID = strings.TrimSpace(address.ID)
 			if err := addMobilityPlanEntry(addressesByID, record.Source, source.PoolRef, "static address", address.ID, address.PoolRef, address); err != nil {
@@ -203,6 +256,7 @@ func mobilityDataplanePlanFromRecords(records []routerstate.DynamicConfigPartRec
 		Captures:        make([]dynamicconfig.LocalCaptureIntent, 0, len(capturesByID)),
 		Routes:          make([]dynamicconfig.MobilityIPv4RouteIntent, 0, len(routesByID)),
 		StaticAddresses: make([]dynamicconfig.MobilityIPv4AddressIntent, 0, len(addressesByID)),
+		Withdrawals:     withdrawals,
 	}
 	for _, capture := range capturesByID {
 		plan.Captures = append(plan.Captures, capture)
@@ -318,7 +372,7 @@ func mobilityARPObserverIntentsFromRecords(records []routerstate.DynamicConfigPa
 // to enter the generic effective-router merge. MobilityPool effects are an
 // explicit typed channel; any historical generic payload from that source is
 // intentionally ignored rather than migrated or replayed.
-func genericDynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.DynamicConfigPart, error) {
+func genericDynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicconfig.DynamicConfigPart, error) {
 	generic := make([]routerstate.DynamicConfigPartRecord, 0, len(records))
 	for _, record := range records {
 		if dynamicconfig.IsMobilityPoolReservedSource(record.Source) {
@@ -326,5 +380,5 @@ func genericDynamicConfigPartsFromRecords(records []routerstate.DynamicConfigPar
 		}
 		generic = append(generic, record)
 	}
-	return codec.DecodeAll(generic)
+	return codec.DecodeActive(generic, now)
 }

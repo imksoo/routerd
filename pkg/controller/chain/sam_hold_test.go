@@ -252,6 +252,10 @@ func (s *countingSAMStatusStore) ObjectStatus(apiVersion, kind, name string) map
 	return s.mapStore.ObjectStatus(apiVersion, kind, name)
 }
 
+func (s *countingSAMStatusStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestSAMControllerReadsAppliedDataplaneOncePerReconcile(t *testing.T) {
 	const (
 		intentID = "cloudedge/10.77.60.9"

@@ -99,7 +99,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		return nil, nil, errors.New("router is nil")
 	}
 	if !api.ValidIPv6PDClient(opts.OverrideClient) {
-		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation client override %q", opts.OverrideClient)
+		return nil, nil, fmt.Errorf("unsupported DHCPv6PrefixDelegation client override %q; use routerd-dhcpv6-client", opts.OverrideClient)
 	}
 	if !api.ValidIPv6PDProfile(opts.OverrideProfile) {
 		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation profile override %q", opts.OverrideProfile)
@@ -127,7 +127,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 			spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
 		}
 		if !api.ValidIPv6PDClient(spec.Client) {
-			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
+			return nil, nil, fmt.Errorf("%s spec.client %q is unsupported; use routerd-dhcpv6-client or omit client", res.ID(), spec.Client)
 		}
 		if !api.ValidIPv6PDProfile(spec.Profile) {
 			return nil, nil, fmt.Errorf("%s spec.profile is invalid: %q", res.ID(), spec.Profile)
@@ -580,8 +580,10 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			return nil, err
 		}
 	}
+	eventBus := bus.NewWithStore(stateStore)
+	eventBus.SetLogger(slog.Default())
 	outcome.Stage = "plan"
-	_, err = recordObservedPrefixDelegationState(router, stateStore)
+	err = recordObservedPrefixDelegationState(router, stateStore, eventBus)
 	if err != nil {
 		return nil, err
 	}
@@ -630,8 +632,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
-	eventBus := bus.NewWithStore(stateStore)
-	eventBus.SetLogger(slog.Default())
 	controllerOpts := applyChainControllerOptions(opts)
 	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
 		opts.attemptHooks.configureControllers(&controllerOpts)
@@ -680,6 +680,10 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	outcome.Stage = "finish-generation"
 	if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
+	}
+	if !configCommitPhase(result.Phase) {
+		outcome.Stage = "observe-result"
+		return result, fmt.Errorf("apply finished with phase %s; canonical config was not committed", result.Phase)
 	}
 	outcome.Stage = "output"
 

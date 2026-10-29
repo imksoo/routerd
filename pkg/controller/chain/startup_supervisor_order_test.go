@@ -29,8 +29,8 @@ func TestStartDefersClientDaemonSupervisionToControllerBootstrap(t *testing.T) {
 			EnabledControllers:     []string{"daemon-supervisor"},
 		},
 	}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
-		return nil, DaemonStatusController{}, nil
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,7 +59,7 @@ func TestControllerBootstrapObservesVRRPBeforeClientDaemonSupervisor(t *testing.
 		},
 	}
 	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: router}
-	controllers, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Leader: true})
+	controllers, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
 	}

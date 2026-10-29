@@ -153,6 +153,8 @@ type DSLiteTunnelController struct {
 	DryRun         bool
 	ResolverPort   int
 	Logger         *slog.Logger
+	Now            func() time.Time
+	CommandOutput  func(context.Context, string, ...string) ([]byte, error)
 }
 
 func (c DSLiteTunnelController) Start(ctx context.Context) {
@@ -181,6 +183,9 @@ func (c DSLiteTunnelController) Start(ctx context.Context) {
 }
 
 func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
+	if err := c.cleanupDelegatedEndpoints(ctx); err != nil {
+		return err
+	}
 	var failures []string
 	declared := c.DeclaredRouter
 	if declared == nil {
@@ -228,20 +233,28 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "Disabled"})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "Disabled"}); err != nil {
+				return err
+			}
 			continue
 		}
 		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"}); err != nil {
+				return err
+			}
 			continue
 		}
 		aftrName, remote, err := c.resolveRemote(ctx, spec)
 		if err != nil && aftrName == "" {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRMissing"})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRMissing"}); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRResolveFailed", "aftrName": aftrName, "error": err.Error()})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRResolveFailed", "aftrName": aftrName, "error": err.Error()}); err != nil {
+				return err
+			}
 			continue
 		}
 		local, localIfName, err := c.localAddress(spec)
@@ -250,7 +263,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			if err != nil {
 				reason = err.Error()
 			}
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason, "aftrName": aftrName, "aftrIPv6": remote})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason, "aftrName": aftrName, "aftrIPv6": remote}); err != nil {
+				return err
+			}
 			continue
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
@@ -261,11 +276,15 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		}
 		innerLocal, innerLocalPending, err := dsliteInnerLocalIPv4(c.Router, c.Store, spec)
 		if innerLocalPending != "" {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": innerLocalPending, "aftrName": aftrName, "aftrIPv6": remote, "dryRun": c.DryRun})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": innerLocalPending, "aftrName": aftrName, "aftrIPv6": remote, "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InnerLocalIPv4Invalid", "error": err.Error(), "dryRun": c.DryRun})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InnerLocalIPv4Invalid", "error": err.Error(), "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 			continue
 		}
 		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
@@ -273,23 +292,34 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if !c.DryRun {
 			if localIfName != "" {
 				delegatedSource := firstNonEmpty(spec.LocalAddressSource, "interface") == "delegatedAddress"
-				if err := ensureIPv6LocalEndpoint(ctx, localIfName, local, delegatedSource); err != nil {
+				pending := ""
+				var endpointErr error
+				if delegatedSource {
+					pending, endpointErr = c.ensureDelegatedEndpoint(ctx, resource.Metadata.Name, spec, localIfName, local)
+				} else {
+					endpointErr = ensureIPv6LocalEndpoint(ctx, localIfName, local)
+				}
+				if endpointErr != nil {
+					err := endpointErr
 					failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+					if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LocalEndpointApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun}); err != nil {
+						return err
+					}
 					continue
 				}
-				if delegatedSource && !waitForIPv6AddressReady(ctx, localIfName, local+"/128", 3*time.Second, ipv6AddressPresentWithPrefix) {
-					// A delegated /128 staged on a DOWN VMAC becomes tentative when
-					// the new MASTER raises that link.  Do not create an UP tunnel or
-					// start its health check until the outer source is usable.
-					_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "LocalIPv6NotReady", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "dryRun": c.DryRun})
+				if pending != "" {
+					if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": pending, "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "dryRun": c.DryRun}); err != nil {
+						return err
+					}
 					continue
 				}
 			}
 			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local, innerLocal)
 			if err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun}); err != nil {
+					return err
+				}
 				continue
 			}
 			actualIfName = firstNonEmpty(resolvedIfName, ifname)
@@ -301,14 +331,25 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			}
 			if err := setDSLiteTunnelLinkUp(ctx, actualIfName, mtu); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LinkApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun})
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LinkApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun}); err != nil {
+					return err
+				}
 				continue
+			}
+			if spec.LocalAddressSource == "delegatedAddress" {
+				pending, err := c.recheckDelegatedEndpoint(ctx, spec, localIfName, local)
+				if err != nil {
+					return err
+				}
+				if pending != "" {
+					status["phase"], status["reason"] = "Pending", pending
+				}
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, status); err != nil {
 			return err
 		}
-		if changed && c.Bus != nil {
+		if status["phase"] == "Up" && changed && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.tunnel.ds-lite.up", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"interface": ifname, "aftrIPv6": remote, "innerLocalIPv4": innerLocal, "dryRun": fmt.Sprintf("%t", c.DryRun)}
@@ -414,103 +455,8 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 			failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 			continue
 		}
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			phase := dependencyUnavailablePhase(c.Router, c.Store, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": phase, "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
-			continue
-		}
-		routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")
-		destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
-		device := ""
-		gateway := firstNonEmpty(resourcequery.Value(c.Store, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
-		preferredSource := strings.TrimSpace(spec.PreferredSource)
-		if routeType != "blackhole" {
-			device = firstNonEmpty(resourcequery.Value(c.Store, spec.DeviceFrom), strings.TrimSpace(spec.Device))
-			if device == "" {
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing"})
-				continue
-			}
-			devicePresent := c.DevicePresent
-			if devicePresent == nil {
-				devicePresent = interfaceDevicePresent
-			}
-			if !c.DryRun && !devicePresent(ctx, device) {
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun})
-				continue
-			}
-		}
-		status := map[string]any{"phase": "Installed", "type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
-		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
-		changed := routeInstallStatusChanged(previous, status)
-		if changed {
-			status["installedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-		} else if installedAt, ok := previous["installedAt"]; ok {
-			status["installedAt"] = installedAt
-		}
-		effectivePreferredSource := preferredSource
-		if !c.DryRun {
-			if preferredSource != "" && routeType != "blackhole" && !ipv4PreferredSourceIsLocal(ctx, c.run, preferredSource) {
-				effectivePreferredSource = ""
-				status["preferredSourceSkipped"] = true
-				status["preferredSourceSkipReason"] = "LocalAddressMissing"
-				status["effectivePreferredSource"] = ""
-				if c.Logger != nil {
-					c.Logger.Warn("ipv4 route preferred source is not a local OS address; installing route without src", "resource", resource.Metadata.Name, "destination", destination, "preferredSource", preferredSource)
-				}
-			} else if preferredSource != "" {
-				status["effectivePreferredSource"] = preferredSource
-			}
-			if platform.CurrentOS() != platform.OSFreeBSD && ipv4RouteInstalled(ctx, c.run, routeType, destination, device, gateway, effectivePreferredSource, spec.Metric) {
-				status["kernelRouteAlreadyCurrent"] = true
-				status["changed"] = changed
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
-					return err
-				}
-				continue
-			}
-			args := []string{"route", "replace", destination, "dev", device}
-			if routeType == "blackhole" {
-				args = []string{"route", "replace", "blackhole", destination}
-			} else if gateway != "" {
-				args = []string{"route", "replace", destination, "via", gateway, "dev", device}
-			}
-			if effectivePreferredSource != "" && routeType != "blackhole" {
-				args = append(args, "src", effectivePreferredSource)
-			}
-			if spec.Metric > 0 {
-				args = append(args, "metric", fmt.Sprintf("%d", spec.Metric))
-			}
-			name := "ip"
-			if platform.CurrentOS() == platform.OSFreeBSD {
-				name, args = freeBSDIPv4RouteApplyCommand(routeType, destination, device, gateway, effectivePreferredSource)
-			}
-			out, err := c.run(ctx, name, args...)
-			if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
-				args = freeBSDIPv4RouteAddArgs(args)
-				out, err = c.run(ctx, name, args...)
-			}
-			if err != nil {
-				message := strings.TrimSpace(string(out))
-				status := map[string]any{"phase": "Error", "reason": "ApplyFailed", "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun, "error": err.Error(), "command": name + " " + strings.Join(args, " ")}
-				if message != "" {
-					status["message"] = message
-				}
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status)
-				failures = append(failures, fmt.Sprintf("%s: %s: %v", resource.Metadata.Name, status["command"], err))
-				continue
-			}
-		}
-		status["changed"] = changed
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		if changed && c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.installed", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "dryRun": fmt.Sprintf("%t", c.DryRun)}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
-			}
+		if err := c.reconcileOrdinaryRoute(ctx, resource, spec); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
 		}
 	}
 	if len(failures) > 0 {
@@ -651,22 +597,16 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 }
 
 func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status routerstate.ObjectStatus, deleter routerstate.ObjectDeleteStore) error {
-	removal := ipv4RouteRemovalFromStatus(status.Status)
-	if !c.DryRun {
-		args := ipv4RouteRemovalDeleteArgs(removal)
-		if len(args) > 0 {
-			name := "ip"
-			if platform.CurrentOS() == platform.OSFreeBSD {
-				name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
-			} else if removedIPv4RouteRemovalIsCurrentlyBGP(ctx, c.run, removal) {
-				args = nil
-			}
-			if len(args) > 0 {
-				out, err := c.run(ctx, name, args...)
-				if err != nil && !missingIPv4RouteDelete(err, out) {
-					return fmt.Errorf("delete removed IPv4Route %s: %s %s: %w: %s", status.Name, name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-				}
-			}
+	if c.DryRun {
+		return nil
+	}
+	receipt, err := ipv4RouteReceiptFromStatus(status.Status)
+	if err != nil {
+		return err
+	}
+	if receipt != nil {
+		if err := c.removeOrdinaryRoute(ctx, receipt.Route); err != nil {
+			return fmt.Errorf("delete removed IPv4Route %s: %w", status.Name, err)
 		}
 	}
 	if err := deleter.DeleteObject(api.NetAPIVersion, "IPv4Route", status.Name); err != nil {
@@ -675,7 +615,9 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 	if c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.route.removed", daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: status.Name}
-		event.Attributes = map[string]string{"destination": removal.Destination, "device": removal.Device}
+		if receipt != nil {
+			event.Attributes = map[string]string{"destination": receipt.Route.Destination, "device": receipt.Route.Device}
+		}
 		if err := c.Bus.Publish(ctx, event); err != nil {
 			return err
 		}
@@ -689,12 +631,12 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 // ledger.  Keeping the removal logic typed avoids treating a status map as an
 // internal route-planning API.
 type ipv4RouteRemoval struct {
-	Type            string
-	Destination     string
-	Device          string
-	Gateway         string
-	PreferredSource string
-	Metric          string
+	Type            string `json:"type"`
+	Destination     string `json:"destination"`
+	Device          string `json:"device"`
+	Gateway         string `json:"gateway"`
+	PreferredSource string `json:"preferredSource"`
+	Metric          string `json:"metric"`
 }
 
 func ipv4RouteRemovalFromStatus(status map[string]any) ipv4RouteRemoval {
@@ -1407,7 +1349,7 @@ func suffixedPath(path, oldSuffix, newSuffix string) string {
 	return strings.TrimSuffix(path, oldSuffix) + newSuffix
 }
 
-func dependencyStatusSnapshot(store Store, dependencies []api.ResourceDependencySpec) []string {
+func dependencyStatusSnapshot(store resourcequery.Store, dependencies []api.ResourceDependencySpec) []string {
 	var out []string
 	for _, dependency := range dependencies {
 		kind, name, ok := resourcequery.SplitResource(dependency.Resource)
@@ -1690,32 +1632,14 @@ func firstUsableIfconfigGlobalIPv6(data []byte) string {
 }
 
 func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
-	if spec.LocalDelegatedAddress == "" {
-		return "", "", fmt.Errorf("localDelegatedAddress is required")
+	source, active, err := c.delegatedEndpointSource(spec)
+	if err != nil {
+		return "", "", err
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "IPv6DelegatedAddress" || resource.Metadata.Name != spec.LocalDelegatedAddress {
-			continue
-		}
-		delegated, err := resource.IPv6DelegatedAddressSpec()
-		if err != nil {
-			return "", "", err
-		}
-		prefix := prefixFromStatusOrAddress(c.Store, "${IPv6DelegatedAddress/"+spec.LocalDelegatedAddress+".status.address}")
-		if prefix == "" {
-			return "", "", fmt.Errorf("delegated prefix is not ready")
-		}
-		subnetID := delegated.SubnetID
-		if parsed, err := netip.ParsePrefix(prefix); err == nil && parsed.Bits() == 64 {
-			subnetID = ""
-		}
-		local, err := deriveIPv6AddressFromPrefix(prefix, subnetID, firstNonEmpty(spec.LocalAddressSuffix, delegated.AddressSuffix, "::1"))
-		if err != nil {
-			return "", "", err
-		}
-		return local, interfaceName(c.Router, delegated.Interface), nil
+	if !active {
+		return "", "", fmt.Errorf("delegated prefix is not ready")
 	}
-	return "", "", fmt.Errorf("missing IPv6DelegatedAddress %q", spec.LocalDelegatedAddress)
+	return source.Address, source.Interface, nil
 }
 
 func resolveAFTRIPv6(ctx context.Context, value string, resolverPort int) (string, error) {
@@ -1894,7 +1818,7 @@ func interfaceName(router *api.Router, name string) string {
 	return name
 }
 
-func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string, deprecated bool) error {
+func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error {
 	if ifname == "" || address == "" {
 		return nil
 	}
@@ -1908,7 +1832,7 @@ func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string, deprec
 		}
 		return nil
 	}
-	args := linuxIPv6LocalEndpointArgs(ifname, address, deprecated)
+	args := []string{"-6", "addr", "replace", address + "/128", "dev", ifname}
 	return exec.CommandContext(ctx, "ip", args...).Run()
 }
 
@@ -1932,14 +1856,6 @@ func waitForIPv6AddressReady(ctx context.Context, ifname, address string, timeou
 			}
 		}
 	}
-}
-
-func linuxIPv6LocalEndpointArgs(ifname, address string, deprecated bool) []string {
-	args := []string{"-6", "addr", "replace", address + "/128", "dev", ifname}
-	if deprecated {
-		args = append(args, "preferred_lft", "0", "valid_lft", "forever")
-	}
-	return args
 }
 
 func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local, innerLocal string) (string, error) {

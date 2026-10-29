@@ -120,7 +120,24 @@ func serveInspectionResources(router *api.Router, store *routerstate.SQLiteStore
 		if store != nil {
 			status = store.ObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		}
-		out = append(out, controlapi.ResourceViewFromResource(res, status, inspectionEventsForResource(store, res, eventsLimit)))
+		view := controlapi.ResourceViewFromResource(res, status, inspectionEventsForResource(store, res, eventsLimit))
+		if store != nil && res.Kind == "DHCPv6PrefixDelegation" {
+			lease, found, err := store.ReadPDLease(res.Metadata.Name)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				lease = lease.Live(store.Now())
+				view.PDLease = &lease
+				delete(view.Status, "observation")
+				for key := range routerstate.PDLeaseStatus(lease, store.Now()) {
+					if key != "phase" && key != "health" && key != "conditions" {
+						delete(view.Status, key)
+					}
+				}
+			}
+		}
+		out = append(out, view)
 	}
 	return out, nil
 }

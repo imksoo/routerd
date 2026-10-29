@@ -72,9 +72,13 @@ type pendingEvent struct {
 	event    daemonapi.DaemonEvent
 }
 
-func (c *Controller) Start(ctx context.Context) {
+// Start returns an acknowledgement that the consumer and its owned timers have
+// stopped. The generation owner waits for it before publishing a replacement.
+func (c *Controller) Start(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	if c.Router == nil || c.Bus == nil || c.Store == nil || c.Events == nil {
-		return
+		close(done)
+		return done
 	}
 	c.init()
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
@@ -83,6 +87,8 @@ func (c *Controller) Start(ctx context.Context) {
 		poll = time.Second
 	}
 	go func() {
+		defer close(done)
+		defer c.StopTimers()
 		ticker := time.NewTicker(poll)
 		defer ticker.Stop()
 		wake := make(chan struct{}, 1)
@@ -120,6 +126,7 @@ func (c *Controller) Start(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
 func (c *Controller) drainStoredEvents(ctx context.Context) error {
@@ -132,6 +139,9 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	c.init()
 	c.pruneRemovedRules()
 	var pending []pendingEvent
@@ -187,11 +197,11 @@ func (c *Controller) reconcileRule(ctx context.Context, resource api.Resource, e
 	case OperatorWindow:
 		out = c.evalWindow(resource, spec, state, key, event, now)
 	case OperatorAbsence:
-		c.evalAbsence(resource, spec, state, key, event)
+		c.evalAbsence(ctx, resource, spec, state, key, event)
 	case OperatorThrottle:
 		out = c.evalThrottle(resource, spec, state, key, event, now)
 	case OperatorDebounce:
-		c.evalDebounce(resource, spec, state, key, event)
+		c.evalDebounce(ctx, resource, spec, state, key, event)
 	case OperatorCount:
 		out = c.evalCount(resource, spec, state, key, event)
 	}
@@ -259,7 +269,7 @@ func (c *Controller) evalWindow(resource api.Resource, spec api.EventRuleSpec, s
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, len(kept))}
 }
 
-func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
+func (c *Controller) evalAbsence(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
 	if spec.Pattern.Expected != "" && bus.MatchTopic(spec.Pattern.Expected, event.Type) {
 		if timer := state.absence[key]; timer != nil {
 			timer.Stop()
@@ -281,15 +291,16 @@ func (c *Controller) evalAbsence(resource api.Resource, spec api.EventRuleSpec, 
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
 		c.mu.Lock()
+		defer c.mu.Unlock()
 		current := c.ruleStateLocked(resource.Metadata.Name)
-		if current.absence[key] != timer {
-			c.mu.Unlock()
+		if current.absence[key] != timer || ctx.Err() != nil {
 			return
 		}
 		delete(current.absence, key)
-		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
-		_ = c.publish(context.Background(), resource, emitted)
+		if err := c.publishLocked(ctx, resource, emitted); err != nil && ctx.Err() == nil && c.Logger != nil {
+			c.Logger.Warn("event rule absence publication failed", "rule", resource.Metadata.Name, "error", err)
+		}
 	})
 	state.absence[key] = timer
 }
@@ -307,7 +318,7 @@ func (c *Controller) evalThrottle(resource api.Resource, spec api.EventRuleSpec,
 	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
 }
 
-func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
+func (c *Controller) evalDebounce(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
 	if !eventMatchesAny(spec.Pattern, event.Type) {
 		return
 	}
@@ -318,15 +329,16 @@ func (c *Controller) evalDebounce(resource api.Resource, spec api.EventRuleSpec,
 	var timer *time.Timer
 	timer = time.AfterFunc(quiet, func() {
 		c.mu.Lock()
+		defer c.mu.Unlock()
 		current := c.ruleStateLocked(resource.Metadata.Name)
-		if current.debounce[key] != timer {
-			c.mu.Unlock()
+		if current.debounce[key] != timer || ctx.Err() != nil {
 			return
 		}
 		delete(current.debounce, key)
-		c.mu.Unlock()
 		emitted := c.emitEvent(resource, spec, event, key, 0)
-		_ = c.publish(context.Background(), resource, emitted)
+		if err := c.publishLocked(ctx, resource, emitted); err != nil && ctx.Err() == nil && c.Logger != nil {
+			c.Logger.Warn("event rule debounce publication failed", "rule", resource.Metadata.Name, "error", err)
+		}
 	})
 	state.debounce[key] = timer
 }
@@ -362,6 +374,16 @@ func (c *Controller) emitEvent(resource api.Resource, spec api.EventRuleSpec, in
 
 func (c *Controller) publish(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.publishLocked(ctx, resource, event)
+}
+
+// The caller holds mu through effects so StopTimers acknowledges any callback
+// that already fired, rather than only stopping a timer that has left the map.
+func (c *Controller) publishLocked(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	state := c.ruleStateLocked(resource.Metadata.Name)
 	state.fireCount++
 	state.lastFiredAt = c.eventTime(event)
@@ -373,8 +395,10 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, event d
 	if state.warningCount > 0 {
 		status["warningCount"] = state.warningCount
 	}
-	c.mu.Unlock()
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", resource.Metadata.Name, status); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return c.Bus.Publish(ctx, event)

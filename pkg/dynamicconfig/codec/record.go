@@ -206,6 +206,24 @@ func DecodeAll(records []routerstate.DynamicConfigPartRecord) ([]dynamicconfig.D
 	return parts, nil
 }
 
+// DecodeActive decodes payloads only while their record is live. Expired input
+// cannot supply resources or directives and must not make a current independent
+// part fail merely because its obsolete JSON is unreadable.
+func DecodeActive(records []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicconfig.DynamicConfigPart, error) {
+	parts := make([]dynamicconfig.DynamicConfigPart, 0, len(records))
+	for _, record := range records {
+		if record.EffectiveStatus(now.UTC()) == "expired" {
+			continue
+		}
+		part, err := Decode(record)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	return parts, nil
+}
+
 // DecodeResources decodes persisted JSON resources into concrete API types.
 func DecodeResources(raw string) ([]api.Resource, error) {
 	if strings.TrimSpace(raw) == "" {
@@ -248,20 +266,21 @@ func DecodeMobilityDataplanePlan(raw string) (dynamicconfig.MobilityDataplanePla
 	_, hasCaptures := fields["captures"]
 	_, hasRoutes := fields["routes"]
 	_, hasStaticAddresses := fields["staticAddresses"]
+	_, hasWithdrawals := fields["withdrawals"]
 	for field := range fields {
 		switch field {
-		case "poolPrefix", "captures", "routes", "staticAddresses":
+		case "poolPrefix", "captures", "routes", "staticAddresses", "withdrawals":
 		default:
 			return dynamicconfig.MobilityDataplanePlan{}, fmt.Errorf("mobility dataplane plan has unknown field %q", field)
 		}
 	}
-	if !hasCaptures && !hasRoutes && !hasStaticAddresses {
+	if !hasCaptures && !hasRoutes && !hasStaticAddresses && !hasWithdrawals {
 		return dynamicconfig.MobilityDataplanePlan{}, fmt.Errorf("mobility dataplane plan has no known fields")
 	}
 	if !hasPoolPrefix || isJSONNull(fields["poolPrefix"]) {
 		return dynamicconfig.MobilityDataplanePlan{}, fmt.Errorf("mobility dataplane plan requires poolPrefix")
 	}
-	for _, field := range []string{"captures", "routes", "staticAddresses"} {
+	for _, field := range []string{"captures", "routes", "staticAddresses", "withdrawals"} {
 		if value, ok := fields[field]; ok && isJSONNull(value) {
 			return dynamicconfig.MobilityDataplanePlan{}, fmt.Errorf("mobility dataplane plan field %q must not be null", field)
 		}

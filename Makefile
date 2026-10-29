@@ -397,12 +397,20 @@ check-routerd15: check-spec
 
 .PHONY: check-routerd15-focused
 check-routerd15-focused: check-spec
-	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/pdclient ./pkg/raobserver ./pkg/pppoeclient ./pkg/resourcequery ./pkg/controller/framework ./pkg/ingressdrain ./pkg/controller/ingressservice ./pkg/nftstate ./pkg/firewallbackend ./pkg/controller/firewall ./pkg/controller/nat44 ./pkg/dnsresolver ./pkg/controller/dnsresolver ./pkg/webconsole ./pkg/derived ./cmd/routerd-healthcheck ./cmd/routerd-dhcpv4-client ./cmd/routerd-dhcpv6-client ./cmd/routerd-ra-observer ./cmd/routerd-dns-resolver ./examples/cloudedge-mobility-demo/plugins
+	go test ./internal/storage ./pkg/api ./pkg/config ./pkg/dynamicconfig/... ./pkg/plugin ./pkg/render ./pkg/resource ./pkg/state ./pkg/healthcheck ./pkg/egressroute ./pkg/dhcpv4client ./pkg/pdclient ./pkg/raobserver ./pkg/pppoeclient ./pkg/resourcequery ./pkg/controller/framework ./pkg/ingressdrain ./pkg/controller/ingressservice ./pkg/nftstate ./pkg/firewallbackend ./pkg/controller/firewall ./pkg/controller/nat44 ./pkg/dnsresolver ./pkg/controller/dnsresolver ./pkg/webconsole ./pkg/eventrule ./pkg/derived ./cmd/routerd-healthcheck ./cmd/routerd-dhcpv4-client ./cmd/routerd-dhcpv6-client ./cmd/routerd-ra-observer ./cmd/routerd-dns-resolver ./examples/cloudedge-mobility-demo/plugins
 	go test ./cmd/routerd ./pkg/controller/chain -run '^(TestRunApplyChainOnce(DryRun|PlansBackup|Commits)|TestApplyCommandDryRun|TestRunDispatchesApplyDryRun|TestFaultDryRun|TestServeConfigMutator(SandboxApply|ApplyReplace)|TestConfigMutation|TestPriorityPolicy|TestIPv4PolicyRoute|TestIPv6HostPolicy|TestTypedRouteExpiry|TestPDObservationPropagatesPersistenceFailure|TestRollbackToGenerationDryRun|TestServeConfigMutatorPlanExplainsUnsupportedStateSchema|TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec|TestPathMTUApply|TestPolicyNft|TestPF|TestConditionalAddress|TestBGPHelper)' -count=1
 	go test ./pkg/lifecycle ./pkg/bgpdaemon ./pkg/controller/bgp
-	go test ./cmd/routerd-bgp -run '^TestRestoreAppliedDoesNotRestorePendingRemoval' -count=1
-	go test ./pkg/controller/dhcpv4client -run '^(TestApply|TestDefaultRouteMetric|TestRemovedLease|TestWhen|TestNextExpiry)' -count=1
+	go test ./cmd/routerd-bgp -run '^(TestRestoreAppliedDoesNotRestorePendingRemoval|TestGoBGPDynamic|TestDynamicPath|TestDynamicPending|TestPendingNative|TestControllerCheckpoint|TestDaemonRestart|TestInitialController|TestRestoreRejectsPrevious)' -count=1
+	go test ./pkg/controller/dhcpv4client -run '^(TestApply|TestDefaultRouteMetric|TestRemovedLease|TestWhen|TestNextExpiry|TestReconcileAllForRouter|TestDryRunUnavailableWorker)' -count=1
+	$(MAKE) check-routerd15-recovery
 	go vet ./...
+
+.PHONY: check-routerd15-recovery
+check-routerd15-recovery:
+	go test ./pkg/controller/mobility
+	go test ./pkg/controller/chain -run '^(TestPrepared|TestGenerationPreparationFailureWaits|TestMobilityNative|TestMobilityStore|TestOrdinaryRoute|TestFreeBSDOrdinaryRoute|TestTypedPD|TestPDAtomicReview|TestPDStage|TestRunnerKeepsDependsOnFalse|TestRunnerClearsWhenFalse|TestTunnelUnderlayRemovalOrder|TestLAN|TestDelegatedAddressObservation|TestDSLite(Custom|Source|Shared|RechecksPD|FiniteEndpoint)|TestSAMController|TestSAMJournal)' -count=1
+	go test ./cmd/routerd -run '^(TestMutation|TestNoReconcilePlan|TestDriftedPlan|TestServeOnceRejectsNonconvergence|TestDeletePublishes|TestInspectionCarriesTypedPD|TestActualPDObservation|TestEventConsumerChanges)' -count=1
+	go test ./cmd/routerctl -run '^(TestRollbackListDoesNotLabel|TestApplyTransportFailure|TestMutationResultPolicy|TestPDLeaseOutput|TestFirewallCLI)' -count=1
 
 .PHONY: generate-spec check-spec
 generate-spec:

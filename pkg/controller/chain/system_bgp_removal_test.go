@@ -94,7 +94,7 @@ func TestBGPOnlyRunnerKeepsAcknowledgedRemovalDependency(t *testing.T) {
 	}
 	failure, stops := errors.New("supervisor refused stop"), 0
 	runner := &Runner{Router: &api.Router{}, Store: mapStore{}, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"bgp"}, BGPStatePath: path, BGPDaemonStop: func(context.Context) error { stops++; return failure }}}
-	controllers, _, err := runner.frameworkControllers(context.Background(), slog.Default(), eventedStore{Store: runner.Store, Router: runner.Router, Bus: runner.Bus}, false, ha.Decision{Leader: true})
+	controllers, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), eventedStore{Store: runner.Store, Router: runner.Router, Bus: runner.Bus}, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
 	}

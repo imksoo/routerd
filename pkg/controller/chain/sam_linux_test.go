@@ -7,7 +7,24 @@ package chain
 import (
 	"net"
 	"testing"
+
+	"github.com/vishvananda/netlink"
 )
+
+func TestSAMProxyNeighborMatchesKernelProxyDump(t *testing.T) {
+	expected := &netlink.Neigh{LinkIndex: 7, Family: netlink.FAMILY_V4, IP: net.ParseIP("192.0.2.99"), State: netlink.NUD_NONE, Flags: netlink.NTF_PROXY}
+	dump := []netlink.Neigh{*expected}
+	if present, err := samMatchProxyNeighbors(expected, dump); err != nil || !present {
+		t.Fatalf("kernel proxy entry: present=%t err=%v", present, err)
+	}
+	dump[0].Flags |= netlink.NTF_ROUTER
+	if _, err := samMatchProxyNeighbors(expected, dump); err == nil {
+		t.Fatal("foreign proxy flags accepted")
+	}
+	if _, err := samMatchProxyNeighbors(expected, []netlink.Neigh{*expected, *expected}); err == nil {
+		t.Fatal("duplicate proxy entries accepted")
+	}
+}
 
 func TestBuildGratuitousARPFrameUsesUnassignedAddress(t *testing.T) {
 	mac := net.HardwareAddr{0x02, 0x00, 0x00, 0x00, 0x00, 0x30}

@@ -5133,6 +5133,9 @@
                     "additionalProperties": false,
                     "properties": {
                       "client": {
+                        "enum": [
+                          "routerd-dhcpv6-client"
+                        ],
                         "type": "string"
                       },
                       "clientDUID": {
@@ -9150,11 +9153,17 @@
                             "fromNodeRef": {
                               "type": "string"
                             },
+                            "id": {
+                              "description": "ID identifies one transfer attempt. Use a new ID after rollback so a\nprevious release cannot authorize a later transfer of the same address.",
+                              "minLength": 1,
+                              "type": "string"
+                            },
                             "toNodeRef": {
                               "type": "string"
                             }
                           },
                           "required": [
+                            "id",
                             "address",
                             "fromNodeRef",
                             "toNodeRef"

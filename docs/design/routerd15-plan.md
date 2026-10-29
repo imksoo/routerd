@@ -102,8 +102,11 @@ multi-prefix DHCPv6 and information requests, error-returning conditional reads,
 serialized partial config updates, truthful nft/PF acknowledgement and withdrawal,
 ICMP exchange correlation, DNS reload/cache/log ownership, current console views
 and non-destructive installer behavior. The audit records the executed checks and
-the remaining mobility handover, static preparation, representation and inventory
-work. These are implementation checkpoints, not completion of steps 3–6.
+the remaining feature inventory work. A further pass connects handover release
+to all native owners, journals BGP additions before effects, prepares validated
+static declarations once per update, and gives PD one typed current observation.
+Mutation responses distinguish committed intent from failed or unconfirmed
+effects. These are implementation checkpoints, not completion of steps 3–6.
 
 ## Validation
 
@@ -112,3 +115,8 @@ retains the complete test/vet gate; `check-routerd15-focused` is a separate loca
 regression gate, never a substitute for full acceptance. Current executed results
 and environment restrictions are tracked in the audit record. GitHub Actions
 completion is not awaited.
+
+`check-routerd15-recovery` runs the focused ownership, native-effect boundary,
+current-declaration, handover and mutation regressions. It is included in the
+focused gate. Its test-owned kernel-command observations and loopback services
+do not replace the complete native suite or the VM/independent-peer gates.

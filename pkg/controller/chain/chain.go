@@ -123,6 +123,20 @@ type mobilityStore struct {
 	data    mobilityDataStore
 }
 
+func (s mobilityStore) withRouter(router *api.Router) mobilityStore {
+	s.evented = s.evented.withRouter(router)
+	return s
+}
+func (s mobilityStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.evented.ReadObjectStatus(apiVersion, kind, name)
+}
+func (s mobilityStore) Get(name string) routerstate.Value { return s.evented.Get(name) }
+func (s mobilityStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.evented.ReadVariable(name)
+}
+func (s mobilityStore) Age(name string) time.Duration { return s.evented.Age(name) }
+func (s mobilityStore) Now() time.Time                { return s.evented.Now() }
+
 func (s mobilityStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	return s.evented.SaveObjectStatus(apiVersion, kind, name, status)
 }
@@ -785,6 +799,12 @@ func routinePhaseTransition(kind, previousPhase, phase string) bool {
 }
 
 func statusForEvent(apiVersion, kind string, status map[string]any) map[string]any {
+	if apiVersion == api.NetAPIVersion && kind == "DHCPv6PrefixDelegation" {
+		status = copyStatusMap(status)
+		delete(status, "observation")
+		delete(status, "lastObservedAt")
+		delete(status, "snapshotUpdatedAt")
+	}
 	stable := stableStatus(status)
 	for key := range stable {
 		if volatileStatusEventField(apiVersion, kind, key) {
@@ -1316,10 +1336,11 @@ type Runner struct {
 	clientDaemonStates     map[string]supervisedDaemonState
 	daemonSourcesStarted   map[string]bool
 	arpObserverReadySet    map[string]bool
-	generationBuilder      func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error)
+	generationBuilder      func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error)
 	reloadMu               sync.Mutex
 	reloadCh               chan generationReload
 	routerMu               sync.RWMutex
+	preparedRouter         *preparedRouterConfig
 	runtimeSnapshot        RuntimeSnapshot
 	runtimeOperation       uint64
 	runtimeReady           chan struct{}
@@ -1478,15 +1499,23 @@ type arpObserverCommandPusher interface {
 }
 
 func (r *Runner) effectiveRouter(store eventedStore) (*api.Router, error) {
-	return resourcequery.FilterRouterByWhen(r.currentRouter(), store)
+	prepared, err := r.currentPreparedRouter()
+	if err != nil {
+		return nil, err
+	}
+	return resourcequery.FilterRouterByWhen(prepared.startup.Router(), store)
 }
 
 func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
-	if r.currentRouter() == nil {
+	declared := store.Router
+	if declared == nil {
+		declared = r.currentRouter()
+	}
+	if declared == nil {
 		return nil
 	}
 	now := time.Now().UTC()
-	for _, res := range r.currentRouter().Spec.Resources {
+	for _, res := range declared.Spec.Resources {
 		when := resourcequery.ResourceWhen(res)
 		if !resourcequery.ResourceWhenPresent(when) {
 			continue
@@ -1521,7 +1550,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if statusIsWhenFalse(current) {
 			next := copyStatusMap(current)
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
-			changed = preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, next) || changed
+			changed = preserveIPv4StaticAddressCleanupStatus(declared, res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
 			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
@@ -1537,7 +1566,7 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			"observedAt": now.Format(time.RFC3339Nano),
 		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
-		preserveIPv4StaticAddressCleanupStatus(r.currentRouter(), res, current, status)
+		preserveIPv4StaticAddressCleanupStatus(declared, res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
 		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
@@ -1668,6 +1697,24 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 	if reason != "WhenFalse" {
 		return nil
 	}
+	if kind == "DHCPv6PrefixDelegation" {
+		reader, ok := store.Store.(routerstate.PDLeaseReader)
+		if !ok {
+			return fmt.Errorf("PD observation reader unavailable")
+		}
+		if _, found, err := reader.ReadPDLease(name); err != nil {
+			return err
+		} else if !found {
+			return nil
+		}
+		next := copyStatusMap(current)
+		delete(next, "reason")
+		for _, key := range []string{"phase", "health", "conditions"} {
+			delete(next, key)
+		}
+		return store.SaveObjectStatus(apiVersion, kind, name, next)
+	}
+
 	observed := statusValueMap(current["observed"])
 	if len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
 		return nil
@@ -1766,27 +1813,30 @@ func parseDurationOrDefault(value string, fallback time.Duration) time.Duration 
 	return duration
 }
 
-func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, error) {
+func (r *Runner) effectiveRouterForReconcile(store eventedStore) (routerObservation, error) {
+	prepared, err := r.currentPreparedRouter()
+	if err != nil {
+		return routerObservation{}, err
+	}
+	store = store.withRouter(prepared.declared)
 	if err := r.saveWhenFalseStatuses(store); err != nil {
-		return nil, err
+		return routerObservation{}, err
 	}
-	effective, err := r.effectiveRouter(store)
+	effective, err := resourcequery.FilterRouterByWhen(prepared.staticSAM, store)
 	if err != nil {
-		return nil, err
+		return routerObservation{}, err
 	}
-	resolved, err := resolveWireGuardSAMResources(effective)
-	if err != nil {
-		return nil, err
+	if prepared.timedSAM {
+		effective, err = resolveWireGuardSAMResources(effective, time.Now().UTC())
+		if err != nil {
+			return routerObservation{}, err
+		}
 	}
-	return resolved, nil
+	return routerObservation{DeclaredRouter: prepared.declared, EffectiveRouter: effective}, nil
 }
 
 func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time.Time, targetOS platform.OS) (*api.Router, error) {
-	effective, err := r.effectiveRouterForReconcile(store)
-	if err != nil {
-		return nil, err
-	}
-	view, err := buildDynamicRouteSAMView(effective, r.Store, now, targetOS)
+	view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, now, targetOS)
 	if err != nil {
 		return nil, err
 	}
@@ -1800,6 +1850,9 @@ func (r *Runner) Start(ctx context.Context) error {
 	r.clientDaemonContext = ctx
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
+	}
+	if _, err := r.currentPreparedRouter(); err != nil {
+		return err
 	}
 	logger := r.Opts.Logger
 	if logger == nil {
@@ -1929,6 +1982,23 @@ type controllerGeneration struct {
 	controllers      []framework.Controller
 	daemonStatusSync DaemonStatusController
 	heartbeatStarted bool
+	lifetimes        controllerLifetimes
+}
+
+// These are the two auxiliary consumers whose timer callbacks can publish
+// effects. A replacement generation waits for their actual exit after cancel.
+type controllerLifetimes struct {
+	eventRuleDone <-chan struct{}
+	derivedDone   <-chan struct{}
+}
+
+func (l controllerLifetimes) wait() {
+	if l.eventRuleDone != nil {
+		<-l.eventRuleDone
+	}
+	if l.derivedDone != nil {
+		<-l.derivedDone
+	}
 }
 
 func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore) (*controllerGeneration, error) {
@@ -1960,12 +2030,13 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	if r.generationBuilder != nil {
 		builder = r.generationBuilder
 	}
-	controllers, daemonStatusSync, err := builder(generationCtx, logger, store, true, decision)
+	controllers, daemonStatusSync, lifetimes, err := builder(generationCtx, logger, store, true, decision)
 	if err == nil {
 		err = generationCtx.Err()
 	}
 	if err != nil {
 		cancel()
+		lifetimes.wait()
 		if decision.Lease != nil {
 			_ = decision.Lease.Close()
 		}
@@ -1989,6 +2060,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	if err != nil {
 		cancel()
+		lifetimes.wait()
 		if decision.Lease != nil {
 			_ = decision.Lease.Close()
 		}
@@ -2002,6 +2074,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		controllers:      controllers,
 		daemonStatusSync: daemonStatusSync,
 		heartbeatStarted: heartbeatStarted,
+		lifetimes:        lifetimes,
 	}, nil
 }
 
@@ -2122,23 +2195,30 @@ func (r *Runner) prepareReloadedControllerGeneration(ctx context.Context, logger
 }
 
 func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, store eventedStore, request generationReload) (*controllerGeneration, bool, error) {
-	previous := r.currentRouter()
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
 	if err := r.RuntimeMutationError(); err != nil {
 		return nil, false, err
 	}
-	r.setRuntimeRouter(request.router)
-	next, err := r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withRouter(request.router), nil)
+	previous, err := r.currentPreparedRouter()
+	if err != nil {
+		return nil, false, err
+	}
+	prepared, err := prepareRouterConfig(request.router, platform.CurrentOS())
+	var next *controllerGeneration
+	if err == nil {
+		r.publishPreparedRouter(prepared)
+		next, err = r.prepareControllerGenerationForRequest(ctx, request.ctx, logger, store.withRouter(request.router), nil)
+	}
 	if err == nil {
 		return next, false, nil
 	}
 	if ctx.Err() != nil || r.RuntimeMutationError() != nil {
 		return nil, false, errors.Join(err, ctx.Err(), r.RuntimeMutationError())
 	}
-	r.setRuntimeRouter(previous)
-	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous), nil)
+	r.publishPreparedRouter(previous)
+	rollback, rollbackErr := r.prepareControllerGenerationWithGate(ctx, logger, store.withRouter(previous.declared), nil)
 	if rollbackErr != nil {
 		return nil, false, errors.Join(err, fmt.Errorf("restore previous generation: %w", rollbackErr))
 	}
@@ -2150,6 +2230,7 @@ func closeControllerGeneration(generation *controllerGeneration) {
 		return
 	}
 	generation.cancel()
+	generation.lifetimes.wait()
 	if generation.decision.Lease != nil {
 		_ = generation.decision.Lease.Close()
 	}
@@ -2188,7 +2269,7 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 		return err
 	}
 	defer closeLease()
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	controllers, _, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
 	if err != nil {
 		return err
 	}
@@ -2213,7 +2294,7 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 		return err
 	}
 	defer closeLease()
-	controllers, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	controllers, _, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
 	if err != nil {
 		return err
 	}
@@ -2268,7 +2349,11 @@ func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.
 	}, nil
 }
 
-func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
+	var lifetimes controllerLifetimes
+	if _, err := r.currentPreparedRouter(); err != nil {
+		return nil, DaemonStatusController{}, lifetimes, err
+	}
 	opts := r.Opts
 	if haDecision.Enabled && !haDecision.Leader {
 		logger.Info("routerd cluster standby mode; mutating controllers run dry-run", "holder", haDecision.Holder, "leasePath", haDecision.LeasePath)
@@ -2303,7 +2388,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// generation after lease acquisition. Keep the options local rather than
 	// copying Runner: Runner owns synchronization and runtime state.
 	if err := r.validatePFNATOptions(platform.CurrentOS(), opts); err != nil {
-		return nil, DaemonStatusController{}, err
+		return nil, DaemonStatusController{}, lifetimes, err
 	}
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
@@ -2318,6 +2403,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	link := LinkController{Router: r.currentRouter(), Store: store, Logger: logger}
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
+	nativeMobilityMu := &sync.Mutex{}
 	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
 	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
@@ -2463,7 +2549,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return conntrack.Snapshot{Count: table.Count, Max: table.Max}, nil
 		}
 	}
-	effectiveForReconcile := func() (*api.Router, error) {
+	effectiveForReconcile := func() (routerObservation, error) {
 		return r.effectiveRouterForReconcile(store)
 	}
 	effectiveDynamicForReconcile := func() (*api.Router, error) {
@@ -2471,19 +2557,21 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	if startAuxiliary {
 		if r.controllerEnabled("event-rule") {
-			rules.Start(ctx)
+			lifetimes.eventRuleDone = rules.Start(ctx)
 		}
 		if r.controllerEnabled("derived-event") {
-			derivedEvents.Start(ctx)
+			lifetimes.derivedDone = derivedEvents.Start(ctx)
 		}
 		if r.controllerEnabled("observability-pipeline") {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
-				return nil, DaemonStatusController{}, err
+				return nil, DaemonStatusController{}, lifetimes, err
 			}
+			effective := observation.EffectiveRouter
 			observabilityPipeline.Router = effective
+			observabilityPipeline.Store = store.withRouter(observation.DeclaredRouter)
 			if err := observabilityPipeline.Start(ctx); err != nil {
-				return nil, DaemonStatusController{}, err
+				return nil, DaemonStatusController{}, lifetimes, err
 			}
 		}
 		if r.controllerEnabled("conntrack-observer") {
@@ -2495,33 +2583,57 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	controllers := []framework.Controller{
 		framework.FuncController{ControllerName: "observability-pipeline", Every: 30 * time.Second, Subs: observabilityPipelineStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			observabilityPipeline.Router = effective
+			observabilityPipeline.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(observabilityPipeline.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: didWorkPeriodic(daemonStatusSync.Reconcile)},
-		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "daemon-status", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv6.client.**", "routerd.dhcpv4.client.**", "routerd.healthcheck.**", "routerd.pppoe.client.**", "routerd.mobility.arp.**", "routerd.mobility.pve-svnet.**"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
 			if err != nil {
 				return false, err
 			}
+			current := daemonStatusSync
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			effective := observation.EffectiveRouter
 			current := leaseSync
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := nat44SessionSync
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(packages.Reconcile)},
+		framework.FuncController{ControllerName: "package", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			current := packages
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
 		framework.FuncController{ControllerName: "kernel-module", Every: 5 * time.Minute, Subs: withDynamicConfigPartSubscriptions(bootstrapSubscriptions()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
@@ -2529,64 +2641,114 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := kernelModules
 			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(sysctl.Reconcile)},
-		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(adoption.Reconcile)},
-		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "sysctl", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
 			if err != nil {
 				return false, err
 			}
+			current := sysctl
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "network-adoption", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			current := adoption
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "bridge", Every: 30 * time.Second, Subs: statusSubscriptions("Interface", "VXLANTunnel", "VXLANSegment"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			effective := observation.EffectiveRouter
 			current := bridge
 			current.Router = effective
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: vxlanTunnel.NextExpiryAfter, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: func() time.Duration {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return 0
+			}
+			current := vxlanTunnel
+			current.Router = prepared.startup.Router()
+			current.DeclaredRouter = prepared.declared
+			current.Store = store.withRouter(prepared.declared)
+			return current.NextExpiryAfter()
+		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := vxlanTunnel
 			current.Router = effective
-			current.DeclaredRouter = r.currentRouter()
+			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "service-unit", Every: 5 * time.Minute, Subs: serviceUnitStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := serviceUnits
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, Subs: bootstrapSubscriptions(), PeriodicFunc: didWorkPeriodic(logRetention.Reconcile)},
-		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "log-retention", Every: time.Hour, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
 			if err != nil {
 				return false, err
 			}
+			current := logRetention
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "ntp-client", Every: 5 * time.Minute, Subs: statusSubscriptions("DHCPv4Client", "DHCPv6Information"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			effective := observation.EffectiveRouter
 			current := ntpClient
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ntp-server", Every: 5 * time.Minute, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NTPServer"}, "DHCPv4Client", "DHCPv6Information", "IPv4StaticAddress", "IPv6DelegatedAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := ntpServer
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := link
 			current.Router = effective
 			current.Store = store.withRouter(effective)
@@ -2598,7 +2760,14 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return current.NextReconcileAfter()
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			current := mobilityEnrollmentClient
-			current.Router = r.currentRouter()
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			current.Router = prepared.startup.Router()
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(prepared.declared)
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam-transport", Every: 30 * time.Second, Subs: samTransportStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2608,6 +2777,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := mobilityTransport
 			current.Router = effective
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(effective)
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "tunnel", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("TunnelInterface", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2627,23 +2799,27 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := wireGuard
 			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			nativeMobilityMu.Lock()
+			defer nativeMobilityMu.Unlock()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
 			current := ipv4Static
 			current.Router = view.RouteRouter
 			current.DeclaredRouter = view.RouteRouter
-			current.WhenRouter = r.currentRouter()
+			current.WhenRouter = view.DeclaredRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
+			if !current.DryRun {
+				if err := invalidateMobilityNativeAck(current.Store, dynamicconfig.MobilityAddressWithdrawalAcks); err != nil {
+					return false, err
+				}
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "dhcpv6-information", Every: 30 * time.Second, Subs: statusSubscriptions("DHCPv6PrefixDelegation"), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -2658,13 +2834,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return nil
 		}},
 		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return err
 			}
+			effective := observation.EffectiveRouter
 			current := lan
 			current.Router = effective
-			for _, name := range declaredPrefixDelegationNames(effective, r.currentRouter()) {
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
+			for _, name := range declaredPrefixDelegationNames(effective, observation.DeclaredRouter) {
 				if err := current.reconcile(ctx, name); err != nil {
 					return err
 				}
@@ -2672,29 +2851,33 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return nil
 		}},
 		framework.FuncController{ControllerName: "dslite", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DSLiteTunnel"}, "DHCPv6Information", "IPv6DelegatedAddress", "DNSResolver"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := dslite
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-policy-route", Subs: statusSubscriptions("DSLiteTunnel", "HealthCheck", "IPv4StaticAddress", "Interface", "VirtualAddress"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := policyRoute
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-route", Every: 30 * time.Second, Subs: ipv4RouteControllerStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			nativeMobilityMu.Lock()
+			defer nativeMobilityMu.Unlock()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2702,14 +2885,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = view.RouteRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
+			if !current.DryRun {
+				if err := invalidateMobilityNativeAck(current.Store, dynamicconfig.MobilityRouteWithdrawalAcks); err != nil {
+					return false, err
+				}
+			}
 			return didWorkError(current.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "hybrid-route", Subs: hybridRouteStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2721,11 +2905,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "sam", Every: 30 * time.Second, Subs: samStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			nativeMobilityMu.Lock()
+			defer nativeMobilityMu.Unlock()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2733,6 +2915,12 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = view.EffectiveRouter
 			current.Store = store.withRouter(view.EffectiveRouter)
 			current.LocalCaptureIntents = view.MobilityDataplane.Captures
+			current.Withdrawals = view.MobilityDataplane.Withdrawals
+			if !current.DryRun {
+				if err := invalidateMobilityNativeAck(current.Store, dynamicconfig.MobilitySAMWithdrawalAcks); err != nil {
+					return false, err
+				}
+			}
 			// FreeBSD routeguard intentionally refuses to delete an owned ARP
 			// neighbor while a stale /32 resolves through a tunnel. Tear down
 			// owned routes from the same effective route view first. If that
@@ -2744,11 +2932,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
 		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -2765,8 +2949,18 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(dhcpv6.reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, NextAfter: dhcp4Client.NextExpiryAfter, Subs: append([]bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, whenStatusSubscriptions(r.currentRouter(), "DHCPv4Client")...), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			return dhcp4Client.ReconcileAll(ctx)
-		}, PeriodicFunc: didWorkPeriodic(dhcp4Client.ReconcileAll)},
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return err
+			}
+			return dhcp4Client.ReconcileAllForRouter(ctx, prepared.declared, store.withRouter(prepared.declared))
+		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			return didWorkError(dhcp4Client.ReconcileAllForRouter(ctx, prepared.declared, store.withRouter(prepared.declared)))
+		}},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			for _, resource := range r.currentRouter().Spec.Resources {
 				if resource.Kind == "PPPoESession" {
@@ -2778,20 +2972,24 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return nil
 		}},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: dnsResolverStatusSubscriptions(r.currentRouter()), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return err
 			}
+			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-federation", Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
@@ -2801,6 +2999,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := eventFederation
 			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
@@ -2809,6 +3008,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := eventFederation
 			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
@@ -2819,6 +3019,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := mobilityDiscovery
 			current.Router = effective
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(effective)
+			}
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveDynamicForReconcile()
@@ -2827,6 +3030,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := mobilityDiscovery
 			current.Router = effective
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(effective)
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "mobility-arp-request", Every: time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2836,23 +3042,38 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := mobilityDiscovery
 			current.Router = effective
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(effective)
+			}
 			return didWorkError(current.ReconcileARPProbeRequests(ctx))
 		}},
 		framework.FuncController{ControllerName: "mobility", Every: 5 * time.Second, Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed", mobilitycontroller.OwnershipChangedEvent}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
-			effective, err := effectiveDynamicForReconcile()
+			nativeMobilityMu.Lock()
+			defer nativeMobilityMu.Unlock()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return err
 			}
 			current := mobility
-			current.Router = effective
+			current.Router = view.EffectiveRouter
+			current.DeclaredRouter = view.DeclaredRouter
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(view.EffectiveRouter)
+			}
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveDynamicForReconcile()
+			nativeMobilityMu.Lock()
+			defer nativeMobilityMu.Unlock()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
 			current := mobility
-			current.Router = effective
+			current.Router = view.EffectiveRouter
+			current.DeclaredRouter = view.DeclaredRouter
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(view.EffectiveRouter)
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "mobility-shard", Every: 30 * time.Second, Subs: dynamicConfigPartSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2862,43 +3083,64 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := mobilityShard
 			current.Router = effective
+			if concrete, ok := current.Store.(mobilityStore); ok {
+				current.Store = concrete.withRouter(effective)
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(providerAction.Reconcile)},
-		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+		framework.FuncController{ControllerName: "provider-action-execution", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
 			if err != nil {
 				return false, err
 			}
+			current := providerAction
+			current.Router = prepared.startup.Router()
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "egress-route-policy", Every: 15 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"EgressRoutePolicy"}, "HealthCheck", "DSLiteTunnel", "Interface", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			effective := observation.EffectiveRouter
 			current := wan
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ingress-service", Every: 5 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IngressService"}), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := ingressService
 			current.Router = effective
+			currentStore := store.withRouter(observation.DeclaredRouter)
+			current.Store = currentStore
+			current.Resolver = ingressServiceDNSResolver(effective, currentStore)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44Rule", "NAT44FlowDNATPinhole", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := nat
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := bfd
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2906,14 +3148,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			if err != nil {
 				return false, err
 			}
-			return didWorkError(bgp.ReconcileRouter(ctx, effective))
+			return didWorkError(bgp.ReconcileRouter(ctx, effective, store.withRouter(effective)))
 		}},
 		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			vrrp.Router = effective
+			vrrp.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(vrrp.Reconcile(ctx))
 		}},
 		// Client daemons with a VRRP role condition must be supervised only
@@ -2928,27 +3172,26 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return false, nil
 		}},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
+			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
 			}
+			effective := observation.EffectiveRouter
 			current := ipAddressSet
 			current.Router = effective
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 	}
 	if !opts.FirewallDisabled {
 		controllers = append(controllers, framework.FuncController{ControllerName: "firewall", Subs: firewallStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			effective, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			view, err := buildDynamicRouteSAMView(effective, r.Store, time.Now().UTC(), platform.CurrentOS())
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
 			current := firewall
 			current.Router = view.EffectiveRouter
+			current.Store = store.withRouter(view.EffectiveRouter)
 			current.LocalCaptureIntents = view.MobilityDataplane.Captures
 			return didWorkError(current.Reconcile(ctx))
 		}})
@@ -2960,7 +3203,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		}})
 	}
 	controllers = r.filterControllers(controllers)
-	return controllers, daemonStatusSync, nil
+	return controllers, daemonStatusSync, lifetimes, nil
 }
 
 func declaredPrefixDelegationNames(effective, declared *api.Router) []string {
@@ -4120,59 +4363,6 @@ func routerdDaemonCommandMatches(command, binary, resourceName, ownerToken strin
 	return daemonOK && resourceOK && ownerOK
 }
 
-type PrefixDelegationController struct {
-	Router        *api.Router
-	Bus           *bus.Bus
-	Store         Store
-	DaemonSockets map[string]string
-	Logger        *slog.Logger
-}
-
-func (c PrefixDelegationController) Start(ctx context.Context) {
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv6.client.prefix.*"}}, 32)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "DHCPv6PrefixDelegation" {
-				continue
-			}
-			if err := c.reconcile(ctx, event); err != nil && c.Logger != nil {
-				c.Logger.Warn("prefix delegation reconcile failed", "resource", event.Resource.Name, "error", err)
-			}
-		}
-	}()
-}
-
-func (c PrefixDelegationController) reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
-	status, err := daemonStatus(ctx, c.socketFor(event.Resource.Name))
-	if err != nil {
-		return err
-	}
-	for _, resource := range status.Resources {
-		if resource.Resource.Kind != "DHCPv6PrefixDelegation" || resource.Resource.Name != event.Resource.Name {
-			continue
-		}
-		next := map[string]any{
-			"phase":      resource.Phase,
-			"health":     resource.Health,
-			"conditions": resource.Conditions,
-			"observed":   resource.Observed,
-		}
-		if resource.Observed != nil {
-			next["currentPrefix"] = resource.Observed["currentPrefix"]
-			next["serverDUID"] = resource.Observed["serverDUID"]
-		}
-		return c.Store.SaveObjectStatus(resource.Resource.APIVersion, resource.Resource.Kind, resource.Resource.Name, next)
-	}
-	return fmt.Errorf("daemon status did not include DHCPv6PrefixDelegation/%s", event.Resource.Name)
-}
-
-func (c PrefixDelegationController) socketFor(resource string) string {
-	if socket := c.DaemonSockets[resource]; socket != "" {
-		return socket
-	}
-	return filepath.Join("/run/routerd/dhcpv6-client", resource+".sock")
-}
-
 type LANAddressController struct {
 	Router         *api.Router
 	DeclaredRouter *api.Router
@@ -4188,10 +4378,8 @@ type LANAddressController struct {
 	// DeprecatedAddressPresent verifies that a DS-Lite-only address is not a
 	// preferred source for unrelated host traffic.
 	DeprecatedAddressPresent func(context.Context, string, string) bool
-	// AddressList returns the global IPv6 addresses currently present on an
-	// interface.  The controller uses this readback to recover routerd-owned
-	// delegated /64 history after a lease-sync file replaces a local snapshot
-	// which contained PreviousPrefixes.
+	// AddressList is an exact-prefix native readback seam. Observed addresses
+	// never become owned history merely because their suffix matches.
 	AddressList func(context.Context, string) ([]string, error)
 	// EnsureVMAC is used only for standby staging.  The authoritative VRRP
 	// helper creates the configured macvlan cold and leaves it DOWN.
@@ -4373,17 +4561,29 @@ func (c DaemonStatusController) Start(ctx context.Context) {
 }
 
 func (c DaemonStatusController) Reconcile(ctx context.Context) error {
+	if err := c.expireKnownPDLeases(ctx); err != nil {
+		return err
+	}
 	for _, socket := range c.daemonSockets() {
 		statusCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		status, err := daemonStatus(statusCtx, socket)
 		cancel()
 		if err != nil {
+			if resetErr := c.resetPDLeaseSourceForUnavailableSocket(ctx, socket); resetErr != nil {
+				return resetErr
+			}
 			if c.Logger != nil && ctx.Err() == nil {
 				c.Logger.Debug("daemon status snapshot skipped", "socket", socket, "error", err)
 			}
 			continue
 		}
 		for _, observed := range status.Resources {
+			if observed.Resource.Kind == "DHCPv6PrefixDelegation" {
+				if err := c.observePDLease(ctx, observed.Resource.Name, socket, observed); err != nil {
+					return err
+				}
+				continue
+			}
 			base := map[string]any{
 				"phase":      observed.Phase,
 				"health":     observed.Health,
@@ -4859,11 +5059,11 @@ func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx cont
 	}
 	removedAddress := false
 	if !c.DryRun && ifname != "" && address != "" {
-		addressPresentFn := c.AddressPresent
-		if addressPresentFn == nil {
-			addressPresentFn = ipv4AddressPresent
+		present, err := c.mobilityAddressPresent(ctx, ifname, address)
+		if err != nil {
+			return fmt.Errorf("observe when-false IPv4StaticAddress %s: %w", object.Name, err)
 		}
-		if addressPresentFn(ctx, ifname, address) {
+		if present {
 			command := c.Command
 			if command == nil {
 				command = runCommandContext
@@ -5236,18 +5436,18 @@ func ipv6DeprecatedAddressApplyCommand(osName platform.OS, ifname, address strin
 }
 
 func remainingIPv6ValidLifetime(now, expiresAt time.Time) int64 {
+	if expiresAt.Equal(time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)) {
+		return int64(infinitePDLifetime)
+	}
 	remaining := expiresAt.Sub(now)
 	if remaining <= 0 {
 		return 0
 	}
-	return int64((remaining + time.Second - 1) / time.Second)
-}
-
-func ipv6PermanentDeprecatedAddressApplyCommand(osName platform.OS, ifname, address string) (string, []string) {
-	if osName == platform.OSFreeBSD {
-		return ipv6StaticAddressApplyCommand(osName, ifname, address)
+	seconds := int64(remaining / time.Second)
+	if seconds >= int64(infinitePDLifetime) {
+		return int64(infinitePDLifetime) - 1
 	}
-	return "ip", []string{"-6", "addr", "replace", address, "dev", ifname, "preferred_lft", "0", "valid_lft", "forever"}
+	return seconds
 }
 
 func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) (string, []string) {
@@ -5261,26 +5461,6 @@ func ipv6StaticAddressDeleteCommand(osName platform.OS, ifname, address string) 
 		return "ifconfig", []string{ifname, "inet6", host, "-alias"}
 	}
 	return "ip", []string{"-6", "addr", "del", address, "dev", ifname}
-}
-
-func ipv6StaticAddressDeleteCandidates(address string) []string {
-	address = strings.TrimSpace(address)
-	if address == "" {
-		return nil
-	}
-	out := []string{address}
-	prefix, err := netip.ParsePrefix(address)
-	if err != nil || !prefix.Addr().Is6() {
-		return out
-	}
-	if prefix.Bits() == 128 {
-		return []string{prefix.Addr().String() + "/64", address}
-	}
-	host128 := prefix.Addr().String() + "/128"
-	if host128 != address {
-		out = append(out, host128)
-	}
-	return out
 }
 
 func delegatedAddressWithPrefixLength(address string, prefixLength int) (string, error) {
@@ -5343,33 +5523,6 @@ func derivePreviousDelegatedAddresses(snapshot pdclient.Snapshot, currentPrefix 
 	return out, nil
 }
 
-const defaultIPv6DelegatedAddressWithdrawalLifetime = 2 * time.Hour
-
-func mergeManagedPreviousDelegatedAddresses(now time.Time, current string, groups ...[]managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
-	byAddress := map[string]time.Time{}
-	for _, group := range groups {
-		for _, previous := range group {
-			address := strings.TrimSpace(previous.Address)
-			if address == "" || address == current || !now.Before(previous.ExpiresAt) {
-				continue
-			}
-			if expiresAt, ok := byAddress[address]; !ok || expiresAt.Before(previous.ExpiresAt) {
-				byAddress[address] = previous.ExpiresAt
-			}
-		}
-	}
-	addresses := make([]string, 0, len(byAddress))
-	for address := range byAddress {
-		addresses = append(addresses, address)
-	}
-	sort.Strings(addresses)
-	out := make([]managedPreviousDelegatedAddress, 0, len(addresses))
-	for _, address := range addresses {
-		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: byAddress[address]})
-	}
-	return out
-}
-
 func retainFailedPreviousDelegatedAddresses(current, failed []managedPreviousDelegatedAddress) []managedPreviousDelegatedAddress {
 	byAddress := map[string]time.Time{}
 	for _, group := range [][]managedPreviousDelegatedAddress{current, failed} {
@@ -5394,48 +5547,10 @@ func retainFailedPreviousDelegatedAddresses(current, failed []managedPreviousDel
 	return out
 }
 
-func delegatedAddressRAWithdrawalLifetime(router *api.Router, delegatedName string) (time.Duration, bool) {
-	if router == nil || strings.TrimSpace(delegatedName) == "" {
-		return 0, false
-	}
-	want := "IPv6DelegatedAddress/" + strings.TrimSpace(delegatedName)
-	var longest time.Duration
-	found := false
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "IPv6RouterAdvertisement" {
-			continue
-		}
-		spec, err := resource.IPv6RouterAdvertisementSpec()
-		if err != nil || strings.TrimSpace(spec.PrefixFrom.Resource) != want {
-			continue
-		}
-		found = true
-		lifetime := defaultIPv6DelegatedAddressWithdrawalLifetime
-		if value := strings.TrimSpace(spec.ValidLifetime); value != "" {
-			seconds, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || seconds < 0 {
-				continue
-			}
-			lifetime = time.Duration(seconds) * time.Second
-		}
-		// RFC 4862 section 5.5.3(e) may keep an unauthenticated prefix valid
-		// for two hours even when a shorter lifetime is advertised.  Keep the
-		// deprecated constructor address for at least that long so dnsmasq can
-		// continue sending preferred=0 PIOs throughout the protection window.
-		if lifetime < defaultIPv6DelegatedAddressWithdrawalLifetime {
-			lifetime = defaultIPv6DelegatedAddressWithdrawalLifetime
-		}
-		if lifetime > longest {
-			longest = lifetime
-		}
-	}
-	return longest, found
-}
-
-func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifname, exceptDelegatedName string) map[string]bool {
+func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifname, exceptDelegatedName string, now time.Time) (map[string]bool, error) {
 	excluded := map[string]bool{}
 	if router == nil {
-		return excluded
+		return excluded, nil
 	}
 	add := func(value string) {
 		value = strings.TrimSpace(value)
@@ -5456,10 +5571,22 @@ func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifnam
 				continue
 			}
 			if store != nil {
-				status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+				reader, ok := store.(interface {
+					ReadObjectStatus(string, string, string) (map[string]any, error)
+				})
+				if !ok {
+					return nil, fmt.Errorf("delegated exclusion ownership reader unavailable")
+				}
+				status, err := reader.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+				if err != nil {
+					return nil, err
+				}
 				add(cleanStatusString(status["address"]))
-				pdStatus := store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", spec.PrefixDelegation)
-				if currentPrefix := statusStringPreferObserved(pdStatus, "currentPrefix"); currentPrefix != "" {
+				lease, _, leaseErr := livePDLease(store, spec.PrefixDelegation, now)
+				if leaseErr != nil {
+					return nil, leaseErr
+				}
+				if currentPrefix := lease.CurrentPrefix; leaseErr == nil && currentPrefix != "" {
 					if address, deriveErr := DeriveIPv6Address(currentPrefix, spec.SubnetID, spec.AddressSuffix); deriveErr == nil {
 						if address, lengthErr := delegatedAddressWithPrefixLength(address, spec.PrefixLength); lengthErr == nil {
 							add(address)
@@ -5474,105 +5601,7 @@ func declaredCurrentIPv6AddressExclusions(router *api.Router, store Store, ifnam
 			}
 		}
 	}
-	return excluded
-}
-
-func managedDelegatedAddressCandidate(value, current string, spec api.IPv6DelegatedAddressSpec) (string, bool) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
-	if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
-		return "", false
-	}
-	prefixLength := spec.PrefixLength
-	if prefixLength == 0 {
-		prefixLength = 64
-	}
-	if prefixLength == 128 || prefix.Bits() != prefixLength {
-		return "", false
-	}
-	suffix, err := netip.ParseAddr(stringutil.FirstNonEmpty(strings.TrimSpace(spec.AddressSuffix), "::1"))
-	if err != nil || !suffix.Is6() || !sameIPv6HostSuffix64(prefix.Addr(), suffix) {
-		return "", false
-	}
-	address := netip.PrefixFrom(prefix.Addr(), prefixLength).String()
-	if address == strings.TrimSpace(current) {
-		return "", false
-	}
-	return address, true
-}
-
-func sameIPv6HostSuffix64(a, b netip.Addr) bool {
-	if !a.Is6() || !b.Is6() {
-		return false
-	}
-	aBytes := a.As16()
-	bBytes := b.As16()
-	for i := 8; i < len(aBytes); i++ {
-		if aBytes[i] != bBytes[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func inferredPreviousDelegatedAddresses(now time.Time, current string, spec api.IPv6DelegatedAddressSpec, withdrawalLifetime time.Duration, values ...string) []managedPreviousDelegatedAddress {
-	if withdrawalLifetime <= 0 {
-		return nil
-	}
-	expiresAt := now.Add(withdrawalLifetime)
-	var out []managedPreviousDelegatedAddress
-	seen := map[string]bool{}
-	for _, value := range values {
-		address, ok := managedDelegatedAddressCandidate(value, current, spec)
-		if !ok || seen[address] {
-			continue
-		}
-		seen[address] = true
-		out = append(out, managedPreviousDelegatedAddress{Address: address, ExpiresAt: expiresAt})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Address < out[j].Address })
-	return out
-}
-
-func linuxIPv6GlobalInterfaceAddresses(ctx context.Context, ifname string) ([]string, error) {
-	out, err := exec.CommandContext(ctx, "ip", "-6", "-o", "addr", "show", "dev", ifname, "scope", "global").Output()
-	if err != nil {
-		return nil, fmt.Errorf("ip -6 -o addr show dev %s scope global: %w", ifname, err)
-	}
-	return parseIPv6InterfaceAddressPrefixes(string(out)), nil
-}
-
-func parseIPv6InterfaceAddressPrefixes(out string) []string {
-	var addresses []string
-	seen := map[string]bool{}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		// SLAAC/temporary addresses are not owned by IPv6DelegatedAddress even
-		// if their host bits happen to match a managed suffix. Linux also labels
-		// a manually installed address with a finite valid_lft as "dynamic", so
-		// that flag alone is not an origin signal. Accept a dynamic address only
-		// after it is deprecated; the caller additionally requires the exact
-		// managed suffix and excludes other declared address owners.
-		dynamic := fieldsContain(fields, "dynamic")
-		deprecated := fieldsContain(fields, "deprecated")
-		if fieldsContain(fields, "temporary") || fieldsContain(fields, "mngtmpaddr") || fieldsContain(fields, "autoconf") || fieldsContain(fields, "tentative") || fieldsContain(fields, "dadfailed") || (dynamic && !deprecated) {
-			continue
-		}
-		for i := 0; i+1 < len(fields); i++ {
-			if fields[i] != "inet6" {
-				continue
-			}
-			prefix, err := netip.ParsePrefix(strings.TrimSpace(fields[i+1]))
-			if err != nil || !prefix.Addr().Is6() || prefix.Addr().IsLinkLocalUnicast() {
-				continue
-			}
-			address := netip.PrefixFrom(prefix.Addr(), prefix.Bits()).String()
-			if !seen[address] {
-				seen[address] = true
-				addresses = append(addresses, address)
-			}
-		}
-	}
-	return addresses
+	return excluded, nil
 }
 
 func previousDelegatedAddressesFromStatus(status map[string]any) []managedPreviousDelegatedAddress {
@@ -5613,17 +5642,14 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	if err := c.cleanupWhenFalseIPv6DelegatedAddresses(ctx, pdName); err != nil {
 		return err
 	}
-	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
-	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
-	prefix := ""
-	if activePD {
-		prefix = statusStringPreferObserved(pdStatus, "currentPrefix")
+	now := c.now()
+	lease, found, err := livePDLease(c.Store, pdName, now)
+	if err != nil {
+		return err
 	}
+	activePD := found && lease.Phase == daemonapi.ResourcePhaseBound && lease.HasFreshTransactionEvidence(now)
+	prefix := lease.CurrentPrefix
 	stagedSnapshot, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
-	now := time.Now().UTC()
-	if c.Now != nil {
-		now = c.Now().UTC()
-	}
 	if !activePD && !stagedSnapshotFresh {
 		return nil
 	}
@@ -5632,10 +5658,19 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	}
 	if !activePD {
 		prefix = stagedSnapshot.CurrentPrefix
+		lease = routerstate.ObservePDLease(routerstate.PDLease{}, stagedSnapshot, now)
 	}
 	resources := append([]api.Resource(nil), c.Router.Spec.Resources...)
+	pdRuntimeEnabled := false
+	for _, resource := range resources {
+		if resource.Kind == "DHCPv6PrefixDelegation" && resource.Metadata.Name == pdName {
+			pdRuntimeEnabled = true
+			break
+		}
+	}
+
 	stagedIDs := map[string]bool{}
-	if !activePD && c.DeclaredRouter != nil && stagedSnapshotFresh {
+	if c.DeclaredRouter != nil && (activePD || stagedSnapshotFresh) {
 		present := map[string]bool{}
 		for _, resource := range resources {
 			present[resource.ID()] = true
@@ -5669,9 +5704,11 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if spec.PrefixDelegation != pdName {
 			continue
 		}
-		stagingVMAC := stagedIDs[resource.ID()] || (!activePD && stagedSnapshotFresh && c.vrrpVMACConfigured(spec.Interface))
-		if stagingVMAC && !stagedSnapshotFresh {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PDLeaseStale"})
+		stagingVMAC := stagedIDs[resource.ID()] || ((!activePD || !pdRuntimeEnabled) && (activePD || stagedSnapshotFresh) && c.vrrpVMACConfigured(spec.Interface))
+		if stagingVMAC && !activePD && !stagedSnapshotFresh {
+			if err := c.saveAddressPending(resource.Metadata.Name, "PDLeaseStale", ""); err != nil {
+				return err
+			}
 			continue
 		}
 		if stagingVMAC {
@@ -5682,21 +5719,23 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 					reason = "VMACEnsureFailed"
 					message = err.Error()
 				}
-				status := map[string]any{"phase": "Pending", "reason": reason}
-				if message != "" {
-					status["message"] = message
+				if err := c.saveAddressPending(resource.Metadata.Name, reason, message); err != nil {
+					return err
 				}
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status)
 				continue
 			}
 		}
 		linkUp := c.linkReady(spec.Interface) || stagingVMAC
 		if !c.delegatedAddressDependenciesReady(spec.DependsOn, spec.Interface, pdName, stagingVMAC) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"})
+			if err := c.saveAddressPending(resource.Metadata.Name, "DependsOnFalse", ""); err != nil {
+				return err
+			}
 			continue
 		}
 		if !linkUp {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending"})
+			if err := c.saveAddressPending(resource.Metadata.Name, "", ""); err != nil {
+				return err
+			}
 			continue
 		}
 		addr, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix)
@@ -5711,7 +5750,31 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if sourceRouter == nil {
 			sourceRouter = c.Router
 		}
-		previousStatus := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+		reader, ok := c.Store.(interface {
+			ReadObjectStatus(string, string, string) (map[string]any, error)
+		})
+		if !ok {
+			return fmt.Errorf("delegated address ownership reader unavailable")
+		}
+		previousStatus, err := reader.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		previousCurrentAddress := ""
+		if old := cleanStatusString(previousStatus["address"]); old != "" && old != addr && previousStatus["dryRun"] != true {
+			previousCurrentAddress = old
+			previousStatus = copyStatusMap(previousStatus)
+			history := previousDelegatedAddressesFromStatus(previousStatus)
+			expiresAt := time.Time{}
+			found := false
+			for _, entry := range history {
+				found = found || entry.Address == old
+			}
+			if !found {
+				history = append(history, managedPreviousDelegatedAddress{Address: old, ExpiresAt: expiresAt})
+			}
+			previousStatus["previousAddresses"] = history
+		}
 		ifname := ""
 		if c.DeclaredRouter != nil {
 			ifname = interfaceIfName(c.DeclaredRouter, spec.Interface)
@@ -5723,57 +5786,26 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			ifname = spec.Interface
 		}
 		previousAddresses := []managedPreviousDelegatedAddress(nil)
-		if stagedSnapshotFresh {
+		if activePD {
+			previousAddresses, err = derivePreviousPDLeaseAddresses(lease, prefix, spec, now)
+			if err != nil {
+				return fmt.Errorf("%s derive previous addresses: %w", resource.ID(), err)
+			}
+		} else if stagedSnapshotFresh {
 			previousAddresses, err = derivePreviousDelegatedAddresses(stagedSnapshot, prefix, spec, now)
 			if err != nil {
 				return fmt.Errorf("%s derive previous addresses: %w", resource.ID(), err)
 			}
 		}
-		// Lease sync deliberately replaces the standby snapshot with the active
-		// peer's file.  A peer which never owned this node's former prefix cannot
-		// carry that PreviousPrefixes history.  Preserve existing status history,
-		// then recover a lost transition from the resource's previous current
-		// address and exact managed-suffix /64 addresses still present in kernel.
-		// This is restricted to resources which actually feed RA; DS-Lite /128
-		// endpoints and unrelated IPv6 addresses are never adopted here.
-		if spec.PrefixLength != 128 {
-			historicalPrevious := previousDelegatedAddressesFromStatus(previousStatus)
-			previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, historicalPrevious)
-			if withdrawalLifetime, hasRA := delegatedAddressRAWithdrawalLifetime(sourceRouter, resource.Metadata.Name); hasRA && withdrawalLifetime > 0 {
-				observed := []string{cleanStatusString(previousStatus["address"])}
-				if !c.DryRun {
-					list := c.AddressList
-					if list == nil && c.currentOS() == platform.OSLinux {
-						list = linuxIPv6GlobalInterfaceAddresses
-					}
-					if list != nil {
-						addresses, listErr := list(ctx, ifname)
-						if listErr != nil {
-							return fmt.Errorf("%s list delegated interface addresses: %w", resource.ID(), listErr)
-						}
-						observed = append(observed, addresses...)
-					}
-				}
-				known := make(map[string]bool, len(historicalPrevious)+len(previousAddresses))
-				for _, previous := range append(append([]managedPreviousDelegatedAddress(nil), historicalPrevious...), previousAddresses...) {
-					known[previous.Address] = true
-				}
-				excluded := declaredCurrentIPv6AddressExclusions(sourceRouter, c.Store, ifname, resource.Metadata.Name)
-				untracked := observed[:0]
-				for _, value := range observed {
-					candidate, ok := managedDelegatedAddressCandidate(value, addr, spec)
-					if ok && !known[candidate] && !excluded[candidate] {
-						untracked = append(untracked, candidate)
-					}
-				}
-				inferred := inferredPreviousDelegatedAddresses(now, addr, spec, withdrawalLifetime, untracked...)
-				previousAddresses = mergeManagedPreviousDelegatedAddresses(now, addr, previousAddresses, inferred)
-			}
-		}
+		// Canonical complete association is the sole lifetime authority.
+		// Local receipts authorize exact cleanup, never an absent old prefix.
+		journalPrevious := previousDelegatedAddressesFromStatus(previousStatus)
+
 		status := map[string]any{
 			"phase":        "Applied",
 			"address":      addr,
 			"interface":    spec.Interface,
+			"ifname":       ifname,
 			"prefixSource": pdName,
 			"dryRun":       c.DryRun,
 		}
@@ -5784,63 +5816,102 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 		if stagingVMAC {
 			status["staged"] = true
 		}
-		currentStatus := copyStatusMap(previousStatus)
-		delete(currentStatus, "previousAddresses")
-		currentChanged := objectStatusChanged("IPv6DelegatedAddress", currentStatus, status)
+		status["pdLeaseAcquiredAt"] = lease.LastReplyAt.UTC().Format(time.RFC3339Nano)
+		status["preferredUntil"] = pdLifetimeDeadline(lease.LastReplyAt, lease.PreferredSeconds)
+		status["validUntil"] = pdLifetimeDeadline(lease.LastReplyAt, lease.ValidSeconds)
+		currentChanged := false
+		for _, key := range []string{"address", "interface", "ifname", "prefixSource", "sourceSelection", "staged", "pdLeaseAcquiredAt", "preferredUntil", "validUntil"} {
+			if !reflect.DeepEqual(previousStatus[key], status[key]) {
+				currentChanged = true
+				break
+			}
+		}
 		if len(previousAddresses) > 0 {
 			status["previousAddresses"] = previousAddresses
 		}
 		changed := objectStatusChanged("IPv6DelegatedAddress", previousStatus, status)
-		addressPresent := true
-		addressPresentFn := c.AddressPresent
-		if stagingVMAC {
-			addressPresentFn = c.StagingAddressPresent
-			if addressPresentFn == nil {
-				// Keep the existing test seam, while production always uses the
-				// standby-specific exact-prefix readback.
-				addressPresentFn = c.AddressPresent
-			}
-			if addressPresentFn == nil {
-				addressPresentFn = ipv6StagedAddressPresentWithPrefix
-			}
-		} else if addressPresentFn == nil {
-			addressPresentFn = ipv6AddressPresent
-			if spec.PrefixLength == 128 {
-				addressPresentFn = ipv6AddressPresentWithPrefix
-			}
-		}
+		observation := delegatedAddressObservation{usable: true, deprecated: true}
 		if !c.DryRun {
-			addressPresent = addressPresentFn(ctx, ifname, addr)
+			observation, err = c.observeCurrentDelegatedAddress(ctx, ifname, addr, stagingVMAC)
+			if err != nil {
+				return fmt.Errorf("%s observe current address: %w", resource.ID(), err)
+			}
 		}
+		if len(observation.sameHost) != 0 {
+			owned := previousStatus["dryRun"] != true && cleanStatusString(previousStatus["ifname"]) == ifname && cleanStatusString(previousStatus["interface"]) == spec.Interface && cleanStatusString(previousStatus["prefixSource"]) == pdName
+			ownAddress := cleanStatusString(previousStatus["address"])
+			for _, existing := range observation.sameHost {
+				if !owned || existing != ownAddress {
+					return fmt.Errorf("%s foreign IPv6 address %s on %s", resource.ID(), existing, ifname)
+				}
+			}
+		}
+		addressPresent := observation.usable
+		currentOwned := previousStatus["dryRun"] != true && cleanStatusString(previousStatus["address"]) == addr && cleanStatusString(previousStatus["ifname"]) == ifname && cleanStatusString(previousStatus["prefixSource"]) == pdName
+		if !c.DryRun && dsliteSource && c.DeprecatedAddressPresent != nil {
+			observation.deprecated = c.DeprecatedAddressPresent(ctx, ifname, addr)
+		}
+		addressDeprecated := !dsliteSource || observation.deprecated
 		command := c.Command
 		if command == nil {
 			command = runCommandContext
 		}
-		addressDeprecated := true
-		if !c.DryRun && dsliteSource {
-			deprecatedAddressPresent := c.DeprecatedAddressPresent
-			if deprecatedAddressPresent == nil {
-				deprecatedAddressPresent = ipv6DeprecatedAddressPresentWithPrefix
+		if !c.DryRun && observation.present && !observation.usable && !currentChanged && addressDeprecated {
+			reason := "AddressNotReady"
+			if observation.dadFailed {
+				reason = "AddressDADFailed"
 			}
-			addressDeprecated = deprecatedAddressPresent(ctx, ifname, addr)
+			if err := c.saveAddressPending(resource.Metadata.Name, reason, ""); err != nil {
+				return err
+			}
+			continue
 		}
+
 		if !c.DryRun && (currentChanged || !addressPresent || !addressDeprecated) {
-			if !addressPresent {
-				for _, stale := range ipv6StaticAddressDeleteCandidates(addr) {
-					deleteName, deleteArgs := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, stale)
-					if err := command(ctx, deleteName, deleteArgs...); err != nil && c.Logger != nil {
-						c.Logger.Debug("delete stale IPv6 delegated address before apply skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
-					}
-				}
+			freshLease, err := c.currentAddressAuthority(pdName, prefix, !activePD)
+			if err != nil {
+				return fmt.Errorf("%s before address apply: %w", resource.ID(), err)
 			}
-			name, args := ipv6StaticAddressApplyCommand(c.currentOS(), ifname, addr)
-			if dsliteSource {
-				name, args = ipv6PermanentDeprecatedAddressApplyCommand(c.currentOS(), ifname, addr)
+			preferred, valid, err := currentPDAddressLifetimes(freshLease, c.now(), dsliteSource)
+			if err != nil {
+				return fmt.Errorf("%s before address apply: %w", resource.ID(), err)
 			}
+			lease = freshLease
+			status["pdLeaseAcquiredAt"] = lease.LastReplyAt.UTC().Format(time.RFC3339Nano)
+			status["preferredUntil"] = pdLifetimeDeadline(lease.LastReplyAt, lease.PreferredSeconds)
+			status["validUntil"] = pdLifetimeDeadline(lease.LastReplyAt, lease.ValidSeconds)
+			pending := copyStatusMap(status)
+			pending["phase"], pending["reason"] = "Pending", "AddressApplying"
+			if history := journalPrevious; len(history) != 0 {
+				pending["previousAddresses"] = history
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, pending); err != nil {
+				return err
+			}
+
+			// Persistence and observations can block. Recheck immediately before
+			// the native address write so they cannot extend stale authority.
+			freshLease, err = c.currentAddressAuthority(pdName, prefix, !activePD)
+			if err != nil {
+				return err
+			}
+			preferred, valid, err = currentPDAddressLifetimes(freshLease, c.now(), dsliteSource)
+			if err != nil {
+				return err
+			}
+			status["pdLeaseAcquiredAt"] = freshLease.LastReplyAt.UTC().Format(time.RFC3339Nano)
+			status["preferredUntil"] = pdLifetimeDeadline(freshLease.LastReplyAt, freshLease.PreferredSeconds)
+			status["validUntil"] = pdLifetimeDeadline(freshLease.LastReplyAt, freshLease.ValidSeconds)
+			name, args := ipv6DelegatedAddressApplyCommand(c.currentOS(), ifname, addr, preferred, valid)
 			if err := command(ctx, name, args...); err != nil {
 				return err
 			}
-			if !addressPresentFn(ctx, ifname, addr) {
+			currentOwned = true
+			after, readErr := c.observeCurrentDelegatedAddress(ctx, ifname, addr, stagingVMAC)
+			if readErr != nil {
+				return readErr
+			}
+			if !after.usable {
 				reason := "AddressNotReady"
 				if stagingVMAC {
 					reason = "AddressReadbackFailed"
@@ -5849,16 +5920,39 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				// an active VMAC must not publish Applied until DAD has completed.
 				// DS-Lite and its health checks consume this phase as a readiness
 				// boundary and would otherwise transmit with an unusable outer source.
-				_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": reason})
+				if err := c.saveAddressPending(resource.Metadata.Name, reason, ""); err != nil {
+					return err
+				}
 				continue
 			}
 		}
 		if !c.DryRun {
+			if _, err := c.currentAddressAuthority(pdName, prefix, !activePD); err != nil {
+				if currentOwned {
+					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, addr)
+					if deleteErr := command(ctx, name, args...); deleteErr != nil {
+						absent, readErr := c.delegatedAddressAbsent(ctx, ifname, addr)
+						if !absent || readErr != nil {
+							return errors.Join(err, deleteErr, readErr)
+						}
+					}
+				}
+				return fmt.Errorf("%s after address apply: %w", resource.ID(), err)
+			}
+		}
+		var previousWithdrawalErr error
+		if !c.DryRun {
 			desiredPrevious := make(map[string]bool, len(previousAddresses))
+			excluded, err := declaredCurrentIPv6AddressExclusions(sourceRouter, c.Store, ifname, resource.Metadata.Name, c.now())
+			if err != nil {
+				return err
+			}
 			managedPrevious := make(map[string]time.Time)
 			var failedPreviousDeletes []managedPreviousDelegatedAddress
 			for _, previous := range previousDelegatedAddressesFromStatus(previousStatus) {
-				managedPrevious[previous.Address] = previous.ExpiresAt
+				if previous.Address != previousCurrentAddress {
+					managedPrevious[previous.Address] = previous.ExpiresAt
+				}
 			}
 			for _, previous := range previousAddresses {
 				desiredPrevious[previous.Address] = true
@@ -5867,8 +5961,13 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				if stale.Address == "" || stale.Address == addr || desiredPrevious[stale.Address] {
 					continue
 				}
+				if excluded[stale.Address] {
+					failedPreviousDeletes = append(failedPreviousDeletes, stale)
+					previousWithdrawalErr = errors.Join(previousWithdrawalErr, fmt.Errorf("%s previous address %s has another declared owner", resource.ID(), stale.Address))
+					continue
+				}
 				deleteFailed := false
-				for _, candidate := range ipv6StaticAddressDeleteCandidates(stale.Address) {
+				for _, candidate := range []string{stale.Address} {
 					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, candidate)
 					if err := command(ctx, name, args...); err != nil {
 						deleteFailed = true
@@ -5877,22 +5976,63 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 						}
 					}
 				}
-				// A /64 cleanup also tries its legacy /128 shape; one of those
-				// deletes may legitimately return not-found.  Only retain the
-				// tombstone when a failed command is followed by a positive
-				// readback, proving that the managed address still exists.
-				if deleteFailed && addressPresentFn(ctx, ifname, stale.Address) {
-					failedPreviousDeletes = append(failedPreviousDeletes, stale)
+				// Delete only the recorded prefix. A failed command is complete
+				// only after an error-aware observation proves exact absence.
+				if deleteFailed {
+					absent, err := c.delegatedAddressAbsent(ctx, ifname, stale.Address)
+					if err != nil {
+						return err
+					}
+					if !absent {
+						failedPreviousDeletes = append(failedPreviousDeletes, stale)
+						previousWithdrawalErr = errors.Join(previousWithdrawalErr, fmt.Errorf("%s previous delegated address %s still exists after withdrawal", resource.ID(), stale.Address))
+					}
 				}
 			}
-			for _, previous := range previousAddresses {
-				validSeconds := remainingIPv6ValidLifetime(now, previous.ExpiresAt)
+			for previousIndex, previous := range previousAddresses {
+				freshPrevious, err := c.currentPreviousAddressAuthority(pdName, prefix, previous.Address, spec, !activePD)
+				if err != nil {
+					return err
+				}
+				previous = freshPrevious
+				previousAddresses[previousIndex] = freshPrevious
+				validSeconds := remainingIPv6ValidLifetime(c.now(), previous.ExpiresAt)
 				if validSeconds == 0 {
 					continue
 				}
-				present := addressPresentFn(ctx, ifname, previous.Address)
+				observedPrevious, readErr := c.observeCurrentDelegatedAddress(ctx, ifname, previous.Address, stagingVMAC)
+				if readErr != nil {
+					return readErr
+				}
+				present := observedPrevious.usable
+				if len(observedPrevious.sameHost) != 0 {
+					_, recorded := managedPrevious[previous.Address]
+					oldCurrentOwned := previousCurrentAddress == previous.Address && cleanStatusString(previousStatus["ifname"]) == ifname && previousStatus["dryRun"] != true
+					for _, existing := range observedPrevious.sameHost {
+						if existing != previous.Address || (!recorded && !oldCurrentOwned) {
+							return fmt.Errorf("%s foreign previous IPv6 address %s on %s", resource.ID(), existing, ifname)
+						}
+					}
+				}
 				if expiresAt, ok := managedPrevious[previous.Address]; ok && expiresAt.Equal(previous.ExpiresAt) && present {
 					continue
+				}
+				replaced := false
+				for i := range journalPrevious {
+					if journalPrevious[i].Address == previous.Address {
+						journalPrevious[i] = previous
+						replaced = true
+						break
+					}
+				}
+				if !replaced {
+					journalPrevious = append(journalPrevious, previous)
+				}
+				pendingPrevious := copyStatusMap(status)
+				pendingPrevious["phase"], pendingPrevious["reason"] = "Pending", "PreviousAddressApplying"
+				pendingPrevious["previousAddresses"] = journalPrevious
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, pendingPrevious); err != nil {
+					return err
 				}
 				if c.currentOS() == platform.OSFreeBSD && present {
 					name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, previous.Address)
@@ -5901,16 +6041,30 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 					}
 				}
 				name, args := ipv6DeprecatedAddressApplyCommand(c.currentOS(), ifname, previous.Address, validSeconds)
+				freshPrevious, err = c.currentPreviousAddressAuthority(pdName, prefix, previous.Address, spec, !activePD)
+				if err != nil {
+					return err
+				}
+				previousAddresses[previousIndex] = freshPrevious
+				validSeconds = remainingIPv6ValidLifetime(c.now(), freshPrevious.ExpiresAt)
+				if validSeconds == 0 {
+					return fmt.Errorf("previous delegated address expired before apply")
+				}
+				name, args = ipv6DeprecatedAddressApplyCommand(c.currentOS(), ifname, previous.Address, validSeconds)
 				if err := command(ctx, name, args...); err != nil {
 					return err
 				}
 			}
 			if len(failedPreviousDeletes) > 0 {
 				status["previousAddresses"] = retainFailedPreviousDelegatedAddresses(previousAddresses, failedPreviousDeletes)
+				status["phase"], status["reason"] = "Error", "PreviousAddressWithdrawFailed"
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status); err != nil {
 			return err
+		}
+		if previousWithdrawalErr != nil {
+			return previousWithdrawalErr
 		}
 		if (changed || !addressPresent || !addressDeprecated) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.lan.address.applied", daemonapi.SeverityInfo)
@@ -6248,16 +6402,32 @@ func (c LANAddressController) freshStagedPDSnapshot(pdName string) (pdclient.Sna
 	if snapshot.IAID != expectedIAID {
 		return pdclient.Snapshot{}, false
 	}
-	expires := snapshot.ExpiresAt
-	if expires.IsZero() && snapshot.Valid > 0 && !snapshot.AcquiredAt.IsZero() {
-		expires = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
-	}
 	now := time.Now().UTC()
 	if c.Now != nil {
 		now = c.Now().UTC()
 	}
-	if expires.IsZero() || !now.Before(expires) {
+	// A file is a cold recovery/peer observation, not an alternate authority
+	// for a snapshot already committed locally. In particular, an older Bound
+	// file must never revive a released/revoked canonical association.
+	reader, ok := c.Store.(routerstate.PDLeaseReader)
+	if !ok {
 		return pdclient.Snapshot{}, false
+	}
+	canonical, found, err := reader.ReadPDLease(pdName)
+	if err != nil {
+		return pdclient.Snapshot{}, false
+	}
+	if found && !canonical.SnapshotUpdatedAt.IsZero() && !snapshot.UpdatedAt.After(canonical.SnapshotUpdatedAt) {
+		return pdclient.Snapshot{}, false
+	}
+
+	lease := routerstate.ObservePDLease(routerstate.PDLease{}, snapshot, now)
+	if lease.Phase != daemonapi.ResourcePhaseBound || !lease.HasFreshTransactionEvidence(now) {
+		return pdclient.Snapshot{}, false
+	}
+	snapshot.PreviousPrefixes = nil
+	for _, previous := range lease.ValidPreviousPrefixes(now) {
+		snapshot.PreviousPrefixes = append(snapshot.PreviousPrefixes, pdclient.PreviousPrefixSnapshot{Prefix: previous.Prefix, ExpiresAt: previous.ExpiresAt})
 	}
 	return snapshot, true
 }
@@ -6274,8 +6444,15 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 	if !ok {
 		return nil
 	}
-	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
-	activePD := statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound
+	now := time.Now().UTC()
+	if c.Now != nil {
+		now = c.Now().UTC()
+	}
+	lease, found, err := livePDLease(c.Store, pdName, now)
+	if err != nil {
+		return err
+	}
+	activePD := found && lease.Phase == daemonapi.ResourcePhaseBound && lease.HasFreshTransactionEvidence(now)
 	_, stagedSnapshotFresh := c.freshStagedPDSnapshot(pdName)
 	for _, resource := range declared.Spec.Resources {
 		if resource.Kind != "IPv6DelegatedAddress" {
@@ -6294,15 +6471,15 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			return err
 		}
 		whenFalse := resourcequery.ResourceWhenPresent(when) && !eligible
-		stagingUnavailable := !activePD && c.vrrpVMACConfigured(spec.Interface) && !stagedSnapshotFresh
+		stagingUnavailable := !activePD && !stagedSnapshotFresh
 		if !whenFalse && !stagingUnavailable {
 			continue
 		}
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name)
 		address := strings.TrimSpace(fmt.Sprint(previous["address"]))
 		if address == "" || address == "<nil>" {
-			if pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName); statusStringPreferObserved(pdStatus, "phase") == daemonapi.ResourcePhaseBound {
-				if prefix := statusStringPreferObserved(pdStatus, "currentPrefix"); prefix != "" {
+			if activePD {
+				if prefix := lease.CurrentPrefix; prefix != "" {
 					if derived, err := DeriveIPv6Address(prefix, spec.SubnetID, spec.AddressSuffix); err == nil {
 						address = derived
 					}
@@ -6318,6 +6495,7 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				addresses = append(addresses, tracked.Address)
 			}
 		}
+		var withdrawalErrors []error
 		if len(addresses) > 0 && !c.DryRun {
 			ifname := interfaceIfName(declared, spec.Interface)
 			if ifname == "" {
@@ -6328,15 +6506,20 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 				command = runCommandContext
 			}
 			for _, trackedAddress := range addresses {
-				for _, stale := range ipv6StaticAddressDeleteCandidates(trackedAddress) {
-					name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), ifname, stale)
-					if err := command(ctx, name, args...); err != nil {
-						if c.Logger != nil {
-							c.Logger.Debug("delete when-false IPv6 delegated address skipped", "resource", resource.Metadata.Name, "address", stale, "interface", ifname, "error", err)
-						}
+				name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), ifname, trackedAddress)
+				if err := command(ctx, name, args...); err != nil {
+					absent, readErr := c.delegatedAddressAbsent(ctx, ifname, trackedAddress)
+					if readErr != nil || !absent {
+						withdrawalErrors = append(withdrawalErrors, errors.Join(fmt.Errorf("withdraw delegated address %s: %w", trackedAddress, err), readErr))
 					}
 				}
 			}
+		}
+		if len(withdrawalErrors) > 0 {
+			status := copyStatusMap(previous)
+			status["phase"], status["reason"], status["error"] = "Error", "WithdrawFailed", errors.Join(withdrawalErrors...).Error()
+			saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", resource.Metadata.Name, status)
+			return errors.Join(errors.Join(withdrawalErrors...), saveErr)
 		}
 		reason := "WhenFalse"
 		if !whenFalse {

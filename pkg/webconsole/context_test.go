@@ -19,7 +19,7 @@ import (
 
 func TestLogHelpersHonorCancellationBeforeOpeningStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.db")
-	h := New(Options{DNSQueryLogPath: path, TrafficFlowLogPath: path, FirewallLogPath: path})
+	h := New(Options{DNSQueryLogPath: path, TrafficFlowLogPath: path, FirewallLogPath: path, DHCPFingerprintLogPath: path, DHCPStickyLogPath: path})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	calls := map[string]func() error{
@@ -28,6 +28,8 @@ func TestLogHelpersHonorCancellationBeforeOpeningStore(t *testing.T) {
 		"traffic list":      func() error { _, err := h.trafficFlowList(ctx, logstore.TrafficFlowFilter{}); return err },
 		"traffic aggregate": func() error { _, err := h.trafficFlowAggregate(ctx, logstore.TrafficFlowFilter{}); return err },
 		"firewall list":     func() error { _, err := h.firewallLogList(ctx, logstore.FirewallLogFilter{}); return err },
+		"fingerprint list":  func() error { _, err := h.dhcpFingerprintList(ctx, logstore.DHCPFingerprintFilter{}); return err },
+		"sticky list":       func() error { _, err := h.dhcpStickyLeaseList(ctx, logstore.DHCPStickyFilter{}); return err },
 		"timeline": func() error {
 			_, err := h.firewallDenyTimelineList(ctx, time.Now(), time.Now(), time.Minute)
 			return err

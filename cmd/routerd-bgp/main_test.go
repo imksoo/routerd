@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,7 +24,7 @@ import (
 
 type fakePathServer struct {
 	added             []*gobgpapi.AddPathRequest
-	deleted           [][]byte
+	deleted           []*gobgpapi.DeletePathRequest
 	policyRequests    []*gobgpapi.SetPoliciesRequest
 	policyAssignments []*gobgpapi.PolicyAssignment
 	resetRequests     []*gobgpapi.ResetPeerRequest
@@ -104,7 +103,7 @@ func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest
 }
 
 func (s *fakePathServer) DeletePath(_ context.Context, req *gobgpapi.DeletePathRequest) error {
-	s.deleted = append(s.deleted, append([]byte(nil), req.GetUuid()...))
+	s.deleted = append(s.deleted, req)
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -532,9 +531,8 @@ func TestDynamicExportPolicySkipsWithheldDirectPeers(t *testing.T) {
 func TestRestoreAppliedRestoresStaticAndMobilityPathsWithFreshUUIDs(t *testing.T) {
 	server := &fakePathServer{}
 	applied := bgpdaemon.AppliedConfig{
-		Global:         bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
-		Advertisements: []string{"10.20.0.0/24"},
-		Paths: []bgpdaemon.AppliedPath{{
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Paths: []bgpdaemon.AppliedPath{bgpdaemon.StaticAppliedPath("10.20.0.0/24", nil), {
 			Source: "MobilityPool/demo/node/aws-router-a",
 			Prefix: "10.77.60.11/32",
 			Attrs:  bgpdaemon.AppliedPathAttrs{LocalPref: 200},
@@ -686,8 +684,8 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	initial := bgpdaemon.AppliedConfig{
-		Global:         bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
-		Advertisements: []string{"10.20.0.0/24"},
+		Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "10.0.0.1", ListenPort: 179},
+		Paths:  []bgpdaemon.AppliedPath{bgpdaemon.StaticAppliedPath("10.20.0.0/24", nil)},
 	}
 	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
 		t.Fatalf("write initial applied: %v", err)
@@ -732,8 +730,8 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 		t.Fatalf("DELETE /v1/paths status = %d body=%s", resp.StatusCode, bytes.TrimSpace(data))
 	}
 	resp.Body.Close()
-	if len(paths.deleted) != 1 || bgpdaemon.EncodeUUID(paths.deleted[0]) != got.UUID {
-		t.Fatalf("deleted UUIDs = %#v, want %s", paths.deleted, got.UUID)
+	if len(paths.deleted) != 1 || paths.deleted[0].GetPath().GetIdentifier() != dynamicPathIdentifier(body.Source) || len(paths.deleted[0].GetUuid()) != 0 {
+		t.Fatalf("dynamic withdrawal did not use exact native source identity: %#v", paths.deleted)
 	}
 	applied, _, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
@@ -742,8 +740,8 @@ func TestControlPathAPISourceScopedMobilityUpsertAndDelete(t *testing.T) {
 	if len(bgpdaemon.NonStaticPaths(applied.Paths)) != 0 {
 		t.Fatalf("dynamic paths after delete = %#v", bgpdaemon.NonStaticPaths(applied.Paths))
 	}
-	if len(applied.Advertisements) != 1 || applied.Advertisements[0] != "10.20.0.0/24" {
-		t.Fatalf("static advertisements changed: %#v", applied.Advertisements)
+	if prefixes := bgpdaemon.StaticAdvertisements(applied.Paths); len(prefixes) != 1 || prefixes[0] != "10.20.0.0/24" {
+		t.Fatalf("static advertisements changed: %#v", prefixes)
 	}
 }
 
@@ -894,7 +892,7 @@ func TestControlPathAPIRejectsNonMobilityAndNonHostPaths(t *testing.T) {
 	}
 }
 
-func TestUpsertDynamicPathIgnoresStaleGoBGPUUID(t *testing.T) {
+func TestUpsertDynamicPathReplacesNativeIdentityDespiteStaleUUID(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "applied.json")
 	source := "MobilityPool/demo/node/aws-router-a"
@@ -911,7 +909,7 @@ func TestUpsertDynamicPathIgnoresStaleGoBGPUUID(t *testing.T) {
 	if err := bgpdaemon.WriteApplied(statePath, initial); err != nil {
 		t.Fatalf("write initial applied: %v", err)
 	}
-	server := &fakePathServer{deleteErr: errors.New("can't find a specified path")}
+	server := &fakePathServer{}
 	_, got, err := upsertDynamicPath(context.Background(), server, statePath, bgpdaemon.AppliedPath{
 		Source: source,
 		Prefix: "10.77.60.11/32",
@@ -923,8 +921,8 @@ func TestUpsertDynamicPathIgnoresStaleGoBGPUUID(t *testing.T) {
 	if got == nil || got.UUID == "" || got.UUID == bgpdaemon.EncodeUUID([]byte{9}) {
 		t.Fatalf("upserted path = %#v, want fresh UUID", got)
 	}
-	if len(server.deleted) != 1 || len(server.added) != 1 {
-		t.Fatalf("delete/add calls = %d/%d, want stale delete and fresh add", len(server.deleted), len(server.added))
+	if len(server.deleted) != 0 || len(server.added) != 1 || server.added[0].GetPath().GetIdentifier() != dynamicPathIdentifier(source) {
+		t.Fatalf("native replacement: delete/add = %d/%d, request=%#v", len(server.deleted), len(server.added), server.added)
 	}
 }
 

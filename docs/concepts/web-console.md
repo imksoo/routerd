@@ -5,6 +5,13 @@ Missing DNS, traffic flow, or firewall log databases produce empty log lists
 created its store. These reads do not create files or directories. Errors from
 existing stores, such as database corruption, remain visible.
 
+In this proposal, summary responses include a typed `collected` list of sections
+read successfully. A listed section with no rows is a current empty observation
+and clears previous rows and count gauges. An unrequested or failed section is
+not listed; the UI retains its previous observation and shows collection errors.
+The response timestamp alone does not make every retained section current.
+Requests pass cancellation into their command and SQLite enrichment work.
+
 Connections includes per-DS-Lite local IPv4 SNAT counts from the complete
 conntrack snapshot, independent of display limits and filters. Total/TCP/UDP/other
 counts are keyed by observed `innerLocalIPv4`; shared addresses show combined

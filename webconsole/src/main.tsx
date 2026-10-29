@@ -68,8 +68,11 @@ declare global {
   }
 }
 
+type SnapshotSection = "resources" | "events" | "connections" | "dnsQueries" | "trafficFlows" | "firewallLogs" | "conntrackTuning" | "dhcpLeases" | "dhcpFingerprints" | "neighbors" | "clients" | "vpn";
+
 type Summary = {
   generatedAt?: string;
+  collected: SnapshotSection[];
   consoleLinks?: ConsoleLink[];
   status?: { status?: Record<string, unknown> };
   controllers?: ControllerStatus[];
@@ -2597,7 +2600,6 @@ function App() {
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const detailRefreshMounted = useRef(false);
-  const overviewDetailsLoaded = useRef(false);
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -2607,7 +2609,7 @@ function App() {
     refreshInFlight.current = true;
     const scrollSnapshot = captureScrollSnapshot();
     const eventLimit = selected === "events" ? 200 : 50;
-    const connectionLimit = selected === "connections" ? 600 : -1;
+    const connectionLimit = selected === "connections" ? 600 : selected === "overview" ? 200 : -1;
     const firewallLogLimit = selected === "firewall" ? 200 : -1;
     const generationLimit = selected === "generations" ? 200 : 50;
     const shouldFetchConfig = selected === "config";
@@ -2618,15 +2620,15 @@ function App() {
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
-    const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
-    const includeResources = selected === "resources" || selected === "gateway-health" || selected === "vrrp" || selected === "connections";
-    const includeEvents = selected === "events";
+    const trafficFlowLimit = selected === "clients" || selected === "overview" ? 200 : selected === "connections" ? 600 : -1;
+    const includeResources = selected === "overview" || selected === "resources" || selected === "gateway-health" || selected === "vrrp" || selected === "connections";
+    const includeEvents = selected === "events" || selected === "overview";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({
       events: includeEvents ? String(eventLimit) : "-1",
       connections: String(connectionLimit),
       firewallLogs: String(firewallLogLimit),
-      dnsQueries: includeClients ? "200" : "-1",
+      dnsQueries: includeClients || selected === "overview" ? "200" : "-1",
       trafficFlows: String(trafficFlowLimit),
       fingerprintQueries: includeClients ? "1000" : "50",
       dhcpFingerprints: includeClients ? "1000" : "200",
@@ -2649,14 +2651,10 @@ function App() {
       pendingScrollSnapshot.current = scrollSnapshot;
       if (samResponse) setSAMStatus(samResponse);
       setSummary(current => reconcileSummary(current, summaryResponse));
-      if (selected === "overview" && !overviewDetailsLoaded.current) {
-        overviewDetailsLoaded.current = true;
-        window.setTimeout(loadOverviewDetails, 250);
-      }
       if (Array.isArray(denyTimelineResponse)) {
         setFirewallDenyTimeline(denyTimelineResponse);
       }
-      if (summaryResponse.resources !== undefined) {
+      if (summaryResponse.collected.includes("resources")) {
         setMetricSamples(current => appendMetricSample(current, summaryResponse));
       }
       if (configResponse) {
@@ -2683,33 +2681,6 @@ function App() {
 
   // Polling and stream callbacks live across renders; always use the active view.
   refreshRef.current = refresh;
-
-  async function loadOverviewDetails() {
-    const query = new URLSearchParams({
-      events: "50",
-      connections: "200",
-      firewallLogs: "-1",
-      dnsQueries: "200",
-      trafficFlows: "200",
-      clients: "0",
-      dpi: "0",
-      tuning: "0",
-      vpn: "0",
-      resources: "1",
-      dhcpLeases: "0",
-    });
-    try {
-      const response = await fetchJSON<Summary>(`api/v1/summary?${query.toString()}`);
-      setSummary(current => reconcileSummary(current, response));
-      if (response.resources !== undefined) {
-        setMetricSamples(current => appendMetricSample(current, response));
-      }
-      setError("");
-    } catch (err) {
-      overviewDetailsLoaded.current = false;
-      setError(String(err));
-    }
-  }
 
   function scheduleRefresh(delay = 350) {
     if (refreshTimer.current !== null) {
@@ -3098,7 +3069,7 @@ function App() {
               <Badge appearance="outline" color={streamState === "live" ? "success" : streamState === "polling" ? "warning" : "subtle"} className={styles.streamBadge}>
                 {streamState === "live" ? "Live updates" : streamState === "polling" ? "Polling fallback" : "Connecting"}
               </Badge>
-              <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>Updated <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
+              <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>{summary.errors?.length ? "Partial update" : "Updated"} <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
               {lastStreamEvent?.type ? <Text size={200} className={styles.muted}>{lastStreamEvent.type}</Text> : null}
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
@@ -3120,6 +3091,7 @@ function App() {
           ) : null}
           <main className={styles.main}>
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
+            {summary?.errors?.length ? <Card><Text role="alert">Some observations could not be refreshed; previous values are retained. {summary.errors.join("; ")}</Text></Card> : null}
             {selected === "overview" ? (
               <>
                 <GatewayHealthSummaryCard health={summary?.gatewayHealth} navigateTo={navigateTo} />
@@ -6473,48 +6445,26 @@ async function fetchText(path: string): Promise<string> {
   return response.text();
 }
 
-function mergeGatewayHealth(
-  current: GatewayHealth | undefined,
-  next: GatewayHealth | undefined,
-): GatewayHealth | undefined {
-  if (next == null) return current;
-  // Plain `??` only falls back when `next` is null/undefined, so a thin
-  // payload like `{ overall: "unknown", components: [] }` would still
-  // overwrite the populated `current` and the Gateway Health page would
-  // flash "No gateway component status observed" until the next refresh
-  // landed. Keep `current` whenever the incoming snapshot has no
-  // components but the previous one did — server-side observations on
-  // homert02 (v20260526.2152) confirmed `/api/v1/summary` consistently
-  // returns 26 components, so a transient empty snapshot is almost
-  // always a partial/light refresh rather than a real "no gateways"
-  // state.
-  const nextComponents = next.components ?? [];
-  const currentComponents = current?.components ?? [];
-  if (nextComponents.length === 0 && currentComponents.length > 0) {
-    return current;
-  }
-  return next;
-}
-
 function reconcileSummary(current: Summary | null, next: Summary): Summary {
-  if (!current) return next;
+  const collected = new Set(next.collected);
   return {
     ...next,
-    controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
-    gatewayHealth: mergeGatewayHealth(current.gatewayHealth, next.gatewayHealth),
-    resources: next.resources === undefined ? current.resources : reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
-    interfaces: next.interfaces === undefined ? current.interfaces : reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
-    events: next.events === undefined ? current.events : reconcileRecords(current.events, next.events, row => eventKey(row)),
-    connections: next.connections === undefined ? current.connections : reconcileConnectionTable(current.connections, next.connections),
-    dnsQueries: next.dnsQueries === undefined ? current.dnsQueries : reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
-    trafficFlows: next.trafficFlows === undefined ? current.trafficFlows : reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
-    firewallLogs: next.firewallLogs === undefined ? current.firewallLogs : reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
-    conntrackTuning: next.conntrackTuning ?? current.conntrackTuning,
-    dhcpLeases: next.dhcpLeases === undefined ? current.dhcpLeases : reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
-    dhcpFingerprints: next.dhcpFingerprints === undefined ? current.dhcpFingerprints : reconcileRecords(current.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`),
-    neighbors: next.neighbors === undefined ? current.neighbors : reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
-    clients: next.clients === undefined ? current.clients : reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
-    vpn: next.vpn === undefined ? current.vpn : reconcileVPNStatus(current.vpn, next.vpn),
+    controllers: reconcileRecords(current?.controllers, next.controllers, row => row.name ?? ""),
+    gatewayHealth: collected.has("resources") ? next.gatewayHealth : current?.gatewayHealth,
+    phases: collected.has("resources") ? next.phases ?? {} : current?.phases,
+    resources: collected.has("resources") ? reconcileRecords(current?.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`) : current?.resources,
+    interfaces: collected.has("resources") ? reconcileRecords(current?.interfaces, next.interfaces, row => row.ifname ?? row.name ?? "") : current?.interfaces,
+    events: collected.has("events") ? reconcileRecords(current?.events, next.events, row => eventKey(row)) : current?.events,
+    connections: collected.has("connections") ? reconcileConnectionTable(current?.connections, next.connections) : current?.connections,
+    dnsQueries: collected.has("dnsQueries") ? reconcileRecords(current?.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`) : current?.dnsQueries,
+    trafficFlows: collected.has("trafficFlows") ? reconcileRecords(current?.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`) : current?.trafficFlows,
+    firewallLogs: collected.has("firewallLogs") ? reconcileRecords(current?.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)) : current?.firewallLogs,
+    conntrackTuning: collected.has("conntrackTuning") ? next.conntrackTuning : current?.conntrackTuning,
+    dhcpLeases: collected.has("dhcpLeases") ? reconcileRecords(current?.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`) : current?.dhcpLeases,
+    dhcpFingerprints: collected.has("dhcpFingerprints") ? reconcileRecords(current?.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`) : current?.dhcpFingerprints,
+    neighbors: collected.has("neighbors") ? reconcileRecords(current?.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`) : current?.neighbors,
+    clients: collected.has("clients") ? reconcileRecords(current?.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")) : current?.clients,
+    vpn: collected.has("vpn") ? reconcileVPNStatus(current?.vpn, next.vpn) : current?.vpn,
   };
 }
 

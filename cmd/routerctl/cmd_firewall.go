@@ -7,12 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func firewallCommand(args []string, stdout, stderr io.Writer) error {
@@ -34,7 +34,8 @@ func firewallTestCommand(args []string, stdout io.Writer) error {
 	fs.Usage = func() {
 		printSubcommandHelp(fs,
 			"FirewallZone / FirewallRule / 内部 hole / 暗黙 zone matrix を引いて、\n"+
-				"from / to / proto / dport の組み合わせに対して accept か drop かを判定する。\n"+
+				"from / to / proto / dport から静的な nftables new-flow 判定を表示する。\n"+
+				"実行中のルールや必要な観測を確認できない場合は indeterminate を返す。\n"+
 				"引数は --from trust --to self の形でも from=trust to=self の形でも受け付ける。",
 			"routerctl firewall test from=trust to=self proto=tcp dport=22\n"+
 				"routerctl firewall test --from untrust --to trust --proto udp --dport 53\n"+
@@ -72,74 +73,35 @@ func firewallTestCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	action, source := firewallDecisionForCLI(router, *from, *to, *proto, *dport)
-	fmt.Fprintf(stdout, "action=%s source=%s from=%s to=%s proto=%s dport=%d\n", action, source, *from, *to, *proto, *dport)
-	return nil
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected firewall test argument %q", fs.Arg(0))
+	}
+	decision, err := firewallDecisionForCLI(router, render.FirewallNewFlowQuery{FromZone: *from, ToZone: *to, Protocol: strings.ToLower(strings.TrimSpace(*proto)), DestinationPort: *dport})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "action=%s source=%s from=%s to=%s proto=%s dport=%d scope=static-nftables-new-flow", decision.Action, decision.Source, *from, *to, *proto, *dport)
+	if err != nil {
+		return err
+	}
+	if decision.Reason != "" {
+		if _, err := fmt.Fprintf(stdout, " reason=%q", decision.Reason); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(stdout)
+	return err
 }
 
-type firewallZoneCLI struct {
-	Name string
-	Role string
-}
-
-func firewallZonesForCLI(router *api.Router) []firewallZoneCLI {
-	var out []firewallZoneCLI
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion == api.FirewallAPIVersion && res.Kind == "FirewallZone" {
-			spec, err := res.FirewallZoneSpec()
-			if err == nil {
-				out = append(out, firewallZoneCLI{Name: res.Metadata.Name, Role: spec.Role})
-			}
+func firewallDecisionForCLI(router *api.Router, query render.FirewallNewFlowQuery) (render.FirewallDecision, error) {
+	for _, resource := range router.Spec.Resources {
+		if resourcequery.ResourceWhenPresent(resourcequery.ResourceWhen(resource)) {
+			return render.FirewallDecision{Action: "indeterminate", Source: resource.ID(), Reason: "current resource when-state is unavailable"}, nil
+		}
+		switch resource.Kind {
+		case "Plugin", "DynamicConfigSource", "EventSubscription", "MobilityPool", "SAMTransportProfile", "SAMPeerGroup", "SAMEnrollmentClient":
+			return render.FirewallDecision{Action: "indeterminate", Source: resource.ID(), Reason: "current effective dynamic configuration is unavailable"}, nil
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
-}
-
-func firewallDecisionForCLI(router *api.Router, from, to, proto string, dport int) (string, string) {
-	for _, res := range router.Spec.Resources {
-		if res.APIVersion != api.FirewallAPIVersion || res.Kind != "FirewallRule" {
-			continue
-		}
-		spec, err := res.FirewallRuleSpec()
-		if err != nil || spec.FromZone != from || spec.ToZone != to {
-			continue
-		}
-		if spec.Protocol != "" && proto != "" && spec.Protocol != proto {
-			continue
-		}
-		if spec.Port != 0 && dport != 0 && spec.Port != dport {
-			continue
-		}
-		return spec.Action, "user/" + res.Metadata.Name
-	}
-	for _, hole := range render.InternalFirewallHoles(router) {
-		if hole.FromZone == from && hole.ToZone == to && (hole.Protocol == "" || proto == "" || hole.Protocol == proto) && (hole.Port == 0 || dport == 0 || hole.Port == dport) {
-			return "accept", "internal/" + hole.Name
-		}
-	}
-	roles := map[string]string{}
-	for _, zone := range firewallZonesForCLI(router) {
-		roles[zone.Name] = zone.Role
-	}
-	return firewallImplicitActionForCLI(roles[from], roles[to]), "implicit/matrix"
-}
-
-func firewallImplicitActionForCLI(fromRole, toRole string) string {
-	if toRole == "" || toRole == "self" {
-		if fromRole == "mgmt" || fromRole == "trust" {
-			return "accept"
-		}
-		return "drop"
-	}
-	if fromRole == toRole {
-		return "accept"
-	}
-	if fromRole == "mgmt" {
-		return "accept"
-	}
-	if fromRole == "trust" && toRole != "mgmt" {
-		return "accept"
-	}
-	return "drop"
+	return render.NftablesNewFlowDecision(router, query)
 }

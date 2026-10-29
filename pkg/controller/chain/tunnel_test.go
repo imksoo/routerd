@@ -1084,14 +1084,15 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 		APIVersion: api.NetAPIVersion,
 		Kind:       "IPv4Route",
 		Name:       lowerings[0].IPv4RouteName,
-		Status: map[string]any{
+		Status: ownedRouteStatusForTest(map[string]any{
 			"phase":       "Installed",
 			"type":        "unicast",
 			"destination": "10.20.0.0/16",
 			"device":      "tun-ipip",
-		},
+		}),
 	}}}
 	var routeCommands [][]string
+	routePresent := true
 	routeController := IPv4RouteController{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			expanded.Spec.Resources[0],
@@ -1099,6 +1100,15 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 		Store: routeStore,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			routeCommands = append(routeCommands, append([]string{name}, args...))
+			if reflect.DeepEqual(args, []string{"-j", "-d", "-4", "route", "show", "10.20.0.0/16"}) {
+				if routePresent {
+					return []byte(`[{"dst":"10.20.0.0/16","dev":"tun-ipip","protocol":"boot"}]`), nil
+				}
+				return []byte(`[]`), nil
+			}
+			if len(args) >= 2 && args[0] == "route" && args[1] == "del" {
+				routePresent = false
+			}
 			return nil, nil
 		},
 	}
@@ -1106,8 +1116,8 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantRouteCommands := [][]string{
-		{"ip", "route", "show", "10.20.0.0/16"},
-		{"ip", "route", "del", "10.20.0.0/16", "dev", "tun-ipip"},
+		{"ip", "-j", "-d", "-4", "route", "show", "10.20.0.0/16"},
+		{"ip", "route", "del", "10.20.0.0/16", "dev", "tun-ipip", "metric", "0", "proto", "boot"},
 	}
 	if !reflect.DeepEqual(routeCommands, wantRouteCommands) {
 		t.Fatalf("route commands = %#v", routeCommands)
@@ -1129,6 +1139,9 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 		Store:  tunnelStore,
 		OS:     platform.OSLinux,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if routePresent || !routeStore.deleted[api.NetAPIVersion+"/IPv4Route/"+lowerings[0].IPv4RouteName] {
+				t.Fatal("tunnel teardown began before owned route withdrawal completed")
+			}
 			tunnelCommands = append(tunnelCommands, append([]string{name}, args...))
 			return nil, nil
 		},

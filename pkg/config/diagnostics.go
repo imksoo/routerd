@@ -1010,9 +1010,6 @@ func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
 	if len(spec.AddressFrom) > 0 && strings.ToLower(strings.TrimSpace(spec.Protocol)) != "udp" {
 		return fmt.Errorf("%s spec.addressFrom currently supports protocol udp only", resourceID)
 	}
-	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.TLSName) != "" {
-		return fmt.Errorf("%s spec.tlsName is only supported with protocol dot", resourceID)
-	}
 	for i, source := range spec.AddressFrom {
 		if strings.TrimSpace(source.Resource) == "" {
 			return fmt.Errorf("%s spec.addressFrom[%d].resource is required", resourceID, i)

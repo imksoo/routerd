@@ -264,22 +264,43 @@ func (s *SQLiteStore) put(name string, value Value) error {
 }
 
 func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, int64, error) {
+	status, generation, _, err := s.loadStatusDocument(apiVersion, kind, name)
+	return status, generation, err
+}
+
+func (s *SQLiteStore) loadStatusDocument(apiVersion, kind, name string) (objectStatus, int64, string, error) {
 	var raw string
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	status := objectStatus{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &status); err != nil {
-			return nil, 0, fmt.Errorf("decode %s/%s status: %w", kind, name, err)
+			return nil, 0, "", fmt.Errorf("decode %s/%s status: %w", kind, name, err)
 		}
 	}
-	return status, generation.Int64, nil
+	return status, generation.Int64, raw, nil
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
+	if ref.APIVersion == "net.routerd.net/v1alpha1" && ref.Kind == "DHCPv6PrefixDelegation" {
+		clean := cleanPDStatus(status)
+		previous, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if observation, ok := previous["observation"]; ok {
+			clean["observation"] = observation
+		}
+		if observed, ok := previous["observed"]; ok {
+			clean["observed"] = observed
+		} else {
+			delete(clean, "observed")
+		}
+		status = clean
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	data, err := json.Marshal(status)
 	if err != nil {
@@ -911,12 +932,17 @@ func (s *SQLiteStore) ReadObjectStatus(apiVersion, kind, name string) (map[strin
 	if s.closed {
 		return nil, sql.ErrConnDone
 	}
-	status, _, err := s.loadStatus(apiVersion, kind, name)
+	status, _, raw, err := s.loadStatusDocument(apiVersion, kind, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
+		if err := projectPDStatus(status, raw, s.now().UTC()); err != nil {
+			return nil, err
+		}
 	}
 	out := map[string]any{}
 	for key, value := range status {
@@ -945,6 +971,11 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		}
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
 			return nil, fmt.Errorf("decode %s/%s status: %w", item.Kind, item.Name, err)
+		}
+		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6PrefixDelegation" {
+			if err := projectPDStatus(item.Status, raw, s.now().UTC()); err != nil {
+				return nil, err
+			}
 		}
 		item.Owner = statusvalue.Field(item.Status, "owner")
 		item.ManagedBy = statusvalue.Field(item.Status, "managedBy")
@@ -1326,111 +1357,18 @@ func JSONValue(value any) string {
 }
 
 func objectRefForKey(key string) objectRef {
-	if rest, ok := strings.CutPrefix(key, "ipv6PrefixDelegation."); ok {
-		name, field, ok := strings.Cut(rest, ".")
-		if ok && name != "" && field != "" {
-			return objectRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: name, Field: field}
-		}
-	}
 	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key, Field: "value"}
 }
 
 func valueFromStatus(status objectStatus, field string) (Value, bool) {
-	if field == "lease" {
-		vars, _ := status["_variables"].(map[string]any)
-		if raw, ok := vars["lease"]; ok {
-			return decodeValue(raw)
-		}
-		lease := objectStatus{}
-		for key, value := range status {
-			if key != "_variables" {
-				lease[key] = value
-			}
-		}
-		if len(lease) == 0 {
-			return Value{}, false
-		}
-		data, _ := json.Marshal(lease)
-		now := time.Now().UTC()
-		return Value{Status: StatusSet, Value: string(data), Since: now, UpdatedAt: now}, true
-	}
-	if field == "value" {
-		return decodeValue(status["value"])
-	}
-	vars, _ := status["_variables"].(map[string]any)
-	return decodeValue(vars[field])
+	return decodeValue(status["value"])
 }
 
 func setStatusField(status objectStatus, field string, value Value) {
-	if field == "lease" {
-		var lease map[string]any
-		if strings.TrimSpace(value.Value) != "" {
-			_ = json.Unmarshal([]byte(value.Value), &lease)
-		}
-		vars := variablesMap(status)
-		vars["lease"] = encodeValueMap(value)
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		for key, item := range lease {
-			status[key] = item
-		}
-		if len(vars) > 0 {
-			status["_variables"] = vars
-		}
-		return
-	}
-	if field == "value" {
-		status["value"] = encodeValueMap(value)
-		return
-	}
-	vars := variablesMap(status)
-	vars[field] = encodeValueMap(value)
-	status["_variables"] = vars
+	status["value"] = encodeValueMap(value)
 }
 
-func deleteStatusField(status objectStatus, field string) {
-	if field == "lease" {
-		vars := variablesMap(status)
-		delete(vars, "lease")
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		if len(vars) == 0 {
-			delete(status, "_variables")
-		} else {
-			status["_variables"] = vars
-		}
-		return
-	}
-	if field == "value" {
-		delete(status, "value")
-		return
-	}
-	vars := variablesMap(status)
-	delete(vars, field)
-	if len(vars) == 0 {
-		delete(status, "_variables")
-	} else {
-		status["_variables"] = vars
-	}
-}
-
-func variablesMap(status objectStatus) map[string]any {
-	if vars, ok := status["_variables"].(map[string]any); ok {
-		return vars
-	}
-	vars := map[string]any{}
-	if raw, ok := status["_variables"]; ok {
-		data, _ := json.Marshal(raw)
-		_ = json.Unmarshal(data, &vars)
-	}
-	return vars
-}
+func deleteStatusField(status objectStatus, field string) { delete(status, "value") }
 
 func encodeValueMap(value Value) map[string]any {
 	return map[string]any{
@@ -1465,21 +1403,6 @@ func decodeValue(raw any) (Value, bool) {
 
 func variablesFromObject(apiVersion, kind, name string, status objectStatus) map[string]Value {
 	out := map[string]Value{}
-	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
-		if value, ok := valueFromStatus(status, "lease"); ok {
-			out["ipv6PrefixDelegation."+name+".lease"] = value
-		}
-		vars := variablesMap(status)
-		for field, raw := range vars {
-			if field == "lease" {
-				continue
-			}
-			if value, ok := decodeValue(raw); ok {
-				out["ipv6PrefixDelegation."+name+"."+field] = value
-			}
-		}
-		return out
-	}
 	if apiVersion == stateAPIVersion && kind == stateKind {
 		if value, ok := valueFromStatus(status, "value"); ok {
 			out[name] = value

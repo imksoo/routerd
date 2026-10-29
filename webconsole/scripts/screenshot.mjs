@@ -24,6 +24,7 @@ await mkdir(outputDir, { recursive: true });
 
 let natResourceRevision = 0;
 let configRevision = 0;
+let observationMode = "normal";
 const connectionResourceRequests = [];
 
 const server = http.createServer(async (req, res) => {
@@ -36,7 +37,31 @@ const server = http.createServer(async (req, res) => {
         fixture.connections.bySNAT = { "192.0.0.9": { total: 702, tcp: 691, udp: 10, other: 1 } };
       }
       if (url.searchParams.get("connections") === "600") connectionResourceRequests.push(url.searchParams.get("resources"));
-      if (url.searchParams.get("resources") === "0") delete fixture.resources;
+      if (observationMode === "partial") fixture.connections.count = 936;
+      const sections = [
+        ["resources", ["resources", "interfaces", "phases", "gatewayHealth"], url.searchParams.get("resources") !== "0"],
+        ["events", ["events"], url.searchParams.get("events") !== "-1"],
+        ["connections", ["connections"], url.searchParams.get("connections") !== "-1"],
+        ["dnsQueries", ["dnsQueries"], url.searchParams.get("dnsQueries") !== "-1"],
+        ["trafficFlows", ["trafficFlows"], url.searchParams.get("trafficFlows") !== "-1"],
+        ["firewallLogs", ["firewallLogs"], url.searchParams.get("firewallLogs") !== "-1"],
+        ["dhcpLeases", ["dhcpLeases"], url.searchParams.get("dhcpLeases") !== "0" || url.searchParams.get("clients") === "1"],
+        ["clients", ["clients"], url.searchParams.get("clients") === "1"],
+        ["neighbors", ["neighbors"], url.searchParams.get("clients") === "1"],
+        ["dhcpFingerprints", ["dhcpFingerprints"], url.searchParams.get("clients") === "1"],
+        ["vpn", ["vpn"], url.searchParams.get("vpn") !== "0"],
+      ];
+      fixture.collected = [];
+      for (const [section, fields, requested] of sections) {
+        const failed = observationMode === "failed" && section === "resources";
+        const skipped = observationMode === "partial" && section === "resources";
+        if (requested && !failed && !skipped) fixture.collected.push(section);
+        if (!requested || failed || skipped || observationMode === "empty") {
+          for (const field of fields) delete fixture[field];
+        }
+      }
+      if (!fixture.gatewayHealth) fixture.gatewayHealth = { overall: "unknown" };
+      if (observationMode === "failed") fixture.errors = ["resource store unavailable"];
       return json(res, fixture);
     }
     if (url.pathname === "/api/v1/routes") return json(res, routesFixture());
@@ -71,10 +96,14 @@ const address = server.address();
 const port = typeof address === "object" && address ? address.port : 0;
 const baseURL = `http://127.0.0.1:${port}/`;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  executablePath: process.env.ROUTERD_WEB_CONSOLE_CHROMIUM_PATH,
+  args: process.env.ROUTERD_WEB_CONSOLE_CHROMIUM_ARGS ? JSON.parse(process.env.ROUTERD_WEB_CONSOLE_CHROMIUM_ARGS) : undefined,
+});
 try {
+  const refreshContext = await browser.newContext();
   // Start with a fresh page: no Overview/Resources response may seed its state.
-  const direct = await browser.newPage();
+  const direct = await refreshContext.newPage();
   await direct.clock.install();
   await direct.goto(`${baseURL}#connections`);
   const directNAT = direct.getByRole("table", { name: "DS-Lite NATエントリー数" });
@@ -93,7 +122,7 @@ try {
 
   // Navigate after mounting: polling must request the current view, and config
   // refresh must pick up canonical changes made through another management path.
-  const navigated = await browser.newPage();
+  const navigated = await refreshContext.newPage();
   await navigated.clock.install();
   await navigated.goto(`${baseURL}#overview`);
   await expect(navigated.locator("main")).toBeVisible();
@@ -117,6 +146,31 @@ try {
   await navigated.close();
   natResourceRevision = 0;
   configRevision = 0;
+
+  // Use the shipped app: omitted rows mean empty only after a successful read.
+  const observations = await refreshContext.newPage();
+  await observations.clock.install();
+  await observations.goto(`${baseURL}#overview`);
+  const interfaces = observations.locator("#overview-interfaces");
+  await expect(interfaces).toContainText("ens18");
+  await expect(observations.getByText("1 gateway components", { exact: true })).toBeVisible();
+  observationMode = "partial";
+  await observations.clock.fastForward(30000);
+  await expect(observations.locator("#overview-metrics")).toContainText("936/262144");
+  await expect(interfaces).toContainText("ens18");
+  await expect(observations.getByText("1 gateway components", { exact: true })).toBeVisible();
+  observationMode = "failed";
+  await observations.clock.fastForward(30000);
+  await expect(observations.getByRole("alert")).toContainText("resource store unavailable");
+  await expect(observations.getByText(/^Partial update/)).toBeVisible();
+  await expect(interfaces).toContainText("ens18");
+  observationMode = "empty";
+  await observations.clock.fastForward(30000);
+  await expect(interfaces).not.toContainText("ens18");
+  await expect(observations.getByText("No gateway component status observed", { exact: true })).toBeVisible();
+  await expect(observations.getByRole("alert")).toHaveCount(0);
+  await observations.close();
+  observationMode = "normal";
 
   if (!process.argv.includes("--check-refresh")) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
@@ -211,6 +265,7 @@ function summaryFixture() {
   const now = new Date().toISOString();
   return {
     generatedAt: now,
+    gatewayHealth: { overall: "ok", components: [{ kind: "HealthCheck", name: "internet-via-dslite-a", status: "ok", phase: "Healthy" }] },
     status: {
       status: {
         phase: "Healthy",

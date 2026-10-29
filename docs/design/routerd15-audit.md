@@ -77,10 +77,10 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/bgp` | 1 | Pending |
 | `pkg/bgpdaemon` | 2 | In progress |
 | `pkg/bus` | 1 | Pending |
-| `pkg/config` | 22 | Pending |
+| `pkg/config` | 22 | In progress |
 | `pkg/conntrack` | 1 | Pending |
 | `pkg/conntracktuning` | 1 | Pending |
-| `pkg/controlapi` | 5 | Pending |
+| `pkg/controlapi` | 5 | In progress |
 | `pkg/controller/bfd` | 1 | Pending |
 | `pkg/controller/bgp` | 7 | In progress |
 | `pkg/controller/chain` | 34 | In progress |
@@ -92,7 +92,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/controller/firewall` | 1 | In progress |
 | `pkg/controller/framework` | 1 | In progress |
 | `pkg/controller/ingressservice` | 1 | In progress |
-| `pkg/controller/mobility` | 37 | Pending |
+| `pkg/controller/mobility` | 37 | In progress |
 | `pkg/controller/mobilityfib` | 1 | Pending |
 | `pkg/controller/nat44` | 1 | In progress |
 | `pkg/controller/pppoesession` | 1 | Pending |
@@ -106,13 +106,13 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/dnsresolver` | 1 | In progress |
 | `pkg/dpi` | 2 | Pending |
 | `pkg/dynamicconfig` | 2 | In progress |
-| `pkg/dynamicconfig/codec` | 2 | Pending |
+| `pkg/dynamicconfig/codec` | 2 | In progress |
 | `pkg/egressroute` | 1 | In progress |
 | `pkg/eventconsumer` | 1 | Pending |
 | `pkg/eventd` | 7 | Pending |
 | `pkg/eventfile` | 1 | Pending |
 | `pkg/eventlog` | 2 | Pending |
-| `pkg/eventrule` | 1 | Pending |
+| `pkg/eventrule` | 1 | In progress |
 | `pkg/federation` | 2 | Pending |
 | `pkg/federationguard` | 1 | Pending |
 | `pkg/firewallbackend` | 1 | In progress |
@@ -362,20 +362,22 @@ the actual canonical YAML and generation. IPv6 host-policy fixtures own all
 artifact paths and command observations, including the existing nft command
 boundary. These tests do not execute host firewall changes.
 
-### Remaining implementation and audit work
+### Findings remaining at checkpoint e9e317f
 
-These remain source findings, separate from missing VM evidence:
+These were source findings, separate from missing VM evidence. The next pass
+below addresses the named handover/preparation/PD/cancellation paths; it does not
+complete the remaining inventory.
 
-- Mobility snapshot collection can publish handover-release ownership events
+- Mobility snapshot collection could publish handover-release ownership events
   before the old local BGP withdrawal succeeds. Move the release decision into
   the typed plan and publish only after the responsible withdrawal, preserving
-  failure/restart/federation semantics. This path has not been rewritten here.
-- Static SAM/dynamic preparation still redecodes, clones and validates parts of
+  failure/restart/federation semantics. The subsequent pass below rewrites it.
+- Static SAM/dynamic preparation redecoded, cloned and validated parts of
   the configuration on observation ticks. The once-per-configuration rule is not
-  yet satisfied throughout the chain.
-- PD state still has internal encoded-string transfers and duplicate projections
+  yet satisfied throughout the chain; see the subsequent pass below.
+- PD state had internal encoded-string transfers and duplicate projections
   in generic current status. The new protocol snapshot does not resolve every
-  controller/store representation.
+  controller/store representation; see the subsequent pass below.
 - Most mobility bodies, event/action/federation paths, CLI commands, UI enrichment,
   scripts and operator documentation have only been inventoried or partially
   read. Neighbor/VPN/log query cancellation also needs further work.
@@ -420,3 +422,134 @@ and `GOFLAGS=-p=2`. No GitHub Actions wait was used.
 
 These results establish a substantial implementation checkpoint, not completion
 of the repository-wide audit, real communication qualification or release.
+
+## Native ownership and current-observation pass
+
+This pass follows published checkpoint `64d1043`. The changed paths and their
+actual callers were reviewed together; the inventory outside this scope remains
+pending or partial.
+
+- Static handover planning is read-only. The source withdraws BGP ownership and
+  persists a typed native withdrawal request. SAM, IPv4 route and address owners
+  invalidate old acknowledgements before effects and acknowledge the exact
+  transfer and plan only after their owned effects are withdrawn. The publisher
+  rechecks the current persisted request under the same native-effect lock through
+  event recording. Pending acquisitions precede kernel mutations and survive
+  failed final saves and restart. Failures preserve retryable ownership.
+- The target requires the exact group, pool, new operation ID, address, source,
+  target and live finite release. Ordinary DHCP/ARP expiry and self-RIB history
+  cannot bypass this gate. Five-minute proof renewal reconfirms BGP and current
+  intent, rechecks time after waits, and permits legitimate delivery effects
+  toward the new remote owner. The barrier certifies routerd-owned effects;
+  arbitrary administrator effects are not silently adopted or removed.
+- BGP dynamic additions use a version-2 journal and a stable native source
+  identifier before AddPath. Lost UUID/final-save and policy-update failures stay
+  recoverable through the real control handler and helper restart. Listing fails
+  on unknown/corrupt journals. Source-specific replacement/deletion preserves
+  other local sources and peer-origin paths in the real GoBGP server. This is
+  in-process GoBGP evidence, not independent-peer wire qualification.
+- Validated static configuration is prepared once per publication. Declaration
+  and preparation are captured together for observation-driven updates and
+  rollback. Dynamic admission, expiry, masks, conditional dependencies and
+  enrollment claim validity remain live. Actual callbacks bind their status
+  writer to the same captured router, including the shared BGP actor, avoiding
+  stale owner references after a shape-preserving update.
+- EventRule, DerivedEvent and Plugin changes replace their generation. Retired
+  event consumers and fired timers complete before replacement is acknowledged;
+  cancellation fences delayed publication. DHCPv4's existing actor updates its
+  prepared interface and status writer together under its own mutex, preserving
+  old owned effects until the corresponding replacement succeeds.
+- PD has one typed current observation with protocol-second lifetimes and parsed
+  timestamps. The actual daemon-status producer uses the existing transactional
+  status/event owner. Generic status writers preserve that section; inspection,
+  CLI and LAN consumers use typed reads. Old encoded internal lease transport
+  and the unused standalone PD controller are removed. Source changes, release
+  and stale snapshots must not revive withdrawn authority.
+  Client selectors that never selected an external lifecycle now fail explicitly;
+  the supported default remains `routerd-dhcpv6-client`.
+- LAN current addresses inherit remaining preferred/valid PD lifetimes in the
+  kernel, including same-address renewal. Default native reads distinguish
+  unknown, absent, tentative and usable addresses. Pending writes and exact old
+  address tombstones precede mutation; failed cleanup retains ownership. Stale
+  authority is rechecked after waits. Finite rounding cannot extend the upstream
+  deadline, and infinite previous-prefix deadlines cannot overflow native values.
+  DS-Lite shares exact LAN-managed /128 sources without a second address writer;
+  separately derived sources have their own finite-lifetime ownership journal.
+- Ordinary IPv4 routes retain pending and applied identities across inactivity,
+  device changes, failed writes/deletes and restart. Failed observations are
+  errors. Exact Linux route priority/protocol and supported FreeBSD native
+  identity distinguish ownership; unsupported nonzero FreeBSD route metrics
+  fail explicitly. Dry-run reports rendering without inventing kernel ownership.
+- FreeBSD rendering retains every managed RA interface, applies explicit native
+  RA flags after CPE boot defaults, zones the full link-local gateway range and
+  avoids static-route label collisions. Tests evaluate the generated rc.conf
+  with a real shell; native FreeBSD execution remains a separate gate.
+- Noncommittable mutations retain terminal failure history and return failure;
+  the runtime does not publish uncommitted declarations. Delete intent and
+  confirmed canonical deletion are distinct fields. Transport timeouts report
+  unconfirmed outcome, and rollback history does not label the latest failed
+  attempt as the current configuration.
+- Console commands and SQLite enrichment queries inherit their request/owner
+  context. Command stdout is separate from diagnostic stderr, including private
+  WireGuard dump data. Successful section collection is explicit; failed/skipped
+  sections retain the previous view, while observed-empty sections clear it.
+  Metrics use the same contract to clear absent labels/counts. The overview has
+  one recurring fetch owner and displays partial collection errors.
+- `routerctl firewall test` shares the renderer's static nftables ordering,
+  policy and selectors. It reports indeterminate input/runtime cases instead of
+  predicting a false verdict with a copied role matrix. A configured DoH TLS
+  name now passes operator configuration validation into the worker input; the
+  existing real TLS/SNI regression remains part of the local DNS gate.
+
+### Remaining scope
+
+Most event/action/federation paths, Mobility's broader status readers, auxiliary
+daemons, scripts, packaging and operator documentation still need semantic review
+against their actual callers. Global forwarding sysctls are shared by several
+features and are not retired as an address-specific handover cleanup. A single
+native receipt must never be presented as proof of arbitrary host-state absence.
+
+Independent peer/client traffic, real netns acceptance, native supervisor/kernel
+crash recovery, native FreeBSD behavior and management recovery remain required
+target gates. AF_UNIX/raw/Netlink restrictions and absent established PVE access
+have not been resolved by adding command fixtures. No production cutover occurs.
+
+### Executed local checks for this pass
+
+Go 1.25.9 on Linux/amd64, with `GOMAXPROCS=2` and `GOFLAGS=-p=2`.
+These checks extend the e9e317f evidence; they do not change its historical
+results. GitHub Actions completion is not awaited.
+
+- PASS: expanded `make check-routerd15-focused`, including the added recovery
+  target and `go vet ./...`. Final ownership/lifetime refinements also have
+  focused ordinary and Race Detector checks through their actual callers.
+- PASS: generated specs, all three schemas and their website copies, including
+  handover ID, typed PD inspection, deletion target and supported PD client.
+- PASS: Race Detector regressions for prepared declarations/current actors,
+  BGP native identifiers/pending additions, native handover owners/publication,
+  SAM acquisition/GARP recovery, ordinary routes, PD atomic source/history,
+  LAN/DS-Lite lifetimes and exact withdrawal, event consumer retirement and
+  mutation outcomes. Command fixtures do not establish real forwarding.
+- PASS: full web console package, frontend typecheck/production build and
+  shipped-app refresh checks in real Chromium 153. Partial/failed responses
+  retain earlier data, display errors and allow other sections to refresh;
+  successful empty observations clear prior rows. Real HTTP/SQLite/OTel
+  collection tests cover the corresponding gauge transitions. This supersedes
+  the earlier browser-download restriction for this pass only.
+- PASS: complete `make check-freebsd-cross-compile`, including all project
+  daemon/provider builds and test compilation with `CGO_ENABLED=0`. The
+  `/bin/true` runner executes no FreeBSD test body.
+- PASS: `make build-daemons build-provider-executors check-linux-static
+  ROUTERD_OS=linux`, with `CGO_ENABLED=0` for the project release build paths.
+- NOT PASS: complete native `go test -json ./... -timeout 180s`: 102 packages
+  passed, 14 failed, and 11 had no test files. The 52 top-level failures require
+  AF_UNIX, including delayed-start/ARP tests waiting on a forbidden Unix listener.
+  Both non-environmental failures found in the first whole-suite run were fixed:
+  PD dependency suppression now preserves its original test premise and actual
+  canonical observation, and tunnel teardown uses a current typed route receipt
+  with exact native facts. Required assertions and the full gate remain intact.
+  The final run uses official ShellCheck 0.10.0; installer static analysis passes.
+- NOT EXECUTED: successful production Unix HTTP transport roundtrips, real netns
+  acceptance/independent network peers, native kernel/supervisor crash recovery,
+  native FreeBSD execution and PVE management/traffic qualification. The browser
+  regression above does not replace these gates.

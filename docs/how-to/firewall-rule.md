@@ -134,14 +134,20 @@ when one source already has more than the allowed concurrent tracked states.
 
 ## Validating before apply
 
-Use the local simulator to check what the rule would do before you apply it:
+Inspect the static new-flow decision before you apply it:
 
 ```sh
 routerctl firewall test from=wan to=self proto=tcp dport=22
 routerctl describe firewall
 ```
 
-The first command reports `accept` or `drop` for the specific 5-tuple. The second prints the full effective ruleset including role-matrix defaults and managed openings.
+On this proposal branch, the first command predicts a static nftables zone-chain
+decision using the supplied zones, protocol and destination port. It uses the
+renderer's managed-opening order and configured policy. Missing packet selectors,
+conditional/dynamic rules or unsupported paths produce `indeterminate` with a
+reason. This is not a live kernel trace or a complete packet tuple; use real
+traffic and the applied ruleset to qualify forwarding. The second command
+describes configured rules and managed openings.
 
 ## See also
 

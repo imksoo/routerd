@@ -41,6 +41,10 @@ func (s *mobilityEffectStore) ObjectStatus(apiVersion, kind, name string) map[st
 	return s.statuses[apiVersion+"/"+kind+"/"+name]
 }
 
+func (s *mobilityEffectStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
@@ -53,6 +57,9 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 		DevicePresent: func(context.Context, string) bool { return true },
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			if name == "ip" && len(args) > 0 && args[0] == "-j" {
+				return []byte("[]"), nil
+			}
 			return nil, nil
 		},
 	}
@@ -89,8 +96,8 @@ func TestIPv4RouteControllerDoesNotDeleteBGPRouteWhenTypedMobilityEffectWithdraw
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip route show 10.77.60.0/24" {
-				return []byte("10.77.60.0/24 dev lan0 proto bgp metric 90\n"), nil
+			if command == "ip -j -d -4 route show 10.77.60.0/24" {
+				return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"bgp","metric":90}]`), nil
 			}
 			return nil, nil
 		},
@@ -123,8 +130,8 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip route show 10.77.60.20/32" {
-				return []byte("10.77.60.20 dev lan0 proto static src 10.77.60.1 metric 90\\n"), nil
+			if command == "ip -j -d -4 route show 10.77.60.20/32" {
+				return []byte(`[{"dst":"10.77.60.20","dev":"lan0","protocol":"boot","prefsrc":"10.77.60.1","metric":90}]`), nil
 			}
 			return nil, nil
 		},
@@ -132,7 +139,7 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 	if err := controller.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route del 10.77.60.20/32 dev lan0 metric 90") {
+	if !containsMobilityDataplaneCommand(commands, "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot") {
 		t.Fatalf("typed mobility ledger route was not withdrawn: commands = %#v", commands)
 	}
 	if routes, err := controller.appliedMobilityRoutes(); err != nil || len(routes) != 0 {

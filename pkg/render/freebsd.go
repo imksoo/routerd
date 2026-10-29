@@ -127,6 +127,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
 	staticBridgeV4 := map[string][]string{}
+	raInterfaces := map[string]bool{}
 	var ntpConfig []byte
 	var pppoes []freeBSDPPPoE
 	var dslites []freeBSDDSLite
@@ -152,9 +153,11 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				return FreeBSDConfig{}, err
 			}
 			if api.BoolDefault(spec.Managed, true) {
-				rc.WriteString(fmt.Sprintf("ifconfig_%s_ipv6=\"inet6 accept_rtadv\"\n", aliases[spec.Interface]))
-				rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", aliases[spec.Interface]))
-				rc.WriteString("rtsold_enable=\"YES\"\n")
+				ifname := aliases[spec.Interface]
+				if ifname == "" {
+					return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
+				}
+				raInterfaces[ifname] = true
 			}
 		case "IPv4StaticAddress":
 			spec, err := res.IPv4StaticAddressSpec()
@@ -271,6 +274,18 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			rc.WriteString("ntpd_config=\"/usr/local/etc/routerd/ntp.conf\"\n")
 			ntpConfig = freeBSDNTPServerConfig(servers, spec.ListenAddresses, len(spec.ListenAddressFrom) > 0)
 		}
+	}
+	if len(raInterfaces) > 0 {
+		ifnames := mapsort.Keys(raInterfaces)
+		// Native CPE setup enables RA reception while IPv6 forwarding is on.
+		// Its singleton field selects the bootstrap interface; every managed RA
+		// interface explicitly enables default-router learning below.
+		rc.WriteString(fmt.Sprintf("ipv6_cpe_wanif=\"%s\"\n", ifnames[0]))
+		for _, ifname := range ifnames {
+			rc.WriteString(fmt.Sprintf("ifconfig_%s_ipv6=\"inet6 -no_radr accept_rtadv\"\n", ifname))
+		}
+		rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", strings.Join(ifnames, " ")))
+		rc.WriteString("rtsold_enable=\"YES\"\n")
 	}
 
 	if hasManagedFreeBSDPPPoE(pppoes) {
@@ -578,19 +593,26 @@ func writeFreeBSDStaticRoutes(buf *bytes.Buffer, routes []freeBSDStaticRoute, ip
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Name < routes[j].Name })
 	var names []string
+	used := map[string]bool{}
 	for _, route := range routes {
-		names = append(names, freeBSDRouteLabel(route.Name))
+		base := freeBSDRouteLabel(route.Name)
+		label := base
+		for suffix := 1; used[label]; suffix++ {
+			label = base + "_" + strconv.Itoa(suffix)
+		}
+		used[label] = true
+		names = append(names, label)
 	}
 	if ipv6 {
 		buf.WriteString("ipv6_static_routes=\"" + strings.Join(names, " ") + "\"\n")
 	} else {
 		buf.WriteString("static_routes=\"" + strings.Join(names, " ") + "\"\n")
 	}
-	for _, route := range routes {
-		label := freeBSDRouteLabel(route.Name)
+	for i, route := range routes {
+		label := names[i]
 		via := route.Via
-		if ipv6 && strings.HasPrefix(strings.ToLower(via), "fe80:") && route.IfName != "" && !strings.Contains(via, "%") {
-			via += "%" + route.IfName
+		if addr, err := netip.ParseAddr(via); ipv6 && err == nil && addr.Is6() && addr.IsLinkLocalUnicast() && route.IfName != "" && addr.Zone() == "" {
+			via = addr.WithZone(route.IfName).String()
 		}
 		if ipv6 {
 			buf.WriteString(fmt.Sprintf("ipv6_route_%s=\"%s %s\"\n", label, route.Destination, via))

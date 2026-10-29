@@ -150,7 +150,11 @@ type DeleteRequest struct {
 }
 
 type DeleteResult struct {
-	TypeMeta  `json:",inline" yaml:",inline"`
+	TypeMeta `json:",inline" yaml:",inline"`
+	// Target is intent, including dry-run and standby responses.
+	Target string `json:"target" yaml:"target"`
+	// Deleted confirms removal from canonical configuration. Reconciliation
+	// may be deferred explicitly by the caller's NoReconcile option.
 	Deleted   []string      `json:"deleted,omitempty" yaml:"deleted,omitempty"`
 	Artifacts []string      `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
 	DryRun    bool          `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
@@ -358,12 +362,13 @@ type GetRequest struct {
 }
 
 type ResourceView struct {
-	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string              `json:"kind" yaml:"kind"`
-	Name       string              `json:"name" yaml:"name"`
-	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Status     map[string]any      `json:"status,omitempty" yaml:"status,omitempty"`
-	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
+	PDLease    *routerstate.PDLease `json:"pdLease,omitempty" yaml:"pdLease,omitempty"`
+	APIVersion string               `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string               `json:"kind" yaml:"kind"`
+	Name       string               `json:"name" yaml:"name"`
+	Spec       any                  `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Status     map[string]any       `json:"status,omitempty" yaml:"status,omitempty"`
+	Events     []routerstate.Event  `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
 type GetResult struct {

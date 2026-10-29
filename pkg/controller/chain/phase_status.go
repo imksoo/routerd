@@ -32,7 +32,7 @@ func egressRoutePolicyCandidateDisabled(candidate api.EgressRoutePolicyCandidate
 	return !api.BoolDefault(candidate.Enabled, true)
 }
 
-func dependencyUnavailablePhase(router *api.Router, store Store, dependencies []api.ResourceDependencySpec, standby bool) string {
+func dependencyUnavailablePhase(router *api.Router, store resourcequery.Store, dependencies []api.ResourceDependencySpec, standby bool) string {
 	for _, dependency := range dependencies {
 		kind, name, ok := resourcequery.SplitResource(dependency.Resource)
 		if !ok {

@@ -75,19 +75,24 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		apiResult := controlapi.NewApplyResult(result)
 		return &apiResult, nil
 	}
-	result, err := m.mutateRuntime(nextRouter, nextYAML)
+	outcome, err := m.mutateRuntime(nextRouter, nextYAML)
 	if err != nil {
 		return nil, err
 	}
-	apiResult := controlapi.NewApplyResult(result)
+	apiResult := controlapi.NewApplyResult(outcome.Result)
 	return &apiResult, nil
 }
 
 func (m serveConfigMutator) plan(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
-	router := m.getRouter()
-	configYAML := ""
-	if strings.TrimSpace(req.CandidateYAML) != "" {
-		var err error
+	var router *api.Router
+	var configYAML string
+	var err error
+	if strings.TrimSpace(req.CandidateYAML) == "" {
+		configYAML, router, err = m.currentCanonical()
+		if err != nil {
+			return nil, fmt.Errorf("read canonical configuration for plan: %w", err)
+		}
+	} else {
 		configYAML, router, err = m.mutatedCandidate(req.CandidateYAML, req.Replace)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
@@ -160,7 +165,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	}
 	result := controlapi.DeleteResult{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
-		Deleted:  []string{target.APIVersion + "/" + target.Kind + "/" + target.Name},
+		Target:   target.APIVersion + "/" + target.Kind + "/" + target.Name,
 		DryRun:   req.DryRun,
 	}
 	if req.DryRun {
@@ -177,13 +182,17 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 			return nil, err
 		}
 		result.Result = committed
+		result.Deleted = []string{result.Target}
 		return &result, nil
 	}
-	applied, err := m.mutateRuntime(nextRouter, string(nextYAML))
+	outcome, err := m.mutateRuntime(nextRouter, string(nextYAML))
 	if err != nil {
 		return nil, err
 	}
-	result.Result = applied
+	result.Result = outcome.Result
+	if outcome.Canonical == canonicalReplaced {
+		result.Deleted = []string{result.Target}
+	}
 	return &result, nil
 }
 
@@ -193,6 +202,8 @@ var runtimeShapeKinds = map[string]bool{
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
 	"DSLiteTunnel": true,
 	"EventGroup":   true, "EventSubscription": true, "WebConsole": true,
+	"EventRule": true, "DerivedEvent": true,
+	"Plugin":              true,
 	"SAMTransportProfile": true,
 	"MobilityPool":        true, "ServiceUnit": true,
 }
@@ -307,6 +318,7 @@ func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML 
 			return committed, err
 		}
 		result.Generation = committed.Generation
+		result.Phase = "Committed"
 		committed.Result = result
 		committed.Stage = "complete"
 		return committed, nil

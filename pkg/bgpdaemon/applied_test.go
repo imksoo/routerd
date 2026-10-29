@@ -3,6 +3,7 @@
 package bgpdaemon
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,8 +29,7 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 				ImportPolicy:  AppliedImportPolicy{LocalPreference: 201},
 			},
 		},
-		Advertisements: []string{"10.20.0.0/24"},
-		Paths: []AppliedPath{{
+		Paths: []AppliedPath{StaticAppliedPath("10.20.0.0/24", nil), {
 			Source: "MobilityPool/demo/node/aws-router-a",
 			Prefix: "10.77.60.11/32",
 			Attrs:  AppliedPathAttrs{LocalPref: 200, Communities: []string{"64512:77"}},
@@ -57,10 +57,10 @@ func TestWriteAppliedAtomicRoundTrip(t *testing.T) {
 		t.Fatalf("import local preferences = global=%d peer=%d, want 200/201", got.Global.ImportPolicy.LocalPreference, got.Peers["10.0.0.2"].ImportPolicy.LocalPreference)
 	}
 	if len(got.Paths) != 2 {
-		t.Fatalf("paths = %#v, want legacy static path plus mobility path", got.Paths)
+		t.Fatalf("paths = %#v, want static path plus mobility path", got.Paths)
 	}
-	if got.Advertisements[0] != "10.20.0.0/24" {
-		t.Fatalf("legacy advertisements = %#v", got.Advertisements)
+	if prefixes := StaticAdvertisements(got.Paths); len(prefixes) != 1 || prefixes[0] != "10.20.0.0/24" {
+		t.Fatalf("static advertisements = %#v", prefixes)
 	}
 	if Hash(got) == "" {
 		t.Fatal("hash is empty")
@@ -90,13 +90,31 @@ func TestReadAppliedRejectsNonEmptyMalformedState(t *testing.T) {
 	}
 }
 
-func TestNormalizeMigratesLegacyAdvertisementsToStaticPaths(t *testing.T) {
-	got := Normalize(AppliedConfig{Advertisements: []string{"10.20.0.0/24", "10.20.0.0/24"}})
+func TestNormalizeDeduplicatesStaticPaths(t *testing.T) {
+	got := Normalize(AppliedConfig{Paths: []AppliedPath{StaticAppliedPath("10.20.0.0/24", nil), StaticAppliedPath("10.20.0.0/24", nil)}})
 	if len(got.Paths) != 1 || got.Paths[0].Source != AppliedPathSourceStatic || got.Paths[0].Prefix != "10.20.0.0/24" {
 		t.Fatalf("normalized paths = %#v, want one static path", got.Paths)
 	}
-	if len(got.Advertisements) != 1 || got.Advertisements[0] != "10.20.0.0/24" {
-		t.Fatalf("advertisements = %#v, want normalized legacy view", got.Advertisements)
+}
+
+func TestMobilityPathSourceAcceptsOnlyCanonicalOwnershipProducer(t *testing.T) {
+	for _, source := range []string{"MobilityPool/demo/node/aws-router-a", "MobilityPool/pool/node/router"} {
+		if !IsMobilityPathSource(source) {
+			t.Errorf("actual MobilityPool source %q was rejected", source)
+		}
+	}
+	for _, source := range []string{"mobility/demo/node/router", "MobilityPool/", "MobilityPool/pool", "MobilityPool/pool/node/", "MobilityPool/pool/not-node/router", "MobilityPool/pool/node/router/arp-observer", "MobilityPool/pool/node/router/extra", AppliedPathSourceStatic} {
+		if IsMobilityPathSource(source) {
+			t.Errorf("non-owner source %q was accepted", source)
+		}
+		if source != AppliedPathSourceStatic {
+			if err := ValidateAppliedPath(AppliedPath{Source: source, Prefix: "192.0.2.1/32"}); err == nil {
+				t.Errorf("journal admitted unsupported owner %q", source)
+			}
+		}
+	}
+	if IsMobilityPathSource("MobilityPool/pool/node/router ") {
+		t.Fatal("owner parser accepted a non-canonical source")
 	}
 }
 
@@ -128,5 +146,56 @@ func TestValidateRejectsTransitionForNonDirectPeer(t *testing.T) {
 	}
 	if err := Validate(config); err == nil {
 		t.Fatal("Validate accepted pending direct transition for ordinary peer")
+	}
+}
+
+func TestPendingDynamicPathIntentRoundTripAndValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied.json")
+	intent := AppliedPath{Source: "MobilityPool/pool/node/a", Prefix: "10.77.60.11/32", Attrs: AppliedPathAttrs{Communities: []string{"64512:11"}}}
+	config := AppliedConfig{Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingDynamicPathAdds: []AppliedPath{intent}}
+	if err := Validate(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteApplied(path, config); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := ReadApplied(path)
+	if err != nil || !found || len(got.PendingDynamicPathAdds) != 1 || len(got.Paths) != 0 {
+		t.Fatalf("pending journal=%#v found=%t error=%v", got, found, err)
+	}
+	config.PendingDynamicPathAdds[0].UUID = EncodeUUID([]byte{1})
+	if err := Validate(config); err == nil {
+		t.Fatal("pending intent accepted an acknowledged UUID")
+	}
+}
+
+func TestReadAppliedRejectsPreviousNativeIdentityFormat(t *testing.T) {
+	for _, version := range []string{"1", "0"} {
+		path := filepath.Join(t.TempDir(), "applied.json")
+		data := `{"version":` + version + `,"global":{"asn":64512,"routerID":"192.0.2.1"},"paths":[{"source":"MobilityPool/pool/node/a","prefix":"10.77.60.11/32","uuid":"01"}]}`
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ReadApplied(path); err == nil {
+			t.Fatal("old ID=0 journal was silently reinterpreted")
+		}
+	}
+	if err := WriteApplied(filepath.Join(t.TempDir(), "applied.json"), AppliedConfig{Version: 1}); err == nil {
+		t.Fatal("old explicit version was silently upgraded")
+	}
+}
+
+func TestReadAppliedDoesNotDiscardIncompletePendingOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied.json")
+	config := AppliedConfig{Version: AppliedVersion, Global: AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}, PendingDynamicPathAdds: []AppliedPath{{Source: "MobilityPool/pool/node/a"}}}
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadApplied(path); err == nil {
+		t.Fatal("incomplete pending effect normalized into false absence")
 	}
 }

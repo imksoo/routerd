@@ -153,7 +153,7 @@ func TestFaultNotificationLossPeriodicRouteConvergence(t *testing.T) {
 	savePart(10)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	runner := &Runner{Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "notification-test"}}, Store: store, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"ipv4-route"}, DryRunRoute: true}}
-	controllers, _, err := runner.frameworkControllers(t.Context(), logger, eventedStore{Store: store, Bus: runner.Bus, Router: runner.Router}, false, ha.Decision{Leader: true})
+	controllers, _, _, err := runner.frameworkControllers(t.Context(), logger, eventedStore{Store: store, Bus: runner.Bus, Router: runner.Router}, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
 	}

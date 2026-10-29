@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
@@ -29,8 +30,17 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
-		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		reader, ok := store.(routerstate.PDLeaseReader)
+		if !ok {
+			result.Warnings = append(result.Warnings, res.ID()+": PD observation store unavailable")
+			continue
+		}
+		lease, _, err := reader.ReadPDLease(res.Metadata.Name)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: read PD observation: %v", res.ID(), err))
+			continue
+		}
+		lease = lease.Live(store.Now())
 		if lease.CurrentPrefix != "" {
 			continue
 		}
@@ -40,8 +50,8 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 		} else {
 			msg += "; no delegated prefix has been recorded locally yet"
 		}
-		if lease.LastObservedAt != "" {
-			msg += " observed at " + lease.LastObservedAt
+		if !lease.LastObservedAt.IsZero() {
+			msg += " observed at " + lease.LastObservedAt.Format(time.RFC3339)
 		}
 		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
 		result.Warnings = append(result.Warnings, msg)

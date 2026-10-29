@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -194,8 +195,10 @@ type Event struct {
 }
 
 type MemoryStore struct {
-	Values map[string]Value `json:"variables"`
-	now    func() time.Time
+	Values   map[string]Value `json:"variables"`
+	pdMu     sync.RWMutex
+	PDLeases map[string]PDLease `json:"pdLeases,omitempty"`
+	now      func() time.Time
 }
 
 func New() Store {
@@ -261,6 +264,13 @@ func (s *MemoryStore) ReadVariable(name string) (Value, error) {
 
 // MemoryStore contains variables only; an object status is an absent observation.
 func (s *MemoryStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
+		if l, ok, err := s.ReadPDLease(name); err == nil && ok {
+			projection := PDLeaseStatus(l, s.Now())
+			projection["observation"] = PDLeaseStatus(l, s.Now())
+			return projection, nil
+		}
+	}
 	return nil, nil
 }
 
@@ -312,11 +322,23 @@ func (s *MemoryStore) Variables() map[string]Value {
 	return out
 }
 
-// MemoryStore retains variables, not object status rows. Its enumeration is an
-// observed empty set rather than an unavailable capability.
-func (s *MemoryStore) ListObjectStatuses() ([]ObjectStatus, error) { return nil, nil }
+// Transient PD observations use the same read-only projection as persisted rows.
+func (s *MemoryStore) ListObjectStatuses() ([]ObjectStatus, error) {
+	s.pdMu.RLock()
+	defer s.pdMu.RUnlock()
+	var out []ObjectStatus
+	for name, lease := range s.PDLeases {
+		out = append(out, ObjectStatus{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: name, Status: PDLeaseStatus(lease, s.Now())})
+	}
+	return out, nil
+}
 
 func (s *MemoryStore) DeleteObject(apiVersion, kind, name string) error {
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
+		s.pdMu.Lock()
+		delete(s.PDLeases, name)
+		s.pdMu.Unlock()
+	}
 	for key := range s.Values {
 		ref := objectRefForKey(key)
 		if ref.APIVersion == apiVersion && ref.Kind == kind && ref.Name == name {

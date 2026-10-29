@@ -22,8 +22,8 @@ func (h Handler) operationalStatus(w http.ResponseWriter, kind string) {
 	writeJSON(w, OperationalStatus{GeneratedAt: time.Now().UTC(), Kind: kind, Resources: resources})
 }
 
-func (h Handler) routes(w http.ResponseWriter) {
-	status := h.routesStatus()
+func (h Handler) routes(w http.ResponseWriter, r *http.Request) {
+	status := h.routesStatus(r.Context())
 	writeJSON(w, status)
 }
 

@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -354,6 +356,16 @@ func serveControlSocketWithStateLock(socketPath, statePath string, paths pathSer
 	if err != nil {
 		return nil, fmt.Errorf("listen control socket: %w", err)
 	}
+	server := &http.Server{Handler: controlHandler(statePath, paths, appliedStateMu)}
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			fmt.Fprintf(os.Stderr, "routerd-bgp control socket failed: %v\n", err)
+		}
+	}()
+	return server, nil
+}
+
+func controlHandler(statePath string, paths pathServer, appliedStateMu sync.Locker) http.Handler {
 	mux := http.NewServeMux()
 	// All applied.json access through this control socket is serialized. Path
 	// requests are read-modify-write transactions; without this gate a request
@@ -380,6 +392,32 @@ func serveControlSocketWithStateLock(socketPath, statePath string, paths pathSer
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			current, found, err := bgpdaemon.ReadApplied(statePath)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// The controller owns global/peer/static intent. Only this daemon's
+			// path transaction may acknowledge or replace a dynamic effect.
+			static := make([]bgpdaemon.AppliedPath, 0, len(config.Paths))
+			for _, path := range bgpdaemon.Normalize(config).Paths {
+				if path.Source == bgpdaemon.AppliedPathSourceStatic {
+					static = append(static, path)
+				}
+			}
+			config.Paths, config.PendingDynamicPathAdds = static, nil
+			if found {
+				config.Paths = append(config.Paths, bgpdaemon.NonStaticPaths(current.Paths)...)
+				config.PendingDynamicPathAdds = current.PendingDynamicPathAdds
+			}
+			if err := bgpdaemon.Validate(config); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := validateNativeDynamicPathOwners(config); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			if err := bgpdaemon.WriteApplied(statePath, config); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -394,12 +432,25 @@ func serveControlSocketWithStateLock(socketPath, statePath string, paths pathSer
 		defer appliedStateMu.Unlock()
 		switch r.Method {
 		case http.MethodGet:
-			config, _, err := bgpdaemon.ReadApplied(statePath)
+			config, found, err := bgpdaemon.ReadApplied(statePath)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			if !found {
+				http.Error(w, "applied BGP config is not initialized", http.StatusServiceUnavailable)
+				return
+			}
+			if err := bgpdaemon.Validate(config); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			source := strings.TrimSpace(r.URL.Query().Get("source"))
+			config, err = recoverPendingDynamicPaths(r.Context(), paths, statePath, config, source)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			out := config.Paths
 			if source != "" {
 				out = nil
@@ -459,13 +510,7 @@ func serveControlSocketWithStateLock(socketPath, statePath string, paths pathSer
 		}
 		writeJSON(w, observed)
 	})
-	server := &http.Server{Handler: mux}
-	go func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "routerd-bgp control socket failed: %v\n", err)
-		}
-	}()
-	return server, nil
+	return mux
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
@@ -516,7 +561,7 @@ func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths po
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return fmt.Errorf("persist restored BGP path UUIDs: %w", err)
 	}
-	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "advertisements", len(applied.Advertisements), "hash", bgpdaemon.Hash(applied))
+	logger.Info("restored applied BGP state", "peers", len(applied.Peers), "paths", len(applied.Paths), "hash", bgpdaemon.Hash(applied))
 	return nil
 }
 
@@ -570,6 +615,12 @@ func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdae
 		return nil
 	}
 	normalized := bgpdaemon.Normalize(*applied)
+	for _, pending := range normalized.PendingDynamicPathAdds {
+		normalized.Paths = append(withoutAppliedPath(normalized.Paths, bgpdaemon.AppliedPathKey(pending)), pending)
+	}
+	if err := validateNativeDynamicPathOwners(normalized); err != nil {
+		return err
+	}
 	for i, appliedPath := range normalized.Paths {
 		path, err := pathFromAppliedPath(appliedPath)
 		if err != nil {
@@ -581,6 +632,7 @@ func restoreAppliedPaths(ctx context.Context, server pathServer, applied *bgpdae
 		}
 		normalized.Paths[i].UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
 	}
+	normalized.PendingDynamicPathAdds = nil
 	*applied = bgpdaemon.Normalize(normalized)
 	return nil
 }
@@ -1050,6 +1102,9 @@ func validateDynamicMobilityPath(path bgpdaemon.AppliedPath) (bgpdaemon.AppliedP
 }
 
 func upsertDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, *bgpdaemon.AppliedPath, error) {
+	if err := ctx.Err(); err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
+	}
 	applied, ok, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
@@ -1064,56 +1119,137 @@ func upsertDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
+	path.UUID = ""
 	key := bgpdaemon.AppliedPathKey(path)
-	for i, existing := range applied.Paths {
-		if bgpdaemon.AppliedPathKey(existing) != key {
-			continue
-		}
-		if reflect.DeepEqual(existing.Attrs, path.Attrs) && existing.UUID != "" {
-			return applied, &applied.Paths[i], nil
-		}
-		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
-			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil {
-				if !isMissingGoBGPPath(err) {
-					return bgpdaemon.AppliedConfig{}, nil, err
-				}
+	pending := false
+	for _, intent := range applied.PendingDynamicPathAdds {
+		pending = pending || bgpdaemon.AppliedPathKey(intent) == key
+	}
+	if !pending {
+		for i, existing := range applied.Paths {
+			if bgpdaemon.AppliedPathKey(existing) == key && reflect.DeepEqual(existing.Attrs, path.Attrs) && existing.UUID != "" {
+				return applied, &applied.Paths[i], nil
 			}
 		}
-		applied.Paths = append(applied.Paths[:i], applied.Paths[i+1:]...)
-		break
 	}
-	reqPath, err := pathFromAppliedPath(path)
-	if err != nil {
+	applied.PendingDynamicPathAdds = append(withoutAppliedPath(applied.PendingDynamicPathAdds, key), path)
+	if err := validateNativeDynamicPathOwners(applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: reqPath})
-	if err != nil {
-		return bgpdaemon.AppliedConfig{}, nil, err
-	}
-	path.UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
-	applied.Paths = append(applied.Paths, path)
-	applied = bgpdaemon.Normalize(applied)
 	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
 		return bgpdaemon.AppliedConfig{}, nil, err
 	}
-	// routerd has already installed a new import policy and is about to reset
-	// inbound peers. applied.json intentionally still contains the old policy
-	// snapshot while that fence is set, so a concurrent mobility-path update
-	// must not roll the live direct /32 policy back by rebuilding it here.
-	if !applied.PendingImportPolicyReset {
-		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-			return bgpdaemon.AppliedConfig{}, nil, err
-		}
+	applied, err = finishDynamicPathAdd(ctx, server, statePath, applied, path)
+	if err != nil {
+		return bgpdaemon.AppliedConfig{}, nil, err
 	}
 	for i := range applied.Paths {
 		if bgpdaemon.AppliedPathKey(applied.Paths[i]) == key {
 			return applied, &applied.Paths[i], nil
 		}
 	}
-	return applied, nil, nil
+	return applied, nil, fmt.Errorf("completed dynamic path %s is missing from applied state", key)
+}
+
+// finishDynamicPathAdd retries the same native identity, replacing an orphan
+// from an earlier successful AddPath whose returned UUID was never persisted.
+func finishDynamicPathAdd(ctx context.Context, server pathServer, statePath string, applied bgpdaemon.AppliedConfig, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return applied, err
+	}
+	reqPath, err := pathFromAppliedPath(path)
+	if err != nil {
+		return applied, err
+	}
+	resp, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: reqPath})
+	if err != nil {
+		return applied, err
+	}
+	if len(resp.GetUuid()) == 0 {
+		return applied, fmt.Errorf("GoBGP returned no UUID for dynamic path %s", path.Prefix)
+	}
+	path.UUID = bgpdaemon.EncodeUUID(resp.GetUuid())
+	key := bgpdaemon.AppliedPathKey(path)
+	applied.Paths = append(withoutAppliedPath(applied.Paths, key), path)
+	applied.PendingDynamicPathAdds = withoutAppliedPath(applied.PendingDynamicPathAdds, key)
+	applied = bgpdaemon.Normalize(applied)
+	if !applied.PendingImportPolicyReset {
+		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+			return applied, err
+		}
+	}
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return applied, err
+	}
+	return applied, nil
+}
+
+func recoverPendingDynamicPaths(ctx context.Context, server pathServer, statePath string, applied bgpdaemon.AppliedConfig, source string) (bgpdaemon.AppliedConfig, error) {
+	if len(applied.PendingDynamicPathAdds) == 0 {
+		return applied, nil
+	}
+	if err := bgpdaemon.Validate(applied); err != nil {
+		return applied, err
+	}
+	if err := validateNativeDynamicPathOwners(applied); err != nil {
+		return applied, err
+	}
+	pending := append([]bgpdaemon.AppliedPath(nil), applied.PendingDynamicPathAdds...)
+	for _, path := range pending {
+		if source != "" && source != path.Source {
+			continue
+		}
+		next, err := finishDynamicPathAdd(ctx, server, statePath, applied, path)
+		if err != nil {
+			return applied, fmt.Errorf("recover pending dynamic path %s: %w", path.Prefix, err)
+		}
+		applied = next
+	}
+	return applied, nil
+}
+
+func withoutAppliedPath(paths []bgpdaemon.AppliedPath, key string) []bgpdaemon.AppliedPath {
+	out := make([]bgpdaemon.AppliedPath, 0, len(paths))
+	for _, path := range paths {
+		if bgpdaemon.AppliedPathKey(path) != key {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// GoBGP's local path key is Identifier plus prefix. Reserve zero for static
+// paths and retain each dynamic source's identity across a lost UUID/restart.
+func dynamicPathIdentifier(source string) uint32 {
+	digest := sha256.Sum256([]byte(source))
+	id := binary.BigEndian.Uint32(digest[:4])
+	if id == 0 {
+		return 1
+	}
+	return id
+}
+
+func validateNativeDynamicPathOwners(applied bgpdaemon.AppliedConfig) error {
+	owners := map[string]string{}
+	for _, group := range [][]bgpdaemon.AppliedPath{applied.Paths, applied.PendingDynamicPathAdds} {
+		for _, path := range group {
+			if !bgpdaemon.IsMobilityPathSource(path.Source) {
+				continue
+			}
+			key := fmt.Sprintf("%s/%d", path.Prefix, dynamicPathIdentifier(path.Source))
+			if owner := owners[key]; owner != "" && owner != path.Source {
+				return fmt.Errorf("dynamic BGP native identity collision between %s and %s for %s", owner, path.Source, path.Prefix)
+			}
+			owners[key] = path.Source
+		}
+	}
+	return nil
 }
 
 func deleteDynamicPath(ctx context.Context, server pathServer, statePath string, path bgpdaemon.AppliedPath) (bgpdaemon.AppliedConfig, error) {
+	if err := ctx.Err(); err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
 	applied, ok, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, err
@@ -1128,29 +1264,43 @@ func deleteDynamicPath(ctx context.Context, server pathServer, statePath string,
 	if err != nil {
 		return bgpdaemon.AppliedConfig{}, err
 	}
+	if err := validateNativeDynamicPathOwners(applied); err != nil {
+		return bgpdaemon.AppliedConfig{}, err
+	}
 	key := bgpdaemon.AppliedPathKey(path)
-	for i, existing := range applied.Paths {
-		if bgpdaemon.AppliedPathKey(existing) != key {
-			continue
+	var recorded *bgpdaemon.AppliedPath
+	pending := false
+	for i := range applied.Paths {
+		if bgpdaemon.AppliedPathKey(applied.Paths[i]) == key {
+			recorded = &applied.Paths[i]
 		}
-		if uuid, err := bgpdaemon.DecodeUUID(existing.UUID); err == nil && len(uuid) > 0 {
-			if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Uuid: uuid}); err != nil {
-				if !isMissingGoBGPPath(err) {
-					return bgpdaemon.AppliedConfig{}, err
-				}
-			}
-		}
-		applied.Paths = append(applied.Paths[:i], applied.Paths[i+1:]...)
-		applied = bgpdaemon.Normalize(applied)
-		if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
-			return bgpdaemon.AppliedConfig{}, err
-		}
-		if !applied.PendingImportPolicyReset {
-			if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
-				return bgpdaemon.AppliedConfig{}, err
-			}
-		}
+	}
+	for _, intent := range applied.PendingDynamicPathAdds {
+		pending = pending || bgpdaemon.AppliedPathKey(intent) == key
+	}
+	if recorded == nil && !pending {
 		return applied, nil
+	}
+	// Native source identity is stable across lost or stale returned UUIDs.
+	// GoBGP confirms this exact local withdrawal idempotently, preserving
+	// another local source and peer-origin paths for the same prefix.
+	native, err := pathFromAppliedPath(path)
+	if err != nil {
+		return applied, err
+	}
+	if err := server.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: native}); err != nil {
+		return applied, err
+	}
+	applied.Paths = withoutAppliedPath(applied.Paths, key)
+	applied.PendingDynamicPathAdds = withoutAppliedPath(applied.PendingDynamicPathAdds, key)
+	applied = bgpdaemon.Normalize(applied)
+	if !applied.PendingImportPolicyReset {
+		if err := refreshDynamicPathPolicies(ctx, server, applied); err != nil {
+			return applied, err
+		}
+	}
+	if err := bgpdaemon.WriteApplied(statePath, applied); err != nil {
+		return applied, err
 	}
 	return applied, nil
 }
@@ -1202,10 +1352,6 @@ func dynamicExportPolicyPeerAddresses(applied bgpdaemon.AppliedConfig) []string 
 	return addresses
 }
 
-func isMissingGoBGPPath(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "can't find a specified path")
-}
-
 func httpStatusForPathError(err error) int {
 	if err == nil {
 		return http.StatusOK
@@ -1251,7 +1397,11 @@ func pathFromAppliedPath(appliedPath bgpdaemon.AppliedPath) (*gobgpapi.Path, err
 	if len(communities) > 0 {
 		attrs = append(attrs, communitiesAttribute(communities))
 	}
-	return &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}, nil
+	path := &gobgpapi.Path{Family: familyForPrefix(parsed), Nlri: nlri, Pattrs: attrs}
+	if bgpdaemon.IsMobilityPathSource(appliedPath.Source) {
+		path.Identifier = dynamicPathIdentifier(appliedPath.Source)
+	}
+	return path, nil
 }
 
 func ipAddressNLRI(prefix netip.Prefix) *gobgpapi.NLRI {

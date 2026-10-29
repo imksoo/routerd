@@ -15,9 +15,13 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/internal/stringutil"
+	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
-const AppliedVersion = 1
+// Version 2 assigns each dynamic source a stable nonzero native path identity
+// and persists its pending Add before the live effect. Version 1 live ID=0
+// records cannot be safely reinterpreted; cutover discards the private journal.
+const AppliedVersion = 2
 
 const (
 	AppliedPathSourceStatic = "routerd-static"
@@ -45,6 +49,10 @@ type AppliedConfig struct {
 	// routerd writes this marker before DeletePeer, so a crash between the live
 	// deletion and the final desired-state save cannot resurrect the peer.
 	PendingDirectPeerRemovals []string `json:"pendingDirectPeerRemovals,omitempty"`
+	// PendingDynamicPathAdds records native path ownership before AddPath.
+	// A missing returned UUID must never make a possibly-live path disappear
+	// from reconciliation after a failed applied-state write.
+	PendingDynamicPathAdds []AppliedPath `json:"pendingDynamicPathAdds,omitempty"`
 	// PendingStaticPathRemovals contains locally originated paths which have
 	// been removed from the restart set but still need a live GoBGP withdrawal.
 	// Keeping their UUIDs makes a crash between DeletePath and the next complete
@@ -53,10 +61,6 @@ type AppliedConfig struct {
 	Global                    AppliedGlobal          `json:"global,omitempty"`
 	Peers                     map[string]AppliedPeer `json:"peers,omitempty"`
 	Paths                     []AppliedPath          `json:"paths,omitempty"`
-	// Advertisements is the legacy static-prefix view. New code should use Paths
-	// with source=routerd-static, but keeping this field preserves existing state
-	// files and control API clients.
-	Advertisements []string `json:"advertisements,omitempty"`
 }
 
 type AppliedGlobal struct {
@@ -145,10 +149,9 @@ func Normalize(config AppliedConfig) AppliedConfig {
 	config.Global.ImportPolicy.NextHopRewrite = strings.TrimSpace(config.Global.ImportPolicy.NextHopRewrite)
 	config.PendingDirectPeerAdditions = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerAdditions)
 	config.PendingDirectPeerRemovals = stringutil.UniqueTrimmedSorted(config.PendingDirectPeerRemovals)
-	config.PendingStaticPathRemovals = normalizeAppliedPaths(config.PendingStaticPathRemovals, nil)
-	config.Advertisements = stringutil.UniqueTrimmedSorted(config.Advertisements)
-	config.Paths = normalizeAppliedPaths(config.Paths, config.Advertisements)
-	config.Advertisements = StaticAdvertisements(config.Paths)
+	config.PendingStaticPathRemovals = normalizeAppliedPaths(config.PendingStaticPathRemovals)
+	config.PendingDynamicPathAdds = normalizeAppliedPaths(config.PendingDynamicPathAdds)
+	config.Paths = normalizeAppliedPaths(config.Paths)
 	if config.Peers != nil {
 		peers := make(map[string]AppliedPeer, len(config.Peers))
 		for key, peer := range config.Peers {
@@ -202,7 +205,7 @@ func StaticAppliedPath(prefix string, uuid []byte) AppliedPath {
 
 func StaticAdvertisements(paths []AppliedPath) []string {
 	var out []string
-	for _, path := range normalizeAppliedPaths(paths, nil) {
+	for _, path := range normalizeAppliedPaths(paths) {
 		if path.Source == AppliedPathSourceStatic {
 			out = append(out, path.Prefix)
 		}
@@ -212,7 +215,7 @@ func StaticAdvertisements(paths []AppliedPath) []string {
 
 func NonStaticPaths(paths []AppliedPath) []AppliedPath {
 	var out []AppliedPath
-	for _, path := range normalizeAppliedPaths(paths, nil) {
+	for _, path := range normalizeAppliedPaths(paths) {
 		if path.Source != AppliedPathSourceStatic {
 			out = append(out, path)
 		}
@@ -226,8 +229,8 @@ func AppliedPathKey(path AppliedPath) string {
 }
 
 func IsMobilityPathSource(source string) bool {
-	source = strings.TrimSpace(source)
-	return strings.HasPrefix(source, "MobilityPool/") || strings.HasPrefix(source, "mobility/")
+	owner, ok := dynamicconfig.ParseMobilityPoolPlanSource(source)
+	return ok && !owner.ARPObserver
 }
 
 func EncodeUUID(uuid []byte) string {
@@ -260,10 +263,22 @@ func ReadApplied(path string) (AppliedConfig, bool, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return AppliedConfig{}, false, err
 	}
+	if config.Version != AppliedVersion {
+		return AppliedConfig{}, false, fmt.Errorf("unsupported applied BGP config version %d; expected %d", config.Version, AppliedVersion)
+	}
+	if err := Validate(config); err != nil {
+		return AppliedConfig{}, false, err
+	}
 	return Normalize(config), true, nil
 }
 
 func WriteApplied(path string, config AppliedConfig) error {
+	if config.Version != 0 && config.Version != AppliedVersion {
+		return fmt.Errorf("unsupported applied BGP config version %d; expected %d", config.Version, AppliedVersion)
+	}
+	if err := validateJournalPathIdentities(config); err != nil {
+		return err
+	}
 	config = Normalize(config)
 	config.Version = AppliedVersion
 	if strings.TrimSpace(config.UpdatedAt) == "" {
@@ -332,7 +347,23 @@ func Hash(config AppliedConfig) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Pending and applied identities must be validated before normalization can
+// discard an incomplete entry. Unknown ownership is not an empty journal.
+func validateJournalPathIdentities(config AppliedConfig) error {
+	for _, paths := range [][]AppliedPath{config.Paths, config.PendingDynamicPathAdds, config.PendingStaticPathRemovals} {
+		for _, path := range paths {
+			if strings.TrimSpace(path.Source) == "" || strings.TrimSpace(path.Prefix) == "" {
+				return fmt.Errorf("BGP journal path source and prefix are required")
+			}
+		}
+	}
+	return nil
+}
+
 func Validate(config AppliedConfig) error {
+	if err := validateJournalPathIdentities(config); err != nil {
+		return err
+	}
 	config = Normalize(config)
 	if config.Version != AppliedVersion {
 		return fmt.Errorf("unsupported applied BGP config version %d", config.Version)
@@ -370,6 +401,21 @@ func Validate(config AppliedConfig) error {
 			return err
 		}
 	}
+	for _, path := range config.PendingDynamicPathAdds {
+		if !IsMobilityPathSource(path.Source) {
+			return fmt.Errorf("pending dynamic BGP path %q is not a MobilityPool source", path.Source)
+		}
+		if err := ValidateAppliedPath(path); err != nil {
+			return err
+		}
+		prefix, err := netip.ParsePrefix(path.Prefix)
+		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+			return fmt.Errorf("pending dynamic BGP path %q must be an IPv4 /32", path.Prefix)
+		}
+		if path.UUID != "" {
+			return fmt.Errorf("pending dynamic BGP path %q already has an applied UUID", path.Prefix)
+		}
+	}
 	for _, path := range config.PendingStaticPathRemovals {
 		if path.Source != AppliedPathSourceStatic {
 			return fmt.Errorf("pending static BGP path %q has unexpected source %q", path.Prefix, path.Source)
@@ -385,6 +431,9 @@ func ValidateAppliedPath(path AppliedPath) error {
 	path = NormalizeAppliedPath(path)
 	if path.Source == "" {
 		return fmt.Errorf("applied BGP path source is required")
+	}
+	if path.Source != AppliedPathSourceStatic && !IsMobilityPathSource(path.Source) {
+		return fmt.Errorf("applied BGP path source %q is not a supported owner", path.Source)
 	}
 	prefix, err := netip.ParsePrefix(path.Prefix)
 	if err != nil {
@@ -410,12 +459,8 @@ func ValidateAppliedPath(path AppliedPath) error {
 	return nil
 }
 
-func normalizeAppliedPaths(paths []AppliedPath, legacyAdvertisements []string) []AppliedPath {
+func normalizeAppliedPaths(paths []AppliedPath) []AppliedPath {
 	byKey := map[string]AppliedPath{}
-	for _, prefix := range stringutil.UniqueTrimmedSorted(legacyAdvertisements) {
-		path := StaticAppliedPath(prefix, nil)
-		byKey[AppliedPathKey(path)] = path
-	}
 	for _, path := range paths {
 		path = NormalizeAppliedPath(path)
 		if path.Source == "" || path.Prefix == "" {

@@ -42,9 +42,11 @@ func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	}
 	lease := PDLease{
 		LastPrefix:     "2001:db8:1200:1210::/60",
-		LastObservedAt: time.Now().UTC().Format(time.RFC3339),
+		LastObservedAt: time.Now().UTC(),
 	}
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", EncodePDLease(lease), "test")
+	if err := store.SavePDLease("wan-pd", lease); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite store: %v", err)
 	}
@@ -55,7 +57,7 @@ func TestSQLiteStorePersistsAndSupportsJSON1(t *testing.T) {
 	}
 	defer db.Close()
 	var prefix string
-	err = db.QueryRow(`SELECT json_extract(status, '$.lastPrefix') FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd").Scan(&prefix)
+	err = db.QueryRow(`SELECT json_extract(status, '$.observation.lastPrefix') FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd").Scan(&prefix)
 	if err != nil {
 		t.Fatalf("json_extract lease prefix: %v", err)
 	}
@@ -114,7 +116,9 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin generation: %v", err)
 	}
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", EncodePDLease(PDLease{LastPrefix: "2001:db8:1200:1210::/60"}), "test")
+	if err := store.SavePDLease("wan-pd", PDLease{LastPrefix: "2001:db8:1200:1210::/60"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.RecordEvent("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", "Normal", "PrefixObserved", "observed prefix"); err != nil {
 		t.Fatalf("record event: %v", err)
 	}

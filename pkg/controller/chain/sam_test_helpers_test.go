@@ -16,10 +16,10 @@ type fakeSAMApplier struct {
 	delete         []string
 	deassign       []string
 	proxyARP       []string
+	acceptLocal    []string
 	ipForwarding   []string
 	calls          []string
 	forwardSets    [][]sam.CaptureAction
-	deassignResult samOSAddressDeassignResult
 	ensureErr      error
 	deleteErr      error
 	onDelete       func()
@@ -39,7 +39,7 @@ func (g *fakeSAMGARP) SendGratuitousARP(_ context.Context, address, ifname strin
 	return g.err
 }
 
-func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, owned bool) (samProxyARPApplyResult, error) {
+func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
 	value := "0"
 	if enabled {
 		value = "1"
@@ -49,9 +49,29 @@ func (a *fakeSAMApplier) SetProxyARP(_ context.Context, ifname string, enabled, 
 	if a.proxyARPErr != nil {
 		return samProxyARPApplyResult{}, a.proxyARPErr
 	}
+	result := samProxyARPApplyResult{changedByRouterd: enabled && !owned}
 	if a.proxyARPResult != nil {
-		return *a.proxyARPResult, nil
+		result = *a.proxyARPResult
 	}
+	if result.changedByRouterd {
+		if err := recordSAMAcquisition(beforeAcquire); err != nil {
+			return samProxyARPApplyResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func (a *fakeSAMApplier) SetAcceptLocal(_ context.Context, iface string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
+	value := "0"
+	if enabled {
+		value = "1"
+	}
+	if enabled && !owned {
+		if err := recordSAMAcquisition(beforeAcquire); err != nil {
+			return samProxyARPApplyResult{}, err
+		}
+	}
+	a.acceptLocal = append(a.acceptLocal, iface+"="+value)
 	return samProxyARPApplyResult{changedByRouterd: enabled && !owned}, nil
 }
 
@@ -65,7 +85,12 @@ func (a *fakeSAMApplier) SetIPForwarding(_ context.Context, enabled bool) error 
 	return nil
 }
 
-func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string) error {
+func (a *fakeSAMApplier) EnsureProxyNeighbor(_ context.Context, address, ifname string, owned bool, beforeAcquire func() error) error {
+	if !owned {
+		if err := recordSAMAcquisition(beforeAcquire); err != nil {
+			return err
+		}
+	}
 	a.ensure = append(a.ensure, address+"@"+ifname)
 	a.calls = append(a.calls, "ensure:"+address+"@"+ifname)
 	return a.ensureErr
@@ -80,22 +105,32 @@ func (a *fakeSAMApplier) DeleteProxyNeighbor(_ context.Context, address, ifname 
 	return a.deleteErr
 }
 
-func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string) (samOSAddressDeassignResult, error) {
+func (a *fakeSAMApplier) EnsureOSAddressAbsent(_ context.Context, address string) error {
 	a.deassign = append(a.deassign, address)
 	a.calls = append(a.calls, "deassign:"+address)
-	result := a.deassignResult
-	if result.address == "" {
-		result.address = address
-	}
-	return result, a.deassignErr
+	return a.deassignErr
 }
 
-func (a *fakeSAMApplier) ReconcileForwardPaths(_ context.Context, paths []sam.CaptureAction) error {
+func (a *fakeSAMApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, setAcceptLocal func(context.Context, string, bool) error) error {
 	a.forwardSets = append(a.forwardSets, append([]sam.CaptureAction(nil), paths...))
 	for _, path := range paths {
 		a.calls = append(a.calls, "forward:"+path.Address+"@"+path.Interface+"<->"+path.PeerInterface)
 	}
-	return a.forwardErr
+	if a.forwardErr != nil {
+		return a.forwardErr
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		for _, iface := range []string{path.Interface, path.PeerInterface} {
+			if iface != "" && !seen[iface] && setAcceptLocal != nil {
+				if err := setAcceptLocal(ctx, iface, true); err != nil {
+					return err
+				}
+				seen[iface] = true
+			}
+		}
+	}
+	return nil
 }
 
 func assertSAMCalls(t *testing.T, got, want []string) {

@@ -517,6 +517,7 @@ func TestConfigLifecycleCommandsUseControlAPI(t *testing.T) {
 			return &controlapi.DeleteResult{
 				TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
 				Deleted:  []string{"net.routerd.net/v1alpha1/Hostname/appliance"},
+				Result:   &apply.Result{Phase: "Healthy", Generation: 10},
 			}, nil
 		},
 	}}
@@ -688,7 +689,7 @@ func TestApplyRequiresInputAndExplainsMissingDaemon(t *testing.T) {
 		t.Fatalf("write candidate: %v", err)
 	}
 	err = run([]string{"apply", "--socket", filepath.Join(t.TempDir(), "missing.sock"), "-f", candidatePath, "--timeout", "10ms"}, &out, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "start routerd serve") {
+	if err == nil || !strings.Contains(err.Error(), "outcome is unconfirmed") {
 		t.Fatalf("missing daemon error = %v", err)
 	}
 }

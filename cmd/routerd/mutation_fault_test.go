@@ -156,11 +156,11 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if active.Available && current != active.Router {
 				t.Error("published router differs from confirmed active")
 			}
-			if stage == "rename" && current != old {
-				t.Error("successful restoration did not publish old router")
+			if (stage == "rename" || stage == "restore-unavailable") && current != old {
+				t.Error("uncommitted candidate replaced the last committed declaration")
 			}
-			if stage != "rename" && current == old {
-				t.Error("last-known/runtime incorrectly reset to old router")
+			if stage != "rename" && stage != "restore-unavailable" && current == old {
+				t.Error("confirmed replacement/runtime incorrectly reset to old router")
 			}
 			if !gate.TryLock() {
 				t.Fatal("completed mutation retained gate")

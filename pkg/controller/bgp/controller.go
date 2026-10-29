@@ -227,12 +227,13 @@ const (
 	bfdResetBackoffMax  = 30 * time.Second
 )
 
-// ReconcileRouter changes the actor's configuration under the same ownership
-// lock as peer watches, FIB reconciliation and removal.
-func (c *Controller) ReconcileRouter(ctx context.Context, router *routerapi.Router) error {
+// ReconcileRouter changes the actor's configuration and corresponding status
+// ownership view under the same lock as peer watches, FIB and removal.
+func (c *Controller) ReconcileRouter(ctx context.Context, router *routerapi.Router, store Store) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Router = router
+	c.Store = store
 	return c.reconcileLocked(ctx)
 }
 
@@ -1683,7 +1684,6 @@ func (c *Controller) buildAppliedConfig(spec routerapi.BGPRouterSpec, peers map[
 		PendingStaticPathRemovals:  staticAppliedPathValues(c.retiringStaticPaths),
 		Global:                     appliedGlobalFromSpec(spec, c.Router),
 		Peers:                      map[string]bgpdaemon.AppliedPeer{},
-		Advertisements:             mapKeys(advertisements),
 		Paths:                      bgpdaemon.NonStaticPaths(existingPaths),
 	}
 	for prefix := range advertisements {
@@ -2573,9 +2573,6 @@ func (c *Controller) persistStaticPathRetirements(ctx context.Context, paths []b
 		keptPaths = append(keptPaths, path)
 	}
 	pending.Paths = keptPaths
-	// Paths are the authoritative representation once present. Clear the
-	// legacy projection so Normalize does not put a retiring static route back.
-	pending.Advertisements = nil
 	pending.PendingStaticPathRemovals = staticAppliedPathValues(retiring)
 	pending = bgpdaemon.Normalize(pending)
 	if err := c.Server.SaveAppliedConfig(ctx, pending); err != nil {

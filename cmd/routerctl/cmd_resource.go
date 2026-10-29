@@ -20,18 +20,19 @@ import (
 )
 
 type showResource struct {
-	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string              `json:"kind" yaml:"kind"`
-	Name       string              `json:"name" yaml:"name"`
-	Source     string              `json:"source,omitempty" yaml:"source,omitempty"`
-	Stale      bool                `json:"stale,omitempty" yaml:"stale,omitempty"`
-	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Observed   map[string]any      `json:"observed,omitempty" yaml:"observed,omitempty"`
-	Ledger     []resource.Artifact `json:"ledger,omitempty" yaml:"ledger,omitempty"`
-	State      map[string]any      `json:"state,omitempty" yaml:"state,omitempty"`
-	Diff       []showDiff          `json:"diff,omitempty" yaml:"diff,omitempty"`
-	Adopt      []any               `json:"adopt,omitempty" yaml:"adopt,omitempty"`
-	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
+	PDLease    *routerstate.PDLease `json:"pdLease,omitempty" yaml:"pdLease,omitempty"`
+	APIVersion string               `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string               `json:"kind" yaml:"kind"`
+	Name       string               `json:"name" yaml:"name"`
+	Source     string               `json:"source,omitempty" yaml:"source,omitempty"`
+	Stale      bool                 `json:"stale,omitempty" yaml:"stale,omitempty"`
+	Spec       any                  `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Observed   map[string]any       `json:"observed,omitempty" yaml:"observed,omitempty"`
+	Ledger     []resource.Artifact  `json:"ledger,omitempty" yaml:"ledger,omitempty"`
+	State      map[string]any       `json:"state,omitempty" yaml:"state,omitempty"`
+	Diff       []showDiff           `json:"diff,omitempty" yaml:"diff,omitempty"`
+	Adopt      []any                `json:"adopt,omitempty" yaml:"adopt,omitempty"`
+	Events     []routerstate.Event  `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
 type showDiff struct {
@@ -374,13 +375,14 @@ func writeResourceViewsTable(stdout io.Writer, rows []controlapi.ResourceView) e
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "KIND\tNAME\tSPEC\tSTATUS\tEVENTS")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", row.Kind, row.Name, specSummary(row.Spec), stateSummary(row.Status), len(row.Events))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", row.Kind, row.Name, specSummary(row.Spec), stateSummary(row.Status, row.PDLease), len(row.Events))
 	}
 	return w.Flush()
 }
 
 func writeResourceViewDescribe(stdout io.Writer, row controlapi.ResourceView) error {
 	show := showResource{
+		PDLease:    row.PDLease,
 		APIVersion: row.APIVersion,
 		Kind:       row.Kind,
 		Name:       row.Name,

@@ -71,50 +71,25 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return freeBSDSAMGratuitousARPAnnouncer{}
 }
 
-func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled, owned bool) (samProxyARPApplyResult, error) {
-	value := "0"
-	if enabled {
-		value = "1"
-	}
-	currentOut, err := freeBSDSAMRunCommand(ctx, "sysctl", "-n", "net.link.ether.inet.proxyall")
-	if err != nil {
-		return samProxyARPApplyResult{}, fmt.Errorf("read net.link.ether.inet.proxyall: %w: %s", err, strings.TrimSpace(string(currentOut)))
-	}
-	current := strings.TrimSpace(string(currentOut))
-	if current != "0" && current != "1" {
-		return samProxyARPApplyResult{}, fmt.Errorf("net.link.ether.inet.proxyall has unexpected value %q", current)
-	}
-	// A configured claim authorizes routerd to enable proxyall from its safe
-	// disabled state. It does not authorize adopting or disabling an existing
-	// operator-owned global setting. Persisted proxy-neighbor status proves
-	// routerd ownership across MASTER/BACKUP and removal transitions.
-	if enabled {
-		if current == "1" {
-			if !owned {
-				return samProxyARPApplyResult{}, errors.New("foreign net.link.ether.inet.proxyall=1: refusing adoption")
-			}
-			return samProxyARPApplyResult{}, nil
-		}
-		out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall=1")
+func (freeBSDSAMProxyNeighborApplier) SetProxyARP(ctx context.Context, _ string, enabled, owned bool, beforeAcquire func() error) (samProxyARPApplyResult, error) {
+	const key = "net.link.ether.inet.proxyall"
+	return applySAMOwnedBinarySetting(key, enabled, owned, func() (string, error) {
+		out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-n", key)
 		if err != nil {
-			return samProxyARPApplyResult{}, fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=1: %w: %s", err, strings.TrimSpace(string(out)))
+			return "", fmt.Errorf("read %s: %w: %s", key, err, strings.TrimSpace(string(out)))
 		}
-		return samProxyARPApplyResult{changedByRouterd: true}, nil
-	}
-	if !owned {
-		if current == "1" {
-			return samProxyARPApplyResult{}, errors.New("foreign net.link.ether.inet.proxyall=1: refusing disable")
+		return strings.TrimSpace(string(out)), nil
+	}, func(value string) error {
+		out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", key+"="+value)
+		if err != nil {
+			return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
 		}
-		return samProxyARPApplyResult{}, nil
-	}
-	if current == "0" {
-		return samProxyARPApplyResult{}, nil
-	}
-	out, err := freeBSDSAMRunCommand(ctx, "sysctl", "-w", "net.link.ether.inet.proxyall="+value)
-	if err != nil {
-		return samProxyARPApplyResult{}, fmt.Errorf("sysctl -w net.link.ether.inet.proxyall=%s: %w: %s", value, err, strings.TrimSpace(string(out)))
-	}
-	return samProxyARPApplyResult{}, nil
+		return nil
+	}, beforeAcquire)
+}
+
+func (freeBSDSAMProxyNeighborApplier) SetAcceptLocal(context.Context, string, bool, bool, func() error) (samProxyARPApplyResult, error) {
+	return samProxyARPApplyResult{}, fmt.Errorf("accept_local is not a FreeBSD SAM effect")
 }
 
 func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabled bool) error {
@@ -129,7 +104,7 @@ func (freeBSDSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabl
 	return nil
 }
 
-func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, address, ifname string) error {
+func (freeBSDSAMProxyNeighborApplier) EnsureProxyNeighbor(ctx context.Context, address, ifname string, _ bool, _ func() error) error {
 	ip, err := samIPv4Address(address)
 	if err != nil {
 		return err
@@ -336,29 +311,28 @@ func freeBSDARPDeleteRouteUsesInterface(ctx context.Context, address, ifname str
 	return fmt.Errorf("delete published ARP %s: route output has no interface for owned interface %s", address, ifname)
 }
 
-func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context, address string) (samOSAddressDeassignResult, error) {
+func (freeBSDSAMProxyNeighborApplier) EnsureOSAddressAbsent(ctx context.Context, address string) error {
 	ip, err := samIPv4Address(address)
 	if err != nil {
-		return samOSAddressDeassignResult{}, err
+		return err
 	}
-	result := samOSAddressDeassignResult{address: address}
 	out, err := freeBSDSAMRunCommand(ctx, "ifconfig", "-l")
 	if err != nil {
-		return result, fmt.Errorf("list FreeBSD interfaces: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("list FreeBSD interfaces: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	for _, ifname := range strings.Fields(string(out)) {
 		data, err := freeBSDSAMRunCommand(ctx, "ifconfig", ifname)
 		if err != nil {
-			return result, fmt.Errorf("observe %s for SAM address collision: %w: %s", ifname, err, strings.TrimSpace(string(data)))
+			return fmt.Errorf("observe %s for SAM address collision: %w: %s", ifname, err, strings.TrimSpace(string(data)))
 		}
 		if freeBSDInterfaceHasIPv4(data, ip) {
-			return result, fmt.Errorf("foreign OS address %s remains configured on %s", ip, ifname)
+			return fmt.Errorf("foreign OS address %s remains configured on %s", ip, ifname)
 		}
 	}
-	return result, nil
+	return nil
 }
 
-func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction) error {
+func (freeBSDSAMProxyNeighborApplier) ReconcileForwardPaths(ctx context.Context, paths []sam.CaptureAction, _ func(context.Context, string, bool) error) error {
 	freeBSDSAMForwardPathMu.Lock()
 	defer freeBSDSAMForwardPathMu.Unlock()
 

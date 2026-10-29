@@ -1851,6 +1851,23 @@ func TestValidateDHCPv6PrefixDelegationIdentity(t *testing.T) {
 	}
 }
 
+func TestValidatePDClientHasRealManagedOwner(t *testing.T) {
+	for _, client := range []string{"", api.IPv6PDClientRouterd, api.IPv6PDClientNetworkd, api.IPv6PDClientDHCPv6C, api.IPv6PDClientDHCPCD} {
+		router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "wan0", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: client}},
+		}}}
+		err := Validate(router)
+		if client == "" || client == api.IPv6PDClientRouterd {
+			if err != nil {
+				t.Fatalf("managed/default rejected: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "unsupported; use routerd-dhcpv6-client or omit client") {
+			t.Fatalf("external selector %q lacks explicit ownership error: %v", client, err)
+		}
+	}
+}
+
 func TestValidateRejectsExternalPDClientAndNetworkdDHCPv6OnSameInterface(t *testing.T) {
 	for _, client := range []string{"dhcp6c", "dhcpcd"} {
 		t.Run(client, func(t *testing.T) {

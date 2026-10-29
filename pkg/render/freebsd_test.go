@@ -15,6 +15,108 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+func TestFreeBSDRouterSolicitationKeepsAllManagedInterfaces(t *testing.T) {
+	managedFalse := false
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan-a", api.InterfaceSpec{IfName: "vtnet2"}),
+		netResource("Interface", "wan-b", api.InterfaceSpec{IfName: "vtnet1"}),
+		netResource("Interface", "wan-external", api.InterfaceSpec{IfName: "vtnet9"}),
+		netResource("IPv6RAAddress", "a", api.IPv6RAAddressSpec{Interface: "wan-a"}),
+		netResource("IPv6RAAddress", "b", api.IPv6RAAddressSpec{Interface: "wan-b"}),
+		netResource("IPv6RAAddress", "a-again", api.IPv6RAAddressSpec{Interface: "wan-a"}),
+		netResource("IPv6RAAddress", "external", api.IPv6RAAddressSpec{Interface: "wan-external", Managed: &managedFalse}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "ifconfig_vtnet9_ipv6='operator-owned'\n" + string(got.RCConf) + "\nprintf '%s\\n' \"$rtsold_flags\" \"$ipv6_cpe_wanif\" \"$ifconfig_vtnet1_ipv6\" \"$ifconfig_vtnet2_ipv6\" \"$ifconfig_vtnet9_ipv6\"\n"
+	command := exec.Command("sh", "-eu", "-c", script)
+	out, err := command.CombinedOutput()
+	expected := "vtnet1 vtnet2\nvtnet1\ninet6 -no_radr accept_rtadv\ninet6 -no_radr accept_rtadv\noperator-owned\n"
+	if err != nil || string(out) != expected {
+		t.Fatalf("effective rtsold interfaces = %q (%v), rc.conf:\n%s", out, err, got.RCConf)
+	}
+	if strings.Count(string(got.RCConf), "rtsold_flags=") != 1 || strings.Count(string(got.RCConf), "ifconfig_vtnet2_ipv6=") != 1 || strings.Contains(string(got.RCConf), "vtnet9") {
+		t.Fatalf("RA ownership was duplicated or applied to unmanaged resource:\n%s", got.RCConf)
+	}
+}
+
+func TestFreeBSDUnmanagedRouterSolicitationDoesNotEnableCPE(t *testing.T) {
+	managedFalse := false
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6RAAddress", "external", api.IPv6RAAddressSpec{Interface: "wan", Managed: &managedFalse}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got.RCConf), "ipv6_cpe_wanif=") || strings.Contains(string(got.RCConf), "rtsold_") || strings.Contains(string(got.RCConf), "accept_rtadv") {
+		t.Fatalf("unmanaged RA resource changed native RA policy:\n%s", got.RCConf)
+	}
+}
+
+func TestFreeBSDScopesEveryIPv6LinkLocalGateway(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6StaticRoute", "link-local", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe90::1"}),
+		netResource("IPv6StaticRoute", "already-scoped", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:2::/64", Via: "fe80::1%em0"}),
+		netResource("IPv6StaticRoute", "global", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:3::/64", Via: "2001:db8::1"}),
+		netResource("IPv4StaticRoute", "ipv4", api.IPv4StaticRouteSpec{Interface: "wan", Destination: "198.51.100.0/24", Via: "169.254.0.1"}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`ipv6_route_link_local="2001:db8:1::/64 fe90::1%em0"`,
+		`ipv6_route_already_scoped="2001:db8:2::/64 fe80::1%em0"`,
+		`ipv6_route_global="2001:db8:3::/64 2001:db8::1"`,
+		`route_ipv4="-net 198.51.100.0/24 169.254.0.1"`,
+	} {
+		if !strings.Contains(string(got.RCConf), expected) {
+			t.Fatalf("native route missing %q:\n%s", expected, got.RCConf)
+		}
+	}
+}
+
+func TestFreeBSDStaticRoutesPreserveCollidingNativeLabels(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6StaticRoute", "lab-v6", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "2001:db8::1"}),
+		netResource("IPv6StaticRoute", "lab.v6", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:2::/64", Via: "2001:db8::1"}),
+		netResource("IPv6StaticRoute", "lab-v6-1", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:3::/64", Via: "2001:db8::1"}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(got.RCConf) + `
+for label in $ipv6_static_routes; do
+    eval "value=\${ipv6_route_$label}"
+    printf '%s|%s\n' "$label" "$value"
+done
+`
+	out, err := exec.Command("sh", "-eu", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("source generated rc.conf: %s (%v)", out, err)
+	}
+	labels := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		label, _, ok := strings.Cut(line, "|")
+		if !ok || labels[label] {
+			t.Fatalf("two declared routes share native identity: %s", out)
+		}
+		labels[label] = true
+	}
+	for _, destination := range []string{"2001:db8:1::/64", "2001:db8:2::/64", "2001:db8:3::/64"} {
+		if !strings.Contains(string(out), "|"+destination+" 2001:db8::1\n") {
+			t.Fatalf("route %s lost after sourcing rc.conf: %s", destination, out)
+		}
+	}
+}
+
 func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd", AdminUp: true}},
@@ -25,7 +127,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false)}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv6"}, Spec: api.DHCPv6AddressSpec{Interface: "wan", Client: "dhcp6c"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "00000001"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0", Username: "user@example.jp", Password: "secret", Managed: true, DefaultRoute: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "bridge-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan-bridge", Address: "192.0.2.1/24"}},
@@ -111,10 +213,10 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 }
 
-func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
+func TestFreeBSDManagedPrefixDelegationDoesNotRenderLegacyClient(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcpcd", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
 	}}}
 	got, err := FreeBSD(router)
 	if err != nil {

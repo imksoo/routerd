@@ -4092,8 +4092,8 @@ func TestReconcilePreservesMobilityPathsWhenStaticAdvertisementsChange(t *testin
 	if pathsByKey[staticKey].Source != bgpdaemon.AppliedPathSourceStatic || pathsByKey[staticKey].UUID == "" {
 		t.Fatalf("desired static path missing from applied state: %#v", server.applied.Paths)
 	}
-	if len(server.applied.Advertisements) != 1 || server.applied.Advertisements[0] != "10.0.0.0/16" {
-		t.Fatalf("legacy static advertisements = %#v", server.applied.Advertisements)
+	if prefixes := bgpdaemon.StaticAdvertisements(server.applied.Paths); len(prefixes) != 1 || prefixes[0] != "10.0.0.0/16" {
+		t.Fatalf("static advertisements = %#v", prefixes)
 	}
 	if got := server.applied.Peers["10.0.0.21"].ExportPolicy.AllowedPrefixes; !sameStringSet(got, []string{"10.0.0.0/16", "10.77.60.11/32"}) {
 		t.Fatalf("export policy prefixes = %#v, want static and dynamic mobility prefixes", got)

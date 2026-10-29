@@ -23,7 +23,7 @@ func TestContractFrameworkRegistrationAndScheduledSelection(t *testing.T) {
 	// Construction with unused optional features must continue to support a
 	// status-only Store. No controller or auxiliary worker is executed here.
 	runner := &Runner{Router: &api.Router{}, Bus: bus.New(), Store: mapStore{}, Opts: Options{SuperviseClientDaemons: true}}
-	controllers, _, err := runner.frameworkControllers(context.Background(), slog.Default(), eventedStore{Store: runner.Store}, false, ha.Decision{})
+	controllers, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), eventedStore{Store: runner.Store}, false, ha.Decision{})
 	if err != nil {
 		t.Fatal(err)
 	}

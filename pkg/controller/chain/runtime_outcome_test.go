@@ -26,19 +26,19 @@ func TestFaultRuntimeAcceptedCancellationPropagatesBeforeAck(t *testing.T) {
 	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		if store.Router == next {
 			close(entered)
 			select {
 			case <-ctx.Done():
 				close(canceled)
 			case <-release:
-				return nil, DaemonStatusController{}, nil
+				return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 			}
 			<-release
-			return nil, DaemonStatusController{}, ctx.Err()
+			return nil, DaemonStatusController{}, controllerLifetimes{}, ctx.Err()
 		}
-		return nil, DaemonStatusController{}, nil
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	serveCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -105,14 +105,14 @@ func TestFaultRuntimeReloadConfirmedOutcomes(t *testing.T) {
 			initial, requested := lifecycleTestRouter(tc.initial, tc.initial), lifecycleTestRouter(tc.requested, tc.requested)
 			runner := &Runner{Router: initial, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 			var injected bool
-			runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+			runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 				if injected && store.Router == requested && tc.failRequested {
-					return nil, DaemonStatusController{}, requestedFailure
+					return nil, DaemonStatusController{}, controllerLifetimes{}, requestedFailure
 				}
 				if injected && store.Router == initial && tc.failRestore {
-					return nil, DaemonStatusController{}, restoreFailure
+					return nil, DaemonStatusController{}, controllerLifetimes{}, restoreFailure
 				}
-				return nil, DaemonStatusController{}, nil
+				return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 			}
 			stop, done := startFaultRuntime(t, runner)
 			defer stop()
@@ -175,12 +175,12 @@ func TestFaultRuntimeNonCooperativeBuilderFencesUntilAck(t *testing.T) {
 	entered, release, fenced := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		if store.Router == next {
 			close(entered)
 			<-release
 		}
-		return nil, DaemonStatusController{}, nil // Deliberately ignores cancellation.
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil // Deliberately ignores cancellation.
 	}
 	stop, done := startFaultRuntime(t, runner)
 	defer stop()
@@ -245,11 +245,11 @@ func TestFaultRuntimeSuccessfulGenerationOutlivesRequest(t *testing.T) {
 	old, next := lifecycleTestRouter("old", "old"), lifecycleTestRouter("new", "new")
 	runner := &Runner{Router: old, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 	contexts := make(chan context.Context, 2)
-	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		if store.Router == next {
 			contexts <- ctx
 		}
-		return nil, DaemonStatusController{}, nil
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	stop, done := startFaultRuntime(t, runner)
 	defer stop()
@@ -274,12 +274,12 @@ func TestFaultRuntimeServeStopDuringReloadAcknowledgesFailure(t *testing.T) {
 	old, next := lifecycleTestRouter("old", "old"), lifecycleTestRouter("new", "new")
 	runner := &Runner{Router: old, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 	entered := make(chan struct{})
-	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		if store.Router == next {
 			close(entered)
 			<-ctx.Done()
 		}
-		return nil, DaemonStatusController{}, nil
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	stop, done := startFaultRuntime(t, runner)
 	defer stop()
@@ -316,8 +316,8 @@ func TestFaultRuntimeServeStopDuringReloadAcknowledgesFailure(t *testing.T) {
 func TestFaultRuntimeSnapshotUpdatesKeepEpochAndRejectUnavailable(t *testing.T) {
 	old, next := lifecycleTestRouter("old", "old"), lifecycleTestRouter("new", "old")
 	runner := &Runner{Router: old, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
-		return nil, DaemonStatusController{}, nil
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	stop, done := startFaultRuntime(t, runner)
 	before := runner.ActiveRuntimeSnapshot()
@@ -343,15 +343,15 @@ func TestFaultRuntimeOldMutationStopsBeforeNewGeneration(t *testing.T) {
 	entered, canceled, exited, release, newPrepared := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	var enteredOnce, canceledOnce, exitedOnce, releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		if store.Router == next {
 			select {
 			case <-exited:
 			default:
-				return nil, DaemonStatusController{}, errors.New("new generation prepared before old mutation exited")
+				return nil, DaemonStatusController{}, controllerLifetimes{}, errors.New("new generation prepared before old mutation exited")
 			}
 			close(newPrepared)
-			return nil, DaemonStatusController{}, nil
+			return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 		}
 		return []framework.Controller{framework.FuncController{
 			ControllerName: "test",
@@ -366,7 +366,7 @@ func TestFaultRuntimeOldMutationStopsBeforeNewGeneration(t *testing.T) {
 				exitedOnce.Do(func() { close(exited) })
 				return false, ctx.Err()
 			},
-		}}, DaemonStatusController{}, nil
+		}}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	stop, done := startFaultRuntime(t, runner)
 	defer stop()

@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"slices"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/conntracktuning"
@@ -12,8 +13,28 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+// SnapshotSection identifies a successfully collected observation. An omitted
+// section was skipped or failed; an included section with no rows is empty.
+type SnapshotSection string
+
+const (
+	SectionResources        SnapshotSection = "resources" // includes interfaces, phases and gateway health
+	SectionEvents           SnapshotSection = "events"
+	SectionConnections      SnapshotSection = "connections"
+	SectionDNSQueries       SnapshotSection = "dnsQueries"
+	SectionTrafficFlows     SnapshotSection = "trafficFlows"
+	SectionFirewallLogs     SnapshotSection = "firewallLogs"
+	SectionConntrackTuning  SnapshotSection = "conntrackTuning"
+	SectionDHCPLeases       SnapshotSection = "dhcpLeases" // includes sticky lease observations
+	SectionDHCPFingerprints SnapshotSection = "dhcpFingerprints"
+	SectionNeighbors        SnapshotSection = "neighbors"
+	SectionClients          SnapshotSection = "clients"
+	SectionVPN              SnapshotSection = "vpn"
+)
+
 type Snapshot struct {
 	GeneratedAt      time.Time                     `json:"generatedAt"`
+	Collected        []SnapshotSection             `json:"collected"`
 	ConsoleLinks     []ConsoleLink                 `json:"consoleLinks,omitempty"`
 	Status           controlapi.Status             `json:"status"`
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
@@ -35,6 +56,10 @@ type Snapshot struct {
 	DPI              *DPIStatus                    `json:"dpi,omitempty"`
 	SystemUsage      SystemUsage                   `json:"systemUsage,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+func (s Snapshot) collected(section SnapshotSection) bool {
+	return slices.Contains(s.Collected, section)
 }
 
 type ConsoleLink struct {

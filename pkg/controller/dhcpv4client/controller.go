@@ -65,7 +65,10 @@ type preparedLease struct {
 }
 
 func (c *Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
+	c.mu.Lock()
+	ready := c.Router != nil && c.Bus != nil && c.Store != nil
+	c.mu.Unlock()
+	if !ready {
 		return
 	}
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dhcpv4.client.*"}}, 32)
@@ -82,11 +85,11 @@ func (c *Controller) Start(ctx context.Context) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context, name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.Router == nil {
 		return errors.New("DHCPv4 router configuration is required")
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	err := c.reconcile(ctx, name)
 	if c.Store == nil {
 		return err
@@ -99,11 +102,29 @@ func (c *Controller) Reconcile(ctx context.Context, name string) error {
 }
 
 func (c *Controller) ReconcileAll(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reconcileAll(ctx)
+}
+
+// ReconcileAllForRouter keeps the lease actor and its status ownership on one
+// immutable declaration. Static interface/spec preparation changes once when
+// that declaration is replaced; lease observations keep the existing actor.
+func (c *Controller) ReconcileAllForRouter(ctx context.Context, router *api.Router, store Store) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Router != router {
+		c.Router = router
+		c.prepared, c.prepareErr, c.leases = false, nil, nil
+	}
+	c.Store = store
+	return c.reconcileAll(ctx)
+}
+
+func (c *Controller) reconcileAll(ctx context.Context) error {
 	if c.Router == nil {
 		return errors.New("DHCPv4 router configuration is required")
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if err := c.prepare(); err != nil {
 		return err
 	}
@@ -287,6 +308,10 @@ func (c *Controller) reconcile(ctx context.Context, name string) error {
 		}
 		return err
 	}
+	return c.applyDaemonStatus(ctx, name, status)
+}
+
+func (c *Controller) applyDaemonStatus(ctx context.Context, name string, status daemonapi.DaemonStatus) error {
 	for _, resource := range status.Resources {
 		if resource.Resource.Kind != "DHCPv4Client" || resource.Resource.Name != name {
 			continue
@@ -388,6 +413,10 @@ func (c *Controller) savePendingDaemonStatus(name, socket string, cause error) e
 	if c.Store == nil {
 		return nil
 	}
+	current, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "DHCPv4Client", name)
+	if err != nil {
+		return err
+	}
 	status := map[string]any{
 		"phase":     daemonapi.ResourcePhasePending,
 		"reason":    "DaemonUnavailable",
@@ -397,7 +426,19 @@ func (c *Controller) savePendingDaemonStatus(name, socket string, cause error) e
 		"dryRun":    true,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
+	preserveLeaseEffects(current, status)
+	if expiry, present := current["expiresAt"]; present {
+		status["expiresAt"] = expiry
+	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, status)
+}
+
+func preserveLeaseEffects(current, next map[string]any) {
+	for _, key := range []string{"appliedAddress", "appliedDefaultGateway", "appliedRouteMetric", "appliedDNSServers", "ifname", "pendingAddress", "pendingAddressInterface", "pendingGateway", "pendingRouteInterface", "pendingRouteMetric", "pendingDNSServers", "pendingDNSInterface", "appliedDNSInterface"} {
+		if value, present := current[key]; present {
+			next[key] = value
+		}
+	}
 }
 
 func leaseEventChanged(current, next map[string]any) bool {
@@ -442,11 +483,7 @@ func (c *Controller) applyLease(ctx context.Context, name string, current, next 
 	}
 	// Only recorded successful effects are owned. Retain them until each undo
 	// succeeds, including when a later effect or the status write fails.
-	for _, key := range []string{"appliedAddress", "appliedDefaultGateway", "appliedRouteMetric", "appliedDNSServers", "ifname", "pendingAddress", "pendingAddressInterface", "pendingGateway", "pendingRouteInterface", "pendingRouteMetric", "pendingDNSServers", "pendingDNSInterface", "appliedDNSInterface"} {
-		if value, present := current[key]; present {
-			next[key] = value
-		}
-	}
+	preserveLeaseEffects(current, next)
 	wantedAddress, gateway := "", ""
 	var servers []string
 	valid := mapString(next, "phase") == daemonapi.ResourcePhaseBound && mapString(next, "currentAddress") != ""
