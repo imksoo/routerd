@@ -190,9 +190,21 @@ func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error 
 }
 
 func (r Runner) RunOnce(ctx context.Context, controllers ...Controller) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.MutationGate != nil && r.Exclusive {
-		r.MutationGate.Lock()
+		for !r.MutationGate.TryLock() {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Millisecond):
+			}
+		}
 		defer r.MutationGate.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 	}
 	interval := r.Interval
 	if interval == 0 {

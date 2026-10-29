@@ -214,3 +214,17 @@ func TestDecodeIgnoresLegacyGenericMobilityPoolPayload(t *testing.T) {
 		t.Fatalf("DecodeGenericDirectives() = %#v, %v", directives, err)
 	}
 }
+
+func TestFutureMobilityObservationCannotAuthorizeCurrentEffects(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	observed := now.Add(time.Minute)
+	record := routerstate.DynamicConfigPartRecord{Source: "MobilityPool/pool/node/node-a", Generation: 1, ObservedAt: observed, ExpiresAt: observed.Add(maxMobilityPoolPlanLease), Digest: "current-plan", Status: "active"}
+	active, invalid := ActiveMobilityPoolPlanRecords([]routerstate.DynamicConfigPartRecord{record}, now)
+	if len(active) != 0 || !invalid["pool"] {
+		t.Fatalf("future observation supplied current authority: active=%+v invalid=%v", active, invalid)
+	}
+	active, invalid = ActiveMobilityPoolPlanRecords([]routerstate.DynamicConfigPartRecord{record}, observed)
+	if len(active) != 1 || len(invalid) != 0 {
+		t.Fatalf("current observation not admitted: active=%+v invalid=%v", active, invalid)
+	}
+}

@@ -18,6 +18,15 @@ import (
 // False rejects a stale write; a nil event permits a status-only update.
 type StatusEventBuilder func(current, next map[string]any) (write bool, event *daemonapi.DaemonEvent)
 
+// StatusEventsBuilder commits the object's status notification and feature
+// transition together. Both events must refer to that object; at most two
+// bounded journal entries are admitted in the same transaction.
+type StatusEventsBuilder func(current, next map[string]any) (write bool, events []daemonapi.DaemonEvent)
+
+func (s *SQLiteStore) SaveObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder) ([]daemonapi.DaemonEvent, error) {
+	return s.writeObjectStatusAndEvents(apiVersion, kind, name, status, build, false, nil, 2)
+}
+
 // SaveObjectStatusAndEvent commits a status and its required transition history
 // together. The returned event has its persisted cursor; a nil event means there
 // is no transition to deliver. Delivery happens only after this method returns.
@@ -42,17 +51,27 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	if build == nil {
 		return nil, fmt.Errorf("status event builder is required")
 	}
+	events, err := s.writeObjectStatusAndEvents(apiVersion, kind, name, status, func(current, next map[string]any) (bool, []daemonapi.DaemonEvent) {
+		write, event := build(current, next)
+		if event == nil {
+			return write, nil
+		}
+		return write, []daemonapi.DaemonEvent{*event}
+	}, merge, update, 1)
+	if err != nil || len(events) == 0 {
+		return nil, err
+	}
+	return &events[0], nil
+}
+
+func (s *SQLiteStore) writeObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder, merge bool, update *pdObservationUpdate, maximumEvents int) ([]daemonapi.DaemonEvent, error) {
+	if build == nil {
+		return nil, fmt.Errorf("status event builder is required")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, sql.ErrConnDone
-	}
-	// Reserve enough journal capacity before entering the atomic status/event
-	// transaction. SQLite maintenance cannot run through the single DB
-	// connection while that transaction is open.
-	const maxStatusEventPayload = maxJournalMessageBytes + maxJournalAttributesBytes + 4096
-	if err := s.ensureEventJournalCapacityLocked(maxStatusEventPayload); err != nil {
-		return nil, s.noteStorageWriteErrorLocked(err)
 	}
 	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
@@ -89,7 +108,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 		status = next
 	}
 	write := true
-	var event *daemonapi.DaemonEvent
+	var events []daemonapi.DaemonEvent
 	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
 		observation, err := decodePDObservation(raw)
 		if err != nil {
@@ -144,7 +163,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			}
 			delete(previousView, "observation")
 			delete(nextView, "observation")
-			write, event = build(previousView, nextView)
+			write, events = build(previousView, nextView)
 		} else {
 			status = cleanPDStatus(status)
 			if observation != nil {
@@ -169,10 +188,10 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			if err := projectTypedPDStatus(nextView, observation, s.now().UTC()); err != nil {
 				return nil, err
 			}
-			write, event = build(previousView, nextView)
+			write, events = build(previousView, nextView)
 		}
 	} else {
-		write, event = build(current, status)
+		write, events = build(current, status)
 	}
 	if !write {
 		return nil, nil
@@ -198,10 +217,24 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	// Observed-generation refresh is required even if status is unchanged;
 	// it is not itself a new status transition.
 	if sameStatus {
-		event = nil
+		events = nil
 	}
-	if event != nil && (event.Resource == nil || event.Resource.APIVersion != apiVersion || event.Resource.Kind != kind || event.Resource.Name != name) {
-		return nil, fmt.Errorf("status event must reference the updated object")
+	if len(events) > maximumEvents {
+		return nil, fmt.Errorf("status transaction accepts at most %d journal events", maximumEvents)
+	}
+	for _, event := range events {
+		if event.Resource == nil || event.Resource.APIVersion != apiVersion || event.Resource.Kind != kind || event.Resource.Name != name {
+			return nil, fmt.Errorf("status event must reference the updated object")
+		}
+	}
+	var incomingBytes int64
+	for _, event := range events {
+		bounded, attrs := boundedJournalEvent(event)
+		incomingBytes += busEventJournalPayloadBytes(bounded, attrs)
+	}
+	usage, err := s.prepareEventJournalBatchLocked(tx, int64(len(events)), incomingBytes)
+	if err != nil {
+		return nil, s.noteStorageWriteErrorLocked(err)
 	}
 	now := s.now().UTC()
 	_, err = tx.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
@@ -211,32 +244,30 @@ ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_versi
 	if err != nil {
 		return nil, err
 	}
-	var cursor string
+	committed := make([]daemonapi.DaemonEvent, len(events))
 	var eventPayloadBytes int64
-	if event != nil {
-		prepared := *event
-		if prepared.Time.IsZero() {
-			prepared.Time = now
+	for i, event := range events {
+		event, _ = boundedJournalEvent(event)
+		if event.Time.IsZero() {
+			event.Time = now
 		}
-		event = &prepared
-		cursor, eventPayloadBytes, err = recordBusEvent(tx, s.generation, now, *event)
+		cursor, payloadBytes, err := recordBusEvent(tx, s.generation, now, event)
 		if err != nil {
 			return nil, s.noteStorageWriteErrorLocked(err)
 		}
+		event.Cursor = cursor
+		committed[i] = event
+		eventPayloadBytes += payloadBytes
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, s.noteStorageWriteErrorLocked(err)
 	}
+	s.applyEventJournalUsageLocked(usage)
 	s.statusWriteCount++
 	s.incrementStatusKindWriteLocked(kind)
-	if event == nil {
-		return nil, nil
-	}
-	s.eventJournalRows++
+	s.eventJournalRows += int64(len(committed))
 	s.eventJournalPayloadBytes += eventPayloadBytes
-	committed := *event
-	committed.Cursor = cursor
-	return &committed, nil
+	return committed, nil
 }
 
 // SavePDLeaseObservationAndEvent is the single observation/event commit owner.

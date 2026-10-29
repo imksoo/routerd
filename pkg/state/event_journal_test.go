@@ -171,6 +171,9 @@ func TestBoundedJournalEventTruncatesOversizedFields(t *testing.T) {
 	if len(attrs) > maxJournalAttributesBytes || !strings.Contains(attrs, "_routerdTruncated") {
 		t.Fatalf("attributes were not bounded: %d %s", len(attrs), attrs)
 	}
+	if bounded.Attributes["_routerdTruncated"] != "true" || bounded.Attributes["large"] != "" {
+		t.Fatal("returned event differs from bounded durable attributes")
+	}
 }
 
 func TestWriteStorageAlertFilePreservesTimestamp(t *testing.T) {
@@ -214,5 +217,51 @@ func TestEventJournalBudgetIncludesOtherLiveDatabaseWriters(t *testing.T) {
 	}
 	if rows > 10 {
 		t.Fatalf("external writer bypassed journal budget: %d rows", rows)
+	}
+}
+
+func TestConcurrentEventAppendsShareOneDurableBudget(t *testing.T) {
+	for _, busEvent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bus=%t", busEvent), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.db")
+			var stores []*SQLiteStore
+			for i := 0; i < 2; i++ {
+				store, err := OpenSQLite(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { store.Close() })
+				store.eventJournalMaxRows, store.eventJournalMaxBytes = 1, 4096
+				stores = append(stores, store)
+			}
+			for batch := 0; batch < 40; batch++ {
+				start, results := make(chan struct{}), make(chan error, len(stores))
+				for _, store := range stores {
+					go func(store *SQLiteStore) {
+						<-start
+						var err error
+						if busEvent {
+							_, err = store.RecordBusEvent(t.Context(), daemonapi.DaemonEvent{Type: "routerd.fixture", Message: "current"})
+						} else {
+							err = store.RecordEvent("v1", "Fixture", "item", "Normal", "Observed", "current")
+						}
+						results <- err
+					}(store)
+				}
+				close(start)
+				for range stores {
+					if err := <-results; err != nil {
+						t.Fatal(err)
+					}
+				}
+				var rows, payload int64
+				if err := stores[0].db.QueryRow(`SELECT count(*),coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).Scan(&rows, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if rows > 1 || payload > 4096 {
+					t.Fatalf("concurrent commits escaped budget: rows=%d payload=%d", rows, payload)
+				}
+			}
+		})
 	}
 }

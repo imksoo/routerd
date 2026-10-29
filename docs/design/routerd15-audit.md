@@ -820,3 +820,35 @@ preparation for native VM evidence, not execution of BPF/DHCP/PD/DNS traffic in
 this environment. A separate primary-source review also found that FreeBSD14.3
 IPv4 address add is not atomically exclusive against unrelated writers; the
 shared Static/Mobility native contract now records that limitation explicitly.
+
+## Journal transactions and canceled one-shot work
+
+This checkpoint closes reproduced defects in the existing SQLite journal and
+one-shot controller paths:
+
+- Event payload accounting now counts every stored column, including both
+  `type` and `topic`. Required status/history batches reserve their actual
+  bounded payload, rather than guessing that identifiers fit in a fixed allowance.
+- Capacity checks, retention pruning and appends commit in one transaction for
+  ordinary events and paired status/feature events. Two live SQLite writers
+  cannot each reserve the same free slot. An insert failure rolls back pruning,
+  status and required history together; cached usage changes only after commit.
+- Read-modify-write transactions acquire SQLite writer admission before reading
+  their premise. Read-only snapshot transactions retain concurrent-writer access.
+  This prevents stale-snapshot upgrade failures when a status transaction and
+  a second writer overlap; no test deadline is increased.
+- Future-dated private Mobility plan observations are unknown input and cannot
+  authorize current native effects. The existing expiry and Pool-invalid boundary
+  handles the result; no clock-skew fallback or old-format reader is introduced.
+- A canceled one-shot controller returns while another mutation holds the
+  exclusive gate, without entering its effect. The earlier blocking lock waited
+  indefinitely for that unrelated mutation.
+
+The frozen checkpoint passes the full state, dynamic-config codec and controller
+framework packages under the race detector, relevant vet and FreeBSD/amd64
+compile-only checks. `make check-routerd15-focused check-schema
+check-website-schemas` also passes, including whole-repository vet. Real
+two-connection regressions cover concurrent capacity,
+writer admission, read-only coexistence and failed paired writes. Linux daemon
+and provider-executor builds pass the static-link check. Native packet
+forwarding is a separate qualification gate.

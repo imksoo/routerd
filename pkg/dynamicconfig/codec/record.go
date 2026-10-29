@@ -73,7 +73,7 @@ func validMobilityPoolPlanEnvelope(record routerstate.DynamicConfigPartRecord, n
 	}
 	observedAt := record.ObservedAt.UTC()
 	expiresAt := record.ExpiresAt.UTC()
-	return now.Before(expiresAt) && expiresAt.After(observedAt) && expiresAt.Sub(observedAt) <= maxMobilityPoolPlanLease
+	return !observedAt.After(now) && now.Before(expiresAt) && expiresAt.After(observedAt) && expiresAt.Sub(observedAt) <= maxMobilityPoolPlanLease
 }
 
 // Encode converts a DynamicConfigPart into its persisted representation. Empty
