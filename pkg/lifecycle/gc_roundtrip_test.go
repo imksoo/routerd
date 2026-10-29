@@ -163,20 +163,20 @@ func TestGCRoundTripDryRunProducesPlanWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestGCRoundTripIssue212213TeardownIsIdempotent(t *testing.T) {
-	tc := gcRoundTripCaseByName(t, "DSLite tunnel and stale inner IPv4 alias")
+func TestGCRoundTripDefersDSLiteTunnelAndInnerAddressToNativeOwner(t *testing.T) {
 	store := newFakeGCRoundTripStore()
-	store.apply(tc.artifacts, tc.statuses)
+	artifacts := []resource.Artifact{
+		{Kind: "linux.ipip6.tunnel", Name: "ds-routerd", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite"},
+		{Kind: "net.ipv4.address", Name: "ds-routerd:192.0.0.2/32", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite"},
+	}
+	store.apply(artifacts, []routerstate.ObjectStatus{{APIVersion: api.RouterAPIVersion, Kind: "Router", Name: "dslite-native", Status: map[string]any{"tunnels": []string{"retained-native-receipt"}}}})
 	plan := store.plan(nil, nil)
-	exec := &fakeArtifactTeardownExecutor{features: tc.features}
-	if err := store.execute(plan, exec, false); err != nil {
-		t.Fatalf("first execute GC plan: %v", err)
+	executor := &fakeArtifactTeardownExecutor{features: platform.Features{HasIproute2: true}}
+	if err := store.execute(plan, executor, false); err != nil {
+		t.Fatal(err)
 	}
-	if err := store.execute(plan, exec, false); err != nil {
-		t.Fatalf("second execute GC plan: %v", err)
-	}
-	if len(store.ledger) != 0 || len(store.host) != 0 || len(store.statuses) != 0 {
-		t.Fatalf("residue after idempotent teardown ledger=%+v host=%+v statuses=%+v", store.ledgerArtifacts(), store.hostArtifacts(), store.objectStatuses())
+	if len(plan.Actions) != 0 || len(executor.commands) != 0 || len(store.ledger) != 2 || len(store.host) != 2 || len(store.statuses) != 1 {
+		t.Fatalf("generic GC bypassed native DS-Lite owner: plan=%+v commands=%+v", plan, executor.commands)
 	}
 }
 
@@ -256,11 +256,7 @@ func gcRoundTripCases() []gcRoundTripCase {
 			},
 		},
 		{
-			name:     "IPv4StaticAddress stale DSLite source alias",
-			features: platform.Features{HasIproute2: true},
-			artifacts: []resource.Artifact{
-				{Kind: "net.ipv4.address", Name: "ds-routerd:192.168.160.249/32", Owner: api.NetAPIVersion + "/IPv4StaticAddress/ds-lite-source"},
-			},
+			name: "IPv4StaticAddress native-owner status dispatch",
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: "ds-lite-source", Status: map[string]any{"phase": "Applied"}},
 			},
@@ -321,17 +317,6 @@ func gcRoundTripCases() []gcRoundTripCase {
 			},
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: "pppoe-flets", Status: map[string]any{"phase": "Applied"}},
-			},
-		},
-		{
-			name:     "DSLite tunnel and stale inner IPv4 alias",
-			features: platform.Features{HasIproute2: true},
-			artifacts: []resource.Artifact{
-				{Kind: "linux.ipip6.tunnel", Name: "ds-routerd", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite"},
-				{Kind: "net.ipv4.address", Name: "ds-routerd:192.168.160.250/32", Owner: api.NetAPIVersion + "/DSLiteTunnel/ds-lite", Attributes: map[string]string{"peer": "192.0.0.1/32"}},
-			},
-			statuses: []routerstate.ObjectStatus{
-				{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel", Name: "ds-lite", Status: map[string]any{"phase": "Applied"}},
 			},
 		},
 		{

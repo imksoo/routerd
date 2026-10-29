@@ -43,7 +43,8 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 	}}}}
 	runner := &Runner{
 		Router: router,
-		Opts:   Options{SuperviseDNSResolvers: true},
+		Store:  mapStore{},
+		Opts:   Options{SuperviseClientDaemons: true, SuperviseDNSResolvers: true},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	// This cleanup runs before PATH, marker-root and temporary-file cleanup.
@@ -62,7 +63,9 @@ func TestSuperviseClientDaemonsStartsDNSResolverWhenEnabled(t *testing.T) {
 			}
 		}
 	})
-	runner.superviseClientDaemons(ctx, nil)
+	if err := runner.reconcileSupervisedClientDaemons(ctx, router, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	var data []byte
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {

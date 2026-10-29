@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"go.opentelemetry.io/otel"
@@ -15,21 +14,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 )
-
-type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
-type Controller struct {
-	Command CommandRunner
-	DryRun  bool
-	// Binary optionally overrides the swanctl executable. FreeBSD packages
-	// install it under /usr/local/sbin while Linux normally resolves swanctl
-	// from PATH.
-	Binary string
-	// ConfigFile optionally selects the complete swanctl configuration to
-	// synchronize.  routerd uses a dedicated aggregate file so it never relies
-	// on a distribution's implicit conf.d include policy.
-	ConfigFile string
-}
 
 func RenderSwanctl(name string, spec api.IPsecConnectionSpec) ([]byte, error) {
 	if name == "" {
@@ -78,39 +62,6 @@ func RenderSwanctl(name string, spec api.IPsecConnectionSpec) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// LoadAll synchronizes the complete swanctl configuration, including secrets.
-// Loading one routerd-owned file at a time is unsafe: swanctl synchronizes the
-// connection set and may unload connections defined by a prior file.
-func (c Controller) LoadAll(ctx context.Context) error {
-	if c.DryRun {
-		return nil
-	}
-	run := c.Command
-	if run == nil {
-		run = runCommand
-	}
-	binary := strings.TrimSpace(c.Binary)
-	if binary == "" {
-		binary = "swanctl"
-	}
-	args := []string{"--load-all"}
-	if file := strings.TrimSpace(c.ConfigFile); file != "" {
-		args = append(args, "--file", file)
-	}
-	out, err := run(ctx, binary, args...)
-	if err != nil {
-		return fmt.Errorf("swanctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// Load is retained for callers compiled against the previous API. The path is
-// intentionally not used: safe reconciliation always loads the complete
-// swanctl configuration and credentials set.
-func (c Controller) Load(ctx context.Context, _ string) error {
-	return c.LoadAll(ctx)
-}
-
 func RecordMetrics(ctx context.Context, connection string, established int64, bytes int64) {
 	meter := otel.Meter("routerd.ipsec")
 	count, _ := meter.Int64Counter("routerd.ipsec.sa.established.count")
@@ -147,8 +98,4 @@ func quoteSwanctl(value string) string {
 		"\t", `\t`,
 	)
 	return `"` + replacer.Replace(value) + `"`
-}
-
-func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }

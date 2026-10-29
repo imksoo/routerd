@@ -19,25 +19,174 @@ import (
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
-// A pending receipt is saved before the command: a restart must also recover
-// the case where the kernel changed but the command's result was not recorded.
-// There is at most one possibly owned route. An old identity is withdrawn before
-// a different identity is staged.
+// A pending receipt fences an uncertain add or delete. A plain native route
+// has no private ownership cookie, so a restart may retire/retry pending work
+// only after observing the exact tuple absent. Presence requires operator
+// inspection and removal. A different identity waits for the old withdrawal.
 type ipv4RouteReceipt struct {
-	Route   ipv4RouteRemoval `json:"route"`
-	Pending bool             `json:"pending"`
+	Route       ipv4RouteRemoval `json:"route"`
+	Scope       string           `json:"scope"`
+	IfIndex     int              `json:"ifIndex"`
+	ParentToken string           `json:"parentToken"`
+	Pending     bool             `json:"pending"`
 }
 
 type ipv4RouteStatusReader interface {
 	ReadObjectStatus(string, string, string) (map[string]any, error)
 }
 
-func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resource api.Resource, spec api.IPv4RouteSpec) error {
-	reader, ok := c.Store.(ipv4RouteStatusReader)
-	if !ok {
-		return errors.New("IPv4Route status reading is unavailable")
+type ordinaryRoutePremise struct {
+	Route       ipv4RouteRemoval
+	Scope       string
+	IfIndex     int
+	ParentToken string
+	Active      bool
+	Reason      string
+}
+
+// Unknown device enumeration is an error. Only a successful complete native
+// enumeration can establish that a required device has disappeared.
+func (c IPv4RouteController) ordinaryRouteDevice(ctx context.Context, name string) (int, bool, error) {
+	if c.DeviceLookup != nil {
+		index, present, err := c.DeviceLookup(ctx, name)
+		if err == nil && present && index < 1 {
+			return 0, false, errors.New("IPv4Route device observation has no index")
+		}
+		return index, present, err
 	}
-	previous, err := reader.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
+	iface, err := (LinkController{}).lookupInterface(name)
+	if err != nil {
+		return 0, false, err
+	}
+	if iface == nil {
+		return 0, false, nil
+	}
+	if iface.Index < 1 {
+		return 0, false, errors.New("IPv4Route device has no native index")
+	}
+	return iface.Index, true, nil
+}
+func (c IPv4RouteController) ordinaryRouteScope(ctx context.Context) (string, error) {
+	if c.NativeScope != nil {
+		return c.NativeScope(ctx)
+	}
+	return platform.KernelNetworkScope(ctx)
+}
+
+// A declared Segment's native name alone cannot admit child effects. Require
+// the actual parent's applied journal and current native cookie, including after
+// a persistence wait, rather than trusting its public status or a foreign link.
+func (c IPv4RouteController) ordinaryRouteSegmentParent(ctx context.Context, device, scope string, index int) (string, error) {
+	if c.Router == nil {
+		return "", errors.New("IPv4Route current router is unavailable")
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "VXLANSegment" {
+			continue
+		}
+		spec, err := resource.VXLANSegmentSpec()
+		if err != nil {
+			return "", err
+		}
+		if firstNonEmpty(spec.IfName, resource.Metadata.Name) != device {
+			continue
+		}
+		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
+		if c.Segments != nil {
+			owner = *c.Segments
+			owner.Router = c.Router
+		}
+		link, err := owner.ObserveOwnedInterface(ctx, resource.Metadata.Name)
+		if err != nil {
+			return "", err
+		}
+		if !link.Exists {
+			return "", errors.New("IPv4Route native VXLAN parent is not acquired")
+		}
+		if link.Config.IfName != device || link.Scope != scope || link.Index != index {
+			return "", errors.New("IPv4Route native VXLAN parent identity changed")
+		}
+		return link.Token, nil
+	}
+	return "", nil
+}
+
+func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.IPv4RouteSpec) (ordinaryRoutePremise, error) {
+	var result ordinaryRoutePremise
+	ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
+	if err != nil {
+		return result, err
+	}
+	if !ready {
+		result.Reason = "DependsOnFalse"
+		return result, nil
+	}
+	routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")
+	gateway, err := resourcequery.ReadValue(c.Store, spec.GatewayFrom)
+	if err != nil {
+		return result, err
+	}
+	device := ""
+	if routeType != "blackhole" {
+		device, err = resourcequery.ReadValue(c.Store, spec.DeviceFrom)
+		if err != nil {
+			return result, err
+		}
+		device = firstNonEmpty(device, strings.TrimSpace(spec.Device))
+		if device == "" {
+			result.Reason = "DeviceMissing"
+			return result, nil
+		}
+		if !c.DryRun {
+			var present bool
+			result.IfIndex, present, err = c.ordinaryRouteDevice(ctx, device)
+			if err != nil {
+				return result, err
+			}
+			if !present {
+				result.Reason = "DeviceNotReady"
+				return result, nil
+			}
+		}
+	}
+	preferred := strings.TrimSpace(spec.PreferredSource)
+	if !c.DryRun && preferred != "" && routeType != "blackhole" {
+		local, err := c.ordinaryRoutePreferredSourceIsLocal(ctx, preferred)
+		if err != nil {
+			return result, err
+		}
+		if !local {
+			preferred = ""
+		}
+	}
+	result.Route, err = normalizeOrdinaryRoute(ipv4RouteRemoval{Type: routeType, Destination: firstNonEmpty(spec.Destination, "0.0.0.0/0"), Device: device, Gateway: firstNonEmpty(gateway, strings.TrimSpace(spec.Gateway)), PreferredSource: preferred, Metric: strconv.Itoa(spec.Metric)})
+	if err != nil {
+		return result, err
+	}
+	if !c.DryRun {
+		result.Scope, err = c.ordinaryRouteScope(ctx)
+		if err != nil {
+			return result, err
+		}
+		if result.Scope == "" {
+			return result, errors.New("IPv4Route kernel scope is unavailable")
+		}
+		if result.Route.Type != "blackhole" {
+			result.ParentToken, err = c.ordinaryRouteSegmentParent(ctx, device, result.Scope, result.IfIndex)
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+	result.Active = true
+	return result, nil
+}
+
+func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resource api.Resource, spec api.IPv4RouteSpec) error {
+	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", resource.Metadata.Name)
 	if err != nil {
 		return err
 	}
@@ -48,123 +197,117 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 	if err != nil {
 		return err
 	}
-	ready, err := resourcequery.ReadDependenciesReady(reader, spec.DependsOn)
+	premise, err := c.ordinaryRoutePremise(ctx, spec)
 	if err != nil {
 		return err
 	}
-	if !ready {
-		phase, err := dependencyUnavailablePhase(c.Router, reader, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
-		if err != nil {
-			return err
+	status := map[string]any{"phase": "Pending", "reason": premise.Reason, "dryRun": c.DryRun}
+	if !premise.Active {
+		if premise.Reason == "DependsOnFalse" {
+			phase, err := dependencyUnavailablePhase(c.Router, c.Store, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
+			if err != nil {
+				return err
+			}
+			dependencies, err := dependencyStatusSnapshot(c.Store, spec.DependsOn)
+			if err != nil {
+				return err
+			}
+			status["phase"], status["dependencies"] = phase, dependencies
 		}
-		dependencies, err := dependencyStatusSnapshot(reader, spec.DependsOn)
-		if err != nil {
-			return err
-		}
-		status := map[string]any{"phase": phase, "reason": "DependsOnFalse", "dependencies": dependencies, "dryRun": c.DryRun}
 		return c.withdrawInactiveOrdinaryRoute(ctx, resource.Metadata.Name, status, receipt)
 	}
-	routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")
-	device := ""
-	gatewayValue, err := resourcequery.ReadValue(reader, spec.GatewayFrom)
-	if err != nil {
-		return err
+	desired := premise.Route
+	status = map[string]any{"phase": "Installed", "type": desired.Type, "destination": desired.Destination, "device": desired.Device, "gateway": desired.Gateway, "preferredSource": strings.TrimSpace(spec.PreferredSource), "effectivePreferredSource": desired.PreferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
+	if spec.PreferredSource != "" && desired.PreferredSource == "" && desired.Type != "blackhole" {
+		status["preferredSourceSkipped"], status["preferredSourceSkipReason"] = true, "LocalAddressMissing"
 	}
-	gateway := firstNonEmpty(gatewayValue, strings.TrimSpace(spec.Gateway))
-	if routeType != "blackhole" {
-		deviceValue, err := resourcequery.ReadValue(reader, spec.DeviceFrom)
-		if err != nil {
-			return err
-		}
-		device = firstNonEmpty(deviceValue, strings.TrimSpace(spec.Device))
-	}
-	if routeType != "blackhole" {
-		if device == "" {
-			return c.withdrawInactiveOrdinaryRoute(ctx, resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceMissing", "dryRun": c.DryRun}, receipt)
-		}
-		present := c.DevicePresent
-		if present == nil {
-			present = interfaceDevicePresent
-		}
-		if !c.DryRun && !present(ctx, device) {
-			return c.withdrawInactiveOrdinaryRoute(ctx, resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DeviceNotReady", "dryRun": c.DryRun}, receipt)
-		}
-	}
-	destination := firstNonEmpty(spec.Destination, "0.0.0.0/0")
-	preferredSource := strings.TrimSpace(spec.PreferredSource)
-	phase := "Installed"
-	if c.DryRun {
-		phase = "Rendered"
-	}
-	status := map[string]any{"phase": phase, "type": routeType, "destination": destination, "device": device, "gateway": gateway, "preferredSource": preferredSource, "metric": spec.Metric, "dryRun": c.DryRun}
 	changed := routeInstallStatusChanged(previous, status)
 	if value, ok := previous["installedAt"]; ok && !changed {
 		status["installedAt"] = value
 	}
 	if c.DryRun {
+		status["phase"] = "Rendered"
 		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
 	}
 	if platform.CurrentOS() == platform.OSFreeBSD && spec.Metric != 0 {
 		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "UnsupportedMetric", errors.New("FreeBSD IPv4Route does not support a Linux route metric"))
 	}
-	effectiveSource := preferredSource
-	if preferredSource != "" && routeType != "blackhole" {
-		local, err := c.ordinaryRoutePreferredSourceIsLocal(ctx, preferredSource)
+	if receipt != nil {
+		matching, _, err := c.observeOrdinaryRoute(ctx, receipt.Route)
 		if err != nil {
 			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
 		}
-		if !local {
-			effectiveSource = ""
-			status["preferredSourceSkipped"], status["preferredSourceSkipReason"] = true, "LocalAddressMissing"
+		if matching && receipt.Pending {
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "OwnershipUnknown", errors.New("pending IPv4Route is present without a private native ownership cookie; inspect and remove it before retrying"))
 		}
-	}
-	status["effectivePreferredSource"] = effectiveSource
-	desired, err := normalizeOrdinaryRoute(ipv4RouteRemoval{Type: routeType, Destination: destination, Device: device, Gateway: gateway, PreferredSource: effectiveSource, Metric: strconv.Itoa(spec.Metric)})
-	if err != nil {
-		return err
-	}
-	if receipt != nil && receipt.Route != desired {
-		if err := c.removeOrdinaryRoute(ctx, receipt.Route); err != nil {
+		if matching && receipt.Route == desired {
+			if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
+				return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "OwnershipUnknown", err)
+			}
+			status["changed"], status["kernelRouteAlreadyCurrent"] = changed, true
+			return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
+		}
+		if err := c.withdrawOrdinaryReceipt(ctx, resource.Metadata.Name, status, receipt); err != nil {
 			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "WithdrawFailed", err)
 		}
 		receipt = nil
-		status["phase"] = "Pending"
-		if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, nil); err != nil {
+		if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, map[string]any{"phase": "Pending", "dryRun": false}, nil); err != nil {
 			return err
 		}
 	}
-	matching, collision, err := c.observeOrdinaryRoute(ctx, desired)
+	_, collision, err := c.observeOrdinaryRoute(ctx, desired)
 	if err != nil {
 		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
-	}
-	if matching && receipt != nil {
-		receipt.Pending = false
-		if changed {
-			status["installedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
-		}
-		status["phase"], status["changed"], status["kernelRouteAlreadyCurrent"] = "Installed", changed, true
-		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
 	}
 	if collision {
 		return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "ForeignRoutePreserved", errors.New("existing route has no matching applied ownership"))
 	}
-	receipt = &ipv4RouteReceipt{Route: desired, Pending: true}
+	receipt = &ipv4RouteReceipt{Route: desired, Scope: premise.Scope, IfIndex: premise.IfIndex, ParentToken: premise.ParentToken, Pending: true}
 	status["phase"] = "Applying"
 	if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt); err != nil {
 		return err
 	}
+	// Persistence can wait. Recheck both observations and desired authority before
+	// the exclusive acquisition; this attempt has not issued a native write yet.
+	fresh, err := c.ordinaryRoutePremise(ctx, spec)
+	if err != nil {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+	}
+	_, collision, err = c.observeOrdinaryRoute(ctx, desired)
+	if err != nil {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+	}
+	if fresh != premise || collision {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "AcquisitionPremiseChanged", errors.New("IPv4Route premise changed after pending persistence; no native add was issued"))
+	}
 	name, args := ordinaryRouteApplyCommand(desired)
 	out, err := c.run(ctx, name, args...)
-	if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
-		args = freeBSDIPv4RouteAddArgs(args)
-		out, err = c.run(ctx, name, args...)
-	}
 	if err != nil {
 		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyFailed", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out))))
 	}
+	matching, _, err := c.observeOrdinaryRoute(ctx, desired)
+	if err != nil || !matching {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyUnconfirmed", errors.Join(err, errors.New("IPv4Route add did not read back the exact native tuple")))
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ApplyUnconfirmed", err)
+	}
+	fresh, err = c.ordinaryRoutePremise(ctx, spec)
+	if err != nil {
+		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
+	}
+	if fresh != premise {
+		// This invocation has the exclusive-add acknowledgement and exact readback.
+		// It may withdraw that known effect without publishing Installed first.
+		known := *receipt
+		known.Pending = false
+		if err := c.withdrawOrdinaryReceipt(ctx, resource.Metadata.Name, status, &known); err != nil {
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "WithdrawFailed", err)
+		}
+		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PremiseChanged", "dryRun": false}, nil)
+	}
 	receipt.Pending = false
-	status["phase"], status["changed"] = "Installed", true
-	status["installedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
+	status["phase"], status["changed"], status["installedAt"] = "Installed", true, time.Now().UTC().Format(time.RFC3339Nano)
 	if err := c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt); err != nil {
 		return err
 	}
@@ -175,6 +318,73 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 		return c.Bus.Publish(ctx, event)
 	}
 	return nil
+}
+
+func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, receipt ipv4RouteReceipt) error {
+	scope, err := c.ordinaryRouteScope(ctx)
+	if err != nil {
+		return err
+	}
+	if scope != receipt.Scope {
+		return errors.New("IPv4Route receipt belongs to another kernel scope")
+	}
+	if receipt.Route.Type == "blackhole" {
+		return nil
+	}
+	index, present, err := c.ordinaryRouteDevice(ctx, receipt.Route.Device)
+	if err != nil {
+		return err
+	}
+	if !present || index != receipt.IfIndex {
+		return errors.New("IPv4Route native device was removed or replaced")
+	}
+	if receipt.ParentToken != "" {
+		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
+		if c.Segments != nil {
+			owner = *c.Segments
+		}
+		link, err := owner.ObserveRecordedInterface(ctx, receipt.Route.Device, receipt.ParentToken)
+		if err != nil {
+			return err
+		}
+		if !link.Exists || link.Scope != scope || link.Index != index || link.Config.IfName != receipt.Route.Device || link.Token != receipt.ParentToken {
+			return errors.New("IPv4Route recorded VXLAN parent identity changed")
+		}
+		return nil
+	}
+	token, err := c.ordinaryRouteSegmentParent(ctx, receipt.Route.Device, scope, index)
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		return errors.New("IPv4Route receipt lacks its VXLAN parent token")
+	}
+	return nil
+}
+
+func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name string, status map[string]any, receipt *ipv4RouteReceipt) error {
+	matching, _, err := c.observeOrdinaryRoute(ctx, receipt.Route)
+	if err != nil || !matching {
+		return err
+	}
+	if receipt.Pending {
+		return errors.New("pending IPv4Route is present; native ownership is unknown, inspect and remove it before retrying")
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
+		return err
+	}
+	pending := *receipt
+	pending.Pending = true
+	pendingStatus := copyStatusMap(status)
+	pendingStatus["phase"] = "Withdrawing"
+	if err := c.saveOrdinaryRouteStatus(name, pendingStatus, &pending); err != nil {
+		return err
+	}
+	*receipt = pending
+	if err := c.verifyOrdinaryRouteIdentity(ctx, pending); err != nil {
+		return err
+	}
+	return c.removeOrdinaryRoute(ctx, pending.Route)
 }
 
 func (c IPv4RouteController) saveOrdinaryRouteStatus(name string, status map[string]any, receipt *ipv4RouteReceipt) error {
@@ -209,6 +419,9 @@ func (c IPv4RouteController) ordinaryRoutePreferredSourceIsLocal(ctx context.Con
 		return false, errors.New("preferred source observation is not an address array")
 	}
 	for _, link := range links {
+		if link.AddrInfo == nil {
+			return false, errors.New("preferred source observation has no address array")
+		}
 		for _, info := range link.AddrInfo {
 			if info.Family == "inet" && info.Local == addr.String() {
 				return true, nil
@@ -225,7 +438,7 @@ func (c IPv4RouteController) failOrdinaryRoute(name string, status map[string]an
 
 func (c IPv4RouteController) withdrawInactiveOrdinaryRoute(ctx context.Context, name string, status map[string]any, receipt *ipv4RouteReceipt) error {
 	if receipt != nil && !c.DryRun {
-		if err := c.removeOrdinaryRoute(ctx, receipt.Route); err != nil {
+		if err := c.withdrawOrdinaryReceipt(ctx, name, status, receipt); err != nil {
 			return c.failOrdinaryRoute(name, status, receipt, "WithdrawFailed", err)
 		}
 		receipt = nil
@@ -255,6 +468,19 @@ func ipv4RouteReceiptFromStatus(status map[string]any) (*ipv4RouteReceipt, error
 			return nil, errors.New("invalid IPv4Route owned route")
 		}
 		receipt.Route = ipv4RouteRemovalFromStatus(route)
+		receipt.Scope, ok = value["scope"].(string)
+		if !ok {
+			return nil, errors.New("invalid IPv4Route scope")
+		}
+		index, ok := value["ifIndex"].(float64)
+		if !ok || index < 0 || index > 2147483647 || index != float64(int(index)) {
+			return nil, errors.New("invalid IPv4Route index")
+		}
+		receipt.IfIndex = int(index)
+		receipt.ParentToken, ok = value["parentToken"].(string)
+		if !ok {
+			return nil, errors.New("invalid IPv4Route parent ownership")
+		}
 		var valid bool
 		receipt.Pending, valid = value["pending"].(bool)
 		if !valid {
@@ -265,6 +491,9 @@ func ipv4RouteReceiptFromStatus(status map[string]any) (*ipv4RouteReceipt, error
 	}
 	var err error
 	receipt.Route, err = normalizeOrdinaryRoute(receipt.Route)
+	if receipt.Scope == "" || receipt.Route.Type != "blackhole" && receipt.IfIndex < 1 || receipt.Route.Type == "blackhole" && receipt.IfIndex != 0 {
+		return nil, errors.New("IPv4Route receipt has no exact kernel/device identity")
+	}
 	return &receipt, err
 }
 
@@ -308,11 +537,12 @@ func normalizeOrdinaryRoute(route ipv4RouteRemoval) (ipv4RouteRemoval, error) {
 
 func ordinaryRouteApplyCommand(route ipv4RouteRemoval) (string, []string) {
 	if platform.CurrentOS() == platform.OSFreeBSD {
-		return freeBSDIPv4RouteApplyCommand(route.Type, route.Destination, route.Device, route.Gateway, route.PreferredSource)
+		name, args := freeBSDIPv4RouteApplyCommand(route.Type, route.Destination, route.Device, route.Gateway, route.PreferredSource)
+		return name, freeBSDIPv4RouteAddArgs(args)
 	}
-	args := []string{"route", "replace", route.Destination}
+	args := []string{"route", "add", route.Destination}
 	if route.Type == "blackhole" {
-		args = []string{"route", "replace", "blackhole", route.Destination}
+		args = []string{"route", "add", "blackhole", route.Destination}
 	} else {
 		if route.Gateway != "" {
 			args = append(args, "via", route.Gateway)
@@ -325,6 +555,7 @@ func ordinaryRouteApplyCommand(route ipv4RouteRemoval) (string, []string) {
 	if route.Metric != "0" {
 		args = append(args, "metric", route.Metric)
 	}
+	args = append(args, "proto", "boot")
 	return "ip", args
 }
 
@@ -426,6 +657,13 @@ func (c IPv4RouteController) removeOrdinaryRoute(ctx context.Context, route ipv4
 	if err != nil && !missingIPv4RouteDelete(err, out) {
 		return fmt.Errorf("withdraw IPv4Route: %s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
+	remaining, _, readErr := c.observeOrdinaryRoute(ctx, route)
+	if readErr != nil {
+		return readErr
+	}
+	if remaining {
+		return errors.New("IPv4Route remains after delete")
+	}
 	return nil
 }
 
@@ -479,5 +717,5 @@ func (c IPv4RouteController) observeFreeBSDOrdinaryRoute(ctx context.Context, wa
 	comparison := wanted
 	comparison.PreferredSource = "" // route get exposes gateway/interface, not -ifa.
 	collision := actual.Destination == wanted.Destination
-	return actual == comparison && strings.Contains(values["flags"], "STATIC") && !strings.Contains(values["flags"], "PROTO1") && !strings.Contains(values["flags"], "PROTO2"), collision, nil
+	return actual == comparison && strings.Contains(values["flags"], "STATIC") && !strings.Contains(values["flags"], "PROTO1") && !strings.Contains(values["flags"], "PROTO2") && !strings.Contains(values["flags"], "REJECT"), collision, nil
 }

@@ -189,16 +189,27 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 			key = ip
 		}
 		row := upsert(key, ip)
-		if flow.Accounting {
-			row.Accounting = true
-			row.BytesOut += flow.BytesOut
-			row.BytesIn += flow.BytesIn
+		if flow.BytesOut == nil {
+			row.BytesOutIncomplete = true
+		} else {
+			if row.BytesOut == nil {
+				row.BytesOut = new(int64)
+			}
+			*row.BytesOut += *flow.BytesOut
+		}
+		if flow.BytesIn == nil {
+			row.BytesInIncomplete = true
+		} else {
+			if row.BytesIn == nil {
+				row.BytesIn = new(int64)
+			}
+			*row.BytesIn += *flow.BytesIn
 		}
 		peer := firstNonEmptyString(flow.TLSSNI, flow.HTTPHost, flow.DNSQuery, flow.ResolvedHostname, flow.PeerAddress)
 		if peer != "" {
 			row.peers[peer] = true
 		}
-		row.recordActivity(flowActivityName(flow), flowActivityDetail(flow), flow.BytesOut+flow.BytesIn, flow.EndedAt)
+		row.recordActivity(flowActivityName(flow), flowActivityDetail(flow), knownTrafficBytes(flow.BytesOut, flow.BytesIn), flow.EndedAt)
 		row.sources["traffic"] = true
 	}
 	out := make([]ClientEntry, 0, len(rows))
@@ -215,8 +226,8 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		out = append(out, row.ClientEntry)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		trafficI := out[i].BytesOut + out[i].BytesIn
-		trafficJ := out[j].BytesOut + out[j].BytesIn
+		trafficI := knownTrafficBytes(out[i].BytesOut, out[i].BytesIn)
+		trafficJ := knownTrafficBytes(out[j].BytesOut, out[j].BytesIn)
 		if trafficI != trafficJ {
 			return trafficI > trafficJ
 		}
@@ -518,4 +529,17 @@ func isLikelyClientAddress(address string) bool {
 		return addr.IsPrivate()
 	}
 	return addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}
+
+// Ranking uses the observed portion only; presentation retains each missing
+// direction and its incomplete marker instead of calling this a complete total.
+func knownTrafficBytes(out, in *int64) int64 {
+	var total int64
+	if out != nil {
+		total += *out
+	}
+	if in != nil {
+		total += *in
+	}
+	return total
 }

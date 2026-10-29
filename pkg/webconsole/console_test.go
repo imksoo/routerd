@@ -84,7 +84,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = dnsLog.Close()
-	flows, err := logstore.OpenTrafficFlowLog(trafficLog)
+	flows, err := logstore.OpenTrafficFlowLog(t.Context(), trafficLog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,7 +955,7 @@ func TestHandlerServesTrafficFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = dnsLog.Close()
-	flowLog, err := logstore.OpenTrafficFlowLog(path)
+	flowLog, err := logstore.OpenTrafficFlowLog(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1611,7 +1611,7 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 			{MAC: "4e:20:15:aa:e0:67", IP: "2409:10:3d60:1271::abcd", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
 			{MAC: "4e:20:15:aa:e0:67", IP: "fe80::14c5:6fd7:b848:a739", IfName: "ens19", State: "STALE", Source: "ip-neigh"},
 		},
-		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", Accounting: true, BytesOut: 120, BytesIn: 240}},
+		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271::abcd", PeerAddress: "2001:4860:4860::8888", BytesOut: counterFixture(120), BytesIn: counterFixture(240)}},
 		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271::abcd", QuestionName: "www.icloud.com", QuestionType: "AAAA"}},
 		nil,
 	)
@@ -1627,7 +1627,7 @@ func TestCorrelateClientsMergesDHCPLeaseAndIPv6NeighborByMAC(t *testing.T) {
 			t.Fatalf("addresses missing %s: %+v", want, row.Addresses)
 		}
 	}
-	if row.BytesOut != 120 || row.BytesIn != 240 {
+	if (row.BytesOut == nil || *row.BytesOut != 120) || (row.BytesIn == nil || *row.BytesIn != 240) {
 		t.Fatalf("traffic was not joined to client: %+v", row)
 	}
 	if row.InferredOSFamily != "Apple" || row.FingerprintConfidence == 0 {
@@ -1646,9 +1646,8 @@ func TestCorrelateClientsAddsDPIActivitySummary(t *testing.T) {
 				PeerAddress:   "93.184.216.34",
 				AppName:       "tls",
 				TLSSNI:        "example.com",
-				Accounting:    true,
-				BytesOut:      1600,
-				BytesIn:       6400,
+				BytesOut:      counterFixture(1600),
+				BytesIn:       counterFixture(6400),
 				EndedAt:       now.Add(-2 * time.Minute),
 			},
 			{
@@ -1656,9 +1655,8 @@ func TestCorrelateClientsAddsDPIActivitySummary(t *testing.T) {
 				PeerAddress:      "1.1.1.1",
 				AppName:          "dns",
 				ResolvedHostname: "one.one.one.one",
-				Accounting:       true,
-				BytesOut:         120,
-				BytesIn:          240,
+				BytesOut:         counterFixture(120),
+				BytesIn:          counterFixture(240),
 				EndedAt:          now,
 			},
 		},
@@ -1815,7 +1813,7 @@ func TestHandlerClientSnapshotIgnoresStaleIPBasedFingerprints(t *testing.T) {
 	_ = dnsLog.Close()
 
 	trafficLog := filepath.Join(dir, "traffic-flows.db")
-	traffic, err := logstore.OpenTrafficFlowLog(trafficLog)
+	traffic, err := logstore.OpenTrafficFlowLog(t.Context(), trafficLog)
 	if err != nil {
 		t.Fatal(err)
 	}

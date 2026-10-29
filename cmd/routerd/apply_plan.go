@@ -24,20 +24,20 @@ func planApply(ctx context.Context, router *api.Router, opts applyOptions) (*app
 	if closer, ok := store.(interface{ Close() error }); ok {
 		defer closer.Close()
 	}
-	declared, err := controllerchain.BuildDynamicRouteSAMEffectiveRouter(router, store, time.Now().UTC(), platformDefaults.OS)
+	observations, ok := store.(controllerchain.RuntimeObservationStore)
+	if !ok {
+		return nil, fmt.Errorf("plan state does not expose resource observations")
+	}
+	view, err := controllerchain.ObserveRouterConfiguration(router, observations, time.Now().UTC(), platformDefaults.OS)
 	if err != nil {
 		return nil, err
 	}
-	effective, err := filterRouterByWhen(declared, store)
+	result, err := apply.New(ctx).PlanEffective(view.RouteRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New(ctx).PlanEffective(effective, declared)
-	if err != nil {
-		return nil, err
-	}
-	appendPrefixDelegationStateWarnings(result, declared, store)
-	if err := appendLedgerOwnedOrphans(ctx, result, effective, declared, opts.LedgerPath, true); err != nil {
+	appendPrefixDelegationStateWarnings(result, view.EffectiveRouter, store)
+	if err := appendLedgerOwnedOrphans(ctx, result, view.RouteRouter, view.DeclaredRouter, opts.LedgerPath, true); err != nil {
 		return nil, err
 	}
 	return result, nil

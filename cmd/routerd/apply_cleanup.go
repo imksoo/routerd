@@ -238,6 +238,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 		"dslite",
 		"firewall",
 		"ingress",
+		"ipsec",
 		"kernel-module",
 		"nat",
 		"network-adoption",

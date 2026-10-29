@@ -73,6 +73,10 @@ func (c BridgeController) bridgePlan(resource api.Resource) (bridgePlan, error) 
 	plan := bridgePlan{IfName: firstNonEmpty(spec.IfName, resource.Metadata.Name), MTU: spec.MTU, MACAddress: spec.MACAddress, STP: api.BoolDefault(spec.STP, true), MulticastSnooping: api.BoolDefault(spec.MulticastSnooping, false), ForwardDelay: chainFirstNonZero(spec.ForwardDelay, 4), HelloTime: chainFirstNonZero(spec.HelloTime, 2)}
 	aliases := bridgeInterfaceAliases(c.Router)
 	for _, member := range spec.Members {
+		// Segment owns its port together with its link/FDB acquisition.
+		if vxlanSegmentMember(c.Router, member) {
+			continue
+		}
 		ifname := aliases[member]
 		if ifname == "" {
 			return plan, fmt.Errorf("Bridge/%s member %s is unavailable", resource.Metadata.Name, member)
@@ -672,4 +676,13 @@ func (c BridgeController) installBridgeFile(artifact bridgeOwnedFile) error {
 		return err
 	}
 	return os.Link(temporary, path)
+}
+
+func vxlanSegmentMember(router *api.Router, member string) bool {
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind == "VXLANSegment" && resource.Metadata.Name == member {
+			return true
+		}
+	}
+	return false
 }

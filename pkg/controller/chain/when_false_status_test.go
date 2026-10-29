@@ -239,12 +239,15 @@ func TestSaveWhenFalseStatusesRetainsIPv4StaticAddressCleanupMetadata(t *testing
 	}}}
 	store := mapStore{
 		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4":        {"role": "backup"},
-		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32"},
+		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32", "ifname": "ens18", "nativeReceipt": staticAddressReceipt{IfName: "ens18", IfIndex: 10, Scope: "fixture-kernel", Address: "192.0.2.249/32"}},
 	}
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "master-source")
+	if receipt, err := staticReceipt(status); err != nil || receipt == nil {
+		t.Fatalf("lost native receipt: %#v %v", receipt, err)
+	}
 	if got := status["ifname"]; got != "ens18" {
 		t.Fatalf("ifname = %v, want ens18; status=%#v", got, status)
 	}

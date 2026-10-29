@@ -194,6 +194,9 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		return nil, err
 	}
 	for _, vxlan := range vxlans {
+		if vxlan.Kind == "VXLANSegment" {
+			continue
+		}
 		name := freeBSDServiceName("routerd-vxlan@" + vxlan.Name + ".service")
 		if explicit[name] {
 			continue

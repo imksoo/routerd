@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestInspectionCarriesTypedPDLeaseWithoutEncodedStatusTransfer(t *testing.T)
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan0"}}}}}
-	views, err := serveInspectionResources(router, store, "DHCPv6PrefixDelegation/wan-pd", 0)
+	views, err := serveInspectionResources(t.Context(), router, store, "DHCPv6PrefixDelegation/wan-pd", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,5 +152,40 @@ func TestActualPDObservationRejectsExternalClientBeforeReadingManagedFile(t *tes
 	events, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed"})
 	if err != nil || len(events) != 0 {
 		t.Fatalf("rejected config published transition: %+v %v", events, err)
+	}
+}
+
+func TestActualPDObservationDoesNotResetLeaseWhenDefaultIdentityReadFails(t *testing.T) {
+	now := time.Now().UTC()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const missingInterface = "pd-missing-9z"
+	config := routerstate.PDLeaseConfig{Client: api.IPv6PDClientRouterd, Profile: api.IPv6PDProfileDefault, UplinkIfname: missingInterface, ClientDUID: "00030001020000000001", IAID: 7, PrefixLength: 56}
+	lease, _, err := store.ConfigurePDLease("wan-pd", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: missingInterface, ClientDUID: config.ClientDUID, IAID: 7, State: pdclient.StateBound, UpdatedAt: now, CurrentPrefix: "2001:db8:1::/56", Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1::/56", AcquiredAt: now, Preferred: 60, Valid: 120}}}
+	if err := store.SavePDLease("wan-pd", routerstate.ObservePDLease(lease, snapshot, now)); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := store.ReadPDLease("wan-pd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: missingInterface, IAID: "7", PrefixLength: 56}}}}}
+	if err := recordObservedPrefixDelegationState(router, store, bus.NewWithStore(store)); err == nil {
+		t.Fatal("missing native identity became an empty configured DUID")
+	}
+	after, _, err := store.ReadPDLease("wan-pd")
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("unknown native identity revoked persisted lease: before=%+v after=%+v err=%v", before, after, err)
+	}
+	events, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed"})
+	if err != nil || len(events) != 0 {
+		t.Fatalf("unknown identity emitted transition: %+v %v", events, err)
 	}
 }

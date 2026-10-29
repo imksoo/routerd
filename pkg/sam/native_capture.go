@@ -13,6 +13,27 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 )
 
+// PFForwardAnchor is the shared attachment point between the managed root
+// ruleset and the native SAM path owner. Only that owner populates its rules.
+const PFForwardAnchor = "routerd_sam_forward"
+
+func PFForwardAnchorReferenced(rules string) bool {
+	for _, line := range strings.Split(rules, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || fields[0] != "anchor" || fields[1] != `"`+PFForwardAnchor+`"` {
+			continue
+		}
+		unconditional := true
+		for _, field := range fields[2:] {
+			unconditional = unconditional && (field == "quick" || field == "all")
+		}
+		if unconditional {
+			return true
+		}
+	}
+	return false
+}
+
 // AppliedProxyNeighbor and PendingProxyNeighbor are the native capture owner's
 // durable receipts. Pending rows are persisted before effects and remain
 // protective until the same owner confirms cleanup or commits applied state.

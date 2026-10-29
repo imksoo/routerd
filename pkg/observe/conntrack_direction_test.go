@@ -22,7 +22,7 @@ func TestConntrackNonPortTuplesKeepDirectionAndAccounting(t *testing.T) {
 	if entry.Original.Source != "192.0.2.10" || entry.Original.Destination != "198.51.100.20" || entry.Reply.Source != "198.51.100.20" || entry.Reply.Destination != "203.0.113.30" {
 		t.Fatalf("original/reply overwritten: %+v", entry)
 	}
-	if !entry.Original.Accounting || entry.Original.Packets != 2 || entry.Original.Bytes != 168 || !entry.Reply.Accounting || entry.Reply.Packets != 3 || entry.Reply.Bytes != 252 {
+	if (entry.Original.Packets == nil || *entry.Original.Packets != 2) || (entry.Original.Bytes == nil || *entry.Original.Bytes != 168) || (entry.Reply.Packets == nil || *entry.Reply.Packets != 3) || (entry.Reply.Bytes == nil || *entry.Reply.Bytes != 252) {
 		t.Fatalf("directional counters=%+v/%+v", entry.Original, entry.Reply)
 	}
 	if count := conntrackEntriesBySNAT(entries)["203.0.113.30"]; count.Total != 1 || count.Other != 1 {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -124,12 +125,29 @@ func (c DaemonStatusController) resetPDLeaseSourceForUnavailableSocket(ctx conte
 		if err != nil {
 			return err
 		}
-		if configured.Config() == previous.Config() {
-			continue
+		path := defaultDHCPv6PDLeaseFile(resource.Metadata.Name)
+		if c.PDLeaseSnapshotPath != nil {
+			path = c.PDLeaseSnapshotPath(resource.Metadata.Name)
 		}
-		if err := RecordPDLeaseObservation(c.Store, c.Bus, c.Router, resource.Metadata.Name, previous.Config(), configured, nil, daemonapi.ResourceStatus{}); err != nil {
-			return err
+		snapshot, readErr := readPDClientSnapshotFile(path)
+		var accepted *pdclient.Snapshot
+		if readErr == nil && snapshot.UpdatedAt.After(configured.SnapshotUpdatedAt) {
+			if err := routerstate.ValidatePDLeaseSnapshot(configured, resource.Metadata.Name, snapshot); err == nil {
+				accepted = &snapshot
+			}
 		}
+		if configured.Config() != previous.Config() || accepted != nil {
+			if err := RecordPDLeaseObservation(c.Store, c.Bus, c.Router, resource.Metadata.Name, previous.Config(), configured, accepted, daemonapi.ResourceStatus{}); err != nil {
+				return err
+			}
+		}
+		// Unavailable or foreign source bytes never revoke a same-source lease.
+		// An unreadable local file is unknown, and a real source change above still
+		// invalidates the previous source atomically before reporting that error.
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return readErr
+		}
+
 	}
 	return nil
 }
@@ -172,13 +190,10 @@ func (c DaemonStatusController) configuredPDLease(name string) (routerstate.PDLe
 	duid := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(spec.ClientDUID), ":", ""))
 	if duid == "" {
 		ifi, err := net.InterfaceByName(ifname)
-		if err == nil {
-			duid = hex.EncodeToString(append([]byte{0, 3, 0, 1}, ifi.HardwareAddr...))
-		} else if previous.UplinkIfname == ifname {
-			duid = previous.ConfiguredClientDUID
+		if err != nil {
+			return previous, routerstate.PDLease{}, fmt.Errorf("read interface %s for default DUID: %w", ifname, err)
 		}
-		// Missing links cannot grant lease authority, but changed intent still
-		// withdraws the previous source before its replacement worker starts.
+		duid = hex.EncodeToString(append([]byte{0, 3, 0, 1}, ifi.HardwareAddr...))
 	}
 
 	iaid := uint32(1)
@@ -258,11 +273,14 @@ func decodeDaemonPDLease(body io.Reader) (pdclient.Snapshot, error) {
 }
 
 func derivePreviousPDLeaseAddresses(lease routerstate.PDLease, currentPrefix string, spec api.IPv6DelegatedAddressSpec, now time.Time) ([]managedPreviousDelegatedAddress, error) {
-	if spec.PrefixLength == 128 || lease.CurrentPrefix != currentPrefix {
+	if spec.PrefixLength == 128 {
 		return nil, nil
 	}
 	var result []managedPreviousDelegatedAddress
 	for _, previous := range lease.ValidPreviousPrefixes(now) {
+		if previous.Prefix == currentPrefix {
+			continue
+		}
 		address, err := DeriveIPv6Address(previous.Prefix, spec.SubnetID, spec.AddressSuffix)
 		if err != nil {
 			return nil, err
@@ -274,28 +292,6 @@ func derivePreviousPDLeaseAddresses(lease routerstate.PDLease, currentPrefix str
 		result = append(result, managedPreviousDelegatedAddress{Address: address, ExpiresAt: previous.ExpiresAt})
 	}
 	return result, nil
-}
-
-// A failed delete is only complete when the exact recorded address is observed
-// absent. Read failures retain ownership for the next reconciliation.
-func (c LANAddressController) delegatedAddressAbsent(ctx context.Context, ifname, address string) (bool, error) {
-	if c.AddressPresent != nil {
-		return !c.AddressPresent(ctx, ifname, address), nil
-	}
-	if c.AddressList != nil {
-		addresses, err := c.AddressList(ctx, ifname)
-		if err != nil {
-			return false, err
-		}
-		for _, candidate := range addresses {
-			if candidate == address {
-				return false, nil
-			}
-		}
-		return true, nil
-	}
-	observation, err := c.observeCurrentDelegatedAddress(ctx, ifname, address, false)
-	return !observation.present, err
 }
 
 type atomicPDObservationStore interface {
@@ -342,4 +338,27 @@ func (s eventedStore) savePDLeaseObservation(name string, expected routerstate.P
 		return s.Bus.Publish(context.Background(), *localEvent)
 	}
 	return nil
+}
+
+// A persisted worker snapshot is external input. Its captured transaction epoch
+// and source identity are admitted by the same atomic owner as socket replies;
+// LAN/native receipts never act as a second lease cache.
+func readPDClientSnapshotFile(path string) (pdclient.Snapshot, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return pdclient.Snapshot{}, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil {
+		return pdclient.Snapshot{}, err
+	}
+	if len(data) > 1<<20 {
+		return pdclient.Snapshot{}, fmt.Errorf("PD snapshot file exceeds input limit")
+	}
+	var snapshot pdclient.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return snapshot, fmt.Errorf("decode PD snapshot file: %w", err)
+	}
+	return snapshot, nil
 }

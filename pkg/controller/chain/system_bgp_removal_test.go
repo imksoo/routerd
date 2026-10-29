@@ -17,18 +17,29 @@ import (
 	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
 	"github.com/imksoo/routerd/pkg/platform"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+func bgpRemovalStore(t *testing.T) *routerstate.SQLiteStore {
+	t.Helper()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
+}
 
 type removalFIB struct {
 	stopped *bool
 	clears  int
 }
 
-func (*removalFIB) SyncBGP(context.Context, []bgpcontroller.FIBRoute) (bgpcontroller.FIBSyncResult, error) {
+func (*removalFIB) SyncBGP(context.Context, bgpcontroller.FIBStore, []bgpcontroller.FIBRoute, bgpcontroller.FIBIntentReader) (bgpcontroller.FIBSyncResult, error) {
 	return bgpcontroller.FIBSyncResult{}, nil
 }
 
-func (f *removalFIB) ClearBGP(context.Context) error {
+func (f *removalFIB) ClearBGP(context.Context, bgpcontroller.FIBStore) error {
 	if !*f.stopped {
 		return errors.New("FIB clear preceded supervisor acknowledgment")
 	}
@@ -40,12 +51,12 @@ func TestBGPHelperRemovalOrdersIntentStopAndFIBAcrossSupervisors(t *testing.T) {
 	for _, supervisor := range []string{"systemd", "rc.d"} {
 		t.Run(supervisor, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "applied.json")
-			if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{}); err != nil {
+			if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}}); err != nil {
 				t.Fatal(err)
 			}
 			stopped := false
 			fib := &removalFIB{stopped: &stopped}
-			controller := SystemdUnitController{BGPStatePath: path, BGPController: &bgpcontroller.Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}}
+			controller := SystemdUnitController{BGPStatePath: path, BGPController: &bgpcontroller.Controller{Store: bgpRemovalStore(t), Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}}
 			features := platform.Features{HasSystemd: supervisor == "systemd", HasRCD: supervisor == "rc.d"}
 			failure := errors.New("supervisor stop failed")
 			var got []string
@@ -89,11 +100,11 @@ func TestBGPHelperRemovalOrdersIntentStopAndFIBAcrossSupervisors(t *testing.T) {
 
 func TestBGPOnlyRunnerKeepsAcknowledgedRemovalDependency(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
-	if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{}); err != nil {
+	if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}}); err != nil {
 		t.Fatal(err)
 	}
 	failure, stops := errors.New("supervisor refused stop"), 0
-	runner := &Runner{Router: &api.Router{}, Store: mapStore{}, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"bgp"}, BGPStatePath: path, BGPDaemonStop: func(context.Context) error { stops++; return failure }}}
+	runner := &Runner{Router: &api.Router{}, Store: bgpRemovalStore(t), Bus: bus.New(), Opts: Options{EnabledControllers: []string{"bgp"}, BGPStatePath: path, BGPDaemonStop: func(context.Context) error { stops++; return failure }}}
 	controllers, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), eventedStore{Store: runner.Store, Router: runner.Router, Bus: runner.Bus}, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
@@ -112,12 +123,12 @@ func TestBGPOnlyRunnerKeepsAcknowledgedRemovalDependency(t *testing.T) {
 
 func TestBGPRemovalHonorsServiceAndKernelDryRunModes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
-	if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{}); err != nil {
+	if err := bgpdaemon.WriteApplied(path, bgpdaemon.AppliedConfig{Global: bgpdaemon.AppliedGlobal{ASN: 64512, RouterID: "192.0.2.1"}}); err != nil {
 		t.Fatal(err)
 	}
 	stopped := false
 	fib := &removalFIB{stopped: &stopped}
-	actor := &bgpcontroller.Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib, DryRun: true}
+	actor := &bgpcontroller.Controller{Store: bgpRemovalStore(t), Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib, DryRun: true}
 	controller := SystemdUnitController{BGPStatePath: path, BGPController: actor}
 	command := func(context.Context, string, ...string) ([]byte, error) {
 		t.Fatal("dry-run changed supervisor")

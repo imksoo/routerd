@@ -28,8 +28,8 @@ func TestBGPRemovalRetriesFailedEffects(t *testing.T) {
 	for _, stage := range []string{"supervisor", "fib"} {
 		t.Run(stage, func(t *testing.T) {
 			path := writeRemovalState(t)
-			fib := &fakeFIB{routes: []FIBRoute{{Prefix: "10.0.0.0/24", RetainOnMissing: true}}}
-			controller := Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}
+			fib := &fakeFIB{routes: []FIBRoute{{Prefix: "10.0.0.0/24"}}}
+			controller := Controller{Store: mapStore{}, Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}
 			stopCalls := 0
 			stop := func(context.Context) error {
 				stopCalls++
@@ -79,7 +79,7 @@ func TestBGPRemovalResumesAcrossControllerGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	fib := &fakeFIB{}
-	controller := Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}
+	controller := Controller{Store: mapStore{}, Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib}
 	if err := controller.Remove(context.Background(), func(context.Context) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestBGPRemovalResumesAcrossControllerGeneration(t *testing.T) {
 
 func TestBGPRemovalDryRunHasNoEffects(t *testing.T) {
 	path := writeRemovalState(t)
-	controller := Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: &fakeFIB{}, DryRun: true}
+	controller := Controller{Store: mapStore{}, Daemon: manageddaemon.Spec{StatePath: path}, FIB: &fakeFIB{}, DryRun: true}
 	if err := controller.Remove(context.Background(), func(context.Context) error { t.Fatal("dry-run stopped daemon"); return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestBGPRemovalManagedHelperWithoutCheckpointStopsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	fib, stops := &fakeFIB{}, 0
-	controller := Controller{Daemon: manageddaemon.Spec{StatePath: path}, ManagedHelperPath: helper, FIB: fib}
+	controller := Controller{Store: mapStore{}, Daemon: manageddaemon.Spec{StatePath: path}, ManagedHelperPath: helper, FIB: fib}
 	stop := func(context.Context) error { stops++; return nil }
 	for range 2 {
 		if err := controller.Remove(context.Background(), stop); err != nil {
@@ -154,7 +154,7 @@ func TestBGPRemovalManagedHelperWithoutCheckpointStopsOnce(t *testing.T) {
 func TestBGPRemovalRetriesUncertainCompletionWithoutFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "applied.json")
 	fib := &fakeFIB{}
-	controller := Controller{Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib, removal: removalInProgress}
+	controller := Controller{Store: mapStore{}, Daemon: manageddaemon.Spec{StatePath: path}, FIB: fib, removal: removalInProgress}
 	pending, err := controller.PendingRemoval()
 	if err != nil || !pending {
 		t.Fatal("uncertain completion lost in-memory retry")

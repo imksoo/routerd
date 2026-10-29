@@ -29,6 +29,15 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 			m.cache.StoreAttempt(outcome, nil)
 		}
 	}()
+	var preparedServers *preparedServeHTTPServers
+	if m.servers != nil {
+		outcome.Stage = "server-prepare"
+		preparedServers, err = m.servers.prepareCandidate(next)
+		if err != nil {
+			return outcome, err
+		}
+		defer preparedServers.close()
+	}
 	if shapeChanged {
 		outcome.Runtime, err = m.reloadRuntimeOutcome(next)
 		if err != nil {
@@ -58,6 +67,12 @@ func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (
 					outcome.Stage = "runtime-publish"
 				}
 				err = errors.Join(err, updateErr)
+			}
+		}
+		if preparedServers != nil {
+			if serverErr := preparedServers.publish(); serverErr != nil {
+				outcome.Stage = "server-publish"
+				err = errors.Join(err, serverErr)
 			}
 		}
 	} else if shapeChanged && outcome.Canonical != canonicalUnknown {

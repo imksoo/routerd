@@ -39,7 +39,7 @@ func forceDeleteTargetFromArg(arg, statePath, apiVersion string) (deleteTarget, 
 	if strings.TrimSpace(apiVersion) != "" {
 		return deleteTarget{APIVersion: strings.TrimSpace(apiVersion), Kind: kind, Name: name}, nil
 	}
-	store, err := routerstate.Load(statePath)
+	store, err := routerstate.LoadReadOnlyLive(statePath)
 	if err != nil {
 		return deleteTarget{}, err
 	}

@@ -22,7 +22,7 @@ func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T)
 	if err := os.MkdirAll(filepath.Dir(legacyPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(legacyPath, []byte("[IPv6AcceptRA]\nDHCPv6Client=no\n"), 0644); err != nil {
+	if err := os.WriteFile(legacyPath, []byte("# Managed by routerd. Do not edit by hand.\n[IPv6AcceptRA]\nDHCPv6Client=no\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -631,7 +631,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -665,7 +665,6 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 	}
 	for _, unwanted := range []string{
 		"systemctl disable --now " + unitName,
-		"systemctl reset-failed " + unitName,
 	} {
 		if strings.Contains(gotCommands, unwanted) {
 			t.Fatalf("commands included service-disrupting cleanup %q:\n%s", unwanted, gotCommands)
@@ -689,7 +688,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 	dir := t.TempDir()
 	unitName := "routerd-dhcpv4-client@wan.service"
 	unitPath := filepath.Join(dir, unitName)
-	if err := os.WriteFile(unitPath, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dhcpv4-client daemon\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{}}
@@ -721,7 +720,6 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 	for _, want := range []string{
 		"systemctl is-active --quiet " + unitName,
 		"systemctl disable --now " + unitName,
-		"systemctl reset-failed " + unitName,
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -834,7 +832,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	unitPath := filepath.Join(dir, "routerd-tailscale-home.service")
-	if err := os.WriteFile(unitPath, []byte("[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte("# Managed by routerd. Do not edit by hand.\n[Unit]\nDescription=old tailscale\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1084,13 +1082,22 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
-	if status["phase"] != "Applied" || status["changed"] != false {
-		t.Fatalf("status after READY = %#v", status)
+	if status["phase"] != "Applied" || status["changed"] != true {
+		t.Fatalf("status after confirmed READY handoff = %#v", status)
 	}
-	for _, command := range commands[restartsBeforeReady:] {
-		if strings.Contains(command, "restart "+unitName) {
-			t.Fatalf("active HealthCheck was restarted after READY: %v", commands[restartsBeforeReady:])
-		}
+	if !commandLineContains(commands[restartsBeforeReady:], "systemctl restart "+unitName) {
+		t.Fatalf("queued activation was never acknowledged by blocking job: %v", commands[restartsBeforeReady:])
+	}
+	commands = nil
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if commandLineContains(commands, "systemctl restart "+unitName) || commandLineContains(commands, "systemctl --no-block restart "+unitName) {
+		t.Fatalf("acknowledged active HealthCheck restarted again: %v", commands)
+	}
+	status = store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName)
+	if status["phase"] != "Applied" || status["changed"] != false {
+		t.Fatalf("stable status = %#v", status)
 	}
 }
 
@@ -1144,7 +1151,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-healthcheck@stale.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-healthcheck\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1177,7 +1184,6 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-healthcheck@stale.service",
-		"systemctl reset-failed routerd-healthcheck@stale.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1257,7 +1263,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-dns-resolver@old.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-dns-resolver\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1289,7 +1295,6 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-dns-resolver@old.service",
-		"systemctl reset-failed routerd-dns-resolver@old.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1305,11 +1310,11 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@old.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	legacy := filepath.Join(dir, "routerd-eventd.service")
-	if err := os.WriteFile(legacy, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
+	if err := os.WriteFile(legacy, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd daemon --config-file /var/lib/routerd/eventd/cloudedge/config.json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	kept := filepath.Join(dir, "routerd-eventd@current.service")
@@ -1345,9 +1350,7 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-eventd@old.service",
-		"systemctl reset-failed routerd-eventd@old.service",
 		"systemctl disable --now routerd-eventd.service",
-		"systemctl reset-failed routerd-eventd.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {
@@ -1528,7 +1531,7 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	stale := filepath.Join(dir, "routerd-eventd@identity.service")
-	if err := os.WriteFile(stale, []byte("[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
+	if err := os.WriteFile(stale, []byte("# Managed by routerd. Do not edit by hand.\n[Service]\nExecStart=/usr/local/sbin/routerd-eventd\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "home"}, Spec: api.RouterSpec{Resources: []api.Resource{
@@ -1559,7 +1562,6 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 	gotCommands := strings.Join(commands, "\n")
 	for _, want := range []string{
 		"systemctl disable --now routerd-eventd@identity.service",
-		"systemctl reset-failed routerd-eventd@identity.service",
 		"systemctl daemon-reload",
 	} {
 		if !strings.Contains(gotCommands, want) {

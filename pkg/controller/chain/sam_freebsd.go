@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	freeBSDSAMForwardAnchor = "routerd_sam_forward"
+	freeBSDSAMForwardAnchor = sam.PFForwardAnchor
 	freeBSDIFTether         = 6
 )
 
@@ -380,11 +380,8 @@ func freeBSDSAMForwardAnchorReachable(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("observe active PF rules for SAM anchor: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, `anchor "`+freeBSDSAMForwardAnchor+`"`) {
-			return nil
-		}
+	if sam.PFForwardAnchorReferenced(string(out)) {
+		return nil
 	}
 	return fmt.Errorf("SAM PF anchor %q is not reachable from the active PF ruleset", freeBSDSAMForwardAnchor)
 }

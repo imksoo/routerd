@@ -123,6 +123,19 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 				return true, fmt.Errorf("%s spec.remotes[%d] must be an IP address", res.ID(), i)
 			}
 		}
+		if targetOS == platform.OSFreeBSD {
+			if spec.VNI == 16777215 {
+				return true, fmt.Errorf("%s VNI 16777215 is reserved as unconfigured by FreeBSD vxlan", res.ID())
+			}
+			remotes := map[netip.Addr]bool{}
+			for _, remote := range spec.Remotes {
+				address, _ := netip.ParseAddr(remote)
+				remotes[address.Unmap()] = true
+			}
+			if len(remotes) > 1 {
+				return true, fmt.Errorf("%s multiple unicast remotes are unsupported by FreeBSD vxlan; use a multicast group or separate VXLAN interfaces", res.ID())
+			}
+		}
 		if spec.MulticastGroup != "" {
 			addr, err := netip.ParseAddr(spec.MulticastGroup)
 			if err != nil || !addr.Is4() || !addr.IsMulticast() {
@@ -344,6 +357,9 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		spec, err := res.IPv4StaticAddressSpec()
 		if err != nil {
 			return true, err
+		}
+		if spec.Exclusive {
+			return true, fmt.Errorf("%s spec.exclusive is unsupported; IPv4StaticAddress preserves addresses owned by others", res.ID())
 		}
 		addr := spec.Address
 		if addr == "" {

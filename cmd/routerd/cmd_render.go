@@ -96,7 +96,6 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 	}
 	if len(dnsmasqConfig) > 0 {
 		files["dnsmasq.conf"] = dnsmasqConfig
-		files["rc.d-routerd_dnsmasq"] = render.DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq")
 	}
 	if len(data.DHCPClient) > 0 {
 		files["dhclient.conf"] = data.DHCPClient
@@ -121,7 +120,7 @@ func renderFreeBSDCommand(args []string, stdout io.Writer) error {
 		} else if strings.HasPrefix(name, "rc.d-") || name == "install-packages.sh" {
 			perm = 0755
 		}
-		if err := os.WriteFile(path, content, perm); err != nil {
+		if _, err := writeFileIfChanged(path, content, perm); err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "wrote %s\n", path)

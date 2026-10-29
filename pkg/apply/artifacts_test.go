@@ -92,25 +92,13 @@ func TestKnownResourceKindsDeclareArtifactIntents(t *testing.T) {
 	}
 }
 
-func TestIPsecArtifactUsesRouterdRuntimeDirectoryPerPlatform(t *testing.T) {
-	resource := api.Resource{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-	}
-	for _, test := range []struct {
-		name string
-		os   platform.OS
-		path string
-	}{
-		{name: "linux", os: platform.OSLinux, path: "/etc/routerd/swanctl/routerd-site-a.conf"},
-		{name: "freebsd", os: platform.OSFreeBSD, path: "/usr/local/etc/routerd/swanctl/routerd-site-a.conf"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			intents := resourceArtifactIntentsForPlatform(resource, nil, test.os, platform.Features{})
-			if len(intents) != 2 || intents[1].Artifact.Name != test.path {
-				t.Fatalf("IPsec artifact intents = %+v, want runtime path %q", intents, test.path)
-			}
-		})
+func TestIPsecArtifactUsesScopedNativeConnectionPerPlatform(t *testing.T) {
+	res := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"}, Metadata: api.ObjectMeta{Name: "site-a"}}
+	for _, target := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		intents := resourceArtifactIntentsForPlatform(res, nil, target, platform.Features{})
+		if len(intents) != 1 || intents[0].Artifact.Kind != "ipsec.vici.connection" || intents[0].Artifact.Name != "routerd-site-a" || intents[0].ApplyWith != "vici" {
+			t.Fatalf("IPsec intents on %s invent effects absent from the VICI owner: %+v", target, intents)
+		}
 	}
 }
 
@@ -462,6 +450,12 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 		for _, platformCase := range platforms {
 			t.Run(res.Kind+"/"+platformCase.name, func(t *testing.T) {
 				intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platformCase.targetOS, platformCase.features)
+				if platformCase.targetOS == platform.OSFreeBSD && (res.Kind == "DHCPv4Server" || res.Kind == "DHCPv6Server") {
+					if hasArtifactKind(intents, "rc.d.service") || hasArtifactKind(intents, "systemd.service") {
+						t.Fatalf("native dnsmasq process owner duplicated by boot helper: %+v", intents)
+					}
+					return
+				}
 				if res.Kind == "VirtualAddress" && platformCase.targetOS == platform.OSFreeBSD {
 					if hasArtifactKind(intents, "rc.d.service") {
 						t.Fatalf("native CARP actor duplicated by boot helper: %+v", intents)
@@ -490,6 +484,16 @@ func hasArtifactIntent(intents []resource.Intent, kind, name, applyWith string) 
 		}
 	}
 	return false
+}
+
+func TestRAOnlyDHCPv6DoesNotDeclareDnsmasq(t *testing.T) {
+	res := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DHCPv6ServerSpec{Interface: "lan", Mode: "ra-only"}}
+	for _, features := range []platform.Features{{HasSystemd: true}, {HasRCD: true}} {
+		intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0"}, platform.OSLinux, features)
+		if len(intents) != 0 {
+			t.Fatalf("RA-only scope declared an independent dnsmasq owner: %+v", intents)
+		}
+	}
 }
 
 func hasArtifact(artifacts []resource.Artifact, kind, name, owner string) bool {

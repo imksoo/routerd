@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestVRRPVMACReadbackMatches(t *testing.T) {
@@ -87,7 +88,11 @@ func TestIPAddrShowHasStagedIPv6AddressWithPrefix(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ipAddrShowHasStagedIPv6AddressWithPrefix([]byte(tc.out), tc.address); got != tc.want {
+			observation, err := parseDelegatedAddressObservation([]byte(tc.out), tc.address, platform.OSLinux, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := observation.usable; got != tc.want {
 				t.Fatalf("got %t want %t", got, tc.want)
 			}
 		})

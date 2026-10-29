@@ -28,6 +28,40 @@ type routerObservation struct {
 	EffectiveRouter *api.Router
 }
 
+// RuntimeRouterObservation captures the declared configuration and the current
+// resource selections from one immutable preparation and one dynamic read.
+// Callers must treat every returned router as read-only.
+type RuntimeRouterObservation struct {
+	DeclaredRouter  *api.Router
+	EffectiveRouter *api.Router
+	RouteRouter     *api.Router
+	NextChangeAt    time.Time
+}
+
+type RuntimeObservationStore interface {
+	resourcequery.StateStore
+	resourcequery.StatusReader
+}
+
+// ObserveRouterConfiguration admits one standalone plan without requiring a
+// writable controller store. Runtime observations reuse Runner's preparation.
+func ObserveRouterConfiguration(router *api.Router, store RuntimeObservationStore, now time.Time, targetOS platform.OS) (RuntimeRouterObservation, error) {
+	prepared, err := prepareRouterConfig(router, targetOS)
+	if err != nil {
+		return RuntimeRouterObservation{}, err
+	}
+	lister, _ := store.(dynamicConfigPartLister)
+	view, err := prepared.observeRuntimeRouter(store, lister, now, targetOS)
+	if err != nil {
+		return RuntimeRouterObservation{}, err
+	}
+	return runtimeRouterObservation(view), nil
+}
+
+func runtimeRouterObservation(view dynamicRouteSAMView) RuntimeRouterObservation {
+	return RuntimeRouterObservation{DeclaredRouter: view.DeclaredRouter, EffectiveRouter: view.EffectiveRouter, RouteRouter: view.RouteRouter, NextChangeAt: view.NextChangeAt}
+}
+
 // Runtime callers have already admitted the operator graph at load/apply. The
 // dynamic public entry points retain their own external validation boundary.
 func prepareRouterConfig(router *api.Router, targetOS platform.OS) (*preparedRouterConfig, error) {
@@ -100,11 +134,34 @@ func (r *Runner) effectiveDynamicRouteSAMViewForReconcile(store eventedStore, no
 		return dynamicRouteSAMView{}, err
 	}
 	lister, _ := r.Store.(dynamicConfigPartLister)
+	return prepared.observeRuntimeRouter(store, lister, now, targetOS)
+}
+
+// ObserveRuntimeRouter uses the same live selection as reconciliation without
+// publishing statuses, running controllers, or changing native state.
+func (r *Runner) ObserveRuntimeRouter(now time.Time, targetOS platform.OS) (RuntimeRouterObservation, error) {
+	prepared, err := r.currentPreparedRouter()
+	if err != nil {
+		return RuntimeRouterObservation{}, err
+	}
+	store := eventedStore{Store: r.Store, Bus: r.Bus}.withRouter(prepared.declared)
+	lister, _ := r.Store.(dynamicConfigPartLister)
+	view, err := prepared.observeRuntimeRouter(store, lister, now, targetOS)
+	if err != nil {
+		return RuntimeRouterObservation{}, err
+	}
+	return runtimeRouterObservation(view), nil
+}
+
+func (p *preparedRouterConfig) observeRuntimeRouter(store resourcequery.StateStore, lister dynamicConfigPartLister, now time.Time, targetOS platform.OS) (dynamicRouteSAMView, error) {
+	if p.targetOS != targetOS {
+		return dynamicRouteSAMView{}, fmt.Errorf("prepared router OS %q differs from observation OS %q", p.targetOS, targetOS)
+	}
 	observation, err := observeDynamicRouteSAM(lister, now, targetOS)
 	if err != nil {
 		return dynamicRouteSAMView{}, err
 	}
-	base, err := prepared.routerForDynamicObservation(observation, now)
+	base, err := p.routerForDynamicObservation(observation, now)
 	if err != nil {
 		return dynamicRouteSAMView{}, err
 	}
@@ -112,5 +169,5 @@ func (r *Runner) effectiveDynamicRouteSAMViewForReconcile(store eventedStore, no
 	if err != nil {
 		return dynamicRouteSAMView{}, err
 	}
-	return prepared.buildDynamicRouteSAMView(selected, observation, now)
+	return p.buildDynamicRouteSAMView(selected, observation, now)
 }

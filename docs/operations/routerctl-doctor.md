@@ -124,6 +124,20 @@ non-zero only if `wan` fails).
 
 ## Stability
 
+### Daemon inspection through `--probe`
+
+`routerctl doctor --probe egress [resource]`, `--probe dns [resource]`, and
+`--probe lan-client IP` use the running daemon's control API. They currently
+report resource phases and explicitly mark current network communication as
+`unobserved`. They do not execute an end-to-end packet, DNS, neighbor or conntrack
+probe. A reported Applied phase does not establish communication, and exit zero
+with a warning must not be used as a qualification PASS.
+
+These daemon inspection commands reject `--server`, `--name`, and `--no-host`
+instead of silently ignoring them. The ordinary local `doctor AREA` commands
+retain their documented host checks. Use actual peer/client communication and
+captures for the corresponding dataplane gate.
+
 The JSON shape, area identifiers, and status enum are part of the v1alpha1
 operator contract. Future versions may add new areas and optional fields;
 existing area names and status values will not be renamed or repurposed in

@@ -12,7 +12,7 @@ import (
 	"github.com/imksoo/routerd/pkg/render"
 )
 
-func TestWriteDnsmasqConfigAdvertisesStaticRAPrefix(t *testing.T) {
+func TestDnsmasqConfigDoesNotOwnStaticRouterAdvertisements(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", Prefix: "2001:db8:1::123/64"}},
@@ -31,8 +31,8 @@ func TestWriteDnsmasqConfigAdvertisesStaticRAPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, output := range [][]byte{live, offline} {
-		if !strings.Contains(string(output), "dhcp-range=set:lan-ra,2001:db8:1::,ra-only,64,12h\n") || strings.Contains(string(output), "constructor:") {
-			t.Fatalf("RA config recorded a prefix without selecting it:\n%s", output)
+		if strings.Contains(string(output), "enable-ra") || strings.Contains(string(output), "ra-param=") || strings.Contains(string(output), "ra-only") {
+			t.Fatalf("dnsmasq retained competing RA authority:\n%s", output)
 		}
 	}
 }

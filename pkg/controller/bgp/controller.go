@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gobgpapi "github.com/osrg/gobgp/v4/api"
@@ -41,6 +42,7 @@ import (
 )
 
 type Store interface {
+	FIBStore
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
@@ -85,22 +87,15 @@ func policyIntent(routerName string, peers map[string]desiredPeer, dynamicPeers 
 }
 
 type FIBSyncer interface {
-	SyncBGP(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error)
-	ClearBGP(ctx context.Context) error
+	SyncBGP(ctx context.Context, store FIBStore, routes []FIBRoute, current FIBIntentReader) (FIBSyncResult, error)
+	ClearBGP(ctx context.Context, store FIBStore) error
 }
 
-type FIBRoute struct {
-	Prefix          string
-	NextHops        []string
-	PreferredSource string
-	RetainOnMissing bool
-}
+type FIBRoute = bgpstate.FIBRoute
 
 type FIBSyncResult struct {
 	Installed                    map[string]bool
 	Unsupported                  map[string]string
-	Retained                     map[string]bool
-	RetainedNextHops             map[string][]string
 	PreferredSource              map[string]string
 	PreferredSourceSkipped       map[string]bool
 	PreferredSourceSkippedReason map[string]string
@@ -138,6 +133,11 @@ type Controller struct {
 	MaxPrefixes         int
 	WatchReconnectDelay time.Duration
 
+	lifetimeMu  sync.Mutex
+	watchCancel context.CancelFunc
+	watchDone   <-chan struct{}
+	stopped     atomic.Bool
+
 	mu              sync.Mutex
 	started         bool
 	removal         removalState
@@ -155,9 +155,6 @@ type Controller struct {
 	observed                   bool
 	lastState                  bgpstate.State
 	peerEvents                 map[string]time.Time
-	lastFIBRoutesSig           string
-	lastFIBResult              FIBSyncResult
-	lastFIBValid               bool
 	bfdPeerSeenUp              map[string]bool
 	bfdPeerDownSince           map[string]time.Time
 	bfdPeerResetPending        map[string]bool
@@ -242,6 +239,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 }
 
 func (c *Controller) reconcileLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.stopped.Load() {
+		return fmt.Errorf("BGP controller generation has stopped")
+	}
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
@@ -410,8 +413,17 @@ func (c *Controller) PendingRemoval() (bool, error) {
 }
 
 func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.stopped.Load() {
+		return fmt.Errorf("BGP controller generation has stopped")
+	}
 	if c.DryRun {
 		return nil
+	}
+	if c.Store == nil {
+		return fmt.Errorf("BGP FIB removal journal is unavailable")
 	}
 	path := c.daemonSpec().StatePath
 	pending, err := bgpdaemon.RemovalPending(path)
@@ -425,7 +437,12 @@ func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context
 	if os.IsNotExist(statErr) && !pending && c.removal == removalCompleted {
 		return nil
 	}
-	managed := c.removal == removalInProgress || c.started || c.Server != nil
+	fibJournal, fibFound, err := c.Store.ReadBGPFIB(ctx)
+	if err != nil {
+		return fmt.Errorf("read BGP FIB removal ownership: %w", err)
+	}
+	fibOwned := fibFound && (len(fibJournal.Applied) > 0 || fibJournal.Pending != nil)
+	managed := fibOwned || c.removal == removalInProgress || c.started || c.Server != nil
 	if c.ManagedHelperPath != "" {
 		_, helperErr := os.Stat(c.ManagedHelperPath)
 		if helperErr != nil && !os.IsNotExist(helperErr) {
@@ -449,7 +466,7 @@ func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context
 	if c.FIB == nil {
 		c.FIB = defaultFIBSyncer()
 	}
-	if err := c.FIB.ClearBGP(ctx); err != nil {
+	if err := c.FIB.ClearBGP(ctx, c.Store); err != nil {
 		return fmt.Errorf("clear removed BGP FIB: %w", err)
 	}
 	if err := bgpdaemon.CompleteRemoval(path); err != nil {
@@ -476,14 +493,53 @@ func (c *Controller) stopServerLocked() {
 	c.pendingDirectPeerAdditions = nil
 	c.observed = false
 	c.lastState = bgpstate.State{}
-	c.lastFIBRoutesSig = ""
-	c.lastFIBValid = false
 	c.lastDynamicPeers = nil
 	c.lastDynamicAdmission = dynamicRouteAdmissionSummary{}
 }
 
-func (c *Controller) Start(ctx context.Context) {
-	go c.watchEventLoop(ctx)
+func (c *Controller) Start(ctx context.Context) <-chan struct{} {
+	c.lifetimeMu.Lock()
+	defer c.lifetimeMu.Unlock()
+	if c.watchDone != nil {
+		return c.watchDone
+	}
+	done := make(chan struct{})
+	c.watchDone = done
+	if c.stopped.Load() {
+		close(done)
+		return done
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	c.watchCancel = cancel
+	go func() { defer close(done); c.watchEventLoop(workerCtx) }()
+	return done
+}
+
+// Stop acknowledges the watch and any in-flight actor mutation before closing
+// this generation's RPC connection. The helper process belongs to its supervisor.
+func (c *Controller) Stop(ctx context.Context) error {
+	c.stopped.Store(true)
+	c.lifetimeMu.Lock()
+	if c.watchCancel != nil {
+		c.watchCancel()
+	}
+	done := c.watchDone
+	c.lifetimeMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	for !c.mu.TryLock() {
+		if !sleepContext(ctx, time.Millisecond) {
+			return ctx.Err()
+		}
+	}
+	defer c.mu.Unlock()
+	c.stopServerLocked()
+	return nil
 }
 
 func (c *Controller) watchEventLoop(ctx context.Context) {
@@ -503,7 +559,7 @@ func (c *Controller) watchEventLoop(ctx context.Context) {
 func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 	c.mu.Lock()
 	server := c.Server
-	watchable := c.Router != nil && c.Store != nil && hasBGP(c.Router) && !c.DryRun && server != nil && c.started
+	watchable := !c.stopped.Load() && c.Router != nil && c.Store != nil && hasBGP(c.Router) && !c.DryRun && server != nil && c.started
 	c.mu.Unlock()
 	if !watchable {
 		return nil
@@ -539,6 +595,12 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 }
 
 func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.stopped.Load() {
+		return context.Canceled
+	}
 	if c.Router == nil || c.Store == nil || c.Server == nil || c.DryRun || c.removal == removalInProgress || !c.started {
 		return nil
 	}
@@ -618,15 +680,42 @@ func (c *Controller) syncBGPFIBLocked(ctx context.Context, routes []FIBRoute) (F
 	if c.FIB == nil {
 		c.FIB = defaultFIBSyncer()
 	}
-	sig := fibRoutesSignature(routes)
-	result, err := c.FIB.SyncBGP(ctx, routes)
+	result, err := c.FIB.SyncBGP(ctx, c.Store, routes, c.currentFIBRoutesLocked)
 	if err != nil {
 		return result, err
 	}
-	c.lastFIBRoutesSig = sig
-	c.lastFIBResult = normalizeFIBSyncResult(result)
-	c.lastFIBValid = true
-	return c.lastFIBResult, nil
+	return normalizeFIBSyncResult(result), nil
+}
+
+// currentFIBRoutesLocked rechecks live policy, RIB and Mobility authority after
+// the pending journal write, while the same actor still owns configuration.
+func (c *Controller) currentFIBRoutesLocked(ctx context.Context) ([]FIBRoute, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if c.stopped.Load() || c.removal == removalInProgress {
+		return nil, context.Canceled
+	}
+	applied, err := c.readAppliedEffects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	routers := c.bgpRouters()
+	if len(routers) != 1 {
+		return nil, fmt.Errorf("BGP FIB declaration is unavailable")
+	}
+	resource := routers[0]
+	spec, err := resource.BGPRouterSpec()
+	if err != nil {
+		return nil, err
+	}
+	peers, err := c.desiredPeers(resource.Metadata.Name, spec.ASN)
+	if err != nil {
+		return nil, err
+	}
+	peers = applyRouterBGPDefaults(resource.Metadata.Name, spec, peers, mapKeys(advertisedPrefixes(spec)), dynamicPathExportPrefixes(applied.Paths))
+	_, routes, _, err := c.observeState(ctx, importAllowedPrefixesFromApplied(applied), peers)
+	return routes, err
 }
 
 func watchEventHasBestPathChange(resp *gobgpapi.WatchEventResponse) bool {
@@ -2821,52 +2910,6 @@ type allowedImportPrefix struct {
 	Max    int
 }
 
-func fibRoutesFromStatePrefixes(prefixes []bgpstate.Prefix, allowed []allowedImportPrefix, admit func(netip.Prefix, string, string, []string) bool) []FIBRoute {
-	type stateRoute struct {
-		nextHops        map[string]bool
-		retainOnMissing bool
-	}
-	byPrefix := map[string]stateRoute{}
-	for _, prefix := range prefixes {
-		if !prefix.Best || !prefix.Valid || strings.TrimSpace(prefix.Prefix) == "" || bgpstate.HasCommunity(prefix.Communities, bgpstate.MobilityCommunityNodeLiveness) {
-			continue
-		}
-		nextHop := strings.TrimSpace(prefix.NextHop)
-		if nextHop == "" || nextHop == "0.0.0.0" || nextHop == "::" {
-			continue
-		}
-		parsed, err := netip.ParsePrefix(prefix.Prefix)
-		if err != nil {
-			continue
-		}
-		parsed = parsed.Masked()
-		if len(allowed) > 0 && !prefixAllowed(parsed, allowed) {
-			continue
-		}
-		if admit != nil && !admit(parsed, nextHop, nextHop, prefix.Communities) {
-			continue
-		}
-		key := parsed.String()
-		route := byPrefix[key]
-		if route.nextHops == nil {
-			route.nextHops = map[string]bool{}
-		}
-		route.nextHops[nextHop] = true
-		byPrefix[key] = route
-	}
-	var out []FIBRoute
-	for prefix, route := range byPrefix {
-		var hops []string
-		for hop := range route.nextHops {
-			hops = append(hops, hop)
-		}
-		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, RetainOnMissing: route.retainOnMissing})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
-	return out
-}
-
 type bgpPathRank struct {
 	LocalPref uint32
 	ASPathLen int
@@ -3029,7 +3072,6 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 	type mergedRoute struct {
 		nextHops        map[string]bool
 		preferredSource string
-		retainOnMissing bool
 	}
 	byPrefix := map[string]mergedRoute{}
 	for _, route := range routes {
@@ -3044,7 +3086,6 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 		for _, nextHop := range normalizeRouteNextHops(route.NextHops) {
 			merged.nextHops[nextHop] = true
 		}
-		merged.retainOnMissing = merged.retainOnMissing || route.RetainOnMissing
 		source := strings.TrimSpace(route.PreferredSource)
 		if source != "" {
 			if merged.preferredSource == "" {
@@ -3062,7 +3103,7 @@ func mergeFIBRoutes(routes []FIBRoute) []FIBRoute {
 			hops = append(hops, hop)
 		}
 		sort.Strings(hops)
-		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource, RetainOnMissing: merged.retainOnMissing})
+		out = append(out, FIBRoute{Prefix: prefix, NextHops: hops, PreferredSource: merged.preferredSource})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out
@@ -3297,13 +3338,6 @@ func installedNextHops(routes []FIBRoute, result FIBSyncResult) map[string][]str
 			continue
 		}
 		out[prefix] = normalizeRouteNextHops(route.NextHops)
-	}
-	for prefix, hops := range result.RetainedNextHops {
-		prefix = normalizeRoutePrefix(prefix)
-		if prefix == "" || !result.Installed[prefix] {
-			continue
-		}
-		out[prefix] = normalizeRouteNextHops(hops)
 	}
 	return out
 }
@@ -3856,45 +3890,10 @@ func PollInterval(router *routerapi.Router) time.Duration {
 	return out
 }
 
-func fibRoutesSignature(routes []FIBRoute) string {
-	normalized := make([]FIBRoute, 0, len(routes))
-	for _, route := range routes {
-		route = normalizeFIBRouteForSignature(route)
-		if route.Prefix != "" {
-			normalized = append(normalized, route)
-		}
-	}
-	sort.SliceStable(normalized, func(i, j int) bool { return normalized[i].Prefix < normalized[j].Prefix })
-	var b strings.Builder
-	for _, route := range normalized {
-		b.WriteString(route.Prefix)
-		b.WriteByte('=')
-		b.WriteString(strings.Join(route.NextHops, ","))
-		if route.PreferredSource != "" {
-			b.WriteString("|src=")
-			b.WriteString(route.PreferredSource)
-		}
-		if route.RetainOnMissing {
-			b.WriteString("|retain")
-		}
-		b.WriteByte(';')
-	}
-	sum := sha256.Sum256([]byte(b.String()))
-	return hex.EncodeToString(sum[:])
-}
-
-func normalizeFIBRouteForSignature(route FIBRoute) FIBRoute {
-	prefix := normalizeRoutePrefix(route.Prefix)
-	nextHops := normalizeRouteNextHops(route.NextHops)
-	return FIBRoute{Prefix: prefix, NextHops: nextHops, PreferredSource: strings.TrimSpace(route.PreferredSource), RetainOnMissing: route.RetainOnMissing}
-}
-
 func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	out := FIBSyncResult{
 		Installed:                    map[string]bool{},
 		Unsupported:                  map[string]string{},
-		Retained:                     map[string]bool{},
-		RetainedNextHops:             map[string][]string{},
 		PreferredSource:              map[string]string{},
 		PreferredSourceSkipped:       map[string]bool{},
 		PreferredSourceSkippedReason: map[string]string{},
@@ -3907,16 +3906,6 @@ func normalizeFIBSyncResult(result FIBSyncResult) FIBSyncResult {
 	for prefix, reason := range result.Unsupported {
 		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
 			out.Unsupported[normalized] = reason
-		}
-	}
-	for prefix, retained := range result.Retained {
-		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
-			out.Retained[normalized] = retained
-		}
-	}
-	for prefix, hops := range result.RetainedNextHops {
-		if normalized := normalizeRoutePrefix(prefix); normalized != "" {
-			out.RetainedNextHops[normalized] = normalizeRouteNextHops(hops)
 		}
 	}
 	for prefix, source := range result.PreferredSource {
@@ -4281,11 +4270,5 @@ func statusInt(value any) int {
 		return out
 	default:
 		return 0
-	}
-}
-
-func (c *Controller) Close() {
-	if c.Server != nil {
-		c.Server.Stop()
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // The generated firewall must isolate local DHCPv4 delivery without disabling
-// DHCPv6/RA in dnsmasq. Actual packet exchange is checked under tests/netns.
+// DHCPv6 in dnsmasq. RA has its own ICMP owner; it creates no UDP listener.
 func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 	for _, tc := range []struct {
 		name                                            string
@@ -18,7 +18,7 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 	}{
 		{name: "split DHCP families", v4: true, exclude: true},
 		{name: "shared physical interface via alias", v4: true, shared: true},
-		{name: "RA only", raOnly: true, exclude: true},
+		{name: "RA only", raOnly: true},
 		{name: "IPv4 relay and IPv6", relay: true},
 		{name: "pending shared IPv4 scope", v4: true, shared: true, pendingV4: true},
 		{name: "delegated IPv6 scope", delegated: true, exclude: true},
@@ -53,7 +53,7 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 				resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "prefix"}, Spec: api.IPv6DelegatedAddressSpec{Interface: "v6", PrefixDelegation: "wan"}})
 			}
 
-			resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "v6", MTU: 1454}})
+			resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "v6", Prefix: "2001:db8:1::/64", MTU: 1454}})
 
 			resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan", "v6"}}})
 			router := &api.Router{Spec: api.RouterSpec{Resources: resources}}
@@ -91,11 +91,14 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 				t.Fatalf("IPv4-only listener exclusion mismatch:\n%s", got)
 			}
 
-			if !strings.Contains(got, "enable-ra\n") || !strings.Contains(got, "ra-param=lan-vrrp,mtu:1454,0\n") {
-				t.Fatalf("IPv6 RA was lost:\n%s", got)
+			if strings.Contains(got, "enable-ra") || strings.Contains(got, "ra-param=") || strings.Contains(got, ",ra-stateless") {
+				t.Fatalf("dnsmasq duplicates the ICMP RA owner: %s", got)
 			}
-			if !tc.raOnly && !tc.delegated && !strings.Contains(got, "constructor:lan-vrrp,ra-stateless") {
-				t.Fatalf("DHCPv6 was lost:\n%s", got)
+			if tc.raOnly && len(data) != 0 {
+				t.Fatalf("RA-only graph acquired UDP DHCP service: %s", got)
+			}
+			if !tc.raOnly && !tc.delegated && !strings.Contains(got, "dhcp-range=tag:lan-vrrp,set:v6,::,static,64,12h") {
+				t.Fatalf("stateless DHCPv6 service was lost: %s", got)
 			}
 		})
 	}

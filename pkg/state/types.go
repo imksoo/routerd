@@ -72,7 +72,6 @@ type GenerationHistoryReader interface {
 
 type EventRecorder interface {
 	RecordEvent(apiVersion, kind, name, eventType, reason, message string) error
-	Events(apiVersion, kind, name string, limit int) []Event
 }
 
 type EventQuery struct {

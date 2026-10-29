@@ -186,7 +186,8 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 
 	capabilities := strings.Join(healthCheckCapabilities(options.FwMark), " ")
-	return []byte(fmt.Sprintf(`[Unit]
+	return []byte(fmt.Sprintf(`# Managed by routerd. Do not edit by hand.
+[Unit]
 Description=routerd healthcheck %s
 BindsTo=routerd.service
 After=routerd.service network-online.target

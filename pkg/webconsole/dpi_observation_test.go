@@ -46,7 +46,7 @@ func TestClientHTTPReportsFailedDPIRead(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	trafficPath := filepath.Join(dir, "traffic.db")
-	traffic, err := logstore.OpenTrafficFlowLog(trafficPath)
+	traffic, err := logstore.OpenTrafficFlowLog(t.Context(), trafficPath)
 	if err != nil {
 		t.Fatal(err)
 	}

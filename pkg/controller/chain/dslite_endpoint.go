@@ -5,7 +5,9 @@ package chain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os/exec"
 	"sort"
@@ -18,18 +20,22 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 const dsliteEndpointStatusName = "dslite-endpoints"
 
 type dsliteEndpointReceipt struct {
-	Name       string `json:"name"`
-	Interface  string `json:"interface"`
-	Address    string `json:"address"`
-	PDName     string `json:"pdName"`
-	PDPrefix   string `json:"pdPrefix"`
-	ValidUntil string `json:"validUntil"`
-	Pending    bool   `json:"pending"`
+	OS         platform.OS `json:"os"`
+	Scope      string      `json:"scope"`
+	IfIndex    int         `json:"ifIndex"`
+	Name       string      `json:"name"`
+	Interface  string      `json:"interface"`
+	Address    string      `json:"address"`
+	PDName     string      `json:"pdName"`
+	PDPrefix   string      `json:"pdPrefix"`
+	ValidUntil string      `json:"validUntil"`
+	Pending    bool        `json:"pending"`
 }
 
 type dsliteEndpointSource struct {
@@ -49,7 +55,19 @@ func (c DSLiteTunnelController) endpointCommand(ctx context.Context, name string
 	if c.CommandOutput != nil {
 		return c.CommandOutput(ctx, name, args...)
 	}
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := subprocessio.Run(cmd)
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, errors.Join(err, limitErr)
+	}
+	if err != nil {
+		return stderr.Bytes(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }
 
 func (c DSLiteTunnelController) endpointStatus(version, kind, name string) (map[string]any, error) {
@@ -117,10 +135,11 @@ func (c DSLiteTunnelController) endpointReceipts() ([]dsliteEndpointReceipt, err
 	}
 	seen := map[string]bool{}
 	for _, receipt := range receipts {
+		_, scopeOK := dsliteKernelScope(receipt.Scope, receipt.OS)
 		address, err := netip.ParsePrefix(receipt.Address)
 		prefix, prefixErr := netip.ParsePrefix(receipt.PDPrefix)
 		_, deadlineErr := time.Parse(time.RFC3339Nano, receipt.ValidUntil)
-		if err != nil || !address.Addr().Is6() || address.Bits() != 128 || address.String() != receipt.Address || prefixErr != nil || !prefix.Addr().Is6() || prefix != prefix.Masked() || !prefix.Contains(address.Addr()) || receipt.Name == "" || receipt.Interface == "" || receipt.PDName == "" || (deadlineErr != nil && receipt.ValidUntil != "infinite") || seen[receipt.Name] {
+		if err != nil || !address.Addr().Is6() || address.Bits() != 128 || address.String() != receipt.Address || prefixErr != nil || !prefix.Addr().Is6() || prefix != prefix.Masked() || !prefix.Contains(address.Addr()) || receipt.Name == "" || !scopeOK || receipt.IfIndex < 1 || receipt.OS != platform.OSLinux && receipt.OS != platform.OSFreeBSD || receipt.Interface == "" || receipt.PDName == "" || (deadlineErr != nil && receipt.ValidUntil != "infinite") || seen[receipt.Name] {
 			return nil, fmt.Errorf("invalid DS-Lite endpoint receipt for %q", receipt.Name)
 		}
 		seen[receipt.Name] = true
@@ -197,7 +216,17 @@ func (c DSLiteTunnelController) cleanupDelegatedEndpoints(ctx context.Context) e
 	}
 	for _, receipt := range receipts {
 		if source, exists := wanted[receipt.Name]; exists && !source.SharedLAN && source.Interface == receipt.Interface && source.Address+"/128" == receipt.Address && source.PDName == receipt.PDName && source.PDPrefix == receipt.PDPrefix {
-			continue
+			observed, err := c.observeEndpoint(ctx, receipt.Interface, receipt.Address)
+			if err != nil {
+				return err
+			}
+			same, err := c.endpointReceiptIdentity(receipt, observed)
+			if err != nil {
+				return err
+			}
+			if same {
+				continue
+			}
 		}
 		if err := c.withdrawEndpoint(ctx, receipt); err != nil {
 			return err
@@ -206,40 +235,129 @@ func (c DSLiteTunnelController) cleanupDelegatedEndpoints(ctx context.Context) e
 	return nil
 }
 
+func (c DSLiteTunnelController) endpointReceiptIdentity(receipt dsliteEndpointReceipt, observed dsliteEndpointObservation) (bool, error) {
+	if receipt.OS != c.currentOS() {
+		return false, fmt.Errorf("DS-Lite source belongs to another platform")
+	}
+	if receipt.Scope != observed.Scope {
+		oldKernel, oldOK := dsliteKernelScope(receipt.Scope, receipt.OS)
+		newKernel, newOK := dsliteKernelScope(observed.Scope, c.currentOS())
+		if oldOK && newOK && oldKernel != newKernel {
+			return false, nil
+		}
+		return false, fmt.Errorf("DS-Lite source belongs to another namespace or jail")
+	}
+	if observed.IfIndex == 0 {
+		return false, nil
+	}
+	if receipt.IfIndex != observed.IfIndex {
+		return false, fmt.Errorf("DS-Lite source interface has been replaced")
+	}
+	return true, nil
+}
+
 func (c DSLiteTunnelController) withdrawEndpoint(ctx context.Context, receipt dsliteEndpointReceipt) error {
+	if c.DryRun {
+		return nil
+	}
 	observed, err := c.observeEndpoint(ctx, receipt.Interface, receipt.Address)
 	if err != nil {
 		return err
 	}
-	if observed.Present {
+	same, err := c.endpointReceiptIdentity(receipt, observed)
+	if err != nil {
+		return err
+	}
+	// A reboot destroyed the old source; its receipt grants no authority over
+	// a same-address replacement in the current kernel.
+	if receipt.Scope != observed.Scope {
+		return c.setEndpointReceipt(receipt, true)
+	}
+	if err := c.withdrawNativeTunnelResource(ctx, receipt.Name); err != nil {
+		return err
+	}
+	if same && observed.Present {
 		if observed.OtherPrefix {
 			return fmt.Errorf("DS-Lite owned source overlaps another native prefix")
 		}
-		name, args := ipv6StaticAddressDeleteCommand(platform.CurrentOS(), receipt.Interface, receipt.Address)
-		if output, err := c.endpointCommand(ctx, name, args...); err != nil {
-			return fmt.Errorf("withdraw DS-Lite endpoint %s: %w: %s", receipt.Address, err, strings.TrimSpace(string(output)))
+		receipt.Pending = true
+		if err := c.setEndpointReceipt(receipt, false); err != nil {
+			return err
+		}
+		current, err := c.observeEndpoint(ctx, receipt.Interface, receipt.Address)
+		if err != nil {
+			return err
+		}
+		matches, err := c.endpointReceiptIdentity(receipt, current)
+		if err != nil {
+			return err
+		}
+		if !matches && current.IfIndex != 0 {
+			return fmt.Errorf("DS-Lite source identity changed during withdrawal")
+		}
+		if current.Present {
+			if current.OtherPrefix {
+				return fmt.Errorf("DS-Lite source prefix changed during withdrawal")
+			}
+			name, args := ipv6StaticAddressDeleteCommand(c.currentOS(), receipt.Interface, receipt.Address)
+			if output, err := c.endpointCommand(ctx, name, args...); err != nil {
+				return fmt.Errorf("withdraw DS-Lite endpoint %s: %w: %s", receipt.Address, err, strings.TrimSpace(string(output)))
+			}
+		}
+		current, err = c.observeEndpoint(ctx, receipt.Interface, receipt.Address)
+		if err != nil {
+			return err
+		}
+		matches, err = c.endpointReceiptIdentity(receipt, current)
+		if err != nil {
+			return err
+		}
+		if current.Present || !matches && current.IfIndex != 0 {
+			return fmt.Errorf("DS-Lite source withdrawal was not confirmed")
 		}
 	}
 	return c.setEndpointReceipt(receipt, true)
 }
 
 type dsliteEndpointObservation struct {
+	Scope                       string
+	IfIndex                     int
 	Present, Ready, OtherPrefix bool
 }
 
 func (c DSLiteTunnelController) observeEndpoint(ctx context.Context, ifname, address string) (dsliteEndpointObservation, error) {
 	var observed dsliteEndpointObservation
+	scope, err := c.tunnelScope(ctx)
+	if err != nil {
+		return observed, err
+	}
+	observed.Scope = scope
 	wanted, err := netip.ParsePrefix(address)
 	if err != nil {
 		return observed, err
 	}
-	if platform.CurrentOS() == platform.OSFreeBSD {
+	if c.currentOS() == platform.OSFreeBSD {
 		output, err := c.endpointCommand(ctx, "ifconfig", ifname, "inet6")
 		if err != nil {
 			if strings.Contains(string(output), "does not exist") {
 				return observed, nil
 			}
 			return observed, err
+		}
+		if !strings.HasPrefix(string(output), ifname+":") {
+			return observed, fmt.Errorf("invalid DS-Lite source interface identity")
+		}
+		if c.NativeInterfaceIndex != nil {
+			observed.IfIndex, err = c.NativeInterfaceIndex(ifname)
+		} else {
+			var iface *net.Interface
+			iface, err = net.InterfaceByName(ifname)
+			if err == nil {
+				observed.IfIndex = iface.Index
+			}
+		}
+		if err != nil || observed.IfIndex < 1 {
+			return observed, fmt.Errorf("DS-Lite source interface index unavailable")
 		}
 		for _, line := range strings.Split(string(output), "\n") {
 			fields := strings.Fields(line)
@@ -272,6 +390,8 @@ func (c DSLiteTunnelController) observeEndpoint(ctx context.Context, ifname, add
 		return observed, fmt.Errorf("observe DS-Lite source address: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	var links []struct {
+		Name      string `json:"ifname"`
+		Index     int    `json:"ifindex"`
 		Addresses []struct {
 			Family    string `json:"family"`
 			Local     string `json:"local"`
@@ -283,7 +403,14 @@ func (c DSLiteTunnelController) observeEndpoint(ctx context.Context, ifname, add
 	if err := json.Unmarshal(output, &links); err != nil || links == nil {
 		return observed, fmt.Errorf("invalid DS-Lite source address observation")
 	}
+	if len(links) > 1 {
+		return observed, fmt.Errorf("DS-Lite source observation is not a single interface")
+	}
 	for _, link := range links {
+		if link.Name != ifname || link.Index < 1 {
+			return observed, fmt.Errorf("invalid DS-Lite source interface identity")
+		}
+		observed.IfIndex = link.Index
 		if link.Addresses == nil {
 			return observed, fmt.Errorf("DS-Lite source observation has no address array")
 		}
@@ -315,7 +442,7 @@ func (c DSLiteTunnelController) recheckDelegatedEndpoint(ctx context.Context, sp
 	if active && source.Interface == ifname && source.Address == local {
 		if _, _, err := currentPDAddressLifetimes(source.Lease, c.now(), true); err == nil {
 			if source.SharedLAN {
-				ready, err := c.sharedEndpointReady(source)
+				ready, err := c.sharedEndpointReady(ctx, source)
 				if err != nil || !ready {
 					return "LocalIPv6NotReady", err
 				}
@@ -336,13 +463,31 @@ func (c DSLiteTunnelController) recheckDelegatedEndpoint(ctx context.Context, sp
 	return "PDLeaseChanged", c.cleanupDelegatedEndpoints(ctx)
 }
 
-func (c DSLiteTunnelController) sharedEndpointReady(source dsliteEndpointSource) (bool, error) {
+func (c DSLiteTunnelController) sharedEndpointReady(ctx context.Context, source dsliteEndpointSource) (bool, error) {
 	status, err := c.endpointStatus(api.NetAPIVersion, "IPv6DelegatedAddress", source.LANName)
 	if err != nil {
 		return false, err
 	}
 	dryRun, known := status["dryRun"].(bool)
-	return status["phase"] == "Applied" && known && !dryRun && status["ifname"] == source.Interface && status["address"] == source.Address+"/128" && status["prefixSource"] == source.PDName && status["validUntil"] == pdLifetimeDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds), nil
+	if status["phase"] != "Applied" || !known || dryRun || status["ifname"] != source.Interface || status["address"] != source.Address+"/128" || status["prefixSource"] != source.PDName || status["validUntil"] != pdLifetimeDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds) {
+		return false, nil
+	}
+	receipt, err := delegatedReceipt(status)
+	if err != nil {
+		return false, err
+	}
+	if receipt == nil || receipt.IfName != source.Interface || receipt.PrefixDelegation != source.PDName {
+		return false, nil
+	}
+	preferred, valid := nativePDAddressDeadlines(source.Lease, c.currentOS() == platform.OSLinux)
+	if !receipt.matches(source.Address+"/128", preferred, valid) {
+		return false, nil
+	}
+	observed, err := c.observeEndpoint(ctx, source.Interface, source.Address+"/128")
+	if err != nil {
+		return false, err
+	}
+	return receipt.Scope == observed.Scope && receipt.IfIndex == observed.IfIndex && observed.Present && observed.Ready && !observed.OtherPrefix, nil
 }
 
 func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, name string, spec api.DSLiteTunnelSpec, ifname, local string) (string, error) {
@@ -359,6 +504,14 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 		if err != nil {
 			return "", err
 		}
+		observed, err := c.observeEndpoint(ctx, ifname, receipt.Address)
+		if err != nil {
+			return "", err
+		}
+		if observed.IfIndex == 0 {
+			return "LocalIPv6NotReady", nil
+		}
+		receipt.OS, receipt.Scope, receipt.IfIndex = c.currentOS(), observed.Scope, observed.IfIndex
 		owned := false
 		for _, previous := range receipts {
 			if previous.Name == name {
@@ -366,11 +519,18 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 				if !owned {
 					return "", fmt.Errorf("previous DS-Lite source has not been withdrawn")
 				}
+				same, err := c.endpointReceiptIdentity(previous, observed)
+				if err != nil {
+					return "", err
+				}
+				if !same {
+					if err := c.withdrawEndpoint(ctx, previous); err != nil {
+						return "", err
+					}
+					owned = false
+				}
+
 			}
-		}
-		observed, err := c.observeEndpoint(ctx, ifname, receipt.Address)
-		if err != nil {
-			return "", err
 		}
 		if observed.OtherPrefix || (observed.Present && !owned) {
 			return "", fmt.Errorf("foreign IPv6 address occupies DS-Lite source %s", receipt.Address)
@@ -385,18 +545,34 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 		if !active || fresh.Interface != ifname || fresh.Address != local || fresh.PDName != receipt.PDName || fresh.PDPrefix != receipt.PDPrefix {
 			return "PDLeaseChanged", c.cleanupDelegatedEndpoints(ctx)
 		}
-		deadline := pdLifetimeDeadline(fresh.Lease.LastReplyAt, fresh.Lease.ValidSeconds)
-		if deadline != receipt.ValidUntil {
-			receipt.ValidUntil = deadline
-			if err := c.setEndpointReceipt(receipt, false); err != nil {
-				return "", err
+
+		current, err := c.observeEndpoint(ctx, ifname, receipt.Address)
+		if err != nil {
+			return "", err
+		}
+		same, err := c.endpointReceiptIdentity(receipt, current)
+		if err != nil || !same || current.OtherPrefix || !observed.Present && current.Present {
+			if !owned {
+				if saveErr := c.setEndpointReceipt(receipt, true); saveErr != nil {
+					return "", errors.Join(err, saveErr)
+				}
 			}
+			return "", errors.Join(err, fmt.Errorf("DS-Lite source acquisition premise changed after pending write"))
+		}
+		// Native observation may wait. Resolve the canonical lease and its
+		// remaining lifetimes after that wait, immediately before the write.
+		fresh, active, err = c.delegatedEndpointSource(spec)
+		if err != nil {
+			return "", err
+		}
+		if !active || fresh.Interface != ifname || fresh.Address != local || fresh.PDName != receipt.PDName || fresh.PDPrefix != receipt.PDPrefix || pdLifetimeDeadline(fresh.Lease.LastReplyAt, fresh.Lease.ValidSeconds) != receipt.ValidUntil {
+			return "PDLeaseChanged", c.withdrawEndpoint(ctx, receipt)
 		}
 		preferred, valid, err := currentPDAddressLifetimes(fresh.Lease, c.now(), true)
 		if err != nil {
-			return "PDLeaseStale", c.cleanupDelegatedEndpoints(ctx)
+			return "PDLeaseStale", c.withdrawEndpoint(ctx, receipt)
 		}
-		command, args := ipv6DelegatedAddressApplyCommand(platform.CurrentOS(), ifname, receipt.Address, preferred, valid)
+		command, args := ipv6DelegatedAddressApplyCommand(c.currentOS(), ifname, receipt.Address, preferred, valid)
 		if output, err := c.endpointCommand(ctx, command, args...); err != nil {
 			return "", fmt.Errorf("apply DS-Lite source: %w: %s", err, strings.TrimSpace(string(output)))
 		}
@@ -404,7 +580,7 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 	var readErr error
 	ready := waitForIPv6AddressReady(ctx, ifname, receipt.Address, 3*time.Second, func(ctx context.Context, ifname, address string) bool {
 		if source.SharedLAN {
-			ready, err := c.sharedEndpointReady(source)
+			ready, err := c.sharedEndpointReady(ctx, source)
 			if err != nil {
 				readErr = err
 				return true // Stop waiting and report the failed observation.
@@ -430,6 +606,17 @@ func (c DSLiteTunnelController) ensureDelegatedEndpoint(ctx context.Context, nam
 		// LAN is now the observed owner; do not duplicate its address write or
 		// carry a second withdrawal authority for the same native /128.
 		return "", c.setEndpointReceipt(receipt, true)
+	}
+	final, err := c.observeEndpoint(ctx, ifname, receipt.Address)
+	if err != nil {
+		return "", err
+	}
+	same, err := c.endpointReceiptIdentity(receipt, final)
+	if err != nil {
+		return "", err
+	}
+	if !same || !final.Present || !final.Ready || final.OtherPrefix {
+		return "", fmt.Errorf("DS-Lite source identity changed while waiting for readiness")
 	}
 	receipt.Pending = false
 	return "", c.setEndpointReceipt(receipt, false)

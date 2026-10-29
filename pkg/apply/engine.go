@@ -1751,9 +1751,6 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 			return
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 address %s on %s", addr, ifname))
-		if boolSpec(res, "exclusive") {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("remove other IPv4 addresses on %s", ifname))
-		}
 	}
 }
 
@@ -2422,8 +2419,6 @@ func boolSpec(res api.Resource, key string) bool {
 		}
 	case api.IPv4StaticAddressSpec:
 		switch key {
-		case "exclusive":
-			return spec.Exclusive
 		case "allowOverlap":
 			return spec.AllowOverlap
 		}

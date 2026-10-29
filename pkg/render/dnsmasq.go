@@ -77,10 +77,6 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	if err != nil {
 		return nil, nil, err
 	}
-	raMTUByScope, err := pathMTURAByScope(router)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	var v4Pools []api.Resource
 	var v6Delegated []api.Resource
@@ -125,7 +121,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			if err != nil {
 				return nil, warnings, err
 			}
-			if strings.TrimSpace(spec.DelegatedAddress) != "" && defaultString(spec.Server, "dnsmasq") == "dnsmasq" && defaultString(spec.Role, "server") != "transit" {
+			if spec.Mode != "ra-only" && strings.TrimSpace(spec.DelegatedAddress) != "" && defaultString(spec.Server, "dnsmasq") == "dnsmasq" && defaultString(spec.Role, "server") != "transit" {
 				v6Delegated = append(v6Delegated, res)
 			}
 		}
@@ -197,9 +193,6 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 	}
 	for _, ifname := range dnsmasqExcludedInterfaces(aliases, renderedScopes) {
 		buf.WriteString("except-interface=" + ifname + "\n")
-	}
-	if len(v6Delegated) > 0 {
-		buf.WriteString("enable-ra\n")
 	}
 	if err := writeDirectDnsmasqLANService(&buf, router, aliases, staticIPv4, delegatedIPv6, runtime); err != nil {
 		return nil, warnings, err
@@ -278,21 +271,8 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 		delegated := delegatedIPv6[spec.DelegatedAddress]
 		leaseTime := defaultString(spec.LeaseTime, "12h")
 		tag := sanitizeDnsmasqTag(res.Metadata.Name)
-		mode := defaultString(spec.Mode, "stateless")
-		raMode := "ra-stateless"
-		if mode == "ra-only" {
-			raMode = "ra-only"
-		}
-		buf.WriteString("\n")
-		buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,%s,64,%s\n", tag, delegated.IfName, raMode, leaseTime))
-		raMTU := raMTUByScope[res.Metadata.Name]
-		switch {
-		case raMTU != 0 && !spec.DefaultRoute:
-			buf.WriteString(fmt.Sprintf("ra-param=%s,mtu:%d,0,0\n", delegated.IfName, raMTU))
-		case raMTU != 0:
-			buf.WriteString(fmt.Sprintf("ra-param=%s,mtu:%d,0\n", delegated.IfName, raMTU))
-		case !spec.DefaultRoute:
-			buf.WriteString(fmt.Sprintf("ra-param=%s,0,0\n", delegated.IfName))
+		if line := DnsmasqDHCPv6Range(res.Metadata.Name, delegated.IfName, spec); line != "" {
+			buf.WriteString(line + "\n")
 		}
 		dnsServers, err := dnsmasqIPv6DNSServers(spec, delegated, selfPolicies[spec.SelfAddressPolicy], aliases, delegatedIPv6, runtime)
 		if err != nil {
@@ -357,10 +337,10 @@ func hasDirectDnsmasqLANService(router *api.Router) bool {
 			}
 		case "DHCPv6Server":
 			spec, err := res.DHCPv6ServerSpec()
-			if err == nil && spec.Interface != "" {
+			if err == nil && spec.Mode != "ra-only" && spec.Interface != "" {
 				return true
 			}
-		case "IPv6RouterAdvertisement", "DHCPv4Relay":
+		case "DHCPv4Relay":
 			return true
 		}
 	}
@@ -376,21 +356,10 @@ func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []strin
 			if err == nil && spec.Interface != "" && !dnsmasqUsesScopeStyleDHCPv4(spec) && aliases[spec.Interface] != "" {
 				ifnames = append(ifnames, aliases[spec.Interface])
 			}
-		case "DHCPv6Server", "IPv6RouterAdvertisement":
-			var iface string
-			if res.Kind == "DHCPv6Server" {
-				spec, err := res.DHCPv6ServerSpec()
-				if err == nil && spec.Interface != "" {
-					iface = spec.Interface
-				}
-			} else {
-				spec, err := res.IPv6RouterAdvertisementSpec()
-				if err == nil {
-					iface = spec.Interface
-				}
-			}
-			if aliases[iface] != "" {
-				ifnames = append(ifnames, aliases[iface])
+		case "DHCPv6Server":
+			spec, err := res.DHCPv6ServerSpec()
+			if err == nil && spec.Mode != "ra-only" && spec.Interface != "" && aliases[spec.Interface] != "" {
+				ifnames = append(ifnames, aliases[spec.Interface])
 			}
 		case "DHCPv4Relay":
 			spec, err := res.DHCPv4RelaySpec()
@@ -407,10 +376,6 @@ func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []strin
 }
 
 func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases map[string]string, staticIPv4 map[string]netip.Prefix, delegatedIPv6 map[string]delegatedIPv6Address, runtime DnsmasqRuntime) error {
-	raMTUByScope, err := pathMTURAByScope(router)
-	if err != nil {
-		return err
-	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv4Server" {
 			continue
@@ -489,22 +454,16 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 			continue
 		}
 		spec, err := res.DHCPv6ServerSpec()
-		if err != nil || spec.Interface == "" || strings.TrimSpace(spec.DelegatedAddress) != "" {
+		if err != nil || spec.Mode == "ra-only" || spec.Interface == "" || strings.TrimSpace(spec.DelegatedAddress) != "" {
 			continue
 		}
 		ifname := defaultString(aliases[spec.Interface], spec.Interface)
 		tag := sanitizeDnsmasqTag(res.Metadata.Name)
 		buf.WriteString("\n")
 		buf.WriteString("interface=" + ifname + "\n")
-		buf.WriteString("enable-ra\n")
 		leaseTime := defaultString(defaultString(spec.AddressPool.LeaseTime, spec.LeaseTime), "12h")
-		switch defaultString(spec.Mode, "stateless") {
-		case "stateful":
-			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,64,%s\n", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
-		case "both":
-			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,%s,%s,constructor:%s,slaac,64,%s\n", tag, spec.AddressPool.Start, spec.AddressPool.End, ifname, leaseTime))
-		default:
-			buf.WriteString(fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s\n", tag, ifname, leaseTime))
+		if line := DnsmasqDHCPv6Range(res.Metadata.Name, ifname, spec); line != "" {
+			buf.WriteString(line + "\n")
 		}
 		dnsServers, err := dnsmasqExpandIPv6Servers(router, append([]string(nil), spec.DNSServers...), spec.DNSServerFrom, aliases, delegatedIPv6, runtime)
 		if err != nil {
@@ -526,58 +485,6 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 		for _, host := range stickyHostsForFamily(runtime.StickyHosts, "ipv6", leaseTime) {
 			buf.WriteString("dhcp-host=" + dnsmasqStickyHost(host) + "\n")
-		}
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv6RouterAdvertisement" {
-			continue
-		}
-		spec, err := res.IPv6RouterAdvertisementSpec()
-		if err != nil {
-			continue
-		}
-		ifname := aliases[spec.Interface]
-		if ifname == "" {
-			ifname = spec.Interface
-		}
-		buf.WriteString("interface=" + ifname + "\n")
-		buf.WriteString("enable-ra\n")
-		prefixRange, err := DnsmasqStaticRouterAdvertisementRange(res.Metadata.Name, spec)
-		if err != nil {
-			return err
-		}
-		if prefixRange != "" {
-			buf.WriteString(prefixRange + "\n")
-		}
-		var params []string
-		mtu := firstNonZero(raMTUByScope[res.Metadata.Name], spec.MTU)
-		if mtu != 0 {
-			params = append(params, fmt.Sprintf("mtu:%d", mtu))
-		}
-		switch spec.PRFPreference {
-		case "high", "low":
-			params = append(params, spec.PRFPreference)
-		}
-		if spec.ValidLifetime != "" {
-			params = append(params, "0", spec.ValidLifetime)
-		} else if len(params) > 0 {
-			// dnsmasq requires the RA interval whenever mtu or router
-			// preference is supplied. Zero retains its default interval.
-			params = append(params, "0")
-		}
-		if len(params) > 0 {
-			buf.WriteString(fmt.Sprintf("ra-param=%s,%s\n", ifname, strings.Join(params, ",")))
-		}
-		rdnss, err := dnsmasqExpandIPv6Servers(router, append([]string(nil), spec.RDNSS...), spec.RDNSSFrom, aliases, delegatedIPv6, runtime)
-		if err != nil {
-			return err
-		}
-		for _, server := range rdnss {
-			buf.WriteString(fmt.Sprintf("dhcp-option=option6:dns-server,[%s]\n", strings.Trim(server, "[]")))
-		}
-		dnssl := dnsmasqExpandDomainValues(router, spec.DNSSL, spec.DNSSLFrom)
-		if len(dnssl) > 0 {
-			buf.WriteString("dhcp-option=option6:domain-search," + strings.Join(dnssl, ",") + "\n")
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -759,47 +666,6 @@ TimeoutStopSec=10s
 
 [Install]
 WantedBy=multi-user.target
-`)
-}
-
-func DnsmasqRCScript(configPath, runtimeDir, leaseDir, dnsmasqPath string) []byte {
-	if runtimeDir == "" {
-		runtimeDir = "/var/run/routerd"
-	}
-	if leaseDir == "" {
-		leaseDir = "/var/db/routerd/dnsmasq"
-	}
-	if dnsmasqPath == "" {
-		dnsmasqPath = "/usr/local/sbin/dnsmasq"
-	}
-	return []byte(`#!/bin/sh
-# Generated by routerd. Do not edit by hand.
-
-# PROVIDE: routerd_dnsmasq
-# REQUIRE: NETWORKING mpd5
-# KEYWORD: shutdown
-
-. /etc/rc.subr
-
-name="routerd_dnsmasq"
-rcvar="routerd_dnsmasq_enable"
-command="` + dnsmasqPath + `"
-pidfile="` + strings.TrimRight(runtimeDir, "/") + `/dnsmasq.pid"
-command_args="--conf-file=` + configPath + ` --pid-file=${pidfile}"
-extra_commands="reload"
-sig_reload="HUP"
-start_precmd="${name}_prestart"
-
-routerd_dnsmasq_prestart()
-{
-	mkdir -p "` + strings.TrimRight(runtimeDir, "/") + `"
-	mkdir -p "` + strings.TrimRight(leaseDir, "/") + `"
-}
-
-load_rc_config ${name}
-: ${routerd_dnsmasq_enable:="NO"}
-
-run_rc_command "$1"
 `)
 }
 

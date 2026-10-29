@@ -194,9 +194,10 @@ type ClientEntry struct {
 	State                 string   `json:"state,omitempty"`
 	Sources               []string `json:"sources,omitempty"`
 	Peers                 []string `json:"peers,omitempty"`
-	Accounting            bool     `json:"accounting"`
-	BytesOut              int64    `json:"bytesOut"`
-	BytesIn               int64    `json:"bytesIn"`
+	BytesOut              *int64   `json:"bytesOut,omitempty"`
+	BytesIn               *int64   `json:"bytesIn,omitempty"`
+	BytesOutIncomplete    bool     `json:"bytesOutIncomplete"`
+	BytesInIncomplete     bool     `json:"bytesInIncomplete"`
 	PrimaryActivity       string   `json:"primaryActivity,omitempty"`
 	LastProtocol          string   `json:"lastProtocol,omitempty"`
 	LastProtocolDetail    string   `json:"lastProtocolDetail,omitempty"`

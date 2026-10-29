@@ -3,6 +3,7 @@
 set skip on lo0
 lan_if = "ens19"
 wan_if = "ens18"
+anchor "routerd_sam_forward" quick
 block drop all
 pass quick on lo0 all
 pass out quick all keep state

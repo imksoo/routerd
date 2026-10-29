@@ -163,36 +163,16 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vxlan100.netdev").Data)
-	for _, want := range []string{
-		"Name=vxlan100",
-		"Kind=vxlan",
-		"MTUBytes=1450",
-		"VNI=100",
-		"Local=192.0.2.10",
-		"Independent=yes",
-		"UDPChecksum=yes",
-		"PortRange=4789-4789",
-		"Remote=192.0.2.20",
-		"DestinationPort=4789",
-	} {
-		if !strings.Contains(netdev, want) {
-			t.Fatalf("vxlan netdev missing %q:\n%s", want, netdev)
+
+	for _, file := range files {
+		if strings.Contains(file.Path, "vxlan100") || strings.Contains(string(file.Data), "BridgeFDB") || strings.Contains(string(file.Data), "Kind=vxlan") {
+			t.Fatalf("native Segment ownership has a competing networkd writer: %s\n%s", file.Path, file.Data)
 		}
 	}
-	network := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vxlan100.network").Data)
-	for _, want := range []string{
-		"Name=vxlan100",
-		"Address=192.0.2.2/24",
-		"Bridge=br0",
-		"MACAddress=00:00:00:00:00:00",
-		"Destination=192.0.2.20",
-		"Destination=192.0.2.30",
-	} {
-		if !strings.Contains(network, want) {
-			t.Fatalf("vxlan network missing %q:\n%s", want, network)
-		}
+	if findNetworkdTestFile(files, "30-routerd-br0.network").Path == "" {
+		t.Fatal("physical bridge configuration lost")
 	}
+
 }
 
 func TestNetworkdDropinsRenderVXLANTunnelOuterDF(t *testing.T) {

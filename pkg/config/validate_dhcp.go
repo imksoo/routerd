@@ -38,10 +38,22 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 		if spec.Prefix != "" && spec.PrefixFrom.Resource != "" {
 			return true, fmt.Errorf("%s spec.prefix and spec.prefixFrom cannot both be set", res.ID())
 		}
+		if _, err := api.ResolveRouterAdvertisementLifetimes(spec); err != nil {
+			return true, fmt.Errorf("%s spec.%w", res.ID(), err)
+		}
+		if spec.ConfigPath != "" || spec.PIDFile != "" {
+			return true, fmt.Errorf("%s spec.configPath and spec.pidFile are not supported by the serve-owned RA service", res.ID())
+		}
+		if spec.PrefixFrom.Resource != "" {
+			kind, name, ok := strings.Cut(spec.PrefixFrom.Resource, "/")
+			if !ok || kind != "IPv6DelegatedAddress" || name == "" || spec.PrefixFrom.Field != "" && spec.PrefixFrom.Field != "address" {
+				return true, fmt.Errorf("%s spec.prefixFrom must select IPv6DelegatedAddress.address with canonical lease lifetimes", res.ID())
+			}
+		}
 		if spec.Prefix != "" {
 			prefix, err := netip.ParsePrefix(spec.Prefix)
 			if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 64 {
-				return true, fmt.Errorf("%s spec.prefix must be an IPv6 /64 supported by dnsmasq RA", res.ID())
+				return true, fmt.Errorf("%s spec.prefix must be an IPv6 /64 supported by routerd SLAAC RA", res.ID())
 			}
 		}
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
@@ -112,7 +124,7 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 		if spec.DelegatedAddress != "" && spec.Mode != "" && defaultString(spec.Mode, "stateless") != "stateless" && spec.Mode != "ra-only" {
 			return true, fmt.Errorf("%s spec.mode must be stateless or ra-only when spec.delegatedAddress is set", res.ID())
 		}
-		if spec.DelegatedAddress == "" && defaultString(spec.Mode, "stateless") != "stateless" {
+		if spec.DelegatedAddress == "" && (spec.Mode == "stateful" || spec.Mode == "both") {
 			if spec.AddressPool.Start == "" || spec.AddressPool.End == "" {
 				return true, fmt.Errorf("%s spec.addressPool.start and spec.addressPool.end are required for stateful modes", res.ID())
 			}

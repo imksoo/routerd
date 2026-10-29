@@ -12,7 +12,7 @@ func defaultFIBSyncer() FIBSyncer {
 	return noopFIBSyncer{}
 }
 
-func (noopFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+func (noopFIBSyncer) SyncBGP(_ context.Context, _ FIBStore, routes []FIBRoute, _ FIBIntentReader) (FIBSyncResult, error) {
 	result := FIBSyncResult{Installed: map[string]bool{}, Unsupported: map[string]string{}}
 	for _, route := range routes {
 		prefix := normalizeRoutePrefix(route.Prefix)
@@ -23,4 +23,4 @@ func (noopFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResul
 	return result, nil
 }
 
-func (noopFIBSyncer) ClearBGP(context.Context) error { return nil }
+func (noopFIBSyncer) ClearBGP(context.Context, FIBStore) error { return nil }

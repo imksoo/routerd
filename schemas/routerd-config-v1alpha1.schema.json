@@ -3817,7 +3817,7 @@
                         "type": "string"
                       },
                       "exclusive": {
-                        "description": "Exclusive removes other IPv4 addresses from the target interface before adding this address.",
+                        "description": "Exclusive is reserved; exclusive takeover is not implemented.",
                         "type": "boolean"
                       },
                       "interface": {
@@ -6983,6 +6983,7 @@
                     "additionalProperties": false,
                     "properties": {
                       "configPath": {
+                        "description": "ConfigPath and PIDFile are unsupported by the serve-owned RA loop.",
                         "type": "string"
                       },
                       "dependsOn": {
@@ -7064,6 +7065,7 @@
                         "type": "string"
                       },
                       "preferredLifetime": {
+                        "description": "PreferredLifetime and ValidLifetime are PIO seconds or infinite; delegated prefixes remain capped by their absolute upstream deadlines.",
                         "type": "string"
                       },
                       "prefix": {
@@ -7126,6 +7128,10 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "routerLifetime": {
+                        "description": "RouterLifetime is default-route seconds, independent of PIO lifetimes. Default is 1800; 0 withdraws, otherwise 4-9000.",
+                        "type": "string"
                       },
                       "validLifetime": {
                         "type": "string"

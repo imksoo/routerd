@@ -58,7 +58,7 @@ func TestPipelineStopTimeoutFencesReloadWithoutStartingAnotherCursorOwner(t *tes
 	defer func() { stop(); waitFaultRuntimeStopped(t, done) }()
 	defer func() {
 		close(output.release)
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), RuntimeShutdownGrace)
 		defer cancel()
 		if err := owner.Stop(ctx); err != nil {
 			t.Errorf("released pipeline did not stop: %v", err)
@@ -69,7 +69,7 @@ func TestPipelineStopTimeoutFencesReloadWithoutStartingAnotherCursorOwner(t *tes
 	}
 	select {
 	case <-output.entered:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("actual exporter did not reach stdout")
 	}
 	next := old.Clone()
@@ -111,7 +111,7 @@ func TestFailedPipelineStopKeepsActualClusterLockUntilWorkerExits(t *testing.T) 
 		if !released {
 			close(output.release)
 		}
-		stopCtx, stop := context.WithTimeout(context.Background(), time.Second)
+		stopCtx, stop := context.WithTimeout(context.Background(), RuntimeShutdownGrace)
 		defer stop()
 		_ = pipeline.Stop(stopCtx)
 	}()
@@ -120,7 +120,7 @@ func TestFailedPipelineStopKeepsActualClusterLockUntilWorkerExits(t *testing.T) 
 	}
 	select {
 	case <-output.entered:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("actual exporter did not block")
 	}
 	leasePath := filepath.Join(t.TempDir(), "lease")
@@ -131,7 +131,8 @@ func TestFailedPipelineStopKeepsActualClusterLockUntilWorkerExits(t *testing.T) 
 	}
 	defer decision.Lease.Close()
 	generation := &controllerGeneration{cancel: cancel, decision: decision, lifetimes: controllerLifetimes{pipeline: pipeline}}
-	if err := closeControllerGeneration(generation); !errors.Is(err, context.DeadlineExceeded) {
+	runner := &Runner{}
+	if err := runner.closeControllerGeneration(generation); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("blocked owner stop=%v", err)
 	}
 	cfg.Identity = "new"
@@ -139,8 +140,23 @@ func TestFailedPipelineStopKeepsActualClusterLockUntilWorkerExits(t *testing.T) 
 	if err != nil || contender.Leader || contender.Reason != "locked-by-peer" {
 		t.Fatalf("unconfirmed old owner released leadership: %+v err=%v", contender, err)
 	}
+	exited := make(chan error, 1)
+	go func() { exited <- runner.Wait(context.Background()) }()
+	select {
+	case err := <-exited:
+		t.Fatalf("runtime acknowledged exit while old exporter retained leadership: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
 	close(output.release)
 	released = true
+	select {
+	case err := <-exited:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("runtime lost the unconfirmed-teardown result: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime did not acknowledge actual old-owner exit")
+	}
 	deadline := time.Now().Add(time.Second)
 	for {
 		contender, err = ha.Acquire(context.Background(), cfg)

@@ -1482,17 +1482,17 @@ spec:
 	}
 }
 
-func TestDoctorDSLiteSelectedHealthyPolicyIgnoresAFTRProbeFailure(t *testing.T) {
+func TestDoctorDSLiteSelectedHealthyPolicyPreservesAFTRProbeFailure(t *testing.T) {
 	configPath, statePath := writeDoctorDSLiteFixture(t)
 	saveDoctorDSLiteState(t, statePath, map[string]any{"phase": "Applied", "health": "HealthOK"}, "ds-lite", map[string]any{"phase": "Applied", "selectedCandidate": "ds-lite", "selectedDevice": "ds-routerd"}, map[string]any{"phase": "Healthy"})
 	installDoctorDSLiteHostCommands(t, false, true)
 
 	report := runDoctorDSLiteJSON(t, configPath, statePath)
-	if report.Summary.Warn != 0 || report.Summary.Fail != 0 {
+	if report.Summary.Warn != 1 || report.Summary.Fail != 0 {
 		t.Fatalf("summary = %#v checks = %#v", report.Summary, report.Checks)
 	}
 	check := findDoctorCheck(t, report, "dig AFTR aftr.example.net")
-	if check.Status != doctorPass || !strings.Contains(check.Detail, "selected via EgressRoutePolicy/ipv4-default") {
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "selected via EgressRoutePolicy/ipv4-default") {
 		t.Fatalf("AFTR check = %#v", check)
 	}
 }
@@ -1503,7 +1503,7 @@ func TestDoctorDSLiteUpSelectedSourceAggregateCandidatePasses(t *testing.T) {
 	installDoctorDSLiteHostCommands(t, false, true)
 
 	report := runDoctorDSLiteJSON(t, configPath, statePath)
-	if report.Summary.Overall != doctorPass || report.Summary.Warn != 0 || report.Summary.Fail != 0 {
+	if report.Summary.Overall != doctorWarn || report.Summary.Warn != 1 || report.Summary.Fail != 0 {
 		t.Fatalf("summary = %#v checks = %#v", report.Summary, report.Checks)
 	}
 	resourceCheck := findDoctorCheck(t, report, "DSLiteTunnel/ds-lite")
@@ -1511,7 +1511,7 @@ func TestDoctorDSLiteUpSelectedSourceAggregateCandidatePasses(t *testing.T) {
 		t.Fatalf("DSLiteTunnel check = %#v", resourceCheck)
 	}
 	check := findDoctorCheck(t, report, "dig AFTR aftr.example.net")
-	if check.Status != doctorPass || !strings.Contains(check.Detail, "selected via EgressRoutePolicy/ipv4-default, gatewayHealth-aligned") {
+	if check.Status != doctorWarn || !strings.Contains(check.Detail, "selected via EgressRoutePolicy/ipv4-default, gatewayHealth-aligned") {
 		t.Fatalf("AFTR check = %#v", check)
 	}
 }

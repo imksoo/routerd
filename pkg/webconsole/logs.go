@@ -326,7 +326,7 @@ func (h Handler) trafficFlowList(ctx context.Context, filter logstore.TrafficFlo
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, h.opts.TrafficFlowLogPath)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -346,7 +346,7 @@ func (h Handler) trafficFlowAggregate(ctx context.Context, filter logstore.Traff
 	if strings.TrimSpace(h.opts.TrafficFlowLogPath) == "" {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}
-	store, err := logstore.OpenTrafficFlowLogReadOnly(h.opts.TrafficFlowLogPath)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, h.opts.TrafficFlowLogPath)
 	if os.IsNotExist(err) {
 		return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
 	}

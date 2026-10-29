@@ -30,6 +30,7 @@ type dynamicRouteSAMView struct {
 	RouteRouter       *api.Router
 	HybridLowerings   []hybrid.HybridLowering
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
+	NextChangeAt      time.Time
 }
 
 // BuildDynamicRouteSAMEffectiveRouter returns the route-facing effective router
@@ -62,6 +63,7 @@ type dynamicRouteSAMObservation struct {
 	hasGeneric bool
 	parts      []dynamicconfig.DynamicConfigPart
 	mobility   dynamicconfig.MobilityDataplanePlan
+	nextExpiry time.Time
 }
 
 func observeDynamicRouteSAM(lister dynamicConfigPartLister, now time.Time, targetOS platform.OS) (dynamicRouteSAMObservation, error) {
@@ -74,6 +76,11 @@ func observeDynamicRouteSAM(lister dynamicConfigPartLister, now time.Time, targe
 		}
 	}
 	observation := dynamicRouteSAMObservation{hasGeneric: hasDynamicConfigResources(records, now)}
+	for _, record := range records {
+		if record.ExpiresAt.After(now) && (observation.nextExpiry.IsZero() || record.ExpiresAt.Before(observation.nextExpiry)) {
+			observation.nextExpiry = record.ExpiresAt
+		}
+	}
 	if observation.hasGeneric {
 		var err error
 		observation.parts, err = genericDynamicConfigPartsFromRecords(records, now)
@@ -155,6 +162,7 @@ func (p *preparedRouterConfig) buildDynamicRouteSAMView(base *api.Router, observ
 		RouteRouter:       &routeRouter,
 		HybridLowerings:   hybridLowerings,
 		MobilityDataplane: observation.mobility,
+		NextChangeAt:      observation.nextExpiry,
 	}, nil
 }
 
@@ -321,37 +329,30 @@ func addMobilityPlanEntry[T any](entries map[string]T, source, sourcePoolRef, ki
 // for discovery-owned ARP observer bootstrap. Like the local dataplane plan,
 // it consumes only an active typed DynamicConfigPart and never reopens raw
 // MobilityPool configuration.
-func mobilityARPObserverIntentsFromRecords(records []routerstate.DynamicConfigPartRecord, now time.Time) []dynamicconfig.ARPObserverIntent {
+func mobilityARPObserverIntentsFromRecords(records []routerstate.DynamicConfigPartRecord, now time.Time) ([]dynamicconfig.ARPObserverIntent, error) {
 	intentsByName := map[string]dynamicconfig.ARPObserverIntent{}
-	conflictingNames := map[string]bool{}
 	activeRecords, invalidPools := codec.ActiveMobilityPoolPlanRecords(records, now)
+	if len(invalidPools) != 0 {
+		return nil, fmt.Errorf("invalid active MobilityPool typed plan record for pool(s): %s", sortedMobilityPoolNames(invalidPools))
+	}
 	for _, active := range activeRecords {
 		record, source := active.Record, active.Source
-		if !source.ARPObserver || invalidPools[source.PoolRef] {
+		if !source.ARPObserver {
 			continue
 		}
 		intents, err := codec.DecodeARPObserverIntents(record.ARPObserverIntentsJSON)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("decode ARP observer intents for %q: %w", record.Source, err)
 		}
-		valid := true
 		for _, intent := range intents {
 			if err := dynamicconfig.ValidateARPObserverIntent(intent, source.PoolRef); err != nil {
-				valid = false
-				break
+				return nil, fmt.Errorf("validate ARP observer intent for %q: %w", record.Source, err)
 			}
-		}
-		if !valid {
-			continue
 		}
 		for _, intent := range intents {
-			if conflictingNames[intent.ResourceName] {
-				continue
-			}
 			if existing, found := intentsByName[intent.ResourceName]; found {
 				if !reflect.DeepEqual(existing, intent) {
-					delete(intentsByName, intent.ResourceName)
-					conflictingNames[intent.ResourceName] = true
+					return nil, fmt.Errorf("conflicting ARP observer resource %q", intent.ResourceName)
 				}
 				continue
 			}
@@ -365,7 +366,7 @@ func mobilityARPObserverIntentsFromRecords(records []routerstate.DynamicConfigPa
 	sort.Slice(intentsOut, func(i, j int) bool {
 		return intentsOut[i].ResourceName < intentsOut[j].ResourceName
 	})
-	return intentsOut
+	return intentsOut, nil
 }
 
 // genericDynamicConfigPartsFromRecords decodes only payloads that are allowed

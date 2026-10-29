@@ -49,7 +49,7 @@ const server = http.createServer(async (req, res) => {
           if (observationMode === "client-zero-accounting") {
             client.bytesOut = 0;
             client.bytesIn = 0;
-            client.accounting = client.hostname === "aiseg2";
+            if (client.hostname !== "aiseg2") { delete client.bytesOut; delete client.bytesIn; }
           }
           client.sources = ["sticky-history", "traffic", "dns"];
         }
@@ -63,13 +63,7 @@ const server = http.createServer(async (req, res) => {
       fixture.resources.push({ apiVersion: "system.routerd.net/v1alpha1", kind: "KernelModule", name: "unobserved-module", declared: true, status: { phase: "NotObserved" } });
       fixture.resources.push({ apiVersion: "net.routerd.net/v1alpha1", kind: "WireGuardPeer", name: "removed-peer", declared: false, status: { phase: "Pending", reason: "WithdrawalFailed", interface: "wg0", configured: true } });
       if (observationMode === "unaccounted-traffic") {
-        fixture.trafficFlows = [{ clientAddress: "192.0.2.1", peerAddress: "198.51.100.1", peerPort: 443, protocol: "tcp", accounting: false, resolvedHostname: "unaccounted.example" }];
-      }
-      for (const client of fixture.clients) {
-        if (client.accounting === undefined) client.accounting = true;
-      }
-      for (const flow of fixture.trafficFlows) {
-        if (flow.accounting === undefined) flow.accounting = true;
+        fixture.trafficFlows = [{ clientAddress: "192.0.2.1", peerAddress: "198.51.100.1", peerPort: 443, protocol: "tcp", resolvedHostname: "unaccounted.example" }];
       }
       if (["interface-failed", "interface-changed", "interface-empty"].includes(observationMode)) {
         delete fixture.interfaces[0].addresses;
@@ -543,8 +537,8 @@ function summaryFixture() {
       { questionName: "routerd.net", answers: ["2606:4700:3030::6815:1001"] },
     ],
     trafficFlows: [
-      { clientAddress: "172.18.0.150", peerAddress: "142.250.207.68", resolvedHostname: "www.google.com", accounting: true, bytesOut: 512000, bytesIn: 9400000 },
-      { clientAddress: "172.18.1.110", peerAddress: "140.82.112.6", resolvedHostname: "api.github.com", accounting: true, bytesOut: 88000, bytesIn: 1200000 },
+      { clientAddress: "172.18.0.150", peerAddress: "142.250.207.68", resolvedHostname: "www.google.com", bytesOut: 512000, bytesIn: 9400000 },
+      { clientAddress: "172.18.1.110", peerAddress: "140.82.112.6", resolvedHostname: "api.github.com", bytesOut: 88000, bytesIn: 1200000 },
     ],
     firewallLogs: [
       { id: 92, ts: now, action: "drop", srcAddress: "192.0.2.77", dstAddress: "198.51.100.77", protocol: "tcp", l3Proto: "ipv4", srcPort: 49152, dstPort: 443, tcpFlags: "ACK" },

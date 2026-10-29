@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/sam"
 )
 
 func PF(router *api.Router, holes []FirewallHole) ([]byte, error) {
@@ -146,6 +147,9 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 			return nil, err
 		}
 	}
+	// The native SAM actor owns these narrow capture rules. Its empty anchor
+	// has no effect; populated paths must be reached before default filtering.
+	buf.WriteString("anchor " + pfQuote(sam.PFForwardAnchor) + " quick\n")
 	filterRequested := len(zoneMap) > 0 || len(rules) > 0 || len(holes) > 0 || len(logs) > 0 || len(clientPolicies) > 0
 	if len(routeToRules) > 0 && (len(rules) > 0 || len(holes) > 0 || len(logs) > 0 || len(clientPolicies) > 0) {
 		return nil, fmt.Errorf("FreeBSD EgressRoutePolicy hash route-to cannot coexist with explicit routerd firewall rules, holes, logs, or ClientPolicy")

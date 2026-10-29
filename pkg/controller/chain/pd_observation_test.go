@@ -37,7 +37,24 @@ func TestTypedPDObservationDrivesLANAndReleaseWithdrawal(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
 		t.Fatal(err)
 	}
-	controller := LANAddressController{Router: router, DeclaredRouter: router, Store: store, DryRun: true, Now: func() time.Time { return now }}
+	present := map[string]bool{}
+	failure := errors.New("injected address delete failure")
+	failDelete := false
+	controller := LANAddressController{Router: router, DeclaredRouter: router, Store: store, Now: func() time.Time { return now },
+		ObserveAddress: lanProbeFixture(func(_ context.Context, _ string, address string) bool { return present[address] }, nil, nil),
+		Command: func(_ context.Context, name string, args ...string) error {
+			if len(args) > 3 && args[1] == "addr" {
+				if args[2] == "del" {
+					if failDelete {
+						return failure
+					}
+					delete(present, args[3])
+				} else {
+					present[args[3]] = true
+				}
+			}
+			return nil
+		}}
 	if err := controller.reconcile(context.Background(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}
@@ -55,23 +72,20 @@ func TestTypedPDObservationDrivesLANAndReleaseWithdrawal(t *testing.T) {
 	if err := store.SavePDLeaseSnapshot("wan-pd", snapshot); err != nil {
 		t.Fatal(err)
 	}
-	controller.DryRun = false
-	present := true
-	controller.AddressPresent = func(context.Context, string, string) bool { return present }
-	failure := errors.New("injected address delete failure")
-	var deletes []string
-	controller.Command = func(_ context.Context, name string, args ...string) error {
-		deletes = append(deletes, args[3])
-		return failure
-	}
+	failDelete = true
 	if err := controller.reconcile(context.Background(), "wan-pd"); !errors.Is(err, failure) {
 		t.Fatalf("withdraw failure was hidden: %v", err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
-	if status["phase"] != "Error" || status["reason"] != "WithdrawFailed" || status["address"] != "2001:db8:1200:1::1/64" {
-		t.Fatalf("failed withdrawal lost ownership: %+v", status)
+	receipt, readErr := delegatedReceipt(status)
+	if readErr != nil || receipt == nil || !receipt.has("2001:db8:1200:1::1/64") || status["phase"] != "Pending" || status["reason"] != "AddressWithdrawing" {
+		t.Fatalf("failed withdrawal lost exact ownership: %+v err=%v", status, readErr)
 	}
-	controller.Command = func(context.Context, string, ...string) error { present = false; return nil }
+	failDelete = false
+	if err := controller.reconcile(t.Context(), "wan-pd"); err == nil {
+		t.Fatal("pending present native tuple was adopted after failed withdrawal")
+	}
+	delete(present, "2001:db8:1200:1::1/64") // explicit external absence resolves the fence.
 	if err := controller.reconcile(context.Background(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}

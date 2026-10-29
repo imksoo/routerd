@@ -158,7 +158,10 @@ func TestSQLiteStoreGenerationsAndEvents(t *testing.T) {
 	if observedGeneration != generation {
 		t.Fatalf("observed generation = %d, want %d", observedGeneration, generation)
 	}
-	events := store.Events("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", 10)
+	events, err := store.ReadEvents(t.Context(), "net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", "wan-pd", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 || events[0].Generation != generation || events[0].Reason != "PrefixObserved" {
 		t.Fatalf("events = %+v", events)
 	}
@@ -277,7 +280,10 @@ func TestSQLiteStoreMaintenance(t *testing.T) {
 	if deleted != 1 {
 		t.Fatalf("deleted events = %d, want 1", deleted)
 	}
-	events := store.Events("net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	events, err := store.ReadEvents(t.Context(), "net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 || events[0].Reason != "NewEvent" {
 		t.Fatalf("remaining events = %+v", events)
 	}

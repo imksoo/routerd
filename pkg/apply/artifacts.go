@@ -87,13 +87,17 @@ var serviceDeclarations = []serviceDeclaration{
 	{
 		kind: "DHCPv4Server",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{dnsmasqServiceIntent(ctx)}
+			return dnsmasqServiceIntents(ctx)
 		},
 	},
 	{
 		kind: "DHCPv6Server",
 		declare: func(ctx serviceDeclarationContext) []resource.Intent {
-			return []resource.Intent{dnsmasqServiceIntent(ctx)}
+			spec, err := ctx.res.DHCPv6ServerSpec()
+			if err != nil || spec.Mode == "ra-only" {
+				return nil
+			}
+			return dnsmasqServiceIntents(ctx)
 		},
 	},
 	{
@@ -117,11 +121,14 @@ func serviceIntent(ctx serviceDeclarationContext, service servicemgr.Service, ac
 	return servicemgr.IntentForPlatform(ctx.owner, ctx.features, service, action, attrs)
 }
 
-func dnsmasqServiceIntent(ctx serviceDeclarationContext) resource.Intent {
-	return serviceIntent(ctx, servicemgr.Service{
+func dnsmasqServiceIntents(ctx serviceDeclarationContext) []resource.Intent {
+	if !ctx.features.HasSystemd {
+		// routerd owns the foreground process on non-systemd platforms.
+		return nil
+	}
+	return []resource.Intent{serviceIntent(ctx, servicemgr.Service{
 		SystemdName: "routerd-dnsmasq.service",
-		RCDName:     "routerd_dnsmasq",
-	}, resource.ActionEnsure, nil)
+	}, resource.ActionEnsure, nil)}
 }
 
 func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]string, targetOS platform.OS, features platform.Features) []resource.Intent {
@@ -243,7 +250,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if err != nil {
 			return nil
 		}
-		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "platform-network", nil)}
+		return []resource.Intent{artifact("net.ipv4.address", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ipv4-static-address", nil)}
 	case "VirtualAddress":
 		spec, err := res.VirtualAddressSpec()
 		if err != nil {
@@ -302,10 +309,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		intents = append(intents, artifact("tailscale.node", res.Metadata.Name, action, "tailscale", nil))
 		return intents
 	case "IPsecConnection":
-		return []resource.Intent{
-			artifact("ipsec.swanctl.connection", res.Metadata.Name, resource.ActionEnsure, "swanctl", nil),
-			artifact("file", ipsecRuntimeArtifactPath(targetOS, res.Metadata.Name), resource.ActionEnsure, "file", nil),
-		}
+		return []resource.Intent{artifact("ipsec.vici.connection", "routerd-"+res.Metadata.Name, resource.ActionEnsure, "vici", nil)}
 	case "VRF":
 		spec, err := res.VRFSpec()
 		if err != nil {
@@ -320,6 +324,12 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
 	case "DHCPv4Server", "DHCPv6Server":
+		if res.Kind == "DHCPv6Server" {
+			spec, err := res.DHCPv6ServerSpec()
+			if err != nil || spec.Mode == "ra-only" {
+				return nil
+			}
+		}
 		intents := []resource.Intent{artifact("dnsmasq.config", "routerd", resource.ActionEnsure, "dnsmasq", nil)}
 		intents = append(intents, declaredServiceIntents(serviceContext)...)
 		return intents
@@ -370,7 +380,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if !api.BoolDefault(spec.Enabled, true) {
 			action = resource.ActionDelete
 		}
-		return []resource.Intent{artifact("linux.ipip6.tunnel", defaultString(spec.TunnelName, res.Metadata.Name), action, "ip-link", nil)}
+		return []resource.Intent{artifact("routerd.dslite.tunnel", res.Metadata.Name, action, "routerd-serve", nil)}
 	case "HealthCheck":
 		spec, err := res.HealthCheckSpec()
 		if err != nil {
@@ -401,7 +411,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 			return nil
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
-		intents := []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "platform-network", nil)}
+		intents := []resource.Intent{artifact("net.link", ifname, resource.ActionEnsure, "vxlan-segment", nil)}
 		if defaultString(spec.L2Filter, "default") != "none" {
 			intents = append(intents, resource.Intent{Artifact: newNftTableArtifact(owner, "bridge", "routerd_l2_filter"), Action: resource.ActionEnsure, ApplyWith: "nft"})
 		}
@@ -442,14 +452,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 	default:
 		return nil
 	}
-}
-
-func ipsecRuntimeArtifactPath(targetOS platform.OS, name string) string {
-	root := "/etc/routerd/swanctl"
-	if targetOS == platform.OSFreeBSD {
-		root = "/usr/local/etc/routerd/swanctl"
-	}
-	return root + "/routerd-" + name + ".conf"
 }
 
 func routerArtifactIntents(router *api.Router, aliases map[string]string) []resource.Intent {

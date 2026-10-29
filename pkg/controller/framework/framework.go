@@ -243,6 +243,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				return controller.Reconcile(runCtx, bootstrap)
 			})
 		})
+		ticker.Reset(nextControllerInterval(controller, intervals[level]))
 	}
 	for {
 		select {

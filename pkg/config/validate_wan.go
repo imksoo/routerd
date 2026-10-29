@@ -225,6 +225,9 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if spec.Interface == "" {
 			return true, fmt.Errorf("%s spec.interface is required", res.ID())
 		}
+		if spec.LocalIPv6Source != "" {
+			return true, fmt.Errorf("%s spec.localIPv6Source was removed; use interface or delegatedAddress source", res.ID())
+		}
 		if spec.AFTRSource != "" {
 			return true, fmt.Errorf("%s spec.aftrSource was removed; use spec.aftrFrom", res.ID())
 		}
@@ -296,6 +299,15 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 			if err != nil || (!addr.Is4() && !addr.Is6()) {
 				return true, fmt.Errorf("%s spec.aftrDNSServers contains invalid address %q", res.ID(), server)
 			}
+		}
+		if targetOS == platform.OSFreeBSD && spec.EncapsulationLimit != "" && spec.EncapsulationLimit != "none" {
+			return true, fmt.Errorf("%s custom spec.encapsulationLimit is unsupported on FreeBSD", res.ID())
+		}
+		if spec.RouteMetric < 0 {
+			return true, fmt.Errorf("%s spec.routeMetric must not be negative", res.ID())
+		}
+		if targetOS == platform.OSFreeBSD && spec.DefaultRoute && spec.RouteMetric != 0 {
+			return true, fmt.Errorf("%s spec.routeMetric for DS-Lite default routes is unsupported on FreeBSD", res.ID())
 		}
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
 			return true, fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())

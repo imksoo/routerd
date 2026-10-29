@@ -1097,7 +1097,9 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			expanded.Spec.Resources[0],
 		}}},
-		Store: routeStore,
+		Store:        routeStore,
+		NativeScope:  func(context.Context) (string, error) { return "linux:fixture:1", nil },
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			routeCommands = append(routeCommands, append([]string{name}, args...))
 			if reflect.DeepEqual(args, []string{"-j", "-d", "-4", "route", "show", "10.20.0.0/16"}) {
@@ -1117,7 +1119,9 @@ func TestTunnelUnderlayRemovalOrderFixture(t *testing.T) {
 	}
 	wantRouteCommands := [][]string{
 		{"ip", "-j", "-d", "-4", "route", "show", "10.20.0.0/16"},
+		{"ip", "-j", "-d", "-4", "route", "show", "10.20.0.0/16"},
 		{"ip", "route", "del", "10.20.0.0/16", "dev", "tun-ipip", "metric", "0", "proto", "boot"},
+		{"ip", "-j", "-d", "-4", "route", "show", "10.20.0.0/16"},
 	}
 	if !reflect.DeepEqual(routeCommands, wantRouteCommands) {
 		t.Fatalf("route commands = %#v", routeCommands)

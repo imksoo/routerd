@@ -286,7 +286,6 @@ type ConnTuple = {
   destinationService?: string;
   packets?: number;
   bytes?: number;
-  accounting?: boolean;
 };
 
 type ConnectionEntry = {
@@ -323,6 +322,7 @@ type DNSQuery = {
 };
 
 type TrafficFlow = {
+  flowKey?: string;
   clientAddress?: string;
   peerAddress?: string;
   peerPort?: number;
@@ -343,7 +343,6 @@ type TrafficFlow = {
   source?: string;
   httpHost?: string;
   dnsQuery?: string;
-  accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
 };
@@ -461,9 +460,10 @@ type ClientEntry = {
   state?: string;
   sources?: string[];
   peers?: string[];
-  accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
+  bytesOutIncomplete?: boolean;
+  bytesInIncomplete?: boolean;
   primaryActivity?: string;
   lastProtocol?: string;
   lastProtocolDetail?: string;
@@ -676,6 +676,8 @@ type ClientRow = {
   sources: Set<string>;
   bytesOut?: number;
   bytesIn?: number;
+  bytesOutIncomplete?: boolean;
+  bytesInIncomplete?: boolean;
   peers: Set<string>;
   primaryActivity: string;
   lastProtocol: string;
@@ -4088,7 +4090,7 @@ function RankList({
   formatLabel = value => value,
   formatValue = value => String(value),
 }: {
-  rows: { label: string; value: number }[];
+  rows: { label: string; value: number; incomplete?: boolean }[];
   empty: string;
   formatLabel?: (value: string) => string;
   formatValue?: (value: number) => string;
@@ -4103,10 +4105,10 @@ function RankList({
         <div className={styles.rankRow} key={row.label}>
           <div className={styles.rankLine}>
             <Text><code className={styles.wrapCode}>{formatLabel(row.label)}</code></Text>
-            <Text size={200} className={styles.muted}>{formatValue(row.value)}</Text>
+            <Text size={200} className={styles.muted}>{row.incomplete ? "≥ " : ""}{formatValue(row.value)}</Text>
           </div>
           <div className={styles.barTrack} aria-hidden="true">
-            <div className={styles.barFill} style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
+            <div className={styles.barFill} style={{ width: `${Math.max(0, (row.value / max) * 100)}%` }} />
           </div>
         </div>
       ))}
@@ -5326,13 +5328,13 @@ function ConnectionCard({
           </div>
           <div className={styles.connectionCardMeta}>
             <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
-            <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+            <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "unknown"}</Badge>
             {entry.localRedirect ? <Badge appearance="tint" color="warning" title={localRedirectTitle(entry.localRedirect)}>Local redirect</Badge> : null}
             {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
             {provider ? <Badge appearance="outline" color="subtle" title="Destination provider">{formatProviderLabel(provider)}</Badge> : null}
             {destServiceApp && destServiceApp !== classification.app ? <ServiceBadge service={destService} app={destServiceApp} /> : null}
             <Text size={200} className={styles.muted}>
-              {hasConnectionAccounting(entry) ? `${formatBytes(traffic)}, ${entry.timeout ?? 0}s` : `${entry.timeout ?? 0}s`}
+              {hasObservedConnectionBytes(entry) ? `${formatObservedBytes(traffic, connectionTrafficIncomplete(entry))}, ${entry.timeout ?? 0}s` : `${entry.timeout ?? 0}s`}
             </Text>
           </div>
         </div>
@@ -5341,7 +5343,7 @@ function ConnectionCard({
         <div className={styles.connectionCardDetail}>
           <div className={styles.detailList}>
             <Text className={styles.detailKey}>state</Text>
-            <Text>{entry.state || "stateless"}{entry.assured ? " (assured)" : ""} · class {connectionClass(entry)}</Text>
+            <Text>{entry.state || "unknown"}{entry.assured ? " (assured)" : ""} · class {connectionClass(entry)}</Text>
             <Text className={styles.detailKey}>source</Text>
             <div className={styles.connectionFlow}>
               <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
@@ -5369,9 +5371,9 @@ function ConnectionCard({
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
             <Text className={styles.detailKey}>traffic</Text>
             <Text size={200} className={styles.muted}>
-              {hasConnectionAccounting(entry)
-                ? `${formatBytes(entry.original?.bytes)} out / ${formatBytes(entry.reply?.bytes)} in / ${formatBytes(traffic)} total`
-                : "not accounted"}
+              {hasObservedConnectionBytes(entry)
+                ? `${formatBytes(entry.original?.bytes)} out / ${formatBytes(entry.reply?.bytes)} in / ${formatObservedBytes(traffic, connectionTrafficIncomplete(entry))} total`
+                : "not collected"}
             </Text>
             <Text className={styles.detailKey}>flow</Text>
             <Text size={200} className={styles.muted}>protocol {family.toUpperCase() || "?"}/{proto} · timeout {entry.timeout ?? 0}s{entry.mark ? ` · mark ${entry.mark}` : ""}</Text>
@@ -5867,7 +5869,7 @@ function ClientInventory({ clients, onShowConnections }: { clients?: ClientEntry
                               {row.primaryActivity ? <Text size={200} className={styles.muted}>activity {formatClientActivity(row.primaryActivity)}</Text> : null}
                               {row.lastProtocol ? <Text size={200} className={styles.muted}>last protocol {formatConnectionApp(row.lastProtocol)}{row.lastProtocolDetail ? ` ${row.lastProtocolDetail}` : ""}</Text> : null}
                               {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
-                              <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+                              <Text size={200} className={styles.muted}>out {formatObservedBytes(row.bytesOut, row.bytesOutIncomplete)} / in {formatObservedBytes(row.bytesIn, row.bytesInIncomplete)}</Text>
                               {row.stickyUntil ? <Text size={200} className={styles.muted}>sticky until <RelativeTime value={row.stickyUntil} /></Text> : null}
                               {row.clientPolicy ? <Text size={200} className={styles.muted}>policy {row.clientPolicy}: {Array.from(row.isolationPolicy).join(", ")}</Text> : null}
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
@@ -6062,8 +6064,8 @@ function ClientTraffic({ flows, onShowConnectionsForAddress }: { flows: TrafficF
                   <Button size="small" appearance="subtle" icon={<PlugConnectedRegular />} onClick={() => onShowConnectionsForAddress(row.client)}>Connections</Button>
                 </div>
               </TableCell>
-              <TableCell>{formatBytes(row.bytesOut)}</TableCell>
-              <TableCell>{formatBytes(row.bytesIn)}</TableCell>
+              <TableCell>{formatObservedBytes(row.bytesOut, row.bytesOutIncomplete)}</TableCell>
+              <TableCell>{formatObservedBytes(row.bytesIn, row.bytesInIncomplete)}</TableCell>
               <TableCell>
                 <div className={styles.badges}>
                   {Array.from(row.protocols).slice(0, 3).map(protocol => (
@@ -6489,7 +6491,7 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
     events: collected.has("events") ? reconcileRecords(current?.events, next.events, row => eventKey(row)) : current?.events,
     connections: collected.has("connections") ? reconcileConnectionTable(current?.connections, next.connections) : current?.connections,
     dnsQueries: collected.has("dnsQueries") ? reconcileRecords(current?.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`) : current?.dnsQueries,
-    trafficFlows: collected.has("trafficFlows") ? reconcileRecords(current?.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`) : current?.trafficFlows,
+    trafficFlows: collected.has("trafficFlows") ? reconcileRecords(current?.trafficFlows, next.trafficFlows, row => row.flowKey ?? "") : current?.trafficFlows,
     firewallLogs: collected.has("firewallLogs") ? reconcileRecords(current?.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)) : current?.firewallLogs,
     conntrackTuning: collected.has("conntrackTuning") ? next.conntrackTuning : current?.conntrackTuning,
     dhcpLeases: collected.has("dhcpLeases") ? reconcileRecords(current?.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`) : current?.dhcpLeases,
@@ -7011,7 +7013,7 @@ function connectionFilterFacets(entries: ConnectionEntry[]) {
     protocols.add(normalizeFacet(entry.protocol, "other"));
     apps.add(connectionApp(entry));
     sources.add(connectionAppSource(entry));
-    states.add(normalizeFacet(entry.state, "stateless"));
+    states.add(normalizeFacet(entry.state, "unknown"));
   }
   return {
     families: Array.from(families).sort(facetSort),
@@ -7045,7 +7047,7 @@ function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string,
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
     if (filters.source !== "all" && connectionAppSource(entry) !== filters.source) return false;
-    if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
+    if (filters.state !== "all" && normalizeFacet(entry.state, "unknown") !== filters.state) return false;
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels, clientIdentities).includes(query);
   });
@@ -7163,7 +7165,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
   return [
     entry.family,
     entry.protocol,
-    entry.state || "stateless",
+    entry.state || "unknown",
     entry.assured ? "assured" : "",
     entry.timeout,
     entry.mark,
@@ -7198,12 +7200,12 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
 function compareConnectionSortValue(a: ConnectionEntry, b: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
   if (sort === "stable") return compareConnectionStable(a, b);
   if (sort === "timeout") return Number(a.timeout ?? 0) - Number(b.timeout ?? 0);
-  if (sort === "traffic") return connectionTrafficBytes(a) - connectionTrafficBytes(b);
+  if (sort === "traffic") return (connectionTrafficBytes(a) ?? -1) - (connectionTrafficBytes(b) ?? -1);
   return stringSort(connectionSortValue(a, sort, dnsLabels), connectionSortValue(b, sort, dnsLabels));
 }
 
 function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
-  if (sort === "state") return `${normalizeFacet(entry.state, "stateless")} ${entry.assured ? "assured" : ""}`;
+  if (sort === "state") return `${normalizeFacet(entry.state, "unknown")} ${entry.assured ? "assured" : ""}`;
   if (sort === "source") return hostPort(entry.original?.source, entry.original?.sourcePort);
   if (sort === "destination") return hostPort(entry.original?.destination, entry.original?.destinationPort);
   if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
@@ -7216,11 +7218,15 @@ function compareConnectionStable(a: ConnectionEntry, b: ConnectionEntry) {
 }
 
 function connectionTrafficBytes(entry: ConnectionEntry) {
-  return Math.max(0, Number(entry.original?.bytes ?? 0)) + Math.max(0, Number(entry.reply?.bytes ?? 0));
+  return addOptionalBytes(entry.original?.bytes, entry.reply?.bytes);
 }
 
-function hasConnectionAccounting(entry: ConnectionEntry) {
-  return Boolean(entry.original?.accounting || entry.reply?.accounting || entry.original?.bytes || entry.reply?.bytes);
+function hasObservedConnectionBytes(entry: ConnectionEntry) {
+  return isObservedCounter(entry.original?.bytes) || isObservedCounter(entry.reply?.bytes);
+}
+
+function connectionTrafficIncomplete(entry: ConnectionEntry) {
+  return !isObservedCounter(entry.original?.bytes) || !isObservedCounter(entry.reply?.bytes);
 }
 
 function normalizeFacet(value: unknown, fallback: string) {
@@ -7354,7 +7360,7 @@ function connectionClass(entry: ConnectionEntry) {
   const source = connectionAppSource(entry);
   if (connectionApp(entry) !== "unidentified") return source === "port-fallback" ? "port guess" : "dpi identified";
   if (source === "identifying") return "identifying";
-  const state = normalizeFacet(entry.state, "stateless");
+  const state = normalizeFacet(entry.state, "unknown");
   if (entry.assured || state.includes("established")) return "established";
   if (state.includes("syn") || state.includes("unreplied")) return "probe";
   return "unidentified";
@@ -7730,22 +7736,25 @@ function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionCl
   return stats;
 }
 
-function topTrafficProtocols(flows: TrafficFlow[]) {
-  const totals = new Map<string, number>();
+function observedTrafficRanks(flows: TrafficFlow[], labelFor: (flow: TrafficFlow) => string) {
+  const totals = new Map<string, { label: string; value?: number; incomplete: boolean }>();
   for (const flow of flows) {
-    const classification = trafficFlowClassification(flow);
-    totals.set(classification.rankLabel, (totals.get(classification.rankLabel) ?? 0) + trafficFlowBytes(flow));
+    const label = labelFor(flow);
+    const row = totals.get(label) ?? { label, incomplete: false };
+    row.value = addOptionalBytes(row.value, trafficFlowBytes(flow));
+    row.incomplete ||= !isObservedCounter(flow.bytesOut) || !isObservedCounter(flow.bytesIn);
+    totals.set(label, row);
   }
-  return topRows(totals, 5);
+  return Array.from(totals.values()).filter((row): row is { label: string; value: number; incomplete: boolean } => row.value !== undefined)
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)).slice(0, 5);
+}
+
+function topTrafficProtocols(flows: TrafficFlow[]) {
+  return observedTrafficRanks(flows, flow => trafficFlowClassification(flow).rankLabel);
 }
 
 function topTrafficSources(flows: TrafficFlow[]) {
-  const totals = new Map<string, number>();
-  for (const flow of flows) {
-    const classification = trafficFlowClassification(flow);
-    totals.set(classification.source, (totals.get(classification.source) ?? 0) + trafficFlowBytes(flow));
-  }
-  return topRows(totals, 5);
+  return observedTrafficRanks(flows, flow => trafficFlowClassification(flow).source);
 }
 
 function topTalkers(clients: ClientEntry[], flows: TrafficFlow[]) {
@@ -7757,14 +7766,7 @@ function topTalkers(clients: ClientEntry[], flows: TrafficFlow[]) {
     }
     if (client.id && label) labels.set(client.id, label);
   }
-  const totals = new Map<string, number>();
-  for (const flow of flows) {
-    const bytes = trafficFlowBytes(flow);
-    if (bytes <= 0) continue;
-    const key = labels.get(flow.clientAddress ?? "") || flow.clientAddress || "-";
-    totals.set(key, (totals.get(key) ?? 0) + bytes);
-  }
-  return topRows(totals, 5);
+  return observedTrafficRanks(flows, flow => labels.get(flow.clientAddress ?? "") || flow.clientAddress || "-");
 }
 
 function topDomains(flows: TrafficFlow[]) {
@@ -7840,8 +7842,7 @@ function trafficFlowDomain(flow: TrafficFlow) {
 }
 
 function trafficFlowBytes(flow: TrafficFlow) {
-  if (!flow.accounting) return 0;
-  return Math.max(0, Number(flow.bytesOut ?? 0)) + Math.max(0, Number(flow.bytesIn ?? 0));
+  return addOptionalBytes(flow.bytesOut, flow.bytesIn);
 }
 
 function topRows(values: Map<string, number>, limit: number) {
@@ -7917,7 +7918,7 @@ function normalizeConnectionGroupProtocol(protocol: string | undefined) {
 function connectionStateSummary(entries: ConnectionEntry[]) {
   const counts = new Map<string, number>();
   for (const entry of entries) {
-    const state = normalizeFacet(entry.state, "stateless");
+    const state = normalizeFacet(entry.state, "unknown");
     counts.set(state, (counts.get(state) ?? 0) + 1);
   }
   return Array.from(counts.entries())
@@ -8430,12 +8431,14 @@ function formatDetailValue(value: unknown) {
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
-  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; peers: Set<string>; protocols: Set<string> }>();
+  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; bytesOutIncomplete?: boolean; bytesInIncomplete?: boolean; peers: Set<string>; protocols: Set<string> }>();
   for (const flow of flows) {
     const key = flow.clientAddress || "-";
     const row = totals.get(key) ?? { client: key, peers: new Set<string>(), protocols: new Set<string>() };
-    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
-    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
+    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut);
+    row.bytesOutIncomplete ||= !isObservedCounter(flow.bytesOut);
+    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn);
+    row.bytesInIncomplete ||= !isObservedCounter(flow.bytesIn);
     const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
     if (peer) row.peers.add(peer);
     const protocol = normalizeFacet(flow.appName || flow.protocol, "unidentified");
@@ -8455,8 +8458,10 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     vendor: entry.vendor ?? "",
     state: entry.state ?? "",
     sources: new Set(entry.sources ?? []),
-    bytesOut: entry.accounting ? entry.bytesOut ?? 0 : undefined,
-    bytesIn: entry.accounting ? entry.bytesIn ?? 0 : undefined,
+    bytesOut: entry.bytesOut,
+    bytesOutIncomplete: entry.bytesOutIncomplete,
+    bytesIn: entry.bytesIn,
+    bytesInIncomplete: entry.bytesInIncomplete,
     peers: new Set(entry.peers ?? []),
     primaryActivity: entry.primaryActivity ?? "",
     lastProtocol: entry.lastProtocol ?? "",
@@ -8519,10 +8524,17 @@ function normalizeMAC(mac?: string) {
   return String(mac ?? "").trim().toLowerCase();
 }
 
-function addOptionalBytes(current: number | undefined, next: number | undefined, accounting?: boolean) {
-  if (!accounting) return current;
-  const value = typeof next === "number" && Number.isFinite(next) ? next : 0;
-  return (current ?? 0) + value;
+function isObservedCounter(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function addOptionalBytes(current: number | undefined, next: number | undefined) {
+  if (!isObservedCounter(current)) return isObservedCounter(next) ? next : undefined;
+  return isObservedCounter(next) ? current + next : current;
+}
+
+function formatObservedBytes(value?: number, incomplete?: boolean) {
+  return `${isObservedCounter(value) && incomplete ? "≥ " : ""}${formatBytes(value)}`;
 }
 
 function clientActivityFacets(clients: ClientEntry[]) {

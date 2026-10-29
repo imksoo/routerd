@@ -12,7 +12,7 @@ import (
 )
 
 func TestOpenTrafficFlowLogConfiguresWALCheckpoint(t *testing.T) {
-	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	log, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,17 +44,17 @@ func TestOpenTrafficFlowLogConfiguresWALCheckpoint(t *testing.T) {
 }
 
 func TestTrafficFlowLogFiltersAndAggregate(t *testing.T) {
-	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	log, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer log.Close()
 	base := time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC)
 	flows := []TrafficFlow{
-		{StartedAt: base, ClientAddress: "192.168.1.10", ClientPort: 10001, PeerAddress: "8.8.8.8", PeerPort: 443, Protocol: "tcp", BytesOut: 100, BytesIn: 200, ResolvedHostname: "dns.google"},
-		{StartedAt: base.Add(10 * time.Second), ClientAddress: "192.168.1.10", ClientPort: 10002, PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp", BytesOut: 50, BytesIn: 0, ResolvedHostname: "one.one.one.one"},
-		{StartedAt: base.Add(20 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10003, PeerAddress: "9.9.9.9", PeerPort: 53, Protocol: "udp", BytesOut: 60, BytesIn: 80, ResolvedHostname: "dns.quad9.net"},
-		{StartedAt: base.Add(30 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10004, PeerAddress: "8.8.4.4", PeerPort: 443, Protocol: "tcp", BytesOut: 0, BytesIn: 90, ResolvedHostname: "dns.google"},
+		{StartedAt: base, ClientAddress: "192.168.1.10", ClientPort: 10001, PeerAddress: "8.8.8.8", PeerPort: 443, Protocol: "tcp", BytesOut: counterFixture(100), BytesIn: counterFixture(200), ResolvedHostname: "dns.google"},
+		{StartedAt: base.Add(10 * time.Second), ClientAddress: "192.168.1.10", ClientPort: 10002, PeerAddress: "1.1.1.1", PeerPort: 443, Protocol: "tcp", BytesOut: counterFixture(50), BytesIn: counterFixture(0), ResolvedHostname: "one.one.one.one"},
+		{StartedAt: base.Add(20 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10003, PeerAddress: "9.9.9.9", PeerPort: 53, Protocol: "udp", BytesOut: counterFixture(60), BytesIn: counterFixture(80), ResolvedHostname: "dns.quad9.net"},
+		{StartedAt: base.Add(30 * time.Second), ClientAddress: "192.168.1.11", ClientPort: 10004, PeerAddress: "8.8.4.4", PeerPort: 443, Protocol: "tcp", BytesOut: counterFixture(0), BytesIn: counterFixture(90), ResolvedHostname: "dns.google"},
 	}
 	for _, f := range flows {
 		f.FlowKey = FlowKey(f.Protocol, f.ClientAddress, f.ClientPort, f.PeerAddress, f.PeerPort)
@@ -107,7 +107,7 @@ func TestTrafficFlowLogFiltersAndAggregate(t *testing.T) {
 	if agg.Total != 4 {
 		t.Fatalf("total = %d", agg.Total)
 	}
-	if agg.TotalBytesIn != 370 || agg.TotalBytesOut != 210 {
+	if (agg.TotalBytesIn == nil || *agg.TotalBytesIn != 370) || (agg.TotalBytesOut == nil || *agg.TotalBytesOut != 210) {
 		t.Fatalf("bytes = (in=%d, out=%d)", agg.TotalBytesIn, agg.TotalBytesOut)
 	}
 	if agg.ByClient["192.168.1.10"] != 2 || agg.ByClient["192.168.1.11"] != 2 {
@@ -119,7 +119,7 @@ func TestTrafficFlowLogFiltersAndAggregate(t *testing.T) {
 }
 
 func TestTrafficFlowLogLimitHardCap(t *testing.T) {
-	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	log, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestTrafficFlowLogLimitHardCap(t *testing.T) {
 }
 
 func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
-	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	log, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,8 +154,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 		PeerAddress:         "1.1.1.1",
 		PeerPort:            443,
 		Protocol:            "tcp",
-		Accounting:          true,
-		BytesOut:            100,
+		BytesOut:            counterFixture(100),
 		AppName:             "tls",
 		AppCategory:         "web",
 		AppConfidence:       95,
@@ -173,7 +172,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 	if err := log.UpsertActive(context.Background(), flow); err != nil {
 		t.Fatal(err)
 	}
-	flow.BytesOut = 200
+	flow.BytesOut = counterFixture(200)
 	flow.AppName = ""
 	flow.AppCategory = ""
 	flow.AppConfidence = 0
@@ -201,7 +200,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("len = %d", len(rows))
 	}
-	if !rows[0].Accounting || rows[0].BytesOut != 200 || rows[0].EndedAt.IsZero() {
+	if (rows[0].BytesOut == nil || *rows[0].BytesOut != 200) || rows[0].EndedAt.IsZero() {
 		t.Fatalf("flow = %#v", rows[0])
 	}
 	if rows[0].AppName != "tls" || rows[0].AppCategory != "web" || rows[0].AppConfidence != 95 || rows[0].Engine != "ndpi-agent" || rows[0].Source != "ndpi-agent" || rows[0].TLSSNI != "routerd.example" || rows[0].HTTPHost != "routerd.example" {
@@ -213,7 +212,7 @@ func TestTrafficFlowLogUpsertAndEndMissing(t *testing.T) {
 }
 
 func TestTrafficFlowLogSyncActiveBatchesUpsertAndEndMissing(t *testing.T) {
-	log, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic-flows.db"))
+	log, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic-flows.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestTrafficFlowLogSyncActiveBatchesUpsertAndEndMissing(t *testing.T) {
 		PeerAddress:   "1.1.1.1",
 		PeerPort:      443,
 		Protocol:      "tcp",
-		BytesOut:      100,
+		BytesOut:      counterFixture(100),
 	}
 	first.FlowKey = FlowKey(first.Protocol, first.ClientAddress, first.ClientPort, first.PeerAddress, first.PeerPort)
 	second := TrafficFlow{
@@ -236,13 +235,13 @@ func TestTrafficFlowLogSyncActiveBatchesUpsertAndEndMissing(t *testing.T) {
 		PeerAddress:   "8.8.8.8",
 		PeerPort:      53,
 		Protocol:      "udp",
-		BytesOut:      50,
+		BytesOut:      counterFixture(50),
 	}
 	second.FlowKey = FlowKey(second.Protocol, second.ClientAddress, second.ClientPort, second.PeerAddress, second.PeerPort)
 	if err := log.SyncActive(context.Background(), []TrafficFlow{first, second}, []string{first.FlowKey, second.FlowKey}, now); err != nil {
 		t.Fatal(err)
 	}
-	first.BytesOut = 200
+	first.BytesOut = counterFixture(200)
 	if err := log.SyncActive(context.Background(), []TrafficFlow{first}, []string{first.FlowKey}, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +256,7 @@ func TestTrafficFlowLogSyncActiveBatchesUpsertAndEndMissing(t *testing.T) {
 	for _, row := range rows {
 		byKey[row.FlowKey] = row
 	}
-	if byKey[first.FlowKey].BytesOut != 200 || !byKey[first.FlowKey].EndedAt.IsZero() {
+	if (byKey[first.FlowKey].BytesOut == nil || *byKey[first.FlowKey].BytesOut != 200) || !byKey[first.FlowKey].EndedAt.IsZero() {
 		t.Fatalf("first flow = %#v", byKey[first.FlowKey])
 	}
 	if byKey[second.FlowKey].EndedAt.IsZero() {

@@ -3,6 +3,7 @@
 package chain
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
+
+var errPDAddressAuthorityChanged = errors.New("PD prefix authority changed or expired")
 
 const infinitePDLifetime = uint32(0xffffffff)
 
@@ -75,27 +78,17 @@ func (c LANAddressController) now() time.Time {
 	return time.Now().UTC()
 }
 
-func (c LANAddressController) currentAddressAuthority(pdName, prefix string, staged bool) (routerstate.PDLease, error) {
+func (c LANAddressController) currentAddressAuthority(pdName, prefix string) (routerstate.PDLease, error) {
 	now := c.now()
-	var lease routerstate.PDLease
-	if staged {
-		snapshot, fresh := c.freshStagedPDSnapshot(pdName)
-		if !fresh {
-			return lease, fmt.Errorf("staged PD prefix authority expired")
-		}
-		lease = routerstate.ObservePDLease(routerstate.PDLease{}, snapshot, now)
-	} else {
-		current, found, err := livePDLease(c.Store, pdName, now)
-		if err != nil {
-			return lease, err
-		}
-		if !found {
-			return lease, fmt.Errorf("PD prefix authority missing")
-		}
-		lease = current
+	lease, found, err := livePDLease(c.Store, pdName, now)
+	if err != nil {
+		return lease, err
 	}
-	if lease.CurrentPrefix != prefix || !lease.HasFreshTransactionEvidence(now) {
-		return lease, fmt.Errorf("PD prefix authority changed or expired")
+	if !found {
+		return lease, fmt.Errorf("%w: observation missing", errPDAddressAuthorityChanged)
+	}
+	if lease.Phase != "Bound" || lease.CurrentPrefix != prefix || !lease.HasFreshTransactionEvidence(now) {
+		return lease, errPDAddressAuthorityChanged
 	}
 	return lease, nil
 }
@@ -129,8 +122,8 @@ func (c LANAddressController) saveAddressPending(name, reason, message string) e
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", name, next)
 }
 
-func (c LANAddressController) currentPreviousAddressAuthority(pdName, currentPrefix, address string, spec api.IPv6DelegatedAddressSpec, staged bool) (managedPreviousDelegatedAddress, error) {
-	lease, err := c.currentAddressAuthority(pdName, currentPrefix, staged)
+func (c LANAddressController) currentPreviousAddressAuthority(pdName, currentPrefix, address string, spec api.IPv6DelegatedAddressSpec) (managedPreviousDelegatedAddress, error) {
+	lease, err := c.currentAddressAuthority(pdName, currentPrefix)
 	if err != nil {
 		return managedPreviousDelegatedAddress{}, err
 	}

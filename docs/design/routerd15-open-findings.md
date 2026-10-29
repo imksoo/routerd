@@ -1,6 +1,6 @@
 # routerd 1.5 remaining production-path findings
 
-Status: implementation pending unless explicitly closed in the audit. These
+Each section distinguishes implemented paths from remaining work. These
 findings come from cumulative production body/caller review, with isolated
 command/SQLite/loopback reproductions where stated. They do not represent native
 or cloud qualification. A passing existing suite does not close them.
@@ -53,82 +53,98 @@ Implemented in the daemon policy/path checkpoint:
 
 Loopback GoBGP export, edit/withdraw and exact-source recovery regressions pass.
 These are production-server tests, not independent-peer qualification. Native
-kernel FIB ownership remains open: remove installed/source-known replicas,
-serialize watch/reconcile/teardown through one owner, journal exact native
-operations, and retain uncertainty where the kernel cannot prove ownership.
-The BGP controller watcher must also acknowledge exit before owner replacement.
+kernel FIB ownership now uses one typed SQL receipt owner, exclusive add/exact
+withdrawal, current RIB/Mobility/native rechecks after persistence and explicit
+unknown-present fencing for both operations. Watcher and in-flight mutation exit
+are acknowledged before connection replacement. Protocol-only adoption, display
+fallback and duplicate retention caches are removed. Actual kernel qualification
+and automatic reacquisition after a kernel-scope change/reboot remain open; the
+current journal safely fences that mismatch. FreeBSD's delete API also lacks an
+atomic full-tuple CAS against unrelated external writers.
 
 ## Native effects and lifetime
 
-- Ordinary IPv4StaticAddress uses after-effect generic status as ownership, can
-  adopt/delete a foreign address, and drops receipts on failed observation.
-  Its WhenFalse path can delete a declared address never acquired. Replace all
-  acquisition/withdrawal paths together with exact pending ownership.
-- Delegated LAN address acquisition lifetimes are bounded, but separate WhenFalse
-  cleanup can derive an unowned address, and declaration removal lacks receipt
-  enumeration. Keep one exact receipt owner for both paths, including infinity.
-- DS-Lite endpoint ownership does not cover the tunnel itself. Linux adopts
-  existing/matching foreign tunnels; FreeBSD can destroy a mismatching GIF and
-  uses a Linux deletion command on a withdrawal path. Missing/disabled branches
-  can leave prior tunnels live. Close the complete native tunnel lifecycle.
-- Policy routing can delete foreign rules sharing priority; IPv6 host routes can
-  be installed before any durable receipt. Normal policy acquisition does not
-  acquire the explicit-adoption ledger. Use exact native identities and one
-  pending owner instead of priority-only deletion or inferred ownership.
-- Managed PF lacks the SAM root forward anchor expected by the native SAM actor.
-  SAM dotted-interface sysctl paths are decoded incorrectly. FreeBSD forward-zone
-  firewall parity remains unsupported, and must not silently become an input rule.
-- Linux VXLANSegment has no confirmed live owner; FreeBSD VXLAN receipts do not
-  protect against a same-name foreign replacement. Bridge and WG now have
-  concrete owners, but this does not repair those separate VXLAN paths.
-- Dynamic dnsmasq RA construction can advertise unrelated native prefixes;
-  DHCPv6Server ranges can contribute further PIOs. Static exact /64 emission is
-  fixed, but finite delegated prefix selection, RS handling and M/O/lifetime
-  semantics still need one actual RA owner and independent-peer validation.
+Implemented in the native/runtime follow-up:
 
-Temporary native-command overlays reproduced foreign policy-rule deletion,
-unjournaled IPv6 host routes and destructive foreign FreeBSD GIF handling.
+- Ordinary static IPv4 addresses and routes use exact scope/index receipts,
+  exclusive acquisition, pending-before-effect and native readback. Unknown
+  pending presence is not adopted or replayed. Required read failures preserve
+  receipts. WhenFalse/removal and changed intent use the same actual owner.
+- Delegated LAN addresses retain acknowledged deadlines and pending intent,
+  including infinite lifetimes. Source revocation/removal cannot fabricate an
+  owned address. Child address/route/RA operations on Segment links use actual
+  journal/cookie proof, including removal of the final parent declaration.
+- DS-Lite now owns the tunnel, inner address/default route and finite endpoint
+  coherently, with exact native token/scope/index and no foreign GIF replacement.
+  Duplicate FreeBSD boot creators and generic teardown ownership are removed.
+- PF emits the SAM root forward anchor; Linux SAM sysctl paths preserve dotted
+  interface names. FreeBSD managed AdminUp uses its native command.
+- VXLANSegment has one native Linux/FreeBSD owner, current admission, durable
+  creation/withdrawal and scope-partitioned receipts. Duplicate networkd/rc
+  creators and Bridge port ownership are removed. Native VM effects are unrun.
+- One RA service owns finite current/previous PIOs, solicitation handling,
+  independent M/O, router lifetime and prefix/DNS withdrawal. dnsmasq no longer
+  creates RAs or a DHCPv6 socket for ra-only intent. See
+  [RA contracts and limits](../reference/router-advertisements.md).
+
+Still open:
+
+- Policy routing can delete foreign rules sharing priority; IPv6 host routes can
+  be installed before any durable receipt. Use exact native identities and one
+  pending owner rather than priority-only deletion or inferred ownership.
+- Mobility's separate address/route pending paths still have automatic unmarked
+  adoption/replace recovery; the ordinary owners' fence does not repair them.
+- Existing VXLANTunnel lifecycle still needs migration to the concrete native
+  owner. Engine VXLANSegment observations can default to Healthy without native
+  proof; wire the actual read-only owner observation instead. Unspecified local
+  source readback and child proof for other virtual parents need closure.
+- RA fragmented-RS provenance is unavailable through the current ndp API; custom
+  DHCPv6 SelfAddressPolicy live resolution remains incomplete. FreeBSD forward
+  zone firewall parity is also unsupported. Native independent peers remain
+  required even where local wire/ownership tests pass.
 
 ## Runtime graph and process owner
 
-- ARP observer spec collection turns a failed dynamic-part read into empty desired
-  workers. Fail before supervision so unknown observations cannot stop owners.
-- DHCP information/server and conntrack callbacks retain old Router/Store inputs;
-  reservation/RA/TrafficFlowLog changes can remain unapplied. Daemon event streams
-  also start only once, missing workers added on reload. Bind each lifetime to the
-  actual generation and one fresh prepared observation.
-- Network adoption/systemd configuration can lose activation retry after writing
-  the desired bytes. Stop failures are swallowed in unit/Health teardown;
-  conntrackd can report Running without consuming a changed configuration.
-- dnsmasq non-systemd startup/reload trusts a bare pidfile, with inconsistent
-  FreeBSD managers. Give its real process one identity and shutdown owner.
-- Actual dnsmasq interface aliases and BGP custom helper socket checks differ from
-  their producer contracts. FreeBSD managed AdminUp still invokes Linux ip.
+Implemented: errorful ARP worker admission; current prepared Router/Store in
+DHCP/conntrack callbacks; joined per-worker event readers on reload; one actual
+conntrack timer; and activation receipts that survive unchanged-byte retries.
+System/unit/network-adoption/health stop acknowledgements are required before
+replacement or unlink. Expired shutdown deadlines do not manufacture owner exit.
+
+Native operations share a kernel-scope outer owner across serve/one-shot/rollback
+before startup cleanup and bootstrap; custom paths cannot bypass it. Actual
+2-process tests cover rejection and preservation of the first pending operation.
+
+DNS main-config changes restart the owned process, hosts-only changes HUP the
+acknowledged owner. A native process receipt and per-artifact activation receipt
+cover startup/stop/retry, exact command and systemd fragment/input identity.
+Linux signals bind to pidfds, including ancestor-procfs PID mapping. FreeBSD's
+bounded birth/jail/executable/argv observation still has second-resolution birth
+and a check-to-PID-signal race; it is not a pidfd-equivalent atomic guarantee.
+Actual systemd/FreeBSD DHCP/RA communication remains unqualified.
 
 ## Command/control plane
 
-- Direct routerd rollback commits to a temporary path then removes it, leaving
-  canonical startup YAML unchanged. Current serve observation also omits effective
-  when/dynamic filtering; fresh serve lacks the one-shot IPsec load path.
-- HTTP ControlAPI/WebConsole capture startup exposure/auth/TLS configuration with
-  no reload owner. Signal cancellation starts too late during initial cleanup.
-- CLI allow-CIDR parsing accepts host-bit /0 then masks it to universal allow;
-  Unix socket setup can unlink a regular/live foreign path and chmod its directory.
-- Actual status/inspection readers suppress SQLite errors and can preserve Healthy
-  or return fake probe success. Bound diagnostics, execute real probes or report
-  unsupported/unavailable, and preserve failed status over later warnings.
-- Ledger retention duration arithmetic overflows; federation queries open writable
-  databases; some mutations validate output format afterward; Mobility traps hide
-  decode failure. Traffic/connection output invents zero/stateless observations.
-- FreeBSD mpd configuration overwrite does not tighten an existing file's mode.
-  PD default-DUID read failure can incorrectly reset a valid observed identity.
-- Remove SAM enrollment compatibility fallbacks only after making current revoke
-  and its identity tombstone atomic; GET must not perform recovery writes.
+Implemented: canonical rollback; current effective serve observation; runtime
+IPsec ownership; reloadable HTTP exposure/auth/TLS with acknowledged listener
+lifetime; early signal cancellation; strict CIDR admission; and exact Unix socket
+ownership. Required inspection failures propagate and Error cannot become WARN.
+CLI retention arithmetic/output admission/read-only federation/strict Mobility
+trap decoding and nullable traffic counters are corrected. FreeBSD mpd secret
+permissions and default-DUID failures are explicit. Counter browser/API/schema
+checks pass; old missing-as-zero traffic databases are rejected untouched.
+
+Remaining implementation: daemon --probe currently reports current communication
+as unobserved rather than executing packet/DNS/neighbor/conntrack probes. SAM
+legacy enrollment compatibility removal still depends on atomic current
+revocation/tombstones; GET must not perform recovery writes. IPsec control tests
+do not establish native IKE or packet forwarding.
 
 ## Build, release and isolated lab tools
 
-- Installer restart/rollback ordering can restore binaries under a partially
-  restarted process. Required failed stops must retain exact recovery state.
+- Installer stop/restart/rollback ordering and retained recovery backups are
+  implemented with subprocess regressions. Actual service installation and
+  native rollback qualification remain unexecuted.
 - Live ISO builder uses a private mount namespace, exact workdir ownership,
   pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
   all-root image rewriting are removed; old mode-damaged caches are rejected.
@@ -143,8 +159,9 @@ unjournaled IPv6 host routes and destructive foreign FreeBSD GIF handling.
   retained. Offline subprocess/fault checks pass; boot-enabled systemd/PVE/cloud
   lifecycle qualification remains unexecuted. Proxy I/O bounds remain a separate
   review item.
-- Existing labctl live TODOs return success and can remove manifests without
-  cleanup. Protocol collectors accept parse failures/unmeasured transfers; capture
+- Unimplemented labctl live operations now fail and preserve manifests. Required
+  protocol evidence cannot be promoted to PASS by a result override. Remaining
+  collectors still need complete parse/measurement identity; capture
   uses bare PIDs; exact address/account/source identities are not always checked.
   E2E deployment ignores stop failures and can write private YAML with ambient mode.
 - Native harness cleanup has unowned PID/route/config deletion and lost-baseline

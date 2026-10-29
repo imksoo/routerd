@@ -63,12 +63,20 @@ func TestTypedRouteExpiryWithdrawsOwnedRoute(t *testing.T) {
 			}
 			apply := func(store *routerstate.SQLiteStore, view dynamicRouteSAMView) []string {
 				var commands []string
+				routePresent := true
 				controller := IPv4RouteController{Router: view.RouteRouter, Store: store, MobilityDataplane: view.MobilityDataplane,
 					DevicePresent: func(context.Context, string) bool { return true },
 					Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 						command := name + " " + strings.Join(args, " ")
 						commands = append(commands, command)
+						if strings.Contains(command, " route del ") {
+							routePresent = false
+							return nil, nil
+						}
 						if strings.HasPrefix(command, "ip -j -d -4 route show") {
+							if !routePresent {
+								return []byte(`[]`), nil
+							}
 							return []byte(`[{"dst":"192.0.2.0/24","dev":"lan0","protocol":"boot","metric":90}]`), nil
 						}
 						return nil, nil

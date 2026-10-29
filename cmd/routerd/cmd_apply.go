@@ -91,6 +91,7 @@ type applyOptions struct {
 	ConfigYAMLOverride   string
 	Sandbox              bool
 	MutationGate         *sync.RWMutex
+	nativeOwner          *nativeOperationOwner
 	attemptHooks         *applyAttemptHooks
 }
 
@@ -506,6 +507,14 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 }
 
 func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (outcome applyAttemptOutcome, err error) {
+	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil {
+		owner, acquireErr := acquireNativeOperationOwner(ctx)
+		if acquireErr != nil {
+			return outcome, acquireErr
+		}
+		opts.nativeOwner = owner
+		defer func() { err = errors.Join(err, owner.finish(true)) }()
+	}
 	outcome = applyAttemptOutcome{Stage: "prepare", Canonical: canonicalNotRequested}
 	defer outcome.wrapError(&err, logger)
 	_, err = runApplyChainOnceAttempt(ctx, router, opts, stdout, logger, &outcome)
@@ -564,11 +573,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	defer stateStore.Close()
 
-	outcome.Stage = "resolve-when"
-	effectiveRouter, err := filterRouterByWhen(router, stateStore)
-	if err != nil {
-		return nil, err
-	}
 	var generation int64
 	generationCreated := false
 	if !opts.DryRun {
@@ -591,7 +595,18 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New(ctx).PlanEffective(effectiveRouter, router)
+	runner := &controllerchain.Runner{Router: router, Bus: eventBus, Store: stateStore}
+	defer func() {
+		if runner.RuntimeMutationError() != nil {
+			opts.nativeOwner.retainUntilProcessExit()
+		}
+	}()
+	view, err := runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
+	if err != nil {
+		return nil, err
+	}
+	effectiveRouter := view.RouteRouter
+	result, err := apply.New(ctx).PlanEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -640,22 +655,17 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
 		opts.attemptHooks.configureControllers(&controllerOpts)
 	}
-	runner := &controllerchain.Runner{
-		Router:     router,
-		Bus:        eventBus,
-		Store:      stateStore,
-		Opts:       controllerOpts,
-		HADecision: &decision,
-	}
+	runner.Opts = controllerOpts
+	runner.HADecision = &decision
 	outcome.Stage = "reconcile"
 	if err := runner.ReconcileOnce(ctx); err != nil {
 		return nil, err
 	}
-	if !opts.DryRun {
-		if _, err := applyIPsecConnections(ctx, effectiveRouter); err != nil {
-			return nil, err
-		}
+	view, err = runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
+	if err != nil {
+		return nil, err
 	}
+	effectiveRouter = view.RouteRouter
 	if !opts.DryRun {
 		outcome.Stage = "record-applied-path"
 		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
@@ -664,7 +674,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
 	outcome.Stage = "observe"
-	result, err = apply.New(ctx).ObserveEffective(effectiveRouter, router)
+	result, err = apply.New(ctx).ObserveEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -724,6 +734,9 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		BGPControlSocketPath:   opts.BGPControlSocketPath,
 		BGPStatePath:           opts.BGPStatePath,
 		MutationGate:           opts.MutationGate,
+	}
+	if !opts.DryRun && !opts.Sandbox {
+		controllerOpts.ReconcileIPsec = applyIPsecConnections
 	}
 	if opts.DryRun || opts.Sandbox {
 		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)

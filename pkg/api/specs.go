@@ -549,7 +549,7 @@ type IPv4StaticAddressSpec struct {
 	Interface string           `yaml:"interface" json:"interface"`
 	Address   string           `yaml:"address" json:"address"`
 	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
-	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
+	// Exclusive is reserved; exclusive takeover is not implemented.
 	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
 	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.
 	AllowOverlap       bool   `yaml:"allowOverlap,omitempty" json:"allowOverlap,omitempty"`
@@ -1476,25 +1476,29 @@ type ReadyWhenPredicateSpec struct {
 }
 
 type IPv6RouterAdvertisementSpec struct {
-	Interface         string                   `yaml:"interface" json:"interface"`
-	Prefix            string                   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
-	PrefixFrom        StatusValueSourceSpec    `yaml:"prefixFrom,omitempty" json:"prefixFrom,omitempty"`
-	PrefixSource      string                   `yaml:"prefixSource,omitempty" json:"-"`
-	RDNSS             []string                 `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
-	RDNSSFrom         []StatusValueSourceSpec  `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
-	DNSSL             []string                 `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
-	DNSSLFrom         []StatusValueSourceSpec  `yaml:"dnsslFrom,omitempty" json:"dnsslFrom,omitempty"`
-	MFlag             bool                     `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
-	OFlag             bool                     `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
-	MTU               int                      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	PRFPreference     string                   `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
-	PreferredLifetime string                   `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
-	ValidLifetime     string                   `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
-	ConfigPath        string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	PIDFile           string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
-	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
-	DependsOn         []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen         []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	Interface     string                  `yaml:"interface" json:"interface"`
+	Prefix        string                  `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	PrefixFrom    StatusValueSourceSpec   `yaml:"prefixFrom,omitempty" json:"prefixFrom,omitempty"`
+	PrefixSource  string                  `yaml:"prefixSource,omitempty" json:"-"`
+	RDNSS         []string                `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
+	RDNSSFrom     []StatusValueSourceSpec `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
+	DNSSL         []string                `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
+	DNSSLFrom     []StatusValueSourceSpec `yaml:"dnsslFrom,omitempty" json:"dnsslFrom,omitempty"`
+	MFlag         bool                    `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
+	OFlag         bool                    `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
+	MTU           int                     `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	PRFPreference string                  `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
+	// PreferredLifetime and ValidLifetime are PIO seconds or infinite; delegated prefixes remain capped by their absolute upstream deadlines.
+	PreferredLifetime string `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
+	ValidLifetime     string `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
+	// RouterLifetime is default-route seconds, independent of PIO lifetimes. Default is 1800; 0 withdraws, otherwise 4-9000.
+	RouterLifetime string `yaml:"routerLifetime,omitempty" json:"routerLifetime,omitempty"`
+	// ConfigPath and PIDFile are unsupported by the serve-owned RA loop.
+	ConfigPath string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	PIDFile    string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	When       ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn  []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen  []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6ServerSpec struct {

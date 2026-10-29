@@ -111,18 +111,18 @@ func TestPreparedRouterPublishesConsistentConfigurationAndRestoresPreparation(t 
 	// on a separate runner with the same immutable accepted preparation.
 	rollbackRunner := &Runner{Router: old, Store: mapStore{}, Bus: bus.New(), preparedRouter: previous, generationBuilder: rollbackBuilder}
 	generation, restored, err := rollbackRunner.prepareRuntimeReload(context.Background(), slog.Default(), eventedStore{Store: rollbackRunner.Store, Bus: rollbackRunner.Bus}, generationReload{router: next})
-	defer closeControllerGeneration(generation)
+	defer rollbackRunner.closeControllerGeneration(generation)
 	if !errors.Is(err, failure) || !restored {
 		t.Fatalf("rollback outcome: restored=%t err=%v", restored, err)
 	}
 	if current, err := rollbackRunner.currentPreparedRouter(); err != nil || current != previous || current.declared != old {
 		t.Fatalf("rollback rebuilt or replaced the prior preparation: %+v %v", current, err)
 	}
-	closeControllerGeneration(generation)
+	rollbackRunner.closeControllerGeneration(generation)
 	invalid := staticPreparationRouter("invalid")
 	invalid.Spec.Resources[0].Spec = api.InterfaceSpec{IfName: "wrong-spec"}
 	generation, restored, err = rollbackRunner.prepareRuntimeReload(context.Background(), slog.Default(), eventedStore{Store: rollbackRunner.Store, Bus: rollbackRunner.Bus}, generationReload{router: invalid})
-	defer closeControllerGeneration(generation)
+	defer rollbackRunner.closeControllerGeneration(generation)
 	if err == nil || !restored || generation == nil {
 		t.Fatalf("static preparation failure stopped the previous generation: restored=%t err=%v", restored, err)
 	}

@@ -408,19 +408,23 @@ check-routerd15-focused: check-spec
 
 .PHONY: check-routerd15-recovery
 check-routerd15-recovery:
+	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
+	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
 	go test ./pkg/controller/mobility
-	go test ./pkg/controller/chain -run '^(TestPrepared|TestGenerationPreparationFailureWaits|TestMobilityNative|TestMobilityStore|TestOrdinaryRoute|TestFreeBSDOrdinaryRoute|TestTypedPD|TestPDAtomicReview|TestPDStage|TestRunnerKeepsDependsOnFalse|TestRunnerClearsWhenFalse|TestTunnelUnderlayRemovalOrder|TestLAN|TestDelegatedAddressObservation|TestDSLite(Custom|Source|Shared|RechecksPD|FiniteEndpoint)|TestSAMController|TestSAMJournal)' -count=1
+	go test ./pkg/controller/chain -run '^(TestPrepared|TestGenerationPreparationFailureWaits|TestMobilityNative|TestMobilityStore|TestBGPGeneration|TestVXLANSegment|TestRouterAdvertisement|TestRA|TestDnsmasq|TestDSLiteNative|TestLinkObservation|TestLinkAdminUp|TestLinkController(Ensures|DoesNot)|TestStaticAddress|TestIPv4StaticAddress|TestSaveWhenFalseStatusesRetainsIPv4|TestOrdinaryRoute|TestFreeBSDOrdinaryRoute|TestTypedPD|TestPDAtomicReview|TestPDStage|TestRunnerKeepsDependsOnFalse|TestRunnerClearsWhenFalse|TestTunnelUnderlayRemovalOrder|TestLAN|TestDelegatedAddressObservation|TestDSLite(Custom|Source|Shared|RechecksPD|FiniteEndpoint)|TestSAMController|TestSAMJournal)' -count=1
 	go test ./cmd/routerd -run '^(TestMutation|TestNoReconcilePlan|TestDriftedPlan|TestServeOnceRejectsNonconvergence|TestDeletePublishes|TestInspectionCarriesTypedPD|TestActualPDObservation|TestEventConsumerChanges)' -count=1
 	go test ./cmd/routerctl -run '^(TestRollbackListDoesNotLabel|TestApplyTransportFailure|TestMutationResultPolicy|TestPDLeaseOutput|TestFirewallCLI)' -count=1
 
 .PHONY: check-routerd15-robustness
 check-routerd15-robustness:
-	go test ./pkg/subprocessio ./pkg/provideraction ./pkg/providerinventory ./pkg/eventd ./pkg/eventfile ./pkg/eventlog ./pkg/federation ./pkg/federationguard ./pkg/controller/eventsubscription ./pkg/controller/eventfederation ./pkg/controller/provideraction ./pkg/controller/bfd ./pkg/controller/vrrp ./pkg/ha ./pkg/observabilitypipeline ./pkg/observe ./pkg/conntrack ./pkg/conntracktuning ./pkg/dpi ./pkg/nflog ./pkg/dhcpfingerprint ./pkg/wireguard ./pkg/otel ./pkg/status ./pkg/logstore ./pkg/bgp
+	go test ./tests/liveiso -count=1
+	go test ./pkg/sam ./pkg/vxlan ./pkg/routeradvertisement ./examples/plugins/aws-provider-executor ./examples/plugins/azure-provider-executor ./examples/plugins/oci-provider-executor ./pkg/subprocessio ./pkg/provideraction ./pkg/providerinventory ./pkg/eventd ./pkg/eventfile ./pkg/eventlog ./pkg/federation ./pkg/federationguard ./pkg/controller/eventsubscription ./pkg/controller/eventfederation ./pkg/controller/provideraction ./pkg/controller/bfd ./pkg/controller/vrrp ./pkg/ha ./pkg/observabilitypipeline ./pkg/observe ./pkg/conntrack ./pkg/conntracktuning ./pkg/dpi ./pkg/nflog ./pkg/dhcpfingerprint ./pkg/wireguard ./pkg/otel ./pkg/status ./pkg/logstore ./pkg/bgp
 	go test ./pkg/controller/pppoesession -run '^(TestStatusEndpoint|TestDaemonProjection)' -count=1
 	go test ./pkg/controlapi -run '^(TestControllerRuntime|TestApplyRejectsUnknown|TestClientRejectsTrailing|TestClientChecksEncoded)' -count=1
 	go test ./pkg/source/daemon -run '^TestDaemonSource(Incomplete|Worker|Rejects)' -count=1
 	go test ./cmd/routerctl -run '^(TestAction(EndToEnd|RollbackDryRun|Resolve|Help)|TestPluginRun)' -count=1
-	go test ./pkg/controller/chain -run '^(TestBridge|TestSupervisorRetainsOwnershipUntilCompletion|TestSupervisorReadFailureRetainsMarkerAndSuppressesReplacement|TestSupervisorWaitsForOwnedInitializingDaemonWithoutReadySocket|TestSupervisorCancellationAllowsActualNativeGracefulExit|TestPPPoESource|TestFailedNativeCaptureWithdrawalStillBlocksFederationFeedback|TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting|TestPipeline)' -count=1
+	go test ./tests/install -run '^(TestInstall(FreeBSDStartFailure|CopyFailure|InterruptedServiceRecovery|ServiceObservationFailure)|TestLabctl|TestAcceptanceStopsWhenLiveFault)' -count=1
+	go test ./pkg/controller/chain -run '^(TestSAMSysctl|TestBridge|TestSupervisorRetainsOwnershipUntilCompletion|TestSupervisorReadFailureRetainsMarkerAndSuppressesReplacement|TestSupervisorWaitsForOwnedInitializingDaemonWithoutReadySocket|TestSupervisorCancellationAllowsActualNativeGracefulExit|TestPPPoESource|TestFailedNativeCaptureWithdrawalStillBlocksFederationFeedback|TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting|TestPipeline)' -count=1
 
 .PHONY: generate-spec check-spec
 generate-spec:

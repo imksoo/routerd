@@ -33,7 +33,7 @@ func finiteLANFixture(now time.Time) (*api.Router, mapStore, LANAddressControlle
 	}}}
 	store := mapStore{api.NetAPIVersion + "/Interface/lan": {"phase": "Up", "ifname": "lan0"}}
 	_ = store.SavePDLease("wan-pd", routerstate.PDLease{CurrentPrefix: "2001:db8:1200::/60", LastPrefix: "2001:db8:1200::/60", LastReplyAt: now, PreferredSeconds: 90, ValidSeconds: 120, Phase: daemonapi.ResourcePhaseBound})
-	controller := LANAddressController{Router: router, DeclaredRouter: router, Store: store, OperatingSystem: platform.OSLinux, Now: func() time.Time { return now }, AddressPresent: func(context.Context, string, string) bool { return true }}
+	controller := LANAddressController{Router: router, DeclaredRouter: router, Store: store, OperatingSystem: platform.OSLinux, Now: func() time.Time { return now }, ObserveAddress: lanProbeFixture(func(context.Context, string, string) bool { return false }, nil, nil)}
 	return router, store, controller
 }
 
@@ -47,10 +47,11 @@ func TestLANCurrentAddressUsesFiniteRemainingPDLifetimeAndRenews(t *testing.T) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		return nil
 	}
+	installLANIOFixture(&controller)
 	if err := controller.reconcile(context.Background(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}
-	want := "ip -6 addr replace 2001:db8:1200:1::1/64 dev lan0 preferred_lft 79 valid_lft 109"
+	want := "ip -6 addr add 2001:db8:1200:1::1/64 dev lan0 preferred_lft 79 valid_lft 109"
 	if !reflect.DeepEqual(commands, []string{want}) {
 		t.Fatalf("finite PD address command: %+v", commands)
 	}
@@ -83,7 +84,7 @@ func TestLANCurrentLifetimeRechecksAfterObservationBeforeWrite(t *testing.T) {
 	now := acquired
 	_, _, controller := finiteLANFixture(acquired)
 	controller.Now = func() time.Time { return now }
-	controller.AddressPresent = func(context.Context, string, string) bool { now = acquired.Add(121 * time.Second); return false }
+	controller.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { now = acquired.Add(121 * time.Second); return false }, nil, nil)
 	writes := 0
 	controller.Command = func(context.Context, string, ...string) error { writes++; return nil }
 	if err := controller.reconcile(context.Background(), "wan-pd"); err == nil {
@@ -142,14 +143,14 @@ func TestLANCurrentNativeObservationFailureAndForeignAddressPreventWrites(t *tes
 		t.Run(map[bool]string{false: "read-error", true: "foreign-same-host"}[foreign], func(t *testing.T) {
 			now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 			_, _, controller := finiteLANFixture(now)
-			controller.AddressPresent = nil
+			controller.ObserveAddress = nil
 			failure := errors.New("native address read failed")
-			controller.AddressList = func(context.Context, string) ([]string, error) {
+			controller.ObserveAddress = lanProbeFixture(nil, func(context.Context, string) ([]string, error) {
 				if foreign {
 					return []string{"2001:db8:1200:1::1/128"}, nil
 				}
 				return nil, failure
-			}
+			}, nil)
 			writes := 0
 			controller.Command = func(context.Context, string, ...string) error { writes++; return nil }
 			err := controller.reconcile(context.Background(), "wan-pd")
@@ -181,41 +182,34 @@ func TestDelegatedAddressObservationSeparatesTentativeFromAbsent(t *testing.T) {
 	}
 }
 
-func TestLANCurrentExpiryDuringApplyRetainsFailedWithdrawalReceipt(t *testing.T) {
+func TestLANCurrentExpiryDuringApplyFencesAmbiguousPresentAddress(t *testing.T) {
 	acquired := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	now := acquired
-	_, store, controller := finiteLANFixture(acquired)
-	controller.Now = func() time.Time { return now }
+	_, store, c := finiteLANFixture(acquired)
+	c.Now = func() time.Time { return now }
 	present := false
-	controller.AddressPresent = func(context.Context, string, string) bool { return present }
-	failure := errors.New("withdraw after expiry failed")
-	var commands []string
-	controller.Command = func(_ context.Context, name string, args ...string) error {
-		command := name + " " + strings.Join(args, " ")
-		commands = append(commands, command)
-		if strings.Contains(command, " addr replace ") {
-			present = true
-			now = acquired.Add(121 * time.Second)
-			return nil
+	writes := 0
+	c.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { return present }, nil, nil)
+	c.Command = func(_ context.Context, _ string, args ...string) error {
+		writes++
+		if args[2] == "del" {
+			t.Fatal("expired finite tuple inferred native ownership")
 		}
-		return failure
+		present = true
+		now = acquired.Add(121 * time.Second)
+		return nil
 	}
-	if err := controller.reconcile(context.Background(), "wan-pd"); !errors.Is(err, failure) {
-		t.Fatalf("postwrite authority loss ignored failed withdrawal: %v", err)
+	if err := c.reconcile(t.Context(), "wan-pd"); err == nil {
+		t.Fatal("expired present native address acknowledged")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
-	if status["address"] != "2001:db8:1200:1::1/64" || status["phase"] != "Pending" {
-		t.Fatalf("postwrite failure lost pending native receipt: %#v", status)
+	receipt, err := delegatedReceipt(status)
+	if err != nil || !receipt.has("2001:db8:1200:1::1/64") || status["reason"] != "NativeOwnershipUnknown" || writes != 1 {
+		t.Fatalf("ambiguous expired receipt lost fence: %+v %v", status, err)
 	}
-	if len(commands) != 2 || commands[1] != "ip -6 addr del 2001:db8:1200:1::1/64 dev lan0" {
-		t.Fatalf("expiry should withdraw exact owned current address: %+v", commands)
-	}
-	controller.Command = func(context.Context, string, ...string) error { present = false; return nil }
-	if err := controller.reconcile(context.Background(), "wan-pd"); err != nil {
+	present = false // operator/native expiry confirms absence; no delete is guessed.
+	if err := c.reconcile(t.Context(), "wan-pd"); err != nil {
 		t.Fatal(err)
-	}
-	if status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address"); status["address"] != nil {
-		t.Fatalf("successful retry retained expired authority: %#v", status)
 	}
 }
 
@@ -227,7 +221,8 @@ func TestLAN128RenumberRetainsExactOldOwnerUntilWithdrawalSucceeds(t *testing.T)
 	router.Spec.Resources[2].Spec = spec
 	old := "2001:db8:1100:1::1/128"
 	_ = store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", map[string]any{"phase": "Applied", "address": old, "interface": "lan", "ifname": "lan0", "prefixSource": "wan-pd", "dryRun": false})
-	controller.AddressPresent = func(context.Context, string, string) bool { return true }
+	recordLANReceiptForTest(t, store, "lan-address", "lan0", "wan-pd", old)
+	controller.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { return true }, nil, nil)
 	var commands []string
 	controller.Command = func(_ context.Context, name string, args ...string) error {
 		command := name + " " + strings.Join(args, " ")
@@ -237,12 +232,13 @@ func TestLAN128RenumberRetainsExactOldOwnerUntilWithdrawalSucceeds(t *testing.T)
 		}
 		return nil
 	}
+	installLANIOFixture(&controller, old)
 	if err := controller.reconcile(context.Background(), "wan-pd"); err == nil {
 		t.Fatal("failed old source removal reported success")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
-	history := previousDelegatedAddressesFromStatus(status)
-	if status["address"] != "2001:db8:1200:1::1/128" || len(history) != 1 || history[0].Address != old || status["reason"] != "PreviousAddressWithdrawFailed" {
+	receipt, err := delegatedReceipt(status)
+	if err != nil || !receipt.has(old) || status["reason"] != "AddressWithdrawing" {
 		t.Fatalf("renumber lost exact old owner: %#v", status)
 	}
 	for _, command := range commands {
@@ -268,7 +264,7 @@ func TestPreviousDelegatedLifetimeFloorsAndBoundsFarFuture(t *testing.T) {
 	}
 }
 
-func TestLAN128RenumberPreservesAnotherDeclaredAddressOwner(t *testing.T) {
+func TestLAN128RenumberRejectsConflictingNativeOwners(t *testing.T) {
 	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	router, store, controller := finiteLANFixture(now)
 	spec, _ := router.Spec.Resources[2].IPv6DelegatedAddressSpec()
@@ -277,6 +273,8 @@ func TestLAN128RenumberPreservesAnotherDeclaredAddressOwner(t *testing.T) {
 	old := "2001:db8:1100:1::1/128"
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "independent"}, Spec: api.VirtualAddressSpec{Family: "ipv6", Interface: "lan", Address: old}})
 	_ = store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", map[string]any{"phase": "Applied", "address": old, "interface": "lan", "ifname": "lan0", "prefixSource": "wan-pd", "dryRun": false})
+	recordLANReceiptForTest(t, store, "lan-address", "lan0", "wan-pd", old)
+	recordLANReceiptForTest(t, store, "independent", "lan0", "other-pd", old)
 	var commands []string
 	controller.Command = func(_ context.Context, name string, args ...string) error {
 		commands = append(commands, name+" "+strings.Join(args, " "))
@@ -291,7 +289,8 @@ func TestLAN128RenumberPreservesAnotherDeclaredAddressOwner(t *testing.T) {
 		}
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
-	if len(previousDelegatedAddressesFromStatus(status)) != 1 {
+	receipt, err := delegatedReceipt(status)
+	if err != nil || !receipt.has(old) {
 		t.Fatal("conflicting owner erased recoverable old receipt")
 	}
 }
@@ -303,13 +302,13 @@ func TestLANSinglePrefixRevocationWithdrawsPriorInfiniteReceipt(t *testing.T) {
 	lease.PreviousPrefixes = []routerstate.PDPreviousPrefix{{Prefix: "2001:db8:1100::/60", ExpiresAt: time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)}}
 	_ = store.SavePDLease("wan-pd", lease)
 	current, old := "2001:db8:1200:1::1/64", "2001:db8:1100:1::1/64"
-	present := map[string]bool{current: true}
-	controller.AddressPresent = func(_ context.Context, _ string, address string) bool { return present[address] }
+	present := map[string]bool{}
+	controller.ObserveAddress = lanProbeFixture(func(_ context.Context, _ string, address string) bool { return present[address] }, nil, nil)
 	var commands []string
 	controller.Command = func(_ context.Context, name string, args ...string) error {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		if len(args) > 3 && args[1] == "addr" {
-			if args[2] == "replace" {
+			if args[2] == "replace" || args[2] == "add" {
 				present[args[3]] = true
 			}
 			if args[2] == "del" {

@@ -21,7 +21,7 @@ func TestFlowReconciliationCannotEndEntryBeyondDisplayLimit(t *testing.T) {
 	for i := range entries {
 		entries[i] = observe.ConnectionEntry{Protocol: "tcp", Original: observe.ConntrackTuple{Source: "192.0.2.10", SourcePort: strconv.Itoa(i + 1), Destination: "198.51.100.20", DestinationPort: "443"}}
 	}
-	log, err := logstore.OpenTrafficFlowLog(path)
+	log, err := logstore.OpenTrafficFlowLog(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -363,9 +363,6 @@
                 "original": {
                   "additionalProperties": false,
                   "properties": {
-                    "accounting": {
-                      "type": "boolean"
-                    },
                     "bytes": {
                       "type": "integer"
                     },
@@ -411,9 +408,6 @@
                 "reply": {
                   "additionalProperties": false,
                   "properties": {
-                    "accounting": {
-                      "type": "boolean"
-                    },
                     "bytes": {
                       "type": "integer"
                     },
@@ -2658,9 +2652,6 @@
             "items": {
               "additionalProperties": false,
               "properties": {
-                "accounting": {
-                  "type": "boolean"
-                },
                 "appCategory": {
                   "type": "string"
                 },

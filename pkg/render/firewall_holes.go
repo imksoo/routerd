@@ -66,7 +66,23 @@ func InternalFirewallHoles(router *api.Router) []FirewallHole {
 			}
 		case "DHCPv6Server":
 			spec, _ := resource.DHCPv6ServerSpec()
-			for _, iface := range resourceInterfaces(spec.Interface, spec.ListenInterfaces) {
+			iface := spec.Interface
+			if iface == "" && spec.DelegatedAddress != "" {
+				for _, candidate := range router.Spec.Resources {
+					if candidate.Kind == "IPv6DelegatedAddress" && candidate.Metadata.Name == spec.DelegatedAddress {
+						value, err := candidate.IPv6DelegatedAddressSpec()
+						if err == nil {
+							iface = value.Interface
+						}
+						break
+					}
+				}
+			}
+			for _, iface := range resourceInterfaces(iface, spec.ListenInterfaces) {
+				add(resource.Metadata.Name+"-ra-"+iface, "self", zones.byResource(iface), "icmpv6", 0, resource.ID(), zones.ifNameByResource(iface))
+				if spec.Mode == "ra-only" {
+					continue
+				}
 				add(resource.Metadata.Name+"-dhcpv6-server-"+iface, zones.byResource(iface), "self", "udp", 547, resource.ID(), zones.ifNameByResource(iface))
 			}
 		case "DNSResolver":

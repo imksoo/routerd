@@ -176,9 +176,10 @@ type doctorIncidentReport struct {
 }
 
 type doctorRunner struct {
-	opts   diagnoseOptions
-	router *api.Router
-	store  routerstate.Store
+	opts     diagnoseOptions
+	router   *api.Router
+	store    routerstate.Store
+	statuses []routerstate.ObjectStatus
 }
 
 var doctorAreas = []string{"wan", "dns", "dslite", "dhcpv6-pd", "nat", "firewall", "rollback", "disk", "mgmt", "reconcile", "runtime", "dynamic", "routes", "plugin", "hybrid", "sam", "sam-enrollment-client", "bgp-dynamic-peer", "federation"}
@@ -231,7 +232,7 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	router, store, err := loadDiagnoseInputs(opts)
 	if err != nil {
-		if opts.Target == "dynamic" || opts.Target == "plugin" {
+		if (opts.Target == "dynamic" || opts.Target == "plugin") && errors.Is(err, os.ErrNotExist) {
 			report := doctorReport{Checks: []doctorCheck{{Area: opts.Target, Name: "inputs", Status: doctorSkip, Detail: err.Error()}}}
 			report.Summary = summarizeDoctorChecks(report.Checks)
 			return writeDoctorReport(stdout, report, opts.Output)
@@ -241,7 +242,15 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	if closer, ok := store.(io.Closer); ok {
 		defer closer.Close()
 	}
-	runner := doctorRunner{opts: opts, router: router, store: store}
+	statusReader, ok := store.(routerstate.ObjectStatusLister)
+	if !ok {
+		return errors.New("doctor state does not support object status reads")
+	}
+	statuses, err := statusReader.ListObjectStatuses()
+	if err != nil {
+		return fmt.Errorf("read doctor object statuses: %w", err)
+	}
+	runner := doctorRunner{opts: opts, router: router, store: store, statuses: statuses}
 	collectChecks := opts.Target != "incident"
 	areas := doctorAreas
 	if opts.Target != "" && opts.Target != "incident" {
@@ -277,14 +286,36 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+func (r doctorRunner) objectStatus(apiVersion, kind, name string) map[string]any {
+	for _, status := range r.statuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.Name == name {
+			return status.Status
+		}
+	}
+	return nil
+}
+
 func doctorProbeCommand(opts diagnoseOptions, stdout io.Writer) error {
+	if !opts.Host || opts.Server != "" || opts.Names != "" {
+		return errors.New("daemon probes do not implement --no-host, --server or --name; these options cannot be ignored")
+	}
+	switch opts.Output {
+	case "", "table", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", opts.Output)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 	defer cancel()
 	result, err := controlapi.NewUnixClient(opts.Socket).Probe(ctx, controlapi.ProbeRequest{Subject: opts.Probe, Target: opts.Target})
 	if err != nil {
 		return err
 	}
-	switch opts.Output {
+	return writeDoctorProbeResult(stdout, result, opts.Output)
+}
+
+func writeDoctorProbeResult(stdout io.Writer, result *controlapi.ProbeResult, output string) error {
+	var err error
+	switch output {
 	case "", "table":
 		w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintf(w, "PROBE\t%s\t%s\n", result.Subject, displayCell(result.Target))
@@ -292,14 +323,26 @@ func doctorProbeCommand(opts diagnoseOptions, stdout io.Writer) error {
 		for _, check := range result.Checks {
 			fmt.Fprintf(w, "%s\t%s\t%s\n", check.Name, check.Status, displayCell(check.Detail))
 		}
-		return w.Flush()
+		err = w.Flush()
 	case "json":
-		return writeJSON(stdout, result)
+		err = writeJSON(stdout, result)
 	case "yaml":
-		return writeYAML(stdout, result)
+		err = writeYAML(stdout, result)
 	default:
-		return fmt.Errorf("unsupported output %q", opts.Output)
+		return fmt.Errorf("unsupported output %q", output)
 	}
+	if err != nil {
+		return err
+	}
+	if len(result.Checks) == 0 {
+		return errors.New("doctor probe returned no observations")
+	}
+	for _, check := range result.Checks {
+		if check.Status == doctorFail {
+			return errors.New("doctor probe found failing checks")
+		}
+	}
+	return nil
 }
 
 func fetchStatus(socketPath string, timeout time.Duration) (*controlapi.Status, error) {
@@ -479,7 +522,7 @@ func (r doctorRunner) doctorSAM() []doctorCheck {
 	}
 	var checks []doctorCheck
 	for _, res := range pools {
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		checks = append(checks, doctorResourceCheck("sam", res, status, healthyPhases("Ready", "BGPPlanned")))
 		poolSpec, err := res.MobilityPoolSpec()
 		if err != nil {
@@ -528,7 +571,7 @@ func (r doctorRunner) doctorSAMEnrollmentClient() []doctorCheck {
 		}
 		checks = append(checks, r.doctorSAMEnrollmentClientClaimCheck(name, spec))
 		checks = append(checks, doctorSAMEnrollmentClientEndpointCheck(name, spec))
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		checks = append(checks, doctorSAMEnrollmentClientStatusCheck(name, status))
 		checks = append(checks, r.doctorSAMEnrollmentClientRRSetCheck(name, spec, status))
 	}
@@ -675,7 +718,7 @@ func (r doctorRunner) doctorBGPDynamicPeer() []doctorCheck {
 			continue
 		}
 		checks = append(checks, doctorBGPDynamicPeerSpecCheck(name, spec))
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		checks = append(checks, doctorBGPDynamicPeerStatusCheck(name, status))
 		checks = append(checks, doctorBGPDynamicPeerAdmissionCheck(name, status))
 	}
@@ -759,7 +802,7 @@ func (r doctorRunner) doctorSAMBGPDeliveryChecks(pool api.Resource) []doctorChec
 	}
 	checks := make([]doctorCheck, 0, len(routerRefs))
 	for _, routerName := range routerRefs {
-		status := objectStatus(r.store, api.NetAPIVersion, "BGPRouter", routerName)
+		status := r.objectStatus(api.NetAPIVersion, "BGPRouter", routerName)
 		name := "MobilityPool/" + pool.Metadata.Name + " BGP delivery BGPRouter/" + routerName
 		if len(status) == 0 {
 			checks = append(checks, doctorCheck{
@@ -1034,7 +1077,8 @@ func (r doctorRunner) doctorSAMOwnerTableRouteChecks(pool string, poolSpec api.M
 		return []doctorCheck{doctorHostSkipped("sam", label)}
 	}
 	var checks []doctorCheck
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
+	defer cancel()
 	snapshotCommand := doctorRunDiagnosticCommand(ctx, "ip -4 route show table main", "ip", "-4", "route", "show", "table", "main")
 	actualRoutes := parseDoctorIPv4MainRoutes(snapshotCommand.Stdout)
 	if !snapshotCommand.OK {
@@ -1429,7 +1473,7 @@ func (r doctorRunner) doctorHybridHealthCheck(routeName, ref string) doctorCheck
 	if !r.opts.Host {
 		return doctorCheck{Area: "hybrid", Name: name, Status: doctorSkip, Detail: "host commands disabled by --no-host"}
 	}
-	status := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", ref)
+	status := r.objectStatus(api.NetAPIVersion, "HealthCheck", ref)
 	return doctorNamedStatusCheck("hybrid", name, status, healthyPhases("Healthy", "Passing", "Applied", "Ready"))
 }
 
@@ -1953,7 +1997,7 @@ func fetchReconcileControllers(socketPath string, timeout time.Duration) ([]cont
 // doctorRuntime reports routerd's own process footprint (heap, goroutines, fds)
 // from the read-only status socket. It is purely observational: success emits an
 // informational pass with the footprint summary, and unusual footprints are
-// downgraded to warn. It never fails the run.
+// downgraded to warn. Critical storage failures remain failures.
 func (r doctorRunner) doctorRuntime() []doctorCheck {
 	stats, err := runtimeStatsFetcher(r.opts.Socket, r.opts.Timeout)
 	if err != nil {
@@ -2002,7 +2046,7 @@ func (r doctorRunner) doctorRuntime() []doctorCheck {
 		detail = appendDoctorDetail(detail, fmt.Sprintf("unusually high goroutine count (%d > %d)", stats.NumGoroutine, doctorRuntimeGoroutineWarn))
 		remedy = "capture a goroutine profile and inspect routerd for leaked goroutines"
 	}
-	if stats.MaxFDs > 0 && uint64(stats.OpenFDs)*100/stats.MaxFDs >= doctorRuntimeFDWarnPercent {
+	if stats.MaxFDs > 0 && uint64(stats.OpenFDs)*100/stats.MaxFDs >= doctorRuntimeFDWarnPercent && status != doctorFail {
 		status = doctorWarn
 		detail = appendDoctorDetail(detail, fmt.Sprintf("fd usage >=%d%% of RLIMIT_NOFILE (%d/%d)", doctorRuntimeFDWarnPercent, stats.OpenFDs, stats.MaxFDs))
 		remedy = "inspect /proc/<pid>/fd for leaked descriptors or raise RLIMIT_NOFILE"
@@ -2065,13 +2109,13 @@ func (r doctorRunner) doctorWAN() []doctorCheck {
 		checks = append(checks, doctorCheck{Area: "wan", Name: "EgressRoutePolicy", Status: doctorSkip, Detail: "no EgressRoutePolicy resources configured"})
 	} else {
 		for _, res := range policies {
-			checks = append(checks, doctorResourceCheck("wan", res, objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
+			checks = append(checks, doctorResourceCheck("wan", res, r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
 			spec, _ := res.EgressRoutePolicySpec()
 			for _, candidate := range spec.Candidates {
 				if candidate.HealthCheck == "" {
 					continue
 				}
-				status := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
+				status := r.objectStatus(api.NetAPIVersion, "HealthCheck", candidate.HealthCheck)
 				checks = append(checks, doctorNamedStatusCheck("wan", "HealthCheck/"+candidate.HealthCheck, status, healthyPhases("Healthy", "Applied", "Ready")))
 			}
 		}
@@ -2113,7 +2157,7 @@ func (r doctorRunner) doctorDNS() []doctorCheck {
 	}
 	var checks []doctorCheck
 	for _, res := range resolvers {
-		checks = append(checks, doctorResourceCheck("dns", res, objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
+		checks = append(checks, doctorResourceCheck("dns", res, r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name), healthyPhases("Applied", "Active", "Ready")))
 	}
 	if r.opts.Host {
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.Timeout)
@@ -2133,7 +2177,7 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 	}
 	var checks []doctorCheck
 	for _, res := range tunnels {
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		if strings.EqualFold(stringStatus(status, "reason"), "WhenFalse") {
 			checks = append(checks, doctorCheck{
 				Area:   "dslite",
@@ -2174,7 +2218,7 @@ func (r doctorRunner) doctorDSLite() []doctorCheck {
 
 func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
 	for _, policy := range selectResources(r.router.Spec.Resources, "EgressRoutePolicy", "") {
-		policyStatus := objectStatus(r.store, policy.APIVersion, policy.Kind, policy.Metadata.Name)
+		policyStatus := r.objectStatus(policy.APIVersion, policy.Kind, policy.Metadata.Name)
 		if !doctorStatusPass(policyStatus, healthyPhases("Applied", "Active", "Ready", "Healthy")) {
 			continue
 		}
@@ -2192,7 +2236,7 @@ func (r doctorRunner) dsliteSelectedEvidence(tunnelName, device string) string {
 		detail := "selected via EgressRoutePolicy/" + policy.Metadata.Name + ", gatewayHealth-aligned"
 		if candidateOK {
 			if hc := stringutil.FirstNonEmpty(candidate.HealthCheck, selectedTargetHealthCheck(candidate)); hc != "" {
-				hcStatus := objectStatus(r.store, api.NetAPIVersion, "HealthCheck", hc)
+				hcStatus := r.objectStatus(api.NetAPIVersion, "HealthCheck", hc)
 				if doctorStatusPass(hcStatus, healthyPhases("Healthy", "Applied", "Ready")) {
 					detail += ", HealthCheck/" + hc + " healthy"
 				}
@@ -2265,7 +2309,7 @@ func (r doctorRunner) doctorDHCPv6PD() []doctorCheck {
 	}
 	var checks []doctorCheck
 	for _, res := range pds {
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		name := res.Kind + "/" + res.Metadata.Name
 		phase := stringStatus(status, "phase")
 		if len(status) == 0 {
@@ -2298,7 +2342,7 @@ func (r doctorRunner) doctorNAT() []doctorCheck {
 		checks = append(checks, doctorCheck{Area: "nat", Name: "NAT44Rule", Status: doctorSkip, Detail: "no NAT44Rule resources configured"})
 	} else {
 		for _, res := range rules {
-			status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+			status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 			checks = append(checks, doctorResourceCheck("nat", res, status, healthyPhases("Applied", "Active", "Ready")))
 			natCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
 		}
@@ -2389,7 +2433,7 @@ func (r doctorRunner) doctorFirewall() []doctorCheck {
 	}
 	zoneCounts := doctorResourceStatusCounts{}
 	for _, res := range firewallResources {
-		status := objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name)
+		status := r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
 		checks = append(checks, doctorResourceCheck("firewall", res, status, healthyPhases("Applied", "Active", "Ready")))
 		if res.Kind == "FirewallZone" {
 			zoneCounts.tally(status, healthyPhases("Applied", "Active", "Ready"))
@@ -2809,7 +2853,7 @@ func (r doctorRunner) doctorMgmt() []doctorCheck {
 	for _, res := range consoles {
 		spec, _ := res.WebConsoleSpec()
 		name := "WebConsole/" + res.Metadata.Name
-		listen := stringutil.FirstNonEmpty(spec.ListenAddress, stringStatus(objectStatus(r.store, res.APIVersion, res.Kind, res.Metadata.Name), "listenAddress"))
+		listen := stringutil.FirstNonEmpty(spec.ListenAddress, stringStatus(r.objectStatus(res.APIVersion, res.Kind, res.Metadata.Name), "listenAddress"))
 		if listen == "" {
 			checks = append(checks, doctorCheck{Area: "mgmt", Name: name, Status: doctorSkip, Detail: "listen address is derived or unavailable"})
 			continue
@@ -3012,16 +3056,9 @@ func doctorStatusPass(status map[string]any, pass map[string]bool) bool {
 
 func doctorDSLiteCommandStatus(command diagnoseCommandCheck, failStatus, remedy, selectedEvidence string) doctorCheck {
 	check := doctorCommandStatus("dslite", command, failStatus, remedy)
-	if selectedEvidence == "" {
-		return check
-	}
-	if check.Status == doctorPass {
+	if selectedEvidence != "" {
 		check.Detail = appendDoctorDetail(check.Detail, selectedEvidence)
-		return check
 	}
-	check.Status = doctorPass
-	check.Detail = appendDoctorDetail(selectedEvidence, "host observation ignored: "+stringutil.FirstNonEmpty(command.Error, oneLine(command.Output)))
-	check.Remedy = ""
 	return check
 }
 

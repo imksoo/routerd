@@ -8,6 +8,7 @@ wan_if = "ens18"
 rdr pass on ens18 inet proto tcp from any to 203.0.113.10 port 443 -> 192.168.10.20 port 443
 rdr pass on ens19 inet proto tcp from any to 203.0.113.10 port 443 -> 192.168.10.20 port 443
 nat on ens19 inet proto tcp from (ens19:network) to 192.168.10.20 port 443 -> (ens19)
+anchor "routerd_sam_forward" quick
 block drop all
 pass quick on lo0 all
 pass out quick all keep state

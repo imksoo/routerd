@@ -144,16 +144,18 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
+	for _, unowned := range []string{`inet 192.168.10.1/24`, `inet 192.0.2.1/24`} {
+		if strings.Contains(rc, unowned) {
+			t.Fatalf("rc.conf duplicates runtime static-address ownership: %s", rc)
+		}
+	}
 	for _, want := range []string{
 		`ifconfig_vtnet0="up"`,
-		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
 		`ifconfig_vtnet2="up"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
 		`cloned_interfaces="bridge0"`,
-		`routerd_vxlan_home_vxlan_enable="YES"`,
 		`ifconfig_bridge0="addm vtnet1 stp vtnet1 up"`,
-		`ifconfig_bridge0_alias0="inet 192.0.2.1/24"`,
 		`static_routes="lab_v4"`,
 		`route_lab_v4="-net 192.0.2.0/24 192.168.10.254"`,
 		`ipv6_static_routes="lab_v6"`,
@@ -165,14 +167,12 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
 		}
 	}
-	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
-	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || { routerd_vxlan_home_vxlan_rollback; return 1; }`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `vxlanlocalport' '4789'`, `vxlanremoteport' '4789'`, `ifconfig 'bridge0' addm "${ifname}"`, `/sbin/ifconfig "${owned}" destroy || return 1`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd interface ownership marker`} {
-		if !strings.Contains(vxlanScript, want) {
-			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
-		}
+
+	if _, exists := got.RCDScripts["routerd_vxlan_home_vxlan"]; exists || strings.Contains(rc, "routerd_vxlan_home_vxlan_enable") || strings.Contains(rc, "vxlanid") {
+		t.Fatalf("native Segment actor has a competing boot owner: %s", rc)
 	}
-	if strings.Contains(vxlanScript, "vxlanport") {
-		t.Fatalf("FreeBSD VXLAN rc.d output uses unsupported vxlanport token:\n%s", vxlanScript)
+	if len(got.RCDScripts["routerd"]) == 0 {
+		t.Fatal("native Segment actor has no routerd boot service")
 	}
 	pf := string(got.PF)
 	for _, want := range []string{
@@ -983,7 +983,7 @@ func TestFreeBSDWireGuardUsesRuntimeControllers(t *testing.T) {
 	}
 }
 
-func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
+func TestFreeBSDVXLANMultipleRemotesRejectsPartialIntent(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "lab"}, Spec: api.VXLANSegmentSpec{
@@ -992,27 +992,14 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 			UnderlayInterface: "wan",
 		}},
 	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	if len(got.Warnings) == 0 {
-		t.Fatal("expected at least one warning for multi-remote VXLAN on FreeBSD")
-	}
-	want := "FreeBSD vxlan(4) supports a single unicast remote"
-	if !strings.Contains(got.Warnings[0], want) {
-		t.Fatalf("warning %q does not mention single-remote limitation", got.Warnings[0])
-	}
-	script := string(got.RCDScripts["routerd_vxlan_lab"])
-	if !strings.Contains(script, "vxlanremote' '192.0.2.20'") {
-		t.Fatalf("FreeBSD VXLAN rc.d script must use the first remote as seed:\n%s", script)
-	}
-	if strings.Contains(script, "vxlanremote' '192.0.2.30'") || strings.Contains(script, "vxlanremote' '192.0.2.40'") {
-		t.Fatalf("FreeBSD VXLAN rc.d script must not emit additional remotes:\n%s", script)
+
+	_, err := FreeBSD(router)
+	if err == nil || !strings.Contains(err.Error(), "does not support multiple unicast remotes") {
+		t.Fatalf("partial remote intent reported as successful render: %v", err)
 	}
 }
 
-func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
+func TestFreeBSDDefersAllDSLiteEffectsToNativeActor(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
@@ -1029,14 +1016,9 @@ func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
-	for _, want := range []string{
-		`cloned_interfaces="gif7"`,
-		`ifconfig_gif7="inet6 tunnel 2001:db8::100 2001:db8::200 inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255 mtu 1454 up"`,
-		`static_routes="ds_lite_default"`,
-		`route_ds_lite_default="default 192.0.0.1"`,
-	} {
-		if !strings.Contains(rc, want) {
-			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+	for _, foreignEffect := range []string{`cloned_interfaces="gif7"`, `ifconfig_gif7=`, `route_ds_lite_default=`, `static_routes="ds_lite_default"`} {
+		if strings.Contains(rc, foreignEffect) {
+			t.Fatalf("renderer bypassed native tunnel receipt with %q:\n%s", foreignEffect, rc)
 		}
 	}
 }

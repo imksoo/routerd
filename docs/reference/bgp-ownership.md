@@ -32,11 +32,32 @@ private journal aside before starting the new pair with rewritten configuration.
 Do not remove a running owner's journal as a recovery procedure. Control clients
 and the daemon must come from the same release.
 
+## Kernel FIB ownership
+
+The BGP controller serializes watch updates, reconciliation and removal through
+one native FIB owner. Its typed SQLite journal records exact applied routes and a
+pending operation before each effect. Linux uses an exclusive add and an exact
+route tuple; FreeBSD records each gateway operation separately so partial ECMP
+withdrawal cannot discard the remaining hops. A BGP protocol number alone never
+establishes ownership.
+
+After a durable write, the owner rereads current RIB/Mobility authority and native
+topology before acting. A restarted pending add or delete with matching presence
+is uncertain and is not replayed. Withdrawal and shutdown preserve their records
+until native absence and actual watcher/in-flight-operation exit are acknowledged.
+
+The current single journal fences a different kernel scope. This also fences
+automatic reacquisition after an ordinary reboot; that recovery remains an open
+implementation item. Do not clear another namespace's authority based on absence
+in the current namespace. Native FreeBSD deletion also lacks an atomic complete
+tuple compare-and-delete against unrelated external writers; a complete immediate
+read detects known ambiguity but does not eliminate that native API limitation.
+
 ## Validation limits
 
 Local checks cover real GoBGP loopback session advertisement, export edits and
 withdrawal, ordered policy repair, static/dynamic restart recovery, and shared
-RPC lifetime. Kernel FIB ownership and teardown are a separate implementation
-boundary. Independent Linux/FreeBSD peer traffic and native forwarding still
+RPC lifetime, typed SQL corruption/recovery and current-intent/native-operation
+failure ordering. Independent Linux/FreeBSD peer traffic and native forwarding still
 require isolated target qualification; a successful policy RPC does not prove
 packet forwarding.

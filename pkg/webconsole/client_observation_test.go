@@ -14,24 +14,23 @@ import (
 
 func TestClientAccountingDistinguishesObservedZeroFromUnavailable(t *testing.T) {
 	clients := correlateClients(nil, nil, []logstore.TrafficFlow{
-		{ClientAddress: "192.0.2.1", Accounting: true},
-		{ClientAddress: "192.0.2.2", Accounting: false},
+		{ClientAddress: "192.0.2.1", BytesOut: counterFixture(0), BytesIn: counterFixture(0)},
+		{ClientAddress: "192.0.2.2"},
 	}, nil, nil)
 	data, err := json.Marshal(clients)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rows []struct {
-		ID         string `json:"id"`
-		Accounting bool   `json:"accounting"`
-		BytesOut   *int64 `json:"bytesOut"`
-		BytesIn    *int64 `json:"bytesIn"`
+		ID       string `json:"id"`
+		BytesOut *int64 `json:"bytesOut"`
+		BytesIn  *int64 `json:"bytesIn"`
 	}
 	if err := json.Unmarshal(data, &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || !rows[0].Accounting || rows[1].Accounting || rows[0].BytesOut == nil || *rows[0].BytesOut != 0 || rows[0].BytesIn == nil || *rows[0].BytesIn != 0 {
-		t.Fatalf("accounting availability or observed zero lost: %s", data)
+	if len(rows) != 2 || rows[0].BytesOut == nil || *rows[0].BytesOut != 0 || rows[0].BytesIn == nil || *rows[0].BytesIn != 0 || rows[1].BytesOut != nil || rows[1].BytesIn != nil {
+		t.Fatalf("counter presence or observed zero lost: %s", data)
 	}
 }
 

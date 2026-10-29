@@ -53,7 +53,10 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		}
 		profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 		ifname := defaultString(aliases[spec.Interface], spec.Interface)
-		duid := configuredPDClientDUID(ifname, spec.ClientDUID)
+		duid, err := configuredPDClientDUID(ifname, spec.ClientDUID)
+		if err != nil {
+			return fmt.Errorf("observe PD %s client identity: %w", resource.Metadata.Name, err)
+		}
 		iaid := uint32(1)
 		if value, ok := parseUint32Flexible(spec.IAID); ok {
 			iaid = value
@@ -64,11 +67,14 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 		}
 		expectedDUID := ""
 		if api.IsNTTIPv6PDProfile(profile) {
-			expectedDUID = interfacePDClientDUID(ifname)
+			expectedDUID, err = interfacePDClientDUID(ifname)
+			if err != nil {
+				return fmt.Errorf("observe PD %s expected identity: %w", resource.Metadata.Name, err)
+			}
 		}
 		lease, _ := previous.Configured(routerstate.PDLeaseConfig{Client: api.IPv6PDClientRouterd, Profile: profile, UplinkIfname: ifname, PrefixLength: api.EffectiveIPv6PDPrefixLength(profile, spec.PrefixLength), ExpectedDUID: expectedDUID, ClientDUID: duid, IAID: iaid})
 		var snapshot *pdclient.Snapshot
-		if observed, found := managedPDClientSnapshot(resource.Metadata.Name, ifname, spec); found {
+		if observed, found := managedPDClientSnapshot(resource.Metadata.Name, ifname, spec, duid); found {
 			snapshot = &observed
 		}
 		// Missing files do not grant or revoke authority. The same atomic owner
@@ -80,23 +86,23 @@ func recordObservedPrefixDelegationState(router *api.Router, store routerstate.S
 	return nil
 }
 
-func configuredPDClientDUID(ifname, configured string) string {
+func configuredPDClientDUID(ifname, configured string) (string, error) {
 	value := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(configured), ":", ""))
 	if value != "" {
-		return value
+		return value, nil
 	}
 	return interfacePDClientDUID(ifname)
 }
 
-func interfacePDClientDUID(ifname string) string {
+func interfacePDClientDUID(ifname string) (string, error) {
 	ifi, err := net.InterfaceByName(ifname)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read interface %s for default DUID: %w", ifname, err)
 	}
-	return hex.EncodeToString(append([]byte{0, 3, 0, 1}, ifi.HardwareAddr...))
+	return hex.EncodeToString(append([]byte{0, 3, 0, 1}, ifi.HardwareAddr...)), nil
 }
 
-func managedPDClientSnapshot(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec) (pdclient.Snapshot, bool) {
+func managedPDClientSnapshot(resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, duid string) (pdclient.Snapshot, bool) {
 	if api.EffectiveIPv6PDClient("", spec.Profile, spec.Client) != api.IPv6PDClientRouterd {
 		return pdclient.Snapshot{}, false
 	}
@@ -109,17 +115,16 @@ func managedPDClientSnapshot(resource, ifname string, spec api.DHCPv6PrefixDeleg
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return pdclient.Snapshot{}, false
 	}
-	if !managedPDClientSnapshotIdentityMatches(snapshot, resource, ifname, spec) {
+	if !managedPDClientSnapshotIdentityMatches(snapshot, resource, ifname, spec, duid) {
 		return pdclient.Snapshot{}, false
 	}
 	return snapshot, true
 }
 
-func managedPDClientSnapshotIdentityMatches(snapshot pdclient.Snapshot, resource, ifname string, spec api.DHCPv6PrefixDelegationSpec) bool {
+func managedPDClientSnapshotIdentityMatches(snapshot pdclient.Snapshot, resource, ifname string, spec api.DHCPv6PrefixDelegationSpec, expectedDUID string) bool {
 	if snapshot.Resource != resource || snapshot.Interface != ifname {
 		return false
 	}
-	expectedDUID := configuredPDClientDUID(ifname, spec.ClientDUID)
 	expectedIAID := uint32(1)
 	if parsed, ok := parseUint32Flexible(spec.IAID); ok {
 		expectedIAID = parsed

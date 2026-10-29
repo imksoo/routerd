@@ -34,10 +34,10 @@ func TestParseConntrackEntryWithAccounting(t *testing.T) {
 	if !ok {
 		t.Fatal("parse failed")
 	}
-	if !entry.Original.Accounting || entry.Original.Packets != 12 || entry.Original.Bytes != 3456 {
+	if (entry.Original.Packets == nil || *entry.Original.Packets != 12) || (entry.Original.Bytes == nil || *entry.Original.Bytes != 3456) {
 		t.Fatalf("original counters = %+v", entry.Original)
 	}
-	if !entry.Reply.Accounting || entry.Reply.Packets != 34 || entry.Reply.Bytes != 98765 {
+	if (entry.Reply.Packets == nil || *entry.Reply.Packets != 34) || (entry.Reply.Bytes == nil || *entry.Reply.Bytes != 98765) {
 		t.Fatalf("reply counters = %+v", entry.Reply)
 	}
 	if entry.RawAttributes == nil || entry.RawAttributes["use"] != "1" {
@@ -162,9 +162,9 @@ func TestSelectConnectionEntriesPreservesObservedOrder(t *testing.T) {
 
 func TestSelectConnectionEntriesPrioritizesTrafficWithinGroup(t *testing.T) {
 	entries := []ConnectionEntry{
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50000", Bytes: 10}, Reply: ConntrackTuple{Bytes: 20}},
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50001", Bytes: 10}, Reply: ConntrackTuple{Bytes: 900}},
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50002", Bytes: 100}, Reply: ConntrackTuple{Bytes: 20}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50000", Bytes: counterFixture(10)}, Reply: ConntrackTuple{Bytes: counterFixture(20)}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50001", Bytes: counterFixture(10)}, Reply: ConntrackTuple{Bytes: counterFixture(900)}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50002", Bytes: counterFixture(100)}, Reply: ConntrackTuple{Bytes: counterFixture(20)}},
 	}
 	selected := selectConnectionEntries(entries, 2)
 	got := []string{selected[0].Original.SourcePort, selected[1].Original.SourcePort}

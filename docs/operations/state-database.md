@@ -88,13 +88,24 @@ Worker restart refuses to restore advertisements while that operation exists.
 Do not discard the operation to force an apparently successful removal; correct
 the reported supervisor/kernel failure and let the same owner retry.
 
-The BGP helper's applied-state journal is version 2 on this branch. Dynamic path
+The BGP helper's applied-state journal is version 3 on this branch. Static and dynamic path
 additions persist their source and native GoBGP identifier before the live add;
 the returned UUID is acknowledged only after the final save. A restart can
 complete or withdraw an interrupted add without treating the path as absent.
-Version 1 files are rejected. At an authorized cutover, stop the old helper and
+Earlier versions are rejected. At an authorized cutover, stop the old helper and
 retire its old journal before starting the matching new binaries; do not replace
 a journal while its helper is running or discard pending effects during repair.
+Complete static/dynamic policy intent and pending policy replacement are owned
+by that same daemon; see [BGP ownership](../reference/bgp-ownership.md).
+
+The separate traffic-log database requires `traffic_log_format` version 1.
+Earlier databases that encoded missing counters as zero are rejected without
+modifying their rows; select a fresh traffic database at cutover. A missing
+per-flow or directional counter is `null`/unobserved, while a measured zero is
+`0`. Client and aggregate incomplete flags mark a known partial sum as a lower
+bound; the console shows `≥` for that sum. Neither a missing flow nor a failed
+collection establishes zero traffic. This traffic format does not change the
+main state's SQLite `user_version` 1500.
 
 Mobility SAM, routes and addresses also retain pending acquisitions and applied
 ownership. A static handover needs a new `staticHandovers[].id` shared by its

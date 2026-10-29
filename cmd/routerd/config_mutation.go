@@ -38,6 +38,7 @@ type serveConfigMutator struct {
 	updateRuntime        func(*api.Router) error
 	runtimeMutationError func() error
 	stopping             func() bool
+	servers              *serveHTTPServers
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
@@ -201,7 +202,7 @@ var runtimeShapeKinds = map[string]bool{
 	"DHCPv6Client": true, "DHCPv6Server": true, "DHCPv6PrefixDelegation": true,
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
 	"DSLiteTunnel": true,
-	"EventGroup":   true, "EventSubscription": true, "WebConsole": true,
+	"EventGroup":   true, "EventSubscription": true,
 	"EventRule": true, "DerivedEvent": true,
 	"Plugin":              true,
 	"SAMTransportProfile": true,

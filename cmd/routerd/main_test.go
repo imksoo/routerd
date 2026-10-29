@@ -75,281 +75,28 @@ func TestServeConfigMutatorPlanExplainsUnsupportedStateSchema(t *testing.T) {
 	}
 }
 
-func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
-	dir := t.TempDir()
-	stale := filepath.Join(dir, "routerd-stale.conf")
-	if err := os.WriteFile(stale, []byte("stale\n"), 0600); err != nil {
-		t.Fatalf("write stale configuration: %v", err)
-	}
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "ipsec-test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-			Metadata: api.ObjectMeta{Name: "site-a"},
-			Spec: api.IPsecConnectionSpec{
-				LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-				LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/24",
-			},
-		}}},
-	}
-	loads := 0
-	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("apply IPsec connections: %v", err)
-	}
-	if loads != 1 {
-		t.Fatalf("load count = %d, want 1", loads)
-	}
-	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stale configuration stat = %v, want not exist", err)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "routerd-site-a.conf"))
-	if err != nil || !strings.Contains(string(data), "secrets {") {
-		t.Fatalf("managed configuration = %q, err=%v", data, err)
-	}
-	aggregate, err := os.ReadFile(filepath.Join(dir, "routerd.conf"))
-	if err != nil || !strings.Contains(string(aggregate), "include "+filepath.Join(dir, "routerd-site-a.conf")) {
-		t.Fatalf("aggregate configuration = %q, err=%v", aggregate, err)
-	}
-	for _, name := range ipsecSwanctlCredentialDirectories {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil || !info.IsDir() {
-			t.Fatalf("swanctl credential directory %s: info=%v err=%v", name, info, err)
-		}
-	}
-	if len(changed) != 3 {
-		t.Fatalf("changed = %v, want managed write, aggregate, and stale removal", changed)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending marker stat = %v, want removed after successful load", err)
-	}
-
-	changed, err = applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil || len(changed) != 0 || loads != 2 {
-		t.Fatalf("unchanged reload changed=%v loads=%d err=%v", changed, loads, err)
-	}
-
-	changed, err = applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("remove managed IPsec connection: %v", err)
-	}
-	if loads != 3 || len(changed) != 2 || !strings.HasPrefix(changed[0], "removed:") {
-		t.Fatalf("removal changed=%v loads=%d", changed, loads)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "routerd.conf")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("empty aggregate stat = %v, want removed", err)
-	}
-}
-
-func TestApplyIPsecConnectionsRetriesPendingLoad(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	loadErr := errors.New("charon unavailable")
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load:      func(context.Context) error { return loadErr },
-	})
-	if !errors.Is(err, loadErr) {
-		t.Fatalf("first load error = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); err != nil {
-		t.Fatalf("pending marker after failed load: %v", err)
-	}
-	loads := 0
-	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil || loads != 1 || len(changed) != 0 {
-		t.Fatalf("retry changed=%v loads=%d err=%v", changed, loads, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending marker after retry = %v, want removed", err)
-	}
-}
-
-func TestApplyIPsecConnectionsMigratesOnlyRouterdLegacyConfigs(t *testing.T) {
-	dir := t.TempDir()
-	legacy := t.TempDir()
-	for name, data := range map[string]string{
-		"routerd-site-a.conf":        "legacy connection\n",
-		"routerd.conf":               "legacy aggregate\n",
-		ipsecPendingLoadMarker:       "pending\n",
-		"operator-managed-site.conf": "operator config\n",
-	} {
-		if err := os.WriteFile(filepath.Join(legacy, name), []byte(data), 0600); err != nil {
-			t.Fatalf("write legacy %s: %v", name, err)
-		}
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-b"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	loads := 0
-	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir:       dir,
-		LegacyConfigDir: legacy,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	}); err != nil {
-		t.Fatalf("migrate legacy configurations: %v", err)
-	}
-	if loads != 1 {
-		t.Fatalf("load count = %d, want 1", loads)
-	}
-	for _, name := range []string{"routerd-site-a.conf", "routerd.conf", ipsecPendingLoadMarker} {
-		if _, err := os.Lstat(filepath.Join(legacy, name)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("legacy %s stat = %v, want removed", name, err)
-		}
-	}
-	if data, err := os.ReadFile(filepath.Join(legacy, "operator-managed-site.conf")); err != nil || string(data) != "operator config\n" {
-		t.Fatalf("operator config = %q, err=%v", data, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "routerd-site-b.conf")); err != nil {
-		t.Fatalf("new runtime configuration missing: %v", err)
-	}
-}
-
-func TestApplyIPsecConnectionsRefusesLegacyRouterdSymlink(t *testing.T) {
-	dir := t.TempDir()
-	legacy := t.TempDir()
-	link := filepath.Join(legacy, "routerd.conf")
-	if err := os.Symlink(filepath.Join(legacy, "operator.conf"), link); err != nil {
-		t.Fatalf("create legacy symlink: %v", err)
-	}
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir:       dir,
-		LegacyConfigDir: legacy,
-		Load:            func(context.Context) error { return nil },
-	})
-	if err == nil || !strings.Contains(err.Error(), "non-regular") {
-		t.Fatalf("legacy symlink error = %v", err)
-	}
-	if info, statErr := os.Lstat(link); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("legacy symlink changed: info=%v err=%v", info, statErr)
-	}
-}
-
-func TestApplyIPsecConnectionsKeepsPendingMarkerWhenEmptyAggregateRemovalFails(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load:      func(context.Context) error { return nil },
-	}); err != nil {
-		t.Fatalf("seed managed IPsec configuration: %v", err)
-	}
-	aggregate := filepath.Join(dir, "routerd.conf")
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			if err := os.Remove(aggregate); err != nil {
-				return err
-			}
-			if err := os.Mkdir(aggregate, 0700); err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(aggregate, "keep"), []byte("x"), 0600)
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "remove empty IPsec swanctl aggregate") {
-		t.Fatalf("empty aggregate teardown error = %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); statErr != nil {
-		t.Fatalf("pending marker after aggregate removal failure: %v", statErr)
-	}
-}
-
-func TestApplyIPsecConnectionsPassesCallerContextToLoad(t *testing.T) {
-	type contextKey string
-	ctx := context.WithValue(context.Background(), contextKey("request"), "apply-ctx")
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	_, err := applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(got context.Context) error {
-			if got.Value(contextKey("request")) != "apply-ctx" {
-				t.Fatalf("load context value = %v", got.Value(contextKey("request")))
-			}
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("apply IPsec connections: %v", err)
-	}
-}
-
 func TestIPsecRuntimePathsArePlatformSpecific(t *testing.T) {
 	oldDefaults := platformDefaults
 	t.Cleanup(func() { platformDefaults = oldDefaults })
 	platformDefaults.OS = platform.OSLinux
+	platformDefaults.SysconfDir = "/etc/routerd"
 	if got := ipsecConfigDir(); got != "/etc/routerd/swanctl" {
 		t.Fatalf("Linux config dir = %q", got)
-	}
-	if got := ipsecLegacyConfigDir(); got != "/etc/swanctl/conf.d" {
-		t.Fatalf("Linux legacy config dir = %q", got)
 	}
 	if got := ipsecSwanctlPath(); got != "swanctl" {
 		t.Fatalf("Linux swanctl path = %q", got)
 	}
 	platformDefaults.OS = platform.OSFreeBSD
+	platformDefaults.SysconfDir = "/usr/local/etc/routerd"
 	if got := ipsecConfigDir(); got != "/usr/local/etc/routerd/swanctl" {
 		t.Fatalf("FreeBSD config dir = %q", got)
 	}
-	if got := ipsecLegacyConfigDir(); got != "/usr/local/etc/swanctl/conf.d" {
-		t.Fatalf("FreeBSD legacy config dir = %q", got)
-	}
 	if got := ipsecSwanctlPath(); got != "/usr/local/sbin/swanctl" {
 		t.Fatalf("FreeBSD swanctl path = %q", got)
+	}
+	platformDefaults.SysconfDir = filepath.Join(t.TempDir(), "routerd")
+	if got := ipsecConfigDir(); got != filepath.Join(platformDefaults.SysconfDir, "swanctl") {
+		t.Fatalf("private config dir escaped configured root: %q", got)
 	}
 }
 
@@ -1503,7 +1250,7 @@ func TestControlAPIHTTPConfigAcceptsNarrowCIDR(t *testing.T) {
 }
 
 func TestControlAPIHTTPConfigRejectsWideOpenCIDRs(t *testing.T) {
-	for _, cidr := range []string{"0.0.0.0/0", "::/0"} {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0", "203.0.113.1/0", "2001:db8::1/0"} {
 		if _, err := parseControlAPIAllowCIDRs([]string{cidr}); err == nil {
 			t.Fatalf("parseControlAPIAllowCIDRs(%q) succeeded, want error", cidr)
 		}
@@ -1661,7 +1408,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	gen1 := seedGeneration(t, store, "hash-1", testRouterYAML("rollback-one"), true, "Applied")
-	gen2 := seedGeneration(t, store, "hash-2", testRouterYAML("rollback-two"), true, "Applied")
+	gen2 := seedGeneration(t, store, "hash-2", testRouterYAML("rollback-two"), true, "Errored")
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
@@ -1672,7 +1419,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	}
 
 	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(rows) != 3 || !reflect.DeepEqual(strings.Fields(rows[0]), []string{"generation", "started_at", "finished_at", "phase", "config", "current"}) {
+	if len(rows) != 3 || !reflect.DeepEqual(strings.Fields(rows[0]), []string{"generation", "started_at", "finished_at", "phase", "config", "attempt"}) {
 		t.Fatalf("typed generation table: %q", stdout.String())
 	}
 	type row struct {
@@ -1700,7 +1447,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 		}
 		got = append(got, row{generation, fields[3], fields[4], current})
 	}
-	want := []row{{gen2, "Applied", "yes", "(current)"}, {gen1, "Applied", "yes", ""}}
+	want := []row{{gen2, "Errored", "yes", "(latest)"}, {gen1, "Applied", "yes", ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("newest-first generation rows = %#v, want %#v", got, want)
 	}
@@ -1862,31 +1609,38 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 		t.Fatalf("open state: %v", err)
 	}
 	defer func() { _ = store.Close() }()
+	phase := func() string {
+		statuses, err := store.ListObjectStatuses()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return overallStatusPhase("Healthy", statuses)
+	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
 		t.Fatalf("save when false status: %v", err)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DNSForwarder", "default", map[string]any{"matches": 1}); err != nil {
 		t.Fatalf("save status without phase: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Healthy" {
+	if got := phase(); got != "Healthy" {
 		t.Fatalf("phase = %q, want Healthy for WhenFalse pending and phase-less status", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Pending"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+	if got := phase(); got != "Pending" {
 		t.Fatalf("phase = %q, want Pending", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Reconverging", "reason": "GoBGPReconverging"}); err != nil {
 		t.Fatalf("save reconverging status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+	if got := phase(); got != "Pending" {
 		t.Fatalf("phase = %q, want Pending for reconverging", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "worker", map[string]any{"phase": "Error"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Error" {
+	if got := phase(); got != "Error" {
 		t.Fatalf("phase = %q, want Error", got)
 	}
 }
@@ -1912,7 +1666,11 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "sessions", map[string]any{"phase": "Error", "reason": "SyncFailed", "message": "ssh failed"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}
-	issues := resourcePhaseIssues(store)
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues := resourcePhaseIssues(statuses)
 	if len(issues) != 2 {
 		t.Fatalf("issues = %+v, want 2 entries", issues)
 	}
@@ -2041,7 +1799,10 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRo
 	if status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default"); status["phase"] != "Error" {
 		t.Fatalf("synthetic controller status after cleanup = %+v, want preserved", status)
 	}
-	events := store.Events(api.RouterAPIVersion, "Router", "test-router", 10)
+	events, err := store.ReadEvents(t.Context(), api.RouterAPIVersion, "Router", "test-router", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) == 0 || events[0].Reason != "StaleStateCleanup" {
 		t.Fatalf("events = %+v, want StaleStateCleanup", events)
 	}
@@ -2310,19 +2071,6 @@ func (s *fakeStaleCleanupStore) RecordEvent(apiVersion, kind, name, eventType, r
 		Message:    message,
 	})
 	return nil
-}
-
-func (s *fakeStaleCleanupStore) Events(apiVersion, kind, name string, limit int) []routerstate.Event {
-	var out []routerstate.Event
-	for _, event := range s.events {
-		if event.APIVersion == apiVersion && event.Kind == kind && event.Name == name {
-			out = append(out, event)
-		}
-	}
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
 }
 
 func (s *fakeStaleCleanupStore) Get(name string) routerstate.Value {
@@ -2620,13 +2368,16 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 }
 
 func TestManagedPDClientSnapshotMatchesDefaultProfileImplicitDUID(t *testing.T) {
-	duid := interfacePDClientDUID("lo")
+	duid, err := interfacePDClientDUID("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if duid == "" {
 		t.Skip("loopback MAC is unavailable")
 	}
 	now := time.Now().UTC()
 	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute), Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1200::/60", Preferred: 60, Valid: 60, AcquiredAt: now}}}
-	if !managedPDClientSnapshotIdentityMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}) {
+	if !managedPDClientSnapshotIdentityMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, duid) {
 		t.Fatal("default profile implicit link-layer DUID must match daemon rule")
 	}
 }
@@ -2647,7 +2398,7 @@ func TestManagedPDObservationDoesNotResurrectRevokedPreviousPrefixes(t *testing.
 	}
 }
 
-func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T) {
+func TestRecordPrefixDelegationStateClearsIdentityWhenConfiguredDUIDChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(path)
 	if err != nil {
@@ -2657,14 +2408,17 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 	if _, err := store.BeginGeneration("test"); err != nil {
 		t.Fatalf("begin generation: %v", err)
 	}
-	store.ConfigurePDLease("wan-pd", routerstate.PDLeaseConfig{Client: "networkd"})
-	store.SavePDLease("wan-pd", routerstate.PDLease{
-		Client:     "networkd",
-		LastPrefix: "2001:db8:3d60:1240::/60",
-		DUID:       "00030001020000000001",
-		DUIDText:   "00:03:00:01:02:00:00:00:00:01",
-		IAID:       "3394439514",
-	})
+	lease, _, err := store.ConfigurePDLease("wan-pd", routerstate.PDLeaseConfig{Client: api.IPv6PDClientRouterd, Profile: api.IPv6PDProfileDefault, UplinkIfname: "ens18", ClientDUID: "00030001020000000001", IAID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.LastPrefix = "2001:db8:3d60:1240::/60"
+	lease.DUID = "00030001020000000001"
+	lease.DUIDText = "00:03:00:01:02:00:00:00:00:01"
+	lease.IAID = "3394439514"
+	if err := store.SavePDLease("wan-pd", lease); err != nil {
+		t.Fatal(err)
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -2675,9 +2429,10 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 			Metadata: api.ObjectMeta{Name: "wan-pd"},
 			Spec: api.DHCPv6PrefixDelegationSpec{
-				Interface: "wan",
-				Client:    api.IPv6PDClientRouterd,
-				Profile:   "ntt-hgw-lan-pd",
+				Interface:  "wan",
+				Client:     api.IPv6PDClientRouterd,
+				Profile:    api.IPv6PDProfileDefault,
+				ClientDUID: "00030001020000000002",
 			},
 		},
 	}}}
@@ -2722,14 +2477,20 @@ func TestRecordHostInventoryState(t *testing.T) {
 	if status == nil || status["os"] == nil || status["commands"] == nil {
 		t.Fatalf("inventory status = %#v", status)
 	}
-	events := store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	events, err := store.ReadEvents(t.Context(), api.RouterAPIVersion, "Inventory", "host", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 || events[0].Reason != "InventoryObserved" {
 		t.Fatalf("events = %#v", events)
 	}
 	if err := recordHostInventoryState(context.Background(), store); err != nil {
 		t.Fatalf("record inventory again: %v", err)
 	}
-	events = store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	events, err = store.ReadEvents(t.Context(), api.RouterAPIVersion, "Inventory", "host", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 {
 		t.Fatalf("unchanged inventory should not add event: %#v", events)
 	}
@@ -2877,46 +2638,6 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 	}
 }
 
-func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	started := time.Now()
-	outputPath, err := startCommandWithFileOutput("sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
-	if err != nil {
-		t.Fatalf("start command: %v", err)
-	}
-	defer os.Remove(outputPath)
-	if elapsed := time.Since(started); elapsed >= time.Second {
-		t.Fatalf("start/release waited %s for long-lived child", elapsed)
-	}
-	if err := waitForFile(pidPath, time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitForFileText(outputPath, "parent exited", time.Second); err != nil {
-		t.Fatal(err)
-	}
-	out, err := os.ReadFile(outputPath)
-	if err != nil || !strings.Contains(string(out), "parent exited") {
-		t.Fatalf("output = %q, err=%v, want parent output", out, err)
-	}
-	pidText, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatalf("read child PID: %v", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidText)))
-	if err != nil {
-		t.Fatalf("parse child PID %q: %v", pidText, err)
-	}
-	child, err := os.FindProcess(pid)
-	if err != nil {
-		t.Fatalf("find child process: %v", err)
-	}
-	if err := child.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("child process is not live after Start/Release: %v", err)
-	}
-	_ = child.Kill()
-	_, _ = child.Wait()
-}
-
 func waitForFile(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -2963,7 +2684,7 @@ func TestPDObservationPropagatesPersistenceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "routerd15-closed-write-fixture"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "routerd15-closed-write-fixture"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000001"}},
 	}}}
 	err = recordObservedPrefixDelegationState(router, store, nil)
 	if !errors.Is(err, sql.ErrConnDone) {

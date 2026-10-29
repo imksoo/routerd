@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -73,7 +74,7 @@ func assuredState(assured bool) string {
 	if assured {
 		return "ASSURED"
 	}
-	return "stateless"
+	return "unknown"
 }
 
 func tupleCell(tuple observe.ConntrackTuple) string {
@@ -92,15 +93,15 @@ func endpointCell(address, port string) string {
 	if strings.TrimSpace(port) == "" {
 		return address
 	}
-	return address + ":" + port
+	return net.JoinHostPort(address, port)
 }
 
 func connectionNATDelta(entry observe.ConnectionEntry) string {
 	var out []string
-	if entry.Reply.Destination != "" && entry.Reply.Destination != entry.Original.Source {
+	if entry.Reply.Destination != "" && entry.Original.Source != "" && (entry.Reply.Destination != entry.Original.Source || entry.Reply.DestinationPort != "" && entry.Original.SourcePort != "" && entry.Reply.DestinationPort != entry.Original.SourcePort) {
 		out = append(out, "reply-dst="+endpointCell(entry.Reply.Destination, entry.Reply.DestinationPort))
 	}
-	if entry.Reply.Source != "" && entry.Reply.Source != entry.Original.Destination {
+	if entry.Reply.Source != "" && entry.Original.Destination != "" && (entry.Reply.Source != entry.Original.Destination || entry.Reply.SourcePort != "" && entry.Original.DestinationPort != "" && entry.Reply.SourcePort != entry.Original.DestinationPort) {
 		out = append(out, "reply-src="+endpointCell(entry.Reply.Source, entry.Reply.SourcePort))
 	}
 	return strings.Join(out, ",")
@@ -127,17 +128,16 @@ func writeTrafficFlowsTable(stdout io.Writer, rows []logstore.TrafficFlow) error
 		if !row.EndedAt.IsZero() {
 			ended = row.EndedAt.Format(time.RFC3339)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s:%d\t%s:%d\t%s\t%d\t%d\t%s\n",
+		bytesOut, bytesIn := trafficCounterCell(row.BytesOut), trafficCounterCell(row.BytesIn)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.StartedAt.Format(time.RFC3339),
 			ended,
 			row.Protocol,
-			row.ClientAddress,
-			row.ClientPort,
-			row.PeerAddress,
-			row.PeerPort,
+			endpointCell(row.ClientAddress, strconv.Itoa(row.ClientPort)),
+			endpointCell(row.PeerAddress, strconv.Itoa(row.PeerPort)),
 			displayCell(row.NATTranslatedAddress),
-			row.BytesOut,
-			row.BytesIn,
+			bytesOut,
+			bytesIn,
 			displayCell(stringutil.FirstNonEmpty(row.TLSSNI, row.ResolvedHostname)),
 		)
 	}
@@ -182,13 +182,9 @@ func emitFirewallRows(stdout io.Writer, output string, rows []logstore.FirewallL
 	}
 }
 
-func parseHumanDuration(value string) (time.Duration, error) {
-	if strings.HasSuffix(value, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
-		if err != nil {
-			return 0, err
-		}
-		return time.Duration(days) * 24 * time.Hour, nil
+func trafficCounterCell(value *int64) string {
+	if value == nil {
+		return "unknown"
 	}
-	return time.ParseDuration(value)
+	return strconv.FormatInt(*value, 10)
 }

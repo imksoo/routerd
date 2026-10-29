@@ -76,17 +76,33 @@ func (netlinkSAMProxyNeighborApplier) SetIPForwarding(ctx context.Context, enabl
 }
 
 func samSetSysctl(ctx context.Context, key, value string) error {
-	out, err := exec.CommandContext(ctx, "sysctl", "-w", key+"="+value).CombinedOutput()
+	path, err := samSysctlPath(key)
 	if err != nil {
-		return fmt.Errorf("sysctl -w %s=%s: %w: %s", key, value, err, strings.TrimSpace(string(out)))
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if value != "0" && value != "1" {
+		return fmt.Errorf("SAM sysctl %s requires a binary value", key)
+	}
+	if err := os.WriteFile(path, []byte(value), 0); err != nil {
+		return fmt.Errorf("write %s: %w", key, err)
 	}
 	return nil
 }
 
 func samReadBinarySysctl(ctx context.Context, key string) (string, error) {
-	out, err := exec.CommandContext(ctx, "sysctl", "-n", key).CombinedOutput()
+	path, err := samSysctlPath(key)
 	if err != nil {
-		return "", fmt.Errorf("sysctl -n %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	out, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", key, err)
 	}
 	value := strings.TrimSpace(string(out))
 	if value != "0" && value != "1" {
@@ -391,7 +407,10 @@ func samForwardChainAbsent(chain string, err error, output []byte, runIPTables f
 }
 
 func samSysctlPresent(key string) (bool, error) {
-	path := "/proc/sys/" + strings.ReplaceAll(key, ".", "/")
+	path, err := samSysctlPath(key)
+	if err != nil {
+		return false, err
+	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -399,6 +418,23 @@ func samSysctlPresent(key string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func samSysctlPath(key string) (string, error) {
+	if key == "net.ipv4.ip_forward" {
+		return "/proc/sys/net/ipv4/ip_forward", nil
+	}
+	if rest, ok := strings.CutPrefix(key, "net.ipv4.conf."); ok {
+		for _, setting := range []string{"proxy_arp", "accept_local"} {
+			if ifname, ok := strings.CutSuffix(rest, "."+setting); ok {
+				if err := sam.ValidateCaptureInterface(ifname); err != nil {
+					return "", err
+				}
+				return "/proc/sys/net/ipv4/conf/" + ifname + "/" + setting, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("unsupported SAM sysctl key %q", key)
 }
 
 func samSetSysctlIfPresent(key, value string, ops samForwardPathOps) error {

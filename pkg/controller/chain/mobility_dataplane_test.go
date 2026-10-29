@@ -4,11 +4,13 @@ package chain
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 // mobilityEffectStore is deliberately in-memory. The direct dataplane
@@ -43,6 +45,16 @@ func (s *mobilityEffectStore) ObjectStatus(apiVersion, kind, name string) map[st
 
 func (s *mobilityEffectStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
 	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
+func (s *mobilityEffectStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	var out []routerstate.ObjectStatus
+	for key, status := range s.statuses {
+		parts := strings.Split(key, "/")
+		last := len(parts) - 1
+		out = append(out, routerstate.ObjectStatus{APIVersion: strings.Join(parts[:last-1], "/"), Kind: parts[last-1], Name: parts[last], Status: copyStatusMap(status)})
+	}
+	return out, nil
 }
 
 func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *testing.T) {
@@ -125,12 +137,20 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 		},
 	}}
 	var commands []string
+	deleted := false
 	controller := IPv4RouteController{
 		Router: &api.Router{}, Store: store,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
+			if command == "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot" {
+				deleted = true
+				return nil, nil
+			}
 			if command == "ip -j -d -4 route show 10.77.60.20/32" {
+				if deleted {
+					return []byte(`[]`), nil
+				}
 				return []byte(`[{"dst":"10.77.60.20","dev":"lan0","protocol":"boot","prefsrc":"10.77.60.1","metric":90}]`), nil
 			}
 			return nil, nil
@@ -186,12 +206,12 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	}
 }
 
-func TestLinuxIPv4AddressPresentRequiresExactPrefix(t *testing.T) {
-	output := []byte("7: ens19    inet 10.77.60.34/24 brd 10.77.60.255 scope global ens19\\n")
-	if linuxIPv4AddressPresent(output, "10.77.60.34/32") {
+func TestStaticAddressObservationRequiresExactPrefix(t *testing.T) {
+	observed := staticAddressSnapshot{Index: 7, Addresses: []netip.Prefix{netip.MustParsePrefix("10.77.60.34/24")}}
+	if observed.has("10.77.60.34/32") {
 		t.Fatal("a wider external address must not satisfy a managed /32")
 	}
-	if !linuxIPv4AddressPresent(output, "10.77.60.34/24") {
+	if !observed.has("10.77.60.34/24") {
 		t.Fatal("exactly matching address was not detected")
 	}
 }

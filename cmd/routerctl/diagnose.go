@@ -77,23 +77,23 @@ func parseDiagnoseOptions(name string, args []string, helpOutput io.Writer) (dia
 		var summary, examples string
 		switch name {
 		case "diagnose egress":
-			summary = "EgressRoutePolicy + HealthCheck + IPv4Route + NAT44Rule の status を集約し、\n" +
-				"--host が有効なら ip route / nft / conntrack コマンドも実行して結果を表示する。\n" +
+			summary = "control API 経由で EgressRoutePolicy の観測済み status を表示する。\n" +
+				"現在のネットワーク疎通は未計測として表示する。\n" +
 				"位置引数: [policy] (EgressRoutePolicy 名。省略時は全 policy 対象)"
 			examples = "routerctl doctor --probe egress\n" +
 				"routerctl doctor --probe egress ipv4-default -o json\n" +
-				"routerctl doctor --probe egress --no-host -o yaml"
+				"routerctl doctor --probe egress -o yaml"
 		case "diagnose dns":
-			summary = "DNSResolver の status を集約し、--host が有効なら dig で実 query を投げて確認する。\n" +
+			summary = "control API 経由で DNSResolver の観測済み status を表示する。実 DNS query は未計測。\n" +
 				"位置引数: [resolver] (DNSResolver 名。省略時は全 resolver 対象)"
 			examples = "routerctl doctor --probe dns\n" +
-				"routerctl doctor --probe dns lan --server 127.0.0.1 --name example.com,routerd.io\n" +
-				"routerctl doctor --probe dns --no-host -o json"
+				"routerctl doctor --probe dns lan -o json\n" +
+				"routerctl doctor --probe dns -o json"
 		case "diagnose lan-client":
-			summary = "LAN client に対して ping / ip neigh / conntrack で疎通と NAT を確認する。\n" +
+			summary = "LAN client の IP を検証し、現在のネットワーク疎通は未計測として表示する。\n" +
 				"位置引数: <ip> (LAN client IP, 必須)"
 			examples = "routerctl doctor --probe lan-client 192.168.1.10\n" +
-				"routerctl doctor --probe lan-client 192.168.1.10 --no-host\n" +
+				"routerctl doctor --probe lan-client 192.168.1.10 -o yaml\n" +
 				"routerctl doctor --probe lan-client 192.168.1.10 -o json"
 		case "doctor":
 			summary = "routerd の各 area (" + strings.Join(doctorAreas, "/") + ") の\n" +
@@ -186,14 +186,6 @@ func loadDiagnoseInputs(opts diagnoseOptions) (*api.Router, routerstate.Store, e
 		return nil, nil, err
 	}
 	return router, store, nil
-}
-
-func objectStatus(store routerstate.Store, apiVersion, kind, name string) map[string]any {
-	objectStore, ok := store.(routerstate.ObjectStatusStore)
-	if !ok {
-		return nil
-	}
-	return objectStore.ObjectStatus(apiVersion, kind, name)
 }
 
 func runDiagnosticCommand(ctx context.Context, label, name string, args ...string) diagnoseCommandCheck {

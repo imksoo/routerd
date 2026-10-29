@@ -78,6 +78,7 @@ var artifactTeardowns = []ArtifactTeardown{
 	{
 		Kind:     "linux.ipip6.tunnel",
 		Priority: 50,
+		Eligible: func(artifact resource.Artifact) bool { return !strings.Contains(artifact.Owner, "/DSLiteTunnel/") },
 		Remediation: func(artifact resource.Artifact) string {
 			return "delete ipip6 tunnel " + artifact.Name
 		},
@@ -115,6 +116,11 @@ var artifactTeardowns = []ArtifactTeardown{
 	{
 		Kind:     "systemd.service",
 		Priority: 10,
+		Eligible: func(artifact resource.Artifact) bool {
+			// DHCP removal and DHCP-to-RA handoff use the actual dnsmasq
+			// activation/process owner, including its stop acknowledgement.
+			return artifact.Name != "routerd-dnsmasq.service"
+		},
 		Remediation: func(artifact resource.Artifact) string {
 			return "disable and stop systemd service " + artifact.Name
 		},
@@ -146,15 +152,6 @@ var artifactTeardowns = []ArtifactTeardown{
 			return "delete directory " + artifact.Name
 		},
 		Teardown: cleanupDirectoryArtifact,
-	},
-	{
-		Kind:     "net.ipv4.address",
-		Priority: 50,
-		Eligible: IsDSLiteIPv4AddressArtifact,
-		Remediation: func(artifact resource.Artifact) string {
-			return "remove IPv4 address " + artifact.Name
-		},
-		Teardown: cleanupIPv4AddressArtifact,
 	},
 	{
 		Kind:     "net.ipv6.address",
@@ -291,42 +288,6 @@ func cleanupDirectoryArtifact(exec ArtifactTeardownExecutor, artifact resource.A
 	return artifact.Kind + "/" + artifact.Name, nil
 }
 
-func cleanupIPv4AddressArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
-	if exec == nil {
-		return "", nil
-	}
-	ifname, address, ok := strings.Cut(artifact.Name, ":")
-	if !ok || ifname == "" || address == "" {
-		return "", nil
-	}
-	features := exec.Features()
-	if features.HasIproute2 {
-		args := []string{"-4", "addr", "del", address}
-		if peer := artifact.Attributes["peer"]; peer != "" {
-			args = append(args, "peer", peer)
-		}
-		args = append(args, "dev", ifname)
-		if err := exec.Run("ip", args...); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	}
-	if features.HasPF {
-		if strings.HasPrefix(ifname, "gif") && strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite-source") {
-			if err := exec.Run("ifconfig", ifname, "destroy"); err != nil {
-				return "", err
-			}
-			return "freebsd.gif.tunnel/" + ifname, nil
-		}
-		addr := strings.SplitN(address, "/", 2)[0]
-		if err := exec.Run("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
-			return "", err
-		}
-		return artifact.Kind + "/" + artifact.Name, nil
-	}
-	return "", nil
-}
-
 func cleanupIPv6AddressArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
 	if exec == nil {
 		return "", nil
@@ -350,18 +311,6 @@ func cleanupIPv6AddressArtifact(exec ArtifactTeardownExecutor, artifact resource
 		return artifact.Kind + "/" + artifact.Name, nil
 	}
 	return "", nil
-}
-
-func IsDSLiteIPv4AddressArtifact(artifact resource.Artifact) bool {
-	return strings.Contains(artifact.Owner, "/IPv4StaticAddress/ds-lite") ||
-		strings.Contains(artifact.Name, ":192.168.160.249/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.250/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.251/32") ||
-		strings.Contains(artifact.Name, ":192.168.160.252/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.249/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.250/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.251/32") ||
-		strings.Contains(artifact.Name, ":172.18.255.252/32")
 }
 
 func IsStaticIPv6AddressArtifact(artifact resource.Artifact) bool {

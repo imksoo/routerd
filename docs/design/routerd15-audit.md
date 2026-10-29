@@ -689,3 +689,37 @@ ShellCheck 0.10.0, before committing this checkpoint.
 
 The focused gate deliberately remains separate from the complete gate. The
 concrete open findings above remain work even when their existing tests pass.
+
+### Separately fixed follow-up checkpoints
+
+These checkpoints were tested from separate immutable worktrees with Go 1.25.9
+and ShellCheck 0.10.0 where applicable. Fixture builds in worktrees use
+`-buildvcs=false`, as release builds do. GitHub Actions was not awaited.
+
+- `d77a848a`: BGP daemon policy and local-path ownership, format-3 recovery and
+  typed control boundaries. Full race tests pass for `pkg/bgp`, `pkg/bgpdaemon`,
+  `pkg/controller/bgp`, `pkg/controller/mobility` and `pkg/config`; scoped vet
+  passes. The daemon race run passes with its five AF_UNIX-listener tests
+  excluded because native socket creation is forbidden here. An attempted
+  listener test failed with EPERM. Actual loopback GoBGP session tests verify
+  export/edit/withdraw and exact-source cleanup. This is not independent-peer
+  or kernel FIB qualification.
+- `7aa0c71d`: release QA and standalone certification share one durable process
+  and cleanup owner. The exact tree passes all **476** offline QA tests in
+  183.594 seconds, with nine existing tool/environment skips; the actual
+  release-certification offline entry point and ShellCheck on four affected
+  shell scripts also pass. No paid resource, native service installation or
+  PVE lifecycle was executed.
+- `ee1fc40c`: live ISO mount/workdir ownership and failure-preserving firstboot.
+  The full `tests/liveiso` package passes under race, including execution of
+  production shell bodies for mounted/unowned workdir refusal, failed unmount
+  retention, cache validation and validation/render failure before DHCP removal.
+  Shell syntax and ShellCheck pass. Package ownership is now preserved by the
+  builder and old caches are rejected, but an actual image build, image mode
+  inspection and VM boot remain unexecuted.
+
+These are bounded implementation checkpoints. Native address/route/tunnel owners,
+RA/LAN lifetime, runtime reload, HTTP/IPsec and observation-counter changes are
+being integrated separately. The complete repository gate has not been rerun on
+these follow-ups; the second checkpoint's complete-run counts above must not be
+presented as current complete-run results.

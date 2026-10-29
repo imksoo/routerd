@@ -19,6 +19,7 @@ type routeOwnerTestStore struct {
 	failPhase  string
 	readKind   string
 	failForget bool
+	afterSave  func(map[string]any)
 }
 
 func (s *routeOwnerTestStore) DeleteObject(version, kind, name string) error {
@@ -32,7 +33,11 @@ func (s *routeOwnerTestStore) SaveObjectStatus(version, kind, name string, statu
 	if kind == "IPv4Route" && status["phase"] == s.failPhase {
 		return errors.New("injected route status write failure")
 	}
-	return s.SQLiteStore.SaveObjectStatus(version, kind, name, status)
+	err := s.SQLiteStore.SaveObjectStatus(version, kind, name, status)
+	if err == nil && kind == "IPv4Route" && s.afterSave != nil {
+		s.afterSave(status)
+	}
+	return err
 }
 
 func (s *routeOwnerTestStore) ReadObjectStatus(version, kind, name string) (map[string]any, error) {
@@ -45,13 +50,14 @@ func (s *routeOwnerTestStore) ReadObjectStatus(version, kind, name string) (map[
 // This command fixture supplies actual native response shapes. It only changes
 // its supplied response on successful writes; all decisions belong to Controller.
 type routeOwnerCommandFixture struct {
-	t                        *testing.T
-	output, afterApply       string
-	calls                    []string
-	failRead, failDelete     bool
-	failApply, applyThenFail bool
-	deviceReady              bool
-	beforeWrite              func()
+	t                         *testing.T
+	output, afterApply        string
+	calls                     []string
+	failRead, failDelete      bool
+	failApply, applyThenFail  bool
+	deviceReady               bool
+	ignoreApply, ignoreDelete bool
+	beforeWrite               func()
 }
 
 func (f *routeOwnerCommandFixture) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -63,7 +69,7 @@ func (f *routeOwnerCommandFixture) run(_ context.Context, name string, args ...s
 		}
 		return []byte(f.output), nil
 	}
-	if len(args) >= 2 && args[0] == "route" && (args[1] == "replace" || args[1] == "del") {
+	if len(args) >= 2 && args[0] == "route" && (args[1] == "add" || args[1] == "del") {
 		if f.beforeWrite != nil {
 			f.beforeWrite()
 		}
@@ -71,12 +77,16 @@ func (f *routeOwnerCommandFixture) run(_ context.Context, name string, args ...s
 			if f.failDelete {
 				return []byte("delete rejected"), errors.New("delete failed")
 			}
-			f.output = `[]`
+			if !f.ignoreDelete {
+				f.output = `[]`
+			}
 		} else {
 			if f.failApply && !f.applyThenFail {
 				return nil, errors.New("apply failed")
 			}
-			f.output = f.afterApply
+			if !f.ignoreApply {
+				f.output = f.afterApply
+			}
 			if f.failApply {
 				return nil, errors.New("apply result lost")
 			}
@@ -108,13 +118,16 @@ func TestOrdinaryRoutePreferredSourceRequiresAddressArray(t *testing.T) {
 	}
 }
 
+func ordinaryFixtureScope(context.Context) (string, error)             { return "linux:fixture:1", nil }
+func ordinaryFixtureDevice(context.Context, string) (int, bool, error) { return 17, true, nil }
+
 func newOrdinaryRouteFixture(t *testing.T) (IPv4RouteController, *routeOwnerTestStore, *routeOwnerCommandFixture, string) {
 	t.Helper()
 	requireLinuxRuntimeFixture(t)
 	path := filepath.Join(t.TempDir(), "state.db")
 	store := openOrdinaryRouteTestStore(t, path)
 	native := &routeOwnerCommandFixture{t: t, output: `[]`, afterApply: ordinaryRouteNativeResponse("old0", "boot"), deviceReady: true}
-	controller := IPv4RouteController{Router: ordinaryRouteTestRouter("old0"), Store: store, Command: native.run, DevicePresent: func(context.Context, string) bool { return native.deviceReady }}
+	controller := IPv4RouteController{Router: ordinaryRouteTestRouter("old0"), Store: store, Command: native.run, NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, native.deviceReady, nil }}
 	return controller, store, native, path
 }
 
@@ -172,12 +185,13 @@ func TestOrdinaryRouteInactiveConditionsWithdrawAppliedIdentity(t *testing.T) {
 				}
 			case "device-not-ready":
 				native.deviceReady = false
+				native.output = `[]`
 			}
 			controller.Router.Spec.Resources[0].Spec = spec
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(strings.Join(native.calls, "\n"), "ip route del 192.0.2.0/24 dev old0 metric 10 proto boot") || native.output != `[]` || readOrdinaryRouteReceipt(t, store) != nil {
+			if (reason != "device-not-ready" && !strings.Contains(strings.Join(native.calls, "\n"), "ip route del 192.0.2.0/24 dev old0 metric 10 proto boot")) || native.output != `[]` || readOrdinaryRouteReceipt(t, store) != nil {
 				t.Fatalf("inactive route retained forwarding or wrong owner: %v", native.calls)
 			}
 		})
@@ -202,6 +216,12 @@ func TestOrdinaryRouteRemovalFailureRetainsOwnerUntilEffectAndForgetSucceed(t *t
 			store = openOrdinaryRouteTestStore(t, path)
 			controller.Store = store
 			native.failDelete = false
+			if failure == "native" {
+				if err := controller.reconcile(t.Context()); err == nil {
+					t.Fatal("pending-present delete replay was admitted")
+				}
+				native.output = `[]` // Operator inspected and removed the ambiguous row.
+			}
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +262,7 @@ func TestOrdinaryRouteFailedWithdrawalSurvivesRestart(t *testing.T) {
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			native.deviceReady = false
+			controller.Router = &api.Router{}
 			switch failure {
 			case "delete":
 				native.failDelete = true
@@ -266,6 +286,12 @@ func TestOrdinaryRouteFailedWithdrawalSurvivesRestart(t *testing.T) {
 			controller.Store = store
 			native.failDelete, native.failRead = false, false
 			native.output = ordinaryRouteNativeResponse("old0", "boot")
+			if failure == "delete" {
+				if err := controller.reconcile(t.Context()); err == nil {
+					t.Fatal("lost delete acknowledgement was replayed")
+				}
+				native.output = `[]`
+			}
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -287,21 +313,28 @@ func TestOrdinaryRouteDeviceChangeWaitsForOldWithdrawal(t *testing.T) {
 	if err := controller.reconcile(t.Context()); err == nil {
 		t.Fatal("new route applied before failed old withdrawal")
 	}
-	if strings.Contains(strings.Join(native.calls, "\n"), "route replace") || readOrdinaryRouteReceipt(t, store).Route.Device != "old0" {
+	if strings.Contains(strings.Join(native.calls, "\n"), "route add") || readOrdinaryRouteReceipt(t, store).Route.Device != "old0" {
 		t.Fatalf("failed withdrawal lost old owner: %v", native.calls)
 	}
 	native.failDelete, native.calls = false, nil
+	if err := controller.reconcile(t.Context()); err == nil {
+		t.Fatal("pending old route was deleted/replaced without ownership proof")
+	}
+	if strings.Contains(strings.Join(native.calls, "\n"), "route add") || strings.Contains(strings.Join(native.calls, "\n"), "route del") {
+		t.Fatal("unknown prior row was mutated")
+	}
+	native.output = `[]`
 	if err := controller.reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	calls := strings.Join(native.calls, "\n")
-	oldDelete, newApply := strings.Index(calls, "route del 192.0.2.0/24 dev old0"), strings.Index(calls, "route replace 192.0.2.0/24 dev new0")
-	if oldDelete < 0 || newApply <= oldDelete || readOrdinaryRouteReceipt(t, store).Route.Device != "new0" {
+	newApply := strings.Index(calls, "route add 192.0.2.0/24 dev new0")
+	if newApply < 0 || readOrdinaryRouteReceipt(t, store).Route.Device != "new0" {
 		t.Fatalf("route identity transition order is wrong: %s", calls)
 	}
 }
 
-func TestOrdinaryRoutePendingEffectRecoversAfterRestart(t *testing.T) {
+func TestOrdinaryRoutePendingPresenceFencesRestartUntilObservedAbsent(t *testing.T) {
 	for _, inactive := range []bool{false, true} {
 		t.Run(fmt.Sprint(inactive), func(t *testing.T) {
 			controller, store, native, path := newOrdinaryRouteFixture(t)
@@ -323,13 +356,23 @@ func TestOrdinaryRoutePendingEffectRecoversAfterRestart(t *testing.T) {
 			store = openOrdinaryRouteTestStore(t, path)
 			controller.Store = store
 			native.beforeWrite, native.calls = nil, nil
-			native.deviceReady = !inactive
+			if inactive {
+				controller.Router = &api.Router{}
+			}
+			if err := controller.reconcile(t.Context()); err == nil {
+				t.Fatal("pending-present row was adopted/deleted")
+			}
+			receipt := readOrdinaryRouteReceipt(t, store)
+			if receipt == nil || !receipt.Pending || strings.Contains(strings.Join(native.calls, "\n"), "route add") || strings.Contains(strings.Join(native.calls, "\n"), "route del") {
+				t.Fatalf("unknown ownership lost fence: %+v %v", receipt, native.calls)
+			}
+			native.output = `[]` // Explicit operator/native removal establishes absence.
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			receipt := readOrdinaryRouteReceipt(t, store)
-			if inactive && receipt != nil || !inactive && (receipt == nil || receipt.Pending) || strings.Contains(strings.Join(native.calls, "\n"), "route replace") {
-				t.Fatalf("restart did not recover exactly observed pending effect: receipt=%+v calls=%v", receipt, native.calls)
+			receipt = readOrdinaryRouteReceipt(t, store)
+			if inactive && receipt != nil || !inactive && (receipt == nil || receipt.Pending) {
+				t.Fatalf("absence did not unblock recovery: %+v", receipt)
 			}
 		})
 	}
@@ -341,12 +384,12 @@ func TestOrdinaryRoutePendingWriteFailurePreventsMutation(t *testing.T) {
 	if err := controller.reconcile(t.Context()); err == nil {
 		t.Fatal("failed pending write was ignored")
 	}
-	if strings.Contains(strings.Join(native.calls, "\n"), "route replace") || readOrdinaryRouteReceipt(t, store) != nil {
+	if strings.Contains(strings.Join(native.calls, "\n"), "route add") || readOrdinaryRouteReceipt(t, store) != nil {
 		t.Fatalf("effect started without pending persistence: %v", native.calls)
 	}
 }
 
-func TestOrdinaryRouteFailedApplyRetriesFromDurablePendingIdentity(t *testing.T) {
+func TestOrdinaryRouteFailedApplyRetriesOnlyAfterObservedAbsence(t *testing.T) {
 	for _, changedBeforeFailure := range []bool{false, true} {
 		t.Run(fmt.Sprint(changedBeforeFailure), func(t *testing.T) {
 			controller, store, native, path := newOrdinaryRouteFixture(t)
@@ -363,11 +406,20 @@ func TestOrdinaryRouteFailedApplyRetriesFromDurablePendingIdentity(t *testing.T)
 			store = openOrdinaryRouteTestStore(t, path)
 			controller.Store = store
 			native.failApply, native.calls = false, nil
+			if changedBeforeFailure {
+				if err := controller.reconcile(t.Context()); err == nil {
+					t.Fatal("ambiguous add was adopted")
+				}
+				if !readOrdinaryRouteReceipt(t, store).Pending {
+					t.Fatal("ambiguous add lost pending fence")
+				}
+				native.output = `[]`
+			}
 			if err := controller.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			retried := strings.Contains(strings.Join(native.calls, "\n"), "route replace")
-			if retried == changedBeforeFailure || readOrdinaryRouteReceipt(t, store).Pending {
+			retried := strings.Contains(strings.Join(native.calls, "\n"), "route add")
+			if !retried || readOrdinaryRouteReceipt(t, store).Pending {
 				t.Fatalf("uncertain result recovery did not use actual observation: calls=%v", native.calls)
 			}
 		})
@@ -379,7 +431,9 @@ func TestOrdinaryRouteFailedWithdrawalCompletionRetainsReceipt(t *testing.T) {
 	if err := controller.reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	store.failPhase, native.deviceReady = "Pending", false
+	store.failPhase = "Pending"
+	controller.Router = &api.Router{}
+	store.failForget = true
 	if err := controller.reconcile(t.Context()); err == nil {
 		t.Fatal("failed withdrawal completion was acknowledged")
 	}
@@ -435,7 +489,7 @@ func TestOrdinaryRouteDoesNotAdoptOrDeleteForeignRoutes(t *testing.T) {
 			if err := controller.reconcile(t.Context()); err == nil {
 				t.Fatal("foreign matching route was adopted")
 			}
-			if receipt := readOrdinaryRouteReceipt(t, store); receipt != nil || strings.Contains(strings.Join(native.calls, "\n"), "route replace") {
+			if receipt := readOrdinaryRouteReceipt(t, store); receipt != nil || strings.Contains(strings.Join(native.calls, "\n"), "route add") {
 				t.Fatal("foreign route acquired an ownership receipt")
 			}
 		})
@@ -464,6 +518,7 @@ func TestFreeBSDOrdinaryRouteObservationPreservesForeignReplacement(t *testing.T
 		{"owned", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC>\n", true, true, false},
 		{"other interface", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em1\nflags: <UP,GATEWAY,DONE,STATIC>\n", false, true, false},
 		{"BGP", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC,PROTO1>\n", false, true, false},
+		{"reject", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC,REJECT>\n", false, true, false},
 		{"fallback default", "destination: default\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC>\n", false, false, false},
 		{"missing mask", "destination: 192.0.2.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC>\n", false, false, true},
 	} {
@@ -518,5 +573,167 @@ func TestOrdinaryRouteZeroMetricDoesNotMatchOtherPriority(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(native.calls, "\n"), "route del") {
 		t.Fatal("zero-metric receipt deleted a different priority route")
+	}
+}
+
+func TestOrdinaryRoutePendingWaitRechecksNativeAndDesiredAuthority(t *testing.T) {
+	for _, change := range []string{"foreign-arrival", "dependency-down", "device-replaced", "scope-changed", "device-read-error"} {
+		t.Run(change, func(t *testing.T) {
+			c, store, native, _ := newOrdinaryRouteFixture(t)
+			scope, index := "linux:fixture:1", 17
+			var lookupErr error
+			c.NativeScope = func(context.Context) (string, error) { return scope, nil }
+			c.DeviceLookup = func(context.Context, string) (int, bool, error) { return index, true, lookupErr }
+			spec, _ := c.Router.Spec.Resources[0].IPv4RouteSpec()
+			spec.DependsOn = []api.ResourceDependencySpec{{Resource: "Interface/ready", Phase: "Up"}}
+			c.Router.Spec.Resources[0].Spec = spec
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "ready", map[string]any{"phase": "Up"}); err != nil {
+				t.Fatal(err)
+			}
+			store.afterSave = func(status map[string]any) {
+				if status["phase"] != "Applying" {
+					return
+				}
+				switch change {
+				case "foreign-arrival":
+					native.output = native.afterApply
+				case "dependency-down":
+					if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "ready", map[string]any{"phase": "Down"}); err != nil {
+						t.Fatal(err)
+					}
+				case "device-replaced":
+					index++
+				case "scope-changed":
+					scope = "linux:new-boot:1"
+				case "device-read-error":
+					lookupErr = errors.New("native enumeration failed")
+				}
+			}
+			if err := c.reconcile(t.Context()); err == nil {
+				t.Fatal("changed premise admitted add")
+			}
+			calls := strings.Join(native.calls, "\n")
+			if strings.Contains(calls, "route add") || strings.Contains(calls, "route del") {
+				t.Fatalf("pending wait authorized native write: %s", calls)
+			}
+			if change == "foreign-arrival" && native.output != native.afterApply {
+				t.Fatal("foreign arrival was removed")
+			}
+		})
+	}
+}
+
+func TestOrdinaryRouteRequiredDeviceReadFailurePreservesAppliedOwner(t *testing.T) {
+	c, store, native, _ := newOrdinaryRouteFixture(t)
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	before := readOrdinaryRouteReceipt(t, store)
+	native.calls = nil
+	c.DeviceLookup = func(context.Context, string) (int, bool, error) {
+		return 0, false, errors.New("required native device observation unavailable")
+	}
+	if err := c.reconcile(t.Context()); err == nil {
+		t.Fatal("read failure became inactive desired state")
+	}
+	after := readOrdinaryRouteReceipt(t, store)
+	if before == nil || after == nil || *before != *after || len(native.calls) != 0 {
+		t.Fatalf("unknown device removed native/ownership: before=%+v after=%+v calls=%v", before, after, native.calls)
+	}
+}
+
+func TestOrdinaryRouteAddAndDeleteRequireActualReadback(t *testing.T) {
+	for _, operation := range []string{"add", "delete"} {
+		t.Run(operation, func(t *testing.T) {
+			c, store, native, path := newOrdinaryRouteFixture(t)
+			if operation == "delete" {
+				if err := c.reconcile(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				c.Router = &api.Router{}
+				native.ignoreDelete = true
+			} else {
+				native.ignoreApply = true
+			}
+			if err := c.reconcile(t.Context()); err == nil {
+				t.Fatal("unobserved native write was acknowledged")
+			}
+			receipt := readOrdinaryRouteReceipt(t, store)
+			if receipt == nil || !receipt.Pending {
+				t.Fatalf("unconfirmed %s lost pending fence: %+v", operation, receipt)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			c.Store = openOrdinaryRouteTestStore(t, path)
+			native.calls = nil
+			native.ignoreApply = false
+			native.ignoreDelete = false
+			if operation == "delete" {
+				if err := c.reconcile(t.Context()); err == nil {
+					t.Fatal("pending-present delete was replayed")
+				}
+				if strings.Contains(strings.Join(native.calls, "\n"), "route del") {
+					t.Fatal("unknown row deleted")
+				}
+				native.output = `[]` // Operator removal, not guessed receipt ownership.
+			}
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOrdinaryRouteAppliedScopeOrIndexReplacementCannotDeletePresentRow(t *testing.T) {
+	for _, change := range []string{"scope", "index"} {
+		t.Run(change, func(t *testing.T) {
+			c, store, native, _ := newOrdinaryRouteFixture(t)
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if change == "scope" {
+				c.NativeScope = func(context.Context) (string, error) { return "linux:other-boot:1", nil }
+			} else {
+				c.DeviceLookup = func(context.Context, string) (int, bool, error) { return 18, true, nil }
+			}
+			c.Router = &api.Router{}
+			native.calls = nil
+			if err := c.reconcile(t.Context()); err == nil {
+				t.Fatal("old native identity authorized deletion")
+			}
+			if strings.Contains(strings.Join(native.calls, "\n"), "route del") || readOrdinaryRouteReceipt(t, store) == nil {
+				t.Fatal("replacement row or unresolved receipt lost")
+			}
+			native.output = `[]`
+			if err := c.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if readOrdinaryRouteReceipt(t, store) != nil {
+				t.Fatal("observed absence did not retire old receipt")
+			}
+		})
+	}
+}
+
+func TestOrdinaryRouteDependencyChangesDuringAddWithdrawsWithoutInstalledPublication(t *testing.T) {
+	c, store, native, _ := newOrdinaryRouteFixture(t)
+	spec, _ := c.Router.Spec.Resources[0].IPv4RouteSpec()
+	spec.DependsOn = []api.ResourceDependencySpec{{Resource: "Interface/ready", Phase: "Up"}}
+	c.Router.Spec.Resources[0].Spec = spec
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "ready", map[string]any{"phase": "Up"}); err != nil {
+		t.Fatal(err)
+	}
+	native.beforeWrite = func() {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "ready", map[string]any{"phase": "Down"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", "route")
+	if status["phase"] != "Pending" || native.output != `[]` || readOrdinaryRouteReceipt(t, store) != nil {
+		t.Fatalf("changed authority published/retained forwarding: %+v calls=%v", status, native.calls)
 	}
 }

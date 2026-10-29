@@ -591,15 +591,17 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ledger owned orphans: %v", err)
 	}
-	if len(orphans) != 4 || len(artifacts) != 4 {
-		t.Fatalf("orphans = %+v artifacts = %+v, want four cleanup eligible", orphans, artifacts)
+	if len(orphans) != 3 || len(artifacts) != 3 {
+		t.Fatalf("orphans = %+v artifacts = %+v, want three cleanup eligible; DS-Lite belongs to its native receipt owner", orphans, artifacts)
 	}
 	kinds := map[string]bool{}
 	for _, orphan := range orphans {
 		kinds[orphan.Kind+"/"+orphan.Name] = true
 	}
+	if kinds["linux.ipip6.tunnel/ds-old"] {
+		t.Fatal("generic GC bypassed DS-Lite native receipt")
+	}
 	for _, want := range []string{
-		"linux.ipip6.tunnel/ds-old",
 		"nft.table/ip/routerd_old",
 		"systemd.service/routerd-old.service",
 		"net.ipv6.address/ens19:2001:db8::1/64",

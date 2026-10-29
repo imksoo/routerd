@@ -52,6 +52,9 @@ func faultApplyFixture(t *testing.T) (*api.Router, applyOptions) {
 	t.Helper()
 	setMissingSAMForwardChainIPTables(t)
 	dir := t.TempDir()
+	previousRuntimeDir := platformDefaults.RuntimeDir
+	platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
+	t.Cleanup(func() { platformDefaults.RuntimeDir = previousRuntimeDir })
 	opts := applyOptions{ConfigPath: filepath.Join(dir, "router.yaml"), StatePath: filepath.Join(dir, "state.db"), LedgerPath: filepath.Join(dir, "ledger.db"), StatusFile: filepath.Join(dir, "status.json"), SkipServiceManager: true, ConfigYAMLOverride: testRouterYAML("new-router")}
 	// Keep fault tests on the real apply/SQLite path, but exclude unrelated
 	// host controllers even when the test machine has networking privileges.

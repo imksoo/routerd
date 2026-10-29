@@ -187,7 +187,6 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	addWarnings(files, warnings)
 	if len(dnsmasqConfig) > 0 {
 		addFile(files, "dnsmasq.conf", dnsmasqConfig)
-		addFile(files, "rc.d-routerd_dnsmasq", render.DnsmasqRCScript("/usr/local/etc/routerd/dnsmasq.conf", "/var/run/routerd", "/var/db/routerd/dnsmasq", "/usr/local/sbin/dnsmasq"))
 	}
 	addFile(files, "dhclient.conf", data.DHCPClient)
 	addFile(files, "mpd5.conf", data.MPD5)

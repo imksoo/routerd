@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,11 +28,10 @@ type TrafficFlow struct {
 	PeerPort             int               `json:"peerPort,omitempty"`
 	Protocol             string            `json:"protocol"`
 	NATTranslatedAddress string            `json:"natTranslatedAddress,omitempty"`
-	Accounting           bool              `json:"accounting,omitempty"`
-	BytesOut             int64             `json:"bytesOut,omitempty"`
-	BytesIn              int64             `json:"bytesIn,omitempty"`
-	PacketsOut           int64             `json:"packetsOut,omitempty"`
-	PacketsIn            int64             `json:"packetsIn,omitempty"`
+	BytesOut             *int64            `json:"bytesOut,omitempty"`
+	BytesIn              *int64            `json:"bytesIn,omitempty"`
+	PacketsOut           *int64            `json:"packetsOut,omitempty"`
+	PacketsIn            *int64            `json:"packetsIn,omitempty"`
 	AppName              string            `json:"appName,omitempty"`
 	AppCategory          string            `json:"appCategory,omitempty"`
 	AppConfidence        int               `json:"appConfidence,omitempty"`
@@ -75,14 +75,16 @@ type TrafficFlowFilter struct {
 
 // TrafficFlowAggregate is the summary returned by Aggregate.
 type TrafficFlowAggregate struct {
-	Total         int            `json:"total"`
-	Since         time.Time      `json:"since"`
-	Until         time.Time      `json:"until"`
-	TotalBytesIn  int64          `json:"totalBytesIn"`
-	TotalBytesOut int64          `json:"totalBytesOut"`
-	ByClient      map[string]int `json:"byClient"`
-	ByPeer        map[string]int `json:"byPeer"`
-	ByProtocol    map[string]int `json:"byProtocol"`
+	Total              int            `json:"total"`
+	Since              time.Time      `json:"since"`
+	Until              time.Time      `json:"until"`
+	TotalBytesIn       *int64         `json:"totalBytesIn,omitempty"`
+	BytesInIncomplete  bool           `json:"bytesInIncomplete"`
+	TotalBytesOut      *int64         `json:"totalBytesOut,omitempty"`
+	BytesOutIncomplete bool           `json:"bytesOutIncomplete"`
+	ByClient           map[string]int `json:"byClient"`
+	ByPeer             map[string]int `json:"byPeer"`
+	ByProtocol         map[string]int `json:"byProtocol"`
 }
 
 type TrafficFlowLog struct {
@@ -93,7 +95,10 @@ type trafficFlowExec interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
-func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
+func OpenTrafficFlowLog(ctx context.Context, path string) (*TrafficFlowLog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -102,7 +107,11 @@ func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`
+	if err := admitTrafficLogFormat(ctx, db, false); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, `
 PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -113,23 +122,41 @@ PRAGMA journal_size_limit = 33554432;
 		return nil, err
 	}
 	log := &TrafficFlowLog{db: db}
-	if err := log.Init(context.Background()); err != nil {
+	if err := log.Init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return log, nil
 }
 
-func OpenTrafficFlowLogReadOnly(path string) (*TrafficFlowLog, error) {
+func OpenTrafficFlowLogReadOnly(ctx context.Context, path string) (*TrafficFlowLog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	db, err := openReadOnlySQLite(path)
 	if err != nil {
+		return nil, err
+	}
+	if err := admitTrafficLogFormat(ctx, db, true); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return &TrafficFlowLog{db: db}, nil
 }
 
 func (l *TrafficFlowLog) Init(ctx context.Context) error {
-	_, err := l.db.ExecContext(ctx, `
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := admitTrafficLogFormat(ctx, tx, false); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS traffic_log_format (version INTEGER PRIMARY KEY CHECK(version=1));
+INSERT OR IGNORE INTO traffic_log_format(version) VALUES(1);
+
 CREATE TABLE IF NOT EXISTS flows (
   id INTEGER PRIMARY KEY,
   flow_key TEXT UNIQUE NOT NULL,
@@ -141,7 +168,6 @@ CREATE TABLE IF NOT EXISTS flows (
   peer_port INTEGER,
   protocol TEXT NOT NULL,
   nat_translated_address TEXT,
-  accounting INTEGER,
   bytes_out INTEGER,
   bytes_in INTEGER,
   packets_out INTEGER,
@@ -169,7 +195,7 @@ CREATE INDEX IF NOT EXISTS flows_peer_ts ON flows(peer_address, ts_started);
 	if err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (l *TrafficFlowLog) Close() error {
@@ -230,8 +256,8 @@ func upsertActiveTrafficFlow(ctx context.Context, exec trafficFlowExec, flow Tra
 	flow.Category = strings.ToLower(strings.TrimSpace(flow.Category))
 	riskJSON := jsonString(flow.Risk)
 	metadataJSON := jsonString(flow.Metadata)
-	_, err := exec.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,accounting,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,resolved_hostname)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := exec.ExecContext(ctx, `INSERT INTO flows(flow_key,ts_started,client_address,client_port,peer_address,peer_port,protocol,nat_translated_address,bytes_out,bytes_in,packets_out,packets_in,app_name,app_category,app_confidence,detected_protocol,master_protocol,application_protocol,category,risk,confidence,metadata_json,engine,source,tls_sni,http_host,dns_query,resolved_hostname)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(flow_key) DO UPDATE SET
   ts_ended = NULL,
   client_address = excluded.client_address,
@@ -240,7 +266,6 @@ ON CONFLICT(flow_key) DO UPDATE SET
   peer_port = excluded.peer_port,
   protocol = excluded.protocol,
   nat_translated_address = excluded.nat_translated_address,
-  accounting = excluded.accounting,
   bytes_out = excluded.bytes_out,
   bytes_in = excluded.bytes_in,
   packets_out = excluded.packets_out,
@@ -269,7 +294,6 @@ ON CONFLICT(flow_key) DO UPDATE SET
 		flow.PeerPort,
 		flow.Protocol,
 		flow.NATTranslatedAddress,
-		flow.Accounting,
 		flow.BytesOut,
 		flow.BytesIn,
 		flow.PacketsOut,
@@ -369,7 +393,7 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 	}
 	where, args := l.buildTrafficQuery(filter)
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),coalesce(accounting,0),coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(resolved_hostname,'')
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),bytes_out,bytes_in,packets_out,packets_in,coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(resolved_hostname,'')
 FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -380,7 +404,7 @@ FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 		var flow TrafficFlow
 		var started, ended int64
 		var riskJSON, metadataJSON string
-		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.Accounting, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &flow.ResolvedHostname); err != nil {
+		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &flow.ResolvedHostname); err != nil {
 			return nil, err
 		}
 		flow.Risk, err = jsonStringSlice(riskJSON)
@@ -418,18 +442,23 @@ func (l *TrafficFlowLog) Aggregate(ctx context.Context, filter TrafficFlowFilter
 		ByProtocol: map[string]int{},
 	}
 	where, args := l.buildTrafficQuery(filter)
-	var total int
+	var total, knownIn, knownOut int
 	var sumIn, sumOut sql.NullInt64
-	row := l.db.QueryRowContext(ctx, `SELECT count(*), coalesce(sum(bytes_in),0), coalesce(sum(bytes_out),0) FROM flows`+where, args...)
-	if err := row.Scan(&total, &sumIn, &sumOut); err != nil {
+	row := l.db.QueryRowContext(ctx, `SELECT count(*), sum(bytes_in), sum(bytes_out),count(bytes_in),count(bytes_out) FROM flows`+where, args...)
+	if err := row.Scan(&total, &sumIn, &sumOut, &knownIn, &knownOut); err != nil {
 		return result, err
 	}
 	result.Total = total
 	if sumIn.Valid {
-		result.TotalBytesIn = sumIn.Int64
+		result.TotalBytesIn = &sumIn.Int64
 	}
 	if sumOut.Valid {
-		result.TotalBytesOut = sumOut.Int64
+		result.TotalBytesOut = &sumOut.Int64
+	}
+	result.BytesInIncomplete, result.BytesOutIncomplete = knownIn != total, knownOut != total
+	if total == 0 {
+		observedZero := int64(0)
+		result.TotalBytesIn, result.TotalBytesOut = &observedZero, &observedZero
 	}
 	if err := aggregateGroupBy(ctx, l.db, `SELECT coalesce(client_address,''), count(*) FROM flows`+where+` GROUP BY client_address`, args, result.ByClient); err != nil {
 		return result, err
@@ -441,4 +470,34 @@ func (l *TrafficFlowLog) Aggregate(ctx context.Context, filter TrafficFlowFilter
 		return result, err
 	}
 	return result, nil
+}
+
+type trafficFormatReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// Earlier traffic logs stored missing counters as zero. Reading that format
+// under nullable counter semantics would invent observations; it is rejected.
+func admitTrafficLogFormat(ctx context.Context, database trafficFormatReader, required bool) error {
+	var flows, marker int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='flows'").Scan(&flows); err != nil {
+		return err
+	}
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='traffic_log_format'").Scan(&marker); err != nil {
+		return err
+	}
+	if flows == 0 && marker == 0 && !required {
+		return nil
+	}
+	if marker == 0 {
+		return errors.New("unsupported traffic log format; initialize a fresh routerd 1.5 traffic log")
+	}
+	var version int
+	if err := database.QueryRowContext(ctx, "SELECT version FROM traffic_log_format").Scan(&version); err != nil {
+		return err
+	}
+	if version != 1 {
+		return errors.New("unsupported traffic log counter format")
+	}
+	return nil
 }

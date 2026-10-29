@@ -3,8 +3,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -61,7 +63,7 @@ func serveGetHandler(currentRouter func() *api.Router, store *routerstate.SQLite
 			result.Ledger = &report
 			return &result, nil
 		default:
-			resources, err := serveInspectionResources(currentRouter(), store, subject, req.EventsLimit)
+			resources, err := serveInspectionResources(r.Context(), currentRouter(), store, subject, req.EventsLimit)
 			if err != nil {
 				return nil, err
 			}
@@ -78,7 +80,7 @@ func serveDescribeHandler(currentRouter func() *api.Router, store *routerstate.S
 		if target == "" {
 			return nil, fmt.Errorf("%w: describe requires target", controlapi.ErrBadRequest)
 		}
-		resources, err := serveInspectionResources(currentRouter(), store, target, req.EventsLimit)
+		resources, err := serveInspectionResources(r.Context(), currentRouter(), store, target, req.EventsLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -96,13 +98,16 @@ func serveProbeHandler(currentRouter func() *api.Router, store *routerstate.SQLi
 		if subject == "" {
 			return nil, fmt.Errorf("%w: doctor --probe requires subject", controlapi.ErrBadRequest)
 		}
-		checks := serveProbeChecks(currentRouter(), store, subject, strings.TrimSpace(req.Target))
+		checks, err := serveProbeChecks(currentRouter(), store, subject, strings.TrimSpace(req.Target))
+		if err != nil {
+			return nil, err
+		}
 		result := controlapi.NewProbeResult(subject, req.Target, checks)
 		return &result, nil
 	}
 }
 
-func serveInspectionResources(router *api.Router, store *routerstate.SQLiteStore, target string, eventsLimit int) ([]controlapi.ResourceView, error) {
+func serveInspectionResources(ctx context.Context, router *api.Router, store *routerstate.SQLiteStore, target string, eventsLimit int) ([]controlapi.ResourceView, error) {
 	if router == nil {
 		return nil, fmt.Errorf("%w: router config unavailable", controlapi.ErrBadRequest)
 	}
@@ -118,9 +123,16 @@ func serveInspectionResources(router *api.Router, store *routerstate.SQLiteStore
 	for _, res := range selected {
 		status := map[string]any{}
 		if store != nil {
-			status = store.ObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
+			status, err = store.ReadObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
+			if err != nil {
+				return nil, err
+			}
 		}
-		view := controlapi.ResourceViewFromResource(res, status, inspectionEventsForResource(store, res, eventsLimit))
+		events, err := inspectionEventsForResource(ctx, store, res, eventsLimit)
+		if err != nil {
+			return nil, err
+		}
+		view := controlapi.ResourceViewFromResource(res, status, events)
 		if store != nil && res.Kind == "DHCPv6PrefixDelegation" {
 			lease, found, err := store.ReadPDLease(res.Metadata.Name)
 			if err != nil {
@@ -171,14 +183,14 @@ func selectInspectionResources(resources []api.Resource, kind, name string) []ap
 	return out
 }
 
-func inspectionEventsForResource(store *routerstate.SQLiteStore, res api.Resource, limit int) []routerstate.Event {
+func inspectionEventsForResource(ctx context.Context, store *routerstate.SQLiteStore, res api.Resource, limit int) ([]routerstate.Event, error) {
 	if store == nil || limit == 0 {
-		return []routerstate.Event{}
+		return []routerstate.Event{}, nil
 	}
 	if limit < 0 {
 		limit = 10
 	}
-	return store.Events(res.APIVersion, res.Kind, res.Metadata.Name, limit)
+	return store.ReadEvents(ctx, res.APIVersion, res.Kind, res.Metadata.Name, limit)
 }
 
 func serveInspectionEvents(store *routerstate.SQLiteStore, req controlapi.GetRequest) ([]routerstate.StoredEvent, error) {
@@ -217,48 +229,56 @@ func serveInspectionLedger(store *routerstate.SQLiteStore, limit int) (controlap
 	return controlapi.LedgerReport{Integrity: integrity, Generations: generations}, nil
 }
 
-func serveProbeChecks(router *api.Router, store *routerstate.SQLiteStore, subject, target string) []controlapi.ProbeCheck {
+func serveProbeChecks(router *api.Router, store *routerstate.SQLiteStore, subject, target string) ([]controlapi.ProbeCheck, error) {
 	switch canonicalInspectionSubject(subject) {
 	case "egress":
 		return resourcePhaseProbe(router, store, "EgressRoutePolicy", target)
 	case "dns":
 		return resourcePhaseProbe(router, store, "DNSResolver", target)
 	case "lan-client":
-		if target == "" {
-			return []controlapi.ProbeCheck{{Name: "target", Status: "fail", Detail: "lan-client probe requires target IP"}}
+		if _, err := netip.ParseAddr(target); err != nil {
+			return []controlapi.ProbeCheck{{Name: "target", Status: "fail", Detail: "lan-client probe requires a literal target IP"}}, nil
 		}
-		return []controlapi.ProbeCheck{{Name: "target", Status: "pass", Detail: target}}
+		return []controlapi.ProbeCheck{{Name: "network probe", Status: "warn", Detail: "unobserved: LAN client communication has not been probed for " + target}}, nil
 	default:
-		return []controlapi.ProbeCheck{{Name: "subject", Status: "fail", Detail: "unknown probe subject " + subject}}
+		return []controlapi.ProbeCheck{{Name: "subject", Status: "fail", Detail: "unknown probe subject " + subject}}, nil
 	}
 }
 
-func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind, name string) []controlapi.ProbeCheck {
+func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind, name string) ([]controlapi.ProbeCheck, error) {
 	if router == nil {
-		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "router config unavailable"}}
+		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "router config unavailable"}}, nil
 	}
 	resources := selectInspectionResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
-		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "resource not found"}}
+		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "resource not found"}}, nil
 	}
 	var out []controlapi.ProbeCheck
 	for _, res := range resources {
-		status := map[string]any{}
+		var status map[string]any
 		if store != nil {
-			status = store.ObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
+			var err error
+			status, err = store.ReadObjectStatus(res.APIVersion, res.Kind, res.Metadata.Name)
+			if err != nil {
+				return nil, err
+			}
 		}
 		phase, _ := status["phase"].(string)
 		checkStatus := "warn"
-		if phase == "" || phase == "Healthy" || phase == "Applied" || phase == "Active" || phase == "Ready" {
+		switch phase {
+		case "Healthy", "Applied", "Active", "Ready":
 			checkStatus = "pass"
+		case "Error", "Failed", "Errored", "Blocked", "Drifted":
+			checkStatus = "fail"
 		}
-		detail := phase
-		if detail == "" {
-			detail = "declared"
+		detail := "reported phase " + phase
+		if phase == "" {
+			detail = "unobserved: resource is declared without an observed phase"
 		}
-		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name, Status: checkStatus, Detail: detail})
+		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail})
 	}
-	return out
+	out = append(out, controlapi.ProbeCheck{Name: "network probe", Status: "warn", Detail: "unobserved: reported resource phases do not establish current network communication"})
+	return out, nil
 }
 
 func canonicalInspectionSubject(subject string) string {

@@ -52,7 +52,7 @@ func TestReadOnlyLogUsesLiteralFilesystemPath(t *testing.T) {
 func TestTrafficReadOnlyRequiresCurrentSchema(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "traffic.db")
-	writer, err := OpenTrafficFlowLog(path)
+	writer, err := OpenTrafficFlowLog(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestTrafficReadOnlyRequiresCurrentSchema(t *testing.T) {
 	if err := writer.UpsertActive(ctx, flow); err != nil {
 		t.Fatal(err)
 	}
-	reader, err := OpenTrafficFlowLogReadOnly(path)
+	reader, err := OpenTrafficFlowLogReadOnly(t.Context(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestDNSQueryReadRejectsMalformedStoredAnswers(t *testing.T) {
 
 func TestFlowReadsRejectMalformedStoredJSON(t *testing.T) {
 	ctx := context.Background()
-	traffic, err := OpenTrafficFlowLog(filepath.Join(t.TempDir(), "traffic.db"))
+	traffic, err := OpenTrafficFlowLog(t.Context(), filepath.Join(t.TempDir(), "traffic.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

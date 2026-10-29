@@ -95,9 +95,8 @@ type ConntrackTuple struct {
 	DestinationHostname string `json:"destinationHostname,omitempty" yaml:"destinationHostname,omitempty"`
 	SourceService       string `json:"sourceService,omitempty" yaml:"sourceService,omitempty"`
 	DestinationService  string `json:"destinationService,omitempty" yaml:"destinationService,omitempty"`
-	Packets             int64  `json:"packets,omitempty" yaml:"packets,omitempty"`
-	Bytes               int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
-	Accounting          bool   `json:"accounting,omitempty" yaml:"accounting,omitempty"`
+	Packets             *int64 `json:"packets,omitempty" yaml:"packets,omitempty"`
+	Bytes               *int64 `json:"bytes,omitempty" yaml:"bytes,omitempty"`
 }
 
 type ConntrackCPUStats struct {
@@ -255,7 +254,14 @@ func selectConnectionEntries(entries []ConnectionEntry, limit int) []ConnectionE
 }
 
 func connectionTrafficBytes(entry ConnectionEntry) int64 {
-	return entry.Original.Bytes + entry.Reply.Bytes
+	var observed int64
+	if entry.Original.Bytes != nil {
+		observed += *entry.Original.Bytes
+	}
+	if entry.Reply.Bytes != nil {
+		observed += *entry.Reply.Bytes
+	}
+	return observed
 }
 
 func connectionSelectionGroupKey(entry ConnectionEntry) string {
@@ -505,16 +511,14 @@ func setTupleField(tuple *ConntrackTuple, key, value string) {
 
 func setTupleCounter(tuple *ConntrackTuple, key, value string) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
+	if err != nil || parsed < 0 {
 		return
 	}
 	switch key {
 	case "packets":
-		tuple.Packets = parsed
-		tuple.Accounting = true
+		tuple.Packets = &parsed
 	case "bytes":
-		tuple.Bytes = parsed
-		tuple.Accounting = true
+		tuple.Bytes = &parsed
 	}
 }
 

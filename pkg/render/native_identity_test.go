@@ -10,9 +10,9 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-func TestFreeBSDStaticAddressesSurviveNativeRCConfAssignment(t *testing.T) {
+func TestFreeBSDStaticAddressesHaveOnlyOneRuntimeOwner(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		netResource("Interface", "lan", api.InterfaceSpec{IfName: "em0", Managed: true}),
+		netResource("Interface", "lan", api.InterfaceSpec{IfName: "em0", Managed: true, AdminUp: true}),
 		netResource("IPv4StaticAddress", "first", api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"}),
 		netResource("IPv4StaticAddress", "second", api.IPv4StaticAddressSpec{Interface: "lan", Address: "198.51.100.1/24"}),
 	}}}
@@ -23,8 +23,8 @@ func TestFreeBSDStaticAddressesSurviveNativeRCConfAssignment(t *testing.T) {
 	command := exec.Command("sh")
 	command.Stdin = strings.NewReader(string(config.RCConf) + "\nprintf '%s\\n' \"${ifconfig_em0}\" \"${ifconfig_em0_alias0}\"\n")
 	output, err := command.CombinedOutput()
-	if err != nil || string(output) != "inet 192.0.2.1/24\ninet 198.51.100.1/24\n" {
-		t.Fatalf("native rc.conf lost one declared address: %v %s", err, output)
+	if err != nil || string(output) != "up\n\n" {
+		t.Fatalf("rc.conf duplicates runtime-owned address acquisition or lost explicit AdminUp: %v %s", err, output)
 	}
 }
 

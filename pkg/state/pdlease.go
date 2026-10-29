@@ -134,6 +134,30 @@ func (l PDLease) HasFreshTransactionEvidence(now time.Time) bool {
 func (l PDLease) Live(now time.Time) PDLease {
 	l = copyPDLease(l)
 	l.PreviousPrefixes = l.ValidPreviousPrefixes(now)
+	if !l.HasFreshTransactionEvidence(now) && l.Phase == daemonapi.ResourcePhaseBound && !l.LastReplyAt.IsZero() && !now.Before(l.LastReplyAt) {
+		// The complete association may still contain a valid older prefix.
+		// Select it as deprecated without inventing a Reply or restarting its
+		// absolute deadline. LastReplyAt and all observation epochs stay genuine.
+		for i, previous := range l.PreviousPrefixes {
+			seconds := int64(0xffffffff)
+			if previous.ExpiresAt.Year() != 9999 {
+				seconds = previous.ExpiresAt.Unix() - l.LastReplyAt.Unix()
+				if previous.ExpiresAt.Nanosecond() < l.LastReplyAt.Nanosecond() {
+					seconds--
+				}
+				if seconds > 0xfffffffe {
+					seconds = 0xfffffffe
+				}
+			}
+			if seconds <= 0 || seconds != 0xffffffff && !now.Before(l.LastReplyAt.Add(time.Duration(seconds)*time.Second)) {
+				continue
+			}
+			l.CurrentPrefix = previous.Prefix
+			l.PreferredSeconds, l.ValidSeconds = 0, uint32(seconds)
+			l.PreviousPrefixes = append(l.PreviousPrefixes[:i], l.PreviousPrefixes[i+1:]...)
+			break
+		}
+	}
 	if !l.HasFreshTransactionEvidence(now) {
 		l.CurrentPrefix = ""
 		if l.Phase == daemonapi.ResourcePhaseBound {
@@ -238,9 +262,6 @@ func ObservePDLease(previous PDLease, snapshot pdclient.Snapshot, now time.Time)
 		if entry.Valid == 0xffffffff {
 			expires = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 		}
-		if !now.Before(expires) {
-			continue
-		}
 		canonical := prefix.Masked().String()
 		if canonical == snapshot.CurrentPrefix {
 			l.CurrentPrefix = canonical
@@ -250,7 +271,7 @@ func ObservePDLease(previous PDLease, snapshot pdclient.Snapshot, now time.Time)
 			l.T2Seconds = uint32(snapshot.T2Seconds)
 			l.PreferredSeconds = uint32(entry.Preferred)
 			l.ValidSeconds = uint32(entry.Valid)
-		} else {
+		} else if now.Before(expires) {
 			l.PreviousPrefixes = append(l.PreviousPrefixes, PDPreviousPrefix{Prefix: canonical, ExpiresAt: expires})
 		}
 	}

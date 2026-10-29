@@ -1232,18 +1232,21 @@ func busEventJournalPayloadBytes(event daemonapi.DaemonEvent, attrs string) int6
 	return journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 }
 
-func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
+func (s *SQLiteStore) ReadEvents(ctx context.Context, apiVersion, kind, name string, limit int) ([]Event, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []Event{}
+		return nil, sql.ErrConnDone
 	}
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.Query(`SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at FROM events WHERE api_version = ? AND kind = ? AND name = ? ORDER BY id DESC LIMIT ?`, apiVersion, kind, name, limit)
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at FROM events WHERE api_version = ? AND kind = ? AND name = ? ORDER BY id DESC LIMIT ?`, apiVersion, kind, name, limit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var events []Event
@@ -1251,12 +1254,15 @@ func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 		var event Event
 		var created string
 		if err := rows.Scan(&event.ID, &event.APIVersion, &event.Kind, &event.Name, &event.Type, &event.Reason, &event.Message, &event.Generation, &created); err != nil {
-			continue
+			return nil, err
 		}
-		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		event.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d creation time: %w", event.ID, err)
+		}
 		events = append(events, event)
 	}
-	return events
+	return events, rows.Err()
 }
 
 func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {

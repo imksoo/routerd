@@ -3,11 +3,11 @@
 package chain
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,7 +18,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -146,15 +145,18 @@ func (c DHCPv6InformationController) socketFor(resource string) string {
 }
 
 type DSLiteTunnelController struct {
-	Router         *api.Router
-	DeclaredRouter *api.Router
-	Bus            *bus.Bus
-	Store          Store
-	DryRun         bool
-	ResolverPort   int
-	Logger         *slog.Logger
-	Now            func() time.Time
-	CommandOutput  func(context.Context, string, ...string) ([]byte, error)
+	OS                   platform.OS
+	NativeScope          func(context.Context) (string, error)
+	NativeInterfaceIndex func(string) (int, error)
+	Router               *api.Router
+	DeclaredRouter       *api.Router
+	Bus                  *bus.Bus
+	Store                Store
+	DryRun               bool
+	ResolverPort         int
+	Logger               *slog.Logger
+	Now                  func() time.Time
+	CommandOutput        func(context.Context, string, ...string) ([]byte, error)
 }
 
 func (c DSLiteTunnelController) Start(ctx context.Context) {
@@ -183,6 +185,9 @@ func (c DSLiteTunnelController) Start(ctx context.Context) {
 }
 
 func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
+	if err := c.cleanupNativeTunnels(ctx); err != nil {
+		return err
+	}
 	if err := c.cleanupDelegatedEndpoints(ctx); err != nil {
 		return err
 	}
@@ -196,11 +201,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		if resource.Kind != "DSLiteTunnel" {
 			continue
 		}
-		spec, err := resource.DSLiteTunnelSpec()
-		if err != nil {
-			return err
-		}
-		desired[firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)] = struct{}{}
+		desired[resource.Metadata.Name] = struct{}{}
 	}
 	for _, resource := range declared.Spec.Resources {
 		if resource.Kind != "DSLiteTunnel" {
@@ -211,14 +212,8 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
-		if _, active := desired[ifname]; active {
+		if _, active := desired[resource.Metadata.Name]; active {
 			continue
-		}
-		if !c.DryRun {
-			if err := deleteDSLiteTunnel(ctx, ifname); err != nil {
-				failures = append(failures, fmt.Sprintf("remove %s: %v", resource.Metadata.Name, err))
-				continue
-			}
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": PhaseDisabled, "reason": "WhenFalse", "interface": ifname, "dryRun": c.DryRun}); err != nil {
 			return err
@@ -243,6 +238,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !ready {
+			if err := c.withdrawNativeTunnelResource(ctx, resource.Metadata.Name); err != nil {
+				return err
+			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"}); err != nil {
 				return err
 			}
@@ -254,6 +252,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		}
 		aftrName, remote, err := c.resolveRemote(ctx, spec, aftrSource)
 		if err != nil && aftrName == "" {
+			if err := c.withdrawNativeTunnelResource(ctx, resource.Metadata.Name); err != nil {
+				return err
+			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRMissing"}); err != nil {
 				return err
 			}
@@ -265,11 +266,14 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		local, localIfName, err := c.localAddress(spec)
+		local, localIfName, err := c.localAddress(ctx, spec)
 		if err != nil {
 			return err
 		}
 		if local == "" {
+			if err := c.withdrawNativeTunnelResource(ctx, resource.Metadata.Name); err != nil {
+				return err
+			}
 			reason := "LocalIPv6Missing"
 			if err != nil {
 				reason = err.Error()
@@ -280,13 +284,18 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			continue
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
-		actualIfName := ifname
+		if c.currentOS() == platform.OSFreeBSD {
+			ifname = freeBSDDSLiteRuntimeIfName(ifname)
+		}
 		mtu := spec.MTU
 		if mtu == 0 {
 			mtu = 1460
 		}
 		innerLocal, innerLocalPending, err := dsliteInnerLocalIPv4(c.Router, c.Store, spec)
 		if innerLocalPending != "" {
+			if err := c.withdrawNativeTunnelResource(ctx, resource.Metadata.Name); err != nil {
+				return err
+			}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": innerLocalPending, "aftrName": aftrName, "aftrIPv6": remote, "dryRun": c.DryRun}); err != nil {
 				return err
 			}
@@ -296,7 +305,14 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			return err
 		}
 		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
-		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
+		previous, err := c.endpointStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		changed := objectStatusChanged("DSLiteTunnel", previous, status)
+		if c.DryRun {
+			status["phase"] = "Rendered"
+		}
 		if !c.DryRun {
 			if localIfName != "" {
 				delegatedSource := firstNonEmpty(spec.LocalAddressSource, "interface") == "delegatedAddress"
@@ -304,8 +320,6 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 				var endpointErr error
 				if delegatedSource {
 					pending, endpointErr = c.ensureDelegatedEndpoint(ctx, resource.Metadata.Name, spec, localIfName, local)
-				} else {
-					endpointErr = ensureIPv6LocalEndpoint(ctx, localIfName, local)
 				}
 				if endpointErr != nil {
 					err := endpointErr
@@ -322,24 +336,29 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					continue
 				}
 			}
-			resolvedIfName, err := ensureDSLiteTunnel(ctx, c.Router, spec, ifname, remote, local, innerLocal)
-			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun}); err != nil {
-					return err
+			underlay := interfaceName(c.Router, spec.Interface)
+			if underlay == ifname {
+				underlay = ""
+			}
+			plan := dsliteTunnelPlan{Name: ifname, Underlay: underlay, Local: local, Remote: remote, InnerLocal: innerLocal, EncapLimit: firstNonEmpty(spec.EncapsulationLimit, "none"), MTU: mtu, DefaultRoute: spec.DefaultRoute, RouteMetric: spec.RouteMetric}
+			if c.currentOS() == platform.OSFreeBSD && plan.EncapLimit != "none" {
+				return fmt.Errorf("FreeBSD DS-Lite does not support custom encapsulationLimit")
+			}
+			if c.currentOS() == platform.OSFreeBSD && spec.DefaultRoute && spec.RouteMetric != 0 {
+				return fmt.Errorf("FreeBSD DS-Lite default route does not support routeMetric")
+			}
+			if err := c.ensureNativeTunnel(ctx, resource.Metadata.Name, spec, plan); err != nil {
+				if errors.Is(err, errDSLiteInputsChanged) {
+					if err := c.cleanupDelegatedEndpoints(ctx); err != nil {
+						return err
+					}
+					if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "SourceOrDependencyChanged", "interface": ifname, "dryRun": false}); err != nil {
+						return err
+					}
+					continue
 				}
-				continue
-			}
-			actualIfName = firstNonEmpty(resolvedIfName, ifname)
-			if actualIfName != ifname {
-				status["interface"] = actualIfName
-				status["device"] = actualIfName
-				status["aliasOf"] = actualIfName
-				status["desiredTunnelName"] = ifname
-			}
-			if err := setDSLiteTunnelLinkUp(ctx, actualIfName, mtu); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "LinkApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": c.DryRun}); err != nil {
+				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "TunnelApplyFailed", "interface": ifname, "localIPv6": local, "aftrIPv6": remote, "error": err.Error(), "dryRun": false}); err != nil {
 					return err
 				}
 				continue
@@ -350,6 +369,9 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					return err
 				}
 				if pending != "" {
+					if err := c.withdrawNativeTunnelResource(ctx, resource.Metadata.Name); err != nil {
+						return err
+					}
 					status["phase"], status["reason"] = "Pending", pending
 				}
 			}
@@ -370,18 +392,6 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
-}
-
-func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
-	if strings.TrimSpace(ifname) == "" {
-		return nil
-	}
-	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "del", ifname).CombinedOutput()
-	message := strings.ToLower(string(out))
-	if err == nil || strings.Contains(message, "cannot find device") || strings.Contains(message, "does not exist") || strings.Contains(message, "no such device") {
-		return nil
-	}
-	return fmt.Errorf("delete ipip6 tunnel %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
 }
 
 func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec, observed string) (string, string, error) {
@@ -415,6 +425,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 
 type IPv4RouteController struct {
 	Router            *api.Router
+	Segments          *VXLANSegmentController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
@@ -422,6 +433,8 @@ type IPv4RouteController struct {
 	Logger            *slog.Logger
 	Command           func(ctx context.Context, name string, args ...string) ([]byte, error)
 	DevicePresent     func(context.Context, string) bool
+	DeviceLookup      func(context.Context, string) (int, bool, error)
+	NativeScope       func(context.Context) (string, error)
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {
@@ -564,19 +577,13 @@ func ipJSONHasIPv4Address(data []byte, address string) bool {
 
 func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 	if c.Store == nil {
-		return nil
+		return errors.New("IPv4Route cleanup store is unavailable")
 	}
 	lister, ok := c.Store.(interface {
 		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
 	})
 	if !ok {
-		return nil
-	}
-	deleter, ok := c.Store.(interface {
-		DeleteObject(apiVersion, kind, name string) error
-	})
-	if !ok {
-		return nil
+		return errors.New("IPv4Route cleanup requires status enumeration")
 	}
 	statuses, err := lister.ListObjectStatuses()
 	if err != nil {
@@ -597,6 +604,12 @@ func (c IPv4RouteController) cleanupRemovedRoutes(ctx context.Context) error {
 		if status.APIVersion != api.NetAPIVersion || status.Kind != "IPv4Route" {
 			continue
 		}
+		deleter, ok := c.Store.(interface {
+			DeleteObject(apiVersion, kind, name string) error
+		})
+		if !ok {
+			return errors.New("IPv4Route cleanup requires status deletion")
+		}
 		if err := c.teardownRemovedRoute(ctx, status, deleter); err != nil {
 			return err
 		}
@@ -613,7 +626,7 @@ func (c IPv4RouteController) teardownRemovedRoute(ctx context.Context, status ro
 		return err
 	}
 	if receipt != nil {
-		if err := c.removeOrdinaryRoute(ctx, receipt.Route); err != nil {
+		if err := c.withdrawOrdinaryReceipt(ctx, status.Name, map[string]any{"phase": "Withdrawing", "dryRun": false}, receipt); err != nil {
 			return fmt.Errorf("delete removed IPv4Route %s: %w", status.Name, err)
 		}
 	}
@@ -833,6 +846,7 @@ func routeInstallStatusChanged(previous, next map[string]any) bool {
 }
 
 type DHCPv6ServerController struct {
+	Advertisements  *RouterAdvertisementService
 	Router          *api.Router
 	Bus             *bus.Bus
 	Store           Store
@@ -844,8 +858,6 @@ type DHCPv6ServerController struct {
 	ListenAddresses []string
 	Logger          *slog.Logger
 	Now             func() time.Time
-	RALinkLocal     routerAdvertisementLinkLocalFunc
-	RASender        routerAdvertisementSenderFunc
 }
 
 func (c DHCPv6ServerController) Start(ctx context.Context) {
@@ -879,10 +891,18 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		return err
 	}
 	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
-		return nil
+		if !c.DryRun {
+			if err := stopOwnedDnsmasq(ctx, c.Command, firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf"), firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")); err != nil {
+				return err
+			}
+		}
+		if err := c.reconcileAdvertisements(ctx, effectiveRouter); err != nil {
+			return err
+		}
+		return c.saveSuppressedRAOnlyServers(effectiveRouter)
 	}
 	configPath := firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf")
-	if err := validateDnsmasqArtifactOwnership(c.Router, configPath); err != nil {
+	if err := validateDnsmasqArtifactOwnership(configPath); err != nil {
 		if statusErr := c.saveDnsmasqOwnershipError(err); statusErr != nil {
 			return statusErr
 		}
@@ -916,7 +936,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return restoreDnsmasqHostsForRetry(configPath, reloadOnly, hostsSnapshot, err)
 		}
 		if reloadOnly && !changed {
-			if err := reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, reloadDnsmasq); err != nil {
+			if err := reloadDnsmasqHostsSidecar(ctx, pidFile, configPath, hostsSnapshot, func(ctx context.Context, pid string) error { return reloadDnsmasq(ctx, configPath, pid) }); err != nil {
 				return err
 			}
 		}
@@ -940,7 +960,9 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !matches {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun})
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 			continue
 		}
 		ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
@@ -989,7 +1011,7 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			}
 		}
 	}
-	if err := c.reconcileRouterAdvertisements(ctx, configPath, pidFile, changed); err != nil {
+	if err := c.reconcileAdvertisements(ctx, effectiveRouter); err != nil {
 		return err
 	}
 	return nil
@@ -1000,20 +1022,16 @@ const routerdGeneratedDNSMasqMarker = "# Generated by routerd. Do not edit by ha
 // validateDnsmasqArtifactOwnership fails closed before the live dnsmasq
 // chain creates directories, writes configuration/hosts, or invokes a
 // service manager. A canonical markerless artifact is administrator-owned.
-func validateDnsmasqArtifactOwnership(router *api.Router, configPath string) error {
+func validateDnsmasqArtifactOwnership(configPath string) error {
 	defaults, features := platform.Current()
 	servicePath := ""
 	if features.HasSystemd || (defaults.OS == platform.OSFreeBSD && filepath.Clean(configPath) == filepath.Clean(defaults.DnsmasqConfigFile)) {
 		servicePath = defaults.DnsmasqServiceFile
 	}
-	return validateDnsmasqArtifactsForRouter(router, configPath, dnsmasqHostsFile(configPath), servicePath, defaults.OS)
+	return validateDnsmasqArtifacts(configPath, dnsmasqHostsFile(configPath), servicePath, defaults.OS)
 }
 
 func validateDnsmasqArtifacts(configPath, hostsPath, servicePath string, osName platform.OS) error {
-	return validateDnsmasqArtifactsForRouter(nil, configPath, hostsPath, servicePath, osName)
-}
-
-func validateDnsmasqArtifactsForRouter(router *api.Router, configPath, hostsPath, servicePath string, osName platform.OS) error {
 	configData, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read dnsmasq canonical config %s: %w", configPath, err)
@@ -1027,7 +1045,7 @@ func validateDnsmasqArtifactsForRouter(router *api.Router, configPath, hostsPath
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("read dnsmasq service %s: %w", servicePath, err)
 		}
-		if err == nil && !dnsmasqServiceOwned(serviceData, configPath, osName) {
+		if err == nil && !dnsmasqServiceOwned(serviceData, osName) {
 			return fmt.Errorf("refusing dnsmasq reconcile: foreign service %s", servicePath)
 		}
 	}
@@ -1035,129 +1053,20 @@ func validateDnsmasqArtifactsForRouter(router *api.Router, configPath, hostsPath
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read dnsmasq canonical hosts sidecar %s: %w", hostsPath, err)
 	}
-	if err == nil && !dnsmasqHostsOwned(hostsData, configData, hostsPath) && !dnsmasqLegacyRuntimeHostsOwned(hostsPath, serviceData, osName) && !dnsmasqLegacyHostsMatchRouter(hostsData, router) && !dnsmasqRetiredHostsOwned(configData, serviceData, osName) {
+	if err == nil && !strings.HasPrefix(string(hostsData), routerdGeneratedDNSMasqMarker) {
 		return fmt.Errorf("refusing dnsmasq reconcile: foreign hosts sidecar %s", hostsPath)
 	}
 	return nil
 }
 
-// dnsmasqRetiredHostsOwned recognizes the canonical hosts path left by the
-// pre-#946 layout after routerd has already moved the live, marked sidecar to
-// its runtime directory. The legacy canonical config must no longer reference
-// the file, so accepting it cannot replace a live administrator-owned input.
-func dnsmasqRetiredHostsOwned(configData, serviceData []byte, osName platform.OS) bool {
-	if osName != platform.OSLinux || !dnsmasqLegacyConfigSkeletonOwned(configData) || strings.Contains(string(configData), "\ndhcp-hostsfile=") {
-		return false
-	}
-	if !strings.HasPrefix(string(serviceData), routerdGeneratedDNSMasqMarker) || !strings.Contains(string(serviceData), "Description=routerd managed dnsmasq DHCP service") {
-		return false
-	}
-	var runtimeConfig string
-	for _, field := range strings.Fields(string(serviceData)) {
-		if strings.HasPrefix(field, "--conf-file=") {
-			runtimeConfig = strings.TrimPrefix(field, "--conf-file=")
-			break
-		}
-	}
-	if runtimeConfig == "" {
-		return false
-	}
-	liveHosts, err := os.ReadFile(filepath.Join(filepath.Dir(runtimeConfig), "dnsmasq-hosts.hosts"))
-	return err == nil && strings.HasPrefix(string(liveHosts), routerdGeneratedDNSMasqMarker)
-}
-
-// dnsmasqLegacyConfigSkeletonOwned recognizes the pre-marker config skeleton
-// both before and after routerd prepended its ownership marker.  It is used
-// only for the retired canonical sidecar path: the generated service and its
-// marked runtime hosts file must independently prove that the old sidecar is
-// no longer live before it can be replaced.
-func dnsmasqLegacyConfigSkeletonOwned(data []byte) bool {
-	data = bytes.TrimPrefix(data, []byte(routerdGeneratedDNSMasqMarker))
-	return dnsmasqLegacyConfigOwned(data)
-}
-
-// dnsmasqLegacyHostsMatchRouter permits a markerless pre-#946 hosts file only
-// when it is byte-for-byte the data routerd can reproduce from the declared
-// reservations and its durable sticky-lease database. This preserves held
-// addresses during migration without adopting administrator-owned content.
-func dnsmasqLegacyHostsMatchRouter(data []byte, router *api.Router) bool {
-	if router == nil || !routerHasDnsmasqHostsFile(router) {
-		return false
-	}
-	lines := append([]string{}, dnsmasqReservationHostLines(router)...)
-	if routerHasDHCPStickyHold(router) {
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv4", "12h"))...)
-		lines = append(lines, dnsmasqHostFileLines(dnsmasqStickyHostLines(router, "ipv6", "12h"))...)
-	}
-	sort.Strings(lines)
-	if len(lines) == 0 {
-		return false
-	}
-	want := []byte(strings.Join(lines, "\n") + "\n")
-	return bytes.Equal(data, want)
-}
-
 func dnsmasqConfigOwned(data []byte) bool {
-	if strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
-		return true
-	}
-	return dnsmasqLegacyConfigOwned(data)
+	return strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker)
 }
 
-func dnsmasqLegacyConfigOwned(data []byte) bool {
-	// Releases before #946 did not prepend an ownership marker. Recognize only
-	// their complete dnsmasq skeleton so a normal reconcile can migrate it.
-	legacyPrefix := "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file="
-	return strings.HasPrefix(string(data), legacyPrefix) && strings.Contains(string(data), "\ndhcp-leasefile=")
-}
-
-func dnsmasqHostsOwned(data, configData []byte, hostsPath string) bool {
-	if strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) {
-		return true
-	}
-	// The pre-marker hosts sidecar has no independent header. Its only safe
-	// migration provenance is a recognized legacy routerd config that names
-	// this exact sidecar.
-	return dnsmasqLegacyConfigOwned(configData) && strings.Contains(string(configData), "dhcp-hostsfile="+hostsPath+"\n")
-}
-
-// dnsmasqLegacyRuntimeHostsOwned recognizes the short-lived layout emitted by
-// routerd before canonical dnsmasq configuration moved out of /run. The
-// service itself must carry routerd's ownership marker and its runtime config
-// must be a complete legacy routerd skeleton referring to this exact sidecar.
-func dnsmasqLegacyRuntimeHostsOwned(hostsPath string, serviceData []byte, osName platform.OS) bool {
-	if osName != platform.OSLinux || !strings.HasPrefix(string(serviceData), routerdGeneratedDNSMasqMarker) || !strings.Contains(string(serviceData), "Description=routerd managed dnsmasq DHCP service") {
-		return false
-	}
-	var runtimePath string
-	for _, field := range strings.Fields(string(serviceData)) {
-		if strings.HasPrefix(field, "--conf-file=") {
-			runtimePath = strings.TrimPrefix(field, "--conf-file=")
-			break
-		}
-	}
-	if runtimePath == "" {
-		return false
-	}
-	runtimeData, err := os.ReadFile(runtimePath)
-	return err == nil && dnsmasqLegacyConfigOwned(runtimeData) && strings.Contains(string(runtimeData), "dhcp-hostsfile="+hostsPath+"\n")
-}
-
-func dnsmasqServiceOwned(data []byte, configPath string, osName platform.OS) bool {
-	text := string(data)
-	if osName == platform.OSFreeBSD {
-		return strings.Contains(text, "# PROVIDE: routerd_dnsmasq") && strings.Contains(text, `name="routerd_dnsmasq"`)
-	}
-	// Current routerd units carry an explicit ownership marker. Accept them
-	// even when an older generated unit still references the legacy runtime
-	// dnsmasq path; reconcile will migrate it to the current path.
-	if strings.HasPrefix(text, routerdGeneratedDNSMasqMarker) && strings.Contains(text, "Description=routerd managed dnsmasq DHCP service") {
-		return true
-	}
-	// Linux units emitted before #946 lack the new marker. Keep accepting the
-	// prior routerd signature only when it names this exact config path.
-	return strings.Contains(text, "Description=routerd managed dnsmasq DHCP service") &&
-		strings.Contains(text, "--conf-file="+configPath)
+func dnsmasqServiceOwned(data []byte, osName platform.OS) bool {
+	// Non-systemd dnsmasq has one native actor; an installed rc boot creator
+	// is a conflicting lifecycle, even if a previous routerd exported it.
+	return osName == platform.OSLinux && strings.HasPrefix(string(data), routerdGeneratedDNSMasqMarker) && strings.Contains(string(data), "Description=routerd managed dnsmasq DHCP service")
 }
 
 func (c DHCPv6ServerController) saveDnsmasqOwnershipError(reconcileErr error) error {
@@ -1320,84 +1229,6 @@ func dhcpv4ReservationRenderedByServers(router *api.Router, store Store, reserva
 	return len(servers) > 0, servers, nil
 }
 
-func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Context, configPath, pidFile string, changed bool) error {
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "IPv6RouterAdvertisement" {
-			continue
-		}
-		spec, err := resource.IPv6RouterAdvertisementSpec()
-		if err != nil {
-			return err
-		}
-		matches, err := c.resourceWhenMatches(resource)
-		if err != nil {
-			return err
-		}
-		if !matches {
-			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun}
-			status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status)
-			continue
-		}
-		ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
-		if err != nil {
-			return err
-		}
-		if !ready {
-			dependencies, err := dependencyStatusSnapshot(c.Store, spec.DependsOn)
-			if err != nil {
-				return err
-			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencies}); err != nil {
-				return err
-			}
-			continue
-		}
-		rdnssFrom, _, err := expandServerSources(c.Store, spec.RDNSSFrom, "RDNSSFrom")
-		if err != nil {
-			return err
-		}
-		rdnss := append(expandServers(spec.RDNSS), rdnssFrom...)
-		observedPrefix, err := resourcequery.ReadValue(c.Store, spec.PrefixFrom)
-		if err != nil {
-			return err
-		}
-		prefix := firstNonEmpty(prefixFromAddress(observedPrefix), prefixFromAddress(spec.Prefix))
-		phase := "Applied"
-		if c.DryRun {
-			phase = "Rendered"
-		}
-		status := map[string]any{
-			"phase":      phase,
-			"interface":  spec.Interface,
-			"prefix":     prefix,
-			"rdnss":      rdnss,
-			"configPath": configPath,
-			"pidFile":    pidFile,
-			"renderer":   "dnsmasq",
-			"dryRun":     c.DryRun,
-		}
-		if !c.DryRun {
-			if err := c.advertisePreviousDelegatedPrefixes(ctx, spec); err != nil {
-				return fmt.Errorf("%s advertise previous delegated prefixes: %w", resource.ID(), err)
-			}
-		}
-		status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
-		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status); err != nil {
-			return err
-		}
-		if changed && c.Bus != nil {
-			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ra.applied", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement", Name: resource.Metadata.Name}
-			event.Attributes = map[string]string{"interface": spec.Interface, "prefix": prefix, "renderer": "dnsmasq", "dryRun": fmt.Sprintf("%t", c.DryRun)}
-			if err := c.Bus.Publish(ctx, event); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func suffixedPath(path, oldSuffix, newSuffix string) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
@@ -1520,25 +1351,25 @@ func valueFromStatusRefOrLiteral(store Store, value string) string {
 	return trimmed
 }
 
-func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string, string, error) {
+func (c DSLiteTunnelController) localAddress(ctx context.Context, spec api.DSLiteTunnelSpec) (string, string, error) {
 	switch spec.LocalAddressSource {
 	case "delegatedAddress":
 		return c.localDelegatedAddress(spec)
 	case "static":
-		local := localIPv6Address(firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress))
+		local := localIPv6Address(spec.LocalAddress)
 		if local == "" {
 			return "", "", fmt.Errorf("invalid static local IPv6 address")
 		}
 		return local, "", nil
 	case "", "interface":
-		raw := firstNonEmpty(valueFromStatusRef(c.Store, spec.LocalIPv6Source), valueFromStatusRef(c.Store, spec.LocalAddress), spec.LocalAddress)
+		raw := spec.LocalAddress
 		if spec.LocalAddressSuffix != "" {
 			if raw == "" {
 				ifname := interfaceName(c.Router, spec.Interface)
 				if ifname == "" {
 					return "", "", fmt.Errorf("missing Interface %q", spec.Interface)
 				}
-				discovered, _, err := interfaceGlobalIPv6(ifname)
+				discovered, _, err := c.interfaceGlobalIPv6(ctx, ifname)
 				if err != nil {
 					return "", "", err
 				}
@@ -1557,7 +1388,7 @@ func (c DSLiteTunnelController) localAddress(spec api.DSLiteTunnelSpec) (string,
 		if ifname == "" {
 			return "", "", fmt.Errorf("missing Interface %q", spec.Interface)
 		}
-		return interfaceGlobalIPv6(ifname)
+		return c.interfaceGlobalIPv6(ctx, ifname)
 	default:
 		return "", "", fmt.Errorf("unsupported localAddressSource %q", spec.LocalAddressSource)
 	}
@@ -1607,6 +1438,10 @@ func firstUsableGlobalIPv6(data []byte) string {
 	if err := json.Unmarshal(data, &links); err != nil {
 		return ""
 	}
+	return firstUsableGlobalIPv6Links(links)
+}
+
+func firstUsableGlobalIPv6Links(links []ipJSONLink) string {
 	var stableSLAAC, onLink, dynamic, fallback string
 	for _, link := range links {
 		for _, info := range link.AddrInfo {
@@ -1876,24 +1711,6 @@ func interfaceName(router *api.Router, name string) string {
 	return name
 }
 
-func ensureIPv6LocalEndpoint(ctx context.Context, ifname, address string) error {
-	if ifname == "" || address == "" {
-		return nil
-	}
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		out, err := exec.CommandContext(ctx, "ifconfig", ifname).CombinedOutput()
-		if err == nil && ifconfigHasIPv6Address(out, address) {
-			return nil
-		}
-		if err := exec.CommandContext(ctx, "ifconfig", ifname, "inet6", address, "prefixlen", "128", "alias").Run(); err != nil {
-			return fmt.Errorf("ifconfig %s inet6 %s prefixlen 128 alias: %w", ifname, address, err)
-		}
-		return nil
-	}
-	args := []string{"-6", "addr", "replace", address + "/128", "dev", ifname}
-	return exec.CommandContext(ctx, "ip", args...).Run()
-}
-
 func waitForIPv6AddressReady(ctx context.Context, ifname, address string, timeout time.Duration, ready func(context.Context, string, string) bool) bool {
 	if ready(ctx, ifname, address) {
 		return true
@@ -1916,139 +1733,12 @@ func waitForIPv6AddressReady(ctx context.Context, ifname, address string, timeou
 	}
 }
 
-func ensureDSLiteTunnel(ctx context.Context, router *api.Router, spec api.DSLiteTunnelSpec, ifname, remote, local, innerLocal string) (string, error) {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		return ensureFreeBSDDSLiteTunnel(ctx, spec, ifname, remote, local, innerLocal)
-	}
-	show, showErr := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show", ifname).CombinedOutput()
-	underlay := interfaceName(router, spec.Interface)
-	if underlay == ifname {
-		underlay = ""
-	}
-	encapLimit := firstNonEmpty(spec.EncapsulationLimit, "none")
-	if showErr == nil && linuxDSLiteTunnelMatches(show, remote, local, underlay, encapLimit) {
-		if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
-			return "", err
-		}
-		return ifname, nil
-	}
-	operation := "add"
-	if showErr == nil {
-		// Updating an owned tunnel in place avoids the delete/add gap. In
-		// particular, keep the previous usable tunnel when the kernel rejects a
-		// newly selected endpoint and let the next reconcile retry the change.
-		operation = "change"
-	} else if !linuxDSLiteTunnelMissing(show) {
-		return "", fmt.Errorf("ip -6 tunnel show %s: %w: %s", ifname, showErr, strings.TrimSpace(string(show)))
-	}
-	args := linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit)
-	out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
-	if err != nil {
-		if operation == "add" {
-			if existing := existingDSLiteTunnel(ctx, remote, local); existing != "" {
-				if err := ensureLinuxDSLiteInnerIPv4(ctx, existing, innerLocal); err != nil {
-					return "", err
-				}
-				return existing, nil
-			}
-		}
-		return "", fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	if err := ensureLinuxDSLiteInnerIPv4(ctx, ifname, innerLocal); err != nil {
-		return "", err
-	}
-	return ifname, nil
-}
-
-func linuxDSLiteTunnelApplyArgs(operation, ifname, remote, local, underlay, encapLimit string) []string {
-	args := []string{"-6", "tunnel", operation, ifname, "mode", "ipip6", "remote", remote, "local", local}
-	if underlay != "" && underlay != ifname {
-		args = append(args, "dev", underlay)
-	}
-	return append(args, "encaplimit", encapLimit)
-}
-
-func linuxDSLiteTunnelMatches(show []byte, remote, local, underlay, encapLimit string) bool {
-	fields := strings.Fields(string(show))
-	if len(fields) == 0 || !fieldsContain(fields, "ip/ipv6") {
-		return false
-	}
-	want := map[string]string{
-		"remote":     canonicalIPAddress(remote),
-		"local":      canonicalIPAddress(local),
-		"encaplimit": strings.TrimSpace(encapLimit),
-	}
-	if underlay != "" {
-		want["dev"] = strings.TrimSpace(underlay)
-	}
-	for key, value := range want {
-		if value == "" || linuxTunnelField(fields, key) != value {
-			return false
-		}
-	}
-	return true
-}
-
-func linuxTunnelField(fields []string, key string) string {
-	for i := 0; i+1 < len(fields); i++ {
-		if fields[i] != key {
-			continue
-		}
-		if key == "local" || key == "remote" {
-			return canonicalIPAddress(fields[i+1])
-		}
-		return strings.TrimSpace(fields[i+1])
-	}
-	return ""
-}
-
 func canonicalIPAddress(value string) string {
 	addr, err := netip.ParseAddr(strings.TrimSpace(value))
 	if err != nil {
 		return ""
 	}
 	return addr.String()
-}
-
-func linuxDSLiteTunnelMissing(output []byte) bool {
-	message := strings.ToLower(string(output))
-	return strings.Contains(message, "cannot find device") ||
-		strings.Contains(message, "does not exist") ||
-		strings.Contains(message, "no such device")
-}
-
-func existingDSLiteTunnel(ctx context.Context, remote, local string) string {
-	out, err := exec.CommandContext(ctx, "ip", "-6", "tunnel", "show").CombinedOutput()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.Contains(line, "remote "+remote) || !strings.Contains(line, "local "+local) {
-			continue
-		}
-		name, _, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(name) != "" && strings.TrimSpace(name) != "ip6tnl0" {
-			return strings.TrimSpace(name)
-		}
-	}
-	return ""
-}
-
-func setDSLiteTunnelLinkUp(ctx context.Context, ifname string, mtu int) error {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		args := []string{ifname}
-		if mtu > 0 {
-			args = append(args, "mtu", strconv.Itoa(mtu))
-		}
-		args = append(args, "up")
-		out, err := exec.CommandContext(ctx, "ifconfig", args...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("ifconfig %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
-	return exec.CommandContext(ctx, "ip", "link", "set", ifname, "mtu", fmt.Sprintf("%d", mtu), "up").Run()
 }
 
 func ifconfigHasIPv6Address(out []byte, address string) bool {
@@ -2064,46 +1754,6 @@ func ifconfigHasIPv6Address(out []byte, address string) bool {
 		}
 	}
 	return false
-}
-
-func ensureFreeBSDDSLiteTunnel(ctx context.Context, spec api.DSLiteTunnelSpec, desiredName, remote, local, innerLocal string) (string, error) {
-	name := freeBSDDSLiteRuntimeIfName(desiredName)
-	show, showErr := exec.CommandContext(ctx, "ifconfig", name).CombinedOutput()
-	mtuText := ""
-	if spec.MTU != 0 {
-		mtuText = "mtu " + strconv.Itoa(spec.MTU)
-	}
-	innerIPv4Text := "inet " + innerLocal + " --> " + dsliteInnerRemoteIPv4
-	needsRecreate := showErr != nil ||
-		!strings.Contains(string(show), "tunnel inet6 "+local+" --> "+remote) ||
-		!strings.Contains(string(show), innerIPv4Text) ||
-		(mtuText != "" && !strings.Contains(string(show), mtuText))
-	if needsRecreate {
-		_ = exec.CommandContext(ctx, "ifconfig", name, "destroy").Run()
-		if out, err := exec.CommandContext(ctx, "ifconfig", name, "create").CombinedOutput(); err != nil {
-			return "", fmt.Errorf("ifconfig %s create: %w: %s", name, err, strings.TrimSpace(string(out)))
-		}
-		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet6", "tunnel", local, remote).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("ifconfig %s inet6 tunnel %s %s: %w: %s", name, local, remote, err, strings.TrimSpace(string(out)))
-		}
-		if out, err := exec.CommandContext(ctx, "ifconfig", name, "inet", innerLocal, dsliteInnerRemoteIPv4, "netmask", "255.255.255.255").CombinedOutput(); err != nil {
-			return "", fmt.Errorf("ifconfig %s inet %s %s: %w: %s", name, innerLocal, dsliteInnerRemoteIPv4, err, strings.TrimSpace(string(out)))
-		}
-	}
-	if spec.DefaultRoute {
-		routeOut, routeErr := exec.CommandContext(ctx, "route", "-n", "get", "default").CombinedOutput()
-		routeMissing := routeErr != nil ||
-			!strings.Contains(string(routeOut), "gateway: "+dsliteInnerRemoteIPv4) ||
-			!strings.Contains(string(routeOut), "interface: "+name)
-		if routeMissing {
-			if out, err := exec.CommandContext(ctx, "route", "-n", "change", "default", dsliteInnerRemoteIPv4).CombinedOutput(); err != nil {
-				if addOut, addErr := exec.CommandContext(ctx, "route", "-n", "add", "default", dsliteInnerRemoteIPv4).CombinedOutput(); addErr != nil {
-					return "", fmt.Errorf("route default via %s: change: %w: %s; add: %w: %s", dsliteInnerRemoteIPv4, err, strings.TrimSpace(string(out)), addErr, strings.TrimSpace(string(addOut)))
-				}
-			}
-		}
-	}
-	return name, nil
 }
 
 const (
@@ -2180,18 +1830,6 @@ func addressFromRouterResource(router *api.Router, source api.StatusValueSourceS
 	return ""
 }
 
-func ensureLinuxDSLiteInnerIPv4(ctx context.Context, ifname, innerLocal string) error {
-	out, err := exec.CommandContext(ctx, "ip", "-4", "addr", "show", "dev", ifname).CombinedOutput()
-	if err == nil && strings.Contains(string(out), "inet "+innerLocal+" ") && strings.Contains(string(out), "peer "+dsliteInnerRemoteIPv4+" ") {
-		return nil
-	}
-	args := []string{"-4", "addr", "replace", innerLocal + "/32", "peer", dsliteInnerRemoteIPv4 + "/32", "dev", ifname}
-	if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
 
 func freeBSDDSLiteRuntimeIfName(name string) string {
@@ -2202,19 +1840,4 @@ func freeBSDDSLiteRuntimeIfName(name string) string {
 	sum := sha256.Sum256([]byte(name))
 	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
 	return "gif" + strconv.Itoa(index)
-}
-
-func writeDnsmasqDHCPv6Config(path, pidFile, ifname string, dnsServers []string, port int) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "port=%d\nno-resolv\nno-hosts\nlisten-address=127.0.0.1\nbind-interfaces\npid-file=%s\n", port, pidFile)
-	fmt.Fprintf(&b, "interface=%s\n", ifname)
-	b.WriteString("enable-ra\n")
-	fmt.Fprintf(&b, "dhcp-range=::,constructor:%s,ra-stateless,64,12h\n", ifname)
-	for _, server := range dnsServers {
-		fmt.Fprintf(&b, "dhcp-option=option6:dns-server,[%s]\n", server)
-	}
-	return os.WriteFile(path, []byte(b.String()), 0644)
 }

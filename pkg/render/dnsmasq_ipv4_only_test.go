@@ -21,7 +21,7 @@ func TestDnsmasqIPv4OnlyInterfaces(t *testing.T) {
 		{"v4 only", nil, []string{"ens19"}},
 		{"separate v6", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{Interface: "v6"})}, []string{"ens19"}},
 		{"shared alias pending v6", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{Interface: "same", DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "DHCPv6Information/pending", Field: "dnsServers"}}})}, nil},
-		{"shared RA", []api.Resource{resource("IPv6RouterAdvertisement", "ra", api.IPv6RouterAdvertisementSpec{Interface: "same"})}, nil},
+		{"separate RA owner", []api.Resource{resource("IPv6RouterAdvertisement", "ra", api.IPv6RouterAdvertisementSpec{Interface: "same"})}, []string{"ens19"}},
 		{"pending delegated IPv6", []api.Resource{resource("IPv6DelegatedAddress", "pd", api.IPv6DelegatedAddressSpec{Interface: "same", PrefixDelegation: "pending"}), resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{DelegatedAddress: "pd"})}, nil},
 		{"unresolved delegated IPv6", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{DelegatedAddress: "missing"})}, nil},
 		{"explicit v6 listener", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{ListenInterfaces: []string{"same"}})}, nil},

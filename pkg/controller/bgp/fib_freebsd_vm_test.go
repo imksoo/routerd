@@ -6,8 +6,10 @@ package bgp
 
 import (
 	"context"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -20,6 +22,11 @@ func TestFreeBSDFIBVMAcceptance(t *testing.T) {
 		t.Skip("set ROUTERD_FREEBSD_FIB_VM=1 in the isolated FreeBSD VM fixture")
 	}
 	ctx := context.Background()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
 	ownedPrefix := "198.18.77.0/24"
 	foreignPrefix := "198.18.78.0/24"
 	firstHop := "192.0.2.2"
@@ -35,43 +42,30 @@ func TestFreeBSDFIBVMAcceptance(t *testing.T) {
 
 	runRouteVM(t, "add", "-net", foreignPrefix, firstHop)
 	s := defaultFIBSyncer()
-	result, err := s.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop}}})
+	result, err := syncFIBFixture(ctx, s, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("install = %#v, %v", result, err)
 	}
 	assertFreeBSDRouteVM(t, ownedPrefix, firstHop, true)
 	assertFreeBSDRouteVM(t, foreignPrefix, firstHop, false)
 
-	// A new syncer sees RTF_PROTO1 through netstat, not an in-memory map.
+	// A new syncer recovers the exact native receipts from the same SQLite journal.
 	restarted := defaultFIBSyncer()
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{secondHop}}})
+	result, err = syncFIBFixture(ctx, restarted, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{secondHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("restart replacement = %#v, %v", result, err)
 	}
 	assertFreeBSDRouteVM(t, ownedPrefix, secondHop, true)
 	assertFreeBSDRouteAbsentVM(t, ownedPrefix, firstHop, true)
 
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}, RetainOnMissing: true}})
+	result, err = syncFIBFixture(ctx, restarted, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("multipath replacement = %#v, %v", result, err)
 	}
 	assertFreeBSDRouteVM(t, ownedPrefix, firstHop, true)
 	assertFreeBSDRouteVM(t, ownedPrefix, secondHop, true)
 
-	result, err = restarted.SyncBGP(ctx, nil)
-	if err != nil || !result.Retained[ownedPrefix] {
-		t.Fatalf("retain-on-missing = %#v, %v", result, err)
-	}
-	assertFreeBSDRouteVM(t, ownedPrefix, firstHop, true)
-	assertFreeBSDRouteVM(t, ownedPrefix, secondHop, true)
-
-	// Clear the retain policy, then prove the same owned multipath route is
-	// withdrawn without touching the unmarked fixture route.
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}}})
-	if err != nil || !result.Installed[ownedPrefix] {
-		t.Fatalf("clear retain-on-missing = %#v, %v", result, err)
-	}
-	result, err = restarted.SyncBGP(ctx, nil)
+	result, err = syncFIBFixture(ctx, restarted, store, nil)
 	if err != nil {
 		t.Fatalf("withdraw = %#v, %v", result, err)
 	}
@@ -88,6 +82,11 @@ func TestFreeBSDIPv6FIBVMAcceptance(t *testing.T) {
 		t.Skip("set ROUTERD_FREEBSD_FIB_VM=1 in the isolated FreeBSD VM fixture")
 	}
 	ctx := context.Background()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
 	ownedPrefix := "2001:db8:77::/64"
 	foreignPrefix := "2001:db8:78::/64"
 	firstHop := "2001:db8:1::2"
@@ -103,7 +102,7 @@ func TestFreeBSDIPv6FIBVMAcceptance(t *testing.T) {
 
 	runRouteVM(t, "add", "-inet6", "-net", foreignPrefix, firstHop)
 	s := defaultFIBSyncer()
-	result, err := s.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop}}})
+	result, err := syncFIBFixture(ctx, s, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("install = %#v, %v", result, err)
 	}
@@ -111,30 +110,21 @@ func TestFreeBSDIPv6FIBVMAcceptance(t *testing.T) {
 	assertFreeBSDRouteVM6(t, foreignPrefix, firstHop, false)
 
 	restarted := defaultFIBSyncer()
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{secondHop}}})
+	result, err = syncFIBFixture(ctx, restarted, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{secondHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("restart replacement = %#v, %v", result, err)
 	}
 	assertFreeBSDRouteVM6(t, ownedPrefix, secondHop, true)
 	assertFreeBSDRouteAbsentVM6(t, ownedPrefix, firstHop, true)
 
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}, RetainOnMissing: true}})
+	result, err = syncFIBFixture(ctx, restarted, store, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}}})
 	if err != nil || !result.Installed[ownedPrefix] {
 		t.Fatalf("multipath replacement = %#v, %v", result, err)
 	}
 	assertFreeBSDRouteVM6(t, ownedPrefix, firstHop, true)
 	assertFreeBSDRouteVM6(t, ownedPrefix, secondHop, true)
 
-	result, err = restarted.SyncBGP(ctx, nil)
-	if err != nil || !result.Retained[ownedPrefix] {
-		t.Fatalf("retain-on-missing = %#v, %v", result, err)
-	}
-
-	result, err = restarted.SyncBGP(ctx, []FIBRoute{{Prefix: ownedPrefix, NextHops: []string{firstHop, secondHop}}})
-	if err != nil || !result.Installed[ownedPrefix] {
-		t.Fatalf("clear retain-on-missing = %#v, %v", result, err)
-	}
-	if _, err := restarted.SyncBGP(ctx, nil); err != nil {
+	if _, err := syncFIBFixture(ctx, restarted, store, nil); err != nil {
 		t.Fatalf("withdraw = %v", err)
 	}
 	assertFreeBSDRouteAbsentVM6(t, ownedPrefix, firstHop, true)
@@ -144,7 +134,7 @@ func TestFreeBSDIPv6FIBVMAcceptance(t *testing.T) {
 
 func runRouteVM(t *testing.T, args ...string) {
 	t.Helper()
-	out, err := exec.Command(freeBSDRoutePath, append([]string{"-n"}, args...)...).CombinedOutput()
+	out, err := exec.Command("/sbin/route", append([]string{"-n"}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("route %s: %v: %s", strings.Join(args, " "), err, out)
 	}
@@ -157,7 +147,7 @@ func cleanupRoute(t *testing.T, prefix, nextHop string, owned bool) {
 		args = append(args, "-proto1")
 	}
 	args = append(args, "-net", prefix, nextHop)
-	_, _ = exec.Command(freeBSDRoutePath, args...).CombinedOutput()
+	_, _ = exec.Command("/sbin/route", args...).CombinedOutput()
 }
 
 func cleanupRoute6(t *testing.T, prefix, nextHop string, owned bool) {
@@ -167,12 +157,12 @@ func cleanupRoute6(t *testing.T, prefix, nextHop string, owned bool) {
 		args = append(args, "-proto1")
 	}
 	args = append(args, "-net", prefix, nextHop)
-	_, _ = exec.Command(freeBSDRoutePath, args...).CombinedOutput()
+	_, _ = exec.Command("/sbin/route", args...).CombinedOutput()
 }
 
 func assertFreeBSDRouteVM(t *testing.T, prefix, nextHop string, owned bool) {
 	t.Helper()
-	out, err := exec.Command(freeBSDNetstatPath, "-rn", "-f", "inet").Output()
+	out, err := exec.Command("/usr/bin/netstat", "-rn", "-f", "inet").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +180,7 @@ func assertFreeBSDRouteVM(t *testing.T, prefix, nextHop string, owned bool) {
 
 func assertFreeBSDRouteAbsentVM(t *testing.T, prefix, nextHop string, owned bool) {
 	t.Helper()
-	out, err := exec.Command(freeBSDNetstatPath, "-rn", "-f", "inet").Output()
+	out, err := exec.Command("/usr/bin/netstat", "-rn", "-f", "inet").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +194,7 @@ func assertFreeBSDRouteAbsentVM(t *testing.T, prefix, nextHop string, owned bool
 
 func assertFreeBSDRouteVM6(t *testing.T, prefix, nextHop string, owned bool) {
 	t.Helper()
-	out, err := exec.Command(freeBSDNetstatPath, "-rn", "-f", "inet6").Output()
+	out, err := exec.Command("/usr/bin/netstat", "-rn", "-f", "inet6").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +212,7 @@ func assertFreeBSDRouteVM6(t *testing.T, prefix, nextHop string, owned bool) {
 
 func assertFreeBSDRouteAbsentVM6(t *testing.T, prefix, nextHop string, owned bool) {
 	t.Helper()
-	out, err := exec.Command(freeBSDNetstatPath, "-rn", "-f", "inet6").Output()
+	out, err := exec.Command("/usr/bin/netstat", "-rn", "-f", "inet6").Output()
 	if err != nil {
 		t.Fatal(err)
 	}

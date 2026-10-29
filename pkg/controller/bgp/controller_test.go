@@ -48,6 +48,13 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func (s mapStore) ReadBGPFIB(context.Context) (bgpstate.FIBJournal, bool, error) {
+	return bgpstate.FIBJournal{}, false, nil
+}
+func (s mapStore) SaveBGPFIB(context.Context, bgpstate.FIBJournal) error {
+	return errors.New("native FIB is not enabled by this status-only fixture")
+}
+
 type mobilityFIBStore struct {
 	mapStore
 	records []routerstate.DynamicConfigPartRecord
@@ -1520,7 +1527,7 @@ type fakeFIB struct {
 	localPreferredSources map[string]bool
 }
 
-func (f *fakeFIB) ClearBGP(context.Context) error {
+func (f *fakeFIB) ClearBGP(context.Context, FIBStore) error {
 	f.clearCalls++
 	if f.clearErr != nil {
 		return f.clearErr
@@ -1529,7 +1536,7 @@ func (f *fakeFIB) ClearBGP(context.Context) error {
 	return nil
 }
 
-func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {
+func (f *fakeFIB) SyncBGP(_ context.Context, _ FIBStore, routes []FIBRoute, _ FIBIntentReader) (FIBSyncResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	result := FIBSyncResult{
@@ -4275,19 +4282,6 @@ func TestStatePeerMapsListPeerFields(t *testing.T) {
 	})
 	if !peer.Established || peer.ASN != 64513 || peer.PrefixesReceived != 3 || peer.MessagesReceived != 7 || peer.MessagesSent != 8 {
 		t.Fatalf("peer = %#v", peer)
-	}
-}
-
-func TestFIBRoutesFromStatePrefixesBuildsECMPAndSkipsLocalAdvertisements(t *testing.T) {
-	routes := fibRoutesFromStatePrefixes([]bgpstate.Prefix{
-		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.53", Best: true, Valid: true},
-		{Prefix: "10.250.0.0/24", NextHop: "192.168.1.38", Best: true, Valid: true},
-		{Prefix: "10.0.0.0/16", NextHop: "0.0.0.0", Best: true, Valid: true},
-		{Prefix: "10.96.0.0/12", NextHop: "192.168.1.57", Best: true, Valid: true},
-	}, importAllowedPrefixesFromPolicy(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.250.0.0/16"}}), nil)
-	want := []FIBRoute{{Prefix: "10.250.0.0/24", NextHops: []string{"192.168.1.38", "192.168.1.53"}}}
-	if !reflect.DeepEqual(routes, want) {
-		t.Fatalf("routes = %#v, want %#v", routes, want)
 	}
 }
 

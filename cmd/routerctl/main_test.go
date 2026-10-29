@@ -317,7 +317,10 @@ func TestLedgerPruneEventsDryRunCommand(t *testing.T) {
 		t.Fatalf("reopen state: %v", err)
 	}
 	defer store.Close()
-	events := store.Events("net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	events, err := store.ReadEvents(t.Context(), "net.routerd.net/v1alpha1", "Interface", "wan", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 2 {
 		t.Fatalf("dry-run pruned events: %+v", events)
 	}

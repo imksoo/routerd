@@ -43,6 +43,11 @@ func writeFileIfChanged(path string, data []byte, perm os.FileMode) (bool, error
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
+	if err == nil && perm.Perm() == 0600 {
+		if err := os.Chmod(path, perm); err != nil {
+			return false, err
+		}
+	}
 	if err := os.WriteFile(path, data, perm); err != nil {
 		return false, err
 	}
