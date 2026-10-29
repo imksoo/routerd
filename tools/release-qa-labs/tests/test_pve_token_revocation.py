@@ -286,6 +286,27 @@ class PveTokenRevocationTests(unittest.TestCase):
         self.assertIn("pveum user token list", calls)
         self.assertNotIn("pveum user token delete", calls)
 
+    def test_supervised_revocation_recovers_absence_without_prior_receipt(self):
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        state["phase"] = "REVOKING_TOKEN"
+        write_private(self.state, state)
+        result = self.hook(supervised=True, SSH_TOKEN_LIST_JSON="[]", UNIT_STATE="active")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls.read_text(encoding="utf-8")
+        self.assertIn("pveum user token list", calls)
+        self.assertNotIn("pveum user token delete", calls)
+        receipt = self.runtime / "evidence/final-token-revocation/revocation.json"
+        self.assertEqual(json.loads(receipt.read_text())["status"], "revoked")
+
+    def test_supervised_unknown_token_listing_cannot_complete_revocation(self):
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        state["phase"] = "REVOKING_TOKEN"
+        write_private(self.state, state)
+        result = self.hook(supervised=True, SSH_TOKEN_LIST_JSON="null", UNIT_STATE="active")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.runtime / "evidence/final-token-revocation/revocation.json").exists())
+        self.assertNotIn("pveum user token delete", self.calls.read_text(encoding="utf-8"))
+
     def test_hook_source_disallows_unpinned_or_api_based_token_revocation(self):
         source = (ROOT / "drivers/revoke-pve-run-token.sh").read_text(encoding="utf-8")
         self.assertIn("StrictHostKeyChecking=yes", source)

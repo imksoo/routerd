@@ -133,11 +133,14 @@ unjournaled IPv6 host routes and destructive foreign FreeBSD GIF handling.
   strips package setuid bits. Use a private mount namespace, explicit ownership,
   pre-walk mount refusal and failure-preserving cleanup. Firstboot must validate
   before caching config or removing bootstrap management DHCP.
-- Release QA mutates state/auth before its lock, starts mutation before durable
-  ownership, trusts reused PGIDs, admits originals while effects use pinned
-  inputs, and has incompatible precheck/cleanup/systemd stop deadlines. Reuse one
-  actual process/service owner, durable launch admission and existing token-removal
-  state; preserve unresolved cleanup. Bound proxy writes as well as reads.
+- Release QA lifecycle ownership is implemented: lock before state/auth changes,
+  durable STARTING admission before child effects, native birth/session checks
+  with pidfd signaling, exact consumed-input pins and acknowledged stop before
+  cleanup. Standalone certification reuses the same supervisor. Token revocation
+  resolves lost replies through authoritative absence; unknown recovery is
+  retained. Offline subprocess/fault checks pass; boot-enabled systemd/PVE/cloud
+  lifecycle qualification remains unexecuted. Proxy I/O bounds remain a separate
+  review item.
 - Existing labctl live TODOs return success and can remove manifests without
   cleanup. Protocol collectors accept parse failures/unmeasured transfers; capture
   uses bare PIDs; exact address/account/source identities are not always checked.

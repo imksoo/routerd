@@ -340,9 +340,7 @@ load_contract() {
 
 require_supervisor_mutating() {
   [ -f "$supervisor_state" ] || die "durable supervisor state is missing"
-  jq -e --arg runId "$run_id" \
-    '.runId == $runId and .phase == "MUTATING" and (.mutationPgid | type == "number")' \
-    "$supervisor_state" >/dev/null ||
+  python3 "$framework_root/lifecycle_supervisor.py" --verify-mutation "$supervisor_state" "$run_id" ||
     die "durable supervisor does not own the active mutation phase"
 }
 

@@ -307,29 +307,45 @@ case "$token_presence" in
       printf '{"status":"pass","runId":"%s","tokenRevocation":"already-recorded"}\n' "$run_id"
       exit 0
     fi
-    die "PVE did not report the exact run-scoped token; refusing deletion"
+    # REVOKING_TOKEN is already the durable intent to remove this exact token,
+    # admitted only after authoritative zero inventory. Recover a lost delete
+    # reply/receipt by observing its absence, without issuing another deletion.
+    [ "$supervised" = true ] ||
+      die "PVE did not report the exact run-scoped token; refusing deletion"
     ;;
   *) die "PVE token listing is malformed; refusing deletion" ;;
 esac
-if ! "${pve_ssh[@]}" "pveum user token delete $token_user $token_name" \
-  >/dev/null 2>>"$ssh_stderr"; then
-  die "strict-host-key PVE token deletion failed; inspect private SSH evidence"
+if [ "$token_presence" = present ]; then
+  if ! "${pve_ssh[@]}" "pveum user token delete $token_user $token_name" \
+    >/dev/null 2>>"$ssh_stderr"; then
+    die "strict-host-key PVE token deletion failed; inspect private SSH evidence"
+  fi
 fi
 
 receipt_tmp="$(mktemp "$evidence_dir/.revocation.json.XXXXXX")"
-python3 - "$run_id" "$token_identity_sha256" >"$receipt_tmp" <<'PY'
+python3 - "$run_id" "$token_identity_sha256" "$receipt_tmp" "$receipt" <<'PY'
 import datetime
 import json
+import os
 import sys
 
-run_id, identity_sha = sys.argv[1:]
-print(json.dumps({
+run_id, identity_sha, temporary, receipt = sys.argv[1:]
+data = {
     "runId": run_id,
     "status": "revoked",
     "revokedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
     "tokenIdentitySha256": identity_sha,
-}, sort_keys=True))
+}
+with open(temporary, "w", encoding="utf-8") as stream:
+    json.dump(data, stream, sort_keys=True)
+    stream.write("\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, receipt)
+directory = os.open(os.path.dirname(receipt), os.O_RDONLY | os.O_DIRECTORY)
+try:
+    os.fsync(directory)
+finally:
+    os.close(directory)
 PY
-chmod 600 "$receipt_tmp"
-mv -f -- "$receipt_tmp" "$receipt"
 printf '{"status":"pass","runId":"%s","tokenRevocation":"revoked"}\n' "$run_id"

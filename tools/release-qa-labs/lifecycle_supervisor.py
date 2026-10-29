@@ -15,14 +15,14 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 
 PAID_MODE = "production"
 STAGING_MODE = "staging-no-mutation"
 MODES = {PAID_MODE, STAGING_MODE}
 PHASES = (
-    "PRECHECK", "STAGING_ARMED", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO",
+    "PRECHECK", "STAGING_ARMED", "STARTING", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO",
     "REVOKING_TOKEN", "DONE", "STAGING_DONE", "FAILED",
 )
 TERMINAL = {"DONE", "STAGING_DONE", "FAILED"}
@@ -32,6 +32,78 @@ MAX_PAID_LIFECYCLE_SECONDS = 145 * 60
 
 class SupervisorError(RuntimeError):
     pass
+
+
+class ProcessIdentity(NamedTuple):
+    pid: int
+    pgid: int
+    session: int
+    started: int
+    state: str
+
+
+def proc_pid_for_pidfd(descriptor: int) -> int:
+    # Pid in fdinfo is expressed in the procfs mount's PID namespace. It can
+    # differ from getpid()/Popen.pid inside a nested namespace. The pidfd binds
+    # this observation to the actual syscall recipient before reading /proc.
+    for line in Path(f"/proc/self/fdinfo/{descriptor}").read_text(encoding="utf-8").splitlines():
+        if line.startswith("Pid:"):
+            return int(line.split()[1])
+    raise SupervisorError("pidfd observation has no native PID")
+
+
+def observe_process(pid: int, expected_proc_pid: int | None = None) -> ProcessIdentity | None:
+    descriptor = None
+    try:
+        descriptor = os.pidfd_open(pid)
+        proc_pid = proc_pid_for_pidfd(descriptor)
+        if proc_pid <= 0 or expected_proc_pid is not None and proc_pid != expected_proc_pid:
+            return None
+        fields = Path(f"/proc/{proc_pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+        return ProcessIdentity(pid, os.getpgid(pid), os.getsid(pid), int(fields[19]), fields[0])
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    except (IndexError, ValueError, OSError) as exc:
+        raise SupervisorError(f"cannot observe process identity for {pid}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def admitted_child(descriptor: int, command: list[str]) -> None:
+    """Keep the actual mutation behind its parent's durable start receipt."""
+    try:
+        admission = os.read(descriptor, 1)
+    finally:
+        os.close(descriptor)
+    if admission != b"1" or not command:
+        raise SupervisorError("mutation was not admitted by its owner")
+    os.execvpe(command[0], command, os.environ)
+
+
+def verify_mutation_admission(state_path: Path, run_id: str) -> None:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if state.get("runId") != run_id or state.get("phase") != "MUTATING":
+        raise SupervisorError("durable supervisor does not admit this mutation")
+    if state.get("mutationBootId") != Supervisor.boot_id():
+        raise SupervisorError("mutation boot identity differs from its owner")
+    leader = observe_process(state["mutationPid"])
+    caller = observe_process(os.getpid())
+    owner = observe_process(state["mutationSupervisorPid"])
+    if (
+        leader is None or caller is None or owner is None
+        or leader.started != state["mutationStarted"]
+        or leader.pgid != state["mutationPgid"] or leader.session != leader.pgid
+        or caller.pgid != leader.pgid or caller.session != leader.session
+        or owner.started != state["mutationSupervisorStarted"] or owner.state == "Z"
+    ):
+        raise SupervisorError("mutation caller is outside its live native owner")
+    with state_path.with_suffix(state_path.suffix + ".lock").open("a+") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        raise SupervisorError("durable supervisor lock is not held")
 
 
 def now_utc() -> datetime:
@@ -49,9 +121,17 @@ def parse_time(value: str) -> datetime:
 def atomic_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.chmod(tmp, 0o600)
+    with tmp.open("w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     os.replace(tmp, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 class Supervisor:
@@ -61,8 +141,13 @@ class Supervisor:
         self.stop_reason: str | None = None
         self.child: subprocess.Popen[bytes] | None = None
         self.lock_file: Any = None
-        self.state = self.load_or_new()
-        self.configure_pinned_environment()
+        self.acquire_lock()
+        try:
+            self.state = self.load_or_new()
+            self.configure_pinned_environment()
+        except BaseException:
+            self.close_lock()
+            raise
 
     @staticmethod
     def digest(path: Path) -> str:
@@ -153,11 +238,18 @@ class Supervisor:
             target = pinned_root / names[name]
             shutil.copyfile(source, target)
             os.chmod(target, 0o600)
+            with target.open("rb") as stream:
+                os.fsync(stream.fileno())
             result[name] = {
                 "source": str(source),
                 "pinned": str(target),
                 "sha256": self.digest(target),
             }
+        directory = os.open(pinned_root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
         return result
 
     def verify_pins(self) -> bool:
@@ -261,13 +353,30 @@ class Supervisor:
             return "unknown"
 
     def acquire_lock(self) -> None:
+        if self.lock_file is not None:
+            return
         lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self.lock_file = lock_path.open("a+", encoding="utf-8")
+        inherited = getattr(self.args, "lock_fd", None)
+        if inherited is not None:
+            descriptor = os.fstat(inherited)
+            expected = lock_path.stat()
+            if (descriptor.st_dev, descriptor.st_ino) != (expected.st_dev, expected.st_ino):
+                raise SupervisorError("inherited lock does not identify this run")
+            self.lock_file = os.fdopen(inherited, "a+", encoding="utf-8")
+            self.args.lock_fd = None
+        else:
+            self.lock_file = lock_path.open("a+", encoding="utf-8")
         try:
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
+            self.close_lock()
             raise SupervisorError("another durable supervisor owns this run") from exc
+
+    def close_lock(self) -> None:
+        if self.lock_file is not None:
+            self.lock_file.close()
+            self.lock_file = None
 
     def load_or_new(self) -> dict[str, Any]:
         root = self.validate_run_root()
@@ -276,11 +385,20 @@ class Supervisor:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
             if data.get("runId") != self.args.run_id or data.get("phase") not in PHASES:
                 raise SupervisorError("durable state does not match the requested run")
+            if data.get("requestSha256") != getattr(self.args, "request_sha256", None):
+                raise SupervisorError("durable state request identity differs from this invocation")
             if data.get("executionMode") not in MODES:
                 raise SupervisorError("durable execution mode is invalid")
             if data.get("effectiveLifecycle", {}).get("executionMode") != data.get("executionMode"):
                 raise SupervisorError("durable execution mode is not bound to lifecycle state")
             self.state = data
+            if data["phase"] not in TERMINAL and (
+                data["phase"] != "PRECHECK" or data.get("mutationCommandExecuted") or data.get("activeCommand")
+            ):
+                # A corrupt recovery input must never prevent stopping a
+                # previously admitted native child. Provider work still waits
+                # for the pinned-input checks below.
+                self.quiesce()
             clean_sources = self.verify_pins()
             if not clean_sources or getattr(self.args, "source_input_tamper_detected", False):
                 data["sourceInputTamperDetected"] = True
@@ -306,6 +424,7 @@ class Supervisor:
             effective = self.effective_lifecycle(pins)
         data = {
             "runId": self.args.run_id,
+            "requestSha256": getattr(self.args, "request_sha256", None),
             "phase": "PRECHECK",
             "startedAt": rfc3339(started),
             "deadline": rfc3339(started + timedelta(seconds=effective["ttlSeconds"])),
@@ -342,8 +461,8 @@ class Supervisor:
 
     def run_checked(self, command: list[str], label: str) -> None:
         try:
-            proc = subprocess.run(command, check=False)
-        except (OSError, subprocess.SubprocessError) as exc:
+            proc = self.run_owned_command(command, timeout=self.state["effectiveLifecycle"]["inventoryTimeoutSeconds"])
+        except (OSError, subprocess.SubprocessError, SupervisorError) as exc:
             # Preserve only the exception class in durable evidence: command
             # output can contain provider diagnostics and must not become a
             # second, unreviewed credential log.
@@ -364,37 +483,159 @@ class Supervisor:
         except PermissionError as exc:
             raise SupervisorError(f"cannot inspect mutation process group {pgid}") from exc
 
+    def launch_mutation(self, command: list[str] | None = None, phase: str = "MUTATING") -> None:
+        if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+            raise SupervisorError("Linux pidfd process ownership is required")
+        admission_read, admission_write = os.pipe()
+        try:
+            self.child = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "--admit-child", str(admission_read), *(command or self.args.mutation_command)],
+                start_new_session=True, pass_fds=(admission_read,),
+            )
+            os.close(admission_read)
+            admission_read = -1
+            identity = observe_process(self.child.pid)
+            if identity is None or identity.pgid != identity.pid or identity.session != identity.pid:
+                raise SupervisorError("mutation did not establish its owned session")
+            boot = self.boot_id()
+            if boot == "unknown":
+                raise SupervisorError("mutation boot identity is unavailable")
+            owner = observe_process(os.getpid())
+            if owner is None:
+                raise SupervisorError("supervisor native process identity is unavailable")
+            receipt = dict(mutationPgid=identity.pgid, mutationPid=identity.pid,
+                mutationStarted=identity.started, mutationBootId=boot,
+                mutationSupervisorPid=owner.pid, mutationSupervisorStarted=owner.started)
+            if phase != self.state["phase"]:
+                self.transition(phase, **receipt)
+            else:
+                self.state.update(receipt)
+                atomic_json(self.state_path, self.state)
+            # No mutation command can execute until that receipt has reached disk.
+            if phase != "MUTATING" or not self.stop_reason:
+                os.write(admission_write, b"1")
+        finally:
+            if admission_read != -1:
+                os.close(admission_read)
+            os.close(admission_write)
+
+    def mutation_exit_status(self) -> int | None:
+        if self.child is None:
+            return None
+        # Retain the session leader as an unreaped child until the whole group
+        # is quiescent. Reaping it early loses the native identity anchor.
+        result = os.waitid(os.P_PID, self.child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if result is None:
+            return None
+        if result.si_code == os.CLD_EXITED:
+            return result.si_status
+        return -result.si_status
+
+    def run_owned_command(self, command: list[str], *, timeout: float) -> subprocess.CompletedProcess:
+        # The current phase is the durable recovery intent for this command.
+        # A restart must stop an admitted prior child before repeating effects.
+        self.state["activeCommand"] = True
+        atomic_json(self.state_path, self.state)
+        self.launch_mutation(command, self.state["phase"])
+        deadline = time.monotonic() + timeout
+        result = self.mutation_exit_status()
+        interrupted = False
+        while result is None and time.monotonic() < deadline:
+            if self.state["phase"] == "PRECHECK" and self.stop_reason:
+                interrupted = True
+                break
+            time.sleep(0.02)
+            result = self.mutation_exit_status()
+        self.quiesce()
+        self.state["activeCommand"] = False
+        atomic_json(self.state_path, self.state)
+        if interrupted:
+            raise SupervisorError("precheck interrupted by its owner")
+        if result is None:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, result)
+
+    def mutation_members(self) -> list[ProcessIdentity]:
+        pgid = self.state["mutationPgid"]
+        leader = observe_process(self.state["mutationPid"])
+        if leader is None or leader.started != self.state["mutationStarted"] or leader.pgid != pgid or leader.session != pgid:
+            raise SupervisorError("mutation session identity is absent or replaced; refusing signals")
+        members = []
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdecimal():
+                continue
+            try:
+                status = (entry / "status").read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue
+            namespace_pid = None
+            for line in status.splitlines():
+                if line.startswith("NSpid:"):
+                    namespace_pid = int(line.split()[-1])
+                    break
+            if namespace_pid is None:
+                raise SupervisorError("process observation has no PID namespace identity")
+            observed = observe_process(namespace_pid, int(entry.name))
+            if observed is not None and observed.pgid == pgid:
+                if observed.session != pgid:
+                    raise SupervisorError("mutation process group no longer matches its session")
+                if observed.state != "Z":
+                    members.append(observed)
+        return members
+
+    @staticmethod
+    def signal_member(identity: ProcessIdentity, signum: int) -> None:
+        try:
+            descriptor = os.pidfd_open(identity.pid)
+        except ProcessLookupError:
+            return
+        try:
+            current = observe_process(identity.pid)
+            if current is None:
+                return
+            if current[:4] != identity[:4]:
+                raise SupervisorError("mutation member identity changed before signal")
+            signal.pidfd_send_signal(descriptor, signum)
+        except ProcessLookupError:
+            return
+        finally:
+            os.close(descriptor)
+
     def quiesce(self) -> None:
-        pgid = self.state.get("mutationPgid")
-        if self.state.get("mutationBootId") not in (None, self.boot_id()):
+        if "mutationPgid" not in self.state:
+            raise SupervisorError("mutation process group observation is missing")
+        pgid = self.state["mutationPgid"]
+        if pgid is not None and (type(pgid) is not int or pgid <= 0):
+            raise SupervisorError("mutation process group identity is invalid; refusing signals")
+        if pgid is None or not self.pgid_alive(pgid):
             self.state["mutationPgid"] = None
             atomic_json(self.state_path, self.state)
             return
-        if not isinstance(pgid, int) or not self.pgid_alive(pgid):
+        boot = self.boot_id()
+        if boot == "unknown" or not self.state.get("mutationBootId"):
+            raise SupervisorError("mutation boot identity is unknown; refusing signals")
+        if self.state["mutationBootId"] != boot:
             self.state["mutationPgid"] = None
             atomic_json(self.state_path, self.state)
             return
-        os.killpg(pgid, signal.SIGTERM)
-        deadline = time.monotonic() + self.args.term_grace_seconds
-        while self.pgid_alive(pgid) and time.monotonic() < deadline:
-            # Reap the process-group leader promptly. An unreaped zombie keeps
-            # killpg(..., 0) positive even after every descendant has exited.
-            if self.child is not None:
-                self.child.poll()
-            time.sleep(0.05)
-        if self.pgid_alive(pgid):
-            os.killpg(pgid, signal.SIGKILL)
-        kill_deadline = time.monotonic() + self.args.kill_grace_seconds
-        while self.pgid_alive(pgid) and time.monotonic() < kill_deadline:
-            if self.child is not None:
-                self.child.poll()
-            time.sleep(0.05)
-        if self.child is not None:
-            self.child.poll()
-        if self.pgid_alive(pgid):
+        if type(self.state.get("mutationPid")) is not int or type(self.state.get("mutationStarted")) is not int:
+            raise SupervisorError("mutation native start identity is missing; refusing signals")
+        members = self.mutation_members()
+        for signum, grace in ((signal.SIGTERM, self.args.term_grace_seconds), (signal.SIGKILL, self.args.kill_grace_seconds)):
+            deadline = time.monotonic() + grace
+            for identity in members:
+                self.signal_member(identity, signum)
+            members = self.mutation_members()
+            while members and time.monotonic() < deadline:
+                time.sleep(0.02)
+                members = self.mutation_members()
+            if not members:
+                break
+        if members:
             raise SupervisorError("mutation process group did not quiesce before cleanup")
         if self.child is not None:
             self.child.wait(timeout=self.args.kill_grace_seconds)
+            self.child = None
         self.state["mutationPgid"] = None
         atomic_json(self.state_path, self.state)
 
@@ -406,9 +647,8 @@ class Supervisor:
         """
         if self.state["phase"] != "REVOKING_TOKEN":
             raise SupervisorError("post-zero revocation requires REVOKING_TOKEN phase")
-        revocation = subprocess.run(
+        revocation = self.run_owned_command(
             self.args.post_zero_command,
-            check=False,
             timeout=self.state["effectiveLifecycle"]["inventoryTimeoutSeconds"],
         )
         self.state["tokenRevocationExit"] = revocation.returncode
@@ -433,24 +673,22 @@ class Supervisor:
         return 1
 
     def cleanup_and_verify(self, reason: str) -> int:
-        pins_clean = self.verify_pins()
         if self.state["phase"] not in {"STOPPING", "CLEANING", "VERIFYING_ZERO"}:
             self.transition("STOPPING", stopReason=reason)
         self.quiesce()
+        pins_clean = self.verify_pins()
         attempts = int(self.state.get("cleanupAttempts", 0)) + 1
         self.state["cleanupAttempts"] = attempts
         atomic_json(self.state_path, self.state)
         if self.state["phase"] != "CLEANING":
             self.transition("CLEANING")
-        cleanup = subprocess.run(
+        cleanup = self.run_owned_command(
             self.args.cleanup_command,
-            check=False,
             timeout=self.state["effectiveLifecycle"]["cleanupTimeoutSeconds"],
         )
         self.transition("VERIFYING_ZERO", cleanupExit=cleanup.returncode)
-        inventory = subprocess.run(
+        inventory = self.run_owned_command(
             self.args.inventory_command,
-            check=False,
             timeout=self.state["effectiveLifecycle"]["inventoryTimeoutSeconds"],
         )
         mutation_succeeded = (
@@ -484,13 +722,14 @@ class Supervisor:
         return 2
 
     def run(self) -> int:
-        self.acquire_lock()
         try:
+            if self.lock_file is None:
+                self.acquire_lock()
+                self.state = self.load_or_new()
+                self.configure_pinned_environment()
             return self.run_locked()
         finally:
-            if self.lock_file is not None:
-                self.lock_file.close()
-                self.lock_file = None
+            self.close_lock()
 
     def run_locked(self) -> int:
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -499,9 +738,10 @@ class Supervisor:
         if phase in TERMINAL:
             return 0 if phase in {"DONE", "STAGING_DONE"} else 1
         if phase == "REVOKING_TOKEN":
+            self.quiesce()
             return self.complete_post_zero()
         # Any supervisor restart after mutation began fails closed into cleanup.
-        if phase != "PRECHECK":
+        if phase != "PRECHECK" or self.state.get("mutationCommandExecuted", False) or self.state.get("activeCommand", False):
             return self.cleanup_and_verify("supervisor-restart")
         try:
             self.run_checked(self.args.precheck_command, "precheck")
@@ -511,7 +751,7 @@ class Supervisor:
             # normal cleanup, authoritative-zero, and token-revocation path
             # has completed.  This deliberately makes a failed precheck a
             # failed qualification rather than an early terminal escape.
-            return self.cleanup_and_verify("precheck-failed")
+            return self.cleanup_and_verify(self.stop_reason or "precheck-failed")
         if self.state["executionMode"] == STAGING_MODE:
             if self.stop_reason:
                 return self.cleanup_and_verify(self.stop_reason)
@@ -521,15 +761,19 @@ class Supervisor:
             return 2
         if now_utc() >= parse_time(self.state["deadline"]):
             return self.cleanup_and_verify("absolute-deadline-before-mutation")
+        if self.stop_reason:
+            return self.cleanup_and_verify(self.stop_reason)
+        if not self.verify_pins():
+            self.state["sourceInputTamperDetected"] = True
+            atomic_json(self.state_path, self.state)
+            return self.cleanup_and_verify("source-input-changed-before-mutation")
         self.state["mutationCommandExecuted"] = True
-        atomic_json(self.state_path, self.state)
-        self.child = subprocess.Popen(self.args.mutation_command, start_new_session=True)
-        pgid = os.getpgid(self.child.pid)
-        self.transition("MUTATING", mutationPgid=pgid, mutationBootId=self.boot_id())
+        self.transition("STARTING")
+        self.launch_mutation()
         reason = "mutation-complete"
         mutation_exit: int | None = None
         while mutation_exit is None:
-            mutation_exit = self.child.poll()
+            mutation_exit = self.mutation_exit_status()
             if self.stop_reason:
                 reason = self.stop_reason
                 break
@@ -572,6 +816,8 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--state", type=Path, required=True)
+    parser.add_argument("--lock-fd", type=int)
+    parser.add_argument("--request-sha256")
     parser.add_argument("--heartbeat", type=Path, required=True)
     parser.add_argument("--run-root", type=Path)
     parser.add_argument("--contract", type=Path)
@@ -595,8 +841,19 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--mutation-command", nargs="+")
     parser.add_argument("--cleanup-command", nargs="+")
     parser.add_argument("--inventory-command", nargs="+")
+    parser.add_argument("--mutation-arg", action="append", default=[])
+    parser.add_argument("--cleanup-arg", action="append", default=[])
+    parser.add_argument("--inventory-arg", action="append", default=[])
     parser.add_argument("--post-zero-command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
+    if args.request_sha256 is not None and (
+        len(args.request_sha256) != 64 or any(char not in "0123456789abcdef" for char in args.request_sha256)
+    ):
+        raise SupervisorError("request identity must be a lowercase SHA-256 digest")
+    if min(args.cleanup_timeout_seconds, args.inventory_timeout_seconds) <= 0:
+        raise SupervisorError("cleanup and inventory timeouts must be positive")
+    if min(args.term_grace_seconds, args.kill_grace_seconds) < 0:
+        raise SupervisorError("process stop timeouts must not be negative")
     if args.ttl_seconds <= 0 or args.ttl_seconds > MAX_MUTATION_TTL_SECONDS:
         raise SupervisorError(f"TTL must be in 1..{MAX_MUTATION_TTL_SECONDS} seconds")
     if args.stale_seconds <= 0 or args.stale_seconds >= args.ttl_seconds:
@@ -607,16 +864,21 @@ def main(argv: list[str]) -> int:
     if args.max_paid_lifecycle_seconds > MAX_PAID_LIFECYCLE_SECONDS or worst > args.max_paid_lifecycle_seconds:
         raise SupervisorError("paid lifecycle envelope exceeds policy")
     args.precheck_command = command_values(args.precheck_command, "precheck command")
-    args.mutation_command = command_values(args.mutation_command, "mutation command")
-    args.cleanup_command = command_values(args.cleanup_command, "cleanup command")
-    args.inventory_command = command_values(args.inventory_command, "inventory command")
+    args.mutation_command = command_values(args.mutation_command, "mutation command") + args.mutation_arg
+    args.cleanup_command = command_values(args.cleanup_command, "cleanup command") + args.cleanup_arg
+    args.inventory_command = command_values(args.inventory_command, "inventory command") + args.inventory_arg
     args.post_zero_command = command_values(args.post_zero_command, "post-zero command")
     return Supervisor(args).run()
 
 
 if __name__ == "__main__":
     try:
+        if len(sys.argv) > 2 and sys.argv[1] == "--admit-child":
+            admitted_child(int(sys.argv[2]), sys.argv[3:])
+        if len(sys.argv) == 4 and sys.argv[1] == "--verify-mutation":
+            verify_mutation_admission(Path(sys.argv[2]), sys.argv[3])
+            raise SystemExit(0)
         raise SystemExit(main(sys.argv[1:]))
-    except (SupervisorError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+    except (SupervisorError, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
         print(f"release QA supervisor: {exc}", file=sys.stderr)
         raise SystemExit(2)

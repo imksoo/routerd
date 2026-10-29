@@ -345,17 +345,31 @@ the only one that may provision cloud resources and run the representative
 The durable supervisor persists this state machine:
 
 ```text
-PRECHECK -> MUTATING -> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> DONE|FAILED
+PRECHECK -> STARTING -> MUTATING -> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> DONE|FAILED
 PRECHECK -> STAGING_ARMED -(unit restart)-> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> STAGING_DONE|FAILED
 ```
 
 The absolute UTC deadline is written before precheck and is not extended by a
 supervisor restart. Restart, disconnect, stale heartbeat, timeout, SIGINT,
 SIGTERM, or mutation failure all enter STOPPING. The supervisor terminates and
-waits for the entire mutation process group before cleanup. A per-run flock
-allows only one cleanup owner. Only a successful mutation followed by cleanup
+waits for the entire mutation process group before cleanup. A per-run flock is
+acquired before state, authentication or pinned-input changes and is held by the
+actual supervisor. Only a successful mutation followed by cleanup
 and exhaustive zero inventory reaches DONE; all other cleanly recovered paths
 remain FAILED.
+
+`STARTING` is durable before child creation. A private launch pipe admits the
+child's command only after its native process identity is recorded and fsynced.
+Recovery verifies boot identity, process birth and session before signaling with
+pidfds; a bare or reused PID/PGID is not authority. An unknown identity or missing
+stop acknowledgement retains the recovery state and prevents cleanup from racing
+a possible mutator. The standalone release-certification entry point uses this
+same supervisor; it has no second detached watchdog or cleanup owner.
+
+Effects consume the exact digest-checked pinned inputs. Changing the mutable
+source after admission cannot silently switch the contract used for mutation or
+cleanup. Service stop deadlines include the bounded stop, cleanup, inventory and
+revocation phases; a frontend disconnect does not end the recovery owner.
 
 Staging never constructs or executes the mutation subprocess. It deliberately
 exits after persisting `STAGING_ARMED`, so the boot-enabled unit must restart from
@@ -686,6 +700,10 @@ both production and staging runs, including a precheck failure. `DONE`,
 `FAILED`, and `STAGING_DONE` are not written until that idempotent action
 succeeds; a service restart in this phase retries only revocation, never a
 cleanup or paid mutation.
+
+A lost token-deletion reply is resolved by an authoritative token read. Confirmed
+absence completes revocation; read failure remains unknown and cannot become a
+successful terminal result.
 
 A failed mutation must not suppress recovery retries: an incomplete cleanup,
 inventory, or token revocation returns retryable exit 2, even when mutation

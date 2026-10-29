@@ -124,6 +124,13 @@ class SupervisorTests(unittest.TestCase):
             source_input_tamper_detected=False,
         )
 
+    def make_supervisor(self):
+        # These phase fixtures prepare a durable state left by a prior owner.
+        # A real run reacquires the same lock and re-reads that state.
+        supervisor = lifecycle.Supervisor(self.args)
+        supervisor.close_lock()
+        return supervisor
+
     def tearDown(self):
         for key in (
             "ROUTERD_RELEASE_QA_PINNED_CONTRACT", "ROUTERD_RELEASE_QA_PINNED_RUN_ENV",
@@ -141,12 +148,16 @@ class SupervisorTests(unittest.TestCase):
     def run_with_commands(self, mutation_exit=0, cleanup_exit=0, inventory_exit=0,
                           post_zero_exit=0, precheck_exit=0, stop_reason=None):
         events = []
-        child = FakeChild([mutation_exit])
+        self.args.mutation_command = [sys.executable, "-c", (
+            f"import os, signal; os.kill(os.getpid(), {-mutation_exit})" if mutation_exit < 0
+            else f"raise SystemExit({mutation_exit})"
+        )]
+        real_popen = lifecycle.subprocess.Popen
 
-        def popen(command, start_new_session=False):
+        def popen(*args, **kwargs):
             events.append("mutation-start")
-            self.assertTrue(start_new_session)
-            return child
+            self.assertTrue(kwargs.get("start_new_session"))
+            return real_popen(*args, **kwargs)
 
         def run(command, check=False, timeout=None):
             label = command[0]
@@ -158,17 +169,15 @@ class SupervisorTests(unittest.TestCase):
                 "post-zero": post_zero_exit,
             }[label])
 
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.stop_reason = stop_reason
         with mock.patch.object(lifecycle.subprocess, "Popen", side_effect=popen), \
-             mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
-             mock.patch.object(lifecycle.os, "getpgid", return_value=4321), \
-             mock.patch.object(supervisor, "pgid_alive", return_value=False):
+             mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run):
             rc = supervisor.run()
         return rc, events
 
     def test_staging_clean_service_restart_never_mutates_and_has_distinct_success(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.state["executionMode"] = lifecycle.STAGING_MODE
         supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
         lifecycle.atomic_json(self.state, supervisor.state)
@@ -178,11 +187,11 @@ class SupervisorTests(unittest.TestCase):
             events.append(command[0])
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.run(), 2)
             self.assertEqual(json.loads(self.state.read_text())["phase"], "STAGING_ARMED")
-            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+            self.assertEqual(self.make_supervisor().run(), 0)
         popen.assert_not_called()
         self.assertEqual(events, ["precheck", "cleanup", "inventory", "post-zero"])
         final = json.loads(self.state.read_text())
@@ -197,7 +206,7 @@ class SupervisorTests(unittest.TestCase):
         })
 
     def test_staging_signal_cleans_without_mutation(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.state["executionMode"] = lifecycle.STAGING_MODE
         supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
         lifecycle.atomic_json(self.state, supervisor.state)
@@ -208,7 +217,7 @@ class SupervisorTests(unittest.TestCase):
             events.append(command[0])
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.run(), 1)
         popen.assert_not_called()
@@ -219,7 +228,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(any(item["to"] == "STAGING_ARMED" for item in final["history"]))
 
     def test_staging_cannot_pass_with_forged_armed_marker_without_history(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.state["executionMode"] = lifecycle.STAGING_MODE
         supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
         supervisor.state["stagingRestartRequired"] = True
@@ -228,14 +237,14 @@ class SupervisorTests(unittest.TestCase):
         def run(command, check=False, timeout=None):
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.cleanup_and_verify("supervisor-restart"), 1)
         popen.assert_not_called()
         self.assertEqual(json.loads(self.state.read_text())["phase"], "FAILED")
 
     def test_staging_nonzero_inventory_is_restartable_not_success(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.state["executionMode"] = lifecycle.STAGING_MODE
         supervisor.state["effectiveLifecycle"]["executionMode"] = lifecycle.STAGING_MODE
         lifecycle.atomic_json(self.state, supervisor.state)
@@ -244,29 +253,29 @@ class SupervisorTests(unittest.TestCase):
         def run(command, check=False, timeout=None):
             return mock.Mock(returncode=next(outcomes) if command[0] == "inventory" else 0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.run(), 2)
-            self.assertEqual(lifecycle.Supervisor(self.args).run(), 2)
+            self.assertEqual(self.make_supervisor().run(), 2)
             self.assertEqual(json.loads(self.state.read_text())["phase"], "VERIFYING_ZERO")
-            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+            self.assertEqual(self.make_supervisor().run(), 0)
         popen.assert_not_called()
         final = json.loads(self.state.read_text())
         self.assertEqual(final["phase"], "STAGING_DONE")
         self.assertEqual(final["cleanupAttempts"], 2)
 
     def test_durable_mode_cannot_change_on_restart(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.state["executionMode"] = lifecycle.STAGING_MODE
         lifecycle.atomic_json(self.state, supervisor.state)
         with self.assertRaisesRegex(lifecycle.SupervisorError, "not bound"):
-            lifecycle.Supervisor(self.args)
+            self.make_supervisor()
 
     def test_success_cleans_and_verifies_before_done(self):
         rc, events = self.run_with_commands()
         self.assertEqual(rc, 0)
         self.assertEqual(events, ["precheck", "mutation-start", "cleanup", "inventory", "post-zero"])
-        self.assertEqual(self.phases(), ["MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "REVOKING_TOKEN", "DONE"])
+        self.assertEqual(self.phases(), ["STARTING", "MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO", "REVOKING_TOKEN", "DONE"])
 
     def test_post_zero_revocation_retry_never_repeats_cleanup_or_mutation(self):
         rc, events = self.run_with_commands(post_zero_exit=1)
@@ -279,9 +288,9 @@ class SupervisorTests(unittest.TestCase):
             retried.append(command[0])
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
-            self.assertEqual(lifecycle.Supervisor(self.args).run(), 0)
+            self.assertEqual(self.make_supervisor().run(), 0)
         popen.assert_not_called()
         self.assertEqual(retried, ["post-zero"])
         self.assertEqual(json.loads(self.state.read_text())["phase"], "DONE")
@@ -305,8 +314,8 @@ class SupervisorTests(unittest.TestCase):
                 raise FileNotFoundError("fixture precheck missing")
             return mock.Mock(returncode=0)
 
-        supervisor = lifecycle.Supervisor(self.args)
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run), \
+        supervisor = self.make_supervisor()
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run), \
              mock.patch.object(lifecycle.subprocess, "Popen") as popen:
             self.assertEqual(supervisor.run(), 1)
         popen.assert_not_called()
@@ -406,7 +415,7 @@ class SupervisorTests(unittest.TestCase):
             with self.subTest(caught_signal=caught_signal):
                 self.state.unlink(missing_ok=True)
                 events = []
-                supervisor = lifecycle.Supervisor(self.args)
+                supervisor = self.make_supervisor()
                 supervisor.child = FakeChild([None])
                 supervisor.transition("MUTATING", mutationPgid=4321)
                 supervisor.signal_handler(caught_signal, None)
@@ -420,7 +429,7 @@ class SupervisorTests(unittest.TestCase):
                     return mock.Mock(returncode=0)
 
                 with mock.patch.object(supervisor, "quiesce", side_effect=quiesce), \
-                     mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
+                     mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run):
                     rc = supervisor.cleanup_and_verify(supervisor.stop_reason)
                 self.assertEqual(rc, 1)
                 self.assertEqual(events, ["quiesce", "cleanup", "inventory", "post-zero"])
@@ -433,7 +442,7 @@ class SupervisorTests(unittest.TestCase):
         for phase in ("MUTATING", "STOPPING", "CLEANING", "VERIFYING_ZERO"):
             with self.subTest(phase=phase):
                 self.state.unlink(missing_ok=True)
-                supervisor = lifecycle.Supervisor(self.args)
+                supervisor = self.make_supervisor()
                 supervisor.transition(phase, mutationPgid=None)
                 events = []
 
@@ -441,8 +450,8 @@ class SupervisorTests(unittest.TestCase):
                     events.append(command[0])
                     return mock.Mock(returncode=0)
 
-                with mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
-                    self.assertEqual(lifecycle.Supervisor(self.args).run(), 1)
+                with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run):
+                    self.assertEqual(self.make_supervisor().run(), 1)
                 self.assertEqual(events, ["cleanup", "inventory", "post-zero"])
                 final = json.loads(self.state.read_text())
                 self.assertEqual(final["phase"], "FAILED")
@@ -452,31 +461,26 @@ class SupervisorTests(unittest.TestCase):
         for reason in ("heartbeat-stale", "absolute-deadline"):
             with self.subTest(reason=reason):
                 self.state.unlink(missing_ok=True)
-                supervisor = lifecycle.Supervisor(self.args)
-                supervisor.child = FakeChild([None])
-                supervisor.transition("MUTATING", mutationPgid=None)
-                with mock.patch.object(supervisor, "cleanup_and_verify", return_value=0) as cleanup:
-                    if reason == "heartbeat-stale":
-                        self.heartbeat.unlink()
-                        supervisor.state["startedAt"] = "2000-01-01T00:00:00Z"
-                        supervisor.state["phase"] = "PRECHECK"
-                    else:
-                        supervisor.state["deadline"] = "2000-01-01T00:00:00Z"
-                        supervisor.state["phase"] = "PRECHECK"
-                    with mock.patch.object(supervisor, "run_checked"), \
-                         mock.patch.object(lifecycle.subprocess, "Popen", return_value=supervisor.child), \
-                         mock.patch.object(lifecycle.os, "getpgid", return_value=4321):
-                        supervisor.run()
-                    cleanup.assert_called_once()
-                    expected = "absolute-deadline-before-mutation" if reason == "absolute-deadline" else reason
-                    self.assertIn(expected, cleanup.call_args.args)
+                supervisor = self.make_supervisor()
+                if reason == "heartbeat-stale":
+                    self.heartbeat.unlink(missing_ok=True)
+                    supervisor.state["startedAt"] = "2000-01-01T00:00:00Z"
+                else:
+                    supervisor.state["deadline"] = "2000-01-01T00:00:00Z"
+                lifecycle.atomic_json(self.state, supervisor.state)
+                self.args.mutation_command = [sys.executable, "-c", "import time; time.sleep(30)"]
+                with mock.patch.object(lifecycle.Supervisor, "run_owned_command", return_value=mock.Mock(returncode=0)):
+                    self.assertEqual(supervisor.run(), 1)
+                expected = "absolute-deadline-before-mutation" if reason == "absolute-deadline" else reason
+                self.assertEqual(json.loads(self.state.read_text())["stopReason"], expected)
+
 
     def test_cleanup_timeout_leaves_durable_cleaning_phase_for_restart(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.transition("MUTATING", mutationPgid=None)
         with mock.patch.object(
-            lifecycle.subprocess,
-            "run",
+            lifecycle.Supervisor,
+            "run_owned_command",
             side_effect=lifecycle.subprocess.TimeoutExpired(["cleanup"], 900),
         ):
             with self.assertRaises(lifecycle.subprocess.TimeoutExpired):
@@ -487,7 +491,7 @@ class SupervisorTests(unittest.TestCase):
     def test_noncanonical_run_root_and_state_path_are_rejected(self):
         self.args.run_root = Path(self.temp.name)
         with self.assertRaisesRegex(lifecycle.SupervisorError, "run root must be exactly"):
-            lifecycle.Supervisor(self.args)
+            self.make_supervisor()
 
     def test_restart_detects_source_tamper_and_cleanup_uses_pinned_inputs(self):
         run_root = Path(self.temp.name) / "canonical-fixture"
@@ -517,7 +521,7 @@ class SupervisorTests(unittest.TestCase):
         self.args.state = run_root / "evidence/lifecycle/supervisor-state.json"
         self.state = self.args.state
         with mock.patch.object(lifecycle.Supervisor, "validate_run_root", return_value=run_root):
-            first = lifecycle.Supervisor(self.args)
+            first = self.make_supervisor()
             first.transition("MUTATING", mutationPgid=None)
             pinned_token = Path(first.state["inputs"]["pveTokenTfvars"]["pinned"])
             self.assertEqual(pinned_token.read_text(encoding="utf-8"), "pve-token.tfvars")
@@ -531,7 +535,7 @@ class SupervisorTests(unittest.TestCase):
             self.assertEqual(pinned_ca.read_text(encoding="utf-8"), "pve-ca.pem")
             inputs["pve_token_tfvars"].unlink()
             inputs["pve_ca_pem"].unlink()
-            restarted = lifecycle.Supervisor(self.args)
+            restarted = self.make_supervisor()
         self.assertTrue(restarted.state["sourceInputTamperDetected"])
         observed = []
 
@@ -545,7 +549,7 @@ class SupervisorTests(unittest.TestCase):
                 "ROUTERD_RELEASE_QA_PINNED_PVE_CA_PEM")})
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=run):
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=run):
             self.assertEqual(restarted.cleanup_and_verify("supervisor-restart"), 1)
         self.assertEqual(len(observed), 3)
         self.assertTrue(all("/pinned/" in value for env in observed for value in env.values()))
@@ -563,10 +567,10 @@ class SupervisorTests(unittest.TestCase):
         lifecycle.atomic_json(self.state, durable)
         with mock.patch.object(lifecycle.Supervisor, "validate_run_root", return_value=run_root):
             with self.assertRaisesRegex(lifecycle.SupervisorError, "differs from the pinned contract"):
-                lifecycle.Supervisor(self.args)
+                self.make_supervisor()
 
     def test_past_paid_deadline_and_many_failures_never_cap_cleanup_recovery(self):
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         supervisor.transition("MUTATING", mutationPgid=None)
         supervisor.state["paidDeadline"] = "2000-01-01T00:00:00Z"
         supervisor.state["cleanupAttempts"] = 9
@@ -577,7 +581,7 @@ class SupervisorTests(unittest.TestCase):
             calls.append(command[0])
             return mock.Mock(returncode=1)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=failed_cleanup):
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=failed_cleanup):
             self.assertEqual(supervisor.cleanup_and_verify("supervisor-restart"), 2)
         self.assertEqual(calls, ["cleanup", "inventory"])
         durable = json.loads(self.state.read_text())
@@ -587,14 +591,14 @@ class SupervisorTests(unittest.TestCase):
         # once inventory independently confirms zero.
         durable["phase"] = "CLEANING"
         lifecycle.atomic_json(self.state, durable)
-        restarted = lifecycle.Supervisor(self.args)
+        restarted = self.make_supervisor()
         calls.clear()
 
         def recovered(command, check=False, timeout=None):
             calls.append(command[0])
             return mock.Mock(returncode=0)
 
-        with mock.patch.object(lifecycle.subprocess, "run", side_effect=recovered):
+        with mock.patch.object(lifecycle.Supervisor, "run_owned_command", side_effect=recovered):
             self.assertEqual(restarted.run(), 1)
         self.assertEqual(calls, ["cleanup", "inventory", "post-zero"])
         self.assertEqual(json.loads(self.state.read_text())["inventoryExit"], 0)
@@ -631,7 +635,7 @@ class SupervisorTests(unittest.TestCase):
         self.args.inventory_command = ["/bin/true"]
         self.args.post_zero_command = ["/bin/true"]
         self.args.term_grace_seconds = 1
-        supervisor = lifecycle.Supervisor(self.args)
+        supervisor = self.make_supervisor()
         def request_stop():
             deadline = time.monotonic() + 2
             while not child_pid.exists() and time.monotonic() < deadline:
