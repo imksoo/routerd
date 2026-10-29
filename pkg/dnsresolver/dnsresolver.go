@@ -3,6 +3,8 @@
 package dnsresolver
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -15,11 +17,28 @@ import (
 )
 
 const DaemonKind = "routerd-dns-resolver"
+const ConfigDigestHeader = "X-Routerd-Config-Digest"
 
 type RuntimeConfig struct {
 	Resource string              `json:"resource"`
 	Spec     api.DNSResolverSpec `json:"spec"`
 	Zones    []RuntimeZone       `json:"zones,omitempty"`
+}
+
+// Digest identifies the normalized configuration at the worker IPC boundary.
+func (config RuntimeConfig) Digest() (string, error) {
+	data, err := json.Marshal(config)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data)), nil
+}
+
+type ReloadResult struct {
+	Reloaded     bool   `json:"reloaded"`
+	ConfigDigest string `json:"configDigest"`
+	Listeners    int    `json:"listeners"`
+	Sources      int    `json:"sources"`
 }
 
 type RuntimeZone struct {

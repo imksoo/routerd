@@ -5,6 +5,7 @@ package dnsresolver
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,9 @@ import (
 // generated runtime files across recovery and renumbering, without a host
 // daemon or live network. This does not claim DNS packet or HA coverage.
 func TestReconcileDNSZoneSourcesSurviveRecoveryAndRenumbering(t *testing.T) {
+	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ackResolverReload(t, w, r, true)
+	}))
 	for _, representation := range []string{"typed", "pointer", "json"} {
 		t.Run(representation, func(t *testing.T) {
 			declaredRecord := api.DNSZoneRecordSpec{

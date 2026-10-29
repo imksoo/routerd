@@ -379,3 +379,35 @@ func TestFreeBSDFIBSyncerIPv6MultipathRetainAndRejectsScopedNextHop(t *testing.T
 
 func mustFreeBSDAddr(value string) netip.Addr     { return netip.MustParseAddr(value) }
 func mustFreeBSDPrefix(value string) netip.Prefix { return netip.MustParsePrefix(value) }
+
+func TestFreeBSDClearBGPRemovesRetainedOwnedRoutesAndRetries(t *testing.T) {
+	var commands [][]string
+	failed := true
+	run := func(_ context.Context, path string, args ...string) ([]byte, error) {
+		commands = append(commands, append([]string{path}, args...))
+		if path == freeBSDNetstatPath {
+			return []byte("Destination Gateway Flags Netif\n10.77.60.0/24 192.0.2.1 UG1 vtnet0\n10.77.61.0/24 192.0.2.9 UG vtnet0\n"), nil
+		}
+		if failed {
+			return nil, errors.New("delete interrupted")
+		}
+		return nil, nil
+	}
+	s := newFreeBSDFIBSyncer(run)
+	s.retainOnMissing["10.77.60.0/24"] = true
+	if err := s.ClearBGP(context.Background()); err == nil {
+		t.Fatal("route deletion failure was swallowed")
+	}
+	failed, commands = false, nil
+	if err := s.ClearBGP(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{freeBSDNetstatPath, "-rn", "-f", "inet"},
+		{freeBSDNetstatPath, "-rn", "-f", "inet6"},
+		{freeBSDRoutePath, "-n", "delete", "-proto1", "-net", "10.77.60.0/24", "192.0.2.1"},
+	}
+	if !reflect.DeepEqual(commands, want) || len(s.retainOnMissing) != 0 {
+		t.Fatalf("explicit removal commands = %#v, retained = %#v", commands, s.retainOnMissing)
+	}
+}

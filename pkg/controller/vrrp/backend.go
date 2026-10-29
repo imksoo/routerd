@@ -253,7 +253,20 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 		previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
 		startedAt := gracefulActivationStartedAt(previous, controllerNow(c))
 		status.StartedAt = startedAt
-		ready := resourcequery.ResourceWhenPresent(gate.ReadyWhen) && resourcequery.ResourceWhenMatches(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+		ready, readErr := resourcequery.ResourceWhenMatches(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+		if readErr != nil {
+			resultErr = errors.Join(resultErr, readErr)
+			continue
+		}
+		ready = resourcequery.ResourceWhenPresent(gate.ReadyWhen) && ready
+		var waitingFor []string
+		if !ready {
+			waitingFor, readErr = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+			if readErr != nil {
+				resultErr = errors.Join(resultErr, readErr)
+				continue
+			}
+		}
 		// Readiness gates admission, not continued ownership. Withdrawing a
 		// published VIP while keepalived remains MASTER prevents HA takeover
 		// and breaks even traffic with a usable alternative egress path.
@@ -262,7 +275,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 			status.State = "Ready"
 			if !ready {
 				status.Reason = "ReadinessDegraded"
-				status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+				status.WaitingFor = waitingFor
 			}
 			statuses[resource.Metadata.Name] = status
 			continue
@@ -278,7 +291,7 @@ func reconcileGracefulActivations(ctx context.Context, c *Controller, aliases ma
 				status.VIPAdvertised = false
 			}
 			status.State = "Preparing"
-			status.WaitingFor = gracefulActivationWaitingFor(gate.ReadyWhen, newVRRPWhenStore(c.Store))
+			status.WaitingFor = waitingFor
 			if controllerNow(c).Sub(startedAt) >= timeout {
 				status.State = "Failed"
 				status.Reason = "ReadinessTimeout"
@@ -328,29 +341,40 @@ func gracefulActivationStartedAt(previous map[string]any, now time.Time) time.Ti
 	return now
 }
 
-func gracefulActivationWaitingFor(when api.ResourceWhenSpec, store resourcequery.StateStore) []string {
+func gracefulActivationWaitingFor(when api.ResourceWhenSpec, store resourcequery.StateStore) ([]string, error) {
 	waiting := map[string]bool{}
-	var walk func(api.ResourceWhenSpec)
-	walk = func(current api.ResourceWhenSpec) {
+	var walk func(api.ResourceWhenSpec) error
+	walk = func(current api.ResourceWhenSpec) error {
 		for ref, match := range current.State {
-			if !resourcequery.StateMatch(store, ref, match) {
+			matches, err := resourcequery.StateMatch(store, ref, match)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				waiting[ref] = true
 			}
 		}
 		for _, child := range current.All {
-			walk(child)
+			if err := walk(child); err != nil {
+				return err
+			}
 		}
 		for _, child := range current.Any {
-			walk(child)
+			if err := walk(child); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
-	walk(when)
+	if err := walk(when); err != nil {
+		return nil, err
+	}
 	out := make([]string, 0, len(waiting))
 	for ref := range waiting {
 		out = append(out, ref)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 func controllerNow(c *Controller) time.Time {

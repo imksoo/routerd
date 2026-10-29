@@ -178,7 +178,11 @@ func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context, com
 			return err
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) || !spec.Managed {
+		eligible, err := resourcequery.ResourceWhenEligible(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || eligible || !spec.Managed {
 			continue
 		}
 		provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
@@ -626,7 +630,11 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		matches, err := resourcequery.ResourceWhenMatches(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		spec, err := resource.NTPServerSpec()

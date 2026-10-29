@@ -23,13 +23,23 @@ type PreviousPrefixSnapshot struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// Snapshot is intentionally plain and database-friendly. LAN-side controllers
-// should consume CurrentPrefix from here instead of knowing anything about
-// DHCPv6 transactions, OS clients, or service lifecycles.
+// PrefixSnapshot is the recovery record for one independently timed lease.
+type PrefixSnapshot struct {
+	Prefix     string    `json:"prefix"`
+	Preferred  int64     `json:"preferredSeconds"`
+	Valid      int64     `json:"validSeconds"`
+	AcquiredAt time.Time `json:"acquiredAt"`
+}
+
+// Snapshot retains the complete association for recovery. CurrentPrefix and
+// PreviousPrefixes are the LAN controller's primary and renumbering projection;
+// they are derived output, never an alternate source for lease restoration.
 type Snapshot struct {
 	Resource         string                   `json:"resource"`
 	Interface        string                   `json:"interface"`
 	State            State                    `json:"state"`
+	Prefixes         []PrefixSnapshot         `json:"prefixes,omitempty"`
+	LeaseUpdatedAt   time.Time                `json:"leaseUpdatedAt,omitempty"`
 	CurrentPrefix    string                   `json:"currentPrefix,omitempty"`
 	PreviousPrefixes []PreviousPrefixSnapshot `json:"previousPrefixes,omitempty"`
 	ServerDUID       string                   `json:"serverDUID,omitempty"`
@@ -48,133 +58,132 @@ type Snapshot struct {
 	SNTPServers      []string                 `json:"sntpServers,omitempty"`
 	DomainSearch     []string                 `json:"domainSearch,omitempty"`
 	InfoUpdatedAt    time.Time                `json:"infoUpdatedAt,omitempty"`
+	InfoRefreshAt    time.Time                `json:"infoRefreshAt,omitempty"`
+	InfoLastSentAt   time.Time                `json:"infoLastSentAt,omitempty"`
+	InfoPending      bool                     `json:"infoPending,omitempty"`
+	InfoStatusCode   uint16                   `json:"infoStatusCode,omitempty"`
+	InfoLastError    string                   `json:"infoLastError,omitempty"`
+	SOLMaxRTSeconds  int64                    `json:"solMaxRTSeconds,omitempty"`
+	INFMaxRTSeconds  int64                    `json:"infMaxRTSeconds,omitempty"`
 	UpdatedAt        time.Time                `json:"updatedAt"`
 	LastError        string                   `json:"lastError,omitempty"`
+	LastSentAt       time.Time                `json:"lastSentAt,omitempty"`
+	LastMessageType  uint8                    `json:"lastMessageType,omitempty"`
 }
 
 func (c *Client) Snapshot() Snapshot {
 	now := c.now()
-	s := Snapshot{
-		Resource:   c.Config.Resource,
-		Interface:  c.Config.Interface,
-		State:      c.State,
-		IAID:       c.Config.IAID,
-		ClientDUID: hex.EncodeToString(c.Config.ClientDUID),
-		UpdatedAt:  now,
+	s := Snapshot{Resource: c.Config.Resource, Interface: c.Config.Interface, State: c.State, IAID: c.Config.IAID,
+		ClientDUID: hex.EncodeToString(c.Config.ClientDUID), UpdatedAt: now, LastError: c.lastError, LastSentAt: c.lastSentAt, LastMessageType: c.lastMessageType,
+		InfoPending: c.infoExchange.active(), InfoStatusCode: c.Info.StatusCode, InfoLastError: c.Info.LastError,
+		SOLMaxRTSeconds: int64(c.solicitMaxRT / time.Second), INFMaxRTSeconds: int64(c.infoMaxRT / time.Second)}
+	current := currentPrefixAt(c.Lease.Prefixes, c.Lease.CurrentPrefix, now)
+	if !current.IsValid() && snapshotCarriesUsableLease(s.State) {
+		s.State = StateExpired
 	}
-	for _, previous := range c.PreviousPrefixes {
-		if !previous.Prefix.IsValid() || previous.Prefix == c.Lease.Prefix || !now.Before(previous.ExpiresAt) {
+	for _, p := range c.Lease.Prefixes {
+		if !now.Before(p.ExpiresAt()) {
 			continue
 		}
-		s.PreviousPrefixes = append(s.PreviousPrefixes, PreviousPrefixSnapshot{
-			Prefix:    previous.Prefix.String(),
-			ExpiresAt: previous.ExpiresAt,
-		})
+		s.Prefixes = append(s.Prefixes, PrefixSnapshot{Prefix: p.Prefix.String(), Preferred: int64(p.Preferred / time.Second), Valid: int64(p.Valid / time.Second), AcquiredAt: p.AcquiredAt})
+		if p.Prefix == current {
+			s.CurrentPrefix = p.Prefix.String()
+			s.Preferred = int64(p.Preferred / time.Second)
+			s.Valid = int64(p.Valid / time.Second)
+			s.AcquiredAt = p.AcquiredAt
+			s.ExpiresAt = p.ExpiresAt()
+		} else {
+			s.PreviousPrefixes = append(s.PreviousPrefixes, PreviousPrefixSnapshot{Prefix: p.Prefix.String(), ExpiresAt: p.ExpiresAt()})
+		}
 	}
-	if c.Lease.Prefix.IsValid() {
-		s.CurrentPrefix = c.Lease.Prefix.String()
+	if len(s.Prefixes) > 0 {
 		s.ServerDUID = hex.EncodeToString(c.Lease.ServerDUID)
-		s.IAID = c.Lease.IAID
+		s.LeaseUpdatedAt = c.Lease.AcquiredAt
 		s.T1Seconds = int64(c.Lease.T1 / time.Second)
 		s.T2Seconds = int64(c.Lease.T2 / time.Second)
-		s.Preferred = int64(c.Lease.Preferred / time.Second)
-		s.Valid = int64(c.Lease.Valid / time.Second)
-		s.AcquiredAt = c.Lease.AcquiredAt
 		s.RenewAt = c.Lease.RenewAt()
 		s.RebindAt = c.Lease.RebindAt()
-		s.ExpiresAt = c.Lease.ExpiresAt()
-	}
-	if c.Info.UpdatedAt.IsZero() {
-		return s
 	}
 	s.AFTRName = c.Info.AFTRName
 	s.DNSServers = addrStrings(c.Info.DNSServers)
 	s.SNTPServers = addrStrings(c.Info.SNTPServers)
 	s.DomainSearch = append([]string(nil), c.Info.DomainSearch...)
+	s.InfoLastSentAt = c.Info.LastSentAt
 	s.InfoUpdatedAt = c.Info.UpdatedAt
+	s.InfoRefreshAt = c.Info.RefreshAt
 	return s
 }
 
 func (c *Client) Restore(snapshot Snapshot) {
+	c.State = StateIdle
+	c.Lease = Lease{}
+	c.prefixExchange = exchange{}
+	c.infoExchange = exchange{}
+	if !snapshotMatchesConfig(snapshot, c.Config) {
+		return
+	}
+	c.restoreInformation(snapshot)
+	c.lastError = snapshot.LastError
+	c.lastSentAt, c.lastMessageType = snapshot.LastSentAt, snapshot.LastMessageType
 	now := c.now()
-	if snapshotCarriesUsableLease(snapshot.State) && !snapshotMatchesConfig(snapshot, c.Config, now) {
-		c.State = StateIdle
-		c.Lease = Lease{}
-		c.PreviousPrefixes = nil
-		c.restoreInformation(snapshot)
+	if !snapshotCarriesUsableLease(snapshot.State) {
 		return
 	}
-	c.State = snapshot.State
-	if c.State == "" {
-		c.State = StateIdle
-	}
-	if snapshot.CurrentPrefix == "" {
-		c.Lease = Lease{}
-		c.PreviousPrefixes = nil
-		c.restoreInformation(snapshot)
+	serverDUID, err := hex.DecodeString(snapshot.ServerDUID)
+	if err != nil || len(serverDUID) == 0 || len(serverDUID) > 130 || snapshot.LeaseUpdatedAt.IsZero() || snapshot.LeaseUpdatedAt.After(now) || snapshot.T1Seconds <= 0 || snapshot.T2Seconds <= 0 || snapshot.T1Seconds > snapshot.T2Seconds || snapshot.T2Seconds > 0xffffffff {
 		return
 	}
-	prefix, err := netip.ParsePrefix(snapshot.CurrentPrefix)
-	if err != nil {
-		c.State = StateExpired
-		c.Lease = Lease{}
-		c.PreviousPrefixes = nil
-		c.restoreInformation(snapshot)
-		return
-	}
-	serverDUID, _ := hex.DecodeString(snapshot.ServerDUID)
-	c.Lease = Lease{
-		Prefix:     prefix,
-		ServerDUID: serverDUID,
-		IAID:       snapshot.IAID,
-		T1:         time.Duration(snapshot.T1Seconds) * time.Second,
-		T2:         time.Duration(snapshot.T2Seconds) * time.Second,
-		Preferred:  time.Duration(snapshot.Preferred) * time.Second,
-		Valid:      time.Duration(snapshot.Valid) * time.Second,
-		AcquiredAt: snapshot.AcquiredAt,
-		RenewedAt:  snapshot.UpdatedAt,
-	}
-	previous := make(map[netip.Prefix]time.Time, len(snapshot.PreviousPrefixes))
-	for _, entry := range snapshot.PreviousPrefixes {
+	lease := Lease{ServerDUID: serverDUID, IAID: snapshot.IAID, T1: seconds(uint32(snapshot.T1Seconds)), T2: seconds(uint32(snapshot.T2Seconds)), AcquiredAt: snapshot.LeaseUpdatedAt}
+	seen := make(map[netip.Prefix]bool, len(snapshot.Prefixes))
+	for _, entry := range snapshot.Prefixes {
 		prefix, err := netip.ParsePrefix(entry.Prefix)
-		if err != nil || prefix == c.Lease.Prefix || !now.Before(entry.ExpiresAt) {
+		if err != nil || !prefix.Addr().Is6() || prefix.Addr().Is4In6() || entry.Preferred < 0 || entry.Preferred > entry.Valid || entry.Valid > 0xffffffff || entry.AcquiredAt.IsZero() || entry.AcquiredAt.After(now) {
 			continue
 		}
-		previous[prefix] = entry.ExpiresAt
+		prefix = prefix.Masked()
+		if seen[prefix] || len(lease.Prefixes) >= maxDelegatedPrefixes {
+			continue
+		}
+		p := PrefixLease{Prefix: prefix, Preferred: seconds(uint32(entry.Preferred)), Valid: seconds(uint32(entry.Valid)), AcquiredAt: entry.AcquiredAt}
+		if !now.Before(p.ExpiresAt()) {
+			continue
+		}
+		seen[prefix] = true
+		lease.Prefixes = append(lease.Prefixes, p)
 	}
-	c.setPreviousPrefixes(previous)
-	c.restoreInformation(snapshot)
+	if len(lease.Prefixes) == 0 {
+		return
+	}
+	lease.CurrentPrefix, _ = netip.ParsePrefix(snapshot.CurrentPrefix)
+	c.Lease = lease
+	c.selectCurrent(now)
+	c.State = snapshot.State
 }
 
 func snapshotCarriesUsableLease(state State) bool {
 	return state == StateBound || state == StateRenewing || state == StateRebinding
 }
 
-func snapshotMatchesConfig(snapshot Snapshot, config Config, now time.Time) bool {
-	if snapshot.Resource != config.Resource || snapshot.CurrentPrefix == "" || snapshot.Interface != config.Interface || snapshot.IAID != config.IAID {
+func snapshotMatchesConfig(snapshot Snapshot, config Config) bool {
+	if snapshot.Resource != config.Resource || snapshot.Interface != config.Interface || snapshot.IAID != config.IAID {
 		return false
 	}
 	duid, err := hex.DecodeString(snapshot.ClientDUID)
-	if err != nil || len(duid) == 0 || !bytes.Equal(duid, config.ClientDUID) {
-		return false
-	}
-	if _, err := netip.ParsePrefix(snapshot.CurrentPrefix); err != nil {
-		return false
-	}
-	expiresAt := snapshot.ExpiresAt
-	if expiresAt.IsZero() && snapshot.Valid > 0 && !snapshot.AcquiredAt.IsZero() {
-		expiresAt = snapshot.AcquiredAt.Add(time.Duration(snapshot.Valid) * time.Second)
-	}
-	return !expiresAt.IsZero() && now.Before(expiresAt)
+	return err == nil && len(duid) > 0 && bytes.Equal(duid, config.ClientDUID)
 }
 
 func (c *Client) restoreInformation(snapshot Snapshot) {
-	c.Info = Information{
-		AFTRName:     snapshot.AFTRName,
-		DNSServers:   parseAddrStrings(snapshot.DNSServers),
-		SNTPServers:  parseAddrStrings(snapshot.SNTPServers),
-		DomainSearch: append([]string(nil), snapshot.DomainSearch...),
-		UpdatedAt:    snapshot.InfoUpdatedAt,
+	c.Info = Information{AFTRName: snapshot.AFTRName, DNSServers: parseAddrStrings(snapshot.DNSServers), SNTPServers: parseAddrStrings(snapshot.SNTPServers), DomainSearch: append([]string(nil), snapshot.DomainSearch...), UpdatedAt: snapshot.InfoUpdatedAt, LastSentAt: snapshot.InfoLastSentAt, RefreshAt: snapshot.InfoRefreshAt, StatusCode: snapshot.InfoStatusCode, LastError: snapshot.InfoLastError}
+	// Recover an interrupted command as a fresh exchange, without persisting or
+	// replaying the old transaction identifier after a process restart.
+	if snapshot.InfoPending {
+		c.Info.RefreshAt = c.now()
+	}
+	if snapshot.SOLMaxRTSeconds >= 60 && snapshot.SOLMaxRTSeconds <= 86400 {
+		c.solicitMaxRT = time.Duration(snapshot.SOLMaxRTSeconds) * time.Second
+	}
+	if snapshot.INFMaxRTSeconds >= 60 && snapshot.INFMaxRTSeconds <= 86400 {
+		c.infoMaxRT = time.Duration(snapshot.INFMaxRTSeconds) * time.Second
 	}
 }
 

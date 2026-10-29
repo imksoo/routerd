@@ -25,6 +25,7 @@ type Value struct {
 
 type Reader interface {
 	Get(name string) Value
+	ReadVariable(name string) (Value, error)
 	Age(name string) time.Duration
 	Now() time.Time
 	Variables() map[string]Value
@@ -254,6 +255,15 @@ func (s *MemoryStore) Get(name string) Value {
 	return value
 }
 
+func (s *MemoryStore) ReadVariable(name string) (Value, error) {
+	return s.Get(name), nil
+}
+
+// MemoryStore contains variables only; an object status is an absent observation.
+func (s *MemoryStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return nil, nil
+}
+
 func (s *MemoryStore) Set(name, value, reason string) (Value, error) {
 	if value == "" {
 		return s.Unset(name, reason)
@@ -301,6 +311,10 @@ func (s *MemoryStore) Variables() map[string]Value {
 	}
 	return out
 }
+
+// MemoryStore retains variables, not object status rows. Its enumeration is an
+// observed empty set rather than an unavailable capability.
+func (s *MemoryStore) ListObjectStatuses() ([]ObjectStatus, error) { return nil, nil }
 
 func (s *MemoryStore) DeleteObject(apiVersion, kind, name string) error {
 	for key := range s.Values {

@@ -54,7 +54,6 @@ type GoBGPServer interface {
 	Stop()
 	GetBgp(context.Context, *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error)
 	StartBgp(context.Context, *gobgpapi.StartBgpRequest) error
-	StopBgp(context.Context, *gobgpapi.StopBgpRequest) error
 	AddPeer(context.Context, *gobgpapi.AddPeerRequest) error
 	UpdatePeer(context.Context, *gobgpapi.UpdatePeerRequest) (*gobgpapi.UpdatePeerResponse, error)
 	ResetPeer(context.Context, *gobgpapi.ResetPeerRequest) error
@@ -81,6 +80,7 @@ type GoBGPServer interface {
 
 type FIBSyncer interface {
 	SyncBGP(ctx context.Context, routes []FIBRoute) (FIBSyncResult, error)
+	ClearBGP(ctx context.Context) error
 }
 
 type FIBRoute struct {
@@ -102,6 +102,14 @@ type FIBSyncResult struct {
 
 const MinPollInterval = 3 * time.Second
 
+type removalState uint8
+
+const (
+	removalUnseen removalState = iota
+	removalInProgress
+	removalCompleted
+)
+
 type Controller struct {
 	Router *routerapi.Router
 	Bus    *bus.Bus
@@ -116,12 +124,17 @@ type Controller struct {
 	NewServer func() GoBGPServer
 	Daemon    manageddaemon.Spec
 	FIB       FIBSyncer
+	// StopDaemon acknowledges this actor's process supervisor stop. The
+	// managed helper path is provenance when no applied checkpoint exists yet.
+	StopDaemon        func(context.Context) error
+	ManagedHelperPath string
 
 	MaxPrefixes         int
 	WatchReconnectDelay time.Duration
 
 	mu        sync.Mutex
 	started   bool
+	removal   removalState
 	startedAt time.Time
 	globalKey string
 	// policyKey covers both import and export policy objects. importPolicyKey
@@ -214,6 +227,15 @@ const (
 	bfdResetBackoffMax  = 30 * time.Second
 )
 
+// ReconcileRouter changes the actor's configuration under the same ownership
+// lock as peer watches, FIB reconciliation and removal.
+func (c *Controller) ReconcileRouter(ctx context.Context, router *routerapi.Router) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Router = router
+	return c.reconcileLocked(ctx)
+}
+
 func (c *Controller) Reconcile(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -224,17 +246,20 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	if !hasBGP(c.Router) {
-		c.stopServerLocked()
-		return nil
-	}
 	routers := c.bgpRouters()
 	if len(routers) == 0 {
-		return nil
+		return c.removeLocked(ctx, c.StopDaemon)
 	}
 	if len(routers) > 1 {
 		err := fmt.Errorf("routerd-bgp MVP supports one BGPRouter per router; found %d", len(routers))
 		return c.savePendingAll("GoBGPMultipleRoutersUnsupported", err)
+	}
+	pendingRemoval, err := bgpdaemon.RemovalPending(c.daemonSpec().StatePath)
+	if err != nil {
+		return err
+	}
+	if c.removal == removalInProgress || pendingRemoval {
+		return fmt.Errorf("BGP removal awaits supervisor cleanup")
 	}
 	routerResource := routers[0]
 	routerSpec, err := routerResource.BGPRouterSpec()
@@ -403,12 +428,82 @@ func (c *Controller) reconcileLocked(ctx context.Context) error {
 	return nil
 }
 
+// Remove records one pending removal before the process supervisor stops the
+// daemon. The acknowledged stop fences its state writer; only then may this
+// owner clear retained kernel routes and remove the old restart checkpoint.
+func (c *Controller) Remove(ctx context.Context, stop func(context.Context) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.removeLocked(ctx, stop)
+}
+
+// PendingRemoval includes an uncertain completion still owned by this actor,
+// even if the final directory sync failed after unlinking the on-disk intent.
+func (c *Controller) PendingRemoval() (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pending, err := bgpdaemon.RemovalPending(c.daemonSpec().StatePath)
+	return c.removal == removalInProgress || pending, err
+}
+
+func (c *Controller) removeLocked(ctx context.Context, stop func(context.Context) error) error {
+	if c.DryRun {
+		return nil
+	}
+	path := c.daemonSpec().StatePath
+	pending, err := bgpdaemon.RemovalPending(path)
+	if err != nil {
+		return err
+	}
+	_, statErr := os.Stat(path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if os.IsNotExist(statErr) && !pending && c.removal == removalCompleted {
+		return nil
+	}
+	managed := c.removal == removalInProgress || c.started || c.Server != nil
+	if c.ManagedHelperPath != "" {
+		_, helperErr := os.Stat(c.ManagedHelperPath)
+		if helperErr != nil && !os.IsNotExist(helperErr) {
+			return helperErr
+		}
+		managed = managed || helperErr == nil
+	}
+	if os.IsNotExist(statErr) && !pending && !managed {
+		return nil
+	}
+	if stop == nil {
+		return fmt.Errorf("BGP removal requires an acknowledged supervisor stop")
+	}
+	if err := bgpdaemon.BeginRemoval(path); err != nil {
+		return fmt.Errorf("record pending BGP removal: %w", err)
+	}
+	c.removal = removalInProgress
+	if err := stop(ctx); err != nil {
+		return fmt.Errorf("stop removed BGP daemon: %w", err)
+	}
+	if c.FIB == nil {
+		c.FIB = defaultFIBSyncer()
+	}
+	if err := c.FIB.ClearBGP(ctx); err != nil {
+		return fmt.Errorf("clear removed BGP FIB: %w", err)
+	}
+	if err := bgpdaemon.CompleteRemoval(path); err != nil {
+		return fmt.Errorf("complete BGP removal: %w", err)
+	}
+	c.stopServerLocked()
+	c.removal = removalCompleted
+	return nil
+}
+
 func (c *Controller) stopServerLocked() {
 	if c.Server != nil {
 		c.Server.Stop()
 		c.Server = nil
 	}
 	c.started = false
+	c.removal = removalUnseen
 	c.startedAt = time.Time{}
 	c.globalKey = ""
 	c.policyKey = ""
@@ -486,7 +581,7 @@ func (c *Controller) watchBestPathEvents(ctx context.Context) error {
 }
 
 func (c *Controller) observeAndSyncFromWatchLocked(ctx context.Context) error {
-	if c.Router == nil || c.Store == nil || c.Server == nil || c.DryRun {
+	if c.Router == nil || c.Store == nil || c.Server == nil || c.DryRun || c.removal == removalInProgress || !c.started {
 		return nil
 	}
 	routers := c.bgpRouters()
@@ -644,6 +739,7 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 			return fmt.Errorf("managed GoBGP global config differs from desired BGPRouter; restart routerd-bgp during a maintenance window to change ASN/router-id/listen socket")
 		}
 		c.started = true
+		c.removal = removalUnseen
 		c.globalKey = key
 		return nil
 	}
@@ -651,6 +747,7 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 		return err
 	}
 	c.started = true
+	c.removal = removalUnseen
 	c.startedAt = time.Now().UTC()
 	c.globalKey = key
 	c.desiredPeerKeys = nil
@@ -659,7 +756,7 @@ func (c *Controller) ensureServer(ctx context.Context, spec routerapi.BGPRouterS
 }
 
 func (c *Controller) daemonSpec() manageddaemon.Spec {
-	if c.Daemon.Name != "" || c.Daemon.SocketPath != "" {
+	if c.Daemon != (manageddaemon.Spec{}) {
 		spec := DefaultDaemonSpec()
 		if c.Daemon.Name != "" {
 			spec.Name = c.Daemon.Name

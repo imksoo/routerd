@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -90,6 +91,9 @@ func parseOptions(name string, args []string) (options, error) {
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
+	if opts.timeout <= 0 {
+		return options{}, errors.New("--timeout must be positive")
+	}
 	if opts.ifname == "" {
 		return options{}, errors.New("--interface is required")
 	}
@@ -110,7 +114,7 @@ func parseOptions(name string, args []string) (options, error) {
 
 type dhcpv4PacketConn interface {
 	ReadFromUDP([]byte) (int, *net.UDPAddr, error)
-	WriteToUDP([]byte, *net.UDPAddr) (int, error)
+	Send(context.Context, dhcpv4client.Packet) error
 	SetReadDeadline(time.Time) error
 	Close() error
 }
@@ -127,7 +131,7 @@ func onceCommand(args []string, stdout io.Writer) error {
 		return err
 	}
 	defer d.conn.Close()
-	if err := d.acquire(ctx); err != nil {
+	if err := d.loop(ctx, true); err != nil {
 		return err
 	}
 	d.mu.Lock()
@@ -170,9 +174,9 @@ type dhcpv4Daemon struct {
 	startedAt  time.Time
 	mu         sync.Mutex
 	cond       *sync.Cond
-	state      dhcpv4client.State
-	xid        uint32
-	lease      dhcpv4client.Lease
+	client     *dhcpv4client.Client
+	lastError  string
+	dirty      bool
 	events     []daemonapi.DaemonEvent
 	nextCursor uint64
 
@@ -195,171 +199,140 @@ func newDaemon(opts options) (*dhcpv4Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &dhcpv4Daemon{opts: opts, ifi: ifi, conn: conn, startedAt: time.Now().UTC(), state: dhcpv4client.StateIdle}
+	d := &dhcpv4Daemon{opts: opts, ifi: ifi, conn: conn, startedAt: time.Now().UTC()}
+	d.client, err = dhcpv4client.New(d.config(), conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	d.cond = sync.NewCond(&d.mu)
 	return d, nil
 }
 
 func (d *dhcpv4Daemon) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
+	d.mu.Lock()
 	d.cancel = cancel
+	d.mu.Unlock()
 	defer cancel()
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
 	}
-	_ = d.restoreLease()
-	_ = d.restoreEvents()
+	if err := d.restoreLease(); err != nil {
+		return fmt.Errorf("restore DHCPv4 lease: %w", err)
+	}
+	if err := d.restoreEvents(); err != nil {
+		return fmt.Errorf("restore DHCPv4 events: %w", err)
+	}
 	server, listener, err := d.httpServer()
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 	defer func() {
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+		shutdown, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
 		if err := server.Shutdown(shutdown); err != nil {
 			_ = server.Close()
 		}
 	}()
-	go func() { _ = server.Serve(listener) }()
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+			cancel()
+		}
+	}()
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv4 client daemon started", nil)
-	if err := d.acquire(ctx); err != nil {
-		d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
-	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DHCPv4 client daemon is ready", nil)
-	buf := make([]byte, 1500)
-	nextAcquireAttempt := time.Now().Add(30 * time.Second)
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if d.shouldAcquire() && time.Now().After(nextAcquireAttempt) {
-			if err := d.acquire(ctx); err != nil {
-				d.publish("routerd.dhcpv4.client.acquire.failed", daemonapi.SeverityWarning, "AcquireFailed", err.Error(), nil)
-			}
-			nextAcquireAttempt = time.Now().Add(30 * time.Second)
-		}
-		if d.shouldRenew() {
-			if err := d.renew(ctx); err != nil {
-				d.publish("routerd.dhcpv4.client.renew.failed", daemonapi.SeverityWarning, "RenewFailed", err.Error(), nil)
-			}
-		}
-		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		n, _, err := d.conn.ReadFromUDP(buf)
-		if err != nil {
-			if timeoutError(err) {
-				continue
-			}
-			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ReadFailed", err.Error(), nil)
-			return err
-		}
-		_ = d.handlePacket(ctx, buf[:n])
-	}
-}
-
-func (d *dhcpv4Daemon) acquire(ctx context.Context) error {
-	d.mu.Lock()
-	d.state = dhcpv4client.StateDiscovering
-	d.xid = dhcpv4client.NewXID()
-	d.mu.Unlock()
-	if err := d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{}); err != nil {
-		return err
-	}
-	d.publish("routerd.dhcpv4.client.discover.sent", daemonapi.SeverityInfo, "DiscoverSent", "sent DHCPv4 Discover", nil)
-	deadline, _ := ctx.Deadline()
-	if deadline.IsZero() {
-		deadline = time.Now().Add(30 * time.Second)
-	}
-	buf := make([]byte, 1500)
-	for time.Now().Before(deadline) && ctx.Err() == nil {
-		_ = d.conn.SetReadDeadline(time.Now().Add(3 * time.Second))
-		n, _, err := d.conn.ReadFromUDP(buf)
-		if err != nil {
-			if timeoutError(err) {
-				_ = d.send(ctx, dhcpv4client.MessageDiscover, dhcpv4client.Message{})
-				continue
-			}
-			return err
-		}
-		msg, err := dhcpv4client.Decode(buf[:n])
-		if err != nil || msg.XID != d.xid {
-			continue
-		}
-		if msg.MessageType() == dhcpv4client.MessageOffer {
-			d.publish("routerd.dhcpv4.client.offer.received", daemonapi.SeverityInfo, "OfferReceived", "received DHCPv4 Offer", map[string]string{"address": msg.YIAddr.String()})
-			d.mu.Lock()
-			d.state = dhcpv4client.StateRequesting
-			d.mu.Unlock()
-			if err := d.send(ctx, dhcpv4client.MessageRequest, msg); err != nil {
-				return err
-			}
-			d.publish("routerd.dhcpv4.client.request.sent", daemonapi.SeverityInfo, "RequestSent", "sent DHCPv4 Request", nil)
-			continue
-		}
-		if msg.MessageType() == dhcpv4client.MessageACK {
-			return d.bind(ctx, msg)
-		}
-		if msg.MessageType() == dhcpv4client.MessageNAK {
-			return errors.New("DHCPv4 server returned NAK")
-		}
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return context.DeadlineExceeded
-}
-
-func (d *dhcpv4Daemon) renew(ctx context.Context) error {
-	d.mu.Lock()
-	d.state = dhcpv4client.StateRenewing
-	d.xid = dhcpv4client.NewXID()
-	d.mu.Unlock()
-	if d.renewCounter != nil {
-		d.renewCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
-	}
-	if err := d.send(ctx, dhcpv4client.MessageRequest, dhcpv4client.Message{}); err != nil {
-		return err
-	}
-	d.publish("routerd.dhcpv4.client.renew.sent", daemonapi.SeverityInfo, "RenewSent", "sent DHCPv4 Renew", nil)
-	return nil
-}
-
-func (d *dhcpv4Daemon) handlePacket(ctx context.Context, packet []byte) error {
-	msg, err := dhcpv4client.Decode(packet)
-	if err != nil || msg.XID != d.xid {
-		return nil
-	}
-	switch msg.MessageType() {
-	case dhcpv4client.MessageACK:
-		return d.bind(ctx, msg)
-	case dhcpv4client.MessageNAK:
-		d.mu.Lock()
-		d.state = dhcpv4client.StateExpired
-		d.mu.Unlock()
-		return d.saveLease()
+	err = d.loop(ctx, false)
+	select {
+	case err = <-serveErr:
 	default:
-		return nil
+	}
+	return err
+}
+
+// loop is the only receive/timer owner for both once and daemon execution.
+// Commands enter the same client/effect owner through advance.
+func (d *dhcpv4Daemon) loop(ctx context.Context, once bool) error {
+	if err := d.advance(ctx, d.client.Start); err != nil {
+		if once {
+			return err
+		}
+		d.publish("routerd.dhcpv4.client.exchange.failed", daemonapi.SeverityWarning, "SendFailed", err.Error(), nil)
+	}
+	buf := make([]byte, 65535)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := d.advance(ctx, d.client.Tick); err != nil {
+			d.publish("routerd.dhcpv4.client.exchange.failed", daemonapi.SeverityWarning, "ExchangeFailed", err.Error(), nil)
+		}
+		d.mu.Lock()
+		bound := d.snapshotLocked().State == dhcpv4client.StateBound
+		next := d.client.NextDeadline()
+		d.mu.Unlock()
+		if once && bound {
+			return nil
+		}
+		deadline := time.Now().Add(500 * time.Millisecond)
+		if !next.IsZero() && next.Before(deadline) {
+			deadline = next
+		}
+		if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
+			deadline = end
+		}
+		if err := d.conn.SetReadDeadline(deadline); err != nil {
+			return err
+		}
+		n, _, err := d.conn.ReadFromUDP(buf)
+		if err != nil {
+			if timeoutError(err) {
+				continue
+			}
+			return err
+		}
+		if err := d.advance(ctx, func(ctx context.Context) error { return d.client.Receive(ctx, buf[:n]) }); err != nil {
+			d.publish("routerd.dhcpv4.client.exchange.failed", daemonapi.SeverityWarning, "ReplyFailed", err.Error(), nil)
+		}
 	}
 }
 
-func (d *dhcpv4Daemon) bind(_ context.Context, msg dhcpv4client.Message) error {
-	lease := dhcpv4client.LeaseFromACK(msg, time.Now().UTC())
+// advance serializes protocol decisions, sends, lease persistence and result
+// publication. HTTP handlers cannot interleave an exchange with a timer or ACK.
+func (d *dhcpv4Daemon) advance(ctx context.Context, operation func(context.Context) error) error {
 	d.mu.Lock()
-	d.lease = lease
-	d.state = dhcpv4client.StateBound
-	d.mu.Unlock()
-	if err := d.saveLease(); err != nil {
-		return err
+	defer d.mu.Unlock()
+	before := d.snapshotLocked()
+	err := operation(ctx)
+	after := d.snapshotLocked()
+	changed := before.State != after.State || before.CurrentAddress != after.CurrentAddress || !before.AcquiredAt.Equal(after.AcquiredAt) || before.ServerID != after.ServerID
+	if changed && err == nil {
+		d.lastError = ""
 	}
-	d.publish("routerd.dhcpv4.client.lease.bound", daemonapi.SeverityInfo, "LeaseBound", "DHCPv4 lease bound", map[string]string{"address": lease.Address.String(), "gateway": lease.DefaultGateway.String()})
-	return nil
-}
-
-func (d *dhcpv4Daemon) send(ctx context.Context, msgType byte, reply dhcpv4client.Message) error {
-	opts := dhcpv4client.RequestOptions(d.config(), reply)
-	packet := dhcpv4client.EncodeRequest(msgType, d.xid, d.ifi.HardwareAddr, opts)
-	_, err := d.conn.WriteToUDP(packet, &net.UDPAddr{IP: net.IPv4bcast, Port: 67})
+	if err != nil {
+		d.lastError = err.Error()
+	}
+	if changed || before.LastError != d.lastError {
+		d.dirty = true
+	}
+	if d.dirty {
+		if saveErr := d.saveLeaseLocked(); saveErr != nil {
+			d.lastError = saveErr.Error()
+			err = errors.Join(err, saveErr)
+		} else {
+			d.dirty = false
+		}
+	}
+	if changed {
+		if after.State == dhcpv4client.StateRenewing && d.renewCounter != nil {
+			d.renewCounter.Add(ctx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
+		}
+		d.publishLocked("routerd.dhcpv4.client.lease.changed", daemonapi.SeverityInfo, string(after.State), "DHCPv4 lease state changed", map[string]string{"state": string(after.State), "address": after.CurrentAddress})
+	}
 	return err
 }
 
@@ -367,26 +340,9 @@ func (d *dhcpv4Daemon) config() dhcpv4client.Config {
 	return dhcpv4client.Config{Resource: d.opts.resource, Interface: d.opts.ifname, HardwareAddr: d.ifi.HardwareAddr, Hostname: d.opts.hostname, RequestedAddress: d.opts.requestedAddress, ClassID: d.opts.classID, ClientID: d.opts.clientID}
 }
 
-func (d *dhcpv4Daemon) shouldRenew() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.state == dhcpv4client.StateBound && !d.lease.RenewAt().IsZero() && time.Now().After(d.lease.RenewAt())
-}
-
-func (d *dhcpv4Daemon) shouldAcquire() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	switch d.state {
-	case dhcpv4client.StateBound, dhcpv4client.StateRenewing, dhcpv4client.StateRebinding:
-		return false
-	default:
-		return true
-	}
-}
-
 func (d *dhcpv4Daemon) snapshotLocked() dhcpv4client.Snapshot {
-	now := time.Now().UTC()
-	s := dhcpv4client.SnapshotFromLease(d.opts.resource, d.opts.ifname, d.state, d.lease, now)
+	s := d.client.Snapshot()
+	s.LastError = d.lastError
 	return s
 }
 
@@ -406,16 +362,12 @@ func (d *dhcpv4Daemon) restoreLease() error {
 		return err
 	}
 	d.mu.Lock()
-	d.state = snapshot.State
-	d.lease = dhcpv4client.LeaseFromSnapshot(snapshot)
-	d.mu.Unlock()
-	return nil
+	defer d.mu.Unlock()
+	return d.client.Restore(snapshot)
 }
 
-func (d *dhcpv4Daemon) saveLease() error {
-	d.mu.Lock()
+func (d *dhcpv4Daemon) saveLeaseLocked() error {
 	snapshot := d.snapshotLocked()
-	d.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(d.opts.leaseFile), 0755); err != nil {
 		return err
 	}
@@ -466,20 +418,25 @@ func (d *dhcpv4Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	status := daemonapi.NewStatus(d.daemonRef())
 	status.Phase = daemonapi.PhaseRunning
 	status.Health = daemonapi.HealthOK
+	if snapshot.LastError != "" {
+		status.Health = daemonapi.HealthDegraded
+	}
 	status.Since = d.startedAt
 	status.Resources = []daemonapi.ResourceStatus{{
 		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Client", Name: d.opts.resource},
 		Phase:    resourcePhase(snapshot.State),
-		Health:   daemonapi.HealthOK,
+		Health:   status.Health,
 		Since:    snapshot.UpdatedAt,
 		Conditions: []daemonapi.Condition{{
 			Type:               "LeaseReady",
-			Status:             conditionStatus(snapshot.State == dhcpv4client.StateBound),
+			Status:             conditionStatus(snapshot.CurrentAddress != ""),
 			Reason:             string(snapshot.State),
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
 		Observed: map[string]string{
 			"interface":      snapshot.Interface,
+			"leaseState":     string(snapshot.State),
+			"lastError":      snapshot.LastError,
 			"currentAddress": snapshot.CurrentAddress,
 			"prefixLength":   strconv.Itoa(snapshot.PrefixLength),
 			"defaultGateway": snapshot.DefaultGateway,
@@ -499,6 +456,12 @@ func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	since := r.URL.Query().Get("since")
 	wait := eventWait(r)
 	deadline := time.Now().Add(wait)
+	stop := context.AfterFunc(r.Context(), func() {
+		d.mu.Lock()
+		d.cond.Broadcast()
+		d.mu.Unlock()
+	})
+	defer stop()
 	if wait > 0 {
 		timer := time.AfterFunc(wait, func() {
 			d.mu.Lock()
@@ -510,7 +473,7 @@ func (d *dhcpv4Daemon) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		d.mu.Lock()
 		events, cursor := d.eventsSinceLocked(since, topic)
-		if len(events) > 0 || wait == 0 || time.Now().After(deadline) {
+		if len(events) > 0 || wait == 0 || time.Now().After(deadline) || r.Context().Err() != nil {
 			d.mu.Unlock()
 			writeHTTPJSON(w, eventsResponse{Cursor: cursor, Events: events})
 			return
@@ -542,19 +505,21 @@ func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch command {
 	case daemonapi.CommandRenew:
-		err = d.renew(r.Context())
+		err = d.advance(r.Context(), d.client.Renew)
 	case daemonapi.CommandRelease:
-		d.mu.Lock()
-		d.state = dhcpv4client.StateReleased
-		d.mu.Unlock()
-		err = d.saveLease()
+		err = d.advance(r.Context(), d.client.Release)
+	case daemonapi.CommandStart:
+		err = d.advance(r.Context(), d.client.Start)
 	case daemonapi.CommandReload:
 		err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
 	case daemonapi.CommandStop:
-		if d.cancel == nil {
+		d.mu.Lock()
+		cancel := d.cancel
+		d.mu.Unlock()
+		if cancel == nil {
 			err = errors.New("daemon is not running")
 		} else {
-			defer d.cancel()
+			defer cancel()
 		}
 	default:
 		err = fmt.Errorf("unknown command %q", command)
@@ -574,6 +539,10 @@ func (d *dhcpv4Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attrs map[string]string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.publishLocked(eventType, severity, reason, message, attrs)
+}
+
+func (d *dhcpv4Daemon) publishLocked(eventType, severity, reason, message string, attrs map[string]string) {
 	event := daemonapi.NewEvent(d.daemonRef(), eventType, severity)
 	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv4Client", Name: d.opts.resource}
 	event.Reason = reason
@@ -590,7 +559,9 @@ func (d *dhcpv4Daemon) publish(eventType, severity, reason, message string, attr
 }
 
 func (d *dhcpv4Daemon) appendEventFileLocked(event daemonapi.DaemonEvent) {
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
+	if err := eventfile.AppendJSONLine(d.opts.eventFile, event); err != nil {
+		slog.Warn("persist DHCPv4 client event", "resource", d.opts.resource, "error", err)
+	}
 }
 
 func (d *dhcpv4Daemon) restoreEvents() error {
@@ -609,6 +580,9 @@ func (d *dhcpv4Daemon) restoreEvents() error {
 			continue
 		}
 		d.events = append(d.events, event)
+		if len(d.events) > 1000 {
+			d.events = d.events[len(d.events)-1000:]
+		}
 		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > d.nextCursor {
 			d.nextCursor = id
 		}
@@ -640,14 +614,10 @@ func (d *dhcpv4Daemon) daemonRef() daemonapi.DaemonRef {
 
 func resourcePhase(state dhcpv4client.State) string {
 	switch state {
-	case dhcpv4client.StateBound:
+	case dhcpv4client.StateBound, dhcpv4client.StateRenewing, dhcpv4client.StateRebinding:
 		return daemonapi.ResourcePhaseBound
 	case dhcpv4client.StateDiscovering, dhcpv4client.StateRequesting:
 		return daemonapi.ResourcePhaseAcquiring
-	case dhcpv4client.StateRenewing:
-		return daemonapi.ResourcePhaseRefreshing
-	case dhcpv4client.StateRebinding:
-		return daemonapi.ResourcePhaseRebinding
 	case dhcpv4client.StateExpired:
 		return daemonapi.ResourcePhaseExpired
 	case dhcpv4client.StateReleased:

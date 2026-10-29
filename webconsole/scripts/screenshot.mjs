@@ -23,6 +23,7 @@ if (!existsSync(path.join(staticDir, "index.html"))) {
 await mkdir(outputDir, { recursive: true });
 
 let natResourceRevision = 0;
+let configRevision = 0;
 const connectionResourceRequests = [];
 
 const server = http.createServer(async (req, res) => {
@@ -89,40 +90,72 @@ try {
   expect(connectionResourceRequests.every(value => value === "1")).toBe(true);
   await direct.close();
   natResourceRevision = 0;
-  const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
-  await capture(page, "#overview", "overview-desktop.png");
-  await capture(page, "#routes", "routes-desktop.png");
-  await capture(page, "#controllers", "controllers-desktop.png");
-  await capture(page, "#connections", "connections-desktop.png");
-  const natTable = page.getByRole("table", { name: "DS-Lite NATエントリー数" });
-  await natTable.waitFor();
-  if (!(await natTable.innerText()).includes("701")) throw new Error("NAT summary must use full snapshot, not displayed entries");
-  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-b" }).innerText()).includes("0")) throw new Error("Successful snapshot must show zero for an idle tunnel");
-  if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-pending" }).innerText()).includes("未取得")) throw new Error("Unresolved tunnel must not show zero");
-  await capture(page, "#clients/inventory", "clients-desktop.png");
-  await capture(page, "#firewall/timeline", "firewall-desktop.png");
-  await capture(page, "#config", "config-desktop.png");
 
-  const mobile = await browser.newPage({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 2,
-    isMobile: true,
-    hasTouch: true,
-  });
-  await capture(mobile, "#overview", "overview-mobile.png");
-  await capture(mobile, "#routes", "routes-mobile.png");
-  await capture(mobile, "#connections", "connections-mobile.png");
-  await capture(mobile, "#clients/inventory", "clients-mobile.png");
+  // Navigate after mounting: polling must request the current view, and config
+  // refresh must pick up canonical changes made through another management path.
+  const navigated = await browser.newPage();
+  await navigated.clock.install();
+  await navigated.goto(`${baseURL}#overview`);
+  await expect(navigated.locator("main")).toBeVisible();
+  await expect(navigated.getByText(/^Updated/)).toBeVisible();
+  await navigated.evaluate(() => { window.location.hash = "connections"; });
+  await navigated.clock.fastForward(1000);
+  const navigatedNAT = navigated.getByRole("table", { name: "DS-Lite NATエントリー数" });
+  await expect(navigatedNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("701");
+  const requestsBeforeNavigationPoll = connectionResourceRequests.length;
+  natResourceRevision = 1;
+  await navigated.clock.fastForward(30000);
+  await expect(navigatedNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("702");
+  expect(connectionResourceRequests.length).toBeGreaterThan(requestsBeforeNavigationPoll);
+  await navigated.evaluate(() => { window.location.hash = "config"; });
+  await navigated.clock.fastForward(1000);
+  await navigated.getByRole("button", { name: "Raw YAML", exact: true }).click();
+  await expect(navigated.locator("main pre")).toContainText("name: homert02");
+  configRevision = 1;
+  await navigated.clock.fastForward(30000);
+  await expect(navigated.locator("main pre")).toContainText("name: refreshed-router");
+  await navigated.close();
+  natResourceRevision = 0;
+  configRevision = 0;
+
+  if (!process.argv.includes("--check-refresh")) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 980 }, deviceScaleFactor: 1 });
+    await capture(page, "#overview", "overview-desktop.png");
+    await capture(page, "#routes", "routes-desktop.png");
+    await capture(page, "#controllers", "controllers-desktop.png");
+    await capture(page, "#connections", "connections-desktop.png");
+    const natTable = page.getByRole("table", { name: "DS-Lite NATエントリー数" });
+    await natTable.waitFor();
+    if (!(await natTable.innerText()).includes("701")) throw new Error("NAT summary must use full snapshot, not displayed entries");
+    if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-b" }).innerText()).includes("0")) throw new Error("Successful snapshot must show zero for an idle tunnel");
+    if (!(await natTable.getByRole("row").filter({ hasText: "ds-lite-pending" }).innerText()).includes("未取得")) throw new Error("Unresolved tunnel must not show zero");
+    await capture(page, "#clients/inventory", "clients-desktop.png");
+    await capture(page, "#firewall/timeline", "firewall-desktop.png");
+    await capture(page, "#config", "config-desktop.png");
+
+    const mobile = await browser.newPage({
+      viewport: { width: 390, height: 844 },
+      deviceScaleFactor: 2,
+      isMobile: true,
+      hasTouch: true,
+    });
+    await capture(mobile, "#overview", "overview-mobile.png");
+    await capture(mobile, "#routes", "routes-mobile.png");
+    await capture(mobile, "#connections", "connections-mobile.png");
+    await capture(mobile, "#clients/inventory", "clients-mobile.png");
+  }
 } finally {
   await browser.close();
   server.close();
 }
 
-await writeFile(
-  path.join(outputDir, "README.txt"),
-  `Generated by webconsole/scripts/screenshot.mjs\nBase URL: ${baseURL}\n`,
-);
-console.log(`Wrote Web Console screenshots to ${outputDir}`);
+if (!process.argv.includes("--check-refresh")) {
+  await writeFile(
+    path.join(outputDir, "README.txt"),
+    `Generated by webconsole/scripts/screenshot.mjs\nBase URL: ${baseURL}\n`,
+  );
+}
+console.log(process.argv.includes("--check-refresh") ? "Web Console refresh checks passed" : `Wrote Web Console screenshots to ${outputDir}`);
 
 async function capture(page, hash, fileName) {
   // domcontentloaded is enough for the screenshot — the Web Console opens a
@@ -294,7 +327,7 @@ function connectionFixture() {
 function configFixture() {
   return {
     path: "/usr/local/etc/routerd/router.yaml",
-    text: `apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: homert02\nspec:\n  resources:\n    - apiVersion: net.routerd.net/v1alpha1\n      kind: Interface\n      metadata:\n        name: lan\n      spec:\n        ifname: ens19\n        role: trust\n    - apiVersion: system.routerd.net/v1alpha1\n      kind: WebConsole\n      metadata:\n        name: mgmt-console\n      spec:\n        listenAddressFrom:\n          resource: Interface/mgmt\n          field: status.addresses[0]\n`,
+    text: `apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: ${configRevision ? "refreshed-router" : "homert02"}\nspec:\n  resources:\n    - apiVersion: net.routerd.net/v1alpha1\n      kind: Interface\n      metadata:\n        name: lan\n      spec:\n        ifname: ens19\n        role: trust\n    - apiVersion: system.routerd.net/v1alpha1\n      kind: WebConsole\n      metadata:\n        name: mgmt-console\n      spec:\n        listenAddressFrom:\n          resource: Interface/mgmt\n          field: status.addresses[0]\n`,
   };
 }
 

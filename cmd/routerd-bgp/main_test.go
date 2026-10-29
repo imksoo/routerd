@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -1001,4 +1002,19 @@ type notifyingStateMutex struct {
 func (m *notifyingStateMutex) Lock() {
 	m.attempts <- struct{}{}
 	m.Mutex.Lock()
+}
+
+func TestRestoreAppliedDoesNotRestorePendingRemoval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "applied.json")
+	if err := bgpdaemon.BeginRemoval(path); err != nil {
+		t.Fatal(err)
+	}
+	// The pending intent must fence restore even before reading stale or
+	// malformed daemon-owned applied state.
+	if err := os.WriteFile(path, []byte("interrupted old state"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreApplied(context.Background(), nil, &fakePathServer{}, path, nil); err != nil {
+		t.Fatal(err)
+	}
 }

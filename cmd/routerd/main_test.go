@@ -780,6 +780,9 @@ spec:
 		StatusFile:         statusPath,
 		LedgerPath:         ledgerPath,
 		SkipServiceManager: true,
+		Sandbox:            true,
+		DnsmasqConfigPath:  filepath.Join(dir, "dnsmasq.conf"),
+		NftablesPath:       filepath.Join(dir, "nat44.nft"),
 	}, io.Discard, &eventlog.Logger{})
 	if err != nil {
 		t.Fatalf("apply once: %v", err)
@@ -916,6 +919,9 @@ func TestServeConfigMutatorApplyReplaceCommitsCanonicalAndGeneration(t *testing.
 			StatusFile:         statusPath,
 			LedgerPath:         ledgerPath,
 			SkipServiceManager: true,
+			Sandbox:            true,
+			DnsmasqConfigPath:  filepath.Join(dir, "dnsmasq.conf"),
+			NftablesPath:       filepath.Join(dir, "nat44.nft"),
 		},
 		cache:     &resultCache{},
 		logger:    &eventlog.Logger{},
@@ -2899,7 +2905,7 @@ func TestFilterRouterByWhenFiltersDHCPv6Information(t *testing.T) {
 		},
 	}}}
 
-	filtered := filterRouterByWhen(router, routerstate.New())
+	filtered := mustWhenFilteredRouter(t, false, router, routerstate.New())
 	if len(filtered.Spec.Resources) != 0 {
 		t.Fatalf("resources = %+v, want none", filtered.Spec.Resources)
 	}
@@ -2917,7 +2923,7 @@ func TestFilterEgressRoutePolicyCandidatesByWhen(t *testing.T) {
 			{Name: "pppoe", Interface: "wan-pppoe", Priority: 20, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "ipv4-only"}}}},
 		}}},
 	}}}
-	filtered := filterRouterByWhen(router, store)
+	filtered := mustWhenFilteredRouter(t, false, router, store)
 	spec, err := filtered.Spec.Resources[0].EgressRoutePolicySpec()
 	if err != nil {
 		t.Fatal(err)
@@ -2941,7 +2947,7 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 		},
 	}}}
 
-	filtered := filterRouterByWhen(router, routerstate.New())
+	filtered := mustWhenFilteredRouter(t, false, router, routerstate.New())
 	if len(filtered.Spec.Resources) != 1 {
 		t.Fatalf("resources = %d, want only BGPPeer", len(filtered.Spec.Resources))
 	}
@@ -3098,4 +3104,21 @@ func TestPDObservationPropagatesPersistenceFailure(t *testing.T) {
 	if !errors.Is(err, sql.ErrConnDone) || len(changes) != 0 {
 		t.Fatalf("failed PD observation was acknowledged: %+v %v", changes, err)
 	}
+}
+
+func (s *fakeStaleCleanupStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s *fakeStaleCleanupStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	statuses, err := s.ListObjectStatuses()
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range statuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.Name == name {
+			return status.Status, nil
+		}
+	}
+	return nil, nil
 }

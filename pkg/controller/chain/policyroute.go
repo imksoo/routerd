@@ -1395,44 +1395,51 @@ func egressCandidateName(candidate api.EgressRoutePolicyCandidate) string {
 }
 
 func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path, family, table string, data []byte) error {
-	if len(data) == 0 {
-		if c.DryRun {
-			return nil
-		}
-		exists := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil
-		if !exists && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-			return nil
-		}
-		if exists {
-			if out, err := exec.CommandContext(ctx, nft, "delete", "table", family, table).CombinedOutput(); err != nil {
-				return fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
-			}
-		}
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return nil
-	}
 	if c.DryRun {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
+	current, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if readErr != nil || !bytes.Equal(current, data) {
+		if err := nftstate.Invalidate(path); err != nil {
+			return err
+		}
+	}
 	changed, err := writeFileIfChanged(path, data, 0644, false)
 	if err != nil {
 		return err
 	}
-	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
+	_, listErr := c.commandOutput(ctx, nft, "list", "table", family, table)
+	missing := listErr != nil
 	if !changed && !missing && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
+	if err := nftstate.Invalidate(path); err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		// A failed inventory read is not proof of absence. Only a successful
+		// deletion or the kernel's explicit missing-table result acknowledges it.
+		out, err := c.commandOutput(ctx, nft, "delete", "table", family, table)
+		if err != nil && !strings.Contains(string(out), "No such file or directory") {
+			return fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
+		}
+		return nftstate.MarkVerified(path, time.Now().UTC())
+	}
+	if out, err := c.commandOutput(ctx, nft, "-c", "-f", path); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
+	if out, err := c.commandOutput(ctx, nft, "-f", path); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
+	if err := nftstate.MarkVerified(path, time.Now().UTC()); err != nil {
+		return err
+	}
 	if (changed || missing) && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.policy_route.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"table": table, "path": path}

@@ -8,13 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
@@ -399,67 +394,6 @@ func ProbeHTTP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	return ProbeResult{Message: fmt.Sprintf("http status %d", resp.StatusCode)}
 }
 
-func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
-	target := strings.TrimSpace(spec.Target)
-	if target == "" {
-		return ProbeResult{Message: "target is required"}
-	}
-	ip, network, err := resolveICMPTarget(ctx, target, spec.AddressFamily)
-	if err != nil {
-		return resultFromError(ctx, err)
-	}
-	var conn *icmp.PacketConn
-	var messageType icmp.Type
-	var replyType icmp.Type
-	var protocol int
-	if network == "ip4:icmp" {
-		conn, err = icmp.ListenPacket(network, listenAddress(spec, "0.0.0.0"))
-		messageType = ipv4.ICMPTypeEcho
-		replyType = ipv4.ICMPTypeEchoReply
-		protocol = 1
-	} else {
-		conn, err = icmp.ListenPacket(network, listenAddress(spec, "::"))
-		messageType = ipv6.ICMPTypeEchoRequest
-		replyType = ipv6.ICMPTypeEchoReply
-		protocol = 58
-	}
-	if err != nil {
-		return resultFromError(ctx, err)
-	}
-	defer conn.Close()
-	identifier := os.Getpid() & 0xffff
-	msg := icmp.Message{
-		Type: messageType,
-		Code: 0,
-		Body: &icmp.Echo{ID: identifier, Seq: 1, Data: []byte("routerd-healthcheck")},
-	}
-	payload, err := msg.Marshal(nil)
-	if err != nil {
-		return ProbeResult{Message: err.Error()}
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	if _, err := conn.WriteTo(payload, &net.IPAddr{IP: ip}); err != nil {
-		return resultFromError(ctx, err)
-	}
-	buf := make([]byte, 1500)
-	for {
-		n, peer, err := conn.ReadFrom(buf)
-		if err != nil {
-			return resultFromError(ctx, err)
-		}
-		parsed, err := icmp.ParseMessage(protocol, buf[:n])
-		if err != nil {
-			continue
-		}
-		echo, ok := parsed.Body.(*icmp.Echo)
-		if parsed.Type == replyType && ok && echo.ID == identifier {
-			return ProbeResult{OK: true, Message: "icmp echo succeeded from " + peer.String()}
-		}
-	}
-}
-
 func dialContext(ctx context.Context, spec api.HealthCheckSpec, network, address string) (net.Conn, error) {
 	dialer, err := dialerForSpec(spec, network, address)
 	if err != nil {
@@ -539,13 +473,6 @@ func resolveInterfaceName(router *api.Router, name string) string {
 		}
 	}
 	return name
-}
-
-func listenAddress(spec api.HealthCheckSpec, fallback string) string {
-	if spec.SourceAddress == "" {
-		return fallback
-	}
-	return spec.SourceAddress
 }
 
 func resultFromError(ctx context.Context, err error) ProbeResult {
@@ -819,32 +746,4 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func resolveICMPTarget(ctx context.Context, target, family string) (net.IP, string, error) {
-	if ip := net.ParseIP(target); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			return ip4, "ip4:icmp", nil
-		}
-		return ip.To16(), "ip6:ipv6-icmp", nil
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, target)
-	if err != nil {
-		return nil, "", err
-	}
-	for _, addr := range addrs {
-		if family == "ipv6" {
-			if addr.IP.To4() == nil {
-				return addr.IP, "ip6:ipv6-icmp", nil
-			}
-			continue
-		}
-		if addr.IP.To4() != nil {
-			return addr.IP.To4(), "ip4:icmp", nil
-		}
-		if family != "ipv4" {
-			return addr.IP, "ip6:ipv6-icmp", nil
-		}
-	}
-	return nil, "", fmt.Errorf("no %s address found for %s", defaultString(family, "IP"), target)
 }

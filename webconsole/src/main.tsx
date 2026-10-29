@@ -2592,7 +2592,7 @@ function App() {
   const refreshInFlight = useRef(false);
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
-  const configRef = useRef<ConfigSnapshot | null>(null);
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
@@ -2640,7 +2640,7 @@ function App() {
     try {
       const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse, samResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
-        shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
+        shouldFetchConfig ? fetchJSON<ConfigSnapshot>("api/v1/config") : Promise.resolve(null),
         shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
         shouldFetchRoutes ? fetchJSON<RoutesStatus>("api/v1/routes") : Promise.resolve(null),
@@ -2659,8 +2659,7 @@ function App() {
       if (summaryResponse.resources !== undefined) {
         setMetricSamples(current => appendMetricSample(current, summaryResponse));
       }
-      if (configResponse && !configRef.current) {
-        configRef.current = configResponse as ConfigSnapshot;
+      if (configResponse) {
         setConfig(configResponse as ConfigSnapshot);
       }
       if (Array.isArray(generationResponse)) {
@@ -2681,6 +2680,9 @@ function App() {
       }
     }
   }
+
+  // Polling and stream callbacks live across renders; always use the active view.
+  refreshRef.current = refresh;
 
   async function loadOverviewDetails() {
     const query = new URLSearchParams({
@@ -2715,7 +2717,7 @@ function App() {
     }
     refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null;
-      refresh();
+      void refreshRef.current();
     }, delay);
   }
 
@@ -2732,8 +2734,8 @@ function App() {
   useEffect(() => installHorizontalScrollTouchCoordinator(), []);
 
   useEffect(() => {
-    refresh();
-    const pollID = window.setInterval(refresh, 30000);
+    void refreshRef.current();
+    const pollID = window.setInterval(() => { void refreshRef.current(); }, 30000);
     let source: EventSource | null = null;
     if ("EventSource" in window) {
       source = new EventSource(basePath + "api/v1/events/stream");
@@ -3559,7 +3561,7 @@ function ConfigView({
   return (
     <>
       <div className={styles.configToolbar}>
-        <Text className={styles.muted}>Read-only view of the active routerd YAML. Edit the source file and run routerd apply from the CLI.</Text>
+        <Text className={styles.muted}>Read-only view of the active routerd YAML. Apply changes with routerctl apply -f from the CLI.</Text>
         <div className={styles.configModeButtons}>
           <Button size="small" appearance="secondary" disabled={!latestGeneration || !config?.text} onClick={loadPlanDiff}>
             Diff before apply

@@ -102,7 +102,10 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		seen[resource.Metadata.Name] = true
-		gate := c.gateState(resource)
+		gate, err := c.gateState(resource)
+		if err != nil {
+			return err
+		}
 		active, retained := effective[resource.Metadata.Name]
 		if !retained || gate != vxlanGateEnabled {
 			reason := gate
@@ -125,7 +128,11 @@ func (c VXLANTunnelController) Reconcile(ctx context.Context) error {
 		if seen[name] {
 			continue
 		}
-		if gate := c.gateState(resource); gate != vxlanGateEnabled {
+		gate, err := c.gateState(resource)
+		if err != nil {
+			return err
+		}
+		if gate != vxlanGateEnabled {
 			if err := c.teardownOne(ctx, resource, gate); err != nil {
 				return err
 			}
@@ -218,28 +225,40 @@ const (
 	vxlanGateSuppressed vxlanGateState = "Suppressed"
 )
 
-func (c VXLANTunnelController) gateState(resource api.Resource) vxlanGateState {
+func (c VXLANTunnelController) gateState(resource api.Resource) (vxlanGateState, error) {
 	when := resourcequery.ResourceWhen(resource)
 	if !resourcequery.ResourceWhenPresent(when) {
-		return vxlanGateEnabled
+		return vxlanGateEnabled, nil
 	}
 	state, ok := c.Store.(resourcequery.StateStore)
 	if !ok || state == nil {
-		return vxlanGateUnknown
+		return vxlanGateUnknown, fmt.Errorf("state-variable reading is unavailable")
 	}
 	if vxlanWhenAcceptsUnknown(when) {
-		return vxlanGateUnknown
+		return vxlanGateUnknown, nil
 	}
-	if resourcequery.ResourceWhenMatches(when, state) {
-		if !c.whenFreshThisBoot(when, state) {
-			return vxlanGateUnknown
+	matches, err := resourcequery.ResourceWhenMatches(when, state)
+	if err != nil {
+		return vxlanGateUnknown, err
+	}
+	if matches {
+		fresh, err := c.whenFreshThisBoot(when, state)
+		if err != nil {
+			return vxlanGateUnknown, err
 		}
-		return vxlanGateEnabled
+		if !fresh {
+			return vxlanGateUnknown, nil
+		}
+		return vxlanGateEnabled, nil
 	}
-	if resourcequery.ResourceWhenIndeterminate(when, state) {
-		return vxlanGateUnknown
+	indeterminate, err := resourcequery.ResourceWhenIndeterminate(when, state)
+	if err != nil {
+		return vxlanGateUnknown, err
 	}
-	return vxlanGateFalse
+	if indeterminate {
+		return vxlanGateUnknown, nil
+	}
+	return vxlanGateFalse, nil
 }
 
 func vxlanWhenAcceptsUnknown(when api.ResourceWhenSpec) bool {
@@ -261,29 +280,31 @@ func vxlanWhenAcceptsUnknown(when api.ResourceWhenSpec) bool {
 	return false
 }
 
-func (c VXLANTunnelController) whenFreshThisBoot(when api.ResourceWhenSpec, state resourcequery.StateStore) bool {
+func (c VXLANTunnelController) whenFreshThisBoot(when api.ResourceWhenSpec, state resourcequery.StateStore) (bool, error) {
 	if c.StartedAt.IsZero() {
-		return true
+		return true, nil
 	}
 	for name, match := range when.State {
-		if !stateReferenceFresh(name, match, state, c.StartedAt) {
-			return false
+		fresh, err := stateReferenceFresh(name, match, state, c.StartedAt)
+		if err != nil || !fresh {
+			return false, err
 		}
 	}
 	for _, child := range append(append([]api.ResourceWhenSpec(nil), when.All...), when.Any...) {
-		if !c.whenFreshThisBoot(child, state) {
-			return false
+		fresh, err := c.whenFreshThisBoot(child, state)
+		if err != nil || !fresh {
+			return false, err
 		}
 	}
-	return true
+	return true, nil
 }
 
-func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourcequery.StateStore, startedAt time.Time) bool {
+func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourcequery.StateStore, startedAt time.Time) (bool, error) {
 	maxAge := 30 * time.Second
 	if match.MaxAge != "" {
 		parsed, err := time.ParseDuration(match.MaxAge)
 		if err != nil || parsed <= 0 {
-			return false
+			return false, nil
 		}
 		maxAge = parsed
 	}
@@ -291,20 +312,28 @@ func stateReferenceFresh(ref string, match api.StateMatchSpec, state resourceque
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 	if left, _, ok := strings.Cut(trimmed, ".status."); ok {
 		kind, name, valid := resourcequery.SplitResource(left)
-		store, storeOK := state.(resourcequery.Store)
+		store, storeOK := state.(interface {
+			ReadObjectStatus(string, string, string) (map[string]any, error)
+		})
 		if !valid || !storeOK {
-			return false
+			return false, fmt.Errorf("object-status reading is unavailable for %s", ref)
 		}
-		status := store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		status, err := store.ReadObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		if err != nil {
+			return false, err
+		}
 		for _, key := range []string{"observedAt", "updatedAt", "lastTransitionAt"} {
 			if observed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(fmt.Sprint(status[key]))); err == nil {
-				return !observed.Before(startedAt) && now.Sub(observed) <= maxAge
+				return !observed.Before(startedAt) && now.Sub(observed) <= maxAge, nil
 			}
 		}
-		return false
+		return false, nil
 	}
-	value := state.Get(ref)
-	return !value.UpdatedAt.IsZero() && !value.UpdatedAt.Before(startedAt) && now.Sub(value.UpdatedAt) <= maxAge
+	value, err := state.ReadVariable(ref)
+	if err != nil {
+		return false, err
+	}
+	return !value.UpdatedAt.IsZero() && !value.UpdatedAt.Before(startedAt) && now.Sub(value.UpdatedAt) <= maxAge, nil
 }
 
 func (c VXLANTunnelController) NextExpiryAfter() time.Duration {
@@ -386,42 +415,69 @@ func stateReferenceUpdatedAt(ref string, state resourcequery.StateStore) (time.T
 // producer values referenced by spec.when. It provides a conservative CAS:
 // any producer change between gate evaluation and a kernel commit invalidates
 // the commit, including changes that leave the boolean predicate unchanged.
-func (c VXLANTunnelController) dependencyRevision(resource api.Resource) (string, bool) {
+func (c VXLANTunnelController) dependencyRevision(resource api.Resource) (string, bool, error) {
 	state, ok := c.Store.(resourcequery.StateStore)
 	if !ok || state == nil {
-		return "", false
+		return "", false, fmt.Errorf("state-variable reading is unavailable")
 	}
 	entries := map[string]any{}
+	var readErr error
 	walkWhen(resourcequery.ResourceWhen(resource), func(ref string, _ api.StateMatchSpec) {
+		if readErr != nil {
+			return
+		}
 		trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 		if left, _, found := strings.Cut(trimmed, ".status."); found {
 			kind, name, valid := resourcequery.SplitResource(left)
-			store, storeOK := state.(resourcequery.Store)
+			store, storeOK := state.(interface {
+				ReadObjectStatus(string, string, string) (map[string]any, error)
+			})
 			if valid && storeOK {
-				entries[ref] = store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+				entries[ref], readErr = store.ReadObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+			} else {
+				readErr = fmt.Errorf("object-status reading is unavailable for %s", ref)
 			}
 			return
 		}
-		entries[ref] = state.Get(ref)
+		entries[ref], readErr = state.ReadVariable(ref)
 	})
+	if readErr != nil {
+		return "", false, readErr
+	}
 	data, err := json.Marshal(entries)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), true
+	return hex.EncodeToString(sum[:]), true, nil
 }
 
-func (c VXLANTunnelController) gateRevision(resource api.Resource) (string, bool) {
-	if c.gateState(resource) != vxlanGateEnabled {
-		return "", false
+func (c VXLANTunnelController) gateRevision(resource api.Resource) (string, bool, error) {
+	gate, err := c.gateState(resource)
+	if err != nil || gate != vxlanGateEnabled {
+		return "", false, err
 	}
 	return c.dependencyRevision(resource)
 }
 
-func (c VXLANTunnelController) revisionStillCurrent(resource api.Resource, revision string) bool {
-	current, ok := c.gateRevision(resource)
-	return ok && current == revision
+func (c VXLANTunnelController) requireCurrentGate(resource api.Resource, revision string, guarded bool) error {
+	gate, err := c.gateState(resource)
+	if err != nil {
+		return err
+	}
+	if gate != vxlanGateEnabled {
+		return errVXLANGateRevisionChanged
+	}
+	if guarded {
+		current, ok, err := c.dependencyRevision(resource)
+		if err != nil {
+			return err
+		}
+		if !ok || current != revision {
+			return errVXLANGateRevisionChanged
+		}
+	}
+	return nil
 }
 
 func vxlansByName(router *api.Router) map[string]api.Resource {
@@ -474,7 +530,11 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	gateRevision := ""
 	if guarded {
 		var ok bool
-		gateRevision, ok = c.gateRevision(resource)
+		var err error
+		gateRevision, ok, err = c.gateRevision(resource)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return c.teardownOne(ctx, resource, vxlanGateUnknown)
 		}
@@ -653,7 +713,10 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 	if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
 		return err
 	}
-	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
+	if err := c.requireCurrentGate(resource, gateRevision, guarded); err != nil {
+		if !errors.Is(err, errVXLANGateRevisionChanged) {
+			return err
+		}
 		return c.teardownOne(ctx, resource, vxlanGateUnknown)
 	}
 	if err := c.reconcileFloodFDB(ctx, resource, cfg, gateRevision, guarded); err != nil {
@@ -662,7 +725,10 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		}
 		return err
 	}
-	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
+	if err := c.requireCurrentGate(resource, gateRevision, guarded); err != nil {
+		if !errors.Is(err, errVXLANGateRevisionChanged) {
+			return err
+		}
 		return c.teardownOne(ctx, resource, vxlanGateUnknown)
 	}
 	if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
@@ -681,7 +747,10 @@ func (c VXLANTunnelController) reconcileOne(ctx context.Context, resource api.Re
 		}
 		return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANTunnel", resource.Metadata.Name, status)
 	}
-	if c.gateState(resource) != vxlanGateEnabled || (guarded && !c.revisionStillCurrent(resource, gateRevision)) {
+	if err := c.requireCurrentGate(resource, gateRevision, guarded); err != nil {
+		if !errors.Is(err, errVXLANGateRevisionChanged) {
+			return err
+		}
 		// Synchronous post-commit fence. Even if a producer changes in the
 		// final syscall window, forwarding is closed before returning.
 		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
@@ -734,8 +803,8 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 	}
 	sort.Strings(peersToDelete)
 	for _, peer := range peersToDelete {
-		if guarded && !c.revisionStillCurrent(resource, revision) {
-			return fmt.Errorf("%w before FDB delete", errVXLANGateRevisionChanged)
+		if err := c.requireCurrentGate(resource, revision, guarded); err != nil {
+			return fmt.Errorf("%w before FDB delete", err)
 		}
 		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
 			return err
@@ -743,8 +812,8 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		if _, err := c.command(ctx, "bridge", "fdb", "del", "00:00:00:00:00:00", "dev", cfg.IfName, "dst", peer); err != nil {
 			return fmt.Errorf("delete stale flood FDB %s from %s: %w", peer, cfg.IfName, err)
 		}
-		if guarded && !c.revisionStillCurrent(resource, revision) {
-			return fmt.Errorf("%w after FDB delete", errVXLANGateRevisionChanged)
+		if err := c.requireCurrentGate(resource, revision, guarded); err != nil {
+			return fmt.Errorf("%w after FDB delete", err)
 		}
 	}
 	for _, peer := range cfg.Peers {
@@ -752,8 +821,8 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		if len(entries) == 1 && entries[0].exact() {
 			continue
 		}
-		if guarded && !c.revisionStillCurrent(resource, revision) {
-			return fmt.Errorf("%w before FDB append", errVXLANGateRevisionChanged)
+		if err := c.requireCurrentGate(resource, revision, guarded); err != nil {
+			return fmt.Errorf("%w before FDB append", err)
 		}
 		if err := c.verifyOwnership(ctx, resource, cfg); err != nil {
 			return err
@@ -761,16 +830,16 @@ func (c VXLANTunnelController) reconcileFloodFDB(ctx context.Context, resource a
 		if _, err := c.command(ctx, "bridge", "fdb", "append", "00:00:00:00:00:00", "dev", cfg.IfName, "dst", peer); err != nil {
 			return err
 		}
-		if guarded && !c.revisionStillCurrent(resource, revision) {
-			return fmt.Errorf("%w after FDB append", errVXLANGateRevisionChanged)
+		if err := c.requireCurrentGate(resource, revision, guarded); err != nil {
+			return fmt.Errorf("%w after FDB append", err)
 		}
 	}
 	readback, err := c.command(ctx, "bridge", "fdb", "show", "dev", cfg.IfName)
 	if err != nil {
 		return fmt.Errorf("read back flood FDB on %s: %w", cfg.IfName, err)
 	}
-	if guarded && !c.revisionStillCurrent(resource, revision) {
-		return fmt.Errorf("%w before FDB readback commit", errVXLANGateRevisionChanged)
+	if err := c.requireCurrentGate(resource, revision, guarded); err != nil {
+		return fmt.Errorf("%w before FDB readback commit", err)
 	}
 	actual := allZeroFDBEntries(string(readback))
 	if len(actual) != len(desired) {

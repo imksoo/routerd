@@ -13,8 +13,13 @@ import (
 
 type StateStore interface {
 	Get(name string) routerstate.Value
+	ReadVariable(name string) (routerstate.Value, error)
 	Age(name string) time.Duration
 	Now() time.Time
+}
+
+type whenObjectStatusReader interface {
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type WhenStore interface {
@@ -22,7 +27,7 @@ type WhenStore interface {
 	Store
 }
 
-func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
+func FilterRouterByWhen(router *api.Router, store StateStore) (*api.Router, error) {
 	return filterRouterByWhen(router, store, true)
 }
 
@@ -30,22 +35,29 @@ func FilterRouterByWhen(router *api.Router, store StateStore) *api.Router {
 // resolved yet.  Use it for client daemons which can acquire a lease or create
 // an external session: treating an unknown VRRP role as eligible can make a
 // BACKUP node send DHCPv6-PD traffic during routerd startup.
-func FilterRouterByResolvedWhen(router *api.Router, store StateStore) *api.Router {
+func FilterRouterByResolvedWhen(router *api.Router, store StateStore) (*api.Router, error) {
 	return filterRouterByWhen(router, store, false)
 }
 
-func filterRouterByWhen(router *api.Router, store StateStore, includeIndeterminate bool) *api.Router {
+func filterRouterByWhen(router *api.Router, store StateStore, includeIndeterminate bool) (*api.Router, error) {
 	if router == nil {
-		return nil
+		return nil, nil
 	}
 	declaredBFDs := bfdResourceNames(router.Spec.Resources)
 	filtered := *router
 	filtered.Spec.Resources = nil
 	for _, res := range router.Spec.Resources {
 		when := ResourceWhen(res)
-		if ResourceWhenMatches(when, store) || (includeIndeterminate && ResourceWhenIndeterminate(when, store)) {
+		result, err := evalResourceWhen(when, store)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate %s when: %w", res.ID(), err)
+		}
+		if result == whenTrue || (includeIndeterminate && result == whenIndeterminate) {
 			if res.Kind == "EgressRoutePolicy" {
-				res = filterEgressRoutePolicyCandidatesByWhen(res, store)
+				res, err = filterEgressRoutePolicyCandidatesByWhen(res, store)
+				if err != nil {
+					return nil, err
+				}
 			}
 			filtered.Spec.Resources = append(filtered.Spec.Resources, res)
 		}
@@ -53,7 +65,7 @@ func filterRouterByWhen(router *api.Router, store StateStore, includeIndetermina
 	filtered.Spec.Resources = clearFilteredBFDRefs(filtered.Spec.Resources, declaredBFDs)
 	filtered.Spec.Resources = clearFilteredDNSRefs(filtered.Spec.Resources)
 	filtered.Spec.Resources = clearFilteredFirewallZoneRefs(filtered.Spec.Resources)
-	return api.ExpandClusterNetworkRoutes(&filtered)
+	return api.ExpandClusterNetworkRoutes(&filtered), nil
 }
 
 func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
@@ -180,12 +192,21 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	}
 }
 
-func ResourceWhenMatches(when api.ResourceWhenSpec, store StateStore) bool {
-	return evalResourceWhen(when, store) == whenTrue
+func ResourceWhenMatches(when api.ResourceWhenSpec, store StateStore) (bool, error) {
+	result, err := evalResourceWhen(when, store)
+	return result == whenTrue, err
 }
 
-func ResourceWhenIndeterminate(when api.ResourceWhenSpec, store StateStore) bool {
-	return evalResourceWhen(when, store) == whenIndeterminate
+func ResourceWhenIndeterminate(when api.ResourceWhenSpec, store StateStore) (bool, error) {
+	result, err := evalResourceWhen(when, store)
+	return result == whenIndeterminate, err
+}
+
+// ResourceWhenEligible keeps an unresolved runtime value eligible, while a
+// failed read always prevents the caller from proceeding with side effects.
+func ResourceWhenEligible(when api.ResourceWhenSpec, store StateStore) (bool, error) {
+	result, err := evalResourceWhen(when, store)
+	return result == whenTrue || result == whenIndeterminate, err
 }
 
 type whenResult int
@@ -196,68 +217,84 @@ const (
 	whenIndeterminate
 )
 
-func evalResourceWhen(when api.ResourceWhenSpec, store StateStore) whenResult {
+func evalResourceWhen(when api.ResourceWhenSpec, store StateStore) (whenResult, error) {
 	if len(when.All) > 0 {
 		indeterminate := false
 		for _, child := range when.All {
-			switch evalResourceWhen(child, store) {
+			result, err := evalResourceWhen(child, store)
+			if err != nil {
+				return whenFalse, err
+			}
+			switch result {
 			case whenFalse:
-				return whenFalse
+				return whenFalse, nil
 			case whenIndeterminate:
 				indeterminate = true
 			}
 		}
 		if indeterminate {
-			return whenIndeterminate
+			return whenIndeterminate, nil
 		}
-		return whenTrue
+		return whenTrue, nil
 	}
 	if len(when.Any) > 0 {
 		indeterminate := false
 		for _, child := range when.Any {
-			switch evalResourceWhen(child, store) {
+			result, err := evalResourceWhen(child, store)
+			if err != nil {
+				return whenFalse, err
+			}
+			switch result {
 			case whenTrue:
-				return whenTrue
+				return whenTrue, nil
 			case whenIndeterminate:
 				indeterminate = true
 			}
 		}
 		if indeterminate {
-			return whenIndeterminate
+			return whenIndeterminate, nil
 		}
-		return whenFalse
+		return whenFalse, nil
 	}
 	if len(when.State) == 0 {
-		return whenTrue
+		return whenTrue, nil
 	}
 	indeterminate := false
 	for name, match := range when.State {
-		switch stateMatchResult(store, name, match) {
+		result, err := stateMatchResult(store, name, match)
+		if err != nil {
+			return whenFalse, err
+		}
+		switch result {
 		case whenFalse:
-			return whenFalse
+			return whenFalse, nil
 		case whenIndeterminate:
 			indeterminate = true
 		}
 	}
 	if indeterminate {
-		return whenIndeterminate
+		return whenIndeterminate, nil
 	}
-	return whenTrue
+	return whenTrue, nil
 }
 
 func ResourceWhenPresent(when api.ResourceWhenSpec) bool {
 	return len(when.All) > 0 || len(when.Any) > 0 || len(when.State) > 0
 }
 
-func StateMatch(store StateStore, name string, match api.StateMatchSpec) bool {
-	return stateMatchResult(store, name, match) == whenTrue
+func StateMatch(store StateStore, name string, match api.StateMatchSpec) (bool, error) {
+	result, err := stateMatchResult(store, name, match)
+	return result == whenTrue, err
 }
 
-func stateMatchResult(store StateStore, name string, match api.StateMatchSpec) whenResult {
+func stateMatchResult(store StateStore, name string, match api.StateMatchSpec) (whenResult, error) {
 	if store == nil {
-		return whenFalse
+		return whenFalse, fmt.Errorf("state-variable reader is unavailable")
 	}
-	value, age, hasCustomAge := stateValue(store, name)
+	value, age, hasCustomAge, err := stateValue(store, name)
+	if err != nil {
+		return whenFalse, fmt.Errorf("read when state %q: %w", name, err)
+	}
 	indeterminate := value.Status == routerstate.StatusSet && strings.EqualFold(strings.TrimSpace(value.Value), "unknown")
 	ok := true
 	if match.Status != "" {
@@ -281,58 +318,62 @@ func stateMatchResult(store StateStore, name string, match api.StateMatchSpec) w
 	}
 	if !ok {
 		if indeterminate && (match.Equals != "" || len(match.In) > 0 || match.Contains != "") {
-			return whenIndeterminate
+			return whenIndeterminate, nil
 		}
-		return whenFalse
+		return whenFalse, nil
 	}
 	if match.MaxAge != "" {
 		duration, err := time.ParseDuration(match.MaxAge)
 		if err != nil || duration <= 0 {
-			return whenFalse
+			return whenFalse, nil
 		}
 		if !hasCustomAge {
-			age = store.Age(name)
+			age = store.Now().UTC().Sub(value.Since)
 		}
 		if age > duration {
-			return whenFalse
+			return whenFalse, nil
 		}
 	}
 	if match.For != "" {
 		duration, err := time.ParseDuration(match.For)
 		if err != nil {
-			return whenFalse
+			return whenFalse, nil
 		}
 		if hasCustomAge {
 			if age >= duration {
-				return whenTrue
+				return whenTrue, nil
 			}
-			return whenFalse
+			return whenFalse, nil
 		}
-		if store.Age(name) >= duration {
-			return whenTrue
+		if store.Now().UTC().Sub(value.Since) >= duration {
+			return whenTrue, nil
 		}
-		return whenFalse
+		return whenFalse, nil
 	}
-	return whenTrue
+	return whenTrue, nil
 }
 
-func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store StateStore) api.Resource {
+func filterEgressRoutePolicyCandidatesByWhen(res api.Resource, store StateStore) (api.Resource, error) {
 	spec, err := res.EgressRoutePolicySpec()
 	if err != nil {
-		return res
+		return res, err
 	}
 	var candidates []api.EgressRoutePolicyCandidate
 	for _, candidate := range spec.Candidates {
 		if !api.BoolDefault(candidate.Enabled, true) {
 			continue
 		}
-		if ResourceWhenMatches(candidate.When, store) || ResourceWhenIndeterminate(candidate.When, store) {
+		eligible, err := ResourceWhenEligible(candidate.When, store)
+		if err != nil {
+			return api.Resource{}, fmt.Errorf("evaluate %s candidate %s when: %w", res.ID(), candidate.Name, err)
+		}
+		if eligible {
 			candidates = append(candidates, candidate)
 		}
 	}
 	spec.Candidates = candidates
 	res.Spec = spec
-	return res
+	return res, nil
 }
 
 func bfdResourceNames(resources []api.Resource) map[string]bool {
@@ -593,29 +634,33 @@ func dnsRefName(ref string) string {
 	return ref
 }
 
-func stateValue(store StateStore, name string) (routerstate.Value, time.Duration, bool) {
-	if value, age, ok := objectStatusStateValue(store, name); ok {
-		return value, age, true
+func stateValue(store StateStore, name string) (routerstate.Value, time.Duration, bool, error) {
+	if value, age, ok, err := objectStatusStateValue(store, name); ok || err != nil {
+		return value, age, true, err
 	}
-	return store.Get(name), 0, false
+	value, err := store.ReadVariable(name)
+	return value, 0, false, err
 }
 
-func objectStatusStateValue(store StateStore, name string) (routerstate.Value, time.Duration, bool) {
-	statusStore, ok := store.(Store)
-	if !ok {
-		return routerstate.Value{}, 0, false
-	}
+func objectStatusStateValue(store StateStore, name string) (routerstate.Value, time.Duration, bool, error) {
 	kind, resourceName, field, ok := splitStatusStateRef(name)
 	if !ok {
-		return routerstate.Value{}, 0, false
+		return routerstate.Value{}, 0, false, nil
 	}
-	status := statusStore.ObjectStatus(APIVersionForKind(kind), kind, resourceName)
+	statusStore, ok := store.(whenObjectStatusReader)
+	if !ok {
+		return routerstate.Value{}, 0, false, fmt.Errorf("object-status reader is unavailable for %s", name)
+	}
+	status, err := statusStore.ReadObjectStatus(APIVersionForKind(kind), kind, resourceName)
+	if err != nil {
+		return routerstate.Value{}, 0, false, err
+	}
 	if len(status) == 0 {
-		return routerstate.Value{}, 0, false
+		return routerstate.Value{}, 0, false, nil
 	}
 	values := normalizeValues(status[field])
 	if len(values) == 0 {
-		return routerstate.Value{}, 0, false
+		return routerstate.Value{}, 0, false, nil
 	}
 	now := store.Now().UTC()
 	since := objectStatusFieldSince(status, field, now)
@@ -625,7 +670,7 @@ func objectStatusStateValue(store StateStore, name string) (routerstate.Value, t
 		Reason:    fmt.Sprintf("%s/%s.status.%s", kind, resourceName, field),
 		Since:     since,
 		UpdatedAt: now,
-	}, now.Sub(since), true
+	}, now.Sub(since), true, nil
 }
 
 func splitStatusStateRef(ref string) (string, string, string, bool) {

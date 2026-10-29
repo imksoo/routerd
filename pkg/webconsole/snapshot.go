@@ -20,6 +20,7 @@ func (h Handler) Snapshot(opts SnapshotOptions) Snapshot {
 }
 
 func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
+	h = h.withCurrentRouter()
 	if opts.EventLimit == 0 {
 		opts.EventLimit = 50
 	}
@@ -209,11 +210,7 @@ func (h Handler) snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 }
 
 func (h Handler) statusWithControllers(result *apply.Result, controllers []controlapi.ControllerStatus) controlapi.Status {
-	router := h.opts.Router
-	if h.opts.CurrentRouter != nil {
-		router = h.opts.CurrentRouter()
-	}
-	status := controlapi.NewStatus(result, router)
+	status := controlapi.NewStatus(result, h.withCurrentRouter().opts.Router)
 	status.Status.Controllers = controllers
 	return status
 }

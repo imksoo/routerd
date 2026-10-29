@@ -23,7 +23,6 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -922,7 +921,7 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	}}
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
-	effective := controller.effectiveRouter()
+	effective := mustDHCPWhenRouter(t, controller)
 	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
@@ -942,7 +941,7 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	effective = controller.effectiveRouter()
+	effective = mustDHCPWhenRouter(t, controller)
 	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -989,7 +988,7 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 	}}
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
-	effective := controller.effectiveRouter()
+	effective := mustDHCPWhenRouter(t, controller)
 	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -1016,7 +1015,7 @@ func TestDHCPv4ReservationWhenTrueClearsWhenFalseStatus(t *testing.T) {
 		t.Fatalf("disabled reservation leaked to hosts sidecar: %s", disabledHosts)
 	}
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	effective = controller.effectiveRouter()
+	effective = mustDHCPWhenRouter(t, controller)
 	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -1081,7 +1080,7 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	}}
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
 
-	effective := controller.effectiveRouter()
+	effective := mustDHCPWhenRouter(t, controller)
 	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
@@ -1110,7 +1109,7 @@ func TestIPv6RouterAdvertisementWhenFalseRemovesDnsmasqRA(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	effective = controller.effectiveRouter()
+	effective = mustDHCPWhenRouter(t, controller)
 	if _, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -1701,7 +1700,7 @@ func TestIPv4StaticAddressControllerDeletesPreviousAddressWhenChanged(t *testing
 	}
 }
 
-func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.T) {
+func TestLANAddressControllerUsesInterfaceObservationBeforeDependencyCheck(t *testing.T) {
 	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lo", Managed: false}},
@@ -1718,6 +1717,9 @@ func TestLANAddressControllerPopulatesInterfaceBeforeDependencyCheck(t *testing.
 		}},
 	}}}
 	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
+		t.Fatal(err)
+	}
 	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
 		"phase":         daemonapi.ResourcePhaseBound,
 		"currentPrefix": "2409:10:3d60:1270::/60",
@@ -1761,7 +1763,7 @@ func TestLANAddressControllerDoesNotStageExpiredVRRPVMACOnBackup(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-base"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan-vmac", SubnetID: "1", AddressSuffix: "::1", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}}},
 	}}}
 	store := mapStore{api.NetAPIVersion + "/VirtualAddress/lan-gw": {"role": "backup"}, api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2001:db8:1200::/60", "lastReplyAt": time.Now().UTC().Add(-2 * time.Hour).Format(time.RFC3339), "vltime": "3600"}, api.NetAPIVersion + "/Interface/lan-vmac": {"phase": "Down", "ifname": "lo"}}
-	effective := resourcequery.FilterRouterByResolvedWhen(router, store)
+	effective := mustWhenFilteredRouter(t, true, router, store)
 	var calls []string
 	c := LANAddressController{Router: effective, DeclaredRouter: router, Store: store, AddressPresent: func(context.Context, string, string) bool { return false }, Command: func(_ context.Context, n string, a ...string) error {
 		calls = append(calls, n+" "+strings.Join(a, " "))
@@ -1811,7 +1813,7 @@ func TestLANAddressControllerStagesFreshPDSnapshotWhenPDIsWhenFalse(t *testing.T
 	requireLinuxRuntimeFixture(t)
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	if len(effective.Spec.Resources) >= len(declared.Spec.Resources) {
 		t.Fatalf("effective router unexpectedly retained when=false resources: %#v", effective.Spec.Resources)
 	}
@@ -1892,7 +1894,7 @@ func TestLANAddressControllerRemovesWhenFalseVRRPAddressesDespiteFreshSnapshot(t
 	if err := (&Runner{Router: declared}).saveWhenFalseStatuses(eventedStore{Store: store, Router: declared}); err != nil {
 		t.Fatal(err)
 	}
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var calls []string
 	ensureCalls := 0
 	controller := LANAddressController{
@@ -1958,7 +1960,7 @@ func TestLANAddressControllerStagingRequiresVMACAndAddressReadback(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
-			effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+			effective := mustWhenFilteredRouter(t, true, declared, store)
 			present := map[string]bool{"lan-vmac": tc.present, "wan-vmac": tc.present}
 			addressPresent := map[string]bool{}
 			ensureCalls := map[string]int{}
@@ -2004,7 +2006,7 @@ func TestLANAddressControllerRemovesStagedAddressForExpiredPDSnapshot(t *testing
 	requireLinuxRuntimeFixture(t)
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var calls []string
 	present := false
 	controller := LANAddressController{
@@ -2057,7 +2059,7 @@ func TestLANAddressControllerRejectsForeignPDSnapshotDUID(t *testing.T) {
 	foreign := pdSnapshotFixture(now)
 	foreign.ClientDUID = "0003000102000000dead"
 	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, foreign)
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var calls []string
 	controller := LANAddressController{
 		Router:              effective,
@@ -2087,7 +2089,7 @@ func TestLANAddressControllerRejectsPDSnapshotWithWrongPrefixLength(t *testing.T
 	snapshot := pdSnapshotFixture(now)
 	snapshot.CurrentPrefix = "2001:db8:1200::/56"
 	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, snapshot)
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var calls []string
 	controller := LANAddressController{
 		Router:              effective,
@@ -2115,7 +2117,7 @@ func TestLANAddressControllerKeepsStagedAddressesAcrossMasterBeforePDBound(t *te
 	requireLinuxRuntimeFixture(t)
 	now := time.Date(2026, 7, 27, 15, 0, 0, 0, time.UTC)
 	store, declared, snapshotPath := sqliteLANAddressStagingFixture(t, pdSnapshotFixture(now))
-	backup := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	backup := mustWhenFilteredRouter(t, true, declared, store)
 	addressPresent := false
 	var calls []string
 	controller := LANAddressController{
@@ -2148,7 +2150,7 @@ func TestLANAddressControllerKeepsStagedAddressesAcrossMasterBeforePDBound(t *te
 	}
 
 	store.Set("VirtualAddress/lan-gw.role", "master", "test")
-	controller.Router = resourcequery.FilterRouterByResolvedWhen(declared, store)
+	controller.Router = mustWhenFilteredRouter(t, true, declared, store)
 	addressPresent = true
 	calls = nil
 	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
@@ -2248,7 +2250,7 @@ func TestLANAddressControllerRetainsMultiplePreviousLANPrefixesUntilExpiry(t *te
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan-vmac", map[string]any{"phase": "Up", "ifname": "lan-vrrp"}); err != nil {
 		t.Fatal(err)
 	}
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var commands []string
 	controller := LANAddressController{
 		Router:              effective,
@@ -2360,7 +2362,7 @@ func TestLANAddressControllerRecoversLostPreviousPrefixFromKernelForRAWithdrawal
 	}); err != nil {
 		t.Fatal(err)
 	}
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var commands []string
 	deleteFailures := false
 	controller := LANAddressController{
@@ -2475,7 +2477,7 @@ func TestLANAddressControllerRecoversPreviousCurrentStatusWithoutKernelHistory(t
 	}); err != nil {
 		t.Fatal(err)
 	}
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var commands []string
 	controller := LANAddressController{
 		Router:              effective,
@@ -2558,7 +2560,7 @@ func TestLANAddressControllerDoesNotWithdrawOtherDeclaredCurrentAddresses(t *tes
 	}); err != nil {
 		t.Fatal(err)
 	}
-	effective := resourcequery.FilterRouterByResolvedWhen(declared, store)
+	effective := mustWhenFilteredRouter(t, true, declared, store)
 	var commands []string
 	controller := LANAddressController{
 		Router:              effective,
@@ -2652,6 +2654,9 @@ func TestLANAddressControllerUsesObservedPrefixDelegationStatus(t *testing.T) {
 		}},
 	}}}
 	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
+		t.Fatal(err)
+	}
 	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
 		"currentPrefix": "fdc7:d277:3de:b780::/60",
 		"observed": map[string]any{
@@ -2699,6 +2704,9 @@ func TestLANAddressControllerDeletesStaleIPv6BeforeApply(t *testing.T) {
 		}},
 	}}}
 	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
+		t.Fatal(err)
+	}
 	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{
 		"phase":         daemonapi.ResourcePhaseBound,
 		"currentPrefix": "2409:10:3d60:1270::/60",
@@ -2736,6 +2744,9 @@ func TestLANAddressControllerReplacesDelegatedRouteWithHostRoute(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-lite-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::21", PrefixLength: 128}},
 	}}}
 	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan-vmac", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
+		t.Fatal(err)
+	}
 	store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", map[string]any{"phase": daemonapi.ResourcePhaseBound, "currentPrefix": "2409:10:3d60:1220::/60"})
 	var commands []string
 	controller := LANAddressController{
@@ -3257,4 +3268,16 @@ func TestFreeBSDDSLiteRuntimeIfNameKeepsGIFNames(t *testing.T) {
 	if got := freeBSDDSLiteRuntimeIfName("ds-lite-a"); !strings.HasPrefix(got, "gif") || got == "gif40" {
 		t.Fatalf("runtime ifname for ds-lite-a = %q, want generated gif name", got)
 	}
+}
+
+func (s mapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s statefulDHCPMapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
 }

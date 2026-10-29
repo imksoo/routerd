@@ -26,7 +26,7 @@ func TestForwarderQueryTimeoutRuntimeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := controller.runtimeConfig("lan-resolver", resolverruntime.NormalizeSpec(spec))
+	runtime, _, err := controller.runtimeConfig("lan-resolver", resolverruntime.NormalizeSpec(spec))
 	if err != nil {
 		t.Fatal(err)
 	}

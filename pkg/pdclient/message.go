@@ -19,39 +19,65 @@ const (
 	MessageRelease     uint8 = 8
 	MessageInfoRequest uint8 = 11
 
-	optionClientID     uint16 = 1
-	optionServerID     uint16 = 2
-	optionORO          uint16 = 6
-	optionElapsedTime  uint16 = 8
-	optionStatusCode   uint16 = 13
-	optionDNSServers   uint16 = 23
-	optionDomainSearch uint16 = 24
-	optionIAPD         uint16 = 25
-	optionIAPrefix     uint16 = 26
-	optionSNTPServers  uint16 = 31
-	optionAFTRName     uint16 = 64
+	optionClientID        uint16 = 1
+	optionServerID        uint16 = 2
+	optionORO             uint16 = 6
+	optionElapsedTime     uint16 = 8
+	optionStatusCode      uint16 = 13
+	optionDNSServers      uint16 = 23
+	optionDomainSearch    uint16 = 24
+	optionIAPD            uint16 = 25
+	optionIAPrefix        uint16 = 26
+	optionSNTPServers     uint16 = 31
+	optionInfoRefreshTime uint16 = 32
+	optionSOLMaxRT        uint16 = 82
+	optionINFMaxRT        uint16 = 83
+	optionAFTRName        uint16 = 64
 )
 
-// Message is the minimal DHCPv6 subset required for IA_PD. It represents a
-// DHCPv6 payload, not an Ethernet/IP/UDP frame.
+const (
+	StatusSuccess       uint16 = 0
+	StatusUnspecFail    uint16 = 1
+	StatusNoAddrsAvail  uint16 = 2
+	StatusNoBinding     uint16 = 3
+	StatusNotOnLink     uint16 = 4
+	StatusNoPrefixAvail uint16 = 6
+)
+
+// IAPrefix is one independent prefix option within an IA_PD.
+type IAPrefix struct {
+	Prefix     netip.Prefix
+	Preferred  uint32
+	Valid      uint32
+	StatusCode uint16
+}
+
+// IAPD carries the association timers, operation status, and all its prefixes.
+type IAPD struct {
+	IAID       uint32
+	T1         uint32
+	T2         uint32
+	Prefixes   []IAPrefix
+	StatusCode uint16
+}
+
+// Message represents a DHCPv6 payload, not an Ethernet/IP/UDP frame.
 type Message struct {
-	Type          uint8
-	TransactionID uint32
-	ClientDUID    []byte
-	ServerDUID    []byte
-	IAID          uint32
-	T1            uint32
-	T2            uint32
-	Prefix        netip.Prefix
-	Preferred     uint32
-	Valid         uint32
-	ORO           []uint16
-	DNSServers    []netip.Addr
-	SNTPServers   []netip.Addr
-	DomainSearch  []string
-	AFTRName      string
-	ElapsedTime   uint16
-	StatusCode    uint16
+	Type            uint8
+	TransactionID   uint32
+	ClientDUID      []byte
+	ServerDUID      []byte
+	IAPDs           []IAPD
+	ORO             []uint16
+	DNSServers      []netip.Addr
+	SNTPServers     []netip.Addr
+	DomainSearch    []string
+	AFTRName        string
+	ElapsedTime     uint16
+	StatusCode      uint16
+	InfoRefreshTime *uint32
+	SOLMaxRT        uint32
+	INFMaxRT        uint32
 }
 
 func EncodeMessage(msg Message) ([]byte, error) {
@@ -64,6 +90,9 @@ func EncodeMessage(msg Message) ([]byte, error) {
 	if len(msg.ClientDUID) == 0 {
 		return nil, fmt.Errorf("client DUID is required")
 	}
+	if len(msg.ClientDUID) > 65535 || len(msg.ServerDUID) > 65535 || len(msg.ORO) > 32767 {
+		return nil, fmt.Errorf("DHCPv6 option exceeds wire length")
+	}
 	out := []byte{msg.Type, byte(msg.TransactionID >> 16), byte(msg.TransactionID >> 8), byte(msg.TransactionID)}
 	out = appendOption(out, optionClientID, msg.ClientDUID)
 	if len(msg.ServerDUID) > 0 {
@@ -72,39 +101,101 @@ func EncodeMessage(msg Message) ([]byte, error) {
 	if len(msg.ORO) > 0 {
 		out = appendOption(out, optionORO, encodeORO(msg.ORO))
 	}
-	if messageCarriesIAPD(msg.Type) {
-		out = appendOption(out, optionIAPD, encodeIAPD(msg))
+	for _, ia := range msg.IAPDs {
+		data, err := encodeIAPD(ia)
+		if err != nil {
+			return nil, err
+		}
+		out = appendOption(out, optionIAPD, data)
+	}
+	out = appendStatus(out, msg.StatusCode)
+	for _, field := range []struct {
+		code  uint16
+		value uint32
+	}{
+		{optionSOLMaxRT, msg.SOLMaxRT}, {optionINFMaxRT, msg.INFMaxRT},
+	} {
+		if field.value != 0 {
+			out = appendOption(out, field.code, encodeUint32(field.value))
+		}
+	}
+	if msg.InfoRefreshTime != nil {
+		out = appendOption(out, optionInfoRefreshTime, encodeUint32(*msg.InfoRefreshTime))
+	}
+	for _, field := range []struct {
+		code  uint16
+		addrs []netip.Addr
+	}{
+		{optionDNSServers, msg.DNSServers}, {optionSNTPServers, msg.SNTPServers},
+	} {
+		var data []byte
+		for _, addr := range field.addrs {
+			if !addr.Is6() || addr.Is4In6() {
+				return nil, fmt.Errorf("DHCPv6 requires IPv6 addresses")
+			}
+			raw := addr.As16()
+			data = append(data, raw[:]...)
+		}
+		if len(data) > 65535 {
+			return nil, fmt.Errorf("DHCPv6 address option exceeds wire length")
+		}
+		if len(data) > 0 {
+			out = appendOption(out, field.code, data)
+		}
+	}
+	if len(msg.DomainSearch) > 0 {
+		var data []byte
+		for _, domain := range msg.DomainSearch {
+			encoded, err := encodeDomainName(domain)
+			if err != nil {
+				return nil, err
+			}
+			data = append(data, encoded...)
+		}
+		if len(data) > 65535 {
+			return nil, fmt.Errorf("DHCPv6 domain option exceeds wire length")
+		}
+		out = appendOption(out, optionDomainSearch, data)
+	}
+	if msg.AFTRName != "" {
+		data, err := encodeDomainName(msg.AFTRName)
+		if err != nil {
+			return nil, err
+		}
+		out = appendOption(out, optionAFTRName, data)
 	}
 	out = appendOption(out, optionElapsedTime, []byte{byte(msg.ElapsedTime >> 8), byte(msg.ElapsedTime)})
+	if len(out) > 65527 {
+		return nil, fmt.Errorf("DHCPv6 payload exceeds UDP length")
+	}
 	return out, nil
 }
 
-func DecodeMessage(payload []byte) (Message, error) {
-	return decodeMessage(payload, nil)
-}
+func DecodeMessage(payload []byte) (Message, error) { return decodeMessage(payload, nil) }
 
-// DecodeMessageForIAID selects the configured association while preserving
-// unrelated usable options in a reply containing multiple IA_PD options.
+// DecodeMessageForIAID retains the complete configured association, including
+// zero-prefix status replies, while ignoring unrelated associations.
 func DecodeMessageForIAID(payload []byte, iaid uint32) (Message, error) {
 	return decodeMessage(payload, &iaid)
 }
 
-// A configured client owns one IA_PD. Select its IAID at the receive boundary
-// rather than allowing an unrelated later IA to overwrite its lease.
 func decodeMessage(payload []byte, wantedIAID *uint32) (Message, error) {
-	if len(payload) < 4 {
-		return Message{}, fmt.Errorf("DHCPv6 payload too short")
+	if len(payload) < 4 || len(payload) > 65527 {
+		return Message{}, fmt.Errorf("invalid DHCPv6 payload length")
 	}
-	msg := Message{
-		Type:          payload[0],
-		TransactionID: uint32(payload[1])<<16 | uint32(payload[2])<<8 | uint32(payload[3]),
-	}
+	msg := Message{Type: payload[0], TransactionID: uint32(payload[1])<<16 | uint32(payload[2])<<8 | uint32(payload[3])}
 	err := walkOptions(payload[4:], func(code uint16, data []byte) error {
 		switch code {
 		case optionClientID:
-			msg.ClientDUID = append([]byte(nil), data...)
+			if msg.ClientDUID != nil {
+				return fmt.Errorf("duplicate client identifier")
+			}
+			msg.ClientDUID = append([]byte{}, data...)
 		case optionServerID:
-			msg.ServerDUID = append([]byte(nil), data...)
+			if msg.ServerDUID != nil {
+				return fmt.Errorf("duplicate server identifier")
+			}
+			msg.ServerDUID = append([]byte{}, data...)
 		case optionDNSServers:
 			msg.DNSServers = decodeIPv6Addrs(data)
 		case optionSNTPServers:
@@ -113,6 +204,12 @@ func decodeMessage(payload []byte, wantedIAID *uint32) (Message, error) {
 			msg.DomainSearch = decodeDomainList(data)
 		case optionAFTRName:
 			msg.AFTRName = decodeDomainName(data)
+		case optionORO:
+			if len(data)%2 == 0 {
+				for i := 0; i < len(data); i += 2 {
+					msg.ORO = append(msg.ORO, binary.BigEndian.Uint16(data[i:i+2]))
+				}
+			}
 		case optionStatusCode:
 			if len(data) >= 2 {
 				msg.StatusCode = binary.BigEndian.Uint16(data[:2])
@@ -121,32 +218,65 @@ func decodeMessage(payload []byte, wantedIAID *uint32) (Message, error) {
 			if len(data) == 2 {
 				msg.ElapsedTime = binary.BigEndian.Uint16(data)
 			}
+		case optionInfoRefreshTime:
+			if len(data) == 4 {
+				value := binary.BigEndian.Uint32(data)
+				msg.InfoRefreshTime = &value
+			}
+		case optionSOLMaxRT:
+			if len(data) == 4 {
+				msg.SOLMaxRT = binary.BigEndian.Uint32(data)
+			}
+		case optionINFMaxRT:
+			if len(data) == 4 {
+				msg.INFMaxRT = binary.BigEndian.Uint32(data)
+			}
 		case optionIAPD:
-			var ia Message
-			if err := decodeIAPD(data, &ia); err != nil {
+			ia, err := decodeIAPD(data)
+			if err != nil || (wantedIAID != nil && ia.IAID != *wantedIAID) {
 				return nil
 			}
-			if wantedIAID != nil && ia.IAID != *wantedIAID {
-				return nil
+			// An IAID names one association. Duplicate options cannot establish
+			// a second timer/status owner for that association.
+			for _, existing := range msg.IAPDs {
+				if existing.IAID == ia.IAID {
+					return nil
+				}
 			}
-			if !ia.Prefix.IsValid() || msg.Prefix.IsValid() {
-				return nil
-			}
-			msg.IAID, msg.T1, msg.T2 = ia.IAID, ia.T1, ia.T2
-			msg.Prefix, msg.Preferred, msg.Valid = ia.Prefix, ia.Preferred, ia.Valid
+			msg.IAPDs = append(msg.IAPDs, ia)
 		}
 		return nil
 	})
 	return msg, err
 }
 
-func messageCarriesIAPD(messageType uint8) bool {
-	switch messageType {
-	case MessageSolicit, MessageRequest, MessageRenew, MessageRebind, MessageRelease, MessageAdvertise, MessageReply:
-		return true
-	default:
-		return false
+func encodeUint32(value uint32) []byte {
+	var raw [4]byte
+	binary.BigEndian.PutUint32(raw[:], value)
+	return raw[:]
+}
+
+func appendStatus(out []byte, status uint16) []byte {
+	if status == 0 {
+		return out
 	}
+	return appendOption(out, optionStatusCode, []byte{byte(status >> 8), byte(status)})
+}
+
+func encodeDomainName(name string) ([]byte, error) {
+	name = strings.TrimSuffix(name, ".")
+	var out []byte
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return nil, fmt.Errorf("invalid DHCPv6 domain name")
+		}
+		out = append(out, byte(len(label)))
+		out = append(out, label...)
+	}
+	if len(out) > 254 {
+		return nil, fmt.Errorf("DHCPv6 domain name too long")
+	}
+	return append(out, 0), nil
 }
 
 func encodeORO(codes []uint16) []byte {
@@ -219,53 +349,72 @@ func decodeDomainNameAt(data []byte) (string, int) {
 	return "", -1
 }
 
-func encodeIAPD(msg Message) []byte {
-	var out [12]byte
-	binary.BigEndian.PutUint32(out[0:4], msg.IAID)
-	binary.BigEndian.PutUint32(out[4:8], msg.T1)
-	binary.BigEndian.PutUint32(out[8:12], msg.T2)
-	data := append([]byte(nil), out[:]...)
-	if msg.Prefix.IsValid() {
+func encodeIAPD(ia IAPD) ([]byte, error) {
+	var header [12]byte
+	binary.BigEndian.PutUint32(header[0:4], ia.IAID)
+	binary.BigEndian.PutUint32(header[4:8], ia.T1)
+	binary.BigEndian.PutUint32(header[8:12], ia.T2)
+	data := append([]byte(nil), header[:]...)
+	data = appendStatus(data, ia.StatusCode)
+	for _, entry := range ia.Prefixes {
+		if !entry.Prefix.IsValid() || !entry.Prefix.Addr().Is6() || entry.Prefix.Addr().Is4In6() {
+			return nil, fmt.Errorf("invalid delegated IPv6 prefix")
+		}
 		var prefix [25]byte
-		binary.BigEndian.PutUint32(prefix[0:4], msg.Preferred)
-		binary.BigEndian.PutUint32(prefix[4:8], msg.Valid)
-		prefix[8] = byte(msg.Prefix.Bits())
-		addr := msg.Prefix.Masked().Addr().As16()
-		copy(prefix[9:25], addr[:])
-		data = appendOption(data, optionIAPrefix, prefix[:])
+		binary.BigEndian.PutUint32(prefix[0:4], entry.Preferred)
+		binary.BigEndian.PutUint32(prefix[4:8], entry.Valid)
+		prefix[8] = byte(entry.Prefix.Bits())
+		addr := entry.Prefix.Masked().Addr().As16()
+		copy(prefix[9:], addr[:])
+		data = appendOption(data, optionIAPrefix, appendStatus(prefix[:], entry.StatusCode))
 	}
-	return data
+	if len(data) > 65535 {
+		return nil, fmt.Errorf("IA_PD exceeds wire length")
+	}
+	return data, nil
 }
 
-func decodeIAPD(data []byte, msg *Message) error {
+func decodeIAPD(data []byte) (IAPD, error) {
 	if len(data) < 12 {
-		return fmt.Errorf("IA_PD option too short")
+		return IAPD{}, fmt.Errorf("IA_PD option too short")
 	}
-	msg.IAID = binary.BigEndian.Uint32(data[0:4])
-	msg.T1 = binary.BigEndian.Uint32(data[4:8])
-	msg.T2 = binary.BigEndian.Uint32(data[8:12])
-	// RFC 9915 21.21: discard this IA, preserving unrelated message options.
-	if msg.T1 > 0 && msg.T2 > 0 && msg.T1 > msg.T2 {
-		return fmt.Errorf("IA_PD T1 exceeds T2")
+	ia := IAPD{IAID: binary.BigEndian.Uint32(data[:4]), T1: binary.BigEndian.Uint32(data[4:8]), T2: binary.BigEndian.Uint32(data[8:12])}
+	// RFC 9915 21.21: discard this IA, preserving independent options.
+	if ia.T1 > 0 && ia.T2 > 0 && ia.T1 > ia.T2 {
+		return IAPD{}, fmt.Errorf("IA_PD T1 exceeds T2")
 	}
-	return walkOptions(data[12:], func(code uint16, data []byte) error {
-		if code == optionStatusCode && len(data) >= 2 && binary.BigEndian.Uint16(data[:2]) != 0 {
-			return fmt.Errorf("IA_PD operation failed")
-		}
-		if code != optionIAPrefix {
+	err := walkOptions(data[12:], func(code uint16, data []byte) error {
+		if code == optionStatusCode && len(data) >= 2 {
+			ia.StatusCode = binary.BigEndian.Uint16(data[:2])
 			return nil
 		}
-		// An unusable independent prefix must not discard another usable one.
-		if len(data) < 25 || data[8] > 128 || binary.BigEndian.Uint32(data[:4]) > binary.BigEndian.Uint32(data[4:8]) || msg.Prefix.IsValid() {
+		if code != optionIAPrefix || len(data) < 25 || data[8] > 128 {
+			return nil
+		}
+		entry := IAPrefix{Preferred: binary.BigEndian.Uint32(data[:4]), Valid: binary.BigEndian.Uint32(data[4:8])}
+		if entry.Preferred > entry.Valid {
 			return nil
 		}
 		var raw [16]byte
 		copy(raw[:], data[9:25])
-		msg.Prefix = netip.PrefixFrom(netip.AddrFrom16(raw), int(data[8])).Masked()
-		msg.Preferred = binary.BigEndian.Uint32(data[0:4])
-		msg.Valid = binary.BigEndian.Uint32(data[4:8])
+		entry.Prefix = netip.PrefixFrom(netip.AddrFrom16(raw), int(data[8])).Masked()
+		if err := walkOptions(data[25:], func(code uint16, value []byte) error {
+			if code == optionStatusCode && len(value) >= 2 {
+				entry.StatusCode = binary.BigEndian.Uint16(value[:2])
+			}
+			return nil
+		}); err != nil {
+			return nil
+		}
+		for _, existing := range ia.Prefixes {
+			if existing.Prefix == entry.Prefix {
+				return nil
+			}
+		}
+		ia.Prefixes = append(ia.Prefixes, entry)
 		return nil
 	})
+	return ia, err
 }
 
 func walkOptions(data []byte, visit func(code uint16, data []byte) error) error {

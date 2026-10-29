@@ -623,7 +623,7 @@ func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
 	return NftablesNAT44RulesForRouter(nil, rules)
 }
 
-func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([]byte, error) {
+func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule, states ...IngressServiceState) ([]byte, error) {
 	var ingressRules []ingressNATRule
 	var flowDNATPinholes []api.Resource
 	var redirectRules []localServiceRedirectRule
@@ -654,7 +654,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 			referencedNAT44IPAddressSets(rules, sets),
 			referencedNAT44FlowDNATPinholeIPAddressSets(flowDNATPinholes, sets),
 		)
-		ingressRules, err = ingressNATRules(router, aliases)
+		ingressRules, err = ingressNATRules(router, aliases, states...)
 		if err != nil {
 			return nil, err
 		}
@@ -671,6 +671,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 		writeNftTablePreamble(&buf, "ip", "routerd_nat")
 		buf.WriteString("table ip routerd_nat {\n")
 		writeNftTableOwnerMarker(&buf)
+		writeIngressUnavailableRules(&buf, ingressRules)
 		writeIPv4AddressSets(&buf, addressSets)
 		writeNAT44FlowDNATPinholeMaps(&buf, flowDNATPinholes)
 		if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
@@ -2147,6 +2148,7 @@ func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]s
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
 	writeNftTableOwnerMarker(buf)
+	writeIngressUnavailableRules(buf, ingressRules)
 	writeIPv4AddressSets(buf, addressSets)
 	writeNAT44FlowDNATPinholeMaps(buf, flowDNATPinholes)
 	if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
@@ -2378,7 +2380,44 @@ func writeIngressDNATChains(buf *bytes.Buffer, rules []ingressNATRule) {
 	}
 }
 
+func writeIngressUnavailableRules(buf *bytes.Buffer, rules []ingressNATRule) {
+	var unavailable []ingressNATRule
+	for _, rule := range rules {
+		if rule.UnavailableAction != "" {
+			unavailable = append(unavailable, rule)
+		}
+	}
+	if len(unavailable) == 0 {
+		return
+	}
+	for _, hook := range []string{"input", "forward"} {
+		buf.WriteString("  chain ingress_unavailable_" + hook + " {\n")
+		buf.WriteString("    type filter hook " + hook + " priority filter - 1; policy accept;\n")
+		for _, rule := range unavailable {
+			ifnames := append([]string{rule.ListenInterface}, rule.HairpinInterfaces...)
+			parts := []string{nftIfNameMatch("iifname", ifnames), "meta l4proto " + rule.Protocol, "ct direction original"}
+			if rule.ListenAddress != "" {
+				parts = append(parts, "ct original ip daddr "+rule.ListenAddress)
+			}
+			parts = append(parts, "ct original proto-dst "+strconv.Itoa(rule.ListenPort), "counter")
+			action := "drop"
+			if rule.UnavailableAction == "reject" {
+				action = "reject with icmp type port-unreachable"
+				if rule.Protocol == "tcp" {
+					action = "reject with tcp reset"
+				}
+			}
+			parts = append(parts, action, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+" no healthy backends"))
+			buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+		}
+		buf.WriteString("  }\n")
+	}
+}
+
 func writeIngressDNATRule(buf *bytes.Buffer, rule ingressNATRule, ifname string, commentSuffix string) {
+	if rule.UnavailableAction != "" {
+		return
+	}
 	var parts []string
 	parts = append(parts, "iifname "+nftQuote(ifname))
 	if rule.ListenAddress != "" {
@@ -2463,6 +2502,9 @@ func sanitizeNftIdentifier(value string) string {
 }
 
 func ingressRuleTargets(rule ingressNATRule) []ingressNATTarget {
+	if rule.UnavailableAction != "" {
+		return nil
+	}
 	if len(rule.Targets) > 0 {
 		return rule.Targets
 	}

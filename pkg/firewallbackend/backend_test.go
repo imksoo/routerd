@@ -11,8 +11,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
@@ -106,7 +108,7 @@ func TestNftablesBackendSkipsUnchangedLiveReloadWhenTableExists(t *testing.T) {
 	}
 }
 
-func TestNftablesBackendReloadsUnchangedRulesetWhenTableMissing(t *testing.T) {
+func TestNftablesBackendReappliesUnacknowledgedRuleset(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall.nft")
 	data := []byte("table inet routerd_filter {}\n")
 	if err := os.WriteFile(path, data, 0644); err != nil {
@@ -127,9 +129,79 @@ func TestNftablesBackendReloadsUnchangedRulesetWhenTableMissing(t *testing.T) {
 	if changed {
 		t.Fatal("unchanged file should not report changed even when table is restored")
 	}
-	want := []string{"nft list table inet routerd_filter", "nft -c -f " + path, "nft -f " + path}
+	want := []string{"nft -c -f " + path, "nft -f " + path}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestNftablesBackendRetriesFailedChangedRuleset(t *testing.T) {
+	for _, failedCommand := range []string{"-c", "-f"} {
+		t.Run(failedCommand, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "firewall.nft")
+			ruleset := Ruleset{Path: path, Data: []byte("table inet routerd_filter {}\n")}
+			fail := false
+			var calls []string
+			backend := Nftables{Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				calls = append(calls, args[0])
+				if fail && args[0] == failedCommand {
+					return []byte("failed transaction"), errors.New("rejected")
+				}
+				return nil, nil
+			}}
+			if _, err := backend.Apply(context.Background(), ruleset, false); err != nil {
+				t.Fatal(err)
+			}
+			ruleset.Data = []byte("table inet routerd_filter { # changed\n}\n")
+			fail = true
+			for attempt := 0; attempt < 2; attempt++ {
+				calls = nil
+				if _, err := backend.Apply(context.Background(), ruleset, false); err == nil {
+					t.Fatal("failed transaction was acknowledged")
+				}
+				if len(calls) == 0 || nftstate.RecentlyVerified(path, time.Now()) {
+					t.Fatalf("attempt %d skipped effect or retained acknowledgement: %v", attempt, calls)
+				}
+			}
+			fail, calls = false, nil
+			if _, err := backend.Apply(context.Background(), ruleset, false); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(calls, []string{"-c", "-f"}) || !nftstate.RecentlyVerified(path, time.Now()) {
+				t.Fatalf("recovery not applied and acknowledged: %v", calls)
+			}
+		})
+	}
+}
+
+func TestNftablesBackendAppliesAfterDryRunAndExpiredAcknowledgement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	ruleset := Ruleset{Path: path, Data: []byte("table inet routerd_filter {}\n")}
+	var calls []string
+	backend := Nftables{Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls = append(calls, args[0])
+		return nil, nil
+	}}
+	if _, err := backend.Apply(context.Background(), ruleset, false); err != nil {
+		t.Fatal(err)
+	}
+	ruleset.Data = []byte("table inet routerd_filter { # changed\n}\n")
+	if _, err := backend.Apply(context.Background(), ruleset, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, expire := range []bool{false, true} {
+		if expire {
+			if err := nftstate.MarkVerified(path, time.Now().Add(-nftstate.DefaultVerifyInterval)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		calls = nil
+		if _, err := backend.Apply(context.Background(), ruleset, false); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(calls, []string{"-c", "-f"}) {
+			t.Fatalf("expire=%v: apply calls = %v", expire, calls)
+		}
 	}
 }
 
@@ -276,13 +348,16 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 	got := string(ruleset.Data)
 	for _, want := range []string{
 		`nat-anchor "routerd_nat"`,
-		`rdr pass on em0 inet proto tcp from any to 203.0.113.10 port 6443 -> 172.18.1.10 port 6443`,
-		`nat on em1 inet proto tcp from (em1:network) to 172.18.1.10 port 6443 -> (em1)`,
+		`rdr-anchor "routerd_nat"`,
+		`anchor "routerd_nat" quick`,
 		`pass in quick on $wan_if proto tcp to 172.18.1.10/32 port 6443 keep state label "routerd:api"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "rdr pass") || strings.Contains(got, "nat on ") {
+		t.Fatalf("root firewall retained translations owned by NAT controller:\n%s", got)
 	}
 }
 

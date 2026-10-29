@@ -422,16 +422,16 @@ func TestVXLANTunnelGateRejectsPersistedPreBootStateAndUnknownMatch(t *testing.T
 	resource := bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}}).Spec.Resources[3]
 	store := &vxlanWhenStore{values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "master", UpdatedAt: started.Add(-time.Minute)}}}
 	controller := VXLANTunnelController{Store: store, StartedAt: started}
-	if got := controller.gateState(resource); got != vxlanGateUnknown {
+	if got := mustVXLANGateState(t, controller, resource); got != vxlanGateUnknown {
 		t.Fatalf("pre-boot gate=%s, want %s", got, vxlanGateUnknown)
 	}
 	store.values["ha.role"] = routerstate.Value{Status: routerstate.StatusSet, Value: "master", UpdatedAt: started.Add(time.Second)}
-	if got := controller.gateState(resource); got != vxlanGateEnabled {
+	if got := mustVXLANGateState(t, controller, resource); got != vxlanGateEnabled {
 		t.Fatalf("fresh gate=%s, want %s", got, vxlanGateEnabled)
 	}
 	resource = bridgeVXLANWhenRouter(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "unknown"}}}).Spec.Resources[3]
 	store.values["ha.role"] = routerstate.Value{Status: routerstate.StatusSet, Value: "unknown", UpdatedAt: started.Add(time.Second)}
-	if got := controller.gateState(resource); got != vxlanGateUnknown {
+	if got := mustVXLANGateState(t, controller, resource); got != vxlanGateUnknown {
 		t.Fatalf("explicit unknown gate=%s, want fail-closed unknown", got)
 	}
 }
@@ -822,13 +822,13 @@ func TestVXLANTunnelDependencyRevisionChangesWithoutPredicateFlip(t *testing.T) 
 	resource := router.Spec.Resources[3]
 	store := &vxlanWhenStore{now: now, values: map[string]routerstate.Value{"ha.role": {Status: routerstate.StatusSet, Value: "master", UpdatedAt: now}}}
 	c := VXLANTunnelController{Store: store}
-	first, ok := c.dependencyRevision(resource)
-	if !ok {
+	first, ok, err := c.dependencyRevision(resource)
+	if err != nil || !ok {
 		t.Fatal("missing first revision")
 	}
 	store.values["ha.role"] = routerstate.Value{Status: routerstate.StatusSet, Value: "master", UpdatedAt: now.Add(time.Nanosecond)}
-	second, ok := c.dependencyRevision(resource)
-	if !ok {
+	second, ok, err := c.dependencyRevision(resource)
+	if err != nil || !ok {
 		t.Fatal("missing second revision")
 	}
 	if first == second {
@@ -931,4 +931,8 @@ func bridgeVXLANTestRouter(withVXLAN bool) *api.Router {
 		resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "legacy-l2-overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1", Peers: []string{"10.254.200.2"}, UnderlayInterface: "wg-l2", UDPPort: 4789, MTU: 1370, Bridge: "legacy-l2"}})
 	}
 	return &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: resources}}
+}
+
+func (s *vxlanWhenStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
 }

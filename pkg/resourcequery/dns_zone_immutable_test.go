@@ -45,7 +45,7 @@ func TestFilterRouterByWhenPreservesDNSZoneSourcesAcrossRoleChange(t *testing.T)
 			for _, role := range []string{"backup", "master"} {
 				t.Run(role, func(t *testing.T) {
 					store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"] = map[string]any{"role": role}
-					filtered := FilterRouterByWhen(router, store)
+					filtered := mustWhenFilteredRouter(t, false, router, store)
 					result, ok := findResource(filtered, "DNSZone", "home")
 					if !ok {
 						t.Fatal("DNSZone/home missing")

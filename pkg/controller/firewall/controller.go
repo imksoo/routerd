@@ -81,7 +81,7 @@ func (c Controller) reconcileLogged(ctx context.Context) error {
 
 func (c Controller) Reconcile(ctx context.Context) error {
 	targetOS := platform.CurrentOS()
-	if !hasFirewall(c.Router) && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0) {
+	if !hasFirewall(c.Router) && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0 && !hasPFTranslations(c.Router)) {
 		return nil
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
@@ -110,7 +110,7 @@ func (c Controller) saveErrorStatuses(ctx context.Context, backend, path, reason
 		"conditions":   []map[string]any{{"type": "Applied", "status": "False", "reason": reason, "message": applyErr.Error()}},
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.FirewallAPIVersion {
+		if !firewallOwnedResource(resource) {
 			continue
 		}
 		if err := c.Store.SaveObjectStatus(api.FirewallAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
@@ -138,7 +138,7 @@ func (c Controller) savePolicyStatuses(ctx context.Context, backend, path string
 		"conditions":    []map[string]any{{"type": "Applied", "status": "True", "reason": "Rendered"}},
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.FirewallAPIVersion {
+		if !firewallOwnedResource(resource) {
 			continue
 		}
 		if err := c.Store.SaveObjectStatus(api.FirewallAPIVersion, resource.Kind, resource.Metadata.Name, status); err != nil {
@@ -158,7 +158,23 @@ func hasFirewall(router *api.Router) bool {
 		return false
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "FirewallZone" || resource.Kind == "FirewallPolicy" || resource.Kind == "FirewallRule" || resource.Kind == "FirewallFlowPinhole" || resource.Kind == "ClientPolicy" || resource.Kind == "LocalServiceRedirect") {
+		if firewallOwnedResource(resource) {
+			return true
+		}
+	}
+	return false
+}
+
+func firewallOwnedResource(resource api.Resource) bool {
+	return resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "FirewallZone" || resource.Kind == "FirewallPolicy" || resource.Kind == "FirewallRule" || resource.Kind == "FirewallFlowPinhole" || resource.Kind == "ClientPolicy" || resource.Kind == "LocalServiceRedirect")
+}
+
+func hasPFTranslations(router *api.Router) bool {
+	if router == nil {
+		return false
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind == "NAT44Rule" || resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "IngressService" || resource.Kind == "PortForward") {
 			return true
 		}
 	}

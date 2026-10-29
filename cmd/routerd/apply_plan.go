@@ -27,7 +27,10 @@ func planApply(router *api.Router, opts applyOptions) (*apply.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	effective := filterRouterByWhen(declared, store)
+	effective, err := filterRouterByWhen(declared, store)
+	if err != nil {
+		return nil, err
+	}
 	result, err := apply.New().PlanEffective(effective, declared)
 	if err != nil {
 		return nil, err

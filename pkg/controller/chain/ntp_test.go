@@ -13,7 +13,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
-	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNTPClientControllerUsesDHCPv6SNTPServers(t *testing.T) {
@@ -152,7 +151,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	configPath := filepath.Join(t.TempDir(), "routerd-client.conf")
 	var commands []string
 	controller := NTPClientController{
-		Router:         resourcequery.FilterRouterByWhen(router, store),
+		Router:         mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter: router,
 		Store:          store,
 		ConfigPath:     configPath,
@@ -170,7 +169,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	commands = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile backup: %v", err)
@@ -187,7 +186,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile remaster: %v", err)
 	}
@@ -372,7 +371,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "chrony-server.conf")
 	var commands []string
 	controller := NTPServerController{
-		Router:         resourcequery.FilterRouterByWhen(router, store),
+		Router:         mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter: router,
 		Store:          store,
 		ConfigPath:     configPath,
@@ -398,7 +397,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "backup"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	commands = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile backup: %v", err)
@@ -419,7 +418,7 @@ func TestNTPServerControllerCleansWhenFalseAndRecreatesWhenTrue(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile remaster: %v", err)
 	}

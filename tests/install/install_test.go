@@ -103,8 +103,8 @@ func TestInstallWaitsForJSONApplyStateAfterServiceRestart(t *testing.T) {
 	if strings.Contains(text, `routerctl" get status --socket "${socket}"`) {
 		t.Fatalf("install.sh still checks human status output for lastApplyTime")
 	}
-	if !strings.Contains(text, `wait_for_routerd_status_socket "${status_socket}" || true`) {
-		t.Fatalf("install.sh should wait for the status socket before final post-upgrade status output")
+	if !strings.Contains(text, `if ! wait_for_routerd_status_socket "${status_socket}"; then`) {
+		t.Fatalf("install.sh should check status socket recovery before final post-upgrade status output")
 	}
 }
 
@@ -368,7 +368,7 @@ echo static-archive-agent
 	}
 }
 
-func TestInstallMigratesLegacySystemdUnitConfig(t *testing.T) {
+func TestInstallPreservesOperatorConfigWithoutMigration(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
 	prefix := filepath.Join(dir, "prefix")
@@ -413,19 +413,75 @@ spec:
 	if err != nil {
 		t.Fatalf("install failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "removing legacy SystemdUnit resources") {
-		t.Fatalf("missing migration warning:\n%s", out)
-	}
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(data)
-	if strings.Contains(got, "SystemdUnit") || strings.Contains(got, "--controller-chain") {
-		t.Fatalf("legacy SystemdUnit was not removed:\n%s", got)
+	if got != legacyConfig {
+		t.Fatalf("installer rewrote operator config:\n%s", got)
 	}
-	if !strings.Contains(got, "kind: Hostname") {
-		t.Fatalf("non-legacy resource was not preserved:\n%s", got)
+}
+
+func TestInstallFailsWhenServiceRecoveryFails(t *testing.T) {
+	requireLinuxSystemdFixture(t)
+	for _, scenario := range []string{"missing-status-socket", "scheduled-restart-timeout", "helper-restart-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			pkg := filepath.Join(dir, "package")
+			prefix := filepath.Join(dir, "prefix")
+			binDir := filepath.Join(dir, "bin")
+			writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), "#!/bin/sh\necho old-routerd\n")
+			writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\necho new-routerd\n")
+			writeExecutable(t, filepath.Join(pkg, "bin", "routerctl"), "#!/bin/sh\nexit 1\n")
+			if err := os.MkdirAll(filepath.Join(pkg, "systemd"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(pkg, "systemd", "routerd.service"), []byte("# routerd-managed-service: v1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// Exercise the real installer without touching host services or waiting
+			// for sockets that the fixture intentionally never creates.
+			writeExecutable(t, filepath.Join(binDir, "sleep"), "#!/bin/sh\nexit 0\n")
+			writeExecutable(t, filepath.Join(binDir, "readlink"), fmt.Sprintf("#!/bin/sh\necho '%s/sbin/routerd-bgp (deleted)'\n", prefix))
+			writeExecutable(t, filepath.Join(binDir, "systemctl"), `#!/bin/sh
+case "$*" in
+  "is-active --quiet routerd.service")
+    [ "$INSTALL_SCENARIO" != "helper-restart-failure" ]; exit $? ;;
+  *routerd-self-restart-*)
+    if [ "$INSTALL_SCENARIO" = "scheduled-restart-timeout" ]; then
+      echo 'routerd-self-restart-test.timer loaded active waiting Restart routerd'
+    fi
+    exit 0 ;;
+  "list-units --type=service --state=running --plain --no-legend routerd*.service")
+    if [ "$INSTALL_SCENARIO" = "helper-restart-failure" ]; then
+      echo 'routerd-bgp.service loaded active running BGP'
+    fi
+    exit 0 ;;
+  "show -p MainPID --value routerd-bgp.service") echo 1; exit 0 ;;
+  "restart routerd-bgp.service") exit 1 ;;
+  *) exit 0 ;;
+esac
+`)
+			out, err := runInstallWithEnv(t, pkg, prefix, []string{
+				"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"INSTALL_SCENARIO=" + scenario,
+				"ROUTERD_INSTALL_FORCE_SERVICE_MANAGER=1",
+				"ROUTERD_INSTALL_SYSTEMD_SYSTEM_DIR=" + filepath.Join(dir, "systemd"),
+				"ROUTERD_INSTALL_STATUS_SOCKET=" + filepath.Join(dir, "missing.sock"),
+				"ROUTERD_INSTALL_SELF_RESTART_TIMEOUT_SECONDS=0",
+			}, "--no-install-deps", "--no-config-update")
+			if err == nil {
+				t.Fatalf("installer reported success after %s:\n%s", scenario, out)
+			}
+			if !strings.Contains(out, "service recovery failed") || strings.Contains(out, "upgrade completed") {
+				t.Fatalf("installer did not report failed recovery:\n%s", out)
+			}
+			installed, readErr := os.ReadFile(filepath.Join(prefix, "sbin", "routerd"))
+			if readErr != nil || !strings.Contains(string(installed), "new-routerd") {
+				t.Fatalf("installer rolled files back underneath restarted processes: %v\n%s", readErr, out)
+			}
+		})
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/manageddaemon"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -379,20 +380,19 @@ func (s *fakeServer) Stop()  { s.stops++ }
 
 func TestReconcileStopsServerWhenBGPRemoved(t *testing.T) {
 	server := &fakeServer{}
+	path := writeRemovalState(t)
+	stopped := false
 	controller := Controller{
-		Router:  &api.Router{},
-		Store:   mapStore{},
-		Server:  server,
-		started: true,
+		Router: &api.Router{}, Store: mapStore{}, Server: server,
+		FIB: &fakeFIB{}, started: true,
+		Daemon:     manageddaemon.Spec{StatePath: path},
+		StopDaemon: func(context.Context) error { stopped = true; return nil },
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
+		t.Fatal(err)
 	}
-	if server.stops != 1 {
-		t.Fatalf("stops = %d, want 1", server.stops)
-	}
-	if controller.Server != nil || controller.started {
-		t.Fatalf("controller did not clear server state: server=%#v started=%t", controller.Server, controller.started)
+	if !stopped || server.stops != 1 || controller.Server != nil || controller.started {
+		t.Fatal("BGP removal did not stop supervisor and clear its owner")
 	}
 }
 
@@ -413,7 +413,7 @@ func TestReconcileAppliesBGPDynamicPeer(t *testing.T) {
 		},
 	})
 	server := &fakeServer{}
-	controller := Controller{Router: router, Store: mapStore{}, Server: server}
+	controller := Controller{Router: router, Store: mapStore{}, Server: server, FIB: &fakeFIB{}}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -926,8 +926,6 @@ func TestBGPDynamicPeerStatusReportsDiscoveredPeersAndAdmissionCounters(t *testi
 	}
 }
 
-func (s *fakeServer) StopBgp(context.Context, *gobgpapi.StopBgpRequest) error { return nil }
-
 func (s *fakeServer) GetBgp(context.Context, *gobgpapi.GetBgpRequest) (*gobgpapi.GetBgpResponse, error) {
 	return &gobgpapi.GetBgpResponse{Global: s.global}, nil
 }
@@ -1411,6 +1409,8 @@ func (s *fakeServer) importPolicyRewritesPeerAddress() bool {
 }
 
 type fakeFIB struct {
+	clearCalls            int
+	clearErr              error
 	mu                    sync.Mutex
 	routes                []FIBRoute
 	history               [][]FIBRoute
@@ -1418,6 +1418,15 @@ type fakeFIB struct {
 	err                   error
 	guardPreferredSource  bool
 	localPreferredSources map[string]bool
+}
+
+func (f *fakeFIB) ClearBGP(context.Context) error {
+	f.clearCalls++
+	if f.clearErr != nil {
+		return f.clearErr
+	}
+	f.routes = nil
+	return nil
 }
 
 func (f *fakeFIB) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResult, error) {

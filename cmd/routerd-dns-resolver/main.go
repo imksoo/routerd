@@ -59,6 +59,7 @@ type daemon struct {
 	listeners    map[string]*boundListener
 	sourceCancel context.CancelFunc
 	generation   uint64
+	configDigest string
 	cache        map[string]cacheEntry
 	queryLogMu   sync.Mutex
 	queryLog     *logstore.DNSQueryLog
@@ -77,15 +78,12 @@ type boundListener struct {
 
 type cacheEntry struct {
 	Message    []byte
+	Stored     time.Time
 	Expires    time.Time
 	Generation uint64
 }
 
-type reloadSummary struct {
-	Reloaded  bool `json:"reloaded"`
-	Listeners int  `json:"listeners"`
-	Sources   int  `json:"sources"`
-}
+type reloadSummary = dnsresolver.ReloadResult
 
 type reloadError struct {
 	status int
@@ -291,6 +289,11 @@ func buildRuntimeSources(config dnsresolver.RuntimeConfig) ([]runtimeSource, err
 }
 
 func (d *daemon) Run(ctx context.Context) error {
+	defer func() {
+		d.reloadMu.Lock()
+		defer d.reloadMu.Unlock()
+		d.closeQueryLog()
+	}()
 	d.runCtx = ctx
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0o755); err != nil {
 		return err
@@ -308,7 +311,6 @@ func (d *daemon) Run(ctx context.Context) error {
 	}
 	defer listener.Close()
 	apiServer := &http.Server{Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = apiServer.Serve(listener) }()
 	defer apiServer.Close()
 
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DNS resolver daemon started", nil)
@@ -319,14 +321,15 @@ func (d *daemon) Run(ctx context.Context) error {
 		if queryLogSpec.Enabled {
 			queryLog, err := logstore.OpenDNSQueryLog(queryLogSpec.Path)
 			if err != nil {
-				d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
-				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "QueryLogOpenFailed", err.Error(), nil)
-				return err
+				// Query history must not prevent serving the configured DNS
+				// zones and upstreams. Reload will retry opening the log and
+				// will not acknowledge the complete config until that succeeds.
+				d.publish("routerd.dns.query_log.failed", daemonapi.SeverityWarning, "QueryLogOpenFailed", err.Error(), nil)
+			} else {
+				d.queryLogMu.Lock()
+				d.queryLog = queryLog
+				d.queryLogMu.Unlock()
 			}
-			d.queryLogMu.Lock()
-			d.queryLog = queryLog
-			d.queryLogMu.Unlock()
-			defer d.closeQueryLog()
 		}
 		sourceCtx, sourceCancel := context.WithCancel(ctx)
 		d.stateMu.Lock()
@@ -352,6 +355,8 @@ func (d *daemon) Run(ctx context.Context) error {
 		d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
 		d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DNS resolver daemon is ready", nil)
 	}
+	// Accept reloads only after startup owns its listeners and query log.
+	go func() { _ = apiServer.Serve(listener) }()
 	<-ctx.Done()
 	d.shutdownDNSServers()
 	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DNS resolver daemon stopped", nil)
@@ -359,6 +364,8 @@ func (d *daemon) Run(ctx context.Context) error {
 }
 
 func (d *daemon) startDNS(ctx context.Context) error {
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
 	d.stateMu.RLock()
 	desired := listenAddressSet(d.config.Spec.Listen)
 	d.stateMu.RUnlock()
@@ -465,6 +472,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			var msg dns.Msg
 			if err := msg.Unpack(cached); err == nil {
 				msg.Id = req.Id
+				msg.Question = append([]dns.Question(nil), req.Question...)
 				return resolveResult{Response: &msg, CacheHit: true, Upstream: "cache", ResponseCode: dns.RcodeToString[msg.Rcode]}, nil
 			}
 		}
@@ -486,7 +494,11 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			}
 			upstreamReq := req.Copy()
 			if source.Spec.DNSSECValidate {
-				upstreamReq.SetEdns0(1232, true)
+				if opt := upstreamReq.IsEdns0(); opt != nil {
+					opt.SetDo()
+				} else {
+					upstreamReq.SetEdns0(1232, true)
+				}
 			}
 			wire, err := upstreamReq.Pack()
 			if err != nil {
@@ -644,15 +656,38 @@ func (d *daemon) cacheGet(key string, generation uint64) ([]byte, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	entry, ok := d.cache[key]
-	if !ok || entry.Generation != generation || time.Now().After(entry.Expires) {
+	now := time.Now()
+	if !ok || entry.Generation != generation || !now.Before(entry.Expires) {
 		delete(d.cache, key)
 		return nil, false
 	}
-	return append([]byte(nil), entry.Message...), true
+	var msg dns.Msg
+	if err := msg.Unpack(entry.Message); err != nil {
+		delete(d.cache, key)
+		return nil, false
+	}
+	age := uint32(now.Sub(entry.Stored) / time.Second)
+	remaining := uint32(entry.Expires.Sub(now) / time.Second)
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+		for _, rr := range section {
+			if rr.Header().Rrtype == dns.TypeOPT {
+				continue // OPT's TTL field contains EDNS flags, not a lifetime.
+			}
+			ttl := rr.Header().Ttl
+			if ttl < age {
+				ttl = 0
+			} else {
+				ttl -= age
+			}
+			rr.Header().Ttl = min(ttl, remaining)
+		}
+	}
+	wire, err := msg.Pack()
+	return wire, err == nil
 }
 
 func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries int, generation uint64) {
-	if ttl <= 0 {
+	if key == "" || ttl <= 0 {
 		return
 	}
 	d.mu.Lock()
@@ -669,7 +704,8 @@ func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries 
 			break
 		}
 	}
-	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Expires: time.Now().Add(ttl), Generation: generation}
+	now := time.Now()
+	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Stored: now, Expires: now.Add(ttl), Generation: generation}
 }
 
 func (d *daemon) routes() http.Handler {
@@ -700,7 +736,7 @@ func (d *daemon) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	if ctx == nil {
 		ctx = r.Context()
 	}
-	summary, err := d.reload(ctx)
+	summary, err := d.reloadConfig(ctx, r.Header.Get(dnsresolver.ConfigDigestHeader))
 	if err != nil {
 		status := http.StatusInternalServerError
 		var reloadErr *reloadError
@@ -738,12 +774,33 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
+	return d.reloadConfig(ctx, "")
+}
+
+func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloadSummary, error) {
 	d.reloadMu.Lock()
 	defer d.reloadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return reloadSummary{}, err
+	}
 
 	config, err := loadConfig(d.opts)
 	if err != nil {
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
+	digest, err := config.Digest()
+	if err != nil {
+		return reloadSummary{}, err
+	}
+	if expectedDigest != "" && digest != expectedDigest {
+		return reloadSummary{}, &reloadError{status: http.StatusConflict, err: fmt.Errorf("desired configuration changed before reload")}
+	}
+	d.stateMu.RLock()
+	unchanged := expectedDigest != "" && d.configDigest == digest
+	summary := reloadSummary{ConfigDigest: d.configDigest, Listeners: len(d.listeners), Sources: len(d.sources)}
+	d.stateMu.RUnlock()
+	if unchanged {
+		return summary, nil
 	}
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
@@ -772,12 +829,44 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		}
 	}
 
+	var stagedQueryLog *logstore.DNSQueryLog
+	replaceQueryLog := false
+	if !d.opts.dryRun {
+		d.queryLogMu.Lock()
+		currentQueryLog := d.queryLog
+		currentPath := ""
+		if currentQueryLog != nil {
+			currentPath = currentQueryLog.Stats().Path
+		}
+		d.queryLogMu.Unlock()
+		if config.Spec.QueryLog.Enabled {
+			if currentQueryLog == nil || currentPath != config.Spec.QueryLog.Path {
+				stagedQueryLog, err = logstore.OpenDNSQueryLog(config.Spec.QueryLog.Path)
+				if err != nil {
+					return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: fmt.Errorf("open DNS query log: %w", err)}
+				}
+				replaceQueryLog = true
+			}
+		} else {
+			replaceQueryLog = true
+		}
+	}
+	defer func() {
+		if stagedQueryLog != nil {
+			_ = stagedQueryLog.Close()
+		}
+	}()
+
 	newListeners := map[string]*boundListener{}
 	if !d.opts.dryRun {
 		newListeners, err = d.openBoundListeners(ctx, additions)
 		if err != nil {
 			return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: err}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		shutdownBoundListeners(newListeners)
+		return reloadSummary{}, err
 	}
 
 	var sourceCancel context.CancelFunc
@@ -792,6 +881,13 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 	}
 
 	d.stateMu.Lock()
+	d.queryLogMu.Lock()
+	var retiredQueryLog *logstore.DNSQueryLog
+	if replaceQueryLog {
+		retiredQueryLog = d.queryLog
+		d.queryLog = stagedQueryLog
+		stagedQueryLog = nil
+	}
 	mergedListeners := map[string]*boundListener{}
 	for addr, listener := range oldListeners {
 		if _, remove := removals[addr]; !remove {
@@ -802,12 +898,17 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		mergedListeners[addr] = listener
 	}
 	d.config = config
+	d.configDigest = digest
 	d.sources = sources
 	d.zones = zones
 	d.listeners = mergedListeners
 	d.sourceCancel = sourceCancel
 	d.generation++
+	d.queryLogMu.Unlock()
 	d.stateMu.Unlock()
+	if retiredQueryLog != nil {
+		_ = retiredQueryLog.Close()
+	}
 	d.mu.Lock()
 	clear(d.cache)
 	d.mu.Unlock()
@@ -823,7 +924,7 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 			d.setState(daemonapi.PhaseStarting, daemonapi.HealthUnknown)
 		}
 	}
-	summary := reloadSummary{Reloaded: true, Listeners: len(mergedListeners), Sources: len(sources)}
+	summary = reloadSummary{Reloaded: true, ConfigDigest: digest, Listeners: len(mergedListeners), Sources: len(sources)}
 	d.publish("routerd.dns.resolver.reloaded", daemonapi.SeverityInfo, "Reloaded", "DNS resolver config reloaded", map[string]string{
 		"listeners": fmt.Sprintf("%d", summary.Listeners),
 		"sources":   fmt.Sprintf("%d", summary.Sources),

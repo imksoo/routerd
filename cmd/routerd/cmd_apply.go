@@ -318,7 +318,10 @@ func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateS
 	if router == nil {
 		return out, nil
 	}
-	effective := resourcequery.FilterRouterByWhen(router, store)
+	effective, err := resourcequery.FilterRouterByWhen(router, store)
+	if err != nil {
+		return nil, err
+	}
 	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), targetOS)
 	if err != nil {
 		return nil, err
@@ -330,7 +333,11 @@ func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateS
 	}
 	for _, resource := range router.Spec.Resources {
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
+		matches, err := resourcequery.ResourceWhenMatches(when, store)
+		if err != nil {
+			return nil, err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
@@ -553,7 +560,11 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	defer stateStore.Close()
 
-	effectiveRouter := filterRouterByWhen(router, stateStore)
+	outcome.Stage = "resolve-when"
+	effectiveRouter, err := filterRouterByWhen(router, stateStore)
+	if err != nil {
+		return nil, err
+	}
 	var generation int64
 	generationCreated := false
 	if !opts.DryRun {
@@ -706,7 +717,7 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		BGPStatePath:           opts.BGPStatePath,
 		MutationGate:           opts.MutationGate,
 	}
-	if opts.DryRun {
+	if opts.DryRun || opts.Sandbox {
 		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
 		if !opts.Sandbox {
 			controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")

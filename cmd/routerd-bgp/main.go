@@ -474,6 +474,13 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func restoreApplied(ctx context.Context, server *gobgpserver.BgpServer, paths policyPathServer, statePath string, logger *slog.Logger) error {
+	pending, err := bgpdaemon.RemovalPending(statePath)
+	if err != nil {
+		return fmt.Errorf("read BGP removal intent: %w", err)
+	}
+	if pending {
+		return nil
+	}
 	applied, ok, err := bgpdaemon.ReadApplied(statePath)
 	if err != nil {
 		return fmt.Errorf("read applied BGP state: %w", err)

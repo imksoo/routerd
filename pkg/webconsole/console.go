@@ -24,7 +24,7 @@ import (
 
 type Options struct {
 	Router *api.Router
-	// CurrentRouter supplies the current declaration for the status inventory count.
+	// CurrentRouter supplies one consistent declaration for each response.
 	CurrentRouter          func() *api.Router
 	Store                  routerstate.Store
 	Result                 func() *apply.Result
@@ -92,6 +92,7 @@ func New(opts Options) Handler {
 }
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h = h.withCurrentRouter()
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "read-only console", http.StatusMethodNotAllowed)
 		return
@@ -162,6 +163,14 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.asset(w, r, path)
 	}
+}
+
+func (h Handler) withCurrentRouter() Handler {
+	if h.opts.CurrentRouter != nil {
+		h.opts.Router = h.opts.CurrentRouter()
+		h.opts.CurrentRouter = nil
+	}
+	return h
 }
 
 func cleanConsoleLinks(links []ConsoleLink) []ConsoleLink {

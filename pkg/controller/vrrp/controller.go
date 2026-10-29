@@ -67,7 +67,10 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if !hasVirtualAddress(c.Router) {
 		return c.stopVirtualAddressBackend(ctx)
 	}
-	priorities, tracks := c.effectivePriorities()
+	priorities, tracks, err := c.effectivePriorities()
+	if err != nil {
+		return err
+	}
 	staticChanged, staticIsolated, err := c.applyStaticAddresses(ctx, aliases)
 	if err != nil {
 		return err
@@ -573,7 +576,7 @@ const (
 	trackedResourceNeutral
 )
 
-func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSummary) {
+func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSummary, error) {
 	priorities := map[string]int{}
 	summaries := map[string]trackSummary{}
 	if c.trackState == nil {
@@ -601,7 +604,11 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			status := c.Store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
 			phase := fmt.Sprint(status["phase"])
 			state := trackedPhaseState(kind, phase, fmt.Sprint(status["reason"]))
-			if c.trackedResourceWhenFalse(kind, name) {
+			whenFalse, err := c.trackedResourceWhenFalse(kind, name)
+			if err != nil {
+				return nil, nil, err
+			}
+			if whenFalse {
 				state = trackedResourceNeutral
 			}
 			healthy := state == trackedResourceHealthy
@@ -631,21 +638,22 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 		priorities[resource.Metadata.Name] = effective
 		summaries[resource.Metadata.Name] = trackSummary{BasePriority: base, EffectivePriority: effective, Entries: entries}
 	}
-	return priorities, summaries
+	return priorities, summaries, nil
 }
 
-func (c *Controller) trackedResourceWhenFalse(kind, name string) bool {
+func (c *Controller) trackedResourceWhenFalse(kind, name string) (bool, error) {
 	if c.Router == nil || c.Store == nil {
-		return false
+		return false, nil
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != kind || resource.Metadata.Name != name {
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		return resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(c.Store))
+		matches, err := resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(c.Store))
+		return resourcequery.ResourceWhenPresent(when) && !matches, err
 	}
-	return false
+	return false, nil
 }
 
 type vrrpWhenStore struct {
@@ -664,6 +672,26 @@ func (s vrrpWhenStore) Get(name string) routerstate.Value {
 	}
 	now := s.Now()
 	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}
+}
+
+func (s vrrpWhenStore) ReadVariable(name string) (routerstate.Value, error) {
+	reader, ok := s.Store.(interface {
+		ReadVariable(string) (routerstate.Value, error)
+	})
+	if !ok {
+		return routerstate.Value{}, fmt.Errorf("state-variable reading is unavailable")
+	}
+	return reader.ReadVariable(name)
+}
+
+func (s vrrpWhenStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	reader, ok := s.Store.(interface {
+		ReadObjectStatus(string, string, string) (map[string]any, error)
+	})
+	if !ok {
+		return nil, fmt.Errorf("object-status reading is unavailable")
+	}
+	return reader.ReadObjectStatus(apiVersion, kind, name)
 }
 
 func (s vrrpWhenStore) Age(name string) time.Duration {

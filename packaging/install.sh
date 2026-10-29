@@ -21,6 +21,7 @@ configure_non_interactive=0
 configure_yes=0
 configure_apply=1
 completed=0
+service_failed=0
 backup_dir=
 
 usage()
@@ -516,92 +517,6 @@ routerd_script_calls_removed_check()
     return 1
 }
 
-routerd_config_contains_systemd_unit()
-{
-    config=$1
-    [ -f "${config}" ] || return 1
-    awk '
-        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
-            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                found = 1
-            }
-            in_item = 1
-            item = $0 "\n"
-            next
-        }
-        {
-            if (in_item) {
-                item = item $0 "\n"
-            }
-        }
-        END {
-            if (in_item && item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                found = 1
-            }
-            exit(found ? 0 : 1)
-        }
-    ' "${config}"
-}
-
-migrate_legacy_router_config()
-{
-    config=$1
-    [ -f "${config}" ] || return 0
-    if ! routerd_config_contains_systemd_unit "${config}"; then
-        return 0
-    fi
-    echo "warning: removing legacy SystemdUnit resources from ${config}; routerd now generates service units from declared router intent" >&2
-    if [ "${dry_run}" -eq 1 ]; then
-        echo "dry-run: remove SystemdUnit resources from ${config}"
-        return 0
-    fi
-    backup_target "${config}"
-    tmp="${config}.tmp.$$"
-    awk '
-        function flush_item() {
-            if (!in_item) {
-                return
-            }
-            if (item ~ /(^|\n)[[:space:]]*kind:[[:space:]]*SystemdUnit([[:space:]\n]|$)/) {
-                changed = 1
-            } else {
-                printf "%s", item
-            }
-            in_item = 0
-            item = ""
-        }
-        /^[[:space:]]*-[[:space:]]*apiVersion:[[:space:]]*/ {
-            flush_item()
-            in_item = 1
-            item = $0 "\n"
-            next
-        }
-        {
-            if (in_item) {
-                item = item $0 "\n"
-            } else {
-                print
-            }
-        }
-        END {
-            flush_item()
-            if (!changed) {
-                exit 3
-            }
-        }
-    ' "${config}" > "${tmp}" || {
-        status=$?
-        rm -f "${tmp}"
-        if [ "${status}" -eq 3 ]; then
-            echo "warning: legacy SystemdUnit marker disappeared before migration: ${config}" >&2
-            return 0
-        fi
-        echo "failed to migrate legacy SystemdUnit resources from ${config}" >&2
-        return "${status}"
-    }
-    mv -f "${tmp}" "${config}"
-}
-
 wait_for_routerd_status_socket()
 {
     socket=$1
@@ -739,16 +654,21 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
     [ -d /proc ] || return 0
 
     if [ "${service_touched}" -eq 1 ]; then
-        if ! wait_for_routerd_status_socket /run/routerd/routerd-status.sock; then
+        if ! wait_for_routerd_status_socket "${status_socket}"; then
             echo "warning: routerd status socket did not appear; checking helper units anyway" >&2
-        elif ! wait_for_routerd_status_apply /run/routerd/routerd-status.sock; then
+        elif ! wait_for_routerd_status_apply "${status_socket}"; then
             echo "warning: routerctl get status apply state was not observed; checking helper units anyway" >&2
         fi
         wait_for_routerd_helper_unit_files_to_settle
     fi
 
     systemctl daemon-reload
-    units=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null | awk '{print $1}' || true)
+    if ! unit_listing=$(systemctl list-units --type=service --state=running --plain --no-legend 'routerd*.service' 2>/dev/null); then
+        echo "error: could not inspect running routerd helper services" >&2
+        service_failed=1
+        return 0
+    fi
+    units=$(printf '%s\n' "${unit_listing}" | awk '{print $1}')
     for unit in ${units}; do
         [ "${unit}" = "routerd.service" ] && continue
         reason=$(routerd_helper_unit_restart_reason "${unit}") || continue
@@ -756,7 +676,8 @@ restart_stale_routerd_helper_systemd_units_after_upgrade()
         if systemctl restart "${unit}"; then
             service_touched=1
         else
-            echo "warning: failed to restart ${unit}" >&2
+            echo "error: failed to restart ${unit}" >&2
+            service_failed=1
         fi
     done
 }
@@ -786,7 +707,8 @@ wait_for_routerd_scheduled_self_restart_after_upgrade()
     elapsed=0
     while routerd_scheduled_self_restart_pending; do
         if [ "${elapsed}" -ge "${timeout_seconds}" ]; then
-            echo "warning: scheduled routerd.service restart did not finish within ${timeout_seconds}s" >&2
+            echo "error: scheduled routerd.service restart did not finish within ${timeout_seconds}s" >&2
+            service_failed=1
             return 0
         fi
         sleep 1
@@ -794,11 +716,13 @@ wait_for_routerd_scheduled_self_restart_after_upgrade()
     done
 
     if ! wait_for_routerd_status_socket "${status_socket}"; then
-        echo "warning: routerd status socket did not recover after scheduled service restart" >&2
+        echo "error: routerd status socket did not recover after scheduled service restart" >&2
+        service_failed=1
         return 0
     fi
     if ! wait_for_routerd_status_apply "${status_socket}"; then
-        echo "warning: routerctl get status apply state was not observed after scheduled service restart" >&2
+        echo "error: routerctl get status apply state was not observed after scheduled service restart" >&2
+        service_failed=1
     fi
 }
 
@@ -2064,8 +1988,6 @@ else
     echo "config sample update skipped by --no-config-update"
 fi
 
-migrate_legacy_router_config "${sysconfdir}/router.yaml"
-
 if [ "${config_update}" -eq 1 ] && [ -f "${sysconfdir}/router.yaml" ] && [ -f "${sysconfdir}/router.yaml.sample" ]; then
     echo "existing config preserved: ${sysconfdir}/router.yaml"
     echo "new sample config: ${sysconfdir}/router.yaml.sample"
@@ -2125,6 +2047,9 @@ case "${os}" in
                     restart_stale_routerd_helper_systemd_units_after_upgrade
                     wait_for_routerd_scheduled_self_restart_after_upgrade
                 fi
+            elif [ "${start_service}" -eq 1 ]; then
+                echo "error: cannot start routerd.service: systemctl is unavailable" >&2
+                service_failed=1
             fi
         fi        ;;
     FreeBSD)
@@ -2167,6 +2092,9 @@ case "${os}" in
                             service_touched=1
                         fi
                     fi
+                else
+                    echo "error: cannot start routerd: service is unavailable" >&2
+                    service_failed=1
                 fi
             fi
         fi
@@ -2177,15 +2105,27 @@ case "${os}" in
         ;;
 esac
 
+if [ "${dry_run}" -eq 0 ] && [ "${service_touched}" -eq 1 ] && [ ! -x "${bindir}/routerctl" ]; then
+    echo "error: cannot verify service recovery: routerctl is unavailable" >&2
+    service_failed=1
+fi
 if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
     if [ "${service_touched}" -eq 1 ] && [ -n "${status_socket}" ]; then
-        wait_for_routerd_status_socket "${status_socket}" || true
+        if ! wait_for_routerd_status_socket "${status_socket}"; then
+            echo "error: routerd status socket did not recover after service restart" >&2
+            service_failed=1
+        fi
     fi
     if [ -n "${status_socket}" ] && [ -S "${status_socket}" ]; then
+        if [ "${service_touched}" -eq 1 ] && ! wait_for_routerd_status_apply "${status_socket}"; then
+            echo "error: routerctl apply state was not observed after service restart" >&2
+            service_failed=1
+        fi
         echo "routerctl get status:"
         run_routerctl_status "${status_socket}" || {
             if [ "${service_touched}" -eq 1 ]; then
-                echo "warning: routerctl get status failed after service restart" >&2
+                echo "error: routerctl get status failed after service restart" >&2
+                service_failed=1
             else
                 echo "warning: routerctl get status failed or timed out" >&2
             fi
@@ -2195,6 +2135,12 @@ if [ "${dry_run}" -eq 0 ] && [ -x "${bindir}/routerctl" ]; then
     fi
 fi
 
+# Installed files may already be in use by the restarted processes. Keep them
+# on recovery failure instead of rolling files back underneath running services.
 completed=1
+if [ "${service_failed}" -ne 0 ]; then
+    echo "routerd ${mode} installed files under ${prefix}, but service recovery failed" >&2
+    exit 1
+fi
 echo "routerd ${mode} completed under ${prefix}"
 echo "state preserved: /var/lib/routerd, /var/db/routerd, /run/routerd, /var/run/routerd, /var/log/otelcol"

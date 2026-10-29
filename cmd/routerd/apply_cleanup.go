@@ -20,7 +20,7 @@ import (
 
 var runCleanupCommand = runLogged
 
-func filterRouterByWhen(router *api.Router, store resourcequery.StateStore) *api.Router {
+func filterRouterByWhen(router *api.Router, store resourcequery.StateStore) (*api.Router, error) {
 	return resourcequery.FilterRouterByWhen(router, store)
 }
 

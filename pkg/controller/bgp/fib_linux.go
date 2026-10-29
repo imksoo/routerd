@@ -128,6 +128,24 @@ func (s *netlinkFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyn
 	return result, nil
 }
 
+func (s *netlinkFIBSyncer) ClearBGP(ctx context.Context) error {
+	routes, err := kernelBGPRoutes()
+	if err != nil {
+		return fmt.Errorf("list BGP routes for removal: %w", err)
+	}
+	for _, route := range routes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := netlink.RouteDel(&route.Netlink); err != nil {
+			return fmt.Errorf("delete removed BGP route %s: %w", route.FIB.Prefix, err)
+		}
+	}
+	s.installed = map[string]kernelBGPRoute{}
+	s.retainOnMissing = map[string]bool{}
+	return nil
+}
+
 func filterLocalHostFIBRoutes(routes map[string]FIBRoute, localHostPrefixes map[string]bool) map[string]FIBRoute {
 	if len(routes) == 0 || len(localHostPrefixes) == 0 {
 		return routes

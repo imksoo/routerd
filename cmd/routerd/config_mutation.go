@@ -47,6 +47,14 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	if strings.TrimSpace(req.CandidateYAML) == "" {
 		return nil, fmt.Errorf("%w: apply requires candidateYaml", controlapi.ErrBadRequest)
 	}
+	// Read and merge the canonical base under the same gate as its commit.
+	if !req.DryRun {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
 	nextYAML, nextRouter, err := m.mutatedCandidate(req.CandidateYAML, req.Replace)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
@@ -60,11 +68,6 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		return &apiResult, nil
 	}
 	if req.NoReconcile {
-		unlock, err := m.lockMutationTransaction()
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
 		result, err := m.commitOnly(nextRouter, nextYAML)
 		if err != nil {
 			return nil, err
@@ -72,11 +75,6 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		apiResult := controlapi.NewApplyResult(result)
 		return &apiResult, nil
 	}
-	unlock, err := m.lockMutationTransaction()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
 	result, err := m.mutateRuntime(nextRouter, nextYAML)
 	if err != nil {
 		return nil, err
@@ -127,6 +125,14 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if strings.TrimSpace(req.Target) == "" {
 		return nil, controlapi.ErrBadRequest
 	}
+	// Resolve the target and read its canonical base within the transaction.
+	if !req.DryRun {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
 	target, err := deleteTargetFromArg(req.Target)
 	if err != nil {
 		if !req.Force {
@@ -166,11 +172,6 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		return &result, nil
 	}
 	if req.NoReconcile {
-		unlock, err := m.lockMutationTransaction()
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
 		committed, err := m.commitOnly(nextRouter, string(nextYAML))
 		if err != nil {
 			return nil, err
@@ -178,11 +179,6 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		result.Result = committed
 		return &result, nil
 	}
-	unlock, err := m.lockMutationTransaction()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
 	applied, err := m.mutateRuntime(nextRouter, string(nextYAML))
 	if err != nil {
 		return nil, err

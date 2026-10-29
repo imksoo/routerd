@@ -33,7 +33,10 @@ func TestStatusResourceCountAcrossObservationPaths(t *testing.T) {
 		t.Run(role, func(t *testing.T) {
 			store := routerstate.NewMemory()
 			store.Set("test-role", role, "fixture")
-			effective := resourcequery.FilterRouterByWhen(router, store)
+			effective, err := resourcequery.FilterRouterByWhen(router, store)
+			if err != nil {
+				t.Fatal(err)
+			}
 			wantEffective := 3
 			if role == "backup" {
 				wantEffective = 1

@@ -156,6 +156,27 @@ func (s *freeBSDFIBSyncer) SyncBGP(ctx context.Context, routes []FIBRoute) (FIBS
 	return result, nil
 }
 
+func (s *freeBSDFIBSyncer) ClearBGP(ctx context.Context) error {
+	routes, err := s.kernelBGPRoutes(ctx)
+	if err != nil {
+		return err
+	}
+	prefixes := make([]string, 0, len(routes))
+	for prefix := range routes {
+		prefixes = append(prefixes, prefix)
+	}
+	sort.Strings(prefixes)
+	for _, prefix := range prefixes {
+		if err := s.deleteRoute(ctx, routes[prefix]); err != nil {
+			return fmt.Errorf("delete removed FreeBSD BGP route %s: %w", prefix, err)
+		}
+	}
+	s.installed = map[string]FIBRoute{}
+	s.sourceKnown = map[string]bool{}
+	s.retainOnMissing = map[string]bool{}
+	return nil
+}
+
 func newFreeBSDFIBSyncResult() FIBSyncResult {
 	return FIBSyncResult{
 		Installed:                    map[string]bool{},

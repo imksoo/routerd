@@ -878,18 +878,17 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 }
 
 func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, table string, data []byte) (bool, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
-		if !c.DryRun {
-			if nftstate.RecentlyVerified(path, time.Now().UTC()) {
-				return false, nil
-			}
-			_, _ = c.runNFT(ctx, nft, "delete", "table", family, table)
-			_ = nftstate.MarkVerified(path, time.Now().UTC())
-		}
-		return false, nil
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
+	}
+	current, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return false, readErr
+	}
+	if !c.DryRun && (readErr != nil || !bytes.Equal(current, data)) {
+		if err := nftstate.Invalidate(path); err != nil {
+			return false, err
+		}
 	}
 	changed, err := writeFileIfChanged(path, data, 0644, false)
 	if err != nil {
@@ -901,12 +900,15 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		return false, nil
 	}
-	current, listErr := c.runNFT(ctx, nft, "list", "table", family, table)
-	missing := listErr != nil
-	_ = current
-	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return false, nil
+	if err := nftstate.Invalidate(path); err != nil {
+		return changed, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		out, err := c.runNFT(ctx, nft, "delete", "table", family, table)
+		if err != nil && !strings.Contains(string(out), "No such file or directory") {
+			return changed, fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
+		}
+		return changed || err == nil, nftstate.MarkVerified(path, time.Now().UTC())
 	}
 	if out, err := c.runNFT(ctx, nft, "-c", "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
@@ -914,6 +916,5 @@ func (c PathMTUController) applyTable(ctx context.Context, nft, path, family, ta
 	if out, err := c.runNFT(ctx, nft, "-f", path); err != nil {
 		return changed, fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
-	return changed || missing, nil
+	return true, nftstate.MarkVerified(path, time.Now().UTC())
 }

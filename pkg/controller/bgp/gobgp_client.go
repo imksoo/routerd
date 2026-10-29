@@ -150,15 +150,6 @@ func (s *remoteGoBGPServer) StartBgp(ctx context.Context, req *gobgpapi.StartBgp
 	return err
 }
 
-func (s *remoteGoBGPServer) StopBgp(ctx context.Context, req *gobgpapi.StopBgpRequest) error {
-	client, err := s.api(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = client.StopBgp(ctx, req)
-	return err
-}
-
 func (s *remoteGoBGPServer) AddPeer(ctx context.Context, req *gobgpapi.AddPeerRequest) error {
 	client, err := s.api(ctx)
 	if err != nil {

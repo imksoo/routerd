@@ -379,3 +379,7 @@ func ingressRouter() *api.Router {
 		},
 	}}}
 }
+
+func (s mapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}

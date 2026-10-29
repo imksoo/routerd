@@ -97,6 +97,14 @@ Implemented across existing callers:
 
 No released version, full semantic audit, or real network qualification is claimed.
 
+The subsequent failure/recovery pass implements full DHCPv4 exchange ownership,
+multi-prefix DHCPv6 and information requests, error-returning conditional reads,
+serialized partial config updates, truthful nft/PF acknowledgement and withdrawal,
+ICMP exchange correlation, DNS reload/cache/log ownership, current console views
+and non-destructive installer behavior. The audit records the executed checks and
+the remaining mobility handover, static preparation, representation and inventory
+work. These are implementation checkpoints, not completion of steps 3–6.
+
 ## Validation
 
 Use go.mod's Go 1.25.9 toolchain and the Makefile targets. `check-routerd15`

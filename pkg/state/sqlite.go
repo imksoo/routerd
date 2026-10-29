@@ -135,22 +135,36 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 }
 
 func (s *SQLiteStore) Get(name string) Value {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return Value{}
-	}
-	ref := objectRefForKey(name)
-	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
+	value, err := s.ReadVariable(name)
+	if err != nil && !errors.Is(err, sql.ErrConnDone) {
 		now := s.now().UTC()
 		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 	}
+	return value
+}
+
+// ReadVariable distinguishes an absent observation from a failed database read.
+// Side-effect decisions must use this boundary instead of the display getter.
+func (s *SQLiteStore) ReadVariable(name string) (Value, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return Value{}, sql.ErrConnDone
+	}
+	ref := objectRefForKey(name)
+	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		now := s.now().UTC()
+		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
+	}
+	if err != nil {
+		return Value{}, err
+	}
 	if value, ok := valueFromStatus(status, ref.Field); ok {
-		return value
+		return value, nil
 	}
 	now := s.now().UTC()
-	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
 }
 
 func (s *SQLiteStore) Set(name, value, reason string) (Value, error) {
@@ -887,20 +901,28 @@ func (s *SQLiteStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 }
 
 func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	status, _ := s.ReadObjectStatus(apiVersion, kind, name)
+	return status
+}
+
+func (s *SQLiteStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return map[string]any{}
+		return nil, sql.ErrConnDone
 	}
 	status, _, err := s.loadStatus(apiVersion, kind, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := map[string]any{}
 	for key, value := range status {
 		out[key] = value
 	}
-	return out
+	return out, nil
 }
 
 func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {

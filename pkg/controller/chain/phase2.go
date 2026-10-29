@@ -924,7 +924,10 @@ func (c DHCPv6ServerController) Start(ctx context.Context) {
 }
 
 func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
-	effectiveRouter := c.effectiveRouter()
+	effectiveRouter, err := c.effectiveRouter()
+	if err != nil {
+		return err
+	}
 	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
 		return nil
 	}
@@ -982,7 +985,11 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !c.resourceWhenMatches(resource) {
+		matches, err := c.resourceWhenMatches(resource)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun})
 			continue
 		}
@@ -1202,19 +1209,13 @@ func (c DHCPv6ServerController) saveDnsmasqOwnershipError(reconcileErr error) er
 	return nil
 }
 
-func (c DHCPv6ServerController) effectiveRouter() *api.Router {
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
-		return c.Router
-	}
+func (c DHCPv6ServerController) effectiveRouter() (*api.Router, error) {
+	stateStore, _ := c.Store.(resourcequery.StateStore)
 	return resourcequery.FilterRouterByWhen(c.Router, stateStore)
 }
 
-func (c DHCPv6ServerController) resourceWhenMatches(resource api.Resource) bool {
-	stateStore, ok := c.Store.(resourcequery.StateStore)
-	if !ok {
-		return true
-	}
+func (c DHCPv6ServerController) resourceWhenMatches(resource api.Resource) (bool, error) {
+	stateStore, _ := c.Store.(resourcequery.StateStore)
 	return resourcequery.ResourceWhenMatches(resourcequery.ResourceWhen(resource), stateStore)
 }
 
@@ -1227,7 +1228,11 @@ func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(renderRouter *api.Route
 		if err != nil {
 			return err
 		}
-		if !c.resourceWhenMatches(resource) {
+		matches, err := c.resourceWhenMatches(resource)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
 				return err
@@ -1275,7 +1280,11 @@ func (c DHCPv6ServerController) saveDHCPv4ReservationStatuses(renderRouter *api.
 			"lifecycleClass": "renderer-input",
 			"dryRun":         c.DryRun,
 		}
-		if !c.resourceWhenMatches(resource) {
+		matches, err := c.resourceWhenMatches(resource)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			status["phase"] = "Pending"
 			status["reason"] = "WhenFalse"
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", resource.Metadata.Name, status); err != nil {
@@ -1339,7 +1348,11 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 		if err != nil {
 			return err
 		}
-		if !c.resourceWhenMatches(resource) {
+		matches, err := c.resourceWhenMatches(resource)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			status := map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "renderer": "dnsmasq", "dryRun": c.DryRun}
 			status = preserveStatusFields(status, c.Store.ObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name), "managedBy", "unitName")
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status)

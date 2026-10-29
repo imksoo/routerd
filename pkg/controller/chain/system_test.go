@@ -13,7 +13,6 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func TestNetworkAdoptionControllerWritesNetworkdAndResolvedDropins(t *testing.T) {
@@ -853,7 +852,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 	}}
 	var commands []string
 	controller := SystemdUnitController{
-		Router:           resourcequery.FilterRouterByWhen(router, store),
+		Router:           mustWhenFilteredRouter(t, false, router, store),
 		DeclaredRouter:   router,
 		Store:            store,
 		SystemdSystemDir: dir,
@@ -892,7 +891,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
 	commands = nil
-	controller.Router = resourcequery.FilterRouterByWhen(router, store)
+	controller.Router = mustWhenFilteredRouter(t, false, router, store)
 	controller.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		_ = ctx
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))

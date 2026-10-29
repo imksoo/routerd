@@ -137,6 +137,13 @@ The order in `DNSForwarder.spec.upstreams` is the priority order. routerd tries 
     address: 8.8.8.8
 ```
 
+On the routerd 1.5 proposal branch, `minTTL` is a cache admission threshold:
+answers with a shorter authoritative lifetime are served without caching.
+It never extends an upstream TTL. `maxTTL` and `negativeTTL` cap retention;
+negative answers also require an SOA and respect the lesser of its TTL and
+MINIMUM field. Cache hits count down the remaining lifetime, including authority
+and additional records, while preserving EDNS flags.
+
 ## NextDNS with a one-second query deadline
 
 Use the following resources with an existing `DNSResolver/lan-resolver`.

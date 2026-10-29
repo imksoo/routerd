@@ -28,7 +28,7 @@ func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
 	router := hostPolicyRouter(true)
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -72,7 +72,7 @@ func TestIPv6HostPolicyRepairsMissingRuleWithMatchingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -114,7 +114,7 @@ func TestIPv6HostPolicyKeepsNormalLocalTrafficOnPhysicalWANWhenPDUsesVMAC(t *tes
 		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
 	)
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -158,7 +158,7 @@ func TestIPv6HostPolicyRoutesOnlyDSLiteOuterSourcesThroughVMACMainTable(t *testi
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"},
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -207,7 +207,7 @@ func TestIPv6HostPolicyKeepsPhysicalSLAACDSLiteSourceInHostPolicyTable(t *testin
 	)
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": physical}}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -253,7 +253,7 @@ func TestIPv6HostPolicyMigratesVMACCatchAllRuleToPhysicalWANAndCleansOldState(t 
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}})
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -315,7 +315,7 @@ func TestIPv6HostPolicyMigratesLegacySourceRuleStateWithoutDeletingRoute(t *test
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"}})
 	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite-ra": {"localIPv6": "2001:db8:1200::23"}}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -344,7 +344,7 @@ func TestIPv6HostPolicyInitialSourceUnavailableDoesNotApply(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "ipv6-host-policy.json")
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if strings.Contains(strings.Join(args, " "), "link show") {
 			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
@@ -378,7 +378,7 @@ func TestIPv6HostPolicyRetainsStateWhenPreferredSourceUnavailable(t *testing.T) 
 	}
 	store := mapStore{}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: store, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if strings.Contains(strings.Join(args, " "), "link show") {
 			return []byte("2: wan0: <BROADCAST,UP,LOWER_UP> mtu 1500 state UP mode DEFAULT group default\n"), nil
@@ -408,7 +408,7 @@ func TestIPv6HostPolicyChangesAndRemovesOnlyStatefulRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		if strings.Contains(call, "link show") {
@@ -457,7 +457,7 @@ func TestIPv6HostPolicyChangeIgnoresAlreadyMissingPreviousRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch {
@@ -496,7 +496,7 @@ func TestIPv6HostPolicyRetainsStateWhenDeviceIsDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -526,7 +526,7 @@ func TestIPv6HostPolicyRetainsStateWhenOnlyAddressIsTentative(t *testing.T) {
 		t.Fatal(err)
 	}
 	var calls []string
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		calls = append(calls, call)
 		switch call {
@@ -556,7 +556,7 @@ func TestIPv6HostPolicyRetriesTransientRouteReplaceWithoutRecordingState(t *test
 		t.Fatal(err)
 	}
 	var routeReplaceCalls int
-	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+	controller := IPv4PolicyRouteController{Router: hostPolicyRouter(true), Store: mapStore{}, OperatingSystem: platform.OSLinux, HostPolicyStatePath: statePath, PolicyPath: filepath.Join(filepath.Dir(statePath), "policy.nft"), DefaultRoutePath: filepath.Join(filepath.Dir(statePath), "default-route.nft"), CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		call := name + " " + strings.Join(args, " ")
 		switch call {
 		case "ip -o link show dev wan0":
@@ -1446,6 +1446,9 @@ func TestIPv4PolicyRouteApplyNftTableDeletesExistingTableWhenDesiredEmptyDespite
 	logPath := filepath.Join(dir, "nft.log")
 	nftPath := filepath.Join(dir, "nft")
 	tablePath := filepath.Join(dir, "policy.nft")
+	if err := os.WriteFile(tablePath, []byte("old rules"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := nftstate.MarkVerified(tablePath, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}

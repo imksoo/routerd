@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	configfile "github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/platform"
@@ -65,10 +67,31 @@ func (c Controller) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent
 	return c.Reconcile(ctx)
 }
 
-func (c Controller) Reconcile(ctx context.Context) error {
+type pendingZoneRecord struct {
+	Hostname string
+	Field    string
+	Source   string
+	Reason   string
+}
+
+type preparedZone struct {
+	Name           string
+	Zone           string
+	Records        int
+	PendingRecords []pendingZoneRecord
+}
+
+func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
+	type preparedResolver struct {
+		name  string
+		spec  api.DNSResolverSpec
+		zones []string
+	}
+	var resolvers []preparedResolver
+	required := map[string]int{}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
 			continue
@@ -82,57 +105,128 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			return err
 		}
 		spec = dnsresolver.NormalizeSpec(spec)
-		spec, waiting, blockReason, err := c.expandSpec(spec)
+		var zones []string
+		for name := range dnsResolverZoneRefs(spec) {
+			zones = append(zones, name)
+			required[name]++
+		}
+		resolvers = append(resolvers, preparedResolver{resource.Metadata.Name, spec, zones})
+	}
+	type zonePublication struct {
+		preparedZone
+		servingPrepared bool
+		acknowledged    int
+	}
+	zones := map[string]*zonePublication{}
+	defer func() {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "DNSZone" {
+				continue
+			}
+			zone := zones[resource.Metadata.Name]
+			if zone == nil {
+				continue
+			}
+			phase, reason := "Applied", ""
+			switch {
+			case c.DryRun:
+				phase, reason = "Planned", "DryRun"
+			case required[zone.Name] == 0:
+				phase, reason = "Pending", "NoServingResolver"
+			case zone.acknowledged != required[zone.Name]:
+				phase, reason = "Pending", "ResolverNotAcknowledged"
+			case len(zone.PendingRecords) > 0:
+				phase, reason = "Pending", "WaitingForRecordAddresses"
+			}
+			reconcileErr = errors.Join(reconcileErr, c.saveZoneStatus(zone.preparedZone, phase, reason))
+		}
+	}()
+	for _, resolver := range resolvers {
+		config, preparedZones, err := c.runtimeConfig(resolver.name, resolver.spec)
 		if err != nil {
 			return err
 		}
+		for _, prepared := range preparedZones {
+			zone := zones[prepared.Name]
+			if zone == nil {
+				zone = &zonePublication{preparedZone: prepared}
+				zones[prepared.Name] = zone
+			}
+			if !slices.Contains(resolver.zones, prepared.Name) {
+				continue
+			}
+			if !zone.servingPrepared {
+				zone.preparedZone = prepared
+				zone.servingPrepared = true
+				continue
+			}
+			for _, pending := range prepared.PendingRecords {
+				if !slices.Contains(zone.PendingRecords, pending) {
+					zone.PendingRecords = append(zone.PendingRecords, pending)
+				}
+			}
+		}
+		spec, waiting, blockReason, err := c.expandSpec(resolver.spec)
+		if err != nil {
+			return err
+		}
+		config.Spec = spec
 		if blockReason != "" {
-			if err := c.saveStatus(resource.Metadata.Name, spec, "Pending", blockReason, waiting); err != nil {
+			if err := c.saveStatus(resolver.name, spec, "Pending", blockReason, waiting); err != nil {
 				return err
 			}
 			continue
 		}
-		config, err := c.runtimeConfig(resource.Metadata.Name, spec)
-		if err != nil {
-			return err
-		}
 		phase := "Applied"
+		if c.DryRun {
+			phase = "Planned"
+		}
 		message := ""
 		if len(waiting) > 0 {
-			phase = "Degraded"
+			if !c.DryRun {
+				phase = "Degraded"
+			}
 			message = "WaitingForDependencies"
 		}
-		changed := c.DryRun
+		changed := false
 		if !c.DryRun {
-			changed, err = c.ensureRunning(ctx, resource.Metadata.Name, config)
+			changed, err = c.ensureRunning(ctx, resolver.name, config)
 			if err != nil {
 				var reloadErr resolverReloadError
 				if errors.As(err, &reloadErr) {
 					phase = "Degraded"
 					message = err.Error()
+					reconcileErr = errors.Join(reconcileErr, fmt.Errorf("DNSResolver/%s: %w", resolver.name, err))
 				} else {
 					phase = "Pending"
-					if err := c.saveStatus(resource.Metadata.Name, spec, phase, err.Error(), waiting); err != nil {
+					if err := c.saveStatus(resolver.name, spec, phase, err.Error(), waiting); err != nil {
 						return err
 					}
 					return err
 				}
+			} else {
+				for _, name := range resolver.zones {
+					if zone := zones[name]; zone != nil {
+						zone.acknowledged++
+					}
+				}
 			}
 		}
-		if err := c.saveStatus(resource.Metadata.Name, spec, phase, message, waiting); err != nil {
+		if err := c.saveStatus(resolver.name, spec, phase, message, waiting); err != nil {
 			return err
 		}
-		if changed && c.Bus != nil {
+		if changed && err == nil && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd"}, "routerd.dns.resolver.configured", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: resource.Metadata.Name}
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: resolver.name}
 			_ = c.Bus.Publish(ctx, event)
 		}
 	}
-	return nil
+	return reconcileErr
 }
 
-func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, error) {
+func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, []preparedZone, error) {
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
+	var zones []preparedZone
 	servedZones := dnsResolverZoneRefs(spec)
 	autoRecords := c.hostnameRecordsForResolver(servedZones)
 	runtimeDir, _ := c.dirs()
@@ -142,7 +236,7 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	}
 	hostData, hostReadErr := os.ReadFile(hostsPath)
 	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
-		return config, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
+		return config, zones, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}
 	dhcpHostRecords := dnsresolver.ParseDNSMasqHostRecords(hostData)
 	for _, resource := range c.Router.Spec.Resources {
@@ -151,25 +245,23 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 		}
 		zoneSpec, err := resource.DNSZoneSpec()
 		if err != nil {
-			return config, err
+			return config, zones, err
 		}
 		if servedZones[resource.Metadata.Name] {
 			zoneSpec = appendHostnameRecords(resource.Metadata.Name, zoneSpec, autoRecords)
 		}
 		zoneSpec, pendingRecords, err := c.expandZoneSpec(zoneSpec)
 		if err != nil {
-			return config, err
+			return config, zones, err
 		}
-		if err := c.saveZoneStatus(resource.Metadata.Name, zoneSpec, pendingRecords); err != nil {
-			return config, err
-		}
+		zones = append(zones, preparedZone{Name: resource.Metadata.Name, Zone: zoneSpec.Zone, Records: len(zoneSpec.Records), PendingRecords: pendingRecords})
 		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec}
 		if len(zoneSpec.DHCPDerived.Sources) > 0 {
 			runtimeZone.DHCPHostRecords = append([]dnsresolver.RuntimeDHCPHostRecord(nil), dhcpHostRecords...)
 		}
 		config.Zones = append(config.Zones, runtimeZone)
 	}
-	return config, nil
+	return config, zones, nil
 }
 
 type hostnameRecord struct {
@@ -510,11 +602,11 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 	return spec, waiting, "", nil
 }
 
-func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map[string]string, error) {
+func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []pendingZoneRecord, error) {
 	// Typed specs share slice storage with the declared router. Resolve only a
 	// private view so a pending source, recovery, or renumbering can be retried.
 	spec.Records = append([]api.DNSZoneRecordSpec(nil), spec.Records...)
-	var pending []map[string]string
+	var pending []pendingZoneRecord
 	for i := range spec.Records {
 		record := &spec.Records[i]
 		if strings.TrimSpace(record.IPv4From.Resource) != "" {
@@ -523,7 +615,7 @@ func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map
 				return spec, pending, fmt.Errorf("DNSZone record %q ipv4From: %w", record.Hostname, err)
 			}
 			if pendingReason != "" {
-				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv4", "source": record.IPv4From.Resource, "reason": pendingReason})
+				pending = append(pending, pendingZoneRecord{Hostname: record.Hostname, Field: "ipv4", Source: record.IPv4From.Resource, Reason: pendingReason})
 			} else if value != "" {
 				record.IPv4 = value
 			}
@@ -535,7 +627,7 @@ func (c Controller) expandZoneSpec(spec api.DNSZoneSpec) (api.DNSZoneSpec, []map
 				return spec, pending, fmt.Errorf("DNSZone record %q ipv6From: %w", record.Hostname, err)
 			}
 			if pendingReason != "" {
-				pending = append(pending, map[string]string{"hostname": record.Hostname, "field": "ipv6", "source": record.IPv6From.Resource, "reason": pendingReason})
+				pending = append(pending, pendingZoneRecord{Hostname: record.Hostname, Field: "ipv6", Source: record.IPv6From.Resource, Reason: pendingReason})
 			} else if value != "" {
 				record.IPv6 = value
 			}
@@ -565,21 +657,20 @@ func (c Controller) ensureRunning(ctx context.Context, name string, config dnsre
 	if err != nil {
 		return false, err
 	}
-	changed := false
 	currentConfig, readErr := os.ReadFile(configPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return false, readErr
+	}
 	if readErr != nil || string(bytes.TrimSpace(currentConfig)) != string(data) {
-		if err := os.WriteFile(configPath, append(data, '\n'), 0644); err != nil {
+		if err := configfile.AtomicWriteFile(configPath, append(data, '\n')); err != nil {
 			return false, err
 		}
-		changed = true
 	}
-	if !changed {
-		return false, nil
+	digest, err := config.Digest()
+	if err != nil {
+		return false, err
 	}
-	if err := c.reloadResolver(ctx, filepath.Join(runtimeDir, "dns-resolver", name+".sock")); err != nil {
-		return true, err
-	}
-	return true, nil
+	return c.reloadResolver(ctx, filepath.Join(runtimeDir, "dns-resolver", name+".sock"), digest)
 }
 
 type resolverReloadError struct {
@@ -594,24 +685,34 @@ func (e resolverReloadError) Error() string {
 	return "ReloadFailed: " + e.status + ": " + strings.TrimSpace(e.body)
 }
 
-func (c Controller) reloadResolver(ctx context.Context, socket string) error {
+func (c Controller) reloadResolver(ctx context.Context, socket, digest string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	client := newResolverHTTPClient(socket)
 	defer client.CloseIdleConnections()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://unix/v1/reload", nil)
 	if err != nil {
-		return err
+		return false, err
 	}
+	req.Header.Set(dnsresolver.ConfigDigestHeader, digest)
 	req.Close = true
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil
+		return false, resolverReloadError{status: "worker unavailable", body: err.Error()}
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return resolverReloadError{status: resp.Status, body: string(body)}
+		return false, resolverReloadError{status: resp.Status, body: string(body)}
 	}
-	return nil
+	var result dnsresolver.ReloadResult
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result); err != nil {
+		return false, resolverReloadError{status: "invalid worker acknowledgement", body: err.Error()}
+	}
+	if result.ConfigDigest != digest {
+		return false, resolverReloadError{status: "worker acknowledged a different configuration"}
+	}
+	return result.Reloaded, nil
 }
 
 var newResolverHTTPClient = resolverUnixHTTPClient
@@ -647,19 +748,22 @@ func (c Controller) saveStatus(name string, spec api.DNSResolverSpec, phase, mes
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSResolver", name, status)
 }
 
-func (c Controller) saveZoneStatus(name string, spec api.DNSZoneSpec, pendingRecords []map[string]string) error {
-	phase := "Applied"
-	if len(pendingRecords) > 0 {
-		phase = "Pending"
+func (c Controller) saveZoneStatus(zone preparedZone, phase, reason string) error {
+	var pending []map[string]string
+	for _, record := range zone.PendingRecords {
+		pending = append(pending, map[string]string{"hostname": record.Hostname, "field": record.Field, "source": record.Source, "reason": record.Reason})
 	}
 	status := map[string]any{
 		"phase":          phase,
-		"zone":           spec.Zone,
-		"records":        len(spec.Records),
-		"pendingRecords": pendingRecords,
+		"zone":           zone.Zone,
+		"records":        zone.Records,
+		"pendingRecords": pending,
 		"updatedAt":      time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSZone", name, status)
+	if reason != "" {
+		status["reason"] = reason
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, "DNSZone", zone.Name, status)
 }
 
 func resolvedListenAddresses(spec api.DNSResolverSpec) []string {
@@ -671,6 +775,9 @@ func resolvedListenAddresses(spec api.DNSResolverSpec) []string {
 }
 
 func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if c.DryRun || c.Router == nil {
+		return nil
+	}
 	action, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type)
 	if !ok {
 		return nil
@@ -685,6 +792,7 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 	if err != nil {
 		return err
 	}
+	var forwardErr error
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSResolver" {
 			continue
@@ -701,16 +809,20 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 		resp, err := client.Do(req)
 		if err != nil {
 			client.CloseIdleConnections()
+			forwardErr = errors.Join(forwardErr, fmt.Errorf("forward DNS lease to %s: %w", resource.Metadata.Name, err))
 			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			forwardErr = errors.Join(forwardErr, fmt.Errorf("forward DNS lease to %s: %s", resource.Metadata.Name, resp.Status))
 		}
 		_ = resp.Body.Close()
 		client.CloseIdleConnections()
 	}
-	return nil
+	return forwardErr
 }
 
 func resolverUnixHTTPClient(socket string) *http.Client {
-	return &http.Client{Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+	return &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "unix", socket)
 	}}}

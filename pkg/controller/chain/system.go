@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
@@ -348,6 +350,7 @@ type SystemdUnitController struct {
 	BGPSocketPath               string
 	BGPControlSocketPath        string
 	BGPStatePath                string
+	BGPController               *bgpcontroller.Controller
 }
 
 func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.SystemdUnitSpec {
@@ -401,6 +404,27 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	telemetryEnv, err := render.TelemetryEnvironment(c.Router)
 	if err != nil {
 		return err
+	}
+	bgpStatePath := c.BGPStatePath
+	if bgpStatePath == "" {
+		_, _, bgpStatePath = defaults.BGPPaths()
+	}
+	bgpRemovalPending, err := bgpdaemon.RemovalPending(bgpStatePath)
+	if c.BGPController != nil {
+		bgpRemovalPending, err = c.BGPController.PendingRemoval()
+	}
+	if err != nil {
+		return err
+	}
+	if !routerHasBGP(c.Router) || bgpRemovalPending {
+		if err := c.cleanupBGPDaemon(ctx, defaults, features, command); err != nil {
+			return err
+		}
+		if features.HasRCD && bgpRemovalPending && routerHasBGP(c.Router) && !c.DryRun {
+			if _, err := command(ctx, "service", "routerd_bgp", "onestart"); err != nil {
+				return err
+			}
+		}
 	}
 	if features.HasSystemd {
 		explicitUnits := map[string]bool{}
@@ -1134,6 +1158,66 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
 }
 
+// cleanupBGPDaemon owns explicit BGP removal across supported supervisors.
+// Process stop is acknowledged before any kernel or daemon restart state is removed.
+func (c SystemdUnitController) cleanupBGPDaemon(ctx context.Context, defaults platform.Defaults, features platform.Features, command outputCommandFunc) error {
+	daemon := bgpcontroller.DefaultDaemonSpec()
+	if c.BGPStatePath != "" {
+		daemon.StatePath = c.BGPStatePath
+	} else {
+		_, _, daemon.StatePath = defaults.BGPPaths()
+	}
+	if c.DryRun {
+		return nil
+	}
+	cleanup := c.BGPController
+	if cleanup == nil {
+		helperPath := filepath.Join(c.SystemdSystemDir, render.BGPUnitName)
+		if features.HasRCD {
+			helperPath = filepath.Join(defaults.RCScriptDir, "routerd_bgp")
+		}
+		cleanup = &bgpcontroller.Controller{Daemon: daemon, ManagedHelperPath: helperPath}
+	}
+	if cleanup.DryRun {
+		_, stateErr := os.Stat(daemon.StatePath)
+		_, helperErr := os.Stat(cleanup.ManagedHelperPath)
+		pending, err := cleanup.PendingRemoval()
+		if err != nil {
+			return err
+		}
+		if stateErr != nil && !os.IsNotExist(stateErr) {
+			return stateErr
+		}
+		if helperErr != nil && !os.IsNotExist(helperErr) {
+			return helperErr
+		}
+		if stateErr == nil || helperErr == nil || pending {
+			return fmt.Errorf("BGP dry-run prevents live daemon removal")
+		}
+		return nil
+	}
+	stop := cleanup.StopDaemon
+	if stop == nil {
+		stop = func(ctx context.Context) error { return c.stopBGPDaemon(ctx, features, command) }
+	}
+	return cleanup.Remove(ctx, stop)
+}
+
+func (c SystemdUnitController) stopBGPDaemon(ctx context.Context, features platform.Features, command outputCommandFunc) error {
+	if c.DryRun {
+		return fmt.Errorf("BGP supervisor mutations are disabled")
+	}
+	if features.HasSystemd {
+		_, err := command(ctx, "systemctl", "disable", "--now", render.BGPUnitName)
+		return err
+	}
+	if features.HasRCD {
+		_, err := command(ctx, "service", "routerd_bgp", "onestop")
+		return err
+	}
+	return fmt.Errorf("BGP removal requires a supported process supervisor")
+}
+
 func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, command outputCommandFunc) error {
 	if c.SystemdSystemDir == "" {
 		defaults, _ := platform.Current()
@@ -1188,7 +1272,11 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context,
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		matches, err := resourcequery.ResourceWhenMatches(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		ref, ok := synthesizedUnitForResource(resource)

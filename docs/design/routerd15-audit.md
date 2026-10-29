@@ -51,12 +51,12 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `cmd/routerctl` | 26 | In progress |
 | `cmd/routerd` | 29 | In progress |
 | `cmd/routerd-arp-observer` | 4 | Pending |
-| `cmd/routerd-bgp` | 1 | Pending |
+| `cmd/routerd-bgp` | 1 | In progress |
 | `cmd/routerd-dhcp-event-relay` | 1 | Pending |
 | `cmd/routerd-dhcp-fingerprint-watcher` | 1 | Pending |
 | `cmd/routerd-dhcpv4-client` | 4 | In progress |
 | `cmd/routerd-dhcpv6-client` | 3 | In progress |
-| `cmd/routerd-dns-resolver` | 9 | Pending |
+| `cmd/routerd-dns-resolver` | 9 | In progress |
 | `cmd/routerd-dpi-classifier` | 1 | Pending |
 | `cmd/routerd-eventd` | 1 | Pending |
 | `cmd/routerd-firewall-logger` | 3 | Pending |
@@ -75,35 +75,35 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/api` | 13 | In progress |
 | `pkg/apply` | 5 | Pending |
 | `pkg/bgp` | 1 | Pending |
-| `pkg/bgpdaemon` | 2 | Pending |
+| `pkg/bgpdaemon` | 2 | In progress |
 | `pkg/bus` | 1 | Pending |
 | `pkg/config` | 22 | Pending |
 | `pkg/conntrack` | 1 | Pending |
 | `pkg/conntracktuning` | 1 | Pending |
 | `pkg/controlapi` | 5 | Pending |
 | `pkg/controller/bfd` | 1 | Pending |
-| `pkg/controller/bgp` | 7 | Pending |
+| `pkg/controller/bgp` | 7 | In progress |
 | `pkg/controller/chain` | 34 | In progress |
 | `pkg/controller/conntrackobserver` | 1 | Pending |
-| `pkg/controller/dhcpv4client` | 1 | Pending |
-| `pkg/controller/dnsresolver` | 1 | Pending |
+| `pkg/controller/dhcpv4client` | 1 | In progress |
+| `pkg/controller/dnsresolver` | 1 | In progress |
 | `pkg/controller/eventfederation` | 1 | Pending |
 | `pkg/controller/eventsubscription` | 1 | Pending |
-| `pkg/controller/firewall` | 1 | Pending |
+| `pkg/controller/firewall` | 1 | In progress |
 | `pkg/controller/framework` | 1 | In progress |
 | `pkg/controller/ingressservice` | 1 | In progress |
 | `pkg/controller/mobility` | 37 | Pending |
 | `pkg/controller/mobilityfib` | 1 | Pending |
-| `pkg/controller/nat44` | 1 | Pending |
+| `pkg/controller/nat44` | 1 | In progress |
 | `pkg/controller/pppoesession` | 1 | Pending |
 | `pkg/controller/provideraction` | 1 | Pending |
-| `pkg/controller/vrrp` | 2 | Pending |
+| `pkg/controller/vrrp` | 2 | In progress |
 | `pkg/daemonapi` | 2 | Pending |
 | `pkg/derived` | 1 | In progress |
 | `pkg/dhcpeventqueue` | 3 | Pending |
 | `pkg/dhcpfingerprint` | 1 | Pending |
-| `pkg/dhcpv4client` | 2 | Pending |
-| `pkg/dnsresolver` | 1 | Pending |
+| `pkg/dhcpv4client` | 2 | In progress |
+| `pkg/dnsresolver` | 1 | In progress |
 | `pkg/dpi` | 2 | Pending |
 | `pkg/dynamicconfig` | 2 | In progress |
 | `pkg/dynamicconfig/codec` | 2 | Pending |
@@ -115,7 +115,7 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/eventrule` | 1 | Pending |
 | `pkg/federation` | 2 | Pending |
 | `pkg/federationguard` | 1 | Pending |
-| `pkg/firewallbackend` | 1 | Pending |
+| `pkg/firewallbackend` | 1 | In progress |
 | `pkg/ha` | 1 | Pending |
 | `pkg/healthcheck` | 10 | In progress |
 | `pkg/hostdeps` | 1 | Pending |
@@ -125,14 +125,14 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/ipsec` | 1 | Pending |
 | `pkg/lan` | 1 | Pending |
 | `pkg/lan/dhcpv4server` | 1 | Pending |
-| `pkg/lifecycle` | 3 | Pending |
+| `pkg/lifecycle` | 3 | In progress |
 | `pkg/lock` | 2 | Pending |
 | `pkg/logstore` | 7 | Pending |
 | `pkg/manageddaemon` | 1 | Pending |
 | `pkg/mobilityconfig` | 4 | Pending |
 | `pkg/netconfigbackend` | 1 | Pending |
 | `pkg/nflog` | 2 | Pending |
-| `pkg/nftstate` | 1 | Pending |
+| `pkg/nftstate` | 1 | In progress |
 | `pkg/observabilitypipeline` | 1 | Pending |
 | `pkg/observe` | 2 | Pending |
 | `pkg/otel` | 3 | Pending |
@@ -145,8 +145,8 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/providerinventory` | 2 | Pending |
 | `pkg/raobserver` | 1 | In progress |
 | `pkg/render` | 32 | In progress |
-| `pkg/resource` | 3 | Pending |
-| `pkg/resourcequery` | 2 | Pending |
+| `pkg/resource` | 3 | In progress |
+| `pkg/resourcequery` | 2 | In progress |
 | `pkg/sam` | 1 | Pending |
 | `pkg/samenrollment` | 1 | Pending |
 | `pkg/servicemgr` | 1 | Pending |
@@ -159,14 +159,16 @@ package is fully audited. "Pending" means inventoried/scanned only.
 | `pkg/version` | 1 | Pending |
 | `pkg/vrf` | 1 | Pending |
 | `pkg/vxlan` | 1 | Pending |
-| `pkg/webconsole` | 25 | Pending |
+| `pkg/webconsole` | 25 | In progress |
 | `pkg/wireguard` | 1 | Pending |
 
 ## Other surfaces
 
-- Web console source and generated assets: pending semantic review.
+- Web console source and generated assets: refresh, current-config snapshots and
+  diff paths reviewed and fixed; remaining UI/enrichment review is pending.
 - Shell/Python test and lab tools: pending semantic review.
-- Build, installation, packaging, release and platform integration: pending.
+- Build, installation, packaging, release and platform integration: installer
+  config/restart-result paths reviewed and fixed; remaining review is pending.
 - Schemas/examples/operator documentation: update contracts changed here; complete
   surface review remains pending.
 - Real daemon/kernel communication: blocked by current Unix socket/Netlink
@@ -238,7 +240,7 @@ surfaces still need semantic review and corresponding implementation.
   Selection/status unit fixtures now own link observations instead of requiring
   a host iproute2 command. None of these changes establishes real forwarding.
 
-### Known open implementation work
+### Open implementation work at the earlier checkpoint
 
 These are source findings, not merely VM-test omissions:
 
@@ -296,3 +298,90 @@ State-write contract checks: PASS for the expanded focused Makefile gate and
 ingress drain/controller and web console, and the PD write-failure regression
 through the real command producer. Read-only/closed SQLite and corrupted JSON
 fixtures exercise actual persistence failures; they do not qualify peer traffic.
+
+## Failure and recovery implementation, 2026-10-29
+
+The following extends the earlier checkpoint. It is still a partial semantic
+audit of the inventory above. Parallel implementation and reciprocal source
+review covered the actual paths below, including their callers and failure
+effects; this is not evidence that the remaining inventory has been reviewed.
+
+- DHCPv4: one client owns discovery, selection, request, INIT-REBOOT, T1 renewal,
+  T2 rebinding, expiry, NAK, release and explicit restart. The daemon's once and
+  persistent modes use that client. Raw Linux/FreeBSD paths validate IPv4 and
+  nonzero UDP checksums, permitting IPv4's optional zero UDP checksum. The lease
+  controller journals owned address, route and DNS operations before effects,
+  retries failed cleanup and does not adopt preexisting matching resources.
+- DHCPv6: multiple IA prefixes with separate validity, omitted-prefix retention,
+  explicit revocation, valid selected-prefix projection and a new snapshot
+  contract. Information requests, transient sends, NoBinding and bounded release
+  share the client owner. Late replies cannot revive an expired exchange.
+- Partial configuration mutation takes the mutation gate before reading and
+  merging the canonical configuration. Concurrent apply/delete operations retain
+  earlier committed changes; dry-run does not acquire the mutation gate.
+- When conditions use error-returning persistence reads. SQL/closed-store errors
+  and invalid object-status JSON stop the operation rather than becoming a fresh
+  unknown observation or a false condition that triggers teardown. Propagation
+  includes the actual apply, route, VXLAN and VRRP callers.
+- nftables acknowledgements bind to the desired content and expire. Invalidate
+  before effects, acknowledge only successful effects, and retry failed apply or
+  withdrawal even if the desired file already exists. The MTU and policy-route
+  consumers use the same contract and propagate receipt errors.
+- NAT withdraws unavailable translations and omitted families. Typed ingress
+  observations drive backend selection and scoped drop/reject rules. PF uses a
+  single runtime anchor for translations and availability filtering; the root
+  firewall no longer duplicates static translations. Inconsistent PF controller
+  flags fail before effects. Firewall status writers preserve ingress-owned
+  observations. PF retains existing states; actual state behavior needs a peer
+  check. Unsupported independent multi-backend PF sourceHash/random is an error,
+  rather than silently selecting the first backend.
+- ICMP probes use the configured socket steering and correlate peer, fresh ID,
+  sequence and payload. Cancellation interrupts an in-flight socket operation.
+- Final BGP removal belongs to the same actor that owns watch/FIB writes.
+  Persist a pending-removal operation before acknowledged supervisor shutdown,
+  clear explicitly owned FIB routes (including retained routes), then retire
+  restart state and complete the operation. Failed or uncertain completion keeps
+  the fence through retry/restart. The service-unit and BGP-only callers share
+  that actor and honor service-manager/dry-run restrictions.
+- DNS reload returns an acknowledgement for the worker's applied config digest.
+  Failed/missing acknowledgements remain errors and retry with unchanged desired
+  files; preparation does not publish zone success. Query-log replacement is
+  staged with the runtime and failed staging retains the previous runtime.
+  Cache identity includes question class, flags and EDNS parameters; cache hits
+  age record TTLs, preserve EDNS flags, and echo the current query. Retired pools
+  cancel their queries and close idle HTTP connections. Runtime files are written
+  atomically. See RFC 2181 section 5 and RFC 2308 section 5 for cache lifetimes.
+- Web console responses snapshot the current declaration once. Frontend refreshes
+  use the current view and reload configuration. Configuration diff uses linear
+  space and cancellation; generated patches are checked by actual patch application.
+  Installer compatibility rewriting is removed; failed restarts/recovery return
+  a failing exit code.
+
+The canonical-commit tests use sandbox controller effects, while still committing
+the actual canonical YAML and generation. IPv6 host-policy fixtures own all
+artifact paths and command observations, including the existing nft command
+boundary. These tests do not execute host firewall changes.
+
+### Remaining implementation and audit work
+
+These remain source findings, separate from missing VM evidence:
+
+- Mobility snapshot collection can publish handover-release ownership events
+  before the old local BGP withdrawal succeeds. Move the release decision into
+  the typed plan and publish only after the responsible withdrawal, preserving
+  failure/restart/federation semantics. This path has not been rewritten here.
+- Static SAM/dynamic preparation still redecodes, clones and validates parts of
+  the configuration on observation ticks. The once-per-configuration rule is not
+  yet satisfied throughout the chain.
+- PD state still has internal encoded-string transfers and duplicate projections
+  in generic current status. The new protocol snapshot does not resolve every
+  controller/store representation.
+- Most mobility bodies, event/action/federation paths, CLI commands, UI enrichment,
+  scripts and operator documentation have only been inventoried or partially
+  read. Neighbor/VPN/log query cancellation also needs further work.
+
+Do not describe this branch as fully rewritten, fully audited, or fully compliant
+with AGENTS.md. Keep the complete test gate and independent-peer/target-OS gates.
+This environment denies AF_UNIX and raw socket operations, and has no established
+PVE access. Chromium download returned HTML rather than an archive, so the added
+browser regression has not run. Cross-compilation is not target-OS execution.

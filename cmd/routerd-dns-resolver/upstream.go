@@ -53,10 +53,12 @@ type upstreamPool struct {
 	mu        sync.Mutex
 	upstreams []*dnsUpstream
 	config    upstreamPoolConfig
-	client    *http.Client
+	owner     context.Context
 }
 
 type dnsUpstream struct {
+	client      *http.Client
+	requestURL  string
 	Index       int       `json:"index"`
 	URL         string    `json:"url"`
 	Scheme      string    `json:"scheme"`
@@ -92,18 +94,21 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 		if err != nil {
 			return nil, err
 		}
+		if upstream.Scheme == "https" {
+			// Each HTTPS endpoint owns its TLS identity and idle connections.
+			// An IP dial address may intentionally use a DNS certificate name.
+			upstream.client = &http.Client{Transport: &http.Transport{
+				IdleConnTimeout: 30 * time.Second,
+				DialContext:     (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext,
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: upstream.ServerName},
+			}}
+		}
 		upstreams = append(upstreams, upstream)
 	}
 	if len(upstreams) == 0 {
 		return nil, fmt.Errorf("no DNS upstream configured")
 	}
-	return &upstreamPool{
-		upstreams: upstreams,
-		config:    cfg,
-		// Each exchange supplies its own deadline: ordinary queries and health
-		// probes may intentionally have different timeouts.
-		client: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}},
-	}, nil
+	return &upstreamPool{upstreams: upstreams, config: cfg}, nil
 }
 
 func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
@@ -148,10 +153,24 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 	if override := strings.TrimSpace(parsed.Query().Get("serverName")); override != "" {
 		serverName = override
 	}
-	return &dnsUpstream{Index: index, URL: trimmed, Scheme: scheme, Address: address, ServerName: serverName, Phase: upstreamProbing}, nil
+	// serverName is local TLS configuration, not a DoH HTTP query parameter.
+	query := parsed.Query()
+	query.Del("serverName")
+	parsed.RawQuery = query.Encode()
+	return &dnsUpstream{Index: index, URL: trimmed, requestURL: parsed.String(), Scheme: scheme, Address: address, ServerName: serverName, Phase: upstreamProbing}, nil
 }
 
 func (p *upstreamPool) Start(ctx context.Context, publish func(string, string, string, string, map[string]string)) {
+	p.mu.Lock()
+	p.owner = ctx
+	p.mu.Unlock()
+	context.AfterFunc(ctx, func() {
+		for _, upstream := range p.snapshotPointers() {
+			if upstream.client != nil {
+				upstream.client.CloseIdleConnections()
+			}
+		}
+	})
 	for _, upstream := range p.snapshotPointers() {
 		go p.probeLoop(ctx, upstream, publish)
 	}
@@ -192,6 +211,19 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 }
 
 func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(string, string, string, string, map[string]string)) ([]byte, error) {
+	p.mu.Lock()
+	owner := p.owner
+	p.mu.Unlock()
+	if owner != nil {
+		if err := owner.Err(); err != nil {
+			return nil, err
+		}
+		queryCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(owner, cancel)
+		defer stop()
+		defer cancel()
+		ctx = queryCtx
+	}
 	var errs []string
 	for _, upstream := range p.attemptOrder() {
 		if err := ctx.Err(); err != nil {
@@ -282,13 +314,13 @@ func validateUpstreamResponse(query, response []byte) error {
 }
 
 func (p *upstreamPool) exchangeDoH(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.URL, bytes.NewReader(query))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.requestURL, bytes.NewReader(query))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
-	resp, err := p.client.Do(req)
+	resp, err := upstream.client.Do(req)
 	if err != nil {
 		return nil, err
 	}

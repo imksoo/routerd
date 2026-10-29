@@ -2435,3 +2435,7 @@ func TestHandlerServesEmbeddedAssets(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+func (s fakeStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}

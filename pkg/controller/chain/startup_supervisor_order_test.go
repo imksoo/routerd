@@ -79,15 +79,15 @@ func TestDaemonSupervisionRouterRequiresObservedMasterRole(t *testing.T) {
 	runner := &Runner{Router: router}
 	evented := eventedStore{Store: store, Router: router}
 
-	if got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented)); len(got) != 0 {
+	if got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented)); len(got) != 0 {
 		t.Fatalf("unknown VRRP role selected client daemons: %#v", got)
 	}
 	store[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"] = map[string]any{"role": "backup"}
-	if got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented)); len(got) != 0 {
+	if got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented)); len(got) != 0 {
 		t.Fatalf("backup VRRP role selected client daemons: %#v", got)
 	}
 	store[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"] = map[string]any{"role": "master"}
-	got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented))
+	got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented))
 	if len(got) != 1 || got[0].Binary != "routerd-dhcpv6-client" || got[0].ResourceName != "wan-pd" {
 		t.Fatalf("master VRRP role client daemons = %#v", got)
 	}

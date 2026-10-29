@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -31,7 +32,12 @@ func TestPriorityPolicyPublishesOnlyAfterNftResult(t *testing.T) {
 			}
 			store := &policyResultStore{mapStore: mapStore{}, marker: marker, t: t}
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.EgressRoutePolicySpec{Mode: "priority", SourceCIDRs: []string{"192.0.2.0/24"}, Candidates: []api.EgressRoutePolicyCandidate{{Name: "uplink", Interface: "lo", GatewaySource: "none", Table: 110, Priority: 10110, Mark: 0x110}}}}}}}
-			c := IPv4PolicyRouteController{Router: router, Store: store, CommandOutput: func(context.Context, string, ...string) ([]byte, error) { return nil, nil }}
+			c := IPv4PolicyRouteController{Router: router, Store: store, CommandOutput: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if name == command {
+					return exec.CommandContext(ctx, name, args...).CombinedOutput()
+				}
+				return nil, nil
+			}}
 			err := c.applyDefaultRoutePolicies(t.Context(), command, filepath.Join(dir, "policy.nft"))
 			if (err != nil) != fail {
 				t.Fatalf("apply error=%v fail=%v", err, fail)

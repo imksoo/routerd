@@ -479,28 +479,50 @@ func sourceMatches(matches []string, qname string) bool {
 }
 
 func dnsCacheKey(localAddr string, req *dns.Msg) string {
-	if len(req.Question) == 0 {
-		return localAddr
+	if len(req.Question) != 1 || req.Opcode != dns.OpcodeQuery || req.Response || req.IsTsig() != nil {
+		return ""
 	}
-	q := req.Question[0]
-	return strings.ToLower(localAddr + "|" + q.Name + "|" + dns.TypeToString[q.Qtype])
+	query := req.Copy()
+	query.Id = 0
+	query.Question[0].Name = strings.ToLower(query.Question[0].Name)
+	wire, err := query.Pack()
+	if err != nil {
+		return ""
+	}
+	// Keep class, header flags and all EDNS parameters in the cache identity.
+	return localAddr + "\x00" + string(wire)
 }
 
 func dnsMessageTTL(msg *dns.Msg, spec api.DNSResolverCacheSpec) time.Duration {
 	// Transient failures are not negative answers about a name's existence.
 	// In particular, never retain a downstream resolver's SERVFAIL using the
 	// configured NXDOMAIN/NODATA lifetime.
-	if msg == nil || (msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeNameError) {
+	if msg == nil || msg.Truncated || msg.IsTsig() != nil || (msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeNameError) {
 		return 0
 	}
-	ttl := uint32(60)
-	if len(msg.Answer) > 0 {
-		ttl = msg.Answer[0].Header().Ttl
+	ttl := ^uint32(0)
+	negative := msg.Rcode == dns.RcodeNameError || len(msg.Answer) == 0
+	hasSOA := false
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+		for _, rr := range section {
+			if rr.Header().Rrtype == dns.TypeOPT {
+				continue
+			}
+			ttl = min(ttl, rr.Header().Ttl)
+			if soa, ok := rr.(*dns.SOA); ok && negative {
+				hasSOA = true
+				ttl = min(ttl, soa.Minttl)
+			}
+		}
+	}
+	if ttl == ^uint32(0) || (negative && !hasSOA) {
+		return 0
 	}
 	out := time.Duration(ttl) * time.Second
 	if spec.MinTTL != "" {
 		if min, err := time.ParseDuration(spec.MinTTL); err == nil && out < min {
-			out = min
+			// A minimum cache lifetime cannot extend an authoritative TTL.
+			return 0
 		}
 	}
 	if spec.MaxTTL != "" {
@@ -508,9 +530,9 @@ func dnsMessageTTL(msg *dns.Msg, spec api.DNSResolverCacheSpec) time.Duration {
 			out = max
 		}
 	}
-	if len(msg.Answer) == 0 && spec.NegativeTTL != "" {
+	if negative && spec.NegativeTTL != "" {
 		if negative, err := time.ParseDuration(spec.NegativeTTL); err == nil {
-			out = negative
+			out = min(out, negative)
 		}
 	}
 	return out

@@ -22,3 +22,5 @@ func (noopFIBSyncer) SyncBGP(_ context.Context, routes []FIBRoute) (FIBSyncResul
 	}
 	return result, nil
 }
+
+func (noopFIBSyncer) ClearBGP(context.Context) error { return nil }

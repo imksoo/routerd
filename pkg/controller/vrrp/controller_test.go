@@ -299,7 +299,7 @@ func TestVRRPWhenStoreDelegatesRouterState(t *testing.T) {
 		"cluster.role": {Status: routerstate.StatusSet, Value: "master", Since: now.Add(-time.Minute), UpdatedAt: now},
 	}}
 	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"cluster.role": {Equals: "master"}}}
-	if !resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(store)) {
+	if matches, err := resourcequery.ResourceWhenMatches(when, newVRRPWhenStore(store)); err != nil || !matches {
 		t.Fatal("VRRP when store must delegate router state")
 	}
 }
@@ -1362,4 +1362,17 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func (s statefulMapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
+func (s mapStore) ReadVariable(name string) (routerstate.Value, error) {
+	now := time.Now().UTC()
+	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}, nil
 }

@@ -489,6 +489,26 @@ func (s eventedStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	return s.Store.ObjectStatus(apiVersion, kind, name)
 }
 
+func (s eventedStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	reader, ok := s.Store.(interface {
+		ReadObjectStatus(string, string, string) (map[string]any, error)
+	})
+	if !ok {
+		return nil, errors.New("object-status reading is unavailable")
+	}
+	return reader.ReadObjectStatus(apiVersion, kind, name)
+}
+
+func (s eventedStore) ReadVariable(name string) (routerstate.Value, error) {
+	reader, ok := s.Store.(interface {
+		ReadVariable(string) (routerstate.Value, error)
+	})
+	if !ok {
+		return routerstate.Value{}, errors.New("state-variable reading is unavailable")
+	}
+	return reader.ReadVariable(name)
+}
+
 func (s eventedStore) Get(name string) routerstate.Value {
 	store, ok := s.Store.(routerstate.Reader)
 	if !ok {
@@ -553,13 +573,13 @@ func (s eventedStore) Variables() map[string]routerstate.Value {
 
 func (s eventedStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
 	if s.Store == nil {
-		return nil, nil
+		return nil, fmt.Errorf("object status enumeration is unavailable")
 	}
 	lister, ok := s.Store.(interface {
 		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
 	})
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("object status enumeration is unavailable")
 	}
 	return lister.ListObjectStatuses()
 }
@@ -579,13 +599,13 @@ func (s eventedStore) ListDynamicConfigParts() ([]routerstate.DynamicConfigPartR
 
 func (s eventedStore) DeleteObject(apiVersion, kind, name string) error {
 	if s.Store == nil {
-		return nil
+		return fmt.Errorf("object deletion is unavailable")
 	}
 	deleter, ok := s.Store.(interface {
 		DeleteObject(apiVersion, kind, name string) error
 	})
 	if !ok {
-		return nil
+		return fmt.Errorf("object deletion is unavailable")
 	}
 	return deleter.DeleteObject(apiVersion, kind, name)
 }
@@ -1263,6 +1283,7 @@ type Options struct {
 	ForceFragmentPath       string
 	LedgerPath              string
 	NftCommand              string
+	BGPDaemonStop           func(context.Context) error
 	BGPSocketPath           string
 	BGPControlSocketPath    string
 	BGPStatePath            string
@@ -1456,7 +1477,7 @@ type arpObserverCommandPusher interface {
 	ProbeTarget(context.Context, string, string) error
 }
 
-func (r *Runner) effectiveRouter(store eventedStore) *api.Router {
+func (r *Runner) effectiveRouter(store eventedStore) (*api.Router, error) {
 	return resourcequery.FilterRouterByWhen(r.currentRouter(), store)
 }
 
@@ -1474,13 +1495,21 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		if apiVersion == "" {
 			apiVersion = resourcequery.APIVersionForKind(res.Kind)
 		}
-		if resourcequery.ResourceWhenMatches(when, store) {
+		matches, err := resourcequery.ResourceWhenMatches(when, store)
+		if err != nil {
+			return fmt.Errorf("evaluate %s when: %w", res.ID(), err)
+		}
+		if matches {
 			if err := r.clearWhenFalseStatus(apiVersion, res.Kind, res.Metadata.Name, store); err != nil {
 				return err
 			}
 			continue
 		}
-		if resourcequery.ResourceWhenIndeterminate(when, store) {
+		indeterminate, err := resourcequery.ResourceWhenIndeterminate(when, store)
+		if err != nil {
+			return fmt.Errorf("evaluate %s when: %w", res.ID(), err)
+		}
+		if indeterminate {
 			continue
 		}
 		if preserved, err := r.preserveFreshDaemonStatusWhenFalse(res, apiVersion, store, now); err != nil {
@@ -1741,7 +1770,10 @@ func (r *Runner) effectiveRouterForReconcile(store eventedStore) (*api.Router, e
 	if err := r.saveWhenFalseStatuses(store); err != nil {
 		return nil, err
 	}
-	effective := r.effectiveRouter(store)
+	effective, err := r.effectiveRouter(store)
+	if err != nil {
+		return nil, err
+	}
 	resolved, err := resolveWireGuardSAMResources(effective)
 	if err != nil {
 		return nil, err
@@ -1762,6 +1794,9 @@ func (r *Runner) effectiveDynamicRouterForReconcile(store eventedStore, now time
 }
 
 func (r *Runner) Start(ctx context.Context) error {
+	if err := r.validatePFNATOptions(platform.CurrentOS(), r.Opts); err != nil {
+		return err
+	}
 	r.clientDaemonContext = ctx
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
@@ -2137,6 +2172,9 @@ func clusterRetryInterval(router *api.Router) time.Duration {
 }
 
 func (r *Runner) ReconcileOnce(ctx context.Context) error {
+	if err := r.validatePFNATOptions(platform.CurrentOS(), r.Opts); err != nil {
+		return err
+	}
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
@@ -2159,6 +2197,9 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 }
 
 func (r *Runner) ReconcileScheduled(ctx context.Context) error {
+	if err := r.validatePFNATOptions(platform.CurrentOS(), r.Opts); err != nil {
+		return err
+	}
 	if r.currentRouter() == nil || r.Bus == nil || r.Store == nil {
 		return fmt.Errorf("router, bus, and store are required")
 	}
@@ -2261,6 +2302,9 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	// effective only for this generation and must not poison a later leader
 	// generation after lease acquisition. Keep the options local rather than
 	// copying Runner: Runner owns synchronization and runtime state.
+	if err := r.validatePFNATOptions(platform.CurrentOS(), opts); err != nil {
+		return nil, DaemonStatusController{}, err
+	}
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
@@ -2383,6 +2427,23 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.currentRouter(), store), Logger: logger}
 	bfd := bfdcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
 	bgp := bgpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
+	serviceUnits.BGPController = &bgp
+	bgp.ManagedHelperPath = filepath.Join(defaults.SystemdSystemDir, render.BGPUnitName)
+	if features.HasRCD {
+		bgp.ManagedHelperPath = filepath.Join(defaults.RCScriptDir, "routerd_bgp")
+	}
+	bgp.StopDaemon = opts.BGPDaemonStop
+	if opts.DryRunServiceUnit {
+		bgp.StopDaemon = nil
+	} else if bgp.StopDaemon == nil {
+		bgp.StopDaemon = func(ctx context.Context) error {
+			command := serviceUnits.Command
+			if command == nil {
+				command = runOutputCommandContext
+			}
+			return serviceUnits.stopBGPDaemon(ctx, features, command)
+		}
+	}
 	vrrp := vrrpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.currentRouter(), Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
 	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
@@ -2703,7 +2764,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return didWorkError(dhcpv6.reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "dhcpv4-lease", Every: 10 * time.Second, NextAfter: dhcp4Client.NextExpiryAfter, Subs: append([]bus.Subscription{{Topics: []string{"routerd.dhcpv4.client.**"}}}, whenStatusSubscriptions(r.currentRouter(), "DHCPv4Client")...), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			return dhcp4Client.ReconcileAll(ctx)
 		}, PeriodicFunc: didWorkPeriodic(dhcp4Client.ReconcileAll)},
 		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -2845,8 +2906,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			if err != nil {
 				return false, err
 			}
-			bgp.Router = effective
-			return didWorkError(bgp.Reconcile(ctx))
+			return didWorkError(bgp.ReconcileRouter(ctx, effective))
 		}},
 		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			effective, err := effectiveForReconcile()
@@ -2860,7 +2920,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		// after this generation has observed the kernel-owned VIP.  A persisted
 		// role from the previous process is not authoritative during startup.
 		framework.FuncController{ControllerName: "daemon-supervisor", Every: 5 * time.Second, Subs: whenStatusSubscriptions(r.currentRouter(), "DNSResolver", "DHCPv6PrefixDelegation", "DHCPv4Client", "PPPoESession"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			r.reconcileSupervisedClientDaemons(ctx, r.daemonSupervisionRouter(store), logger)
+			effective, err := r.daemonSupervisionRouter(store)
+			if err != nil {
+				return false, err
+			}
+			r.reconcileSupervisedClientDaemons(ctx, effective, logger)
 			return false, nil
 		}},
 		framework.FuncController{ControllerName: "ip-address-set", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"}, "IPAddressSet", "LocalServiceRedirect", "FirewallFlowPinhole"), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2943,6 +3007,27 @@ func reconcileSAMAfterRouteTeardown(ctx context.Context, route IPv4RouteControll
 
 func didWorkError(err error) (bool, error) {
 	return false, err
+}
+
+func (r *Runner) validatePFNATOptions(targetOS platform.OS, opts Options) error {
+	if targetOS != platform.OSFreeBSD || !r.controllerEnabled("nat44") || opts.DryRunNAT && opts.DryRunIngress {
+		return nil
+	}
+	if !opts.DryRunFirewall && !opts.FirewallDisabled && r.controllerEnabled("firewall") || r.currentRouter() == nil || r.Store == nil {
+		return nil
+	}
+	router, err := r.effectiveRouter(eventedStore{Store: r.Store, Bus: r.Bus, Router: r.currentRouter()})
+	if err != nil {
+		return err
+	}
+	for _, resource := range router.Spec.Resources {
+		needsNAT := resource.Kind == "NAT44Rule" && !opts.DryRunNAT
+		needsIngress := resource.APIVersion == api.FirewallAPIVersion && (resource.Kind == "IngressService" && !opts.DryRunIngress || resource.Kind == "PortForward")
+		if needsNAT || needsIngress {
+			return fmt.Errorf("FreeBSD live NAT or ingress requires an enabled live firewall controller to attach the routerd_nat PF anchor")
+		}
+	}
+	return nil
 }
 
 func (r *Runner) controllerEnabled(name string) bool {
@@ -3109,7 +3194,7 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 	r.reconcileSupervisedDaemonSpecs(ctx, logger, r.clientDaemonSpecs(router))
 }
 
-func (r *Runner) daemonSupervisionRouter(store eventedStore) *api.Router {
+func (r *Runner) daemonSupervisionRouter(store eventedStore) (*api.Router, error) {
 	return resourcequery.FilterRouterByResolvedWhen(r.currentRouter(), store)
 }
 
@@ -4543,8 +4628,12 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 			return err
 		}
 		if resourcequery.ResourceWhenPresent(spec.When) {
-			stateStore, ok := c.Store.(resourcequery.StateStore)
-			if ok && !resourcequery.ResourceWhenMatches(spec.When, stateStore) {
+			stateStore, _ := c.Store.(resourcequery.StateStore)
+			matches, err := resourcequery.ResourceWhenMatches(spec.When, stateStore)
+			if err != nil {
+				return err
+			}
+			if !matches {
 				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", resource.Metadata.Name, map[string]any{
 					"phase":     "Pending",
 					"reason":    "WhenFalse",
@@ -4677,7 +4766,10 @@ func (c IPv4StaticAddressController) cleanupRemovedIPv4StaticAddresses(ctx conte
 	if err != nil {
 		return err
 	}
-	whenFalse := c.whenFalseIPv4StaticAddresses()
+	whenFalse, err := c.whenFalseIPv4StaticAddresses()
+	if err != nil {
+		return err
+	}
 	remaining := make([]routerstate.ObjectStatus, 0, len(statuses))
 	for _, status := range statuses {
 		ref := lifecycle.OwnerKey(status.APIVersion, status.Kind, status.Name)
@@ -4724,14 +4816,14 @@ type whenFalseIPv4StaticAddress struct {
 	spec     api.IPv4StaticAddressSpec
 }
 
-func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() map[string]whenFalseIPv4StaticAddress {
+func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() (map[string]whenFalseIPv4StaticAddress, error) {
 	router := c.WhenRouter
 	if router == nil {
-		return nil
+		return nil, nil
 	}
 	state, ok := c.Store.(resourcequery.StateStore)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("state-variable reading is unavailable")
 	}
 	out := map[string]whenFalseIPv4StaticAddress{}
 	for _, resource := range router.Spec.Resources {
@@ -4739,7 +4831,11 @@ func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() map[string]w
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, state) || resourcequery.ResourceWhenIndeterminate(when, state) {
+		eligible, err := resourcequery.ResourceWhenEligible(when, state)
+		if err != nil {
+			return nil, err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || eligible {
 			continue
 		}
 		spec, err := resource.IPv4StaticAddressSpec()
@@ -4748,7 +4844,7 @@ func (c IPv4StaticAddressController) whenFalseIPv4StaticAddresses() map[string]w
 		}
 		out[lifecycle.OwnerKey(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)] = whenFalseIPv4StaticAddress{resource: resource, spec: spec}
 	}
-	return out
+	return out, nil
 }
 
 func (c IPv4StaticAddressController) teardownWhenFalseIPv4StaticAddress(ctx context.Context, object routerstate.ObjectStatus, candidate whenFalseIPv4StaticAddress) error {
@@ -5549,7 +5645,14 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				continue
 			}
 			spec, err := resource.IPv6DelegatedAddressSpec()
-			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) && c.delegatedAddressStagingEligible(resource) {
+			if err == nil && spec.PrefixDelegation == pdName && c.vrrpVMACConfigured(spec.Interface) {
+				eligible, err := c.delegatedAddressStagingEligible(resource)
+				if err != nil {
+					return err
+				}
+				if !eligible {
+					continue
+				}
 				resources = append(resources, resource)
 				stagedIDs[resource.ID()] = true
 			}
@@ -5869,16 +5972,16 @@ func delegatedAddressUsedByDSLite(router *api.Router, name string) bool {
 // from an explicitly false resource condition. A fresh PD snapshot may stage
 // an unconditional or indeterminate delegated address, but it must never
 // override a resolved when=false decision.
-func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resource) bool {
+func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resource) (bool, error) {
 	when := resourcequery.ResourceWhen(resource)
 	if !resourcequery.ResourceWhenPresent(when) {
-		return true
+		return true, nil
 	}
 	stateStore, ok := c.Store.(resourcequery.StateStore)
 	if !ok {
-		return false
+		return false, fmt.Errorf("state-variable reading is unavailable")
 	}
-	return resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore)
+	return resourcequery.ResourceWhenEligible(when, stateStore)
 }
 
 func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
@@ -6186,7 +6289,11 @@ func (c LANAddressController) cleanupWhenFalseIPv6DelegatedAddresses(ctx context
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		whenFalse := resourcequery.ResourceWhenPresent(when) && !resourcequery.ResourceWhenMatches(when, stateStore) && !resourcequery.ResourceWhenIndeterminate(when, stateStore)
+		eligible, err := resourcequery.ResourceWhenEligible(when, stateStore)
+		if err != nil {
+			return err
+		}
+		whenFalse := resourcequery.ResourceWhenPresent(when) && !eligible
 		stagingUnavailable := !activePD && c.vrrpVMACConfigured(spec.Interface) && !stagedSnapshotFresh
 		if !whenFalse && !stagingUnavailable {
 			continue

@@ -46,6 +46,24 @@ PD observation saves and ingress drain/undrain requests fail when their change
 cannot be stored. Expired drain records are inactive when read; observing expiry
 does not delete operator intent. An explicit undrain removes the record.
 
+Conditional state reads also return storage failures. A closed database or
+invalid persisted object JSON stops conditional reconciliation; it is not a new
+`unknown` observation and must not authorize application or teardown.
+
+DHCPv6 worker snapshots now retain a `prefixes` collection with individual
+lifetimes and a lease-update timestamp. Current/previous selected prefixes are
+derived views for LAN renumbering. The old single-prefix snapshot is not a
+supported restart format on this branch. DHCPv4 lease-effect ownership includes
+pending address, gateway and DNS operations in current state, so a restart can
+finish interrupted effects and exact withdrawal. Preserve these records while
+cleanup is pending.
+
+BGP removal keeps a `<applied-state-path>.remove-pending` operation until the
+owning supervisor has stopped the helper and the owned FIB cleanup succeeds.
+Worker restart refuses to restore advertisements while that operation exists.
+Do not discard the operation to force an apparently successful removal; correct
+the reported supervisor/kernel failure and let the same owner retry.
+
 ## Events table
 
 The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl get events` over running `sqlite3` against the database directly:
