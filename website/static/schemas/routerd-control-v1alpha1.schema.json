@@ -2445,7 +2445,9 @@
       },
       "required": [
         "name",
-        "claimRef"
+        "claimRef",
+        "claimDigest",
+        "claimIdentityDigest"
       ],
       "type": "object"
     },

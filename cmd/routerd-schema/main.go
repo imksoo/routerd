@@ -208,9 +208,21 @@ func controlOpenAPISchema() map[string]any {
 					"operationId": "getSAMEnrollmentTopology",
 					"parameters": []any{
 						pathParam("name", "SAMRRSet metadata.name selected by the enrollment policy."),
-						queryParam("claim", "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.", "string", ""),
-						queryParam("claimDigest", "Digest of the caller's current submitted claim. A mismatched or omitted digest returns only the RR fallback topology.", "string", ""),
-						queryParam("claimIdentityDigest", "Digest of client-authored claim material. A join-token policy authenticates it with JoinHMAC; it distinguishes an exact revoked identity, an empty admission store, and a different active identity before admission.", "string", ""),
+						map[string]any{
+							"name": "claim", "in": "query", "required": true,
+							"description": "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.",
+							"schema":      map[string]any{"type": "string"},
+						},
+						map[string]any{
+							"name": "claimDigest", "in": "query", "required": true,
+							"description": "Digest of the caller's exact accepted claim. Missing or mismatched digests are rejected.",
+							"schema":      map[string]any{"type": "string"},
+						},
+						map[string]any{
+							"name": "claimIdentityDigest", "in": "query", "required": true,
+							"description": "Digest of client-authored claim material authenticated by JoinHMAC. It distinguishes this identity's revocation from a rotated same-name claim.",
+							"schema":      map[string]any{"type": "string"},
+						},
 					},
 					"responses": map[string]any{
 						"200":     responseRef("SAMEnrollmentTopologyGetResult"),

@@ -1348,15 +1348,14 @@ func TestSAMEnrollmentClientDoesNotReadmitWhenAnotherRRTombstonedTheClaim(t *tes
 	}
 }
 
-func TestSAMEnrollmentClientDoesNotReadmitAcrossLegacyRRMixedVersion(t *testing.T) {
-	// An older RR ignores claimIdentityDigest and returns its ambiguous legacy
-	// not-found response for a tombstone. A new clean RR returns the explicit
-	// identity-aware marker. The leaf must keep RR-only fallback rather than
-	// POSTing the old claim to the legacy reflector.
+func TestSAMEnrollmentClientDoesNotReadmitOnAmbiguousAdmissionError(t *testing.T) {
+	// An ambiguous endpoint error does not establish missing admission. Even
+	// when another RR reports the exact identity absent, retain the valid RR
+	// path without rewriting either endpoint's claim.
 	now := time.Date(2026, 8, 22, 21, 45, 0, 0, time.UTC)
 	store := newSAMEnrollmentClientTestStore()
 	peerGroup := testSAMEnrollmentDirectPeerGroupResource()
-	legacyRR := &fakeSAMEnrollmentJoinClient{
+	ambiguousRR := &fakeSAMEnrollmentJoinClient{
 		now:       now,
 		peerGroup: &peerGroup,
 		fetchErr:  &controlapi.APIError{StatusCode: http.StatusBadRequest, Message: "bad request: accepted SAMEnrollmentClaim/pve-leaf-a not found"},
@@ -1371,7 +1370,7 @@ func TestSAMEnrollmentClientDoesNotReadmitAcrossLegacyRRMixedVersion(t *testing.
 		Store:  store,
 		Now:    func() time.Time { return now },
 		ClientFactory: func(api.SAMEnrollmentClientSpec) []SAMEnrollmentJoinClient {
-			return []SAMEnrollmentJoinClient{legacyRR, currentRR}
+			return []SAMEnrollmentJoinClient{ambiguousRR, currentRR}
 		},
 	}
 	setSAMEnrollmentClientDirectMesh(t, controller.Router, true)
@@ -1393,8 +1392,8 @@ func TestSAMEnrollmentClientDoesNotReadmitAcrossLegacyRRMixedVersion(t *testing.
 	if err := controller.Reconcile(context.Background()); err == nil {
 		t.Fatal("failed enrollment attempt returned success")
 	}
-	if legacyRR.submitCount != 0 || currentRR.submitCount != 0 || legacyRR.fetchCount != 1 || currentRR.fetchCount != 1 {
-		t.Fatalf("legacy submit/fetch=%d/%d current=%d/%d, want zero POSTs and one preflight each", legacyRR.submitCount, legacyRR.fetchCount, currentRR.submitCount, currentRR.fetchCount)
+	if ambiguousRR.submitCount != 0 || currentRR.submitCount != 0 || ambiguousRR.fetchCount != 1 || currentRR.fetchCount != 1 {
+		t.Fatalf("ambiguous submit/fetch=%d/%d current=%d/%d, want zero POSTs and one preflight each", ambiguousRR.submitCount, ambiguousRR.fetchCount, currentRR.submitCount, currentRR.fetchCount)
 	}
 	assertSAMEnrollmentClientRRSetOnlyRecord(t, store, expiresAt)
 }
@@ -1412,7 +1411,7 @@ func TestSAMEnrollmentClientReadmissionRequiredMatchesOnlyLocalMissingClaim(t *t
 			want: true,
 		},
 		{
-			name: "legacy ambiguous missing claim",
+			name: "ambiguous missing claim",
 			err:  &controlapi.APIError{StatusCode: http.StatusBadRequest, Message: "bad request: accepted SAMEnrollmentClaim/pve-leaf-a not found"},
 		},
 		{
@@ -2004,7 +2003,7 @@ func TestSAMEnrollmentClientWithholdsDirectTopologyWhenRRDoesNotAttestCurrentCla
 			},
 		},
 		{
-			name: "older RR omits claim digest",
+			name: "missing claim digest",
 			configure: func(client *fakeSAMEnrollmentJoinClient) {
 				client.omitTopologyClaimDigest = true
 			},

@@ -730,6 +730,10 @@ func (h Handler) handleGetSAMEnrollmentTopology(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "SAM enrollment topology name is required")
 		return
 	}
+	if strings.TrimSpace(r.URL.Query().Get("claimDigest")) == "" || strings.TrimSpace(r.URL.Query().Get("claimIdentityDigest")) == "" {
+		writeError(w, http.StatusBadRequest, "claimDigest and claimIdentityDigest are required")
+		return
+	}
 	result, err := h.GetSAMEnrollmentTopology(r, SAMEnrollmentTopologyGetRequest{
 		Name:                name,
 		ClaimRef:            r.URL.Query().Get("claim"),

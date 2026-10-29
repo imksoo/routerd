@@ -134,11 +134,15 @@ trap decoding and nullable traffic counters are corrected. FreeBSD mpd secret
 permissions and default-DUID failures are explicit. Counter browser/API/schema
 checks pass; old missing-as-zero traffic databases are rejected untouched.
 
+SAM admission and revocation now atomically commit claims and durable nonce
+ledger entries. Topology GET uses a read-only consistent snapshot and mandatory
+current digests; lazy backfill and omitted-field signature compatibility are
+removed. SQL failure, reopen/retry and replay regressions pass.
+
 Remaining implementation: daemon --probe currently reports current communication
-as unobserved rather than executing packet/DNS/neighbor/conntrack probes. SAM
-legacy enrollment compatibility removal still depends on atomic current
-revocation/tombstones; GET must not perform recovery writes. IPsec control tests
-do not establish native IKE or packet forwarding.
+as unobserved rather than executing packet/DNS/neighbor/conntrack probes. IPsec
+control tests do not establish native IKE or packet forwarding; SAM tests do not
+establish independent RR/leaf interoperability.
 
 ## Build, release and isolated lab tools
 

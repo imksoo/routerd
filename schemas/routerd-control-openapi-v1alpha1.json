@@ -2245,7 +2245,9 @@
         },
         "required": [
           "name",
-          "claimRef"
+          "claimRef",
+          "claimDigest",
+          "claimIdentityDigest"
         ],
         "type": "object"
       },
@@ -3418,25 +3420,25 @@
             "description": "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.",
             "in": "query",
             "name": "claim",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "description": "Digest of the caller's current submitted claim. A mismatched or omitted digest returns only the RR fallback topology.",
+            "description": "Digest of the caller's exact accepted claim. Missing or mismatched digests are rejected.",
             "in": "query",
             "name": "claimDigest",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
           },
           {
-            "description": "Digest of client-authored claim material. A join-token policy authenticates it with JoinHMAC; it distinguishes an exact revoked identity, an empty admission store, and a different active identity before admission.",
+            "description": "Digest of client-authored claim material authenticated by JoinHMAC. It distinguishes this identity's revocation from a rotated same-name claim.",
             "in": "query",
             "name": "claimIdentityDigest",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }

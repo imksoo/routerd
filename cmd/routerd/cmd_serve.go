@@ -945,7 +945,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			result, err := submitSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			result, err := submitSAMEnrollmentClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
 			}
@@ -970,7 +970,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			result, err := revokeSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			result, err := revokeSAMEnrollmentClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
 			}
@@ -996,7 +996,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			return getSAMEnrollmentTopologyForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			return getSAMEnrollmentTopologyForAcceptedClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)

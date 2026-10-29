@@ -57,7 +57,7 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"required\":[\"apiVersion\",\"kind\",\"accepted\",\"claimRef\",\"dynamicSource\",\"generation\",\"observedAt\",\"expiresAt\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"name\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"revoked\",\"claimRef\",\"dynamicSource\",\"generation\",\"observedAt\",\"expiresAt\"]",
-		"\"required\":[\"name\",\"claimRef\"]",
+		"\"required\":[\"name\",\"claimRef\",\"claimDigest\",\"claimIdentityDigest\"]",
 		"\"required\":[\"apiVersion\",\"kind\",\"metadata\",\"claimDigest\",\"rrSet\"]",
 		"\"peerGroup\"",
 	} {
@@ -81,6 +81,9 @@ func TestControlSchemasCoverSAMEnrollmentTopology(t *testing.T) {
 		"\"name\":\"claim\"",
 		"\"name\":\"claimDigest\"",
 		"\"name\":\"claimIdentityDigest\"",
+		`"in":"query","name":"claim","required":true`,
+		`"in":"query","name":"claimDigest","required":true`,
+		`"in":"query","name":"claimIdentityDigest","required":true`,
 		"\"SAMEnrollmentClaimSubmitRequest\"",
 		"\"SAMEnrollmentClaimSubmitResult\"",
 		"\"SAMEnrollmentClaimRevokeRequest\"",

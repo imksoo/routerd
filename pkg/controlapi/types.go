@@ -213,15 +213,13 @@ type SAMEnrollmentClaimRevokeResult struct {
 type SAMEnrollmentTopologyGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
-	// ClaimDigest is the caller's identity for its current submitted claim. It is
-	// optional for an RR-only compatibility response, but an RR must omit any
-	// direct peer group unless it matches its active accepted claim.
-	ClaimDigest string `json:"claimDigest,omitempty" yaml:"claimDigest,omitempty"`
-	// ClaimIdentityDigest identifies only client-authored claim material. With a
-	// join-token policy, that material is authenticated by JoinHMAC. It lets an
-	// RR distinguish an explicit revoke of this exact identity from a tombstone
-	// for an older claim with the same resource name before admission.
-	ClaimIdentityDigest string `json:"claimIdentityDigest,omitempty" yaml:"claimIdentityDigest,omitempty"`
+	// ClaimDigest must identify the caller's exact accepted claim. A topology
+	// response is usable only when it echoes this digest.
+	ClaimDigest string `json:"claimDigest" yaml:"claimDigest"`
+	// ClaimIdentityDigest identifies client-authored material authenticated by
+	// JoinHMAC, excluding RR-owned expiry and revocation state. It is required
+	// to distinguish this identity's revocation from a rotated same-name claim.
+	ClaimIdentityDigest string `json:"claimIdentityDigest" yaml:"claimIdentityDigest"`
 }
 
 type SAMEnrollmentTopologyGetResult struct {

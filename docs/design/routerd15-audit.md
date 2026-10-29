@@ -723,3 +723,62 @@ RA/LAN lifetime, runtime reload, HTTP/IPsec and observation-counter changes are
 being integrated separately. The complete repository gate has not been rerun on
 these follow-ups; the second checkpoint's complete-run counts above must not be
 presented as current complete-run results.
+
+
+### Native/runtime integration checkpoint
+
+The fixed source tree is `edf269ad80c1f3d82367651baec95ed081d4583c`,
+published as `a93e55a9`. Its local validation commit was `0f186b3`; only commit
+metadata changes between those revisions. Checks used Go 1.25.9, ShellCheck
+0.10.0, `GOMAXPROCS=2` and `GOFLAGS="-p=2 -buildvcs=false"`.
+
+This checkpoint replaces duplicate static IPv4, ordinary-route, delegated-LAN,
+DS-Lite and VXLANSegment writers with typed pending/applied native receipts.
+The recorded parent identity remains usable for safe child withdrawal after the
+last parent declaration is removed. One RA service owns finite prefix/DNS
+lifetimes and withdrawals. Runtime reload, native process acknowledgement,
+artifact activation, scoped IPsec receipts and optional traffic counters preserve
+failed or unknown observations. Public apply errors retain progress facts without
+embedding raw causes. Separate operator references describe native, RA and IPsec
+contracts and cutover.
+
+- PASS: `make check-routerd15-focused check-schema check-website-schemas`,
+  including recovery/robustness targets and whole-repository vet. The integrated
+  systemd removal path now receives its actual BGP receipt store; unrelated
+  fixtures explicitly report known absence and reject any BGP receipt write.
+- PASS: targeted regressions for DS-Lite shared-LAN receipts, systemd units,
+  public apply-failure output, PD source changes, retained FreeBSD rendering and
+  installer ShellCheck. The previous generation's late BGP removal is fenced.
+- PASS: Linux release daemon/provider builds with `CGO_ENABLED=0` and static
+  binary checks; complete FreeBSD/amd64 daemon/provider builds and test
+  compilation through `make check-freebsd-cross-compile`. This compiles FreeBSD
+  tests and does not execute them on Linux.
+- COMPLETE RUN, NOT PASS: `go test -json ./... -timeout=180s` completed all 127
+  packages: **104 pass, 14 fail, 9 have no test files**. Of 3,825 top-level tests,
+  3,764 pass, 55 fail and six skip. Failures comprise 51 direct AF_UNIX EPERM,
+  two direct Netlink EPERM and two Unix-listener prerequisite timeouts inferred
+  from their actual call paths and same-run socket failures. The native implicit
+  DUID and interface-observation positive assertions remain intact. There are no
+  unexplained assertion failures in this run; the complete gate did not pass.
+- NOT RUN: unrestricted Unix/native networking, independent peer/client
+  qualification, actual FreeBSD/PVE lifecycle and an ISO build/boot. Separate
+  pending policy-route, Mobility, VXLANTunnel and SAM changes are not included in
+  these counts. No GitHub Actions result was awaited.
+
+
+### Atomic enrollment checkpoint
+
+Current SAM enrollment admission and revocation commit the claim and durable
+nonce ledger in one SQLite transaction. Admission rechecks the current row and
+global revocation inside that transaction. Topology GET reads one consistent
+snapshot without writing repairs; missing claim/identity digests and old HMAC
+payloads without explicit `directMesh=true|false` are rejected. Current schemas
+and operator instructions match that contract.
+
+On the isolated `feeb740` plus exact SAM source projection, focused race tests
+pass for routerd, Mobility, ControlAPI and routerctl. Full Mobility,
+SAM-enrollment and schema-generator race tests pass, as do state race tests,
+seven-package vet and FreeBSD/amd64 routerd test compilation. Actual SQLite
+trigger failures on both revocation writes, reopen/retry, nonce rotation,
+replay rejection and physically read-only GET are exercised. These checks do
+not establish independent RR/leaf interoperability or native forwarding.

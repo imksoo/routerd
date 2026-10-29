@@ -423,10 +423,6 @@ type samEnrollmentFetchedTopology struct {
 	// a malformed optional direct group. It must not be confused with a valid
 	// empty group while a restarted RR is relearning peers.
 	directPayloadError error
-	// directAttested means this endpoint explicitly bound its optional direct
-	// group to the exact locally configured client claim. An RR-only result
-	// remains useful when false, but it must not count toward direct agreement.
-	directAttested bool
 }
 
 // validateSAMEnrollmentClaimSubmitResult treats the submit response as an
@@ -510,20 +506,17 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 // a disagreement is handled by the normal post-submit path, which preserves
 // the verified RRSet while withdrawing only the optional direct group. The
 // preflight's sole job is to stop an automatic POST when any RR reports a
-// revoke, an old ambiguous response, an unattested claim, or a request error.
+// revoke, an unattested claim, or a request error.
 func (c SAMEnrollmentClientController) preflightDirectEnrollment(ctx context.Context, clients []SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) error {
 	if len(clients) == 0 {
 		return fmt.Errorf("no SAM enrollment bootstrap endpoint configured")
 	}
 	var endpointErrors []error
 	for _, client := range clients {
-		topology, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
+		_, err := c.fetchSAMEnrollmentTopology(ctx, client, claimResource, claim, rrSetName)
 		if err != nil {
 			endpointErrors = append(endpointErrors, err)
 			continue
-		}
-		if !topology.directAttested {
-			endpointErrors = append(endpointErrors, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology"))
 		}
 	}
 	if len(endpointErrors) > 0 {
@@ -555,10 +548,6 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 			lastErr = err
 			allAgreed = false
 			continue
-		}
-		if !topology.directAttested {
-			allAgreed = false
-			lastErr = fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
 		}
 		if topology.directPayloadError != nil {
 			allAgreed = false
@@ -646,8 +635,7 @@ func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx conte
 
 // samEnrollmentClientReadmissionRequired recognizes only the identity-aware
 // 400 returned by a current enrollment server which has lost this leaf's
-// accepted dynamic claim. Keep this narrow: an older RR's ambiguous legacy
-// not-found response, every other request failure, and malformed data retain
+// accepted dynamic claim. Every other request failure and malformed data retain
 // the RR-only fallback rather than turning uncertainty into a claim rewrite.
 // Every RR is examined first, so an explicit revocation at one endpoint wins
 // over another endpoint's empty volatile store.
@@ -756,7 +744,6 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 	firstDigest := ""
 	topologyMismatch := false
 	var endpointErrors []error
-	unattested := false
 	for _, result := range results {
 		if result.err != nil {
 			// Query every configured RR before deciding whether a missing claim
@@ -767,10 +754,6 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 			continue
 		}
 		topology := result.topology
-		if !topology.directAttested {
-			unattested = true
-			continue
-		}
 		if topology.directPayloadError != nil {
 			endpointErrors = append(endpointErrors, fmt.Errorf("enrollment endpoint returned invalid direct topology: %w", topology.directPayloadError))
 			continue
@@ -788,9 +771,6 @@ func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Con
 		if digest != firstDigest {
 			topologyMismatch = true
 		}
-	}
-	if unattested {
-		return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim for direct topology")
 	}
 	if len(endpointErrors) > 0 {
 		return samEnrollmentFetchedTopology{}, &samEnrollmentDirectTopologyFetchErrors{Errors: endpointErrors}
@@ -912,15 +892,10 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 	if !claim.DirectMesh && topology.PeerGroup != nil {
 		return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment topology returned a direct SAMPeerGroup for non-direct claim %s", claimResource.ID())
 	}
-	directAttested := strings.TrimSpace(topology.ClaimDigest) == claimDigest
-	directPeerGroup := topology.PeerGroup
-	if claim.DirectMesh && !directAttested {
-		// An old, stale, or partially upgraded RR may still provide the stable
-		// RRSet.  Its direct payload has no authority until its response proves
-		// it projected the current accepted claim, so drop it before any
-		// validation or persistence.
-		directPeerGroup = nil
+	if strings.TrimSpace(topology.ClaimDigest) != claimDigest {
+		return samEnrollmentFetchedTopology{}, fmt.Errorf("enrollment endpoint did not attest the current claim")
 	}
+	directPeerGroup := topology.PeerGroup
 	var directPayloadError error
 	if err := config.ValidateFetchedSAMEnrollmentTopology(topology.RRSet, directPeerGroup); err != nil {
 		if !claim.DirectMesh || directPeerGroup == nil {
@@ -935,7 +910,7 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 			return samEnrollmentFetchedTopology{}, fallbackErr
 		}
 	}
-	return samEnrollmentFetchedTopology{rrSet: topology.RRSet, directPeerGroup: directPeerGroup, directPayloadError: directPayloadError, directAttested: directAttested}, nil
+	return samEnrollmentFetchedTopology{rrSet: topology.RRSet, directPeerGroup: directPeerGroup, directPayloadError: directPayloadError}, nil
 }
 
 func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(ctx context.Context, topology samEnrollmentFetchedTopology, observedAt, expiresAt time.Time) error {
