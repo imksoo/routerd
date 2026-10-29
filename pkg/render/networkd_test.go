@@ -21,7 +21,6 @@ func TestNetworkdDropinsDoNotRenderLegacyDHCPv6PD(t *testing.T) {
 	}
 
 	ntpFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/91-routerd-ntp.conf")
-	wanRoutesFile := findNetworkdTestFile(files, "10-netplan-ens18.network.d/92-routerd-static-routes.conf")
 	lanRoutesFile := findNetworkdTestFile(files, "10-netplan-ens19.network.d/92-routerd-static-routes.conf")
 	ntp := string(ntpFile.Data)
 	if ntpFile.Path == "" {
@@ -30,13 +29,13 @@ func TestNetworkdDropinsDoNotRenderLegacyDHCPv6PD(t *testing.T) {
 	if !strings.Contains(ntp, "NTP=pool.ntp.org") {
 		t.Fatalf("ntp drop-in missing NTP server:\n%s", ntp)
 	}
-	if wanRoutesFile.Path == "" {
-		t.Fatal("missing WAN static route drop-in")
-	}
 	if lanRoutesFile.Path == "" {
 		t.Fatal("missing LAN static route drop-in")
 	}
 	for _, file := range files {
+		if strings.Contains(string(file.Data), "Destination=192.0.2.0/24") {
+			t.Fatalf("native networkd artifact duplicates actor-owned public IPv4Route: %s", file.Path)
+		}
 		if strings.Contains(file.Path, "89-routerd-ipv6-ra.conf") || strings.Contains(file.Path, "90-routerd-dhcpv6-pd.conf") {
 			t.Fatalf("legacy DHCPv6/RA networkd drop-in should not be rendered: %s\n%s", file.Path, file.Data)
 		}
@@ -127,30 +126,19 @@ func TestNetworkdDropinsRenderBridge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/30-routerd-br0.netdev").Data)
-	for _, want := range []string{
-		"Name=br0",
-		"Kind=bridge",
-		"MTUBytes=1500",
-		"STP=yes",
-		"MulticastSnooping=no",
-		"ForwardDelaySec=4s",
-		"HelloTimeSec=2s",
-	} {
-		if !strings.Contains(netdev, want) {
-			t.Fatalf("bridge netdev missing %q:\n%s", want, netdev)
-		}
+	if file := findNetworkdTestFile(files, "/etc/systemd/network/30-routerd-br0.netdev"); file.Path != "" {
+		t.Fatalf("native creation competes with Bridge actor: %s", file.Path)
 	}
 	network := string(findNetworkdTestFile(files, "/etc/systemd/network/30-routerd-br0.network").Data)
-	if !strings.Contains(network, "Address=192.0.2.1/24") {
-		t.Fatalf("bridge network missing static address:\n%s", network)
+	if !strings.Contains(network, "Name=br0") || strings.Contains(network, "Address=192.0.2.1/24") {
+		t.Fatalf("networkd must bind the link without adopting another actor's address: %s", network)
 	}
 	lan := string(findNetworkdTestFile(files, "10-netplan-ens19.network.d/88-routerd-bridge.conf").Data)
-	if !strings.Contains(lan, "Bridge=br0") {
+	if !strings.Contains(lan, "KeepMaster=yes") || strings.Contains(lan, "Bridge=") {
 		t.Fatalf("bridge member drop-in missing Bridge=br0:\n%s", lan)
 	}
 	uplink := string(findNetworkdTestFile(files, "10-netplan-ens20.network.d/88-routerd-bridge.conf").Data)
-	if !strings.Contains(uplink, "Bridge=br0") {
+	if !strings.Contains(uplink, "KeepMaster=yes") || strings.Contains(uplink, "Bridge=") {
 		t.Fatalf("bridge member drop-in missing Bridge=br0:\n%s", uplink)
 	}
 }

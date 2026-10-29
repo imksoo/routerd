@@ -32,22 +32,6 @@ type ipv4RouteStatusReader interface {
 	ReadObjectStatus(string, string, string) (map[string]any, error)
 }
 
-// The existing resource-query API has no error result. Keep its status maps at
-// this boundary and check the read failure before making any effect decision.
-type ipv4RouteObservationReader struct {
-	reader ipv4RouteStatusReader
-	err    error
-}
-
-func (s *ipv4RouteObservationReader) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if s.err != nil {
-		return nil
-	}
-	status, err := s.reader.ReadObjectStatus(apiVersion, kind, name)
-	s.err = err
-	return status
-}
-
 func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resource api.Resource, spec api.IPv4RouteSpec) error {
 	reader, ok := c.Store.(ipv4RouteStatusReader)
 	if !ok {
@@ -64,23 +48,35 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 	if err != nil {
 		return err
 	}
-	observation := &ipv4RouteObservationReader{reader: reader}
-	if !resourcequery.DependenciesReady(observation, spec.DependsOn) {
-		phase := dependencyUnavailablePhase(c.Router, observation, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
-		status := map[string]any{"phase": phase, "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(observation, spec.DependsOn), "dryRun": c.DryRun}
-		if observation.err != nil {
-			return observation.err
+	ready, err := resourcequery.ReadDependenciesReady(reader, spec.DependsOn)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		phase, err := dependencyUnavailablePhase(c.Router, reader, spec.DependsOn, standbyHealthcheckRoute(resource.Metadata.Name, spec))
+		if err != nil {
+			return err
 		}
+		dependencies, err := dependencyStatusSnapshot(reader, spec.DependsOn)
+		if err != nil {
+			return err
+		}
+		status := map[string]any{"phase": phase, "reason": "DependsOnFalse", "dependencies": dependencies, "dryRun": c.DryRun}
 		return c.withdrawInactiveOrdinaryRoute(ctx, resource.Metadata.Name, status, receipt)
 	}
 	routeType := firstNonEmpty(strings.TrimSpace(spec.Type), "unicast")
 	device := ""
-	gateway := firstNonEmpty(resourcequery.Value(observation, spec.GatewayFrom), strings.TrimSpace(spec.Gateway))
-	if routeType != "blackhole" {
-		device = firstNonEmpty(resourcequery.Value(observation, spec.DeviceFrom), strings.TrimSpace(spec.Device))
+	gatewayValue, err := resourcequery.ReadValue(reader, spec.GatewayFrom)
+	if err != nil {
+		return err
 	}
-	if observation.err != nil {
-		return observation.err
+	gateway := firstNonEmpty(gatewayValue, strings.TrimSpace(spec.Gateway))
+	if routeType != "blackhole" {
+		deviceValue, err := resourcequery.ReadValue(reader, spec.DeviceFrom)
+		if err != nil {
+			return err
+		}
+		device = firstNonEmpty(deviceValue, strings.TrimSpace(spec.Device))
 	}
 	if routeType != "blackhole" {
 		if device == "" {

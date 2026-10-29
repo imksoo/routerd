@@ -30,7 +30,7 @@ const normalizedYAMLHashPrefix = "yaml-v1-sha256:"
 
 func CanonicalYAML(data []byte) ([]byte, error) {
 	var node yaml.Node
-	if err := yaml.Unmarshal(data, &node); err != nil {
+	if err := decodeSingleYAMLDocument(data, &node); err != nil {
 		return nil, err
 	}
 	var out bytes.Buffer
@@ -56,7 +56,7 @@ func CanonicalYAML(data []byte) ([]byte, error) {
 // preserve comments and field order when routerd commits a configuration.
 func NormalizedYAMLHash(data []byte) (string, error) {
 	var value any
-	if err := yaml.Unmarshal(data, &value); err != nil {
+	if err := decodeSingleYAMLDocument(data, &value); err != nil {
 		return "", err
 	}
 	normalized, err := normalizedYAMLValue(value)
@@ -305,7 +305,7 @@ func resourceKey(target MutationTarget) resourceNodeID {
 
 func parseYAMLDocument(data []byte, source string) (*yaml.Node, *yaml.Node, error) {
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := decodeSingleYAMLDocument(data, &doc); err != nil {
 		return nil, nil, fmt.Errorf("parse config %s: %w", source, err)
 	}
 	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {

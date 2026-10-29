@@ -54,7 +54,11 @@ func (s DaemonSource) Run(ctx context.Context) error {
 	if backoff == 0 {
 		backoff = time.Second
 	}
+	if wait < 0 || backoff < 0 {
+		return fmt.Errorf("daemon source wait and backoff must be non-negative")
+	}
 	client := httpClientForUnixSocket(s.Socket)
+	defer client.CloseIdleConnections()
 	var cursor string
 	if !s.Replay {
 		for {
@@ -84,7 +88,7 @@ func (s DaemonSource) Run(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		next, err := s.poll(ctx, client, cursor, wait, true)
+		next, err := s.poll(ctx, client, cursor, wait)
 		if err != nil {
 			timer := time.NewTimer(backoff)
 			select {
@@ -102,6 +106,8 @@ func (s DaemonSource) Run(ctx context.Context) error {
 }
 
 func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (string, *daemonapi.DaemonEvent, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	values := url.Values{}
 	values.Set("wait", "0s")
 	values.Set("tail", "true")
@@ -117,8 +123,8 @@ func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (str
 	if resp.StatusCode/100 != 2 {
 		return "", nil, fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
 	}
-	var decoded EventsResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded); err != nil {
+	decoded, err := readEventsResponse(resp.Body)
+	if err != nil {
 		return "", nil, err
 	}
 	var tail *daemonapi.DaemonEvent
@@ -138,7 +144,13 @@ func (s DaemonSource) fastForward(ctx context.Context, client *http.Client) (str
 	return next, tail, nil
 }
 
-func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration, publish bool) (string, error) {
+func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor string, wait time.Duration) (string, error) {
+	timeout := wait + 5*time.Second
+	if wait < 0 || timeout < wait {
+		return "", fmt.Errorf("invalid daemon event wait %s", wait)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	values := url.Values{}
 	values.Set("wait", wait.String())
 	if cursor != "" {
@@ -156,8 +168,8 @@ func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor stri
 	if resp.StatusCode/100 != 2 {
 		return "", fmt.Errorf("daemon events returned HTTP %d", resp.StatusCode)
 	}
-	var decoded EventsResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&decoded); err != nil {
+	decoded, err := readEventsResponse(resp.Body)
+	if err != nil {
 		return "", err
 	}
 	next := decoded.Cursor
@@ -165,10 +177,8 @@ func (s DaemonSource) poll(ctx context.Context, client *http.Client, cursor stri
 		if event.Daemon.Name == "" {
 			event.Daemon = s.Daemon
 		}
-		if publish {
-			if err := s.Publisher.Publish(ctx, event); err != nil {
-				return next, err
-			}
+		if err := s.Publisher.Publish(ctx, event); err != nil {
+			return next, err
 		}
 		if event.Cursor != "" {
 			next = event.Cursor
@@ -185,4 +195,23 @@ func httpClientForUnixSocket(socketPath string) *http.Client {
 		},
 	}
 	return &http.Client{Transport: transport}
+}
+
+// readEventsResponse owns decoding the worker's complete bounded IPC message.
+// A valid initial object followed by a broken/truncated value is not a complete
+// observation and must not advance a cursor or publish a partial event batch.
+func readEventsResponse(body io.Reader) (EventsResponse, error) {
+	const limit = 4 << 20
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return EventsResponse{}, err
+	}
+	if len(raw) > limit {
+		return EventsResponse{}, fmt.Errorf("daemon events response exceeds %d bytes", limit)
+	}
+	var response EventsResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return EventsResponse{}, err
+	}
+	return response, nil
 }

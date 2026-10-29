@@ -12,22 +12,26 @@ import (
 const RedactedSecret = "***REDACTED***"
 
 var exactSecretKeys = map[string]struct{}{
-	"password":         {},
-	"passwordfile":     {},
-	"privatekey":       {},
-	"privatekeyfile":   {},
-	"presharedkey":     {},
-	"presharedkeyfile": {},
-	"authkey":          {},
-	"authkeyenv":       {},
-	"authkeyfile":      {},
-	"initialpassword":  {},
-	"psk":              {},
-	"secret":           {},
-	"bearer":           {},
-	"token":            {},
-	"apikey":           {},
-	"clientsecret":     {},
+	"authorization":      {},
+	"proxyauthorization": {},
+	"cookie":             {},
+	"setcookie":          {},
+	"password":           {},
+	"passwordfile":       {},
+	"privatekey":         {},
+	"privatekeyfile":     {},
+	"presharedkey":       {},
+	"presharedkeyfile":   {},
+	"authkey":            {},
+	"authkeyenv":         {},
+	"authkeyfile":        {},
+	"initialpassword":    {},
+	"psk":                {},
+	"secret":             {},
+	"bearer":             {},
+	"token":              {},
+	"apikey":             {},
+	"clientsecret":       {},
 }
 
 var suffixSecretKeys = []string{
@@ -166,11 +170,15 @@ func redactYAMLValue(node *yaml.Node) {
 	if node == nil {
 		return
 	}
+	// An alias can expose the same secret through its original anchor or
+	// another public-looking reference. Redact that shared value as well.
+	if node.Kind == yaml.AliasNode && node.Alias != nil {
+		redactYAMLValue(node.Alias)
+	}
 	node.Kind = yaml.ScalarNode
 	node.Tag = "!!str"
 	node.Value = RedactedSecret
 	node.Style = yaml.DoubleQuotedStyle
 	node.Content = nil
-	node.Anchor = ""
 	node.Alias = nil
 }

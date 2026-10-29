@@ -4,8 +4,7 @@ package mobility
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -43,10 +42,13 @@ func (c ShardController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := c.now()
+	var errs []error
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMSubnetPolicy" {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(errors.Join(errs...), err)
 		}
 		spec, err := res.SAMSubnetPolicySpec()
 		if err != nil {
@@ -54,19 +56,21 @@ func (c ShardController) Reconcile(ctx context.Context) error {
 				"shardPhase":  "Degraded",
 				"shardReason": err.Error(),
 			})
+			errs = append(errs, err)
 			continue
 		}
-		if err := c.reconcilePolicy(res.Metadata.Name, spec, now); err != nil {
+		if err := c.reconcilePolicy(ctx, res.Metadata.Name, spec, c.now()); err != nil {
 			_ = c.Store.MergeObjectStatus(api.MobilityAPIVersion, "SAMSubnetPolicy", res.Metadata.Name, map[string]any{
 				"shardPhase":  "Degraded",
 				"shardReason": err.Error(),
 			})
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPolicySpec, now time.Time) error {
+func (c ShardController) reconcilePolicy(ctx context.Context, policyName string, spec api.SAMSubnetPolicySpec, now time.Time) error {
 	selfNode, err := api.EventGroupSelfNode(c.Router, spec.GroupRef)
 	if err != nil {
 		return err
@@ -83,6 +87,9 @@ func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPo
 			if nodeRef == "" {
 				continue
 			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			ev := shardAssignmentEvent(policyName, spec.GroupRef, spec.PoolRef, prefix, selfNode, nodeRef, i, now)
 			if err := c.Store.RecordFederationEvent(ev); err != nil {
 				return fmt.Errorf("emit shard event for %s shard[%d] node %s: %w", policyName, i, nodeRef, err)
@@ -91,21 +98,17 @@ func (c ShardController) reconcilePolicy(policyName string, spec api.SAMSubnetPo
 		}
 	}
 
-	_ = c.Store.MergeObjectStatus(api.MobilityAPIVersion, "SAMSubnetPolicy", policyName, map[string]any{
+	return c.Store.MergeObjectStatus(api.MobilityAPIVersion, "SAMSubnetPolicy", policyName, map[string]any{
 		"shardPhase":       "Active",
 		"shardCount":       len(spec.Shards),
 		"emittedEvents":    emitted,
 		"lastReconciledAt": now.Format(time.RFC3339Nano),
 	})
-	return nil
 }
 
 func shardAssignmentEvent(policyName, group, poolRef, prefix, sourceNode, targetNode string, shardIndex int, now time.Time) routerstate.EventRecord {
 	dedupeKey := fmt.Sprintf("shard:%s:%s:%s", policyName, prefix, targetNode)
-	h := sha256.Sum256([]byte(dedupeKey))
-	id := "shard-" + hex.EncodeToString(h[:8])
-	return routerstate.EventRecord{
-		ID:         id,
+	event := routerstate.EventRecord{
 		Group:      group,
 		SourceNode: sourceNode,
 		Type:       ShardAssignedEventType,
@@ -120,6 +123,8 @@ func shardAssignmentEvent(policyName, group, poolRef, prefix, sourceNode, target
 		ObservedAt: now.UTC(),
 		ExpiresAt:  now.Add(shardEventTTL).UTC(),
 	}
+	event.ID = "shard-" + mobilityFederationFactID(event)
+	return event
 }
 
 type shardEventReader interface {
@@ -129,15 +134,15 @@ type shardEventReader interface {
 // ResolveShardScope reads shard assignment events from the federation store and
 // returns the union of assigned shard prefixes for the given node and pool. If
 // no shard events exist, it returns nil (no shard filtering).
-func ResolveShardScope(store shardEventReader, group, poolRef, selfNode string, now time.Time) []string {
+func ResolveShardScope(store shardEventReader, group, poolRef, selfNode string, now time.Time) ([]string, error) {
 	events, err := store.ListFederationEvents(group, false, now.Unix())
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read shard scope: %w", err)
 	}
 	var prefixes []string
 	seen := map[string]bool{}
 	for _, ev := range events {
-		if ev.Type != ShardAssignedEventType {
+		if ev.Group != group || ev.Type != ShardAssignedEventType || (!ev.ExpiresAt.IsZero() && !now.Before(ev.ExpiresAt)) {
 			continue
 		}
 		pool := ev.Payload["pool"]
@@ -156,7 +161,7 @@ func ResolveShardScope(store shardEventReader, group, poolRef, selfNode string, 
 		prefixes = append(prefixes, prefix)
 	}
 	sort.Strings(prefixes)
-	return prefixes
+	return prefixes, nil
 }
 
 func (c ShardController) now() time.Time {

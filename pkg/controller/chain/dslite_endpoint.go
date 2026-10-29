@@ -180,10 +180,9 @@ func (c DSLiteTunnelController) cleanupDelegatedEndpoints(ctx context.Context) e
 		if err != nil {
 			return err
 		}
-		observation := &ipv4RouteObservationReader{reader: reader}
-		ready := resourcequery.DependenciesReady(observation, spec.DependsOn)
-		if observation.err != nil {
-			return observation.err
+		ready, err := resourcequery.ReadDependenciesReady(reader, spec.DependsOn)
+		if err != nil {
+			return err
 		}
 		if !api.BoolDefault(spec.Enabled, true) || !ready || spec.LocalAddressSource != "delegatedAddress" {
 			continue

@@ -97,6 +97,10 @@ func (s store) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func (s store) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s[apiVersion+"/"+kind+"/"+name], nil
+}
+
 func main() {
 	config := os.Getenv("KEEPALIVED_CONFIG")
 	systemctl := os.Getenv("FAKE_SYSTEMCTL")

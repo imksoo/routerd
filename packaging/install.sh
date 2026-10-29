@@ -494,29 +494,6 @@ EOF
     exit 1
 }
 
-routerd_service_has_legacy_config()
-{
-    service_path=$1
-    [ -f "${service_path}" ] || return 1
-    grep -Eq -- '--controller-chain' "${service_path}"
-}
-
-routerd_script_calls_removed_check()
-{
-    script_path=$1
-    [ -f "${script_path}" ] || return 1
-    if grep -q "routerd check" "${script_path}"; then
-        return 0
-    fi
-    if grep -q "routerd' 'check" "${script_path}"; then
-        return 0
-    fi
-    if grep -q 'routerd" "check' "${script_path}"; then
-        return 0
-    fi
-    return 1
-}
-
 wait_for_routerd_status_socket()
 {
     socket=$1
@@ -1056,8 +1033,8 @@ save_config_persistence()
         /usr/share/routerd/live-persistence.sh save-config "${usb_device}" "${final_config}" "${flush_enabled}" "${log_limit}"
         return 0
     fi
-    echo "warning: live persistence helper is not installed; config was not saved to USB" >&2
-    return 0
+    echo "live persistence helper is not installed; config was not saved to USB" >&2
+    return 1
 }
 
 prompt_value()
@@ -1173,6 +1150,67 @@ write_yaml_list()
     done
 }
 
+write_dns_upstream()
+{
+    upstream_index=$1
+    endpoint=$2
+    protocol=udp
+    upstream_path=
+    upstream_port=
+    tls_name=
+    case "${endpoint}" in
+        *://*)
+            protocol=${endpoint%%://*}
+            endpoint=${endpoint#*://}
+            case "${protocol}" in
+                udp|tcp) ;;
+                tls|dot) protocol=dot ;;
+                https|doh) protocol=doh ;;
+                *) echo "unsupported DNS upstream protocol: ${protocol}" >&2; return 1 ;;
+            esac
+            case "${endpoint}" in
+                *\?serverName=*)
+                    tls_name=${endpoint#*\?serverName=}
+                    endpoint=${endpoint%%\?serverName=*}
+                    ;;
+                *\?*) echo "unsupported DNS upstream query: ${endpoint}" >&2; return 1 ;;
+            esac
+            case "${endpoint}" in
+                */*)
+                    upstream_path=/${endpoint#*/}
+                    endpoint=${endpoint%%/*}
+                    [ "${protocol}" = doh ] || { echo "DNS upstream paths require HTTPS" >&2; return 1; }
+                    ;;
+            esac
+            case "${endpoint}" in
+                \[*\]:*) upstream_port=${endpoint##*]:}; endpoint=${endpoint#\[}; endpoint=${endpoint%]:*} ;;
+                \[*\]) endpoint=${endpoint#\[}; endpoint=${endpoint%\]} ;;
+                *:*)
+                    case "${endpoint#*:}" in
+                        *:*) ;; # An unbracketed IPv6 address has no explicit port.
+                        *) upstream_port=${endpoint##*:}; endpoint=${endpoint%:*} ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
+    [ -n "${endpoint}" ] || { echo "DNS upstream address is empty" >&2; return 1; }
+    cat <<EOF
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata:
+        name: wizard-${upstream_index}
+      spec:
+        protocol: ${protocol}
+        address: "${endpoint}"
+EOF
+    [ -z "${upstream_port}" ] || printf '        port: %s\n' "${upstream_port}"
+    [ -z "${upstream_path}" ] || printf '        path: "%s"\n' "${upstream_path}"
+    [ -z "${tls_name}" ] || printf '        tlsName: "%s"\n' "${tls_name}"
+    return 0
+}
+
 write_router_config()
 {
     output=$1; shift
@@ -1282,13 +1320,13 @@ EOF
         exclusive: false
 
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticRoute
+      kind: IPv4Route
       metadata:
         name: wan-default
       spec:
-        interface: wan
+        device: ${wan_interface}
         destination: 0.0.0.0/0
-        via: ${wan_gateway}
+        gateway: ${wan_gateway}
         metric: 100
 EOF
         fi
@@ -1363,31 +1401,29 @@ EOF
 EOF
             fi
             cat <<EOF
-        sources:
-          - name: default
-            kind: upstream
-            match:
-              - "."
-            upstreams:
-EOF
-            for upstream in ${dns_upstreams}; do
-                case "${upstream}" in
-                    http://*|https://*|udp://*|tcp://*|tls://*|quic://*)
-                        echo "              - ${upstream}"
-                        ;;
-                    *:*)
-                        echo "              - udp://[${upstream}]:53"
-                        ;;
-                    *)
-                        echo "              - udp://${upstream}:53"
-                        ;;
-                esac
-            done
-            cat <<EOF
         cache:
           enabled: true
           maxEntries: 10000
+
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata:
+        name: default
+      spec:
+        resolver: DNSResolver/lan-resolver
+        match: ["."]
+        upstreams:
 EOF
+            upstream_index=0
+            for upstream in ${dns_upstreams}; do
+                upstream_index=$((upstream_index + 1))
+                printf '          - DNSUpstream/wizard-%s\n' "${upstream_index}"
+            done
+            upstream_index=0
+            for upstream in ${dns_upstreams}; do
+                upstream_index=$((upstream_index + 1))
+                write_dns_upstream "${upstream_index}" "${upstream}" || return 1
+            done
         fi
         if [ "${dhcp4_enabled}" = "yes" ]; then
             cat <<EOF
@@ -1677,7 +1713,7 @@ run_configure()
     if [ "${dry_run}" -eq 1 ]; then
         tmp=$(mktemp "${TMPDIR:-/tmp}/routerd-configure.XXXXXX")
     else
-        tmp="${candidate}.$$"
+        tmp=$(mktemp "${sysconfdir}/.router.yaml.configure.XXXXXX")
     fi
     write_router_config "${tmp}" "${router_name}" "${wan_interface}" "${wan_mode}" "${wan_address}" "${wan_gateway}" "${wan_dns}" \
         "${lan_interface}" "${lan_address}" "${lan_cidr}" "${lan_ipv6_prefix}" "${dhcp4_enabled}" "${dhcp4_start}" "${dhcp4_end}" \
@@ -1710,24 +1746,27 @@ run_configure()
             return 0
         fi
     fi
-    if [ -f "${final_config}" ]; then
-        backup_config_one_generation "${final_config}"
-    fi
-    install -m 0600 "${candidate}" "${final_config}"
-    echo "installed config: ${final_config}"
-    save_config_persistence "${usb_persistence}" "${usb_device}" "${final_config}" "${usb_flush}" "${log_limit}"
-
     if [ ! -x "${routerd_bin}" ]; then
-        echo "routerd binary not found at ${routerd_bin}; skipping preflight/apply" >&2
-        completed=1
-        return 0
+        echo "routerd binary not found at ${routerd_bin}; candidate remains uninstalled at ${candidate}" >&2
+        return 1
     fi
     sandbox_root=$(mktemp -d "${TMPDIR:-/tmp}/routerd-configure-sandbox.XXXXXX")
-    if ! "${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${final_config}" --once; then
+    if ! "${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${candidate}" --once; then
         rm -rf -- "${sandbox_root}"
         return 1
     fi
     rm -rf -- "${sandbox_root}"
+    if [ -f "${final_config}" ]; then
+        backup_config_one_generation "${final_config}"
+    fi
+    installed_tmp=$(mktemp "${sysconfdir}/.router.yaml.install.XXXXXX")
+    if ! install -m 0600 "${candidate}" "${installed_tmp}"; then
+        rm -f "${installed_tmp}"
+        return 1
+    fi
+    mv -f "${installed_tmp}" "${final_config}"
+    echo "installed config: ${final_config}"
+    save_config_persistence "${usb_persistence}" "${usb_device}" "${final_config}" "${usb_flush}" "${log_limit}"
     if [ "${configure_apply}" -eq 1 ]; then
         "${routerd_bin}" serve --config "${final_config}" --once
         maybe_start_live_routerd "${routerd_bin}" "${final_config}"
@@ -1868,7 +1907,6 @@ routerd_service_artifact_is_manageable()
     service_path=$1
     [ ! -e "${service_path}" ] && [ ! -L "${service_path}" ] && return 0
     routerd_service_has_ownership_marker "${service_path}" && return 0
-    routerd_service_has_legacy_config "${service_path}" && return 0
     return 1
 }
 
@@ -2014,9 +2052,7 @@ case "${os}" in
                 [ -f "${unit}" ] || continue
                 unit_name=$(basename "${unit}")
                 target_unit="${systemd_system_dir}/${unit_name}"
-                if [ "${unit_name}" = "routerd.service" ] && routerd_service_has_legacy_config "${target_unit}"; then
-                    echo "warning: replacing legacy routerd.service managed by removed SystemdUnit/controller-chain flags: ${target_unit}" >&2
-                elif [ "${unit_name}" = "routerd.service" ] && [ -f "${target_unit}" ] && grep -q '^# Managed by routerd\.' "${target_unit}"; then
+                if [ "${unit_name}" = "routerd.service" ] && [ -f "${target_unit}" ] && grep -q '^# Managed by routerd\.' "${target_unit}"; then
                     echo "preserving generated routerd.service: ${target_unit}"
                     continue
                 fi
@@ -2063,9 +2099,6 @@ case "${os}" in
                 [ -f "${script}" ] || continue
                 script_name=$(basename "${script}")
                 target_script="${rcd_dir}/${script_name}"
-                if [ "${script_name}" = "routerd" ] && routerd_service_has_legacy_config "${target_script}"; then
-                    echo "warning: replacing legacy routerd rc.d script managed by removed SystemdUnit/controller-chain flags: ${target_script}" >&2
-                fi
                 atomic_install 0555 "${script}" "${target_script}"
             done
             if [ "${enable_service}" -eq 1 ] && command -v sysrc >/dev/null 2>&1; then

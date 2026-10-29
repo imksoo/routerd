@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,10 +15,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -36,6 +39,7 @@ const daemonKind = pppoeclient.DaemonKind
 const defaultDiscoveryTimeout = 30 * time.Second
 
 type options struct {
+	supervisorOwner  string
 	resource         string
 	ifname           string
 	username         string
@@ -61,17 +65,20 @@ type daemon struct {
 	spec      api.PPPoESessionSpec
 	startedAt time.Time
 
-	mu              sync.Mutex
-	snapshot        pppoeclient.Snapshot
-	events          []daemonapi.DaemonEvent
-	nextCursor      uint64
-	cmd             *exec.Cmd
-	cmdDone         chan struct{}
-	teardownFailed  bool
-	sessionStarting bool
-	startDone       chan struct{}
-	lifetimeCtx     context.Context
-	lastDiagnostic  string
+	mu               sync.Mutex
+	snapshot         pppoeclient.Snapshot
+	events           []daemonapi.DaemonEvent
+	cmd              *exec.Cmd
+	cmdDone          chan struct{}
+	teardownFailed   bool
+	sessionStarting  bool
+	startDone        chan struct{}
+	lifetimeCtx      context.Context
+	lastDiagnostic   string
+	stateError       string
+	eventError       string
+	recordedBytesIn  uint64
+	recordedBytesOut uint64
 
 	telemetry     *routerotel.Runtime
 	phaseGauge    metric.Int64Gauge
@@ -157,7 +164,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	opts := options{}
 	fs.StringVar(&opts.resource, "resource", "wan-pppoe", "resource name")
-	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
+	fs.StringVar(&opts.supervisorOwner, "supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "underlying Ethernet interface name")
 	fs.StringVar(&opts.username, "username", "", "PPPoE username")
 	fs.StringVar(&opts.password, "password", "", "PPPoE password")
@@ -252,7 +259,7 @@ func daemonCommand(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	telemetry, err := routerotel.Setup(ctx, daemonKind, attribute.String("routerd.resource.name", opts.resource))
 	if err != nil {
@@ -281,6 +288,10 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 		LCPEchoInterval: opts.lcpEchoInterval,
 		LCPEchoFailure:  opts.lcpEchoFailure,
 	}
+	identity := pppoeclient.IdentityForSpec(spec)
+	spec.AuthMethod = identity.AuthMethod
+	spec.MTU, spec.MRU = identity.MTU, identity.MRU
+	spec.LCPEchoInterval, spec.LCPEchoFailure = identity.LCPEchoInterval, identity.LCPEchoFailure
 	now := time.Now().UTC()
 	return &daemon{
 		opts:          opts,
@@ -303,30 +314,42 @@ func (d *daemon) Run(ctx context.Context) error {
 	d.mu.Lock()
 	d.lifetimeCtx = ctx
 	d.mu.Unlock()
+	defer d.stopSession()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
 	}
-	_ = d.restoreState()
-	_ = d.restoreEvents()
+	if err := d.restoreState(); err != nil {
+		d.stateError = err.Error()
+	}
+	if err := d.restoreEvents(); err != nil {
+		d.eventError = err.Error()
+	}
 	server, listener, err := d.httpServer()
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 	defer server.Close()
-	go func() { _ = server.Serve(listener) }()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve(listener) }()
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "PPPoE client daemon started", nil)
 	if err := d.renderRuntimeConfig(); err != nil {
 		return err
 	}
 	if err := d.startSession(ctx); err != nil {
 		d.publish("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "StartFailed", err.Error(), nil)
+		return fmt.Errorf("start PPPoE native session: %w", err)
 	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "PPPoE client daemon is ready", nil)
-	<-ctx.Done()
+	var runErr error
+	select {
+	case <-ctx.Done():
+		runErr = ctx.Err()
+	case runErr = <-serveDone:
+	}
 	d.stopSession()
 	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "PPPoE client daemon stopped", nil)
-	return ctx.Err()
+	return runErr
 }
 
 func (d *daemon) startSession(ctx context.Context) error {
@@ -377,6 +400,12 @@ func (d *daemon) startSession(ctx context.Context) error {
 	}
 	name, argv := pppoeSessionCommand(d.config())
 	cmd := exec.CommandContext(managedCtx, name, argv...)
+	// Daemon cancellation must let pppd/mpd withdraw IPCP before force-kill.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = pppoeStopGraceForOS(osName)
+	if err := bindPPPoEChildLifetime(cmd); err != nil {
+		return err
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -394,6 +423,11 @@ func (d *daemon) startSession(ctx context.Context) error {
 	d.snapshot.Phase = pppoeclient.PhaseConnecting
 	d.snapshot.CurrentAddress = ""
 	d.snapshot.PeerAddress = ""
+	d.snapshot.DNSServers = nil
+	d.snapshot.SessionID = ""
+	d.lastDiagnostic = ""
+	d.recordedBytesIn = 0
+	d.recordedBytesOut = 0
 	d.snapshot.BytesIn = 0
 	d.snapshot.BytesOut = 0
 	d.snapshot.ConnectedAt = time.Time{}
@@ -413,8 +447,8 @@ func (d *daemon) startSession(ctx context.Context) error {
 	if osName == platform.OSFreeBSD {
 		go d.watchFreeBSDPPPoEInterface(cmd, freeBSDIfName)
 	}
-	go d.scanLog(stdout)
-	go d.scanLog(stderr)
+	go d.scanLog(cmd, stdout)
+	go d.scanLog(cmd, stderr)
 	go func() {
 		childErr := cmd.Wait()
 		teardownErr := waitForOwnedPPPoEInterfaceTeardown(osName, freeBSDIfName)
@@ -429,6 +463,13 @@ func (d *daemon) startSession(ctx context.Context) error {
 func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, childErr, teardownErr error) {
 	d.mu.Lock()
 	if d.cmd == cmd && d.cmdDone == completion {
+		wasConnected := !d.snapshot.ConnectedAt.IsZero()
+		if wasConnected && d.sessionLength != nil {
+			d.sessionLength.Record(context.Background(), max(time.Since(d.snapshot.ConnectedAt).Seconds(), 0), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
+		}
+		d.snapshot.CurrentAddress, d.snapshot.PeerAddress, d.snapshot.SessionID = "", "", ""
+		d.snapshot.DNSServers = nil
+		d.snapshot.ConnectedAt = time.Time{}
 		if teardownErr != nil {
 			// Keep the generation reserved: a replacement could otherwise adopt or
 			// collide with a kernel interface which is still being torn down.
@@ -438,7 +479,7 @@ func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, childErr
 			d.snapshot.UpdatedAt = time.Now().UTC()
 			_ = d.saveStateLocked()
 			d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "TeardownFailed", d.snapshot.LastError, nil)
-		} else if childErr != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting && d.snapshot.ConnectedAt.IsZero() {
+		} else if childErr != nil && d.snapshot.Phase != pppoeclient.PhaseDisconnecting {
 			d.cmd = nil
 			d.cmdDone = nil
 			d.snapshot.Phase = pppoeclient.PhaseFailed
@@ -451,7 +492,7 @@ func (d *daemon) finishSession(cmd *exec.Cmd, completion chan struct{}, childErr
 			d.cmdDone = nil
 			d.teardownFailed = false
 			d.snapshot.Phase = pppoeclient.PhaseIdle
-			if !d.snapshot.ConnectedAt.IsZero() {
+			if wasConnected {
 				d.snapshot.LastError = ""
 			}
 			d.snapshot.UpdatedAt = time.Now().UTC()
@@ -473,6 +514,10 @@ func (d *daemon) stopSession() {
 				<-startDone
 			}
 			continue
+		}
+		if d.teardownFailed {
+			d.mu.Unlock()
+			return
 		}
 		cmd := d.cmd
 		completion := d.cmdDone
@@ -508,7 +553,14 @@ func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	<-timer.C
+	d.mu.Lock()
+	done := d.cmdDone
+	d.mu.Unlock()
+	select {
+	case <-timer.C:
+	case <-done:
+		return
+	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -523,11 +575,15 @@ func (d *daemon) watchDiscoveryTimeout(cmd *exec.Cmd) {
 	d.publishLocked("routerd.pppoe.client.session.failed", daemonapi.SeverityWarning, "DiscoveryTimeout", d.snapshot.LastError, nil)
 }
 
-func (d *daemon) scanLog(r io.Reader) {
+func (d *daemon) scanLog(cmd *exec.Cmd, r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := redactPPPoEDiagnostic(scanner.Text(), d.opts.password)
 		d.mu.Lock()
+		if d.cmd != cmd || d.snapshot.Phase == pppoeclient.PhaseDisconnecting {
+			d.mu.Unlock()
+			continue
+		}
 		d.lastDiagnostic = line
 		prev := d.snapshot.Phase
 		d.snapshot = pppoeclient.ParseLogLine(d.snapshot, line, time.Now())
@@ -586,8 +642,25 @@ func (d *daemon) prepareFilesystem() error {
 			return err
 		}
 	}
-	_ = os.Remove(d.opts.socketPath)
-	return nil
+	info, err := os.Lstat(d.opts.socketPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refusing to remove non-socket path %s", d.opts.socketPath)
+	}
+	conn, dialErr := net.DialTimeout("unix", d.opts.socketPath, 200*time.Millisecond)
+	if dialErr == nil {
+		conn.Close()
+		return fmt.Errorf("socket %s is already active", d.opts.socketPath)
+	}
+	if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect PPPoE socket before removal: %w", dialErr)
+	}
+	return os.Remove(d.opts.socketPath)
 }
 
 func (d *daemon) httpServer() (*http.Server, net.Listener, error) {
@@ -608,34 +681,43 @@ func (d *daemon) httpServer() (*http.Server, net.Listener, error) {
 func (d *daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	d.mu.Lock()
 	snapshot := d.snapshot
+	stateError, eventError := d.stateError, d.eventError
 	d.recordPhaseLocked()
 	d.mu.Unlock()
 	status := daemonapi.NewStatus(d.daemonRef())
 	status.Phase = daemonapi.PhaseRunning
 	status.Health = daemonapi.HealthOK
 	status.Since = d.startedAt
+	if stateError != "" || eventError != "" {
+		status.Health = daemonapi.HealthFailed
+		status.Conditions = append(status.Conditions, daemonapi.Condition{Type: "HistoryPersisted", Status: "False", Reason: "PersistenceFailed", Message: strings.TrimSpace(stateError + " " + eventError)})
+	}
 	health := daemonapi.HealthUnknown
 	if snapshot.Phase == pppoeclient.PhaseConnected {
 		health = daemonapi.HealthOK
 	} else if snapshot.Phase == pppoeclient.PhaseFailed {
 		health = daemonapi.HealthFailed
 	}
+	identity := pppoeclient.IdentityForSpec(d.spec)
 	status.Resources = []daemonapi.ResourceStatus{{
-		Resource:   daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: d.opts.resource},
-		Phase:      snapshot.Phase,
-		Health:     health,
-		Since:      snapshot.UpdatedAt,
-		Conditions: []daemonapi.Condition{{Type: "SessionConnected", Status: conditionStatus(snapshot.Phase == pppoeclient.PhaseConnected), Reason: snapshot.Phase, LastTransitionTime: snapshot.UpdatedAt}},
+		PPPoEIdentity: &identity,
+		Resource:      daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: d.opts.resource},
+		Phase:         snapshot.Phase,
+		Health:        health,
+		Since:         snapshot.UpdatedAt,
+		Conditions:    []daemonapi.Condition{{Type: "SessionConnected", Status: conditionStatus(snapshot.Phase == pppoeclient.PhaseConnected), Reason: snapshot.Phase, LastTransitionTime: snapshot.UpdatedAt}},
 		Observed: map[string]string{
-			"interface":      snapshot.Interface,
-			"ifname":         snapshot.IfName,
-			"sessionID":      snapshot.SessionID,
-			"currentAddress": snapshot.CurrentAddress,
-			"peerAddress":    snapshot.PeerAddress,
-			"dnsServers":     jsonStringList(snapshot.DNSServers),
-			"connectedAt":    formatTime(snapshot.ConnectedAt),
-			"bytesIn":        strconv.FormatUint(snapshot.BytesIn, 10),
-			"bytesOut":       strconv.FormatUint(snapshot.BytesOut, 10),
+			"supervisorOwner": d.opts.supervisorOwner,
+			"interface":       snapshot.Interface,
+			"ifname":          snapshot.IfName,
+			"sessionID":       snapshot.SessionID,
+			"lastError":       snapshot.LastError,
+			"currentAddress":  snapshot.CurrentAddress,
+			"peerAddress":     snapshot.PeerAddress,
+			"dnsServers":      jsonStringList(snapshot.DNSServers),
+			"connectedAt":     formatTime(snapshot.ConnectedAt),
+			"bytesIn":         strconv.FormatUint(snapshot.BytesIn, 10),
+			"bytesOut":        strconv.FormatUint(snapshot.BytesOut, 10),
 		},
 	}}
 	writeHTTPJSON(w, status)
@@ -665,8 +747,17 @@ func (d *daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	case "disconnect", daemonapi.CommandRelease, daemonapi.CommandStop:
 		d.stopSession()
+		d.mu.Lock()
+		if d.teardownFailed {
+			result.Accepted = false
+			result.Message = d.snapshot.LastError
+		}
+		d.mu.Unlock()
 	case daemonapi.CommandReload:
-		result.Accepted = d.renderRuntimeConfig() == nil
+		if err := d.renderRuntimeConfig(); err != nil {
+			result.Accepted = false
+			result.Message = err.Error()
+		}
 	default:
 		result.Accepted = false
 		result.Message = "unsupported command"
@@ -690,12 +781,24 @@ func (d *daemon) restoreState() error {
 		return err
 	}
 	d.mu.Lock()
-	d.snapshot = snapshot
+	if snapshot.Resource != d.opts.resource || snapshot.Interface != d.opts.ifname || snapshot.IfName != pppoeclient.DefaultIfName(d.opts.resource) {
+		d.mu.Unlock()
+		return errors.New("stored PPPoE snapshot does not match configured session identity")
+	}
+	// The old process cannot prove a currently owned child or negotiated IPCP.
+	// Keep only its diagnostic history; current identity/state come from config.
+	d.snapshot.LastError = snapshot.LastError
 	d.mu.Unlock()
 	return nil
 }
 
-func (d *daemon) saveStateLocked() error {
+func (d *daemon) saveStateLocked() (err error) {
+	defer func() {
+		d.stateError = ""
+		if err != nil {
+			d.stateError = err.Error()
+		}
+	}()
 	data, err := json.MarshalIndent(d.snapshot, "", "  ")
 	if err != nil {
 		return err
@@ -716,16 +819,25 @@ func (d *daemon) restoreEvents() error {
 		return err
 	}
 	defer file.Close()
+	if info, err := file.Stat(); err != nil {
+		return err
+	} else if info.Size() > eventfile.DefaultMaxBytes+(64<<10) {
+		return errors.New("PPPoE event history exceeds bounded rotation size")
+	}
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		var event daemonapi.DaemonEvent
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
 		}
-		d.events = append(d.events, event)
-		if id, err := strconv.ParseUint(event.Cursor, 10, 64); err == nil && id > d.nextCursor {
-			d.nextCursor = id
+		if event.Cursor == "" || event.Daemon != d.daemonRef() || event.Resource == nil || event.Resource.Kind != "PPPoESession" || event.Resource.Name != d.opts.resource {
+			continue
 		}
+		d.events = append(d.events, event)
+		if len(d.events) > 1000 {
+			d.events = d.events[len(d.events)-1000:]
+		}
+
 	}
 	return scanner.Err()
 }
@@ -737,9 +849,8 @@ func (d *daemon) publish(topic, severity, reason, message string, attrs map[stri
 }
 
 func (d *daemon) publishLocked(topic, severity, reason, message string, attrs map[string]string) {
-	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
-	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
+	event.Cursor = rand.Text()
 	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: d.opts.resource}
 	event.Reason = reason
 	event.Message = message
@@ -748,23 +859,29 @@ func (d *daemon) publishLocked(topic, severity, reason, message string, attrs ma
 	if len(d.events) > 1000 {
 		d.events = append([]daemonapi.DaemonEvent(nil), d.events[len(d.events)-1000:]...)
 	}
-	_ = eventfile.AppendJSONLine(d.opts.eventFile, event)
+	d.eventError = ""
+	if err := eventfile.AppendJSONLine(d.opts.eventFile, event); err != nil {
+		d.eventError = err.Error()
+	}
 }
 
 func (d *daemon) eventsSinceLocked(since, topic string) ([]daemonapi.DaemonEvent, string) {
-	var out []daemonapi.DaemonEvent
 	cursor := since
-	sinceID, _ := strconv.ParseUint(since, 10, 64)
-	for _, event := range d.events {
-		id, _ := strconv.ParseUint(event.Cursor, 10, 64)
-		if id <= sinceID {
-			continue
+	if len(d.events) > 0 {
+		cursor = d.events[len(d.events)-1].Cursor
+	}
+	start := 0
+	for index, event := range d.events {
+		if since != "" && event.Cursor == since {
+			start = index + 1
+			break
 		}
-		if topic != "" && topic != event.Type {
-			continue
+	}
+	var out []daemonapi.DaemonEvent
+	for _, event := range d.events[start:] {
+		if topic == "" || topic == event.Type {
+			out = append(out, event)
 		}
-		out = append(out, event)
-		cursor = event.Cursor
 	}
 	return out, cursor
 }
@@ -779,12 +896,20 @@ func (d *daemon) recordPhaseLocked() {
 	if d.phaseGauge != nil {
 		d.phaseGauge.Record(context.Background(), phaseValue(d.snapshot.Phase), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource), attribute.String("routerd.pppoe.phase", d.snapshot.Phase)))
 	}
-	if d.bytesCounter != nil && (d.snapshot.BytesIn > 0 || d.snapshot.BytesOut > 0) {
-		d.bytesCounter.Add(context.Background(), int64(d.snapshot.BytesIn+d.snapshot.BytesOut), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
+	if d.bytesCounter != nil {
+		var delta uint64
+		if d.snapshot.BytesIn >= d.recordedBytesIn {
+			delta += d.snapshot.BytesIn - d.recordedBytesIn
+		}
+		if d.snapshot.BytesOut >= d.recordedBytesOut {
+			delta += d.snapshot.BytesOut - d.recordedBytesOut
+		}
+		if delta > 0 {
+			d.bytesCounter.Add(context.Background(), int64(delta), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
+		}
+		d.recordedBytesIn, d.recordedBytesOut = d.snapshot.BytesIn, d.snapshot.BytesOut
 	}
-	if d.sessionLength != nil && !d.snapshot.ConnectedAt.IsZero() {
-		d.sessionLength.Record(context.Background(), time.Since(d.snapshot.ConnectedAt).Seconds(), metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
-	}
+
 }
 
 func (d *daemon) eventAttrsLocked() map[string]string {

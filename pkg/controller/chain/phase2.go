@@ -238,13 +238,21 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
+		ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
+		if err != nil {
+			return err
+		}
+		if !ready {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse"}); err != nil {
 				return err
 			}
 			continue
 		}
-		aftrName, remote, err := c.resolveRemote(ctx, spec)
+		aftrSource, err := resourcequery.ReadValue(c.Store, spec.AFTRFrom)
+		if err != nil {
+			return err
+		}
+		aftrName, remote, err := c.resolveRemote(ctx, spec, aftrSource)
 		if err != nil && aftrName == "" {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "AFTRMissing"}); err != nil {
 				return err
@@ -258,7 +266,10 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			continue
 		}
 		local, localIfName, err := c.localAddress(spec)
-		if err != nil || local == "" {
+		if err != nil {
+			return err
+		}
+		if local == "" {
 			reason := "LocalIPv6Missing"
 			if err != nil {
 				reason = err.Error()
@@ -282,10 +293,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 			continue
 		}
 		if err != nil {
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InnerLocalIPv4Invalid", "error": err.Error(), "dryRun": c.DryRun}); err != nil {
-				return err
-			}
-			continue
+			return err
 		}
 		status := map[string]any{"phase": "Up", "interface": ifname, "tunnelName": ifname, "device": ifname, "localIPv6": local, "innerLocalIPv4": innerLocal, "innerRemoteIPv4": dsliteInnerRemoteIPv4, "localInterface": localIfName, "aftrName": aftrName, "aftrIPv6": remote, "mtu": mtu, "dryRun": c.DryRun}
 		changed := objectStatusChanged("DSLiteTunnel", c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", resource.Metadata.Name), status)
@@ -376,10 +384,10 @@ func deleteDSLiteTunnel(ctx context.Context, ifname string) error {
 	return fmt.Errorf("delete ipip6 tunnel %s: %w: %s", ifname, err, strings.TrimSpace(string(out)))
 }
 
-func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec) (string, string, error) {
+func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLiteTunnelSpec, observed string) (string, string, error) {
 	var firstName string
 	candidates := []string{
-		resourcequery.Value(c.Store, spec.AFTRFrom),
+		observed,
 		spec.AFTRFQDN,
 		spec.AFTRIPv6,
 		spec.RemoteAddress,
@@ -935,18 +943,35 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WhenFalse", "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun})
 			continue
 		}
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
+		ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			dependencies, err := dependencyStatusSnapshot(c.Store, spec.DependsOn)
+			if err != nil {
+				return err
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencies}); err != nil {
+				return err
+			}
 			continue
 		}
-		if pending := dhcpv6ServerPending(effectiveRouter, c.Store, spec); pending != "" {
+		pending, err := dhcpv6ServerPending(effectiveRouter, c.Store, spec)
+		if err != nil {
+			return err
+		}
+		if pending != "" {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Server", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "mode": firstNonEmpty(spec.Mode, "stateless"), "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}); err != nil {
 				return err
 			}
 			continue
 		}
-		dnsServerSources, _ := expandServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
-		dnsServers := append(expandServers(c.Store, spec.DNSServers), dnsServerSources...)
+		dnsServerSources, _, err := expandServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
+		if err != nil {
+			return err
+		}
+		dnsServers := append(expandServers(spec.DNSServers), dnsServerSources...)
 		phase := "Applied"
 		if c.DryRun {
 			phase = "Rendered"
@@ -1181,14 +1206,21 @@ func (c DHCPv6ServerController) saveDHCPv4ServerStatuses(renderRouter *api.Route
 			}
 			continue
 		}
-		if pending := dhcpv4ServerPending(renderRouter, c.Store, spec); pending != "" {
+		pending, err := dhcpv4ServerPending(renderRouter, c.Store, spec)
+		if err != nil {
+			return err
+		}
+		if pending != "" {
 			status := map[string]any{"phase": "Pending", "reason": pending, "interface": spec.Interface, "configPath": configPath, "pidFile": pidFile, "dryRun": c.DryRun}
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Server", resource.Metadata.Name, status); err != nil {
 				return err
 			}
 			continue
 		}
-		dnsServerSources, _ := expandIPv4DHCPServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
+		dnsServerSources, _, err := expandIPv4DHCPServerSources(c.Store, spec.DNSServerFrom, "DNSServerFrom")
+		if err != nil {
+			return err
+		}
 		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), dnsServerSources...)
 		phase := "Applied"
 		if c.DryRun {
@@ -1234,7 +1266,10 @@ func (c DHCPv6ServerController) saveDHCPv4ReservationStatuses(renderRouter *api.
 			}
 			continue
 		}
-		rendered, servers := dhcpv4ReservationRenderedByServers(renderRouter, c.Store, spec)
+		rendered, servers, err := dhcpv4ReservationRenderedByServers(renderRouter, c.Store, spec)
+		if err != nil {
+			return err
+		}
 		if !rendered {
 			status["phase"] = "Pending"
 			status["reason"] = "ServerPending"
@@ -1257,9 +1292,9 @@ func (c DHCPv6ServerController) saveDHCPv4ReservationStatuses(renderRouter *api.
 	return nil
 }
 
-func dhcpv4ReservationRenderedByServers(router *api.Router, store Store, reservation api.DHCPv4ReservationSpec) (bool, []string) {
+func dhcpv4ReservationRenderedByServers(router *api.Router, store Store, reservation api.DHCPv4ReservationSpec) (bool, []string, error) {
 	if router == nil || reservation.Scope != "" {
-		return false, nil
+		return false, nil, nil
 	}
 	var servers []string
 	for _, resource := range router.Spec.Resources {
@@ -1273,12 +1308,16 @@ func dhcpv4ReservationRenderedByServers(router *api.Router, store Store, reserva
 		if err != nil {
 			continue
 		}
-		if dhcpv4ServerPending(router, store, spec) != "" {
+		pending, err := dhcpv4ServerPending(router, store, spec)
+		if err != nil {
+			return false, nil, err
+		}
+		if pending != "" {
 			continue
 		}
 		servers = append(servers, resource.Metadata.Name)
 	}
-	return len(servers) > 0, servers
+	return len(servers) > 0, servers, nil
 }
 
 func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Context, configPath, pidFile string, changed bool) error {
@@ -1300,13 +1339,30 @@ func (c DHCPv6ServerController) reconcileRouterAdvertisements(ctx context.Contex
 			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, status)
 			continue
 		}
-		if !resourcequery.DependenciesReady(c.Store, spec.DependsOn) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencyStatusSnapshot(c.Store, spec.DependsOn)})
+		ready, err := resourcequery.ReadDependenciesReady(c.Store, spec.DependsOn)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			dependencies, err := dependencyStatusSnapshot(c.Store, spec.DependsOn)
+			if err != nil {
+				return err
+			}
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "DependsOnFalse", "dependencies": dependencies}); err != nil {
+				return err
+			}
 			continue
 		}
-		rdnssFrom, _ := expandServerSources(c.Store, spec.RDNSSFrom, "RDNSSFrom")
-		rdnss := append(expandServers(c.Store, spec.RDNSS), rdnssFrom...)
-		prefix := firstNonEmpty(prefixFromStatusOrAddress(c.Store, resourcequery.Value(c.Store, spec.PrefixFrom)), prefixFromStatusOrAddress(c.Store, spec.Prefix), prefixFromStatusOrAddress(c.Store, spec.PrefixSource))
+		rdnssFrom, _, err := expandServerSources(c.Store, spec.RDNSSFrom, "RDNSSFrom")
+		if err != nil {
+			return err
+		}
+		rdnss := append(expandServers(spec.RDNSS), rdnssFrom...)
+		observedPrefix, err := resourcequery.ReadValue(c.Store, spec.PrefixFrom)
+		if err != nil {
+			return err
+		}
+		prefix := firstNonEmpty(prefixFromAddress(observedPrefix), prefixFromAddress(spec.Prefix))
 		phase := "Applied"
 		if c.DryRun {
 			phase = "Rendered"
@@ -1349,7 +1405,7 @@ func suffixedPath(path, oldSuffix, newSuffix string) string {
 	return strings.TrimSuffix(path, oldSuffix) + newSuffix
 }
 
-func dependencyStatusSnapshot(store resourcequery.Store, dependencies []api.ResourceDependencySpec) []string {
+func dependencyStatusSnapshot(store resourcequery.StatusReader, dependencies []api.ResourceDependencySpec) ([]string, error) {
 	var out []string
 	for _, dependency := range dependencies {
 		kind, name, ok := resourcequery.SplitResource(dependency.Resource)
@@ -1357,14 +1413,17 @@ func dependencyStatusSnapshot(store resourcequery.Store, dependencies []api.Reso
 			out = append(out, dependency.Resource+" invalid")
 			continue
 		}
-		status := store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		status, err := store.ReadObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		if err != nil {
+			return nil, err
+		}
 		field := firstNonEmpty(dependency.Field, "phase")
 		if dependency.Phase != "" {
 			field = "phase"
 		}
 		out = append(out, fmt.Sprintf("%s %s=%v want=%s optional=%t", dependency.Resource, field, status[field], firstNonEmpty(dependency.Phase, dependency.Equals), dependency.Optional))
 	}
-	return out
+	return out, nil
 }
 
 func postDaemonCommand(ctx context.Context, socketPath, command string) (daemonapi.CommandResult, error) {
@@ -1637,7 +1696,7 @@ func (c DSLiteTunnelController) localDelegatedAddress(spec api.DSLiteTunnelSpec)
 		return "", "", err
 	}
 	if !active {
-		return "", "", fmt.Errorf("delegated prefix is not ready")
+		return "", "", nil
 	}
 	return source.Address, source.Interface, nil
 }
@@ -1685,8 +1744,7 @@ func localIPv6Address(value string) string {
 	return ""
 }
 
-func prefixFromStatusOrAddress(store Store, ref string) string {
-	value := valueFromStatusRef(store, ref)
+func prefixFromAddress(value string) string {
 	if value == "" {
 		return ""
 	}
@@ -2061,7 +2119,13 @@ const (
 func dsliteInnerLocalIPv4(router *api.Router, store Store, spec api.DSLiteTunnelSpec) (string, string, error) {
 	value := ""
 	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
-		value = statusvalue.Address(resourcequery.Value(store, spec.LocalAddressFrom))
+		values, err := resourcequery.ReadValuesFromStoreOrRouter(store, router, spec.LocalAddressFrom)
+		if err != nil {
+			return "", "", err
+		}
+		if len(values) > 0 {
+			value = statusvalue.Address(values[0])
+		}
 		if value == "" {
 			value = statusvalue.Address(addressFromRouterResource(router, spec.LocalAddressFrom))
 		}

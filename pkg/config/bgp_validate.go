@@ -293,7 +293,7 @@ func validBGPCommunity(value string) bool {
 	if !ok || left == "" || right == "" {
 		return false
 	}
-	asn, err := strconv.ParseUint(left, 10, 32)
+	asn, err := strconv.ParseUint(left, 10, 16)
 	if err != nil || asn == 0 {
 		return false
 	}

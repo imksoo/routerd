@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -36,7 +35,7 @@ type poolPlanningFacts struct {
 type poolPlanningFactsStore interface {
 	ListFederationEvents(group string, includeExpired bool, now int64) ([]routerstate.EventRecord, error)
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 func collectPoolPlanningFacts(router *api.Router, store poolPlanningFactsStore, pool NormalizedMobilityPool, now time.Time) (poolPlanningFacts, error) {
@@ -54,12 +53,23 @@ func collectPoolPlanningFacts(router *api.Router, store poolPlanningFactsStore, 
 			return poolPlanningFacts{}, fmt.Errorf("read onprem discovery intent: %w", err)
 		}
 	}
-	previous, ownership := poolPreviousStateAndOwnershipFacts(store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", pool.Name), pool, events, pool.Prefix, onPremIntentReady, now)
+	bgp, err := collectBGPSnapshot(router, store, pool)
+	if err != nil {
+		return poolPlanningFacts{}, err
+	}
+	status, err := store.ReadObjectStatus(api.MobilityAPIVersion, "MobilityPool", pool.Name)
+	if err != nil {
+		return poolPlanningFacts{}, fmt.Errorf("read MobilityPool/%s continuation: %w", pool.Name, err)
+	}
+	previous, ownership, err := poolPreviousStateAndOwnershipFacts(status, pool, events, pool.Prefix, onPremIntentReady, now)
+	if err != nil {
+		return poolPlanningFacts{}, fmt.Errorf("MobilityPool/%s continuation: %w", pool.Name, err)
+	}
 	return poolPlanningFacts{
 		Events:            events,
 		Previous:          previous,
 		Ownership:         ownership,
-		BGP:               collectBGPSnapshot(router, store, pool),
+		BGP:               bgp,
 		OnPremIntentReady: onPremIntentReady,
 	}, nil
 }
@@ -113,13 +123,20 @@ func (c Controller) collectPoolReconcileState(res api.Resource, spec api.Mobilit
 	if err != nil {
 		return state, err
 	}
-	pool.Self.CaptureSourceAddress = resolveCaptureSourceAddress(c.Store, pool.Self.CaptureSourceAddress, pool.Self.CaptureSourceAddressFrom, pool.Prefix)
+	pool.Self.CaptureSourceAddress, err = resolveCaptureSourceAddress(c.Store, pool.Self.CaptureSourceAddress, pool.Self.CaptureSourceAddressFrom, pool.Prefix)
+	if err != nil {
+		return state, err
+	}
 	pool, captureResolved, captureReason := poolWithDiscoveredSelfCapture(pool, facts.Ownership)
 	// Resolve the route device at the snapshot boundary. The PoolPlan persists
 	// this actual ifname as a typed local route intent instead of making the
 	// downstream chain controller recover it from a FIB verdict.
 	selfCaptureInterface := strings.TrimSpace(api.ResolveInterfaceIfName(c.Router, pool.Self.Capture.Interface))
-	captureGate := sam.EvaluateCaptureGate(pool.Self.Capture, captureGateObservation(c.Store, pool.Self.Capture))
+	gateObservation, err := captureGateObservation(c.Store, pool.Self.Capture)
+	if err != nil {
+		return state, err
+	}
+	captureGate := sam.EvaluateCaptureGate(pool.Self.Capture, gateObservation)
 	pool.SelfCaptureInterface = selfCaptureInterface
 	actionHistory, err := providerActionHistoryForPool(c.Store, res.Metadata.Name, pool.SelfNode, now)
 	if err != nil {
@@ -145,20 +162,36 @@ func (c Controller) collectPoolReconcileState(res api.Resource, spec api.Mobilit
 // captureGateObservation is the persisted-status boundary for capture gates.
 // The functional core receives only the typed VRRP fact, never a status map or
 // a store handle.
-func captureGateObservation(store Store, capture api.MobilityMemberCapture) sam.CaptureGateObservation {
+func captureGateObservation(store Store, capture api.MobilityMemberCapture) (sam.CaptureGateObservation, error) {
 	typ := strings.TrimSpace(capture.ActiveWhen.Type)
 	ref := strings.TrimPrefix(strings.TrimSpace(capture.ActiveWhen.VirtualAddressRef), "VirtualAddress/")
-	if store == nil || typ != "vrrp-master" || ref == "" {
-		return sam.CaptureGateObservation{}
+	if typ != "vrrp-master" {
+		return sam.CaptureGateObservation{}, nil
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", ref)
-	if status == nil {
-		return sam.CaptureGateObservation{}
+	if store == nil || ref == "" {
+		return sam.CaptureGateObservation{}, fmt.Errorf("capture gate requires a VirtualAddress status reader and reference")
+	}
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "VirtualAddress", ref)
+	if err != nil {
+		return sam.CaptureGateObservation{}, fmt.Errorf("read VirtualAddress/%s capture gate: %w", ref, err)
+	}
+	if len(status) == 0 {
+		return sam.CaptureGateObservation{}, nil
+	}
+	role, ok := status["role"].(string)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if !ok {
+		return sam.CaptureGateObservation{}, fmt.Errorf("VirtualAddress/%s capture gate role must be a string", ref)
+	}
+	switch role {
+	case "master", "backup", "fault", "init":
+	default:
+		return sam.CaptureGateObservation{}, fmt.Errorf("VirtualAddress/%s capture gate role %q is unknown", ref, role)
 	}
 	return sam.CaptureGateObservation{
 		VirtualAddressStatusAvailable: true,
-		VirtualAddressRole:            statusvalue.Text(status["role"]),
-	}
+		VirtualAddressRole:            role,
+	}, nil
 }
 
 func poolWithForcedSelfDrain(pool NormalizedMobilityPool) NormalizedMobilityPool {

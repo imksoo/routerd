@@ -4,6 +4,7 @@ package webconsole
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"os"
 	"sort"
@@ -176,22 +177,30 @@ func readDnsmasqLeases(path string) ([]DHCPLease, error) {
 		return nil, err
 	}
 	var out []DHCPLease
-	for _, line := range strings.Split(string(data), "\n") {
+	for index, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
 			continue
 		}
-		expiresUnix, _ := strconv.ParseInt(fields[0], 10, 64)
+		expiresUnix, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || expiresUnix < 0 {
+			return nil, fmt.Errorf("%s:%d: invalid lease expiry %q", path, index+1, fields[0])
+		}
 		hostname := fields[3]
 		if hostname == "*" {
 			hostname = ""
 		}
 		lease := DHCPLease{
-			MAC:      strings.ToLower(fields[1]),
 			IP:       fields[2],
 			Hostname: hostname,
 			Family:   leaseAddressFamily(fields[2]),
 			Source:   path,
+		}
+		if lease.Family == "ipv6" {
+			// dnsmasq writes IAID here for IPv6, not a hardware address.
+			lease.IAID = fields[1]
+		} else {
+			lease.MAC = strings.ToLower(fields[1])
 		}
 		if expiresUnix > 0 {
 			lease.ExpiresAt = time.Unix(expiresUnix, 0).UTC()

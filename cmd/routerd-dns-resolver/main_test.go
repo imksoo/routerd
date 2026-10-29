@@ -544,16 +544,9 @@ func TestRecordQueryReopensClosedQueryLog(t *testing.T) {
 	resp.SetReply(req)
 	d.recordQuery("192.0.2.10:12345", req, resolveResult{Response: resp, ResponseCode: dns.RcodeToString[resp.Rcode]}, time.Millisecond)
 
-	d.queryLogMu.Lock()
-	reopened := d.queryLog
-	d.queryLogMu.Unlock()
-	defer d.closeQueryLog()
+	reopened, rows := awaitQueryHistory(t, d, 1)
 	if reopened == nil || reopened == queryLog {
 		t.Fatal("query log was not reopened")
-	}
-	rows, err := reopened.List(context.Background(), logstore.DNSQueryFilter{Limit: 1})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if len(rows) != 1 || rows[0].QuestionName != "reopen.example" {
 		t.Fatalf("unexpected query rows: %#v", rows)
@@ -621,6 +614,8 @@ func newTestDaemon(t *testing.T, configPath string, config resolvercfg.RuntimeCo
 	if err != nil {
 		t.Fatal(err)
 	}
+	d.startQueryHistory(context.Background())
+	t.Cleanup(d.closeQueryLog)
 	return d
 }
 

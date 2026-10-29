@@ -63,7 +63,8 @@ routerd_prestart()
 {
     install -d -m 0755 /var/run/routerd
     install -d -m 0755 /var/db/routerd
-    install -m 0644 /dev/null "${routerd_log}"
+    touch "${routerd_log}" || return 1
+    chmod 0644 "${routerd_log}" || return 1
     if [ ! -x "${procname}" ]; then
         warn "routerd binary ${procname} is missing or not executable"
         return 1
@@ -76,34 +77,83 @@ routerd_prestart()
 
 routerd_pid()
 {
-    routerd_read_pidfile "${pidfile}"
+    routerd_read_pidfile "${pidfile}" child
 }
 
 routerd_supervisor_pid()
 {
-    routerd_read_pidfile "${supervisor_pidfile}"
+    routerd_read_pidfile "${supervisor_pidfile}" supervisor
 }
 
+# Absence is 1; an unreadable or contradictory native observation is 2.
+# daemon(8) holds both pidfile(3) locks. A live numeric PID alone is not
+# ownership: it can have been reused since an unclean service exit.
 routerd_read_pidfile()
 {
     _file="$1"
-    if [ -r "${_file}" ]; then
-        read -r _pid < "${_file}"
-        if [ -n "${_pid}" ] && kill -0 "${_pid}" 2>/dev/null; then
-            echo "${_pid}"
-            return 0
-        fi
+    _kind="$2"
+    [ -e "${_file}" ] || return 1
+    [ -r "${_file}" ] || return 2
+    _pid=
+    read -r _pid < "${_file}" || [ -n "${_pid}" ] || return 2
+    case "${_pid}" in ''|0|*[!0-9]*) return 2 ;; esac
+    _snapshot=$(ps -axww -o pid= -o comm= -o args=) || return 2
+    _row=$(printf '%s\n' "${_snapshot}" | awk -v pid="${_pid}" '$1 == pid { $1=""; sub(/^[[:space:]]+/, ""); print }')
+    [ -n "${_row}" ] || return 1
+    _comm=${_row%% *}
+    _args=${_row#* }
+    if [ "${_kind}" = child ]; then
+        [ "${_comm##*/}" = "${procname##*/}" ] || return 2
+        _expected="${procname} serve --config ${routerd_config} --socket ${routerd_socket} --status-socket ${routerd_status_socket} --apply-interval ${routerd_apply_interval}"
+        case "${_args}" in "${_expected}"|"${_expected} "*) ;; *) return 2 ;; esac
+    else
+        [ "${_comm##*/}" = daemon ] || return 2
+        _title=${_args% (daemon)}
+        case "${_title}" in "daemon: ${name}["*']') ;; *) return 2 ;; esac
+        _child=${_title#"daemon: ${name}["}
+        _child=${_child%]}
+        case "${_child}" in ''|*[!0-9]*) return 2 ;; esac
     fi
-    return 1
+    _locked_pid=$(pgrep -L -F "${_file}" -x "${_comm##*/}") || return 2
+    [ "${_locked_pid}" = "${_pid}" ] || return 2
+    printf '%s\n' "${_pid}"
+}
+
+routerd_signal_owned()
+{
+    _signal_file=$1
+    _signal_kind=$2
+    _signal=$3
+    routerd_read_pidfile "${_signal_file}" "${_signal_kind}" >/dev/null
+    _rc=$?
+    [ "${_rc}" -ne 2 ] || { warn "native ${_signal_kind} ownership is unknown; retaining service state"; return 1; }
+    [ "${_rc}" -eq 0 ] || return 0
+    _signal_comm=daemon
+    [ "${_signal_kind}" != child ] || _signal_comm=${procname##*/}
+    pkill "-${_signal}" -L -F "${_signal_file}" -x "${_signal_comm}"
+    _rc=$?
+    [ "${_rc}" -eq 0 ] || [ "${_rc}" -eq 1 ]
+}
+
+routerd_any_owned_running()
+{
+    routerd_pid >/dev/null
+    _rc=$?
+    [ "${_rc}" -ne 2 ] || return 2
+    [ "${_rc}" -ne 0 ] || return 0
+    routerd_supervisor_pid >/dev/null
 }
 
 routerd_start()
 {
-    routerd_prestart || return 1
-    if routerd_pid >/dev/null 2>&1; then
+    routerd_any_owned_running
+    _rc=$?
+    [ "${_rc}" -ne 2 ] || { warn "native service ownership is unknown; refusing start"; return 1; }
+    if [ "${_rc}" -eq 0 ]; then
         echo "${name} is already running."
         return 0
     fi
+    routerd_prestart || return 1
     echo "Starting ${name}."
     eval "${command} ${command_args}"
     for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -118,37 +168,39 @@ routerd_start()
 
 routerd_stop()
 {
-    supervisor_pid="$(routerd_supervisor_pid)"
-    child_pid="$(routerd_pid)"
+    supervisor_pid="$(routerd_supervisor_pid)"; _rc=$?
+    [ "${_rc}" -ne 2 ] || { warn "native supervisor ownership is unknown; refusing stop"; return 1; }
+    child_pid="$(routerd_pid)"; _rc=$?
+    [ "${_rc}" -ne 2 ] || { warn "native child ownership is unknown; refusing stop"; return 1; }
     if [ -z "${supervisor_pid}" ] && [ -z "${child_pid}" ]; then
         echo "${name} is not running."
         return 0
     fi
     echo "Stopping ${name}."
     if [ -n "${supervisor_pid}" ]; then
-        kill "${supervisor_pid}" 2>/dev/null || true
+        routerd_signal_owned "${supervisor_pidfile}" supervisor TERM || return 1
     fi
     if [ -n "${child_pid}" ]; then
-        kill "${child_pid}" 2>/dev/null || true
+        routerd_signal_owned "${pidfile}" child TERM || return 1
     fi
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-        if ! routerd_pid >/dev/null 2>&1 && ! routerd_supervisor_pid >/dev/null 2>&1; then
+        routerd_any_owned_running
+        _rc=$?
+        [ "${_rc}" -ne 2 ] || { warn "native service ownership read failed; retaining pidfiles"; return 1; }
+        if [ "${_rc}" -eq 1 ]; then
             rm -f "${pidfile}" "${supervisor_pidfile}"
             return 0
         fi
         sleep 1
     done
     warn "${name} did not stop after TERM; sending KILL"
-    supervisor_pid="$(routerd_supervisor_pid)"
-    child_pid="$(routerd_pid)"
-    if [ -n "${supervisor_pid}" ]; then
-        kill -KILL "${supervisor_pid}" 2>/dev/null || true
-    fi
-    if [ -n "${child_pid}" ]; then
-        kill -KILL "${child_pid}" 2>/dev/null || true
-    fi
+    routerd_signal_owned "${pidfile}" child KILL || return 1
+    routerd_signal_owned "${supervisor_pidfile}" supervisor KILL || return 1
     for _ in 1 2 3 4 5; do
-        if ! routerd_pid >/dev/null 2>&1 && ! routerd_supervisor_pid >/dev/null 2>&1; then
+        routerd_any_owned_running
+        _rc=$?
+        [ "${_rc}" -ne 2 ] || { warn "native service ownership read failed; retaining pidfiles"; return 1; }
+        if [ "${_rc}" -eq 1 ]; then
             rm -f "${pidfile}" "${supervisor_pidfile}"
             return 0
         fi
@@ -160,7 +212,8 @@ routerd_stop()
 
 routerd_status()
 {
-    pid="$(routerd_pid)"
+    pid="$(routerd_pid)"; _rc=$?
+    [ "${_rc}" -ne 2 ] || { warn "native child ownership is unknown"; return 2; }
     if [ -z "${pid}" ]; then
         echo "${name} is not running."
         return 1

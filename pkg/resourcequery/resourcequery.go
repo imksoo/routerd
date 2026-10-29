@@ -15,9 +15,41 @@ type Store interface {
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
+type StatusReader interface {
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
+}
+
 type ResourceRef struct {
 	Kind string
 	Name string
+}
+
+// ReadValue preserves storage failures so effect owners can retain their last
+// committed result instead of mistaking an unavailable observation for absence.
+func ReadValue(store StatusReader, source api.StatusValueSourceSpec) (string, error) {
+	values, err := ReadValues(store, source)
+	if err != nil || len(values) == 0 {
+		return "", err
+	}
+	return values[0], nil
+}
+
+func ReadValues(store StatusReader, source api.StatusValueSourceSpec) ([]string, error) {
+	if strings.TrimSpace(source.Resource) == "" {
+		return nil, nil
+	}
+	if store == nil {
+		return nil, fmt.Errorf("read %s status: store is unavailable", source.Resource)
+	}
+	kind, name, ok := SplitResource(source.Resource)
+	if !ok {
+		return nil, fmt.Errorf("invalid resource source %q", source.Resource)
+	}
+	status, err := store.ReadObjectStatus(APIVersionForKind(kind), kind, name)
+	if err != nil {
+		return nil, fmt.Errorf("read %s status: %w", source.Resource, err)
+	}
+	return normalizeValues(status[defaultString(source.Field, "phase")]), nil
 }
 
 func Value(store Store, source api.StatusValueSourceSpec) string {
@@ -47,6 +79,13 @@ func ValuesFromStoreOrRouter(store Store, router *api.Router, source api.StatusV
 		return values
 	}
 	return Values(store, source)
+}
+
+func ReadValuesFromStoreOrRouter(store StatusReader, router *api.Router, source api.StatusValueSourceSpec) ([]string, error) {
+	if values := ValuesFromRouter(router, source); len(values) > 0 {
+		return values, nil
+	}
+	return ReadValues(store, source)
 }
 
 func ValuesFromRouter(router *api.Router, source api.StatusValueSourceSpec) []string {
@@ -96,11 +135,33 @@ func DependencyReady(store Store, dependency api.ResourceDependencySpec) bool {
 	if !ok {
 		return dependency.Optional
 	}
+	status := store.ObjectStatus(APIVersionForKind(kind), kind, name)
+	return dependencyReady(status, dependency)
+}
+
+func ReadDependencyReady(store StatusReader, dependency api.ResourceDependencySpec) (bool, error) {
+	if strings.TrimSpace(dependency.Resource) == "" {
+		return dependency.Optional, nil
+	}
+	kind, name, ok := SplitResource(dependency.Resource)
+	if !ok {
+		return false, fmt.Errorf("invalid dependency resource %q", dependency.Resource)
+	}
+	if store == nil {
+		return false, fmt.Errorf("read dependency %s: store is unavailable", dependency.Resource)
+	}
+	status, err := store.ReadObjectStatus(APIVersionForKind(kind), kind, name)
+	if err != nil {
+		return false, fmt.Errorf("read dependency %s: %w", dependency.Resource, err)
+	}
+	return dependencyReady(status, dependency), nil
+}
+
+func dependencyReady(status map[string]any, dependency api.ResourceDependencySpec) bool {
 	field := defaultString(dependency.Field, "phase")
 	if dependency.Phase != "" {
 		field = "phase"
 	}
-	status := store.ObjectStatus(APIVersionForKind(kind), kind, name)
 	values := normalizeValues(statusValue(status, field))
 	if len(values) == 0 {
 		return dependency.Optional
@@ -129,12 +190,41 @@ func DependenciesReady(store Store, dependencies []api.ResourceDependencySpec) b
 	return true
 }
 
+func ReadDependenciesReady(store StatusReader, dependencies []api.ResourceDependencySpec) (bool, error) {
+	for _, dependency := range dependencies {
+		ready, err := ReadDependencyReady(store, dependency)
+		if err != nil || !ready {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 func SourceReady(store Store, source string) bool {
 	kind, name, ok := SplitResource(source)
 	if !ok {
 		return false
 	}
-	switch fmt.Sprint(statusValue(store.ObjectStatus(APIVersionForKind(kind), kind, name), "phase")) {
+	return sourceReady(store.ObjectStatus(APIVersionForKind(kind), kind, name))
+}
+
+func ReadSourceReady(store StatusReader, source string) (bool, error) {
+	kind, name, ok := SplitResource(source)
+	if !ok {
+		return false, fmt.Errorf("invalid resource source %q", source)
+	}
+	if store == nil {
+		return false, fmt.Errorf("read source %s: store is unavailable", source)
+	}
+	status, err := store.ReadObjectStatus(APIVersionForKind(kind), kind, name)
+	if err != nil {
+		return false, fmt.Errorf("read source %s: %w", source, err)
+	}
+	return sourceReady(status), nil
+}
+
+func sourceReady(status map[string]any) bool {
+	switch fmt.Sprint(statusValue(status, "phase")) {
 	case "Applied", "Bound", "Healthy", "Installed", "Ready", "Running", "Up":
 		return true
 	default:
@@ -146,29 +236,20 @@ func statusValue(status map[string]any, field string) any {
 	if strings.TrimSpace(field) != "phase" {
 		return status[field]
 	}
-	if observed, ok := status["observed"].(map[string]any); ok {
-		if phase := observed["phase"]; phase != nil && strings.TrimSpace(fmt.Sprint(phase)) != "" {
-			return phase
-		}
+	if phase := status[field]; phase != nil && strings.TrimSpace(fmt.Sprint(phase)) != "" {
+		return phase
 	}
-	return status[field]
+	if observed, ok := status["observed"].(map[string]any); ok {
+		return observed["phase"]
+	}
+	return nil
 }
 
 func APIVersionForKind(kind string) string {
-	switch kind {
-	case "Inventory":
-		return api.RouterAPIVersion
-	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
-		return api.SystemAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
-		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile":
-		return api.HybridAPIVersion
-	case "MobilityPool", "SAMNodeSet", "SAMTransportProfile":
-		return api.MobilityAPIVersion
-	default:
-		return api.NetAPIVersion
+	if version, known := api.ResourceAPIVersion(kind); known {
+		return version
 	}
+	return api.NetAPIVersion
 }
 
 func SplitResource(ref string) (string, string, bool) {

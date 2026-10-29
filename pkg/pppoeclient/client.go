@@ -89,6 +89,9 @@ func LinuxPeer(cfg Config) []byte {
 	}
 	b.WriteString("noauth\nhide-password\nnoipdefault\nusepeerdns\n")
 	b.WriteString("nodetach\n")
+	if api.BoolDefault(spec.Persist, true) {
+		b.WriteString("persist\nmaxfail 0\n")
+	}
 	switch auth {
 	case "pap":
 		b.WriteString("-chap\n")
@@ -146,7 +149,11 @@ func FreeBSDMPDConf(cfg Config) []byte {
 		b.WriteString(" set link accept pap chap\n")
 	}
 	b.WriteString(" set auth authname " + strconv.Quote(spec.Username) + "\n")
-	b.WriteString(" set auth password " + strconv.Quote(cfg.Password) + "\n")
+	password := cfg.Password
+	if password == "" {
+		password = spec.Password
+	}
+	b.WriteString(" set auth password " + strconv.Quote(password) + "\n")
 	b.WriteString(" set link max-redial 0\n")
 	b.WriteString(" set link mtu " + strconv.Itoa(mtu) + "\n")
 	b.WriteString(" set link mru " + strconv.Itoa(mru) + "\n")
@@ -185,19 +192,25 @@ func RuntimeConfigForOS(osName string, cfg Config) (string, []byte) {
 // RedactedRuntimeConfigForOS preserves the useful configuration shape in
 // selftest output without returning a PPPoE password.
 func RedactedRuntimeConfigForOS(osName string, cfg Config) []byte {
-	_, config := RuntimeConfigForOS(osName, cfg)
-	if cfg.Password == "" {
-		return config
+	if cfg.Password != "" || cfg.Spec.Password != "" {
+		// Redact before quoting: escaped credentials must never reach diagnostics.
+		cfg.Password = "[REDACTED]"
+		cfg.Spec.Password = "[REDACTED]"
 	}
-	return []byte(strings.ReplaceAll(string(config), cfg.Password, "[REDACTED]"))
+	_, config := RuntimeConfigForOS(osName, cfg)
+	return config
 }
 
 func ParseLogLine(snapshot Snapshot, line string, now time.Time) Snapshot {
 	lower := strings.ToLower(line)
 	snapshot.UpdatedAt = now.UTC()
 	switch {
+	case strings.HasPrefix(strings.TrimSpace(lower), "connect:"):
+		snapshot.Phase = PhaseConnecting
+		snapshot.LastError = ""
 	case strings.Contains(lower, "chap authentication succeeded"), strings.Contains(lower, "pap authentication succeeded"):
 		snapshot.Phase = PhaseIPCP
+		snapshot.LastError = ""
 	case strings.Contains(lower, "local  ip address"):
 		snapshot.CurrentAddress = lastIPv4(line)
 		if snapshot.CurrentAddress != "" {
@@ -214,6 +227,9 @@ func ParseLogLine(snapshot Snapshot, line string, now time.Time) Snapshot {
 		}
 	case strings.Contains(lower, "authentication failed"), strings.Contains(lower, "connection terminated"):
 		snapshot.Phase = PhaseFailed
+		snapshot.CurrentAddress, snapshot.PeerAddress, snapshot.SessionID = "", "", ""
+		snapshot.DNSServers = nil
+		snapshot.ConnectedAt = time.Time{}
 		snapshot.LastError = strings.TrimSpace(line)
 	}
 	return snapshot

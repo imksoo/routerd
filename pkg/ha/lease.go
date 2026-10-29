@@ -50,6 +50,9 @@ type Decision struct {
 }
 
 func Acquire(ctx context.Context, cfg Config) (Decision, error) {
+	if err := ctx.Err(); err != nil {
+		return Decision{}, err
+	}
 	cfg = normalizeConfig(cfg)
 	if cfg.LeasePath == "" || len(cfg.Peers) == 0 {
 		return Decision{Enabled: false, Leader: true, Identity: cfg.Identity, Reason: "disabled"}, nil
@@ -57,13 +60,20 @@ func Acquire(ctx context.Context, cfg Config) (Decision, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.LeasePath), 0o755); err != nil {
 		return Decision{}, err
 	}
-	file, err := os.OpenFile(cfg.LeasePath, os.O_CREATE|os.O_RDWR, 0o644)
+	file, err := os.OpenFile(cfg.LeasePath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o644)
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		file, err = os.OpenFile(cfg.LeasePath, os.O_RDWR, 0o644)
+	}
 	if err != nil {
 		return Decision{}, err
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		current := readLease(file)
+		current, readErr := readLease(file)
 		_ = file.Close()
+		if readErr != nil {
+			return Decision{}, fmt.Errorf("read locked cluster lease: %w", readErr)
+		}
 		if (err == syscall.EWOULDBLOCK || err == syscall.EAGAIN) && current.Holder != "" {
 			return Decision{Enabled: true, Leader: false, Identity: cfg.Identity, Holder: current.Holder, LeasePath: cfg.LeasePath, ExpiresAt: current.ExpiresAt, Reason: "locked-by-peer"}, nil
 		}
@@ -73,7 +83,15 @@ func Acquire(ctx context.Context, cfg Config) (Decision, error) {
 		return Decision{}, err
 	}
 	now := time.Now().UTC()
-	current := readLease(file)
+	current := Lease{}
+	if !created {
+		current, err = readLease(file)
+		if err != nil {
+			_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			_ = file.Close()
+			return Decision{}, fmt.Errorf("read cluster lease: %w", err)
+		}
+	}
 	if current.Holder != "" && current.Holder != cfg.Identity && now.Before(current.ExpiresAt) {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
@@ -163,11 +181,18 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
-func readLease(file *os.File) Lease {
-	_, _ = file.Seek(0, 0)
+func readLease(file *os.File) (Lease, error) {
+	if _, err := file.Seek(0, 0); err != nil {
+		return Lease{}, err
+	}
 	var lease Lease
-	_ = json.NewDecoder(file).Decode(&lease)
-	return lease
+	if err := json.NewDecoder(file).Decode(&lease); err != nil {
+		return Lease{}, err
+	}
+	if strings.TrimSpace(lease.Holder) == "" || lease.ExpiresAt.IsZero() || lease.UpdatedAt.IsZero() {
+		return Lease{}, errors.New("cluster lease has no holder or validity timestamps")
+	}
+	return lease, nil
 }
 
 func writeLease(file *os.File, lease Lease) error {

@@ -363,7 +363,7 @@ func TestControllerBGPModeFailedProviderActionDoesNotSuppressHomeOwnerPath(t *te
 		Provider:       "azure",
 		ProviderRef:    "azure-provider",
 		Action:         "assign-secondary-ip",
-		TargetJSON:     `{"address":"10.88.60.11/32","nicRef":"client-nic","providerRef":"azure-provider"}`,
+		Target:         map[string]string{"address": "10.88.60.11/32", "nicRef": "client-nic", "providerRef": "azure-provider"},
 		Status:         routerstate.ActionFailed,
 		Error:          "provider API unavailable",
 		CreatedAt:      now.Add(-2 * time.Minute),
@@ -462,7 +462,7 @@ func TestControllerBGPModeFreshHomeOwnerKeepsRemoteProviderDeliveryCapture(t *te
 				Provider:       tc.homeProvider,
 				ProviderRef:    tc.homeRef,
 				Action:         "assign-secondary-ip",
-				TargetJSON:     fmt.Sprintf(`{"address":%q,"nicRef":%q,"providerRef":%q}`, tc.address, tc.homeNIC, tc.homeRef),
+				Target:         map[string]string{"address": tc.address, "nicRef": tc.homeNIC, "providerRef": tc.homeRef},
 				Status:         routerstate.ActionFailed,
 				Error:          "stale capture failure",
 				CreatedAt:      now.Add(-10 * time.Minute),
@@ -670,6 +670,9 @@ func TestControllerBGPModeProviderActionFailureDoesNotRemoveBGPPath(t *testing.T
 	if len(rows) == 0 {
 		t.Fatal("imported action not found")
 	}
+	if claimed, err := store.BeginActionExecution(rows[0].ID, now); err != nil || !claimed {
+		t.Fatalf("BeginActionExecution: claimed=%v err=%v", claimed, err)
+	}
 	if err := store.MarkActionResult(rows[0].ID, routerstate.ActionFailed, "failed", "provider API unavailable", nil, now.Add(time.Second)); err != nil {
 		t.Fatalf("MarkActionResult failed: %v", err)
 	}
@@ -751,6 +754,9 @@ func TestControllerBGPModeWaitsForProviderObservationAfterAssignSuccess(t *testi
 	id, err := importApprovedAction(t, assign, source, store, now)
 	if err != nil {
 		t.Fatalf("import action: %v", err)
+	}
+	if claimed, err := store.BeginActionExecution(id, now); err != nil || !claimed {
+		t.Fatalf("BeginActionExecution: claimed=%v err=%v", claimed, err)
 	}
 	if err := store.MarkActionResult(id, routerstate.ActionSucceeded, "ok", "", nil, now.Add(time.Second)); err != nil {
 		t.Fatalf("MarkActionResult: %v", err)
@@ -837,6 +843,9 @@ func TestControllerBGPModeReportsFailedForwardingProviderAction(t *testing.T) {
 		t.Fatalf("import action: %v", err)
 	}
 	failedAt := now.Add(2 * time.Second)
+	if claimed, err := store.BeginActionExecution(id, now); err != nil || !claimed {
+		t.Fatalf("BeginActionExecution: claimed=%v err=%v", claimed, err)
+	}
 	if err := store.MarkActionResult(id, routerstate.ActionFailed, "failed", "source/dest check update denied", nil, failedAt); err != nil {
 		t.Fatalf("MarkActionResult: %v", err)
 	}
@@ -873,7 +882,7 @@ func TestControllerBGPModeObservedSelfCaptureSupersedesProviderActionFailureStat
 		Provider:       "aws",
 		ProviderRef:    "aws-provider",
 		Action:         "assign-secondary-ip",
-		TargetJSON:     `{"address":"10.88.60.10/32","nicRef":"eni-a","providerRef":"aws-provider"}`,
+		Target:         map[string]string{"address": "10.88.60.10/32", "nicRef": "eni-a", "providerRef": "aws-provider"},
 		Status:         routerstate.ActionFailed,
 		Error:          "stale provider conflict",
 		CreatedAt:      now.Add(-time.Minute),
@@ -907,10 +916,7 @@ func TestProviderObservationRequiresFreshUnassignSnapshot(t *testing.T) {
 	now := time.Date(2026, 6, 26, 3, 10, 0, 0, time.UTC)
 	address := "10.88.60.11/32"
 	target := map[string]string{"address": address, "providerRef": "aws-provider", "nicRef": "eni-a"}
-	targetJSON, err := json.Marshal(target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
+	targetJSON := target
 	previous := []dynamicconfig.ActionPlan{{
 		Provider:       "aws",
 		ProviderRef:    "aws-provider",
@@ -924,7 +930,7 @@ func TestProviderObservationRequiresFreshUnassignSnapshot(t *testing.T) {
 		Provider:       "aws",
 		ProviderRef:    "aws-provider",
 		Action:         actionUnassignSecondaryIP,
-		TargetJSON:     string(targetJSON),
+		Target:         targetJSON,
 		Status:         routerstate.ActionSucceeded,
 		ExecutedAt:     now.Add(time.Second),
 		UpdatedAt:      now.Add(time.Second),
@@ -949,17 +955,14 @@ func TestProviderObservationRequiresFreshForwardingSnapshot(t *testing.T) {
 		Target:         map[string]string{"providerRef": "aws-provider", "nicRef": "eni-a"},
 		IdempotencyKey: "forwarding-key",
 	}
-	targetJSON, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
+	targetJSON := plan.Target
 	journal := []routerstate.ActionExecutionRecord{{
 		ID:             1,
 		IdempotencyKey: plan.IdempotencyKey,
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(targetJSON),
+		Target:         targetJSON,
 		Status:         routerstate.ActionSucceeded,
 		ExecutedAt:     now.Add(time.Second),
 		UpdatedAt:      now.Add(time.Second),
@@ -1979,7 +1982,7 @@ func TestPlanBGPMobilityDeliveryDoesNotReviveIneligibleCaptureAfterFailedAction(
 					Action:      "assign-secondary-ip",
 					Provider:    "aws",
 					ProviderRef: "aws-provider",
-					TargetJSON:  `{"address":"10.88.60.11/32","nicRef":"eni-b","providerRef":"aws-provider"}`,
+					Target:      map[string]string{"address": "10.88.60.11/32", "nicRef": "eni-b", "providerRef": "aws-provider"},
 					Status:      routerstate.ActionFailed,
 					Error:       "provider conflict",
 					UpdatedAt:   now.Add(-time.Second),
@@ -2236,7 +2239,10 @@ func TestControllerBGPCaptureCandidateNextHopsExcludeReturnRoutes(t *testing.T) 
 	if err != nil {
 		t.Fatalf("normalize pool: %v", err)
 	}
-	bgp := collectBGPSnapshot(router, store, normalized.Pool)
+	bgp, err := collectBGPSnapshot(router, store, normalized.Pool)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := bgp.CaptureNextHops
 	if !bgp.CaptureRIBObserved {
 		t.Fatal("collectBGPSnapshot capture RIB observed=false, want prefixes to be authoritative")
@@ -2912,29 +2918,23 @@ func TestBGPProviderDeprovisionUnassignDoesNotRecapture(t *testing.T) {
 		},
 	}
 	address := "10.88.60.12/32"
-	targetJSON, err := json.Marshal(map[string]string{
+	targetJSON := map[string]string{
 		"address":     address,
 		"nicRef":      "eni-a",
 		"providerRef": "aws-provider",
-	})
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
 	}
-	paramsJSON, err := json.Marshal(map[string]string{
+	paramsJSON := map[string]string{
 		bgpPathSigParam:    "deprovision:" + address + ":observed-self-stale:since=" + now.Add(-time.Minute).Format(time.RFC3339Nano),
 		"deprovisionSince": now.Add(-time.Minute).Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
 	}
 	journal := []routerstate.ActionExecutionRecord{{
-		ID:             42,
-		ProviderRef:    "aws-provider",
-		Action:         "unassign-secondary-ip",
-		TargetJSON:     string(targetJSON),
-		ParametersJSON: string(paramsJSON),
-		Status:         routerstate.ActionSucceeded,
-		ExecutedAt:     now,
+		ID:          42,
+		ProviderRef: "aws-provider",
+		Action:      "unassign-secondary-ip",
+		Target:      targetJSON,
+		Parameters:  paramsJSON,
+		Status:      routerstate.ActionSucceeded,
+		ExecutedAt:  now,
 	}}
 	history := newProviderActionHistoryWithRevision(nil, journal, "")
 	if shouldAllowBGPTrapReassignment(self, address, history, map[string]bool{address: true}, true, now) {
@@ -3160,13 +3160,10 @@ func TestPlanBGPMobilityDeliveryAllowsAfterUnassignRecaptureWhenCanonicalSucceed
 
 func providerCaptureActionRecordForPlannerTest(t *testing.T, id int64, action, address, providerRef, nicRef, holder string, at time.Time, params map[string]string) routerstate.ActionExecutionRecord {
 	t.Helper()
-	targetJSON, err := json.Marshal(map[string]string{
+	targetJSON := map[string]string{
 		"address":     address,
 		"nicRef":      nicRef,
 		"providerRef": providerRef,
-	})
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
 	}
 	if params == nil {
 		params = map[string]string{}
@@ -3177,18 +3174,15 @@ func providerCaptureActionRecordForPlannerTest(t *testing.T, id int64, action, a
 	if params[captureParamHolder] == "" {
 		params[captureParamHolder] = holder
 	}
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+	paramsJSON := params
 	return routerstate.ActionExecutionRecord{
 		ID:             id,
 		IdempotencyKey: strings.Join([]string{"test", providerRef, nicRef, action, address, fmt.Sprint(id)}, ":"),
 		Provider:       strings.TrimSuffix(providerRef, "-provider"),
 		ProviderRef:    providerRef,
 		Action:         action,
-		TargetJSON:     string(targetJSON),
-		ParametersJSON: string(paramsJSON),
+		Target:         targetJSON,
+		Parameters:     paramsJSON,
 		Status:         routerstate.ActionSucceeded,
 		ExecutedAt:     at.UTC(),
 		UpdatedAt:      at.UTC(),
@@ -3206,22 +3200,16 @@ func seedSucceededActionRecordForPlannerTest(t *testing.T, store *routerstate.SQ
 
 func importActionPlanRecord(t *testing.T, store *routerstate.SQLiteStore, source string, plan dynamicconfig.ActionPlan, now time.Time) bool {
 	t.Helper()
-	targetJSON, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
-	paramsJSON, err := json.Marshal(plan.Parameters)
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
+	targetJSON := plan.Target
+	paramsJSON := plan.Parameters
 	return importActionRecordForPlannerTest(t, store, routerstate.ActionExecutionRecord{
 		IdempotencyKey: plan.IdempotencyKey,
 		Source:         source,
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(targetJSON),
-		ParametersJSON: string(paramsJSON),
+		Target:         targetJSON,
+		Parameters:     paramsJSON,
 		RiskLevel:      plan.RiskLevel,
 		Status:         routerstate.ActionPending,
 		CreatedAt:      now,
@@ -3269,7 +3257,7 @@ func countActionRowsByAddress(t *testing.T, store *routerstate.SQLiteStore, acti
 		if row.Action != action {
 			continue
 		}
-		target := decodeActionRecordMap(row.TargetJSON)
+		target := row.Target
 		if normalizeAddressString(target["address"]) == address {
 			count++
 		}
@@ -3754,7 +3742,10 @@ func TestControllerBGPModeObservedSelfStaleCaptureIsProtectedWithoutPriorAction(
 		t.Fatalf("plans = %#v, first observed stale provider-secondary capture must wait for cleanup hold", plans)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", "cloudedge")
-	staleSince := observedSelfStaleCaptureSinceFromStatus(status)
+	staleSince, err := observedSelfStaleCaptureSinceFromStatus(status)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if staleSince[address].IsZero() {
 		t.Fatalf("observedSelfStaleCaptures = %#v, want first-seen marker for %s", status["observedSelfStaleCaptures"], address)
 	}

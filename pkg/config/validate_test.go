@@ -747,7 +747,7 @@ func TestValidateLogSinkWebhookRequiresURL(t *testing.T) {
 	}
 }
 
-func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
+func TestValidateRejectsUnimplementedOTLPLogSink(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -768,8 +768,8 @@ func TestValidateLogSinkOTLPReferencesTelemetry(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
-		t.Fatalf("validate otlp log sink: %v", err)
+	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "LogSink type otlp is unsupported") {
+		t.Fatalf("unimplemented log sink admitted: %v", err)
 	}
 }
 
@@ -1707,9 +1707,9 @@ func TestValidateStaticRoutes(t *testing.T) {
 				Spec:     api.InterfaceSpec{IfName: "ens18", Managed: true},
 			},
 			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticRoute"},
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
 				Metadata: api.ObjectMeta{Name: "lab-v4"},
-				Spec:     api.IPv4StaticRouteSpec{Interface: "wan", Destination: "192.0.2.0/24", Via: "198.51.100.1"},
+				Spec:     api.IPv4RouteSpec{Device: "ens18", Destination: "192.0.2.0/24", Gateway: "198.51.100.1"},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"},
@@ -2811,7 +2811,7 @@ func TestValidateBridge(t *testing.T) {
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"},
 				Metadata: api.ObjectMeta{Name: "br-home"},
-				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, RSTP: boolPtr(true), MulticastSnooping: boolPtr(false)},
+				Spec:     api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MulticastSnooping: boolPtr(false)},
 			},
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},

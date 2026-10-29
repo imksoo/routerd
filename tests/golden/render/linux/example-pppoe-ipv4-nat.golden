@@ -45,7 +45,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -54,7 +54,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan
@@ -95,7 +94,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -104,7 +103,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan

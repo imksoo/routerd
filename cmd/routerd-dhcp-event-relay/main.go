@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -122,7 +123,11 @@ func eventFromArgs(args []string, env []string) (controlapi.DHCPLeaseEventReques
 		event.MAC = args[1]
 	}
 	if len(args) > 2 {
-		event.IP = args[2]
+		addr, err := netip.ParseAddr(strings.TrimSpace(args[2]))
+		if err != nil {
+			return controlapi.DHCPLeaseEventRequest{}, fmt.Errorf("invalid DHCP lease IP: %w", err)
+		}
+		event.IP = addr.String()
 	}
 	if len(args) > 3 && args[3] != "*" {
 		event.Hostname = args[3]

@@ -246,6 +246,9 @@ func (c *Client) Apply(ctx context.Context, request ApplyRequest) (*ApplyResult,
 	if err != nil {
 		return nil, err
 	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/apply", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -264,6 +267,9 @@ func (c *Client) Plan(ctx context.Context, request PlanRequest) (*PlanResult, er
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/plan", bytes.NewReader(data))
 	if err != nil {
@@ -284,6 +290,9 @@ func (c *Client) Delete(ctx context.Context, request DeleteRequest) (*DeleteResu
 	if err != nil {
 		return nil, err
 	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/delete", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -302,6 +311,9 @@ func (c *Client) Validate(ctx context.Context, request ValidateRequest) (*Valida
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/validate", bytes.NewReader(data))
 	if err != nil {
@@ -322,6 +334,9 @@ func (c *Client) SubmitSAMEnrollmentClaim(ctx context.Context, request SAMEnroll
 	if err != nil {
 		return nil, err
 	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/sam-enrollment-claims", bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -341,6 +356,9 @@ func (c *Client) RevokeSAMEnrollmentClaim(ctx context.Context, request SAMEnroll
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/sam-enrollment-claims/"+url.PathEscape(request.Name)+"/revoke", bytes.NewReader(data))
 	if err != nil {
@@ -386,6 +404,9 @@ func (c *Client) SetLogLevel(ctx context.Context, request LogLevelRequest) (*Log
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > MaxRequestBodyBytes {
+		return nil, fmt.Errorf("routerd API request exceeds %d bytes", MaxRequestBodyBytes)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+Prefix+"/log-level", bytes.NewReader(data))
 	if err != nil {
@@ -545,7 +566,15 @@ func (c *Client) do(req *http.Request, value any) error {
 		}
 		return &APIError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("routerd API returned HTTP %d", resp.StatusCode)}
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(value)
+	const maxResponseBytes = 16 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxResponseBytes {
+		return fmt.Errorf("routerd API response exceeds %d bytes", maxResponseBytes)
+	}
+	return json.Unmarshal(data, value)
 }
 
 // APIError reports a response returned by a reachable routerd API endpoint.

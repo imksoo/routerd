@@ -555,14 +555,9 @@ func patchResourceWhenSchemas(value any) {
 }
 
 func metadataSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"required":             []string{"name"},
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"name": map[string]any{"type": "string", "minLength": 1},
-		},
-	}
+	schema := reflectedSchema(api.ObjectMeta{})
+	schema["properties"].(map[string]any)["name"].(map[string]any)["minLength"] = 1
+	return schema
 }
 
 func constString(value string) map[string]any {

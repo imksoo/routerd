@@ -72,3 +72,13 @@ func TestEventFromArgsNormalizesOnlyDnsmasqLeaseActions(t *testing.T) {
 		t.Fatal("eventFromArgs accepted an unknown dnsmasq lease action")
 	}
 }
+
+func TestLeaseEventCanonicalizesAddressWithoutRequiringEthernetIdentity(t *testing.T) {
+	event, err := eventFromArgs([]string{"add", "client-duid", "2001:0db8:0:0::1", "host"}, nil)
+	if err != nil || event.IP != "2001:db8::1" || event.MAC != "client-duid" {
+		t.Fatalf("usable IPv6 callback lost: %+v %v", event, err)
+	}
+	if _, err := eventFromArgs([]string{"add", "client", "not-an-address"}, nil); err == nil {
+		t.Fatal("invalid address was accepted for durable queue")
+	}
+}

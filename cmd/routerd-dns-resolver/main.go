@@ -63,6 +63,7 @@ type daemon struct {
 	cache        map[string]cacheEntry
 	queryLogMu   sync.Mutex
 	queryLog     *logstore.DNSQueryLog
+	queryHistory queryHistory
 }
 
 type runtimeSource struct {
@@ -319,7 +320,9 @@ func (d *daemon) Run(ctx context.Context) error {
 		queryLogSpec := d.config.Spec.QueryLog
 		d.stateMu.RUnlock()
 		if queryLogSpec.Enabled {
-			queryLog, err := logstore.OpenDNSQueryLog(queryLogSpec.Path)
+			openCtx, cancelOpen := context.WithTimeout(ctx, queryHistoryOpenTimeout)
+			queryLog, err := logstore.OpenDNSQueryLogContext(openCtx, queryLogSpec.Path)
+			cancelOpen()
 			if err != nil {
 				// Query history must not prevent serving the configured DNS
 				// zones and upstreams. Reload will retry opening the log and
@@ -328,9 +331,11 @@ func (d *daemon) Run(ctx context.Context) error {
 			} else {
 				d.queryLogMu.Lock()
 				d.queryLog = queryLog
+				d.queryHistory.generation++
 				d.queryLogMu.Unlock()
 			}
 		}
+		d.startQueryHistory(ctx)
 		sourceCtx, sourceCancel := context.WithCancel(ctx)
 		d.stateMu.Lock()
 		d.sourceCancel = sourceCancel
@@ -565,36 +570,7 @@ func (d *daemon) recordQuery(remoteAddr string, req *dns.Msg, result resolveResu
 	if entry.ResponseCode == "" && result.Response != nil {
 		entry.ResponseCode = dns.RcodeToString[result.Response.Rcode]
 	}
-	d.queryLogMu.Lock()
-	defer d.queryLogMu.Unlock()
-	if d.queryLog == nil {
-		return
-	}
-	if err := d.queryLog.Record(context.Background(), entry); err == nil {
-		return
-	}
-
-	// A resolver must continue serving DNS even if its query log becomes
-	// unavailable. Reopen the log after a failed write so a transient or stale
-	// SQLite connection does not leave observability disabled until a restart.
-	path := d.queryLog.Stats().Path
-	_ = d.queryLog.Close()
-	queryLog, err := logstore.OpenDNSQueryLog(path)
-	if err != nil {
-		return
-	}
-	d.queryLog = queryLog
-	_ = d.queryLog.Record(context.Background(), entry)
-}
-
-func (d *daemon) closeQueryLog() {
-	d.queryLogMu.Lock()
-	defer d.queryLogMu.Unlock()
-	if d.queryLog == nil {
-		return
-	}
-	_ = d.queryLog.Close()
-	d.queryLog = nil
+	d.enqueueQueryHistory(entry)
 }
 
 func sourceName(source api.DNSResolverSourceSpec) string {
@@ -841,7 +817,9 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		d.queryLogMu.Unlock()
 		if config.Spec.QueryLog.Enabled {
 			if currentQueryLog == nil || currentPath != config.Spec.QueryLog.Path {
-				stagedQueryLog, err = logstore.OpenDNSQueryLog(config.Spec.QueryLog.Path)
+				openCtx, cancelOpen := context.WithTimeout(ctx, queryHistoryOpenTimeout)
+				stagedQueryLog, err = logstore.OpenDNSQueryLogContext(openCtx, config.Spec.QueryLog.Path)
+				cancelOpen()
 				if err != nil {
 					return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: fmt.Errorf("open DNS query log: %w", err)}
 				}
@@ -880,12 +858,16 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		}
 	}
 
+	// Retire the old log only after its bounded write/reopen operation stops.
+	// DNS enqueue never takes this mutex and cannot wait on disk or reload.
+	d.queryHistory.operation.Lock()
 	d.stateMu.Lock()
 	d.queryLogMu.Lock()
 	var retiredQueryLog *logstore.DNSQueryLog
 	if replaceQueryLog {
 		retiredQueryLog = d.queryLog
 		d.queryLog = stagedQueryLog
+		d.queryHistory.generation++
 		stagedQueryLog = nil
 	}
 	mergedListeners := map[string]*boundListener{}
@@ -909,6 +891,7 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 	if retiredQueryLog != nil {
 		_ = retiredQueryLog.Close()
 	}
+	d.queryHistory.operation.Unlock()
 	d.mu.Lock()
 	clear(d.cache)
 	d.mu.Unlock()
@@ -963,7 +946,11 @@ func (d *daemon) observedStatus() map[string]string {
 	observed := map[string]string{"listeners": fmt.Sprintf("%d", listenerCount), "zones": fmt.Sprintf("%d", zones.ZoneCount())}
 	d.queryLogMu.Lock()
 	queryLog := d.queryLog
+	queue := d.queryHistory.queue
 	d.queryLogMu.Unlock()
+	observed["queryLogDropped"] = fmt.Sprintf("%d", d.queryHistory.dropped.Load())
+	observed["queryLogWriteErrors"] = fmt.Sprintf("%d", d.queryHistory.writeErrors.Load())
+	observed["queryLogQueueDepth"] = fmt.Sprintf("%d", len(queue))
 	if queryLog != nil {
 		stats := queryLog.Stats()
 		observed["queryLogEnabled"] = "true"

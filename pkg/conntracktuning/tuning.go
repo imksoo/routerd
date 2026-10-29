@@ -105,6 +105,9 @@ func Analyze(inputs Inputs) Summary {
 	}
 	suggestions := make([]Suggestion, 0, len(groups))
 	for _, stat := range groups {
+		if stat.protocol != "tcp" && stat.protocol != "udp" {
+			continue
+		}
 		if stat.flows == 0 && stat.orphans == 0 && stat.expired == 0 {
 			continue
 		}
@@ -227,6 +230,9 @@ func RecordMetrics(ctx context.Context, telemetry *routerotel.Runtime, summary S
 }
 
 func RecommendationForEvent(entry logstore.FirewallLogEntry) Suggestion {
+	if protocol := normalizeProtocol(entry.Protocol); protocol != "tcp" && protocol != "udp" {
+		return Suggestion{}
+	}
 	return suggestion(&groupStats{
 		app:      normalizeApp(firewallApp(entry), entry.Protocol),
 		protocol: normalizeProtocol(entry.Protocol),

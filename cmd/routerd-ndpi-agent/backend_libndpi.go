@@ -79,9 +79,7 @@ import "C"
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
-	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -140,7 +138,10 @@ func (b *libndpiBackend) Status() backendStatus {
 	}
 }
 
-func (b *libndpiBackend) Classify(_ context.Context, key string, req dpi.ClassifyRequest, state *flowState) (dpi.ClassifyResult, error) {
+func (b *libndpiBackend) Classify(ctx context.Context, key string, req dpi.ClassifyRequest, state *flowState) (dpi.ClassifyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return dpi.ClassifyResult{}, err
+	}
 	packet, err := packetForNDPI(req)
 	if err != nil {
 		result := metadataOnlyResult(req)
@@ -162,6 +163,9 @@ func (b *libndpiBackend) Classify(_ context.Context, key string, req dpi.Classif
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return dpi.ClassifyResult{}, err
+	}
 	if b.mod == nil {
 		return dpi.ClassifyResult{}, errors.New("libndpi backend is closed")
 	}
@@ -256,67 +260,4 @@ func confidencePercent(confidence int) int {
 	default:
 		return 0
 	}
-}
-
-func packetForNDPI(req dpi.ClassifyRequest) ([]byte, error) {
-	if len(req.Packet) > 0 {
-		return append([]byte(nil), req.Packet...), nil
-	}
-	meta := dpi.Classify(req)
-	src, err := netip.ParseAddr(meta.SrcAddress)
-	if err != nil {
-		return nil, err
-	}
-	dst, err := netip.ParseAddr(meta.DstAddress)
-	if err != nil {
-		return nil, err
-	}
-	if !src.Is4() || !dst.Is4() {
-		return nil, errors.New("cannot synthesize non-IPv4 packet")
-	}
-	payload := req.L4Payload
-	if len(payload) == 0 {
-		payload = req.Payload
-	}
-	switch strings.ToLower(meta.TransportProtocol) {
-	case "tcp":
-		return synthesizeIPv4TCP(src, dst, meta.SrcPort, meta.DstPort, payload), nil
-	case "udp":
-		return synthesizeIPv4UDP(src, dst, meta.SrcPort, meta.DstPort, payload), nil
-	default:
-		return nil, errors.New("unsupported transport protocol")
-	}
-}
-
-func synthesizeIPv4TCP(src, dst netip.Addr, srcPort, dstPort int, payload []byte) []byte {
-	l4Len := 20 + len(payload)
-	packet := make([]byte, 20+l4Len)
-	packet[0] = 0x45
-	packet[8] = 64
-	packet[9] = 6
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
-	copy(packet[12:16], src.AsSlice())
-	copy(packet[16:20], dst.AsSlice())
-	binary.BigEndian.PutUint16(packet[20:22], uint16(srcPort))
-	binary.BigEndian.PutUint16(packet[22:24], uint16(dstPort))
-	packet[32] = 0x50
-	packet[33] = 0x18
-	copy(packet[40:], payload)
-	return packet
-}
-
-func synthesizeIPv4UDP(src, dst netip.Addr, srcPort, dstPort int, payload []byte) []byte {
-	l4Len := 8 + len(payload)
-	packet := make([]byte, 20+l4Len)
-	packet[0] = 0x45
-	packet[8] = 64
-	packet[9] = 17
-	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
-	copy(packet[12:16], src.AsSlice())
-	copy(packet[16:20], dst.AsSlice())
-	binary.BigEndian.PutUint16(packet[20:22], uint16(srcPort))
-	binary.BigEndian.PutUint16(packet[22:24], uint16(dstPort))
-	binary.BigEndian.PutUint16(packet[24:26], uint16(l4Len))
-	copy(packet[28:], payload)
-	return packet
 }

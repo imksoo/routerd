@@ -4,6 +4,7 @@ package eventd
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -76,11 +77,16 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(req.Body, maxBodyBytes))
+	body, err := io.ReadAll(http.MaxBytesReader(w, req.Body, maxBodyBytes))
 	if err != nil {
 		r.rejected.Add(1)
 		r.metrics.RecordReceiverReject(ctx, r.group, "read_body")
-		http.Error(w, "read body", http.StatusBadRequest)
+		var oversized *http.MaxBytesError
+		if errors.As(err, &oversized) {
+			http.Error(w, "event body exceeds limit", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "read body", http.StatusBadRequest)
+		}
 		return
 	}
 	tsRaw := req.Header.Get(HeaderTimestamp)
@@ -118,6 +124,12 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "invalid event: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	if ev.Group != r.group {
+		r.rejected.Add(1)
+		r.metrics.RecordReceiverReject(ctx, r.group, "wrong_group")
+		http.Error(w, "event group does not match authenticated receiver", http.StatusForbidden)
+		return
+	}
 
 	// Idempotency: a duplicate ID is a no-op insert, so detect duplicates for
 	// the metric/log without breaking the at-least-once 200 contract.
@@ -146,7 +158,11 @@ func (r *Receiver) handleEvents(w http.ResponseWriter, req *http.Request) {
 		// should retry. Do not count it as received.
 		r.rejected.Add(1)
 		r.metrics.RecordReceiverReject(ctx, r.group, "store_error")
-		http.Error(w, "store error", http.StatusInternalServerError)
+		if errors.Is(err, routerstate.ErrFederationEventIdentityConflict) {
+			http.Error(w, "event ID belongs to a different fact", http.StatusConflict)
+		} else {
+			http.Error(w, "store error", http.StatusInternalServerError)
+		}
 		return
 	}
 	if dup {
@@ -178,13 +194,21 @@ type Status struct {
 }
 
 func (r *Receiver) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	status, err := r.Status()
+	if err != nil {
+		http.Error(w, "event storage observation failed", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(r.Status())
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 // Status returns a snapshot of receiver counters and the stored event count.
-func (r *Receiver) Status() Status {
-	stored, _ := r.store.ListFederationEvents(r.group, true, r.now().Unix())
+func (r *Receiver) Status() (Status, error) {
+	stored, err := r.store.ListFederationEvents(r.group, true, r.now().Unix())
+	if err != nil {
+		return Status{}, err
+	}
 	return Status{
 		Node:            r.node,
 		Group:           r.group,
@@ -193,5 +217,5 @@ func (r *Receiver) Status() Status {
 		Rejected:        r.rejected.Load(),
 		StoredEvents:    len(stored),
 		ReplayWindowSec: int(r.replayWindow / time.Second),
-	}
+	}, nil
 }

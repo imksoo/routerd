@@ -26,6 +26,7 @@ import (
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
@@ -91,7 +92,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ifname, reason := c.resolveEgressInterface(spec, aliases)
+		ifname, reason, err := c.resolveEgressInterface(spec, aliases)
+		if err != nil {
+			return err
+		}
 		if ifname == "" {
 			status := map[string]any{
 				"phase":      "Pending",
@@ -104,7 +108,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		snatAddress, snatReason := c.resolveSNATAddress(spec)
+		snatAddress, snatReason, err := c.resolveSNATAddress(spec)
+		if err != nil {
+			return err
+		}
 		if spec.Type == "snat" && snatAddress == "" {
 			status := map[string]any{
 				"phase":      "Pending",
@@ -142,7 +149,11 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		return c.reconcilePF(ctx, applyRouter, renderRules, rules)
 	}
-	data, err := render.NftablesNAT44RulesForRouter(applyRouter, renderRules, c.ingressServiceStates()...)
+	states, err := c.ingressServiceStates()
+	if err != nil {
+		return err
+	}
+	data, err := render.NftablesNAT44RulesForRouter(applyRouter, renderRules, states...)
 	if err != nil {
 		return err
 	}
@@ -208,7 +219,11 @@ func clearNftablesTable(ctx context.Context, nft, family string) error {
 }
 
 func (c Controller) reconcilePF(ctx context.Context, router *api.Router, rules, statusRules []render.NAT44RenderRule) error {
-	data, err := render.PFNAT44RulesForRouter(router, rules, c.ingressServiceStates()...)
+	states, err := c.ingressServiceStates()
+	if err != nil {
+		return err
+	}
+	data, err := render.PFNAT44RulesForRouter(router, rules, states...)
 	if err != nil {
 		return err
 	}
@@ -283,12 +298,12 @@ func checkNftablesRuleset(ctx context.Context, nft, path string) error {
 	return nil
 }
 
-func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[string]string) (string, string) {
+func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[string]string) (string, string, error) {
 	if spec.EgressInterface != "" {
 		if ifname := aliases[spec.EgressInterface]; ifname != "" {
-			return ifname, ""
+			return ifname, "", nil
 		}
-		return spec.EgressInterface, ""
+		return spec.EgressInterface, "", nil
 	}
 	policyName := spec.EgressPolicyRef
 	if policyName == "" {
@@ -298,41 +313,48 @@ func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[s
 		}
 	}
 	if policyName == "" {
-		return "", "EgressPolicyMissing"
+		return "", "EgressPolicyMissing", nil
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policyName)
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policyName)
+	if err != nil {
+		return "", "", err
+	}
 	if fmt.Sprint(status["phase"]) != "Applied" {
-		return "", "EgressPolicyNotApplied"
+		return "", "EgressPolicyNotApplied", nil
 	}
 	if selected, _ := status["selectedDevice"].(string); selected != "" {
-		return selected, ""
+		return selected, "", nil
 	}
-	return "", "SelectedDeviceMissing"
+	return "", "SelectedDeviceMissing", nil
 }
 
-func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string) {
+func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string, error) {
 	if spec.Type != "snat" {
-		return "", ""
+		return "", "", nil
 	}
 	if strings.TrimSpace(spec.SNATAddress) != "" {
-		return strings.TrimSpace(spec.SNATAddress), ""
+		return strings.TrimSpace(spec.SNATAddress), "", nil
 	}
 	if strings.TrimSpace(spec.SNATAddressFrom.Resource) == "" {
-		return "", "SNATAddressMissing"
+		return "", "SNATAddressMissing", nil
 	}
-	value := statusvalue.Address(resourcequery.Value(c.Store, spec.SNATAddressFrom))
+	resolved, err := resourcequery.ReadValue(c.Store, spec.SNATAddressFrom)
+	if err != nil {
+		return "", "", err
+	}
+	value := statusvalue.Address(resolved)
 	if value == "" {
 		value = statusvalue.Address(addressFromRouterResource(c.Router, spec.SNATAddressFrom))
 	}
 	if value == "" {
-		return "", "SNATAddressSourcePending"
+		return "", "SNATAddressSourcePending", nil
 	}
-	return value, ""
+	return value, "", nil
 }
 
-func (c Controller) ingressServiceStates() []render.IngressServiceState {
+func (c Controller) ingressServiceStates() ([]render.IngressServiceState, error) {
 	if c.Router == nil || c.Store == nil {
-		return nil
+		return nil, nil
 	}
 	var states []render.IngressServiceState
 	for _, resource := range c.Router.Spec.Resources {
@@ -340,7 +362,10 @@ func (c Controller) ingressServiceStates() []render.IngressServiceState {
 			continue
 		}
 		state := render.IngressServiceState{Name: resource.Metadata.Name}
-		status := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
+		status, err := c.Store.ReadObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
+		if err != nil {
+			return nil, err
+		}
 		if backends, selection := activeBackends(status); len(backends) > 0 {
 			state.Backends, state.Selection = backends, selection
 		} else if name, address, port := activeBackend(status["activeBackend"]); address != "" && port != 0 {
@@ -349,7 +374,7 @@ func (c Controller) ingressServiceStates() []render.IngressServiceState {
 		}
 		states = append(states, state)
 	}
-	return states
+	return states, nil
 }
 
 func (c Controller) applyRouter(router *api.Router) *api.Router {

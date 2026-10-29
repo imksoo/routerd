@@ -153,6 +153,9 @@ func providerInventoryHomeOwnerFactSets(pool NormalizedMobilityPool, poolPrefix 
 	routerNICs := discoveryRouterNICRefs(pool)
 	out := map[string][]providerInventoryOwnerFact{}
 	for _, record := range runtime {
+		if _, member := pool.Members[strings.TrimSpace(record.NodeRef)]; !member {
+			continue
+		}
 		for _, addressFact := range record.RuntimeFact.Addresses {
 			if !providerDiscoveryAddressFactActive(addressFact, now) {
 				continue

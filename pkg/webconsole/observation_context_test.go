@@ -100,13 +100,14 @@ func TestObservationCommandKeepsDataOutOfDiagnostics(t *testing.T) {
 
 func TestObservationRoutesCancelTheirChildCommands(t *testing.T) {
 	for _, route := range []string{
-		"vpn", "routes", "clients",
+		"vpn", "routes", "clients", "connections?limit=1",
+		"summary?events=-1&connections=1&firewallLogs=-1&dnsQueries=-1&trafficFlows=-1&clients=0&vpn=0",
 		"summary?events=-1&connections=-1&firewallLogs=-1&dnsQueries=-1&trafficFlows=-1&clients=1&vpn=0",
 	} {
 		t.Run(route, func(t *testing.T) {
 			dir := t.TempDir()
 			var pidPaths []string
-			for _, name := range []string{"ip", "arp", "ndp", "wg", "tailscale"} {
+			for _, name := range []string{"ip", "arp", "ndp", "wg", "tailscale", "conntrack"} {
 				pidPaths = append(pidPaths, blockingObservationCommand(t, dir, name, false))
 			}
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -49,11 +49,18 @@ func TestParseConntrackEntriesLimitAndMarkCount(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1
 `
-	entries := parseConntrackEntries(output, 1)
+	entries, err := parseConntrackEntries(output, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
-	byMark := conntrackEntriesByMark(parseConntrackEntries(output, 0))
+	all, err := parseConntrackEntries(output, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byMark := conntrackEntriesByMark(all)
 	if byMark["0"] != 1 || byMark["257"] != 1 {
 		t.Fatalf("byMark = %+v", byMark)
 	}
@@ -99,7 +106,10 @@ func TestParsePFStateEntriesLimit(t *testing.T) {
 		"   [123 + 64] wscale 7",
 		"all udp 10.0.0.2:53168 -> 1.1.1.1:53       MULTIPLE:SINGLE",
 	}, "\n")
-	entries := parsePFStateEntries(output, 1)
+	entries, err := parsePFStateEntries(output, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
@@ -125,7 +135,10 @@ func TestParseConntrackEntriesZeroLimitMeansAllForParser(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1
 `
-	entries := parseConntrackEntries(output, 0)
+	entries, err := parseConntrackEntries(output, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(entries))
 	}

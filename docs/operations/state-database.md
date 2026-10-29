@@ -172,3 +172,43 @@ If you want history of operational events for forensic purposes, export or take 
 
 - [Log storage](../concepts/log-storage.md)
 - [Reconcile and removal](./reconcile)
+
+## Provider operation recovery in the 1.5 proposal
+
+Provider actions use one process guard next to the database, `<db>.actions.lock`,
+shared by the daemon and `routerctl`. Preserve this file; unlinking a live flock
+file creates a second lock identity. The forward operation records `running`
+before invoking the executor; undo records `rollingBack` first. Explicit executor
+failures are returned to the caller. Invocation/reply failures retain
+`outcomeUnknown` or `rollbackUnknown`, including restart recovery. Elapsed time
+never reapproves an operation. The guard proves an invocation owner has released
+or exited; it does not prove a remote provider request completed.
+
+An unresolved operation blocks further live provider operations, including a new
+idempotency key. Inspect the exact provider resource independently and establish
+that no old operation remains in flight. Then record that evidence explicitly:
+
+```sh
+routerctl action resolve <id> --outcome succeeded --by <operator> \
+  --evidence 'exact provider resource inspected; assignment confirmed; no request in flight'
+```
+
+Forward uncertainty accepts `succeeded` or `failed`; undo uncertainty accepts
+`rolledBack` or `rollbackFailed`. A failed outcome means an inspection established
+that the operation may safely be retried; ordinary desired-action import can
+then requeue it. This command performs no provider mutation, cannot override a
+live operation guard, and preserves prior non-secret undo facts. It does not
+invent lost pre-mutation facts needed for undo. Operator identity, evidence and
+the prior error remain in the journal's result message.
+
+Journal inspection exposes typed `target`, `parameters` and `undo` values.
+Encoding/decoding belongs to SQLite; malformed stored values fail the read rather
+than turning into empty parameters. Unknown capture operations remain protective
+Mobility evidence and cannot establish confirmed ownership. A completed undo
+invalidates the preceding assignment fence.
+
+Manual plugin publication compares the source generation after the plugin exits.
+A slow invocation cannot overwrite a result published by a concurrent command;
+an observation already expired at completion is rejected. Required subscription
+output and successful deduplication of its complete event batch commit in one
+SQLite transaction. Display history alone does not authorize publication.

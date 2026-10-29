@@ -46,6 +46,9 @@ func DynamicConfigPartFromResult(source string, generation int64, result PluginR
 	if ttl <= 0 {
 		return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult status.ttl must be greater than 0")
 	}
+	if !now.Before(observedAt.Add(ttl)) {
+		return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult observation expired before publication")
+	}
 	for i, resource := range result.Status.Resources {
 		if strings.TrimSpace(resource.APIVersion) == "" {
 			return dynamicconfig.DynamicConfigPart{}, fmt.Errorf("PluginResult status.resources[%d].apiVersion is required", i)

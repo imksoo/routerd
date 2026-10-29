@@ -72,6 +72,12 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			return nil, fmt.Errorf("decode status for transactional update: %w", err)
 		}
 	}
+	if current == nil {
+		return nil, fmt.Errorf("decode status for transactional update: expected an object")
+	}
+	if status == nil {
+		status = map[string]any{}
+	}
 	if merge {
 		next := map[string]any{}
 		for key, value := range current {
@@ -85,17 +91,13 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 	write := true
 	var event *daemonapi.DaemonEvent
 	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
-		var document struct {
-			Observation *PDLease `json:"observation"`
-		}
-		if raw != "" {
-			if err := json.Unmarshal([]byte(raw), &document); err != nil {
-				return nil, err
-			}
+		observation, err := decodePDObservation(raw)
+		if err != nil {
+			return nil, err
 		}
 		previous := PDLease{}
-		if document.Observation != nil {
-			previous = *document.Observation
+		if observation != nil {
+			previous = *observation
 		}
 		if update != nil {
 			if previous.Config() != update.expected {
@@ -134,7 +136,7 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			for key, value := range status {
 				nextView[key] = value
 			}
-			if err := projectCommittedPDStatus(previousView, document.Observation); err != nil {
+			if err := projectCommittedPDStatus(previousView, observation); err != nil {
 				return nil, err
 			}
 			if err := projectCommittedPDStatus(nextView, &next); err != nil {
@@ -145,8 +147,8 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			write, event = build(previousView, nextView)
 		} else {
 			status = cleanPDStatus(status)
-			if document.Observation != nil {
-				status["observation"] = *document.Observation
+			if observation != nil {
+				status["observation"] = *observation
 			}
 			if observed, ok := current["observed"]; ok {
 				status["observed"] = observed
@@ -161,10 +163,10 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			for key, value := range status {
 				nextView[key] = value
 			}
-			if err := projectTypedPDStatus(previousView, document.Observation, s.now().UTC()); err != nil {
+			if err := projectTypedPDStatus(previousView, observation, s.now().UTC()); err != nil {
 				return nil, err
 			}
-			if err := projectTypedPDStatus(nextView, document.Observation, s.now().UTC()); err != nil {
+			if err := projectTypedPDStatus(nextView, observation, s.now().UTC()); err != nil {
 				return nil, err
 			}
 			write, event = build(previousView, nextView)

@@ -147,8 +147,8 @@ func ensureLoopbackUp() error {
 	return exec.Command("ip", "link", "set", "lo", "up").Run()
 }
 
-func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
-	removed, err := cleanupLedgerOwnedOrphansForServe(router, ledgerPath)
+func cleanupServeLedgerOwnedOrphans(ctx context.Context, router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
+	removed, err := cleanupLedgerOwnedOrphansForServe(ctx, router, ledgerPath)
 	if err != nil {
 		if logger != nil {
 			logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
@@ -559,8 +559,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
 		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
 	}
-	_, _ = cleanupServeLedgerOwnedOrphans(router, *ledgerPath, logger)
-	engine := apply.New()
+	_, _ = cleanupServeLedgerOwnedOrphans(ctx, router, *ledgerPath, logger)
+	engine := apply.New(ctx)
 	if result, observeErr := engine.Observe(router); observeErr == nil {
 		cache.Store(result)
 		_ = statuswriter.Write(*statusFile, result)
@@ -718,7 +718,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	if webConsoleResourcePresent(router) {
 		var webStore routerstate.Store
-		var webObjectStore routerstate.ObjectStatusStore
+		var webObjectStore resourcequery.StatusReader
 		if stateStore != nil {
 			webStore = stateStore
 			webObjectStore = stateStore
@@ -790,7 +790,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		Describe:    serveDescribeHandler(currentRouter, stateStore),
 		Probe:       serveProbeHandler(currentRouter, stateStore),
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
-			table, err := observe.Connections(req.Limit)
+			table, err := observe.Connections(r.Context(), req.Limit)
 			if err != nil {
 				return nil, err
 			}
@@ -2002,7 +2002,7 @@ func webConsoleResourcePresent(router *api.Router) bool {
 	return false
 }
 
-func webConsoleFromRouter(router *api.Router, store routerstate.ObjectStatusStore) (api.WebConsoleSpec, bool, error) {
+func webConsoleFromRouter(router *api.Router, store resourcequery.StatusReader) (api.WebConsoleSpec, bool, error) {
 	if router == nil {
 		return api.WebConsoleSpec{}, false, nil
 	}
@@ -2036,9 +2036,13 @@ func webConsoleFromRouter(router *api.Router, store routerstate.ObjectStatusStor
 	return api.WebConsoleSpec{}, false, nil
 }
 
-func resolveWebConsoleListenAddress(router *api.Router, store routerstate.ObjectStatusStore, spec api.WebConsoleSpec) (string, error) {
+func resolveWebConsoleListenAddress(router *api.Router, store resourcequery.StatusReader, spec api.WebConsoleSpec) (string, error) {
 	if strings.TrimSpace(spec.ListenAddressFrom.Resource) != "" {
-		if address := firstAddressValue(resourcequery.Values(store, spec.ListenAddressFrom)); address != "" {
+		values, err := resourcequery.ReadValues(store, spec.ListenAddressFrom)
+		if err != nil {
+			return "", err
+		}
+		if address := firstAddressValue(values); address != "" {
 			return address, nil
 		}
 		if address := firstInterfaceAddressValue(router, spec.ListenAddressFrom); address != "" {
@@ -2661,7 +2665,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
 		defer outcome.finishEarlyFailure(store, opts, &err)
 		outcome.Stage = "inventory"
-		if err := recordHostInventoryState(store); err != nil {
+		if err := recordHostInventoryState(ctx, store); err != nil {
 			return nil, err
 		}
 	}
@@ -2676,7 +2680,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		return nil, reconcileErr
 	}
 	outcome.Stage = "observe"
-	result, err = apply.New().Observe(router)
+	result, err = apply.New(ctx).Observe(router)
 	if err != nil {
 		return nil, err
 	}

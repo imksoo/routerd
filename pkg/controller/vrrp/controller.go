@@ -3,7 +3,9 @@
 package vrrp
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -26,6 +28,7 @@ import (
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type CommandFunc func(context.Context, string, ...string) ([]byte, error)
@@ -81,6 +84,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	extra := map[string]any{}
+	if result.ConfigHash != "" {
+		extra["backendConfigHash"] = result.ConfigHash
+	}
 	if result.LastReloadAt != "" {
 		extra["lastReloadAt"] = result.LastReloadAt
 	}
@@ -103,21 +109,25 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 }
 
 func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {
-	if c.DryRun {
+	if c.DryRun || c.currentOS() != platform.OSLinux {
 		return nil
 	}
 	path := stringutil.FirstNonEmpty(c.ConfigPath, "/etc/keepalived/keepalived.conf")
-	if _, err := os.Stat(path); err != nil {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.HasPrefix(data, []byte(keepalivedConfigHeader)) {
 		return nil
 	}
 	systemctl := stringutil.FirstNonEmpty(c.Systemctl, "systemctl")
-	if _, err := c.run(ctx, systemctl, "is-active", "--quiet", "keepalived.service"); err != nil {
-		return nil
-	}
 	if out, err := c.run(ctx, systemctl, "stop", "keepalived.service"); err != nil {
 		return fmt.Errorf("%s stop keepalived.service: %w: %s", systemctl, err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	return os.Remove(path)
 }
 
 func (c *Controller) saveError(path string, changed bool, tracks map[string]trackSummary, reason string, err error) error {
@@ -246,7 +256,7 @@ func matchingVIPPublication(previous map[string]any, address, ifname string) boo
 }
 
 func carryBackendActionStatus(status, previous map[string]any, extra map[string]any) {
-	for _, key := range []string{"lastReloadAt", "lastRestartAt", "lastChangeReason"} {
+	for _, key := range []string{"lastReloadAt", "lastRestartAt", "lastChangeReason", "backendConfigHash"} {
 		if value, ok := extra[key]; ok && fmt.Sprint(value) != "" {
 			status[key] = value
 			continue
@@ -257,86 +267,8 @@ func carryBackendActionStatus(status, previous map[string]any, extra map[string]
 	}
 }
 
-type staticVIP struct {
-	IfName  string
-	Address string
-}
-
 func (c *Controller) cleanupStaleStaticAddresses(ctx context.Context, aliases map[string]string) (bool, error) {
-	lister, ok := c.Store.(routerstate.ObjectStatusLister)
-	if !ok {
-		return false, nil
-	}
-	desired := map[string]staticVIP{}
-	for _, resource := range c.Router.Spec.Resources {
-		spec, ok, err := vrrpResourceSpec(resource)
-		if err != nil || !ok {
-			continue
-		}
-		if err != nil || (strings.TrimSpace(spec.Mode) != "" && spec.Mode != "static") {
-			continue
-		}
-		address, err := renderVirtualAddress(c.Router, spec)
-		if err != nil {
-			continue
-		}
-		desired[resource.Kind+"\x00"+resource.Metadata.Name] = staticVIP{IfName: aliases[spec.Interface], Address: address}
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return false, err
-	}
-	changed := false
-	for _, item := range statuses {
-		backend := strings.TrimSpace(statusvalue.Field(item.Status, "backend"))
-		whenFalse := statusvalue.Field(item.Status, "phase") == "Pending" && statusvalue.Field(item.Status, "reason") == "WhenFalse"
-		if item.APIVersion != api.NetAPIVersion || !isVirtualAddressKind(item.Kind) || ((backend != "iproute2" && backend != "ifconfig") && !whenFalse) {
-			continue
-		}
-		if backend == "" && whenFalse {
-			backend = c.staticVirtualAddressBackend()
-		}
-		previous := staticVIP{IfName: statusvalue.Field(item.Status, "ifname"), Address: statusvalue.Field(item.Status, "appliedAddress")}
-		if previous.IfName == "" && whenFalse {
-			previous.IfName = aliases[statusvalue.Field(item.Status, "interface")]
-		}
-		if previous.Address == "" && statusvalue.Field(item.Status, "phase") != "Removed" && (!whenFalse || item.Status["staticAddressRemoved"] != true) {
-			previous.Address = statusvalue.Field(item.Status, "address")
-		}
-		if previous.IfName == "" || previous.Address == "" {
-			continue
-		}
-		if current, ok := desired[item.Kind+"\x00"+item.Name]; ok && current.IfName == previous.IfName && current.Address == previous.Address {
-			continue
-		}
-		changed = true
-		if !c.DryRun {
-			if err := c.removeStaticAddress(ctx, previous.IfName, previous.Address); err != nil && !(whenFalse && staticAddressAlreadyAbsent(err)) {
-				return changed, err
-			}
-		}
-		if !c.DryRun {
-			status := map[string]any{
-				"phase":          "Removed",
-				"backend":        backend,
-				"address":        previous.Address,
-				"appliedAddress": "",
-				"ifname":         previous.IfName,
-				"changed":        true,
-				"dryRun":         c.DryRun,
-				"observedAt":     time.Now().UTC().Format(time.RFC3339Nano),
-			}
-			if whenFalse {
-				status["phase"] = "Pending"
-				status["reason"] = "WhenFalse"
-				status["staticAddressRemoved"] = true
-			}
-			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, item.Kind, item.Name, status); err != nil {
-				return changed, err
-			}
-		}
-	}
-	return changed, nil
+	return c.cleanupNativeVIPs(ctx, aliases)
 }
 
 func (c *Controller) staticVirtualAddressBackend() string {
@@ -344,14 +276,6 @@ func (c *Controller) staticVirtualAddressBackend() string {
 		return "ifconfig"
 	}
 	return "iproute2"
-}
-
-func staticAddressAlreadyAbsent(err error) bool {
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "cannot assign requested address") ||
-		strings.Contains(message, "can't assign requested address") ||
-		strings.Contains(message, "address not found") ||
-		strings.Contains(message, "does not exist")
 }
 
 func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[string]string) (bool, map[string]bool, error) {
@@ -386,28 +310,21 @@ func (c *Controller) applyStaticAddresses(ctx context.Context, aliases map[strin
 			isolated[resource.Metadata.Name] = true
 			continue
 		}
-		changed = true
 		if c.DryRun {
+			changed = true
 			continue
 		}
-		announce := false
-		_, isIPv4 := staticIPv4Host(address)
-		if spec.GratuitousARP && isIPv4 && c.currentOS() == platform.OSLinux {
-			addressPresent, err := c.staticIPv4AddressPresent(ctx, ifname, address)
-			if err != nil {
-				return changed, isolated, c.saveError("", changed, nil, "StaticVIPObserveFailed", err)
+		vip := nativeVIP{Kind: resource.Kind, Name: resource.Metadata.Name, IfName: ifname, Address: address, Backend: c.staticVirtualAddressBackend()}
+		applied, err := c.applyNativeVIP(ctx, vip, spec.GratuitousARP, false, func() error { return c.replaceStaticAddress(ctx, ifname, address) })
+		if err != nil {
+			reason := "StaticVIPApplyFailed"
+			var announcement *nativeVIPAnnouncementError
+			if errors.As(err, &announcement) {
+				reason = "StaticVIPGratuitousARPFailed"
 			}
-			previous := c.Store.ObjectStatus(api.NetAPIVersion, resource.Kind, resource.Metadata.Name)
-			announce = !addressPresent || statusvalue.Field(previous, "reason") == "StaticVIPGratuitousARPFailed"
+			return changed, isolated, c.saveError("", changed, nil, reason, err)
 		}
-		if err := c.replaceStaticAddress(ctx, ifname, address); err != nil {
-			return changed, isolated, c.saveError("", changed, nil, "StaticVIPApplyFailed", err)
-		}
-		if announce {
-			if err := c.announceStaticIPv4Address(ctx, ifname, address); err != nil {
-				return changed, isolated, c.saveError("", changed, nil, "StaticVIPGratuitousARPFailed", err)
-			}
-		}
+		changed = changed || applied
 	}
 	return changed, isolated, nil
 }
@@ -601,7 +518,10 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			if !ok {
 				continue
 			}
-			status := c.Store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+			status, err := c.Store.ReadObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+			if err != nil {
+				return nil, nil, err
+			}
 			phase := fmt.Sprint(status["phase"])
 			state := trackedPhaseState(kind, phase, fmt.Sprint(status["reason"]))
 			whenFalse, err := c.trackedResourceWhenFalse(kind, name)
@@ -616,7 +536,10 @@ func (c *Controller) effectivePriorities() (map[string]int, map[string]trackSumm
 			if penalty == 0 {
 				penalty = 50
 			}
-			decision := c.trackStateFor(resource.Kind, resource.Metadata.Name, track, state)
+			decision, err := c.trackStateFor(resource.Kind, resource.Metadata.Name, track, state)
+			if err != nil {
+				return nil, nil, err
+			}
 			if decision.Penalized {
 				effective -= penalty
 			}
@@ -685,13 +608,7 @@ func (s vrrpWhenStore) ReadVariable(name string) (routerstate.Value, error) {
 }
 
 func (s vrrpWhenStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
-	reader, ok := s.Store.(interface {
-		ReadObjectStatus(string, string, string) (map[string]any, error)
-	})
-	if !ok {
-		return nil, fmt.Errorf("object-status reading is unavailable")
-	}
-	return reader.ReadObjectStatus(apiVersion, kind, name)
+	return s.Store.ReadObjectStatus(apiVersion, kind, name)
 }
 
 func (s vrrpWhenStore) Age(name string) time.Duration {
@@ -708,18 +625,16 @@ func (s vrrpWhenStore) Now() time.Time {
 	return time.Now().UTC()
 }
 
-func (c *Controller) trackStateFor(kind, vip string, track api.ResourceTrackSpec, state trackedResourceState) trackDecision {
-	decision := c.currentTrackDecision(kind, vip, track.Resource)
-	if state == trackedResourceNeutral {
-		return decision
+func (c *Controller) trackStateFor(kind, vip string, track api.ResourceTrackSpec, state trackedResourceState) (trackDecision, error) {
+	decision, err := c.currentTrackDecision(kind, vip, track.Resource)
+	if err != nil {
+		return trackDecision{}, err
 	}
-	return c.confirmTrack(kind, vip, track, state == trackedResourceHealthy)
-}
-
-func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec, healthy bool) trackDecision {
+	if state == trackedResourceNeutral {
+		return decision, nil
+	}
 	key := kind + "\x00" + vip + "\x00" + track.Resource
-	decision := c.currentTrackDecision(kind, vip, track.Resource)
-	if healthy {
+	if state == trackedResourceHealthy {
 		decision.HealthyCount++
 		decision.UnhealthyCount = 0
 		if decision.Penalized && decision.HealthyCount >= defaultInt(track.ConfirmConsecutiveHealthy, 2) {
@@ -733,24 +648,31 @@ func (c *Controller) confirmTrack(kind, vip string, track api.ResourceTrackSpec,
 		}
 	}
 	c.trackState[key] = decision
-	return decision
+	return decision, nil
 }
 
-func (c *Controller) currentTrackDecision(kind, vip, trackedResource string) trackDecision {
+func (c *Controller) currentTrackDecision(kind, vip, trackedResource string) (trackDecision, error) {
 	key := kind + "\x00" + vip + "\x00" + trackedResource
 	decision, ok := c.trackState[key]
 	if !ok {
-		decision = c.restoreTrackDecision(kind, vip, trackedResource)
+		var err error
+		decision, err = c.restoreTrackDecision(kind, vip, trackedResource)
+		if err != nil {
+			return trackDecision{}, err
+		}
 		c.trackState[key] = decision
 	}
-	return decision
+	return decision, nil
 }
 
-func (c *Controller) restoreTrackDecision(kind, vip, trackedResource string) trackDecision {
+func (c *Controller) restoreTrackDecision(kind, vip, trackedResource string) (trackDecision, error) {
 	if c.Store == nil {
-		return trackDecision{}
+		return trackDecision{}, fmt.Errorf("VRRP track store is unavailable")
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, kind, vip)
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, kind, vip)
+	if err != nil {
+		return trackDecision{}, err
+	}
 	for _, entry := range trackEntries(status["track"]) {
 		if strings.TrimSpace(fmt.Sprint(entry["resource"])) != trackedResource {
 			continue
@@ -759,9 +681,9 @@ func (c *Controller) restoreTrackDecision(kind, vip, trackedResource string) tra
 			HealthyCount:   statusInt(entry["healthyCount"]),
 			UnhealthyCount: statusInt(entry["unhealthyCount"]),
 			Penalized:      statusvalue.BoolOrFalse(entry["penalized"]),
-		}
+		}, nil
 	}
-	return trackDecision{}
+	return trackDecision{}, nil
 }
 
 func trackEntries(value any) []map[string]any {

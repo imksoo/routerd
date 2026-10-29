@@ -126,7 +126,7 @@ func TestOTelMetricsDeliveryEndToEnd(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "cloud-a", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	seedEventFrom(t, senderStore, "otel-evt-1", "cloudedge", "onprem", "10.88.60.9/32", now)
@@ -247,7 +247,7 @@ func TestOTelMetricsStaleTTLRepush(t *testing.T) {
 	peers := []eventd.PeerConfig{{NodeName: "leaf-a", Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(store, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
-		srv.Client(), clock, func(time.Duration) {})
+		srv.Client(), clock, func(context.Context, time.Duration) error { return nil })
 	pusher.SetMetrics(metrics)
 
 	expires1 := now.Add(10 * time.Minute)
@@ -265,7 +265,7 @@ func TestOTelMetricsStaleTTLRepush(t *testing.T) {
 	if err := store.RecordFederationEvent(routerstate.EventRecord{
 		ID: "stale-1", Group: "cloudedge", SourceNode: "rr-node",
 		Type: "routerd.client.ipv4.observed", Subject: "10.77.60.0/25",
-		DedupeKey: "10.77.60.0/25", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
+		DedupeKey: "stale-1", Payload: map[string]string{"mac": "aa:bb:cc:dd:ee:ff"},
 		ObservedAt: now, ExpiresAt: expires2,
 	}); err != nil {
 		t.Fatalf("re-record: %v", err)

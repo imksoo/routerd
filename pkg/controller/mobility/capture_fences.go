@@ -20,6 +20,9 @@ func shouldAllowBGPTrapReassignment(self memberPlanInfo, address string, history
 	latest := history.captureTransitions
 	key := providerCaptureTransitionKey(self.Capture.ProviderRef, providerCaptureRefFromCapture(self.Capture), address)
 	tr, ok := latest[key]
+	if ok && tr.uncertain {
+		return false
+	}
 	if !ok && observedSelfCapturesOK && !observedSelfCaptures[address] {
 		return true
 	}
@@ -263,6 +266,9 @@ func providerCaptureAssignRecordMatchesPlan(row providerActionJournalRecord, pla
 }
 
 func providerCaptureTransitionAllowsRecapture(tr providerCaptureTransition) bool {
+	if !tr.succeeded || tr.uncertain {
+		return false
+	}
 	params := tr.plan.Parameters
 	if strings.TrimSpace(params["deprovisionSince"]) != "" {
 		return false
@@ -295,6 +301,7 @@ type providerCaptureTransition struct {
 	id        int64
 	assign    bool
 	succeeded bool
+	uncertain bool
 	plan      dynamicconfig.ActionPlan
 }
 

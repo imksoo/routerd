@@ -40,7 +40,6 @@ type RouterIndex struct {
 	DNSForwarders              map[string]api.DNSForwarderSpec
 	DNSUpstreams               map[string]api.DNSUpstreamSpec
 	IPAddressSets              map[string]bool
-	Telemetries                map[string]bool
 	LogSinks                   map[string]bool
 	LogRetentions              map[string]bool
 	FirewallRules              map[string]bool
@@ -49,8 +48,8 @@ type RouterIndex struct {
 	StaticIPv4ByName           map[string]staticIPv4IndexEntry
 	VRRPByInterfaceVRID        map[string]string
 	ProtectedInterfaces        map[string]bool
-	DHCPv6AddressByInterface   map[string]dhcpv6AddressIndexEntry
-	ExternalPDByInterface      map[string]externalPDIndexEntry
+	DHCPv6AddressByInterface   map[string]string
+	ManagedDHCPv6ByInterface   map[string]managedDHCPv6Client
 	MobilityPools              map[string]mobilityPoolValidation
 }
 
@@ -60,14 +59,9 @@ type staticIPv4IndexEntry struct {
 	address string
 }
 
-type dhcpv6AddressIndexEntry struct {
-	id     string
-	client string
-}
-
-type externalPDIndexEntry struct {
-	id     string
-	client string
+type managedDHCPv6Client struct {
+	id               string
+	logicalInterface string
 }
 
 func newRouterIndex(router *api.Router) *RouterIndex {
@@ -100,7 +94,6 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		DNSForwarders:              map[string]api.DNSForwarderSpec{},
 		DNSUpstreams:               map[string]api.DNSUpstreamSpec{},
 		IPAddressSets:              map[string]bool{},
-		Telemetries:                map[string]bool{},
 		LogSinks:                   map[string]bool{},
 		LogRetentions:              map[string]bool{},
 		FirewallRules:              map[string]bool{},
@@ -109,8 +102,8 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		StaticIPv4ByName:           map[string]staticIPv4IndexEntry{},
 		VRRPByInterfaceVRID:        map[string]string{},
 		ProtectedInterfaces:        map[string]bool{},
-		DHCPv6AddressByInterface:   map[string]dhcpv6AddressIndexEntry{},
-		ExternalPDByInterface:      map[string]externalPDIndexEntry{},
+		DHCPv6AddressByInterface:   map[string]string{},
+		ManagedDHCPv6ByInterface:   map[string]managedDHCPv6Client{},
 		MobilityPools:              map[string]mobilityPoolValidation{},
 	}
 
@@ -132,9 +125,6 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRun
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "Interface" {
 			idx.BaseInterfaces[res.Metadata.Name] = true
 			idx.Interfaces[res.Metadata.Name] = true
-		}
-		if res.APIVersion == api.ObservabilityAPIVersion && res.Kind == "Telemetry" {
-			idx.Telemetries[res.Metadata.Name] = true
 		}
 		if res.APIVersion == api.SystemAPIVersion && res.Kind == "LogSink" {
 			idx.LogSinks[res.Metadata.Name] = true
@@ -219,16 +209,18 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRun
 			if err != nil {
 				return err
 			}
-			if isExternalIPv6PDClient(spec.Client) {
-				idx.ExternalPDByInterface[spec.Interface] = externalPDIndexEntry{id: res.ID(), client: spec.Client}
+			ifname := api.ResolveInterfaceIfName(router, spec.Interface)
+			if previous := idx.ManagedDHCPv6ByInterface[ifname]; previous.id != "" {
+				return fmt.Errorf("%s conflicts with %s on interface %q: one managed DHCPv6 client must own UDP port 546", res.ID(), previous.id, ifname)
 			}
+			idx.ManagedDHCPv6ByInterface[ifname] = managedDHCPv6Client{id: res.ID(), logicalInterface: spec.Interface}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DHCPv6Address" {
 			spec, err := res.DHCPv6AddressSpec()
 			if err != nil {
 				return err
 			}
-			idx.DHCPv6AddressByInterface[spec.Interface] = dhcpv6AddressIndexEntry{id: res.ID(), client: defaultString(spec.Client, "networkd")}
+			idx.DHCPv6AddressByInterface[api.ResolveInterfaceIfName(router, spec.Interface)] = res.ID()
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DelegatedAddress" {
 			idx.DelegatedAddresses[res.Metadata.Name] = true
@@ -304,12 +296,13 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRun
 			if err != nil {
 				return fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
 			}
-			key := spec.Interface + "|" + prefix.Masked().String()
+			ifname := api.ResolveInterfaceIfName(router, spec.Interface)
+			key := ifname + "|" + prefix.Addr().String()
 			if existing := idx.StaticByInterfaceAddress[key]; existing != "" {
 				return fmt.Errorf("%s duplicates IPv4 static address already declared by %s", res.ID(), existing)
 			}
 			idx.StaticByInterfaceAddress[key] = res.ID()
-			idx.StaticIPv4ByName[res.Metadata.Name] = staticIPv4IndexEntry{id: res.ID(), iface: spec.Interface, address: prefix.Masked().String()}
+			idx.StaticIPv4ByName[res.Metadata.Name] = staticIPv4IndexEntry{id: res.ID(), iface: ifname, address: prefix.String()}
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "VirtualAddress" {
 			spec, err := res.VirtualAddressSpec()

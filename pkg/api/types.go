@@ -3,8 +3,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 
 	"gopkg.in/yaml.v3"
@@ -80,14 +82,31 @@ func (r *Resource) UnmarshalJSON(data []byte) error {
 		Spec     json.RawMessage `json:"spec"`
 		Status   map[string]any  `json:"status,omitempty"`
 	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	if err := decodeJSONResourceField(data, &raw); err != nil {
 		return err
 	}
-	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error { return json.Unmarshal(raw.Spec, spec) })
+	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error { return decodeJSONResourceField(raw.Spec, spec) })
 	if err != nil {
 		return fmt.Errorf("%s spec: %w", raw.Kind, err)
 	}
 	*r = Resource{TypeMeta: raw.TypeMeta, Metadata: raw.Metadata, Spec: spec, Status: raw.Status}
+	return nil
+}
+
+// Resource IPC is a closed external input contract, just like its schema.
+func decodeJSONResourceField(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected trailing JSON value")
+	}
 	return nil
 }
 
@@ -125,6 +144,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	if err := checkYAMLFields(value, &raw); err != nil {
+		return err
+	}
 	r.TypeMeta = raw.TypeMeta
 	r.Metadata = raw.Metadata
 	r.Status = raw.Status
@@ -154,8 +176,10 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 			}
 		}
 	case "IPsecConnection":
-		if err := normalizeIPsecProposalFields(&raw.Spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		for _, field := range []string{"psPhase1Proposals", "psPhase2Proposals"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is unsupported; use phase1Proposals and phase2Proposals", r.ID(), field)
+			}
 		}
 	case "PPPoESession":
 		if hasMappingKey(&raw.Spec, "socketSource") {
@@ -236,6 +260,9 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		if err := rejectMobilityPoolRemovedFields(&raw.Spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
+	case "IPv4StaticRoute":
+		return RemovedLegacyKindError(raw.Kind, r.ID())
+
 	case "IPv4DefaultRoutePolicy":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4PolicyRoute":
@@ -269,7 +296,12 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	case "PathMTUPolicy":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	}
-	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error { return raw.Spec.Decode(spec) })
+	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error {
+		if err := raw.Spec.Decode(spec); err != nil {
+			return err
+		}
+		return checkYAMLFields(&raw.Spec, spec)
+	})
 	if err != nil {
 		return fmt.Errorf("%s spec: %w", r.ID(), err)
 	}
@@ -341,31 +373,6 @@ func rejectMobilityPoolRemovedFields(spec *yaml.Node) error {
 			}
 			if !allowedMemberFields[field] {
 				return fmt.Errorf("members[%d].%s is not supported; MobilityPool members are local provider/L2 overlays only", i, field)
-			}
-		}
-	}
-	return nil
-}
-
-// normalizeIPsecProposalFields accepts the historical psPhase* spelling while
-// publishing the canonical phase* API names.  Renaming the YAML node before
-// decoding keeps existing Linux and FreeBSD configurations usable without
-// letting both spellings silently choose one value.
-func normalizeIPsecProposalFields(node *yaml.Node) error {
-	for legacy, canonical := range map[string]string{
-		"psPhase1Proposals": "phase1Proposals",
-		"psPhase2Proposals": "phase2Proposals",
-	} {
-		if !hasMappingKey(node, legacy) {
-			continue
-		}
-		if hasMappingKey(node, canonical) {
-			return fmt.Errorf("%s and deprecated %s cannot both be set", canonical, legacy)
-		}
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if node.Content[i].Value == legacy {
-				node.Content[i].Value = canonical
-				break
 			}
 		}
 	}

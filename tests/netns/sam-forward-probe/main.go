@@ -21,6 +21,10 @@ func (s statusStore) ObjectStatus(apiVersion, kind, name string) map[string]any 
 	return s[apiVersion+"/"+kind+"/"+name]
 }
 
+func (s statusStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func (s statusStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	s[apiVersion+"/"+kind+"/"+name] = status
 	return nil

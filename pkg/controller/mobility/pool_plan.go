@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/pkg/api"
 	bgpstate "github.com/imksoo/routerd/pkg/bgp"
 	"github.com/imksoo/routerd/pkg/bgpdaemon"
@@ -122,25 +121,55 @@ type placementPreviousState struct {
 	SeizeHoldDownUntil  time.Time
 }
 
-func decodePlacementPreviousState(status map[string]any) placementPreviousState {
-	seizeHoldDownActive, _ := statusvalue.StrictBool(status["bgpSeizeHoldDownActive"])
-	since, _ := statusTimeValue(status["bgpSeizeHoldDownSince"])
-	until, _ := statusTimeValue(status["bgpSeizeHoldDownUntil"])
-	return placementPreviousState{
-		SeizeHoldDownActive: seizeHoldDownActive,
-		SeizeHoldDownKey:    statusvalue.Text(status["bgpSeizeHoldDownKey"]),
-		SeizeHoldDownSince:  since,
-		SeizeHoldDownUntil:  until,
+func decodePlacementPreviousState(status map[string]any) (placementPreviousState, error) {
+	var previous placementPreviousState
+	if err := decodeContinuationField(status, "bgpSeizeHoldDownActive", &previous.SeizeHoldDownActive); err != nil {
+		return previous, err
 	}
+	if err := decodeContinuationField(status, "bgpSeizeHoldDownKey", &previous.SeizeHoldDownKey); err != nil {
+		return previous, err
+	}
+	for key, target := range map[string]*time.Time{
+		"bgpSeizeHoldDownSince": &previous.SeizeHoldDownSince,
+		"bgpSeizeHoldDownUntil": &previous.SeizeHoldDownUntil,
+	} {
+		var value string
+		if err := decodeContinuationField(status, key, &value); err != nil {
+			return previous, err
+		}
+		if value == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil || parsed.IsZero() {
+			return previous, fmt.Errorf("%s is not a valid continuation timestamp", key)
+		}
+		*target = parsed.UTC()
+	}
+	if previous.SeizeHoldDownKey != "" || previous.SeizeHoldDownActive {
+		if previous.SeizeHoldDownKey == "" || previous.SeizeHoldDownSince.IsZero() || !previous.SeizeHoldDownUntil.After(previous.SeizeHoldDownSince) {
+			return previous, fmt.Errorf("seize hold-down continuation requires a key and ordered timestamps")
+		}
+	} else if !previous.SeizeHoldDownSince.IsZero() || !previous.SeizeHoldDownUntil.IsZero() {
+		return previous, fmt.Errorf("seize hold-down timestamps have no continuation key")
+	}
+	return previous, nil
 }
 
-func decodePoolPreviousState(status map[string]any) PreviousPoolState {
-	placement := decodePlacementPreviousState(status)
-	return PreviousPoolState{
-		Placement:          placement,
-		ObservedStaleSince: observedSelfStaleCaptureSinceFromStatus(status),
-		Transitions:        decodeBGPCaptureTransitionState(status),
+func decodePoolPreviousState(status map[string]any) (PreviousPoolState, error) {
+	placement, err := decodePlacementPreviousState(status)
+	if err != nil {
+		return PreviousPoolState{}, err
 	}
+	staleSince, err := observedSelfStaleCaptureSinceFromStatus(status)
+	if err != nil {
+		return PreviousPoolState{}, err
+	}
+	transitions, err := decodeBGPCaptureTransitionState(status)
+	if err != nil {
+		return PreviousPoolState{}, err
+	}
+	return PreviousPoolState{Placement: placement, ObservedStaleSince: staleSince, Transitions: transitions}, nil
 }
 
 // PoolPlan is the single typed result consumed by effectors.

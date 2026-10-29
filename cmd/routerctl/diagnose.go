@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -182,7 +181,7 @@ func loadDiagnoseInputs(opts diagnoseOptions) (*api.Router, routerstate.Store, e
 	if err != nil {
 		return nil, nil, err
 	}
-	store, err := routerstate.Open(opts.StatePath)
+	store, err := routerstate.LoadReadOnlyLive(opts.StatePath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -198,13 +197,9 @@ func objectStatus(store routerstate.Store, apiVersion, kind, name string) map[st
 }
 
 func runDiagnosticCommand(ctx context.Context, label, name string, args ...string) diagnoseCommandCheck {
-	cmd := exec.CommandContext(ctx, name, args...)
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-	err := cmd.Run()
-	stdout := strings.TrimSpace(stdoutBuf.String())
-	stderr := strings.TrimSpace(stderrBuf.String())
+	stdoutData, stderrData, err := runHostCommand(ctx, name, args...)
+	stdout := strings.TrimSpace(string(stdoutData))
+	stderr := strings.TrimSpace(string(stderrData))
 	check := diagnoseCommandCheck{
 		Name:    label,
 		OK:      err == nil,

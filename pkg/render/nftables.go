@@ -961,7 +961,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    ct state invalid counter drop\n")
 	buf.WriteString("    ct state { established, related } counter accept\n")
 	buf.WriteString("    iifname \"lo\" counter accept\n")
-	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
+	buf.WriteString("    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept\n")
 	writeClientPolicyInputRules(buf, clientPolicies)
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) == 0 {
@@ -982,7 +982,6 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		buf.WriteString("    ct state { new, established } " + nftSampledLogExpr("routerd firewall forward accept ", logging.AcceptSampleRate, logging) + "\n")
 	}
 	buf.WriteString("    ct state { established, related } counter accept\n")
-	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
 	writeIngressForwardAcceptRules(buf, ingressRules)
 	writeClientPolicyForwardRules(buf, clientPolicies, logging)
 	for _, from := range sortedZones {
@@ -1633,22 +1632,22 @@ func nftFirewallRuleExprs(name string, spec api.FirewallRuleSpec, logging firewa
 	if limit := nftFirewallRateLimitExpr(spec.RateLimit); limit != "" {
 		suffix = append(suffix, limit)
 		if spec.RateLimit.Log {
-			suffix = append(suffix, nftLogExpr("routerd firewall "+name+" rate-limit ", logging))
+			suffix = append(suffix, nftLogExpr("routerd firewall "+name+" rate-limit "+spec.Action+" ", logging))
 		}
 	}
 	if spec.Log {
-		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" ", logging))
+		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" "+spec.Action+" ", logging))
 	}
 	suffix = append(suffix, "counter", spec.Action)
 	connSuffix := append([]string{}, common...)
 	if spec.Log {
-		connSuffix = append(connSuffix, nftLogExpr("routerd firewall "+name+" ", logging))
+		connSuffix = append(connSuffix, nftLogExpr("routerd firewall "+name+" "+spec.Action+" ", logging))
 	}
 	connSuffix = append(connSuffix, "counter", spec.Action)
 	var out []string
 	for _, match := range matches {
 		if spec.ConnLimit.MaxPerSource > 0 {
-			for _, connLimit := range nftFirewallConnLimitExprs(name, spec.ConnLimit, match.Family, logging) {
+			for _, connLimit := range nftFirewallConnLimitExprs(name, spec.Action, spec.ConnLimit, match.Family, logging) {
 				out = append(out, strings.Join(strings.Fields(strings.Join([]string{match.Expr, connLimit, strings.Join(connSuffix, " ")}, " ")), " "))
 			}
 		}
@@ -1887,14 +1886,14 @@ func nftFirewallRateLimitExpr(limit api.FirewallRateLimitSpec) string {
 	return expr
 }
 
-func nftFirewallConnLimitExprs(name string, limit api.FirewallConnLimitSpec, family string, logging firewallLogging) []string {
+func nftFirewallConnLimitExprs(name, action string, limit api.FirewallConnLimitSpec, family string, logging firewallLogging) []string {
 	if limit.MaxPerSource <= 0 {
 		return []string{""}
 	}
 	safeName := nftSetName("routerd_conn_" + name)
 	logExpr := ""
 	if limit.Log {
-		logExpr = nftLogExpr("routerd firewall "+name+" conn-limit ", logging)
+		logExpr = nftLogExpr("routerd firewall "+name+" conn-limit "+action+" ", logging)
 	}
 	if family == "ip" {
 		return []string{strings.TrimSpace("meter " + safeName + "_v4 { ip saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr)}
@@ -1991,13 +1990,22 @@ func nftFirewallMatchAlternatives(resourceID string, spec api.FirewallRuleSpec, 
 					continue
 				}
 			}
-			parts := []string{source.Expr, destination.Expr}
-			for _, exclude := range excludes {
-				if exclude.Family == "" || family == "" || exclude.Family == family {
-					parts = append(parts, exclude.Expr)
-				}
+			families := []string{family}
+			if family == "" && len(excludes) > 0 {
+				families = []string{"ip", "ip6"}
 			}
-			out = append(out, nftFirewallMatch{Family: family, Expr: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
+			for _, matchFamily := range families {
+				parts := []string{source.Expr, destination.Expr}
+				if family == "" && matchFamily != "" {
+					parts = append(parts, "meta nfproto "+map[string]string{"ip": "ipv4", "ip6": "ipv6"}[matchFamily])
+				}
+				for _, exclude := range excludes {
+					if exclude.Family == "" || exclude.Family == matchFamily {
+						parts = append(parts, exclude.Expr)
+					}
+				}
+				out = append(out, nftFirewallMatch{Family: matchFamily, Expr: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
+			}
 		}
 	}
 	if len(out) == 0 {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,7 +20,10 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-var runCleanupCommand = runLogged
+var runCleanupCommand = func(ctx context.Context, name string, args ...string) error {
+	_, err := apply.New(ctx).Command(name, args...)
+	return err
+}
 
 func filterRouterByWhen(router *api.Router, store resourcequery.StateStore) (*api.Router, error) {
 	return resourcequery.FilterRouterByWhen(router, store)
@@ -58,7 +62,7 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 	}
 }
 
-func appendLedgerOwnedOrphans(result *apply.Result, effective, declared *api.Router, ledgerPath string, transient bool) error {
+func appendLedgerOwnedOrphans(ctx context.Context, result *apply.Result, effective, declared *api.Router, ledgerPath string, transient bool) error {
 	if ledgerPath == "" {
 		return nil
 	}
@@ -67,7 +71,7 @@ func appendLedgerOwnedOrphans(result *apply.Result, effective, declared *api.Rou
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
-	engine := apply.New()
+	engine := apply.New(ctx)
 	orphans, _, err := engine.LedgerOwnedOrphansEffective(effective, declared, ledger)
 	if err != nil {
 		return err
@@ -118,11 +122,11 @@ func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.O
 	return existing
 }
 
-func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string, error) {
-	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, func(resource.Artifact) bool { return true })
+func cleanupLedgerOwnedOrphans(ctx context.Context, router *api.Router, ledgerPath string) ([]string, error) {
+	return cleanupLedgerOwnedOrphansMatching(ctx, router, ledgerPath, func(resource.Artifact) bool { return true })
 }
 
-func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
+func cleanupLedgerOwnedOrphansMatching(ctx context.Context, router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
 	if ledgerPath == "" {
 		return nil, nil
 	}
@@ -131,7 +135,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		return nil, err
 	}
 	defer func() { _ = ledger.Close() }()
-	engine := apply.New()
+	engine := apply.New(ctx)
 	plan, err := engine.LedgerOwnedOrphanPlan(router, ledger)
 	if err != nil {
 		return nil, err
@@ -146,7 +150,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		if match != nil && !match(artifact) {
 			continue
 		}
-		label, err := cleanupLedgerOwnedArtifact(artifact)
+		label, err := cleanupLedgerOwnedArtifact(ctx, artifact)
 		if err != nil {
 			return removed, err
 		}
@@ -165,37 +169,46 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 	return removed, nil
 }
 
-func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
-	return lifecycle.CleanupArtifact(routerdArtifactTeardownExecutor{}, artifact)
+func cleanupLedgerOwnedArtifact(ctx context.Context, artifact resource.Artifact) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return lifecycle.CleanupArtifact(routerdArtifactTeardownExecutor{ctx: ctx}, artifact)
 }
 
-type routerdArtifactTeardownExecutor struct{}
+type routerdArtifactTeardownExecutor struct{ ctx context.Context }
 
 func (routerdArtifactTeardownExecutor) Features() platform.Features {
 	return platformFeatures
 }
 
-func (routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
-	return runCleanupCommand(name, args...)
+func (e routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
+	return runCleanupCommand(e.ctx, name, args...)
 }
 
-func (routerdArtifactTeardownExecutor) Remove(path string) error {
+func (e routerdArtifactTeardownExecutor) Remove(path string) error {
+	if err := e.ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
 }
 
-func (routerdArtifactTeardownExecutor) RemoveAll(path string) error {
+func (e routerdArtifactTeardownExecutor) RemoveAll(path string) error {
+	if err := e.ctx.Err(); err != nil {
+		return err
+	}
 	return os.RemoveAll(path)
 }
 
-func (routerdArtifactTeardownExecutor) DeleteIPv4FwmarkRule(priority, mark, table int) error {
-	return deleteIPv4FwmarkRule(ipv4FwmarkRule{Priority: priority, Mark: mark, Table: table})
+func (e routerdArtifactTeardownExecutor) DeleteIPv4FwmarkRule(priority, mark, table int) error {
+	return e.Run("ip", "-4", "rule", "del", "priority", fmt.Sprint(priority), "fwmark", fmt.Sprintf("0x%x", mark), "table", fmt.Sprint(table))
 }
 
-func (routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
-	return flushIPv4RouteTable(table)
+func (e routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
+	return e.Run("ip", "-4", "route", "flush", "table", fmt.Sprint(table))
 }
 
 func recordLastAppliedPath(router *api.Router, store resourcequery.StateStore, path string) error {

@@ -70,7 +70,7 @@ func TestEmitThenOutboxPush(t *testing.T) {
 
 	// 4. Build a Pusher + Outbox over the sender DB. nodeName == --source-node.
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		srv.Client(), clock, noSleep)

@@ -197,7 +197,11 @@ func TestEnsurePrivateKeyFileRejectsEmptyExistingKey(t *testing.T) {
 func TestApplyDryRunDoesNotGeneratePrivateKeyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secrets", "wg0.key")
 	controller := Controller{DryRun: true}
-	if _, err := controller.Apply(context.Background(), InterfaceConfig{Name: "wg0", PrivateKeyFile: path}); err != nil {
+	cfg, err := PrepareConfig(InterfaceConfig{Name: "wg0", PrivateKeyFile: path}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Configure(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -222,7 +226,11 @@ func TestApplyGeneratesPrivateKeyFile(t *testing.T) {
 			return nil, nil
 		},
 	}
-	if _, err := controller.Apply(context.Background(), InterfaceConfig{Name: "wg0", PrivateKeyFile: path}); err != nil {
+	cfg, err := PrepareConfig(InterfaceConfig{Name: "wg0", PrivateKeyFile: path}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Configure(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	key, err := readSecretFile(path)

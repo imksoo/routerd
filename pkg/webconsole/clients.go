@@ -43,8 +43,10 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flows = enrichTrafficFlowsWithDNS(flows, queries)
-	if enriched, err := h.enrichTrafficFlowsWithDPI(r.Context(), flows, now, clientObservationWindow); err == nil {
-		flows = enriched
+	flows, err = h.enrichTrafficFlowsWithDPI(r.Context(), flows, now, clientObservationWindow)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	firewallLogs, err := h.firewallLogList(r.Context(), logstore.FirewallLogFilter{Since: clientSince, Action: "drop", Limit: 1000})
 	if err != nil {
@@ -62,8 +64,21 @@ func (h Handler) clients(w http.ResponseWriter, r *http.Request) {
 func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry, dhcpFingerprints ...[]logstore.DHCPFingerprint) []ClientEntry {
 	rows := map[string]*clientMutableEntry{}
 	ipToKey := map[string]string{}
-	passive := buildPassiveFingerprints(leases, flows, queries, firewallLogs)
+	passive := buildPassiveFingerprints(flows, queries, firewallLogs)
 	dhcpFingerprintByMAC := latestDHCPFingerprintByMAC(dhcpFingerprints...)
+	neighborMAC := map[string]string{}
+	for _, neighbor := range neighbors {
+		if neighborStateFailed(neighbor.State) || neighbor.IP == "" || neighbor.MAC == "" {
+			continue
+		}
+		mac := normalizeClientMAC(neighbor.MAC)
+		if previous, exists := neighborMAC[neighbor.IP]; !exists || previous == mac {
+			neighborMAC[neighbor.IP] = mac
+		} else {
+			// Conflicting interfaces do not establish one device identity.
+			neighborMAC[neighbor.IP] = ""
+		}
+	}
 	upsert := func(key, address string) *clientMutableEntry {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -93,13 +108,17 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if strings.TrimSpace(lease.IP) == "" {
 			continue
 		}
-		key := clientCorrelationKey(lease.MAC, lease.IP)
+		mac := lease.MAC
+		if mac == "" {
+			mac = neighborMAC[lease.IP]
+		}
+		key := clientCorrelationKey(mac, lease.IP)
 		row := upsert(key, lease.IP)
 		if row.Hostname == "" {
 			row.Hostname = lease.Hostname
 		}
 		if row.MAC == "" {
-			row.MAC = normalizeClientMAC(lease.MAC)
+			row.MAC = normalizeClientMAC(mac)
 		}
 		if row.Vendor == "" {
 			row.Vendor = lease.Vendor
@@ -108,7 +127,14 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 			row.StickyUntil = lease.StickyUntil.Format(time.RFC3339Nano)
 			row.StickyState = firstNonEmptyString(lease.StickyState, "held")
 		}
-		row.sources["dhcpv4"] = true
+		switch {
+		case lease.Source == "sticky-history":
+			row.sources["sticky-history"] = true
+		case lease.Family == "ipv6":
+			row.sources["dhcpv6"] = true
+		default:
+			row.sources["dhcpv4"] = true
+		}
 	}
 	for _, neighbor := range neighbors {
 		if strings.TrimSpace(neighbor.IP) == "" {
@@ -125,23 +151,18 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		if row.Vendor == "" {
 			row.Vendor = neighbor.Vendor
 		}
-		if row.State == "" {
-			row.State = neighbor.State
+		if neighbor.State != "" {
+			states := strings.Split(row.State, ",")
+			for _, state := range strings.Split(neighbor.State, ",") {
+				states = appendUnique(states, strings.TrimSpace(state))
+			}
+			row.State = strings.Trim(strings.Join(states, ","), ",")
 		}
 		source := strings.TrimSpace(neighbor.Source)
 		if source == "" {
 			source = "neighbor"
 		}
 		row.sources[source] = true
-	}
-	for ip, fingerprint := range passive {
-		if ip == "" || ipToKey[ip] != "" {
-			continue
-		}
-		if key := matchFingerprintToClient(rows, ip, fingerprint); key != "" {
-			ipToKey[ip] = key
-			rows[key].addresses[ip] = true
-		}
 	}
 	for _, query := range queries {
 		ip := strings.TrimSpace(query.ClientAddress)
@@ -150,7 +171,7 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		key := ipToKey[ip]
 		if key == "" {
-			key = passiveCorrelationKey(passive[ip], ip)
+			key = ip
 		}
 		row := upsert(key, ip)
 		if query.QuestionName != "" {
@@ -165,10 +186,11 @@ func correlateClients(leases []DHCPLease, neighbors []NeighborEntry, flows []log
 		}
 		key := ipToKey[ip]
 		if key == "" {
-			key = passiveCorrelationKey(passive[ip], ip)
+			key = ip
 		}
 		row := upsert(key, ip)
 		if flow.Accounting {
+			row.Accounting = true
 			row.BytesOut += flow.BytesOut
 			row.BytesIn += flow.BytesIn
 		}

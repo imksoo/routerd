@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 // Provider-action execution journal statuses (ADR 0007, Phase 5). Every
@@ -32,28 +34,32 @@ const (
 	// idempotency key already succeeded, or policy declined).
 	ActionSkipped = "skipped"
 	// ActionRolledBack is an action whose best-effort undo was applied.
-	ActionRolledBack = "rolledBack"
+	ActionRolledBack      = "rolledBack"
+	ActionRollingBack     = "rollingBack"
+	ActionRollbackFailed  = "rollbackFailed"
+	ActionOutcomeUnknown  = "outcomeUnknown"
+	ActionRollbackUnknown = "rollbackUnknown"
 )
 
 // ActionExecutionRecord is one row of the action_executions journal. It mirrors
 // the approved ActionPlan (no secrets) plus its execution lifecycle state.
 type ActionExecutionRecord struct {
-	ID             int64     `json:"id" yaml:"id"`
-	IdempotencyKey string    `json:"idempotencyKey" yaml:"idempotencyKey"`
-	Source         string    `json:"source,omitempty" yaml:"source,omitempty"`
-	Provider       string    `json:"provider" yaml:"provider"`
-	ProviderRef    string    `json:"providerRef,omitempty" yaml:"providerRef,omitempty"`
-	Action         string    `json:"action" yaml:"action"`
-	TargetJSON     string    `json:"targetJSON,omitempty" yaml:"targetJSON,omitempty"`
-	ParametersJSON string    `json:"parametersJSON,omitempty" yaml:"parametersJSON,omitempty"`
-	UndoJSON       string    `json:"undoJSON,omitempty" yaml:"undoJSON,omitempty"`
-	RiskLevel      string    `json:"riskLevel,omitempty" yaml:"riskLevel,omitempty"`
-	Status         string    `json:"status" yaml:"status"`
-	ApprovedBy     string    `json:"approvedBy,omitempty" yaml:"approvedBy,omitempty"`
-	ApprovedAt     time.Time `json:"approvedAt,omitempty" yaml:"approvedAt,omitempty"`
-	ExecutedAt     time.Time `json:"executedAt,omitempty" yaml:"executedAt,omitempty"`
-	ResultMessage  string    `json:"resultMessage,omitempty" yaml:"resultMessage,omitempty"`
-	Error          string    `json:"error,omitempty" yaml:"error,omitempty"`
+	ID             int64                   `json:"id" yaml:"id"`
+	IdempotencyKey string                  `json:"idempotencyKey" yaml:"idempotencyKey"`
+	Source         string                  `json:"source,omitempty" yaml:"source,omitempty"`
+	Provider       string                  `json:"provider" yaml:"provider"`
+	ProviderRef    string                  `json:"providerRef,omitempty" yaml:"providerRef,omitempty"`
+	Action         string                  `json:"action" yaml:"action"`
+	Target         map[string]string       `json:"target,omitempty" yaml:"target,omitempty"`
+	Parameters     map[string]string       `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Undo           *api.ProviderActionUndo `json:"undo,omitempty" yaml:"undo,omitempty"`
+	RiskLevel      string                  `json:"riskLevel,omitempty" yaml:"riskLevel,omitempty"`
+	Status         string                  `json:"status" yaml:"status"`
+	ApprovedBy     string                  `json:"approvedBy,omitempty" yaml:"approvedBy,omitempty"`
+	ApprovedAt     time.Time               `json:"approvedAt,omitempty" yaml:"approvedAt,omitempty"`
+	ExecutedAt     time.Time               `json:"executedAt,omitempty" yaml:"executedAt,omitempty"`
+	ResultMessage  string                  `json:"resultMessage,omitempty" yaml:"resultMessage,omitempty"`
+	Error          string                  `json:"error,omitempty" yaml:"error,omitempty"`
 	// Observed are the non-secret facts the executor reported on its last
 	// terminal result (decoded from the observed_json column). The undo of
 	// ensure-forwarding-enabled relies on Observed["priorSourceDestCheck"], which
@@ -89,9 +95,27 @@ func (s *SQLiteStore) ImportAction(rec ActionExecutionRecord) (bool, error) {
 	if strings.TrimSpace(rec.Action) == "" {
 		return false, fmt.Errorf("action import requires action")
 	}
+	target, err := json.Marshal(rec.Target)
+	if err != nil {
+		return false, fmt.Errorf("encode action target: %w", err)
+	}
+	parameters, err := json.Marshal(rec.Parameters)
+	if err != nil {
+		return false, fmt.Errorf("encode action parameters: %w", err)
+	}
+	var undo []byte
+	if rec.Undo != nil {
+		undo, err = json.Marshal(rec.Undo)
+		if err != nil {
+			return false, fmt.Errorf("encode action undo: %w", err)
+		}
+	}
 	now := s.now().UTC()
 	if rec.Status == "" {
 		rec.Status = ActionPending
+	}
+	if !validActionStatus(rec.Status) {
+		return false, fmt.Errorf("invalid action status %q", rec.Status)
 	}
 	if rec.CreatedAt.IsZero() {
 		rec.CreatedAt = now
@@ -120,7 +144,7 @@ ON CONFLICT(idempotency_key) DO UPDATE SET
   updated_at = excluded.updated_at
 WHERE action_executions.status IN (?, ?)`,
 		rec.IdempotencyKey, nullableString(rec.Source), rec.Provider, nullableString(rec.ProviderRef), rec.Action,
-		nullableString(rec.TargetJSON), nullableString(rec.ParametersJSON), nullableString(rec.UndoJSON), nullableString(rec.RiskLevel),
+		string(target), string(parameters), nullableString(string(undo)), nullableString(rec.RiskLevel),
 		rec.Status, formatStateTime(rec.CreatedAt), formatStateTime(rec.UpdatedAt), ActionFailed, ActionSkipped)
 	if err != nil {
 		return false, err
@@ -136,16 +160,52 @@ const actionExecutionColumns = `id,idempotency_key,coalesce(source,''),provider,
 
 func scanActionExecution(scan func(...any) error) (ActionExecutionRecord, error) {
 	var rec ActionExecutionRecord
-	var approved, executed, created, updated, observed string
+	var approved, executed, created, updated, observed, target, parameters, undo string
 	if err := scan(&rec.ID, &rec.IdempotencyKey, &rec.Source, &rec.Provider, &rec.ProviderRef, &rec.Action,
-		&rec.TargetJSON, &rec.ParametersJSON, &rec.UndoJSON, &rec.RiskLevel, &rec.Status, &rec.ApprovedBy,
+		&target, &parameters, &undo, &rec.RiskLevel, &rec.Status, &rec.ApprovedBy,
 		&approved, &executed, &rec.ResultMessage, &rec.Error, &observed, &created, &updated); err != nil {
 		return ActionExecutionRecord{}, err
 	}
-	rec.ApprovedAt = parseStateTime(approved)
-	rec.ExecutedAt = parseStateTime(executed)
-	rec.CreatedAt = parseStateTime(created)
-	rec.UpdatedAt = parseStateTime(updated)
+	if target != "" {
+		if err := json.Unmarshal([]byte(target), &rec.Target); err != nil {
+			return ActionExecutionRecord{}, fmt.Errorf("decode target_json for action %d: %w", rec.ID, err)
+		}
+	}
+	if parameters != "" {
+		if err := json.Unmarshal([]byte(parameters), &rec.Parameters); err != nil {
+			return ActionExecutionRecord{}, fmt.Errorf("decode parameters_json for action %d: %w", rec.ID, err)
+		}
+	}
+	if undo != "" {
+		// Validate the whole value, then enforce the closed undo object shape.
+		if !json.Valid([]byte(undo)) {
+			return ActionExecutionRecord{}, fmt.Errorf("decode undo_json for action %d: invalid JSON", rec.ID)
+		}
+		decoder := json.NewDecoder(strings.NewReader(undo))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&rec.Undo); err != nil {
+			return ActionExecutionRecord{}, fmt.Errorf("decode undo_json for action %d: %w", rec.ID, err)
+		}
+	}
+	if !validActionStatus(rec.Status) {
+		return ActionExecutionRecord{}, fmt.Errorf("invalid status for action %d: %q", rec.ID, rec.Status)
+	}
+	for _, field := range []struct {
+		name, raw string
+		target    *time.Time
+		required  bool
+	}{
+		{"approved_at", approved, &rec.ApprovedAt, false}, {"executed_at", executed, &rec.ExecutedAt, false}, {"created_at", created, &rec.CreatedAt, true}, {"updated_at", updated, &rec.UpdatedAt, true},
+	} {
+		if field.raw == "" && !field.required {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, field.raw)
+		if err != nil {
+			return ActionExecutionRecord{}, fmt.Errorf("decode %s for action %d: %w", field.name, rec.ID, err)
+		}
+		*field.target = parsed
+	}
 	if strings.TrimSpace(observed) != "" {
 		var m map[string]string
 		if err := json.Unmarshal([]byte(observed), &m); err != nil {
@@ -278,39 +338,9 @@ func (s *SQLiteStore) BeginActionExecution(id int64, now time.Time) (bool, error
 	return affected > 0, nil
 }
 
-// RequeueStaleRunningActions moves orphaned running actions back to approved so
-// the normal execution path can reclaim them. The cutoff is compared against
-// updated_at, which BeginActionExecution sets when the action is claimed.
-func (s *SQLiteStore) RequeueStaleRunningActions(cutoff, now time.Time) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return 0, sql.ErrConnDone
-	}
-	if cutoff.IsZero() {
-		return 0, fmt.Errorf("stale running cutoff is required")
-	}
-	if now.IsZero() {
-		now = s.now().UTC()
-	}
-	result, err := s.db.Exec(`UPDATE action_executions
-SET status = ?, result_message = ?, error = NULL, executed_at = NULL, observed_json = NULL, updated_at = ?
-WHERE status = ? AND updated_at <= ?`,
-		ActionApproved, nullableString("requeued stale running action"), formatStateTime(now), ActionRunning, formatStateTime(cutoff))
-	if err != nil {
-		return 0, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	return int(affected), nil
-}
-
 // MarkActionResult records a terminal execution outcome (succeeded, failed, or
-// skipped) for a running action. For backward-compatible tests and migration
-// helpers it also accepts approved, but the Engine claims running before it
-// launches an executor. The observed map carries the executor's non-secret
+// skipped) or an unconfirmed outcome for a claimed running action. The observed
+// map carries the executor's non-secret
 // reported facts (e.g. priorSourceDestCheck), which the undo path later reads
 // back from the journal; nil or empty leaves observed_json NULL.
 func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string, observed map[string]string, executedAt time.Time) error {
@@ -320,9 +350,9 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 		return sql.ErrConnDone
 	}
 	switch status {
-	case ActionSucceeded, ActionFailed, ActionSkipped:
+	case ActionSucceeded, ActionFailed, ActionSkipped, ActionOutcomeUnknown:
 	default:
-		return fmt.Errorf("action %d result status %q must be succeeded, failed, or skipped", id, status)
+		return fmt.Errorf("action %d has invalid execution result status %q", id, status)
 	}
 	now := s.now().UTC()
 	if executedAt.IsZero() {
@@ -336,12 +366,12 @@ func (s *SQLiteStore) MarkActionResult(id int64, status, message, errMsg string,
 		}
 		observedJSON = string(b)
 	}
-	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, observed_json = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)`,
-		status, nullableString(message), nullableString(errMsg), nullableString(observedJSON), formatStateTime(executedAt), formatStateTime(now), id, ActionRunning, ActionApproved)
+	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error = ?, observed_json = ?, executed_at = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		status, nullableString(message), nullableString(errMsg), nullableString(observedJSON), formatStateTime(executedAt), formatStateTime(now), id, ActionRunning)
 	if err != nil {
 		return err
 	}
-	return requireRowAffected(result, id, "record result for", ActionRunning+" or "+ActionApproved)
+	return requireRowAffected(result, id, "record result for", ActionRunning)
 }
 
 // MarkActionSkippedByIdempotencyKey fences an unexecuted action out of the
@@ -366,9 +396,29 @@ func (s *SQLiteStore) MarkActionSkippedByIdempotencyKey(key, message string, now
 	return err
 }
 
-// MarkActionRolledBack records that an action's best-effort undo was applied. It
-// transitions a succeeded action to rolledBack.
-func (s *SQLiteStore) MarkActionRolledBack(id int64, message string, now time.Time) error {
+// BeginActionRollback persists undo intent before an executor may reverse a
+// successful action. Only a definitive failed undo may be retried automatically
+// by an explicit rollback request; an unknown outcome remains fenced.
+func (s *SQLiteStore) BeginActionRollback(id int64, now time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false, sql.ErrConnDone
+	}
+	if now.IsZero() {
+		now = s.now().UTC()
+	}
+	result, err := s.db.Exec(`UPDATE action_executions SET status=?,result_message=NULL,error=NULL,updated_at=? WHERE id=? AND status IN (?,?) AND coalesce(undo_json,'')<>''`, ActionRollingBack, formatStateTime(now), id, ActionSucceeded, ActionRollbackFailed)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// MarkActionRollbackResult completes a claimed undo without erasing the original
+// successful action's observed facts or execution timestamp.
+func (s *SQLiteStore) MarkActionRollbackResult(id int64, status, message, errMsg string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -377,12 +427,17 @@ func (s *SQLiteStore) MarkActionRolledBack(id int64, message string, now time.Ti
 	if now.IsZero() {
 		now = s.now().UTC()
 	}
-	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, updated_at = ? WHERE id = ? AND status = ?`,
-		ActionRolledBack, nullableString(message), formatStateTime(now), id, ActionSucceeded)
+	switch status {
+	case ActionRolledBack, ActionRollbackFailed, ActionRollbackUnknown:
+	default:
+		return fmt.Errorf("action %d has invalid rollback result status %q", id, status)
+	}
+	result, err := s.db.Exec(`UPDATE action_executions SET status = ?, result_message = ?, error=?,updated_at = ? WHERE id = ? AND status = ?`,
+		status, nullableString(message), nullableString(errMsg), formatStateTime(now), id, ActionRollingBack)
 	if err != nil {
 		return err
 	}
-	return requireRowAffected(result, id, "roll back", ActionSucceeded)
+	return requireRowAffected(result, id, "record rollback result for", ActionRollingBack)
 }
 
 func requireRowAffected(result sql.Result, id int64, verb, fromStatus string) error {
@@ -394,4 +449,13 @@ func requireRowAffected(result sql.Result, id int64, verb, fromStatus string) er
 		return fmt.Errorf("cannot %s action %d: row missing or not in %s state", verb, id, fromStatus)
 	}
 	return nil
+}
+
+func validActionStatus(status string) bool {
+	switch status {
+	case ActionPending, ActionApproved, ActionRunning, ActionSucceeded, ActionFailed, ActionSkipped, ActionRollingBack, ActionRolledBack, ActionRollbackFailed, ActionOutcomeUnknown, ActionRollbackUnknown:
+		return true
+	default:
+		return false
+	}
 }

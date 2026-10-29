@@ -237,12 +237,16 @@ func recordKnownNGCombinationEvents(router *api.Router, store routerstate.Store,
 	}
 }
 
-func recordHostInventoryState(store routerstate.Store) error {
+func recordHostInventoryState(ctx context.Context, store routerstate.Store) error {
 	objectStore, ok := store.(routerstate.ObjectStatusStore)
 	if !ok {
 		return nil
 	}
-	status := inventoryStatusMap(inventory.Collect())
+	observed, err := inventory.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	status := inventoryStatusMap(observed)
 	previous := objectStore.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
 	if err := objectStore.SaveObjectStatus(api.RouterAPIVersion, "Inventory", "host", status); err != nil {
 		return err
@@ -531,7 +535,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	optionWarnings = append(optionWarnings, managementWarnings...)
 	if opts.DryRun {
 		outcome.Stage = "plan"
-		result, err := planApply(router, opts)
+		result, err := planApply(ctx, router, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -576,7 +580,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
 		defer outcome.finishEarlyFailure(stateStore, opts, &err)
 		outcome.Stage = "inventory"
-		if err := recordHostInventoryState(stateStore); err != nil {
+		if err := recordHostInventoryState(ctx, stateStore); err != nil {
 			return nil, err
 		}
 	}
@@ -587,7 +591,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New().PlanEffective(effectiveRouter, router)
+	result, err := apply.New(ctx).PlanEffective(effectiveRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +601,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	decision := ha.Decision{Leader: true}
@@ -660,7 +664,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
 	outcome.Stage = "observe"
-	result, err = apply.New().ObserveEffective(effectiveRouter, router)
+	result, err = apply.New(ctx).ObserveEffective(effectiveRouter, router)
 	if err != nil {
 		return nil, err
 	}
@@ -669,7 +673,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, applyWarnings...)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	if !opts.DryRun && configCommitPhase(result.Phase) {

@@ -4,6 +4,7 @@ package webconsole
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -84,8 +85,8 @@ func samPoolFromResource(res routerstate.ObjectStatus) (SAMPool, bool) {
 		Reason:              statusAnyText(status["reason"]),
 		DiscoveryMode:       statusAnyText(status["discoveryMode"]),
 		DiscoveryPhase:      statusAnyText(status["discoveryPhase"]),
-		GeneratedBGPPaths:   statusIntValue(status["generatedBGPPaths"]),
-		ResolvedMemberCount: statusIntValue(status["resolvedMemberCount"]),
+		GeneratedBGPPaths:   optionalStatusCount(status["generatedBGPPaths"]),
+		ResolvedMemberCount: optionalStatusCount(status["resolvedMemberCount"]),
 		PlacementActive:     statusAnyText(status["placementActive"]) == "true",
 		PlacementActiveNode: statusAnyText(status["placementActiveNode"]),
 	}
@@ -99,6 +100,17 @@ func samPoolFromResource(res routerstate.ObjectStatus) (SAMPool, bool) {
 	}
 
 	return pool, true
+}
+
+func optionalStatusCount(value any) *int {
+	if value == nil {
+		return nil
+	}
+	count, err := strconv.Atoi(statusAnyText(value))
+	if err != nil || count < 0 {
+		return nil
+	}
+	return &count
 }
 
 func samTunnelFromResource(res routerstate.ObjectStatus) (SAMTunnel, bool) {

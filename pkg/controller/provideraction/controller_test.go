@@ -141,20 +141,17 @@ func TestControllerHonorsMaxActionsPerRun(t *testing.T) {
 	}
 }
 
-func TestControllerRequeuesAndExecutesStaleRunningAction(t *testing.T) {
+func TestControllerFencesInterruptedUnknownActionWithoutReexecution(t *testing.T) {
 	store := controllerStore(t)
 	plan := controllerPlan("stale-running", "10.0.0.5/32")
-	target, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
+	target := plan.Target
 	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
 		IdempotencyKey: plan.IdempotencyKey,
 		Source:         "test",
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(target),
+		Target:         target,
 		Status:         routerstate.ActionPending,
 	}); err != nil {
 		t.Fatalf("ImportAction: %v", err)
@@ -176,32 +173,26 @@ func TestControllerRequeuesAndExecutesStaleRunningAction(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if runner.calls != 1 {
-		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("interrupted provider operation was repeated: %d calls", runner.calls)
 	}
 	rec = actionByKey(t, store, "stale-running")
-	if rec.Status != routerstate.ActionSucceeded {
-		t.Fatalf("status = %q, want succeeded", rec.Status)
-	}
-	if rec.ResultMessage != "ok" {
-		t.Fatalf("resultMessage = %q, want ok", rec.ResultMessage)
+	if rec.Status != routerstate.ActionOutcomeUnknown {
+		t.Fatalf("status = %q, want outcomeUnknown", rec.Status)
 	}
 }
 
 func TestControllerRequeuesAndExecutesFailedDesiredAction(t *testing.T) {
 	store := controllerStore(t)
 	plan := controllerPlan("failed-still-desired", "10.0.0.5/32")
-	target, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
+	target := plan.Target
 	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
 		IdempotencyKey: plan.IdempotencyKey,
 		Source:         "test",
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(target),
+		Target:         target,
 		Status:         routerstate.ActionPending,
 	}); err != nil {
 		t.Fatalf("ImportAction: %v", err)
@@ -245,22 +236,16 @@ func TestControllerSkipsStaleMobilityPathBeforeExecute(t *testing.T) {
 	plan.Parameters = map[string]string{
 		"mobilityPathSig": "prefix=10.0.0.5/32;nextHops=old",
 	}
-	params, err := json.Marshal(plan.Parameters)
-	if err != nil {
-		t.Fatalf("marshal params: %v", err)
-	}
-	target, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal target: %v", err)
-	}
+	params := plan.Parameters
+	target := plan.Target
 	if _, err := store.ImportAction(routerstate.ActionExecutionRecord{
 		IdempotencyKey: plan.IdempotencyKey,
 		Source:         "test",
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(target),
-		ParametersJSON: string(params),
+		Target:         target,
+		Parameters:     params,
 		Status:         routerstate.ActionPending,
 	}); err != nil {
 		t.Fatalf("ImportAction: %v", err)

@@ -88,10 +88,7 @@ func TestResolutionFailureIsSERVFAILWithSourceAndEvent(t *testing.T) {
 	if w.response == nil || w.response.Rcode != dns.RcodeServerFailure {
 		t.Fatalf("upstream timeout response = %v, want SERVFAIL", w.response)
 	}
-	rows, err := queryLog.List(context.Background(), logstore.DNSQueryFilter{Limit: 10})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("query log rows=%v error=%v", rows, err)
-	}
+	_, rows := awaitQueryHistory(t, d, 1)
 	if rows[0].ResponseCode != "SERVFAIL" || rows[0].Upstream != "primary" || rows[0].CacheHit {
 		t.Fatalf("query failure lost its source or response code: %+v", rows[0])
 	}

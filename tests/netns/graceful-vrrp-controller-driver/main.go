@@ -40,6 +40,11 @@ func (s *statusStore) ObjectStatus(apiVersion, kind, name string) map[string]any
 	return map[string]any{}
 }
 
+func (s *statusStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+func (s *statusStore) ReadVariable(name string) (routerstate.Value, error) { return s.Get(name), nil }
+
 func (s *statusStore) Get(name string) routerstate.Value {
 	if name == "DSLiteTunnel/dslite-ready.phase" && s.ready {
 		return routerstate.Value{Status: routerstate.StatusSet, Value: "Up", Since: s.now, UpdatedAt: s.now}
@@ -53,6 +58,14 @@ func (s *statusStore) Now() time.Time           { return s.now }
 func main() {
 	if os.Getenv("ROUTERD_NETNS_TEST_TOKEN") == "" {
 		fatal(errors.New("ROUTERD_NETNS_TEST_TOKEN is required"))
+	}
+	current, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		fatal(err)
+	}
+	host, err := os.Readlink("/proc/1/ns/net")
+	if err != nil || current == host {
+		fatal(errors.New("VRRP test driver requires a separate network namespace"))
 	}
 	if len(os.Args) != 4 {
 		fatal(errors.New("usage: graceful-vrrp-controller-driver <runtime-dir> <config-path> <ifname>"))

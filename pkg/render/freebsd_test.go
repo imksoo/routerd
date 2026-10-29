@@ -166,7 +166,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		}
 	}
 	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
-	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || return 1`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `vxlanlocalport' '4789'`, `vxlanremoteport' '4789'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
+	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || { routerd_vxlan_home_vxlan_rollback; return 1; }`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `vxlanlocalport' '4789'`, `vxlanremoteport' '4789'`, `ifconfig 'bridge0' addm "${ifname}"`, `/sbin/ifconfig "${owned}" destroy || return 1`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd interface ownership marker`} {
 		if !strings.Contains(vxlanScript, want) {
 			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
 		}
@@ -227,85 +227,28 @@ func TestFreeBSDManagedPrefixDelegationDoesNotRenderLegacyClient(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
-			Interface: "lan",
-			Address:   "10.240.70.10/32",
-			Mode:      "vrrp",
-			VRRP: api.VirtualAddressVRRPSpec{
-				VirtualRouterID: 50,
-				Priority:        150,
-				AdvertInterval:  "2s",
-				Authentication:  "secret",
-			},
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	rc := string(got.RCConf)
-	if !strings.Contains(rc, `routerd_carp_enable="YES"`) {
-		t.Fatalf("rc.conf did not enable routerd_carp:\n%s", rc)
-	}
-	script := string(got.RCDScripts["routerd_carp"])
-	for _, want := range []string{
-		`kldload carp >/dev/null 2>&1 || true`,
-		`foreign CARP address is already present; refusing mutation`,
-		`foreign CARP VHID is already present; refusing mutation`,
-		`foreign CARP ownership is unknown; refusing mutation`,
-		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
-		`unable to publish routerd CARP ownership marker`,
-		`grep -Fq 'inet 10.240.70.10 '`,
-		`grep -Eq 'vhid 50([[:space:]]|$)'`,
-		`kldload carp >/dev/null 2>&1 || true`,
-		`preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }`,
-		`unable to configure CARP preempt`,
-		`unable to configure routerd CARP address`,
-		`applied_0=1`,
-		`${applied_0:-0}`,
-		`printf '%s\n%s\n' "${name}" "${preempt_before}"`,
-		`{ read owned; read preempt_before; } < "${marker}"`,
-		`routerd CARP cleanup incomplete; retaining ownership marker`,
-		`if routerd_carp_status; then return 0; fi`,
-		`routerd_carp_stop || return 1`,
-		`if ifconfig 'vtnet1' | grep -Fq 'inet 10.240.70.10 '; then`,
-		`sysctl net.inet.carp.preempt='0'`,
-		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
-		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
-		`grep -Eq 'vhid 50([[:space:]]|$)'`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "grep -Fq '10.240.70.10/32'") {
-		t.Fatalf("CARP ownership probes must not grep CIDR-form addresses:\n%s", script)
-	}
-}
-
-func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip-v6"}, Spec: api.VirtualAddressSpec{
-			Family: "ipv6", Interface: "lan", Address: "fd00:1234::10/128", Mode: "vrrp",
-			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150},
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	script := string(got.RCDScripts["routerd_carp"])
-	for _, want := range []string{`grep -Fq 'inet6 fd00:1234::10 '`, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("routerd_carp IPv6 script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
-		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
+func TestFreeBSDCARPHasOneRuntimeOwner(t *testing.T) {
+	for _, family := range []string{"ipv4", "ipv6"} {
+		t.Run(family, func(t *testing.T) {
+			address := "192.0.2.10/32"
+			if family == "ipv6" {
+				address = "2001:db8::10/128"
+			}
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				netResource("Interface", "lan", api.InterfaceSpec{IfName: "vtnet1", Managed: true}),
+				netResource("VirtualAddress", "vip", api.VirtualAddressSpec{Family: family, Interface: "lan", Address: address, Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150}}),
+			}}}
+			config, err := FreeBSD(router)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := config.RCDScripts["routerd_carp"]; exists || strings.Contains(string(config.RCConf), "routerd_carp_enable") || strings.Contains(string(config.RCConf), address) {
+				t.Fatalf("boot export duplicates the native VIP actor's CARP ownership: %s", config.RCConf)
+			}
+			if !strings.Contains(string(config.RCDScripts["routerd"]), "'/usr/local/sbin/routerd' 'serve'") {
+				t.Fatal("runtime owner no longer starts at boot")
+			}
+		})
 	}
 }
 
@@ -996,7 +939,7 @@ func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
+func TestFreeBSDWireGuardUsesRuntimeControllers(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
@@ -1029,24 +972,14 @@ func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
-	if strings.Contains(rc, "ifconfig_wg0=\"inet") {
-		t.Fatalf("WireGuard address should be owned by rc.d script, not rc.conf:\n%s", rc)
+	if strings.Contains(rc, "ifconfig_wg0") || strings.Contains(rc, "routerd_wireguard") {
+		t.Fatalf("native boot config duplicates WireGuard runtime effects:\n%s", rc)
 	}
-	script := string(got.RCDScripts["routerd_wireguard_wg0"])
-	for _, want := range []string{
-		`PROVIDE: routerd_wireguard_wg0`,
-		`kldload if_wg`,
-		`ifconfig 'wg0' create`,
-		`wg set 'wg0' listen-port '51824' private-key '/usr/local/etc/routerd/secrets/wg0.key'`,
-		`wg set 'wg0' peer 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' allowed-ips '10.44.4.2/32' endpoint '192.0.2.2:51824' persistent-keepalive '25'`,
-		`ifconfig 'wg0' inet '10.44.4.4/24' alias`,
-		`foreign WireGuard interface is already present; refusing mutation`,
-		`unable to publish routerd WireGuard ownership marker`,
-		`routerd_wireguard_wg0_rollback`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("wireguard rc.d script missing %q:\n%s", want, script)
-		}
+	if _, exists := got.RCDScripts["routerd_wireguard_wg0"]; exists {
+		t.Fatal("native boot script duplicates the WireGuard controller")
+	}
+	if len(got.RCDScripts["routerd"]) == 0 {
+		t.Fatal("runtime owner has no boot service")
 	}
 }
 

@@ -25,6 +25,11 @@ await mkdir(outputDir, { recursive: true });
 let natResourceRevision = 0;
 let configRevision = 0;
 let observationMode = "normal";
+let largeConfig = false;
+let recursiveConfig = false;
+let currentFileDiffRequests = 0;
+let holdGeneration13 = false;
+let pendingGenerationResponse = null;
 const connectionResourceRequests = [];
 
 const server = http.createServer(async (req, res) => {
@@ -38,6 +43,39 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.searchParams.get("connections") === "600") connectionResourceRequests.push(url.searchParams.get("resources"));
       if (observationMode === "partial") fixture.connections.count = 936;
+      if (observationMode.startsWith("client-")) {
+        for (const client of fixture.clients) {
+          client.state = observationMode === "client-stale" ? "STALE" : observationMode === "client-mixed" ? "STALE,REACHABLE" : "";
+          if (observationMode === "client-zero-accounting") {
+            client.bytesOut = 0;
+            client.bytesIn = 0;
+            client.accounting = client.hostname === "aiseg2";
+          }
+          client.sources = ["sticky-history", "traffic", "dns"];
+        }
+      }
+      fixture.interfaces[0].configuredAddresses = ["192.0.2.250/24"];
+      if (observationMode === "unknown-health") {
+        fixture.gatewayHealth.overall = "unknown";
+        fixture.gatewayHealth.components[0].status = "unknown";
+        fixture.gatewayHealth.components[0].phase = "NotObserved";
+      }
+      fixture.resources.push({ apiVersion: "system.routerd.net/v1alpha1", kind: "KernelModule", name: "unobserved-module", declared: true, status: { phase: "NotObserved" } });
+      fixture.resources.push({ apiVersion: "net.routerd.net/v1alpha1", kind: "WireGuardPeer", name: "removed-peer", declared: false, status: { phase: "Pending", reason: "WithdrawalFailed", interface: "wg0", configured: true } });
+      if (observationMode === "unaccounted-traffic") {
+        fixture.trafficFlows = [{ clientAddress: "192.0.2.1", peerAddress: "198.51.100.1", peerPort: 443, protocol: "tcp", accounting: false, resolvedHostname: "unaccounted.example" }];
+      }
+      for (const client of fixture.clients) {
+        if (client.accounting === undefined) client.accounting = true;
+      }
+      for (const flow of fixture.trafficFlows) {
+        if (flow.accounting === undefined) flow.accounting = true;
+      }
+      if (["interface-failed", "interface-changed", "interface-empty"].includes(observationMode)) {
+        delete fixture.interfaces[0].addresses;
+        if (observationMode !== "interface-empty") fixture.interfaces[0].observationError = "native address read denied";
+        if (observationMode === "interface-changed") fixture.interfaces[0].ifname = "ens99";
+      }
       const sections = [
         ["resources", ["resources", "interfaces", "phases", "gatewayHealth"], url.searchParams.get("resources") !== "0"],
         ["events", ["events"], url.searchParams.get("events") !== "-1"],
@@ -46,14 +84,16 @@ const server = http.createServer(async (req, res) => {
         ["trafficFlows", ["trafficFlows"], url.searchParams.get("trafficFlows") !== "-1"],
         ["firewallLogs", ["firewallLogs"], url.searchParams.get("firewallLogs") !== "-1"],
         ["dhcpLeases", ["dhcpLeases"], url.searchParams.get("dhcpLeases") !== "0" || url.searchParams.get("clients") === "1"],
+        ["conntrackTuning", ["conntrackTuning"], url.searchParams.get("tuning") === "1"],
         ["clients", ["clients"], url.searchParams.get("clients") === "1"],
         ["neighbors", ["neighbors"], url.searchParams.get("clients") === "1"],
         ["dhcpFingerprints", ["dhcpFingerprints"], url.searchParams.get("clients") === "1"],
         ["vpn", ["vpn"], url.searchParams.get("vpn") !== "0"],
       ];
+      fixture.conntrackTuning = { window: "24h", suggestions: [] };
       fixture.collected = [];
       for (const [section, fields, requested] of sections) {
-        const failed = observationMode === "failed" && section === "resources";
+        const failed = (observationMode === "failed" && section === "resources") || observationMode === "unavailable";
         const skipped = observationMode === "partial" && section === "resources";
         if (requested && !failed && !skipped) fixture.collected.push(section);
         if (!requested || failed || skipped || observationMode === "empty") {
@@ -62,7 +102,18 @@ const server = http.createServer(async (req, res) => {
       }
       if (!fixture.gatewayHealth) fixture.gatewayHealth = { overall: "unknown" };
       if (observationMode === "failed") fixture.errors = ["resource store unavailable"];
+      if (observationMode === "unavailable") fixture.errors = ["requested observation unavailable"];
+      if (observationMode === "empty" && url.searchParams.get("connections") !== "-1") fixture.connections = { count: 0, byFamily: {}, entries: [] };
+      if (observationMode === "empty" && url.searchParams.get("tuning") === "1") fixture.conntrackTuning = { window: "24h", suggestions: [] };
       return json(res, fixture);
+    }
+    if (url.pathname === "/api/v1/firewall/deny-timeline") {
+      if (observationMode === "unavailable") {
+        res.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+        res.end("deny database unavailable");
+        return;
+      }
+      return json(res, []);
     }
     if (url.pathname === "/api/v1/routes") return json(res, routesFixture());
     if (url.pathname === "/api/v1/config") return json(res, configFixture());
@@ -110,6 +161,7 @@ try {
   await expect(directNAT).toBeVisible();
   await expect(directNAT.getByRole("row").filter({ hasText: "ds-lite-a" })).toContainText("701");
   expect(connectionResourceRequests.at(-1)).toBe("1");
+  await expect(direct.getByText("[2606:4700:3030::6815:1001]:443", { exact: true })).toBeVisible();
   const requestsBeforeRefresh = connectionResourceRequests.length;
   natResourceRevision = 1;
   await direct.clock.fastForward(30000);
@@ -143,7 +195,51 @@ try {
   configRevision = 1;
   await navigated.clock.fastForward(30000);
   await expect(navigated.locator("main pre")).toContainText("name: refreshed-router");
+  largeConfig = true;
+  await navigated.clock.fastForward(30000);
+  await expect(navigated.locator("main pre")).toContainText("large configuration context");
+  await navigated.getByRole("button", { name: "Diff before apply", exact: true }).click();
+  await expect(navigated.locator("main")).toContainText("Current file vs latest stored generation");
+  await expect(navigated.locator("main")).toContainText("+++ current-file.yaml");
+  expect(currentFileDiffRequests).toBe(1);
+  configRevision = 2;
+  await navigated.clock.fastForward(30000);
+  await expect(navigated.locator("main pre")).toContainText("name: third-router");
+  await expect(navigated.getByText("Current file vs latest stored generation", { exact: true })).toHaveCount(0);
+  configRevision = 1;
+  await navigated.evaluate(() => { window.location.hash = "generations"; });
+  await navigated.clock.fastForward(1000);
+  const generations = navigated.locator("#generations-table");
+  const generation13 = generations.getByRole("row").filter({ hasText: "#13" });
+  const generation12 = generations.getByRole("row").filter({ hasText: "#12" });
+  await expect(generation13).toBeVisible();
+  holdGeneration13 = true;
+  const firstSettled = new Promise(resolve => {
+    const settled = request => {
+      if (!request.url().endsWith("/api/v1/generations/13/config")) return;
+      navigated.off("requestfinished", settled);
+      navigated.off("requestfailed", settled);
+      resolve();
+    };
+    navigated.on("requestfinished", settled);
+    navigated.on("requestfailed", settled);
+  });
+  await generation13.getByRole("button", { name: "View", exact: true }).click();
+  await expect.poll(() => pendingGenerationResponse !== null).toBe(true);
+  await generation12.getByRole("button", { name: "View", exact: true }).click();
+  await expect(navigated.getByText("Generation #12", { exact: true })).toBeVisible();
+  const delayed = pendingGenerationResponse;
+  pendingGenerationResponse = null;
+  delayed.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+  delayed.end("# stored generation 13\n" + configFixture().text);
+  await firstSettled;
+  await navigated.clock.fastForward(1000);
+  await expect(navigated.getByText("Generation #12", { exact: true })).toBeVisible();
+  await expect(navigated.locator("#generation-result pre")).toContainText("stored generation 12");
+  await expect(navigated.getByText("Generation #13", { exact: true })).toHaveCount(0);
+  holdGeneration13 = false;
   await navigated.close();
+  largeConfig = false;
   natResourceRevision = 0;
   configRevision = 0;
 
@@ -153,12 +249,32 @@ try {
   await observations.goto(`${baseURL}#overview`);
   const interfaces = observations.locator("#overview-interfaces");
   await expect(interfaces).toContainText("ens18");
+  await expect(observations.locator("#overview-metrics").getByText("0% / 1.00 GiB", { exact: true })).toHaveCount(2);
   await expect(observations.getByText("1 gateway components", { exact: true })).toBeVisible();
   observationMode = "partial";
   await observations.clock.fastForward(30000);
   await expect(observations.locator("#overview-metrics")).toContainText("936/262144");
   await expect(interfaces).toContainText("ens18");
   await expect(observations.getByText("1 gateway components", { exact: true })).toBeVisible();
+  observationMode = "interface-failed";
+  await observations.clock.fastForward(30000);
+  const oldInterface = interfaces.getByRole("group", { name: "Interface ens18", exact: true });
+  await expect(oldInterface).toContainText("Previously observed addresses; current read failed");
+  await expect(oldInterface).toContainText("192.168.1.249/24");
+  await expect(oldInterface).toContainText("Configured addresses");
+  await expect(oldInterface).toContainText("192.0.2.250/24");
+  observationMode = "interface-changed";
+  await observations.clock.fastForward(30000);
+  const changedInterface = interfaces.getByRole("group", { name: "Interface ens99", exact: true });
+  await expect(changedInterface).toContainText("Current addresses unknown");
+  await expect(changedInterface).not.toContainText("192.168.1.249/24");
+  observationMode = "normal";
+  await observations.clock.fastForward(30000);
+  await expect(oldInterface).toContainText("192.168.1.249/24");
+  observationMode = "interface-empty";
+  await observations.clock.fastForward(30000);
+  await expect(oldInterface).toContainText("No address observed");
+  await expect(oldInterface).not.toContainText("192.168.1.249/24");
   observationMode = "failed";
   await observations.clock.fastForward(30000);
   await expect(observations.getByRole("alert")).toContainText("resource store unavailable");
@@ -170,6 +286,133 @@ try {
   await expect(observations.getByText("No gateway component status observed", { exact: true })).toBeVisible();
   await expect(observations.getByRole("alert")).toHaveCount(0);
   await observations.close();
+  observationMode = "normal";
+
+  // The resource inventory includes all declared kinds. Absence of observed
+  // effect/controller state must not turn a declaration into healthy/live.
+  const inventory = await refreshContext.newPage();
+  await inventory.clock.install();
+  await inventory.goto(`${baseURL}#resources`);
+  const resourceTable = inventory.locator("#resources-table table");
+  const unobserved = resourceTable.getByRole("row").filter({ hasText: "unobserved-module" });
+  await expect(unobserved).toContainText("NotObserved");
+  await expect(unobserved).toContainText("unknown");
+  const retained = resourceTable.getByRole("row").filter({ hasText: "removed-peer" });
+  await expect(retained).toContainText("retained status; not declared in current config");
+  await expect(retained).toContainText("Pending");
+  await expect(retained).toContainText("WithdrawalFailed");
+  await expect(resourceTable.getByRole("row").filter({ hasText: "Package" }).first()).toBeVisible();
+  const unknownPhaseColor = await unobserved.getByText("NotObserved", { exact: true }).evaluate(element => getComputedStyle(element.closest(".fui-Badge")).color);
+  const healthyPhaseColor = await resourceTable.getByText("Healthy", { exact: true }).first().evaluate(element => getComputedStyle(element.closest(".fui-Badge")).color);
+  expect(unknownPhaseColor).not.toBe(healthyPhaseColor);
+  observationMode = "unknown-health";
+  await inventory.evaluate(() => { window.location.hash = "overview"; });
+  await inventory.clock.fastForward(1000);
+  const unknownHealth = inventory.locator("#overview-gateway-health");
+  await expect(unknownHealth.getByText("unknown", { exact: true })).toBeVisible();
+  await expect(unknownHealth.getByText("unknown 1", { exact: true })).toBeVisible();
+  await expect(unknownHealth.getByText("skip 0", { exact: true })).toBeVisible();
+  await inventory.close();
+  observationMode = "normal";
+
+  observationMode = "unavailable";
+  const unknownConnections = await refreshContext.newPage();
+  await unknownConnections.clock.install();
+  await unknownConnections.goto(`${baseURL}#connections`);
+  await expect(unknownConnections.getByRole("alert")).toContainText("requested observation unavailable");
+  await expect(unknownConnections.getByText("Connection observation unavailable", { exact: true })).toBeVisible();
+  await expect(unknownConnections.getByText("IPv4", { exact: true }).locator("..")).toContainText("-");
+  observationMode = "empty";
+  await unknownConnections.clock.fastForward(30000);
+  await expect(unknownConnections.getByText("Connection observation unavailable", { exact: true })).toHaveCount(0);
+  await expect(unknownConnections.getByText("IPv4", { exact: true }).locator("..")).toContainText("0");
+  await unknownConnections.close();
+  observationMode = "unavailable";
+  const unknownDenies = await refreshContext.newPage();
+  await unknownDenies.clock.install();
+  await unknownDenies.goto(`${baseURL}#firewall/timeline`);
+  await expect(unknownDenies.getByText("Firewall deny observation unavailable", { exact: true })).toBeVisible();
+  await expect(unknownDenies.getByText("Conntrack tuning observation unavailable", { exact: true })).toBeVisible();
+  await expect(unknownDenies.getByText("No denies in the last 24 hours", { exact: true })).toHaveCount(0);
+  observationMode = "empty";
+  await unknownDenies.clock.fastForward(30000);
+  await expect(unknownDenies.getByText("No denies in the last 24 hours", { exact: true })).toBeVisible();
+  await expect(unknownDenies.getByText("No tuning suggestions from the current observation window", { exact: true })).toBeVisible();
+  await unknownDenies.close();
+  observationMode = "normal";
+
+  observationMode = "unaccounted-traffic";
+  const passive = await refreshContext.newPage();
+  await passive.clock.install();
+  await passive.goto(`${baseURL}#overview`);
+  const domains = passive.locator(".fui-Card").filter({ has: passive.getByText("Top SNI / domains", { exact: true }) });
+  await expect(domains).toContainText("unaccounted.example");
+  await expect(domains).toContainText("1 flow");
+  await expect(domains).not.toContainText("1 B");
+  await expect(passive.locator(".fui-Card").filter({ has: passive.getByText("Top protocols", { exact: true }) })).toContainText("No measured byte volume");
+  observationMode = "normal";
+  await passive.evaluate(() => { window.location.hash = "firewall/timeline"; });
+  await passive.clock.fastForward(1000);
+  const ackPacket = passive.getByRole("table", { name: "Deny timeline", exact: true }).getByRole("row").filter({ hasText: "192.0.2.77" });
+  await expect(ackPacket).toContainText("unknown");
+  await expect(ackPacket).toContainText("ACK packet");
+  await expect(ackPacket).not.toContainText("true suspicious");
+  await expect(ackPacket).not.toContainText("established follow");
+  await passive.close();
+
+  // Real YAML aliases may be recursive. Keep the raw file readable instead
+  // of sending a cyclic object graph into the recursive tree renderer.
+  recursiveConfig = true;
+  const recursive = await refreshContext.newPage();
+  await recursive.clock.install();
+  const recursiveErrors = [];
+  recursive.on("pageerror", error => recursiveErrors.push(String(error)));
+  await recursive.goto(`${baseURL}#config`);
+  await expect(recursive.locator("main")).toContainText("Recursive YAML aliases cannot be shown as a tree");
+  await expect(recursive.locator("main pre")).toContainText("child: *loop");
+  recursiveConfig = false;
+  await recursive.clock.fastForward(30000);
+  await expect(recursive.locator("main")).not.toContainText("Recursive YAML aliases cannot be shown as a tree");
+  await expect(recursive.locator("main")).toContainText("homert02");
+  expect(recursiveErrors).toEqual([]);
+  await recursive.close();
+
+  // Addresses, retained leases and recent traffic identify a device without
+  // proving it is reachable now. Exercise the shipped inventory's badges.
+  const clientPresence = await refreshContext.newPage();
+  await clientPresence.clock.install();
+  await clientPresence.goto(`${baseURL}#clients/inventory`);
+  const clientRows = clientPresence.locator('[data-client-row="true"]');
+  await expect(clientRows).toHaveCount(2);
+  await expect(clientRows.first()).toHaveAttribute("data-reachability", "reachable");
+  for (const mode of ["client-history", "client-stale"]) {
+    observationMode = mode;
+    await clientPresence.clock.fastForward(30000);
+    await expect(clientRows.first()).toHaveAttribute("data-reachability", "unknown");
+    await expect(clientRows.first().getByText("unknown", { exact: true }).last()).toBeVisible();
+    await expect(clientRows.first().getByText("offline", { exact: true })).toHaveCount(0);
+  }
+  observationMode = "client-mixed";
+  await clientPresence.clock.fastForward(30000);
+  await expect(clientRows.first()).toHaveAttribute("data-reachability", "reachable");
+  observationMode = "normal";
+  const dualStackClient = clientRows.filter({ hasText: "mcberry" });
+  await dualStackClient.getByRole("button", { name: "Expand client details", exact: true }).click();
+  await expect(dualStackClient).toContainText("IPv6");
+  await expect(dualStackClient).not.toContainText("IPv6 privacy");
+  await expect(dualStackClient).not.toContainText("IPv6 stable");
+  observationMode = "client-zero-accounting";
+  await clientPresence.clock.fastForward(30000);
+  const zeroAccountedClient = clientRows.filter({ hasText: "aiseg2" });
+  await zeroAccountedClient.getByRole("button", { name: "Expand client details", exact: true }).click();
+  await expect(zeroAccountedClient).toContainText("out 0 B / in 0 B");
+  await expect(dualStackClient).toContainText("out not collected / in not collected");
+  observationMode = "normal";
+  await clientPresence.evaluate(() => { window.location.hash = "clients/leases"; });
+  await clientPresence.clock.fastForward(1000);
+  await expect(clientPresence.locator("#clients-leases").getByRole("columnheader", { name: "MAC / IAID", exact: true })).toBeVisible();
+  await expect(clientPresence.locator("#clients-leases").getByRole("cell", { name: "IAID 1", exact: true })).toBeVisible();
+  await clientPresence.close();
   observationMode = "normal";
 
   if (!process.argv.includes("--check-refresh")) {
@@ -238,10 +481,20 @@ function notFound(res) {
 }
 
 function generationResponse(urlPath, res) {
+  if (/^\/api\/v1\/generations\/\d+\/diff\/current$/.test(urlPath)) {
+    currentFileDiffRequests++;
+    res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+    res.end("--- generation-13.yaml\n+++ current-file.yaml\n@@ -1,1 +1,1 @@\n-name: previous-router\n+name: refreshed-router\n");
+    return;
+  }
   const configMatch = urlPath.match(/^\/api\/v1\/generations\/(\d+)\/config$/);
   if (configMatch) {
+    if (holdGeneration13 && configMatch[1] === "13") {
+      pendingGenerationResponse = res;
+      return;
+    }
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-    res.end(configFixture().text);
+    res.end(`# stored generation ${configMatch[1]}\n` + configFixture().text);
     return;
   }
   const diffMatch = urlPath.match(/^\/api\/v1\/generations\/(\d+)\/diff\/(\d+)$/);
@@ -265,6 +518,7 @@ function summaryFixture() {
   const now = new Date().toISOString();
   return {
     generatedAt: now,
+    systemUsage: { cpuPercent: 0, memoryUsedPercent: 0, memoryTotalBytes: 1073741824, disks: [{ path: "/", usedPercent: 0, totalBytes: 1073741824 }] },
     gatewayHealth: { overall: "ok", components: [{ kind: "HealthCheck", name: "internet-via-dslite-a", status: "ok", phase: "Healthy" }] },
     status: {
       status: {
@@ -293,12 +547,14 @@ function summaryFixture() {
       { clientAddress: "172.18.1.110", peerAddress: "140.82.112.6", resolvedHostname: "api.github.com", accounting: true, bytesOut: 88000, bytesIn: 1200000 },
     ],
     firewallLogs: [
+      { id: 92, ts: now, action: "drop", srcAddress: "192.0.2.77", dstAddress: "198.51.100.77", protocol: "tcp", l3Proto: "ipv4", srcPort: 49152, dstPort: 443, tcpFlags: "ACK" },
       { id: 91, ts: now, action: "drop", srcAddress: "192.168.178.40", dstAddress: "172.18.0.1", protocol: "tcp", l3Proto: "ipv4", dstPort: 8080, inIface: "ens18", outIface: "ens19", packetBytes: 60 },
       { id: 90, ts: now, action: "drop", srcAddress: "35.72.114.176", dstAddress: "172.18.1.110", protocol: "udp", l3Proto: "ipv4", dstPort: 41641, inIface: "ds-lite-a", packetBytes: 92 },
     ],
     dhcpLeases: [
       { expiresAt: now, mac: "18:ec:e7:33:12:6c", ip: "172.18.0.150", hostname: "aiseg2", family: "ipv4", source: "dnsmasq" },
       { expiresAt: now, mac: "4e:20:15:aa:e0:67", ip: "172.18.1.110", hostname: "mcberry", family: "ipv4", source: "dnsmasq" },
+      { expiresAt: now, iaid: "1", clientId: "00:03:00:01:00:11:22:33:44:55", ip: "2001:db8::1", hostname: "host6", family: "ipv6", source: "dnsmasq" },
     ],
     neighbors: [
       { ip: "2409:10:3d60:1271:879:3d5a:205d:ba39", ifname: "ens19", mac: "4e:20:15:aa:e0:67", state: "reachable", source: "ip-neigh" },
@@ -306,7 +562,7 @@ function summaryFixture() {
     ],
     clients: [
       { id: "18:ec:e7:33:12:6c", hostname: "aiseg2", mac: "18:ec:e7:33:12:6c", vendor: "Panasonic", addresses: ["172.18.0.150"], state: "reachable", sources: ["dhcpv4", "neighbor"], bytesOut: 512000, bytesIn: 9400000, peers: ["www.google.com"] },
-      { id: "4e:20:15:aa:e0:67", hostname: "mcberry", mac: "4e:20:15:aa:e0:67", vendor: "Apple", addresses: ["172.18.1.110", "2409:10:3d60:1271:879:3d5a:205d:ba39"], state: "reachable", sources: ["dhcpv4", "neighbor"], bytesOut: 88000, bytesIn: 1200000, peers: ["api.github.com"] },
+      { id: "4e:20:15:aa:e0:67", hostname: "mcberry", mac: "4e:20:15:aa:e0:67", addresses: ["172.18.1.110", "2409:10:3d60:1271:879:3d5a:205d:ba39"], state: "reachable", sources: ["dhcpv4", "neighbor"], bytesOut: 88000, bytesIn: 1200000, peers: ["api.github.com"] },
     ],
     vpn: {
       wireGuard: [
@@ -380,9 +636,10 @@ function connectionFixture() {
 }
 
 function configFixture() {
+  if (recursiveConfig) return { path: "/etc/routerd/router.yaml", text: "root: &loop\n  child: *loop\n" };
   return {
     path: "/usr/local/etc/routerd/router.yaml",
-    text: `apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: ${configRevision ? "refreshed-router" : "homert02"}\nspec:\n  resources:\n    - apiVersion: net.routerd.net/v1alpha1\n      kind: Interface\n      metadata:\n        name: lan\n      spec:\n        ifname: ens19\n        role: trust\n    - apiVersion: system.routerd.net/v1alpha1\n      kind: WebConsole\n      metadata:\n        name: mgmt-console\n      spec:\n        listenAddressFrom:\n          resource: Interface/mgmt\n          field: status.addresses[0]\n`,
+    text: (largeConfig ? "# large configuration context\n".repeat(10000) : "") + `apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: ${configRevision === 2 ? "third-router" : configRevision ? "refreshed-router" : "homert02"}\nspec:\n  resources:\n    - apiVersion: net.routerd.net/v1alpha1\n      kind: Interface\n      metadata:\n        name: lan\n      spec:\n        ifname: ens19\n        role: trust\n    - apiVersion: system.routerd.net/v1alpha1\n      kind: WebConsole\n      metadata:\n        name: mgmt-console\n      spec:\n        listenAddressFrom:\n          resource: Interface/mgmt\n          field: status.addresses[0]\n`,
   };
 }
 

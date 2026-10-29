@@ -48,10 +48,32 @@ func TestExpiredDrainCanBeObservedWithoutMutatingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if _, active := Current(reader, "service", "backend"); active {
-		t.Fatal("expired drain remained active")
+	if _, active, err := Current(reader, "service", "backend"); err != nil || active {
+		t.Fatalf("expired drain remained active: err=%v", err)
 	}
 	if got := writer.Get(Key("service", "backend")); got.Value != string(payload) {
 		t.Fatal("read-only drain evaluation changed persisted state")
+	}
+}
+
+func TestCurrentDoesNotTurnUnreadableDrainIntoUndrainedBackend(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Drain(store, "service", "backend", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Set(Key("service", "backend"), "{", "corrupt fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Current(store, "service", "backend"); err == nil {
+		t.Fatal("corrupt drain treated as inactive")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Current(store, "service", "backend"); !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("closed store treated as inactive: %v", err)
 	}
 }

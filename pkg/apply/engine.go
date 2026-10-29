@@ -4,6 +4,7 @@ package apply
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -19,19 +20,34 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type Engine struct {
-	Command      func(name string, args ...string) ([]byte, error)
-	OSNetworking *osNetworking
+	Command          func(name string, args ...string) ([]byte, error)
+	OSNetworking     *osNetworking
+	operationContext context.Context
 }
 
-func New() *Engine {
-	return &Engine{Command: runCommand}
+// New binds native observations to one request or serve operation. The engine
+// is ephemeral; it does not retain a context across unrelated requests.
+func New(ctx context.Context) *Engine {
+	return &Engine{operationContext: ctx, Command: func(name string, args ...string) ([]byte, error) { return runCommand(ctx, name, args...) }}
+}
+
+func (e *Engine) operationError() error {
+	if e.operationContext != nil {
+		return e.operationContext.Err()
+	}
+	// Explicitly injected command collaborators own their observation lifetime.
+	return nil
 }
 
 func (e *Engine) Validate(router *api.Router) error {
+	if err := e.operationError(); err != nil {
+		return err
+	}
 	return config.Validate(router)
 }
 
@@ -78,6 +94,9 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	for _, res := range router.Spec.Resources {
+		if err := e.operationError(); err != nil {
+			return nil, err
+		}
 		rr := ResourceResult{
 			ID:       res.ID(),
 			Phase:    "Healthy",
@@ -206,6 +225,9 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		}
 	}
 
+	if err := e.operationError(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -464,7 +486,7 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 		return
 	}
 	ifname := aliases[spec.Interface]
-	client := defaultString(spec.Client, "networkd")
+	client := api.EffectiveIPv6PDClient("", spec.Profile, spec.Client)
 	profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
@@ -691,7 +713,7 @@ func (e *Engine) observeBFD(res api.Resource, includePlan bool, rr *ResourceResu
 		rr.Observed["interface"] = spec.Interface
 	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, "record BFD intent (embedded GoBGP backend does not support BFD yet)")
+		rr.Plan = append(rr.Plan, "reconcile owned FRR bfdd sessions and feed observed peer state to BGP")
 	}
 }
 
@@ -2227,18 +2249,28 @@ func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interf
 	return policies
 }
 
-func runCommand(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if stderr.Len() > 0 {
-			return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return out, err
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, name, args...)
+	cmd.WaitDelay = time.Second
+	stdout := subprocessio.NewCapture(subprocessio.StdoutLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	if commandCtx.Err() != nil {
+		return nil, commandCtx.Err()
 	}
-	return out, nil
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, limitErr
+	}
+	if err != nil {
+		if stderr.String() != "" {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
 }
 
 func ownerFromManaged(managed bool) string {

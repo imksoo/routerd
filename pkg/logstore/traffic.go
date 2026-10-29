@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -96,7 +97,7 @@ func OpenTrafficFlowLog(path string) (*TrafficFlowLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteFileURI(path))
 	if err != nil {
 		return nil, err
 	}
@@ -167,43 +168,6 @@ CREATE INDEX IF NOT EXISTS flows_peer_ts ON flows(peer_address, ts_started);
 `)
 	if err != nil {
 		return err
-	}
-	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN accounting INTEGER`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
-	}
-	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN http_host TEXT`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
-	}
-	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN dns_query TEXT`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
-	}
-	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN engine TEXT`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
-	}
-	_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN source TEXT`)
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		typ  string
-	}{
-		{"detected_protocol", "TEXT"},
-		{"master_protocol", "TEXT"},
-		{"application_protocol", "TEXT"},
-		{"category", "TEXT"},
-		{"risk", "TEXT"},
-		{"confidence", "INTEGER"},
-		{"metadata_json", "TEXT"},
-	} {
-		_, err = l.db.ExecContext(ctx, `ALTER TABLE flows ADD COLUMN `+column.name+` `+column.typ)
-		if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-			return err
-		}
 	}
 	return nil
 }
@@ -396,10 +360,6 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 	if l == nil || l.db == nil {
 		return nil, nil
 	}
-	columns, err := tableColumns(ctx, l.db, "flows")
-	if err != nil {
-		return nil, err
-	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
@@ -409,7 +369,7 @@ func (l *TrafficFlowLog) List(ctx context.Context, filter TrafficFlowFilter) ([]
 	}
 	where, args := l.buildTrafficQuery(filter)
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),`+optionalIntColumn(columns, "accounting")+`,coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),`+optionalTextColumn(columns, "http_host")+`,`+optionalTextColumn(columns, "dns_query")+`,coalesce(resolved_hostname,'')
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_key,ts_started,coalesce(ts_ended,0),coalesce(client_address,''),coalesce(client_port,0),coalesce(peer_address,''),coalesce(peer_port,0),protocol,coalesce(nat_translated_address,''),coalesce(accounting,0),coalesce(bytes_out,0),coalesce(bytes_in,0),coalesce(packets_out,0),coalesce(packets_in,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(resolved_hostname,'')
 FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -423,8 +383,14 @@ FROM flows`+where+` ORDER BY ts_started DESC LIMIT ?`, args...)
 		if err := rows.Scan(&flow.FlowKey, &started, &ended, &flow.ClientAddress, &flow.ClientPort, &flow.PeerAddress, &flow.PeerPort, &flow.Protocol, &flow.NATTranslatedAddress, &flow.Accounting, &flow.BytesOut, &flow.BytesIn, &flow.PacketsOut, &flow.PacketsIn, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &flow.ResolvedHostname); err != nil {
 			return nil, err
 		}
-		flow.Risk = jsonStringSlice(riskJSON)
-		flow.Metadata = jsonStringMap(metadataJSON)
+		flow.Risk, err = jsonStringSlice(riskJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode traffic flow %s risk: %w", flow.FlowKey, err)
+		}
+		flow.Metadata, err = jsonStringMap(metadataJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode traffic flow %s metadata: %w", flow.FlowKey, err)
+		}
 		flow.StartedAt = time.Unix(0, started).UTC()
 		if ended > 0 {
 			flow.EndedAt = time.Unix(0, ended).UTC()

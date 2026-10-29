@@ -64,11 +64,32 @@ func IsStorageFullError(err error) bool {
 }
 
 func (s *SQLiteStore) loadEventJournalUsage() error {
-	return s.db.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).
-		Scan(&s.eventJournalRows, &s.eventJournalPayloadBytes)
+	// Capture before the aggregate: an external commit racing the read changes
+	// data_version again and forces another refresh before the next append.
+	var version int64
+	if err := s.db.QueryRow(`PRAGMA data_version`).Scan(&version); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(`SELECT count(*), coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).Scan(&s.eventJournalRows, &s.eventJournalPayloadBytes); err != nil {
+		return err
+	}
+	s.eventJournalDataVersion = version
+	return nil
 }
 
 func (s *SQLiteStore) ensureEventJournalCapacityLocked(incomingBytes int64) error {
+	// The daemon and CLI can write the same journal. Keep the fast incremental
+	// budget while this connection is its only writer, and refresh after another
+	// SQLite connection commits instead of treating its rows as zero bytes.
+	var version int64
+	if err := s.db.QueryRow(`PRAGMA data_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version != s.eventJournalDataVersion {
+		if err := s.loadEventJournalUsage(); err != nil {
+			return err
+		}
+	}
 	if err := s.pruneExpiredJournalBatchLocked(); err != nil {
 		return err
 	}

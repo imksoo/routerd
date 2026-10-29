@@ -120,3 +120,19 @@ completion is not awaited.
 current-declaration, handover and mutation regressions. It is included in the
 focused gate. Its test-owned kernel-command observations and loopback services
 do not replace the complete native suite or the VM/independent-peer gates.
+
+The second semantic pass extends those same production paths: explicit provider
+uncertainty and operator resolution; atomic subscription output/deduplication;
+authenticated immutable federation facts; bounded worker/exporter shutdown;
+strict configuration and error-bearing source reads; native BFD/VIP ownership;
+and truthful console observations. `check-routerd15-robustness`, included in the
+focused gate, exercises these paths with owned SQLite/process/loopback fixtures.
+The audit record retains the unread scopes, implementation gaps and independent
+peer/platform gates; a successful focused gate does not close them.
+
+The next repair batches follow the concrete production findings in
+[routerd15-open-findings.md](routerd15-open-findings.md): provider ambiguity and
+exact identity, one BGP policy owner, ordinary/native address and route ownership,
+current runtime lifetimes, truthful command/control behavior, and durable isolated
+build/lab cleanup. Complete each actual owner/caller path and remove superseded
+branches; do not expand a generic framework or certify an unread scope.

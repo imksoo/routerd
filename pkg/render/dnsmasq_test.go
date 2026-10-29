@@ -628,7 +628,7 @@ func TestDnsmasqConfigRendersIPv6StatelessScope(t *testing.T) {
 	for _, want := range []string{
 		"enable-ra",
 		"dhcp-range=set:lan-dhcpv6,::,constructor:ens19,ra-stateless,64,12h",
-		"ra-param=ens19,mtu:1454,0",
+		"ra-param=ens19,mtu:1460,0",
 		"dhcp-option=tag:lan-dhcpv6,option6:dns-server,[2001:db8:3d60:1220::3]",
 	} {
 		if !strings.Contains(got, want) {
@@ -696,7 +696,7 @@ func TestDnsmasqConfigAddsDefaultIntervalForPartialRAParams(t *testing.T) {
 		t.Fatalf("render dnsmasq: %v", err)
 	}
 	for _, want := range []string{
-		"ra-param=ens19,mtu:1454,0",
+		"ra-param=ens19,mtu:1460,0",
 		"ra-param=ens19,high,0",
 	} {
 		if !strings.Contains(string(data), want) {

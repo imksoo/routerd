@@ -19,6 +19,8 @@ import (
 type packetSocket struct {
 	capture   *freebsdpcap.Reader
 	writerFD  int
+	writerMu  sync.Mutex
+	closed    bool
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -46,13 +48,23 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 	return &packetSocket{capture: capture, writerFD: fd}, nil
 }
 
-func (s *packetSocket) read(frame []byte) (int, error)  { return s.capture.Read(frame) }
-func (s *packetSocket) write(frame []byte) (int, error) { return unix.Write(s.writerFD, frame) }
+func (s *packetSocket) read(frame []byte) (int, error) { return s.capture.Read(frame) }
+func (s *packetSocket) write(frame []byte) (int, error) {
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
+	if s.closed {
+		return 0, os.ErrClosed
+	}
+	return unix.Write(s.writerFD, frame)
+}
 
 func (s *packetSocket) closeSocket() error {
 	s.closeOnce.Do(func() {
 		captureErr := s.capture.Close()
+		s.writerMu.Lock()
+		s.closed = true
 		writerErr := unix.Close(s.writerFD)
+		s.writerMu.Unlock()
 		if captureErr != nil {
 			s.closeErr = captureErr
 		} else {

@@ -4,7 +4,10 @@ package otel
 
 import (
 	"context"
+	"crypto/tls"
+	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -27,6 +30,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
 )
 
 type Runtime struct {
@@ -62,7 +66,15 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	res := resource.NewWithAttributes(semconv.SchemaURL, resourceAttributes(serviceName, attrs...)...)
 
 	if signalEnabled("logs") {
-		logExporter, err := otlploggrpc.New(ctx)
+		creds, err := otlpTLSCredentials("logs")
+		if err != nil {
+			return nil, err
+		}
+		var options []otlploggrpc.Option
+		if creds != nil {
+			options = append(options, otlploggrpc.WithTLSCredentials(creds))
+		}
+		logExporter, err := otlploggrpc.New(ctx, options...)
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +88,16 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	}
 
 	if signalEnabled("metrics") {
-		metricExporter, err := otlpmetricgrpc.New(ctx)
+		creds, err := otlpTLSCredentials("metrics")
+		if err != nil {
+			_ = runtime.ShutdownGracefully()
+			return nil, err
+		}
+		var options []otlpmetricgrpc.Option
+		if creds != nil {
+			options = append(options, otlpmetricgrpc.WithTLSCredentials(creds))
+		}
+		metricExporter, err := otlpmetricgrpc.New(ctx, options...)
 		if err != nil {
 			_ = runtime.ShutdownGracefully()
 			return nil, err
@@ -91,7 +112,16 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	}
 
 	if signalEnabled("traces") {
-		traceExporter, err := otlptracegrpc.New(ctx)
+		creds, err := otlpTLSCredentials("traces")
+		if err != nil {
+			_ = runtime.ShutdownGracefully()
+			return nil, err
+		}
+		var options []otlptracegrpc.Option
+		if creds != nil {
+			options = append(options, otlptracegrpc.WithTLSCredentials(creds))
+		}
+		traceExporter, err := otlptracegrpc.New(ctx, options...)
 		if err != nil {
 			_ = runtime.ShutdownGracefully()
 			return nil, err
@@ -106,6 +136,31 @@ func Setup(ctx context.Context, serviceName string, attrs ...attribute.KeyValue)
 	}
 	runtime.Enabled = true
 	return runtime, nil
+}
+
+// The standard OTLP INSECURE setting selects plaintext transport. Certificate
+// verification is a separate operator setting and must retain TLS, including
+// any client identity configured through the standard exporter environment.
+func otlpTLSCredentials(signal string) (credentials.TransportCredentials, error) {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("ROUTERD_OTLP_TLS_SKIP_VERIFY")), "true") {
+		return nil, nil
+	}
+	config := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit operator certificate-verification setting
+	value := func(suffix string) string {
+		if configured := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_" + strings.ToUpper(signal) + "_" + suffix)); configured != "" {
+			return configured
+		}
+		return strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_" + suffix))
+	}
+	certificate, key := value("CLIENT_CERTIFICATE"), value("CLIENT_KEY")
+	if certificate != "" || key != "" {
+		pair, err := tls.LoadX509KeyPair(certificate, key)
+		if err != nil {
+			return nil, fmt.Errorf("load %s OTLP client TLS identity: %w", signal, err)
+		}
+		config.Certificates = []tls.Certificate{pair}
+	}
+	return credentials.NewTLS(config), nil
 }
 
 func resourceAttributes(serviceName string, attrs ...attribute.KeyValue) []attribute.KeyValue {
@@ -142,7 +197,11 @@ func parseResourceAttributes(raw string) []attribute.KeyValue {
 		if !ok || key == "" {
 			continue
 		}
-		out = append(out, attribute.String(key, strings.TrimSpace(value)))
+		decoded, err := url.PathUnescape(strings.TrimSpace(value))
+		if err != nil {
+			continue
+		}
+		out = append(out, attribute.String(key, decoded))
 	}
 	return out
 }
@@ -187,11 +246,11 @@ func (r *Runtime) ShutdownGracefully() error {
 }
 
 func (r *Runtime) Counter(name string) otelmetric.Int64Counter {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.counters == nil {
 		r.counters = map[string]otelmetric.Int64Counter{}
 	}
@@ -204,11 +263,11 @@ func (r *Runtime) Counter(name string) otelmetric.Int64Counter {
 }
 
 func (r *Runtime) Gauge(name string) otelmetric.Int64Gauge {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.gauges == nil {
 		r.gauges = map[string]otelmetric.Int64Gauge{}
 	}
@@ -221,11 +280,11 @@ func (r *Runtime) Gauge(name string) otelmetric.Int64Gauge {
 }
 
 func (r *Runtime) Float64Gauge(name string) otelmetric.Float64Gauge {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.Meter == nil {
 		r.Meter = otel.Meter(r.ServiceName)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.float64Gauges == nil {
 		r.float64Gauges = map[string]otelmetric.Float64Gauge{}
 	}
@@ -238,6 +297,8 @@ func (r *Runtime) Float64Gauge(name string) otelmetric.Float64Gauge {
 }
 
 func (r *Runtime) Ensure() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.Logger == nil {
 		r.Logger = slog.Default()
 	}

@@ -19,20 +19,24 @@ import (
 // resolveCaptureSourceAddress resolves a capture address from a configured
 // value or from the configured status source. It is an input-resolution helper
 // for the controller shell; address ownership remains in the planner.
-func resolveCaptureSourceAddress(reader resourcequery.Store, configured string, source api.StatusValueSourceSpec, pool netip.Prefix) string {
+func resolveCaptureSourceAddress(reader resourcequery.StatusReader, configured string, source api.StatusValueSourceSpec, pool netip.Prefix) (string, error) {
 	configured = strings.TrimSpace(configured)
-	if configured != "" || reader == nil {
-		return configured
+	if configured != "" {
+		return configured, nil
 	}
 	if !pool.IsValid() || !pool.Addr().Is4() {
-		return ""
+		return "", nil
 	}
-	for _, raw := range resourcequery.Values(reader, source) {
+	values, err := resourcequery.ReadValues(reader, source)
+	if err != nil {
+		return "", fmt.Errorf("resolve capture source address: %w", err)
+	}
+	for _, raw := range values {
 		if prefix, ok := captureSourcePrefix(raw, pool); ok {
-			return prefix.Addr().String()
+			return prefix.Addr().String(), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func bgpPathSigsByAddress(plans []dynamicconfig.ActionPlan) map[string]string {

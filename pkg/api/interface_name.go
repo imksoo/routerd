@@ -30,6 +30,17 @@ func ResolveInterfaceIfName(router *Router, name string) string {
 			if err == nil && spec.IfName != "" {
 				return spec.IfName
 			}
+		case "VRF":
+			spec, err := resource.VRFSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err == nil && spec.IfName != "" {
+				return spec.IfName
+			}
+
 		case "WireGuardInterface":
 			spec, err := resource.WireGuardInterfaceSpec()
 			if err == nil && spec.IfName != "" {

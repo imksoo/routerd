@@ -62,7 +62,7 @@ func TestValidateActionPlanRejectsExecuteExactly(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for mode=execute")
 	}
-	const want = "actionPlan mode=execute is not supported; provider actions are dry-run/display-only in Phase 4.1"
+	const want = "actionPlan mode=execute is not supported; a proposal cannot authorize live execution"
 	if err.Error() != want {
 		t.Fatalf("error = %q, want exactly %q", err.Error(), want)
 	}

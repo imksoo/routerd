@@ -80,6 +80,9 @@ func (e *Engine) AdoptionCandidateArtifacts(router *api.Router, ledger resource.
 		})
 		artifacts = append(artifacts, mergeArtifactAttributes(artifact, actualArtifact))
 	}
+	if err := e.operationError(); err != nil {
+		return nil, nil, err
+	}
 	return candidates, artifacts, nil
 }
 
@@ -113,6 +116,9 @@ func (e *Engine) AppliedOwnedArtifacts(router *api.Router) ([]resource.Artifact,
 		}
 		seen[id] = true
 		artifacts = append(artifacts, mergeArtifactAttributes(artifact, actual))
+	}
+	if err := e.operationError(); err != nil {
+		return nil, err
 	}
 	return artifacts, nil
 }
@@ -156,10 +162,14 @@ func (e *Engine) LedgerOwnedOrphanPlanEffective(effective, declared *api.Router,
 	if err != nil {
 		return lifecycle.GCPlan{}, err
 	}
+	host := e.actualInventoryBackedArtifacts()
+	if err := e.operationError(); err != nil {
+		return lifecycle.GCPlan{}, err
+	}
 	return lifecycle.PlanArtifactOrphans(lifecycle.GCPlanInput{
 		DesiredArtifacts: desired,
 		LedgerArtifacts:  owned,
-		HostArtifacts:    e.actualInventoryBackedArtifacts(),
+		HostArtifacts:    host,
 	}), nil
 }
 

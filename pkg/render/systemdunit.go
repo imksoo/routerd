@@ -70,7 +70,7 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 	b.WriteString("Type=" + serviceType + "\n")
 	if len(spec.Environment) > 0 {
 		for _, env := range spec.Environment {
-			b.WriteString("Environment=" + strconv.Quote(env) + "\n")
+			b.WriteString("Environment=" + strconv.Quote(strings.ReplaceAll(env, "%", "%%")) + "\n")
 		}
 	}
 	for _, envFile := range spec.EnvironmentFiles {
@@ -125,7 +125,11 @@ func SystemdUnit(name string, spec api.SystemdUnitSpec) []byte {
 func quoteCommand(args []string) string {
 	var quoted []string
 	for _, arg := range args {
-		if strings.ContainsAny(arg, " \t\"'\\") {
+		if arg == ";" {
+			quoted = append(quoted, `\;`)
+			continue
+		}
+		if arg == "" || strings.ContainsAny(arg, " \t\r\n\"'\\") {
 			quoted = append(quoted, strconv.Quote(arg))
 			continue
 		}

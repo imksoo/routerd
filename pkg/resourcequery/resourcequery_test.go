@@ -3,6 +3,7 @@
 package resourcequery
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -59,8 +60,6 @@ func TestDependencyReadyUsesKindAPIVersion(t *testing.T) {
 func TestDependencyReadyUsesObservedPhase(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {
-			"phase":  "Pending",
-			"reason": "WhenFalse",
 			"observed": map[string]any{
 				"phase": "Bound",
 			},
@@ -135,7 +134,6 @@ func TestSourceReadyUsesKindAPIVersion(t *testing.T) {
 func TestSourceReadyUsesObservedPhase(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {
-			"phase": "Pending",
 			"observed": map[string]any{
 				"phase": "Up",
 			},
@@ -642,4 +640,49 @@ func (s statefulMapStore) ReadVariable(name string) (routerstate.Value, error) {
 
 func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
 	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
+func TestResourceReferencesUseAuthoritativeKindCatalog(t *testing.T) {
+	for _, kind := range api.ConfigResourceKinds() {
+		if got := APIVersionForKind(kind.Kind); got != kind.APIVersion {
+			t.Fatalf("%s resolved %s instead of %s", kind.Kind, got, kind.APIVersion)
+		}
+	}
+	if got := APIVersionForKind("Inventory"); got != api.RouterAPIVersion {
+		t.Fatalf("runtime Inventory producer uses router API, got %s", got)
+	}
+	if got := APIVersionForKind("NetworkAdoption"); got != api.SystemAPIVersion {
+		t.Fatalf("runtime NetworkAdoption producer uses system API, got %s", got)
+	}
+
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, kind := range []struct{ apiVersion, kind string }{{api.FederationAPIVersion, "EventGroup"}, {api.PluginAPIVersion, "DynamicConfigSource"}, {api.ConfigAPIVersion, "DynamicOverridePolicy"}, {api.ObservabilityAPIVersion, "Telemetry"}, {api.MobilityAPIVersion, "SAMEnrollmentPolicy"}, {api.HybridAPIVersion, "ProviderActionPolicy"}} {
+		if err := store.SaveObjectStatus(kind.apiVersion, kind.kind, "test", map[string]any{"phase": "Ready", "value": "found"}); err != nil {
+			t.Fatal(err)
+		}
+		ref := kind.kind + "/test"
+		if got := Value(store, api.StatusValueSourceSpec{Resource: ref, Field: "value"}); got != "found" {
+			t.Fatalf("actual %s status source lost: %q", ref, got)
+		}
+		if !DependencyReady(store, api.ResourceDependencySpec{Resource: ref, Phase: "Ready"}) {
+			t.Fatalf("actual %s dependency lost", ref)
+		}
+		when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{ref + ".phase": {Equals: "Ready"}}}
+		if ready, err := ResourceWhenMatches(when, store); err != nil || !ready {
+			t.Fatalf("actual %s when source lost: %t %v", ref, ready, err)
+		}
+	}
+}
+
+func TestOperationalPhaseOwnsDefaultReadiness(t *testing.T) {
+	for _, reason := range []string{"WhenFalse", "DependsOnFalse", "ApplyFailed"} {
+		store := mapStore{api.NetAPIVersion + "/DHCPv4Client/wan": {"phase": "Pending", "reason": reason, "observed": map[string]any{"phase": "Bound"}}}
+		if SourceReady(store, "DHCPv4Client/wan") || DependencyReady(store, api.ResourceDependencySpec{Resource: "DHCPv4Client/wan", Phase: "Bound"}) {
+			t.Fatalf("%s was bypassed through raw daemon observation", reason)
+		}
+	}
 }

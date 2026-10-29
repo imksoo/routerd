@@ -21,6 +21,10 @@ import (
 
 type mapStore map[string]map[string]any
 
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 var testNow = time.Date(2026, 5, 19, 1, 30, 0, 0, time.UTC)
 
 func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {

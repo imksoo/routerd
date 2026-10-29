@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +42,7 @@ type SQLiteStore struct {
 	eventJournalMaxRows      int64
 	eventJournalMaxBytes     int64
 	eventJournalLastAgePrune time.Time
+	eventJournalDataVersion  int64
 	storageAlert             *StorageAlert
 	storageAlertHandler      func(StorageAlert)
 	statusWriteCount         uint64
@@ -61,7 +61,6 @@ type objectRef struct {
 	APIVersion string
 	Kind       string
 	Name       string
-	Field      string
 }
 
 type objectStatus map[string]any
@@ -160,7 +159,9 @@ func (s *SQLiteStore) ReadVariable(name string) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	if value, ok := valueFromStatus(status, ref.Field); ok {
+	if value, ok, err := readStoredVariable(status); err != nil {
+		return Value{}, err
+	} else if ok {
 		return value, nil
 	}
 	now := s.now().UTC()
@@ -211,7 +212,7 @@ func (s *SQLiteStore) Delete(name string) error {
 	if err != nil {
 		return err
 	}
-	deleteStatusField(status, ref.Field)
+	delete(status, "value")
 	if len(status) == 0 {
 		_, err := s.db.Exec(`DELETE FROM objects WHERE api_version=? AND kind=? AND name=?`, ref.APIVersion, ref.Kind, ref.Name)
 		return err
@@ -221,7 +222,10 @@ func (s *SQLiteStore) Delete(name string) error {
 
 func (s *SQLiteStore) setLocked(name, status, value, reason string) (Value, error) {
 	now := s.now().UTC()
-	current := s.getLocked(name)
+	current, err := s.getLocked(name)
+	if err != nil {
+		return Value{}, err
+	}
 	since := current.Since
 	if current.Status != status || current.Value != value || since.IsZero() {
 		since = now
@@ -233,18 +237,19 @@ func (s *SQLiteStore) setLocked(name, status, value, reason string) (Value, erro
 	return next, nil
 }
 
-func (s *SQLiteStore) getLocked(name string) Value {
+func (s *SQLiteStore) getLocked(name string) (Value, error) {
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
-		now := s.now().UTC()
-		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Value{}, err
 	}
-	if value, ok := valueFromStatus(status, ref.Field); ok {
-		return value
+	if value, ok, err := readStoredVariable(status); err != nil {
+		return Value{}, err
+	} else if ok {
+		return value, nil
 	}
 	now := s.now().UTC()
-	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
 }
 
 func (s *SQLiteStore) put(name string, value Value) error {
@@ -256,10 +261,12 @@ func (s *SQLiteStore) put(name string, value Value) error {
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		status = objectStatus{}
+	} else if err != nil {
+		return err
 	}
-	setStatusField(status, ref.Field, value)
+	status["value"] = encodeValueMap(value)
 	return s.saveStatus(ref, status)
 }
 
@@ -281,10 +288,16 @@ func (s *SQLiteStore) loadStatusDocument(apiVersion, kind, name string) (objectS
 			return nil, 0, "", fmt.Errorf("decode %s/%s status: %w", kind, name, err)
 		}
 	}
+	if status == nil {
+		return nil, 0, "", fmt.Errorf("decode %s/%s status: expected an object", kind, name)
+	}
 	return status, generation.Int64, raw, nil
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
+	if status == nil {
+		status = objectStatus{}
+	}
 	if ref.APIVersion == "net.routerd.net/v1alpha1" && ref.Kind == "DHCPv6PrefixDelegation" {
 		clean := cleanPDStatus(status)
 		previous, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
@@ -379,8 +392,11 @@ func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, e
 	current := objectStatus{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return false, nil
+			return false, fmt.Errorf("decode %s/%s status: %w", ref.Kind, ref.Name, err)
 		}
+	}
+	if current == nil {
+		return false, fmt.Errorf("decode %s/%s status: expected an object", ref.Kind, ref.Name)
 	}
 	currentData, _ := json.Marshal(current)
 	if string(currentData) != string(next) {
@@ -484,7 +500,15 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if s.closed {
 		return sql.ErrConnDone
 	}
-	now := s.now().UTC()
+	_, err := s.db.Exec(upsertDynamicConfigPartSQL, dynamicConfigPartArguments(part, s.now().UTC())...)
+	return err
+}
+
+const upsertDynamicConfigPartSQL = `INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,mobility_dataplane_json,arp_observer_intents_json,fib_verdicts_json,status,error,created_at,updated_at)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`
+
+func dynamicConfigPartArguments(part DynamicConfigPartRecord, now time.Time) []any {
 	if part.ObservedAt.IsZero() {
 		part.ObservedAt = now
 	}
@@ -494,11 +518,9 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if part.UpdatedAt.IsZero() {
 		part.UpdatedAt = now
 	}
-	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,mobility_dataplane_json,arp_observer_intents_json,fib_verdicts_json,status,error,created_at,updated_at)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
-		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
-	return err
+	return []any{
+		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt),
+	}
 }
 
 func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error) {
@@ -972,6 +994,9 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
 			return nil, fmt.Errorf("decode %s/%s status: %w", item.Kind, item.Name, err)
 		}
+		if item.Status == nil {
+			return nil, fmt.Errorf("decode %s/%s status: expected an object", item.Kind, item.Name)
+		}
 		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6PrefixDelegation" {
 			if err := projectPDStatus(item.Status, raw, s.now().UTC()); err != nil {
 				return nil, err
@@ -1297,12 +1322,16 @@ FROM events`+where+` ORDER BY id `+order+` LIMIT ?`, args...)
 		if err := rows.Scan(&event.ID, &event.APIVersion, &event.Kind, &event.Name, &event.Type, &event.Reason, &event.Message, &event.Generation, &created, &event.Topic, &event.SourceKind, &event.SourceInstance, &event.ResourceAPIVersion, &event.ResourceKind, &event.ResourceName, &event.Severity, &attributes); err != nil {
 			return nil, err
 		}
-		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		event.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d creation time: %w", event.ID, err)
+		}
 		if attributes != "" && attributes != "null" {
 			var decoded map[string]any
-			if err := json.Unmarshal([]byte(attributes), &decoded); err == nil && len(decoded) > 0 {
-				event.Attributes = decoded
+			if err := json.Unmarshal([]byte(attributes), &decoded); err != nil {
+				return nil, fmt.Errorf("decode event %d attributes: %w", event.ID, err)
 			}
+			event.Attributes = decoded
 		}
 		events = append(events, event)
 	}
@@ -1351,24 +1380,9 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
-func JSONValue(value any) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
 func objectRefForKey(key string) objectRef {
-	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key, Field: "value"}
+	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key}
 }
-
-func valueFromStatus(status objectStatus, field string) (Value, bool) {
-	return decodeValue(status["value"])
-}
-
-func setStatusField(status objectStatus, field string, value Value) {
-	status["value"] = encodeValueMap(value)
-}
-
-func deleteStatusField(status objectStatus, field string) { delete(status, "value") }
 
 func encodeValueMap(value Value) map[string]any {
 	return map[string]any{
@@ -1380,49 +1394,66 @@ func encodeValueMap(value Value) map[string]any {
 	}
 }
 
-func decodeValue(raw any) (Value, bool) {
-	if raw == nil {
-		return Value{}, false
+// readStoredVariable decodes the closed variable shape at its SQLite boundary.
+// A missing value is unknown; a malformed present value is a read failure.
+func readStoredVariable(status objectStatus) (Value, bool, error) {
+	raw, found := status["value"]
+	if !found {
+		return Value{}, false, nil
 	}
-	data, _ := json.Marshal(raw)
-	var decoded struct {
-		Status    string `json:"status"`
-		Value     string `json:"value"`
-		Reason    string `json:"reason"`
-		Since     string `json:"since"`
-		UpdatedAt string `json:"updatedAt"`
+	fields, ok := raw.(map[string]any)
+	if !ok || fields == nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable: expected an object")
 	}
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Status == "" {
-		return Value{}, false
+	var value Value
+	var since, updated string
+	for _, field := range []struct {
+		name     string
+		target   *string
+		required bool
+	}{
+		{"status", &value.Status, true}, {"value", &value.Value, false}, {"reason", &value.Reason, false}, {"since", &since, true}, {"updatedAt", &updated, true},
+	} {
+		raw, exists := fields[field.name]
+		if !exists && !field.required {
+			continue
+		}
+		text, ok := raw.(string)
+		if !ok {
+			return Value{}, false, fmt.Errorf("invalid stored variable %s: expected a string", field.name)
+		}
+		*field.target = text
 	}
-	value := Value{Status: decoded.Status, Value: decoded.Value, Reason: decoded.Reason}
-	value.Since, _ = time.Parse(time.RFC3339Nano, decoded.Since)
-	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
-	return value, true
+	switch value.Status {
+	case StatusSet:
+		if value.Value == "" {
+			return Value{}, false, fmt.Errorf("invalid stored set variable: missing value")
+		}
+	case StatusUnset, StatusUnknown:
+		if value.Value != "" {
+			return Value{}, false, fmt.Errorf("invalid stored %s variable: unexpected value", value.Status)
+		}
+	default:
+		return Value{}, false, fmt.Errorf("invalid stored variable status %q", value.Status)
+	}
+	var err error
+	value.Since, err = time.Parse(time.RFC3339Nano, since)
+	if err != nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable since: %w", err)
+	}
+	value.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+	if err != nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable updatedAt: %w", err)
+	}
+	return value, true, nil
 }
 
 func variablesFromObject(apiVersion, kind, name string, status objectStatus) map[string]Value {
 	out := map[string]Value{}
 	if apiVersion == stateAPIVersion && kind == stateKind {
-		if value, ok := valueFromStatus(status, "value"); ok {
+		if value, ok, err := readStoredVariable(status); err == nil && ok {
 			out[name] = value
 		}
 	}
 	return out
-}
-
-func DebugObjects(db *sql.DB) string {
-	rows, err := db.Query(`SELECT api_version,kind,name,status FROM objects ORDER BY api_version,kind,name`)
-	if err != nil {
-		return err.Error()
-	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var apiVersion, kind, name, status string
-		_ = rows.Scan(&apiVersion, &kind, &name, &status)
-		lines = append(lines, fmt.Sprintf("%s %s %s %s", apiVersion, kind, name, status))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
 }

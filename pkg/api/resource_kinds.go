@@ -25,6 +25,10 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{SystemAPIVersion, "WebConsole", WebConsoleSpec{}},
 		{SystemAPIVersion, "ControlAPI", ControlAPISpec{}},
 		{SystemAPIVersion, "RouterdCluster", RouterdClusterSpec{}},
+		{NetAPIVersion, "Bridge", BridgeSpec{}},
+		{NetAPIVersion, "VXLANSegment", VXLANSegmentSpec{}},
+		{NetAPIVersion, "IPv6StaticRoute", IPv6StaticRouteSpec{}},
+
 		{NetAPIVersion, "Interface", InterfaceSpec{}},
 		{NetAPIVersion, "PPPoESession", PPPoESessionSpec{}},
 		{NetAPIVersion, "WireGuardInterface", WireGuardInterfaceSpec{}},
@@ -105,13 +109,10 @@ func ConfigResourceKinds() []ResourceKindSchema {
 func runtimeResourceKinds() []ResourceKindSchema {
 	return []ResourceKindSchema{
 		{SystemAPIVersion, "KernelModule", KernelModuleSpec{}},
-		{NetAPIVersion, "NetworkAdoption", NetworkAdoptionSpec{}},
-		{SystemAPIVersion, "Inventory", InventorySpec{}},
-		{NetAPIVersion, "Bridge", BridgeSpec{}},
-		{NetAPIVersion, "VXLANSegment", VXLANSegmentSpec{}},
+		{SystemAPIVersion, "NetworkAdoption", NetworkAdoptionSpec{}},
+		{RouterAPIVersion, "Inventory", InventorySpec{}},
 		{MobilityAPIVersion, "SAMRRSet", SAMRRSetSpec{}},
 		{NetAPIVersion, "IPv4StaticRoute", IPv4StaticRouteSpec{}},
-		{NetAPIVersion, "IPv6StaticRoute", IPv6StaticRouteSpec{}},
 		{MobilityAPIVersion, "SAMPeerGroup", SAMPeerGroupSpec{}},
 	}
 }

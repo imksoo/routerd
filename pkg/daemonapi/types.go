@@ -4,6 +4,7 @@ package daemonapi
 
 import (
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/pppoeclient"
 	"time"
 )
 
@@ -175,14 +176,15 @@ type Condition struct {
 }
 
 type ResourceStatus struct {
-	Routing    *api.HealthObservation `json:"routing,omitempty"`
-	Resource   ResourceRef            `json:"resource"`
-	Phase      string                 `json:"phase"`
-	Health     string                 `json:"health"`
-	Since      time.Time              `json:"since,omitempty"`
-	Conditions []Condition            `json:"conditions"`
-	Observed   map[string]string      `json:"observed,omitempty"`
-	Warnings   []string               `json:"warnings,omitempty"`
+	PPPoEIdentity *pppoeclient.SessionIdentity `json:"pppoeIdentity,omitempty"`
+	Routing       *api.HealthObservation       `json:"routing,omitempty"`
+	Resource      ResourceRef                  `json:"resource"`
+	Phase         string                       `json:"phase"`
+	Health        string                       `json:"health"`
+	Since         time.Time                    `json:"since,omitempty"`
+	Conditions    []Condition                  `json:"conditions"`
+	Observed      map[string]string            `json:"observed,omitempty"`
+	Warnings      []string                     `json:"warnings,omitempty"`
 }
 
 type DaemonEvent struct {

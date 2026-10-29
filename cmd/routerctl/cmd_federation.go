@@ -163,7 +163,11 @@ func federationEventEmitCommand(args []string, stdout io.Writer) error {
 	if !ok {
 		return fmt.Errorf("state file %s does not support federation events", *statePath)
 	}
-	if captureStore, ok := store.(federationguard.DynamicConfigPartStore); ok {
+	if ev.Type == federation.ObservedIPv4EventType {
+		captureStore, ok := store.(federationguard.DynamicConfigPartStore)
+		if !ok {
+			return fmt.Errorf("state file %s cannot read local native capture ownership", *statePath)
+		}
 		if err := federationguard.RejectSelfCapturedObservedEvent(captureStore, ev, now); err != nil {
 			return err
 		}

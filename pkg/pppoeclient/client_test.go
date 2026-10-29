@@ -160,3 +160,44 @@ func TestParseLogLineAuthenticationStartsIPCP(t *testing.T) {
 		t.Fatalf("phase = %q, want %q", got.Phase, PhaseIPCP)
 	}
 }
+
+func TestRedactedRuntimeConfigRedactsBeforeEscapingAndSpecFallback(t *testing.T) {
+	for _, password := range []string{"quote\"slash\\line\nsecret", "fallback-secret"} {
+		for _, osName := range []string{"linux", "freebsd"} {
+			cfg := Config{Resource: "wan", Interface: "eth0", Spec: api.PPPoESessionSpec{Password: password}}
+			got := string(RedactedRuntimeConfigForOS(osName, cfg))
+			if strings.Contains(got, "secret") || !strings.Contains(got, "[REDACTED]") {
+				t.Fatalf("%s leaked escaped/fallback credential: %q", osName, got)
+			}
+		}
+	}
+}
+
+func TestTerminatedConnectionDoesNotRetainNegotiatedAuthority(t *testing.T) {
+	s := Snapshot{Phase: PhaseConnected, CurrentAddress: "192.0.2.8", PeerAddress: "192.0.2.1", DNSServers: []string{"192.0.2.53"}, ConnectedAt: time.Now()}
+	s = ParseLogLine(s, "Connection terminated.", time.Now())
+	if s.CurrentAddress != "" || s.PeerAddress != "" || len(s.DNSServers) != 0 || !s.ConnectedAt.IsZero() {
+		t.Fatalf("terminated negotiation retained authority: %+v", s)
+	}
+}
+
+func TestNativeRedialRemainsOwnedByForegroundBackend(t *testing.T) {
+	cfg := Config{Resource: "wan", Interface: "eth0"}
+	linux := string(LinuxPeer(cfg))
+	for _, option := range []string{"nodetach\n", "persist\n", "maxfail 0\n"} {
+		if !strings.Contains(linux, option) {
+			t.Fatalf("native managed redial missing %q: %s", option, linux)
+		}
+	}
+	if freebsd := string(FreeBSDMPDConf(cfg)); !strings.Contains(freebsd, "set link max-redial 0") {
+		t.Fatalf("FreeBSD managed redial missing: %s", freebsd)
+	}
+}
+
+func TestExplicitNonPersistentPublicPeerRemainsNonPersistent(t *testing.T) {
+	disabled := false
+	got := string(LinuxPeer(Config{Resource: "wan", Interface: "eth0", Spec: api.PPPoESessionSpec{Persist: &disabled}}))
+	if strings.Contains(got, "\npersist\n") || strings.Contains(got, "\nmaxfail 0\n") {
+		t.Fatalf("explicit nonpersistent peer was overridden: %s", got)
+	}
+}

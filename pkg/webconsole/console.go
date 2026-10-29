@@ -28,7 +28,7 @@ type Options struct {
 	CurrentRouter func() *api.Router
 	Store         routerstate.Store
 	Result        func() *apply.Result
-	Connections   func(limit int) (*observe.ConnectionTable, error)
+	Connections   func(context.Context, int) (*observe.ConnectionTable, error)
 	// VPNStatus implementations must return when ctx is cancelled.
 	VPNStatus              func(context.Context) (VPNStatus, error)
 	Title                  string

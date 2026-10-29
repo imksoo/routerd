@@ -9,12 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
@@ -54,6 +52,10 @@ func validateCommand(args []string, stdout io.Writer, stdin io.Reader) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Validate(ctx, controlapi.ValidateRequest{CandidateYAML: candidate, Replace: *replace})
 	if err != nil {
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return commandExitError{Code: 2, Err: fmt.Errorf("routerd validate failed: %w", apiErr)}
+		}
 		return commandExitError{Code: 2, Err: fmt.Errorf("routerd serve is not reachable for validate; start routerd serve or check --socket: %w", err)}
 	}
 	if err := writeJSON(stdout, result); err != nil {
@@ -212,18 +214,26 @@ func readCandidateYAML(path string, stdin io.Reader) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	var data []byte
-	var err error
+	var input io.Reader
 	if path == "-" {
 		if stdin == nil {
 			stdin = os.Stdin
 		}
-		data, err = io.ReadAll(stdin)
+		input = stdin
 	} else {
-		data, err = os.ReadFile(path)
+		file, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		input = file
 	}
+	data, err := io.ReadAll(io.LimitReader(input, int64(controlapi.MaxRequestBodyBytes)+1))
 	if err != nil {
 		return "", err
+	}
+	if len(data) > controlapi.MaxRequestBodyBytes {
+		return "", fmt.Errorf("candidate YAML exceeds the %d-byte API request body limit", controlapi.MaxRequestBodyBytes)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return "", fmt.Errorf("candidate %s is empty", path)
@@ -345,9 +355,9 @@ func restartDNSResolverCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, hostcmd.Resolve(command.Name), command.Args...).CombinedOutput()
+	_, stderr, err := runHostCommand(ctx, command.Name, command.Args...)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(stderr)))
 	}
 	fmt.Fprintf(stdout, "restarted DNSResolver/%s via %s\n", name, manager.Name())
 	return nil

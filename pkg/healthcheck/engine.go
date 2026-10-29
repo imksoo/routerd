@@ -38,7 +38,7 @@ const (
 )
 
 type Store interface {
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type ProbeResult struct {
@@ -190,20 +190,19 @@ func sameDerivedSourceInterface(current *string, next string) bool {
 	return *current == next
 }
 
-func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	spec = ResolveSpec(router, spec)
-	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
-	}
-	return spec
-}
-
-func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
+func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) (api.HealthCheckSpec, error) {
 	spec = ResolveSpecForResource(router, resourceName, spec)
-	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
+	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
+		value, err := resourcequery.ReadValue(store, spec.SourceAddressFrom)
+		if err != nil {
+			return api.HealthCheckSpec{}, err
+		}
+		spec.SourceAddress = statusvalue.Address(value)
+		if spec.SourceAddress == "" && !spec.SourceAddressFrom.Optional {
+			return api.HealthCheckSpec{}, fmt.Errorf("required health-check source address %s.%s is unresolved", spec.SourceAddressFrom.Resource, spec.SourceAddressFrom.Field)
+		}
 	}
-	return spec
+	return spec, nil
 }
 
 func DerivedFwMark(router *api.Router, healthCheckName string) (int, bool) {

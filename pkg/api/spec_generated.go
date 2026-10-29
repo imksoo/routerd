@@ -5,6 +5,204 @@ package api
 
 import "fmt"
 
+// ResourceAPIVersion resolves every configured/runtime kind from the closed catalog.
+func ResourceAPIVersion(kind string) (string, bool) {
+	switch kind {
+	case "Plugin":
+		return PluginAPIVersion, true
+	case "DynamicConfigSource":
+		return PluginAPIVersion, true
+	case "DynamicOverridePolicy":
+		return ConfigAPIVersion, true
+	case "LogSink":
+		return SystemAPIVersion, true
+	case "Telemetry":
+		return ObservabilityAPIVersion, true
+	case "ObservabilityPipeline":
+		return SystemAPIVersion, true
+	case "LogRetention":
+		return SystemAPIVersion, true
+	case "Sysctl":
+		return SystemAPIVersion, true
+	case "SysctlProfile":
+		return SystemAPIVersion, true
+	case "Package":
+		return SystemAPIVersion, true
+	case "NTPClient":
+		return SystemAPIVersion, true
+	case "NTPServer":
+		return SystemAPIVersion, true
+	case "WebConsole":
+		return SystemAPIVersion, true
+	case "ControlAPI":
+		return SystemAPIVersion, true
+	case "RouterdCluster":
+		return SystemAPIVersion, true
+	case "Bridge":
+		return NetAPIVersion, true
+	case "VXLANSegment":
+		return NetAPIVersion, true
+	case "IPv6StaticRoute":
+		return NetAPIVersion, true
+	case "Interface":
+		return NetAPIVersion, true
+	case "PPPoESession":
+		return NetAPIVersion, true
+	case "WireGuardInterface":
+		return NetAPIVersion, true
+	case "WireGuardPeer":
+		return NetAPIVersion, true
+	case "TailscaleNode":
+		return NetAPIVersion, true
+	case "IPsecConnection":
+		return NetAPIVersion, true
+	case "VRF":
+		return NetAPIVersion, true
+	case "VXLANTunnel":
+		return NetAPIVersion, true
+	case "IPv4StaticAddress":
+		return NetAPIVersion, true
+	case "VirtualAddress":
+		return NetAPIVersion, true
+	case "BGPRouter":
+		return NetAPIVersion, true
+	case "BGPPeer":
+		return NetAPIVersion, true
+	case "BGPDynamicPeer":
+		return NetAPIVersion, true
+	case "BFD":
+		return NetAPIVersion, true
+	case "DHCPv4Client":
+		return NetAPIVersion, true
+	case "ClusterNetworkRoute":
+		return NetAPIVersion, true
+	case "DHCPv4Server":
+		return NetAPIVersion, true
+	case "DHCPv4Reservation":
+		return NetAPIVersion, true
+	case "DHCPv6Address":
+		return NetAPIVersion, true
+	case "IPv6RAAddress":
+		return NetAPIVersion, true
+	case "DHCPv6PrefixDelegation":
+		return NetAPIVersion, true
+	case "IPv6DelegatedAddress":
+		return NetAPIVersion, true
+	case "DHCPv6Information":
+		return NetAPIVersion, true
+	case "IPv6RouterAdvertisement":
+		return NetAPIVersion, true
+	case "DHCPv6Server":
+		return NetAPIVersion, true
+	case "DHCPv4ServerLeaseSync":
+		return NetAPIVersion, true
+	case "DHCPv6ServerLeaseSync":
+		return NetAPIVersion, true
+	case "DHCPv6PrefixDelegationLeaseSync":
+		return NetAPIVersion, true
+	case "DHCPv4Relay":
+		return NetAPIVersion, true
+	case "SelfAddressPolicy":
+		return NetAPIVersion, true
+	case "DNSZone":
+		return NetAPIVersion, true
+	case "DNSResolver":
+		return NetAPIVersion, true
+	case "DNSForwarder":
+		return NetAPIVersion, true
+	case "DNSUpstream":
+		return NetAPIVersion, true
+	case "DSLiteTunnel":
+		return NetAPIVersion, true
+	case "TunnelInterface":
+		return HybridAPIVersion, true
+	case "OverlayPeer":
+		return HybridAPIVersion, true
+	case "HybridRoute":
+		return HybridAPIVersion, true
+	case "CloudProviderProfile":
+		return HybridAPIVersion, true
+	case "ProviderActionPolicy":
+		return HybridAPIVersion, true
+	case "EventGroup":
+		return FederationAPIVersion, true
+	case "EventPeer":
+		return FederationAPIVersion, true
+	case "EventSubscription":
+		return FederationAPIVersion, true
+	case "FederationSLO":
+		return FederationAPIVersion, true
+	case "MobilityPool":
+		return MobilityAPIVersion, true
+	case "SAMNodeSet":
+		return MobilityAPIVersion, true
+	case "SAMEnrollmentPolicy":
+		return MobilityAPIVersion, true
+	case "SAMEnrollmentClaim":
+		return MobilityAPIVersion, true
+	case "SAMEnrollmentClient":
+		return MobilityAPIVersion, true
+	case "SAMTransportProfile":
+		return MobilityAPIVersion, true
+	case "SAMSubnetPolicy":
+		return MobilityAPIVersion, true
+	case "IPv4Route":
+		return NetAPIVersion, true
+	case "HealthCheck":
+		return NetAPIVersion, true
+	case "EgressRoutePolicy":
+		return NetAPIVersion, true
+	case "EventRule":
+		return NetAPIVersion, true
+	case "DerivedEvent":
+		return NetAPIVersion, true
+	case "NAT44Rule":
+		return NetAPIVersion, true
+	case "NAT44FlowDNATPinhole":
+		return NetAPIVersion, true
+	case "NAT44SessionSync":
+		return NetAPIVersion, true
+	case "ManagementAccess":
+		return NetAPIVersion, true
+	case "PortForward":
+		return FirewallAPIVersion, true
+	case "IngressService":
+		return FirewallAPIVersion, true
+	case "IPAddressSet":
+		return NetAPIVersion, true
+	case "LocalServiceRedirect":
+		return FirewallAPIVersion, true
+	case "FirewallFlowPinhole":
+		return FirewallAPIVersion, true
+	case "TrafficFlowLog":
+		return NetAPIVersion, true
+	case "FirewallZone":
+		return FirewallAPIVersion, true
+	case "FirewallPolicy":
+		return FirewallAPIVersion, true
+	case "ClientPolicy":
+		return FirewallAPIVersion, true
+	case "FirewallRule":
+		return FirewallAPIVersion, true
+	case "FirewallEventLog":
+		return FirewallAPIVersion, true
+	case "Hostname":
+		return NetAPIVersion, true
+	case "KernelModule":
+		return SystemAPIVersion, true
+	case "NetworkAdoption":
+		return SystemAPIVersion, true
+	case "Inventory":
+		return RouterAPIVersion, true
+	case "SAMRRSet":
+		return MobilityAPIVersion, true
+	case "IPv4StaticRoute":
+		return NetAPIVersion, true
+	case "SAMPeerGroup":
+		return MobilityAPIVersion, true
+	}
+	return "", false
+}
 func decodeResourceSpec(kind string, decode func(ResourceSpec) error) (ResourceSpec, error) {
 	switch kind {
 	case "Plugin":
@@ -93,6 +291,24 @@ func decodeResourceSpec(kind string, decode func(ResourceSpec) error) (ResourceS
 		return spec, nil
 	case "RouterdCluster":
 		var spec RouterdClusterSpec
+		if err := decode(&spec); err != nil {
+			return nil, err
+		}
+		return spec, nil
+	case "Bridge":
+		var spec BridgeSpec
+		if err := decode(&spec); err != nil {
+			return nil, err
+		}
+		return spec, nil
+	case "VXLANSegment":
+		var spec VXLANSegmentSpec
+		if err := decode(&spec); err != nil {
+			return nil, err
+		}
+		return spec, nil
+	case "IPv6StaticRoute":
+		var spec IPv6StaticRouteSpec
 		if err := decode(&spec); err != nil {
 			return nil, err
 		}
@@ -547,18 +763,6 @@ func decodeResourceSpec(kind string, decode func(ResourceSpec) error) (ResourceS
 			return nil, err
 		}
 		return spec, nil
-	case "Bridge":
-		var spec BridgeSpec
-		if err := decode(&spec); err != nil {
-			return nil, err
-		}
-		return spec, nil
-	case "VXLANSegment":
-		var spec VXLANSegmentSpec
-		if err := decode(&spec); err != nil {
-			return nil, err
-		}
-		return spec, nil
 	case "SAMRRSet":
 		var spec SAMRRSetSpec
 		if err := decode(&spec); err != nil {
@@ -567,12 +771,6 @@ func decodeResourceSpec(kind string, decode func(ResourceSpec) error) (ResourceS
 		return spec, nil
 	case "IPv4StaticRoute":
 		var spec IPv4StaticRouteSpec
-		if err := decode(&spec); err != nil {
-			return nil, err
-		}
-		return spec, nil
-	case "IPv6StaticRoute":
-		var spec IPv6StaticRouteSpec
 		if err := decode(&spec); err != nil {
 			return nil, err
 		}
@@ -601,6 +799,9 @@ func (s NTPServerSpec) cloneSpec() ResourceSpec             { return cloneNTPSer
 func (s WebConsoleSpec) cloneSpec() ResourceSpec            { return cloneWebConsoleSpec(s) }
 func (s ControlAPISpec) cloneSpec() ResourceSpec            { return cloneControlAPISpec(s) }
 func (s RouterdClusterSpec) cloneSpec() ResourceSpec        { return cloneRouterdClusterSpec(s) }
+func (s BridgeSpec) cloneSpec() ResourceSpec                { return cloneBridgeSpec(s) }
+func (s VXLANSegmentSpec) cloneSpec() ResourceSpec          { return cloneVXLANSegmentSpec(s) }
+func (s IPv6StaticRouteSpec) cloneSpec() ResourceSpec       { return cloneIPv6StaticRouteSpec(s) }
 func (s InterfaceSpec) cloneSpec() ResourceSpec             { return cloneInterfaceSpec(s) }
 func (s PPPoESessionSpec) cloneSpec() ResourceSpec          { return clonePPPoESessionSpec(s) }
 func (s WireGuardInterfaceSpec) cloneSpec() ResourceSpec    { return cloneWireGuardInterfaceSpec(s) }
@@ -682,11 +883,8 @@ func (s HostnameSpec) cloneSpec() ResourceSpec             { return cloneHostnam
 func (s KernelModuleSpec) cloneSpec() ResourceSpec         { return cloneKernelModuleSpec(s) }
 func (s NetworkAdoptionSpec) cloneSpec() ResourceSpec      { return cloneNetworkAdoptionSpec(s) }
 func (s InventorySpec) cloneSpec() ResourceSpec            { return cloneInventorySpec(s) }
-func (s BridgeSpec) cloneSpec() ResourceSpec               { return cloneBridgeSpec(s) }
-func (s VXLANSegmentSpec) cloneSpec() ResourceSpec         { return cloneVXLANSegmentSpec(s) }
 func (s SAMRRSetSpec) cloneSpec() ResourceSpec             { return cloneSAMRRSetSpec(s) }
 func (s IPv4StaticRouteSpec) cloneSpec() ResourceSpec      { return cloneIPv4StaticRouteSpec(s) }
-func (s IPv6StaticRouteSpec) cloneSpec() ResourceSpec      { return cloneIPv6StaticRouteSpec(s) }
 func (s SAMPeerGroupSpec) cloneSpec() ResourceSpec         { return cloneSAMPeerGroupSpec(s) }
 func cloneApplyPolicySpec(s ApplyPolicySpec) ApplyPolicySpec {
 	out := s

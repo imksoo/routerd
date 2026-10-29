@@ -110,7 +110,7 @@ func TestDPIEnrichmentBatchPreservesExistingFieldsAndFallback(t *testing.T) {
 
 func TestMissingOptionalDPIStoreRetainsFallbackWithoutCreatingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing", "firewall.db")
-	h := New(Options{FirewallLogPath: path, Connections: func(int) (*observe.ConnectionTable, error) {
+	h := New(Options{FirewallLogPath: path, Connections: func(context.Context, int) (*observe.ConnectionTable, error) {
 		return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{Protocol: "udp", Original: observe.ConntrackTuple{Source: "10.0.0.2", SourcePort: "12345", Destination: "192.0.2.1", DestinationPort: "53"}}}}, nil
 	}, ReverseLookup: func(context.Context, string) ([]string, error) { return nil, nil }})
 	flows, err := h.enrichTrafficFlowsWithDPI(context.Background(), []logstore.TrafficFlow{{Protocol: "udp", ClientAddress: "10.0.0.2", ClientPort: 12345, PeerAddress: "192.0.2.1", PeerPort: 53}}, time.Now(), time.Hour)

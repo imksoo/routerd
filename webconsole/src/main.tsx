@@ -152,6 +152,7 @@ type DPIServiceStatus = {
 };
 
 type ResourceStatus = {
+  declared?: boolean;
   apiVersion?: string;
   kind?: string;
   name?: string;
@@ -423,6 +424,7 @@ type DHCPLease = {
   ip?: string;
   hostname?: string;
   clientId?: string;
+  iaid?: string;
   vendor?: string;
   family?: string;
   source?: string;
@@ -459,6 +461,7 @@ type ClientEntry = {
   state?: string;
   sources?: string[];
   peers?: string[];
+  accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
   primaryActivity?: string;
@@ -494,6 +497,8 @@ type InterfaceSummary = {
   hardwareAddress?: string;
   flags?: string;
   addresses?: string[];
+  configuredAddresses?: string[];
+  observationError?: string;
 };
 
 type VPNStatus = {
@@ -583,8 +588,6 @@ type SAMPoolEntry = {
   placementActive?: boolean;
   placementActiveNode?: string;
   addresses?: SAMPoolAddressEntry[];
-  heldAddresses?: string[];
-  stoppedInstancePolicy?: string;
 };
 
 type SAMPoolAddressEntry = {
@@ -671,7 +674,6 @@ type ClientRow = {
   vendor: string;
   state?: string;
   sources: Set<string>;
-  expiresAt: string;
   bytesOut?: number;
   bytesIn?: number;
   peers: Set<string>;
@@ -715,7 +717,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
-  { key: "generations", label: "Generations", description: "Applied YAML history and diffs", icon: <DocumentTextRegular /> },
+  { key: "generations", label: "Generations", description: "Stored configuration attempts and diffs", icon: <DocumentTextRegular /> },
 ];
 const viewKeys = new Set<string>(navItems.map(item => item.key));
 
@@ -2522,7 +2524,7 @@ function App() {
   const [routesStatus, setRoutesStatus] = useState<RoutesStatus | null>(null);
   const [samStatus, setSAMStatus] = useState<SAMStatusResponse | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
-  const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[]>([]);
+  const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[] | undefined>();
   const [generationDiff, setGenerationDiff] = useState<string>("");
   const [configPlanDiff, setConfigPlanDiff] = useState<string>("");
   const [generationConfig, setGenerationConfig] = useState<{ generation: number; text: string } | null>(null);
@@ -2596,6 +2598,8 @@ function App() {
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const generationRequest = useRef<AbortController | null>(null);
+  const planDiffRequest = useRef<AbortController | null>(null);
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
@@ -2658,7 +2662,12 @@ function App() {
         setMetricSamples(current => appendMetricSample(current, summaryResponse));
       }
       if (configResponse) {
-        setConfig(configResponse as ConfigSnapshot);
+        if (config?.text !== configResponse.text || generations.find(row => row.hasYaml)?.generation !== generationResponse?.find(row => row.hasYaml)?.generation) {
+          planDiffRequest.current?.abort();
+          planDiffRequest.current = null;
+          setConfigPlanDiff("");
+        }
+        setConfig(configResponse);
       }
       if (Array.isArray(generationResponse)) {
         setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
@@ -2733,6 +2742,8 @@ function App() {
       window.clearInterval(pollID);
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
       source?.close();
+      generationRequest.current?.abort();
+      planDiffRequest.current?.abort();
     };
   }, []);
 
@@ -2797,7 +2808,7 @@ function App() {
   }, [filteredConnections, connectionSortSignature]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
-  const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
+  const resources = summary?.resources ?? [];
   const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
   const events = summary?.events ?? [];
   const filteredEvents = useMemo(() => filterEvents(events, eventFilters), [events, eventFilters]);
@@ -2913,14 +2924,20 @@ function App() {
   }
 
   async function loadGenerationConfig(generation: number) {
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${generation}/config`);
+      const text = await fetchText(`api/v1/generations/${generation}/config`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationConfig({ generation, text });
       setGenerationDiff("");
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
@@ -2928,20 +2945,30 @@ function App() {
     const from = Number(generationFrom);
     const to = Number(generationTo);
     if (!from || !to) return;
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationDiff(text);
       setGenerationConfig(null);
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
   async function loadAdjacentGenerationDiff(from: number, to: number) {
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationFrom(String(from));
       setGenerationTo(String(to));
       setGenerationDiff(text);
@@ -2949,19 +2976,27 @@ function App() {
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
   async function loadConfigPlanDiff() {
     const latest = generations.find(row => row.hasYaml);
     if (!latest || !config?.text) return;
+    planDiffRequest.current?.abort();
+    const request = new AbortController();
+    planDiffRequest.current = request;
     try {
-      const previous = await fetchText(`api/v1/generations/${latest.generation}/config`);
-      setConfigPlanDiff(unifiedLineDiff(`generation-${latest.generation}.yaml`, "current-file.yaml", previous, config.text));
+      const diff = await fetchText(`api/v1/generations/${latest.generation}/diff/current`, request.signal);
+      if (request.signal.aborted) return;
+      setConfigPlanDiff(diff);
       setError("");
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (planDiffRequest.current === request) planDiffRequest.current = null;
     }
   }
 
@@ -3119,7 +3154,7 @@ function App() {
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
                 </Card>
-                <OverviewActivity resources={summary?.resources ?? []} events={events} navigateTo={navigateTo} />
+                <OverviewActivity resources={summary?.resources} events={summary?.events} navigateTo={navigateTo} />
               </>
             ) : null}
             {selected === "resources" ? (
@@ -3129,13 +3164,13 @@ function App() {
                   description={<Text className={styles.muted}>Resource phase, controller mode, and status detail</Text>}
                 />
                 <div className={styles.grid}>
-                  <Metric label="total" value={String(resources.length)} />
-                  <Metric label="healthy" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "healthy").length)} />
-                  <Metric label="warning" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "warning").length)} />
-                  <Metric label="danger" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "danger").length)} />
+                  <Metric label="total" value={summary?.resources ? String(resources.length) : "-"} />
+                  <Metric label="healthy" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "healthy").length) : "-"} />
+                  <Metric label="warning" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "warning").length) : "-"} />
+                  <Metric label="danger" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "danger").length) : "-"} />
                   <Metric label="dry-run kinds" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
                 </div>
-                <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
+                {summary?.resources ? <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} /> : <Text className={styles.muted}>Resource observation unavailable</Text>}
               </Card>
             ) : null}
             {selected === "routes" ? (
@@ -3175,19 +3210,19 @@ function App() {
                         </Select>
                       </div>
                     </div>
-                    <ClientInventory clients={filteredClients} onShowConnections={showClientConnections} />
+                    <ClientInventory clients={summary?.clients ? filteredClients : undefined} onShowConnections={showClientConnections} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-traffic" ? (
                   <Card id="clients-traffic" className={styles.connectionAnchor}>
                     <CardHeader header={<Text weight="semibold">Client traffic</Text>} description={<Text className={styles.muted}>Traffic grouped by client address</Text>} />
-                    <ClientTraffic flows={summary?.trafficFlows ?? []} onShowConnectionsForAddress={showAddressConnections} />
+                    {summary?.trafficFlows ? <ClientTraffic flows={summary.trafficFlows} onShowConnectionsForAddress={showAddressConnections} /> : <Text className={styles.muted}>Traffic observation unavailable</Text>}
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-leases" ? (
                   <Card id="clients-leases" className={styles.connectionAnchor}>
                     <CardHeader header={<Text weight="semibold">DHCP leases</Text>} description={<Text className={styles.muted}>dnsmasq lease file entries</Text>} />
-                    <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+                    <DHCPLeaseTable leases={summary?.dhcpLeases} />
                   </Card>
                 ) : null}
               </div>
@@ -3199,10 +3234,10 @@ function App() {
               description={<Text className={styles.muted}>conntrack flows grouped by family and protocol</Text>}
             />
             <div className={styles.grid}>
-              <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4"))} />
-              <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6"))} />
+              <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4") ?? "-")} />
+              <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6") ?? "-")} />
               <Metric label="Showing" value={connectionShowingValue(summary?.connections, filteredConnections.length)} />
-              <Metric label="Groups" value={String(connectionGroupsList.length)} />
+              <Metric label="Groups" value={summary?.connections ? String(connectionGroupsList.length) : "-"} />
             </div>
             <DSLiteNATSummary table={summary?.connections} resources={summary?.resources ?? []} />
             <div className={styles.connectionJumpBar}>
@@ -3229,7 +3264,7 @@ function App() {
                 </Select>
               ) : null}
             </div>
-            <ConnectionClassificationSummary entries={filteredConnections} />
+            <ConnectionClassificationSummary entries={summary?.connections ? filteredConnections : undefined} />
             {connectionFilters.client ? (
               <div className={styles.activeFilterBanner}>
                 <div className={styles.connectionFlow}>
@@ -3362,10 +3397,10 @@ function App() {
                 <Card id="events-list" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Bus events from routerd controllers and daemons</Text>} />
                   <div className={styles.grid}>
-                    <Metric label="total" value={String(events.length)} />
-                    <Metric label="filter matched" value={String(filteredEvents.length)} />
-                    <Metric label="severities" value={String(eventFacets.severities.length)} />
-                    <Metric label="kinds" value={String(eventFacets.kinds.length)} />
+                    <Metric label="total" value={summary?.events ? String(events.length) : "-"} />
+                    <Metric label="filter matched" value={summary?.events ? String(filteredEvents.length) : "-"} />
+                    <Metric label="severities" value={summary?.events ? String(eventFacets.severities.length) : "-"} />
+                    <Metric label="kinds" value={summary?.events ? String(eventFacets.kinds.length) : "-"} />
                   </div>
                   <div className={styles.eventFilters}>
                     <SearchControl label="Search" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={value => setEventFilters(current => ({ ...current, query: value }))} />
@@ -3412,12 +3447,12 @@ function App() {
                     description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
                   />
                   <div className={styles.grid}>
-                    <Metric label="total denies (24h)" value={String(denyTimelineTotal(firewallDenyTimeline))} />
-                    <Metric label="peak / bucket" value={String(denyTimelinePeak(firewallDenyTimeline))} />
-                    <Metric label="unique sources" value={String(new Set(firewallLogs.map(l => l.srcAddress).filter(Boolean)).size)} />
-                    <Metric label="DPI identified" value={`${firewallLogs.filter(l => l.dpiApp).length} / ${firewallLogs.length}`} />
-                    <Metric label="orphan returns" value={String(firewallLogs.filter(l => l.correlation === "orphan_return").length)} />
-                    <Metric label="filter matched" value={`${filteredFirewallLogs.length} / ${firewallLogs.length}`} />
+                    <Metric label="total denies (24h)" value={firewallDenyTimeline ? String(denyTimelineTotal(firewallDenyTimeline)) : "-"} />
+                    <Metric label="peak / bucket" value={firewallDenyTimeline ? String(denyTimelinePeak(firewallDenyTimeline)) : "-"} />
+                    <Metric label="unique sources" value={summary?.firewallLogs ? String(new Set(firewallLogs.map(l => l.srcAddress).filter(Boolean)).size) : "-"} />
+                    <Metric label="DPI identified" value={summary?.firewallLogs ? `${firewallLogs.filter(l => l.dpiApp).length} / ${firewallLogs.length}` : "-"} />
+                    <Metric label="orphan returns" value={summary?.firewallLogs ? String(firewallLogs.filter(l => l.correlation === "orphan_return").length) : "-"} />
+                    <Metric label="filter matched" value={summary?.firewallLogs ? `${filteredFirewallLogs.length} / ${firewallLogs.length}` : "-"} />
                   </div>
                   <DenyRateChart timeline={firewallDenyTimeline} />
                   <div className={styles.firewallFilters}>
@@ -3446,7 +3481,7 @@ function App() {
                 </Card>
                 <Card>
                   <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
-                  <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} />
+                  {summary?.firewallLogs ? <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
                 <Card id="firewall-tuning" className={styles.connectionAnchor}>
                   <CardHeader
@@ -3457,11 +3492,11 @@ function App() {
                 </Card>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-                  <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                  {summary?.firewallLogs ? <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
                 <Card id="firewall-timeline" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-                  <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                  {summary?.firewallLogs ? <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
               </div>
             ) : null}
@@ -3533,7 +3568,7 @@ function ConfigView({
   return (
     <>
       <div className={styles.configToolbar}>
-        <Text className={styles.muted}>Read-only view of the active routerd YAML. Apply changes with routerctl apply -f from the CLI.</Text>
+        <Text className={styles.muted}>Read-only view of the configured routerd YAML file. Apply changes with routerctl apply -f from the CLI.</Text>
         <div className={styles.configModeButtons}>
           <Button size="small" appearance="secondary" disabled={!latestGeneration || !config?.text} onClick={loadPlanDiff}>
             Diff before apply
@@ -3570,7 +3605,7 @@ function ConfigView({
       </div>
       {planDiff ? (
         <div style={{ marginTop: "12px" }}>
-          <Text weight="semibold">Current file vs latest applied generation</Text>
+          <Text weight="semibold">Current file vs latest stored generation</Text>
           <Text className={styles.muted}>Review only. The Web Console does not edit or apply YAML.</Text>
           <DiffView diff={planDiff} />
         </div>
@@ -3615,7 +3650,7 @@ function GenerationsView({
       <Card id="generations-table" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Generations</Text>}
-          description={<Text className={styles.muted}>Applied router YAML snapshots. Older rows without YAML cannot be diffed.</Text>}
+          description={<Text className={styles.muted}>Stored YAML from configuration attempts. Rows without YAML cannot be diffed.</Text>}
         />
         <div className={styles.grid}>
           <Metric label="total" value={String(totalGenerations)} />
@@ -3855,6 +3890,7 @@ function GatewayHealthSummaryCard({ health, navigateTo }: { health?: GatewayHeal
         <Badge appearance="tint" color="warning">warn {counts.warn}</Badge>
         <Badge appearance="tint" color="danger">fail {counts.fail}</Badge>
         <Badge appearance="outline" color="subtle">skip {counts.skip}</Badge>
+        <Badge appearance="outline" color="subtle">unknown {counts.unknown}</Badge>
       </div>
       <div className={styles.gatewaySummaryFooter}>
         {worst.length && (overall === "degraded" || overall === "down") ? (
@@ -3983,6 +4019,7 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
   const connectionRows = connections?.entries ?? [];
   const flowEmpty = flows === undefined ? "Loading observed flow data" : "No observed flow data";
   const connectionEmpty = connections === undefined ? "Loading connection data" : "No active connection classes";
+  const volumeEmpty = flowRows.length ? "No measured byte volume in these flows" : flowEmpty;
   const protocols = topTrafficProtocols(flowRows);
   const sources = topTrafficSources(flowRows);
   const talkers = topTalkers(clientRows, flowRows);
@@ -3993,7 +4030,7 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
     <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Classification</Text>} description={<Text className={styles.muted}>Active flow identification ratio from DPI and port fallback</Text>} />
-        <ConnectionClassificationMeter stats={classification} />
+        {connections ? <ConnectionClassificationMeter stats={classification} /> : <Text className={styles.muted}>Connection observation unavailable</Text>}
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">DPI engine</Text>} description={<Text className={styles.muted}>Classifier and nDPI agent service status</Text>} />
@@ -4001,19 +4038,19 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
-        <RankList rows={protocols} empty={flowEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
+        <RankList rows={protocols} empty={volumeEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">DPI sources</Text>} description={<Text className={styles.muted}>Observed flow volume by classifier source</Text>} />
-        <RankList rows={sources} empty={flowEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
+        <RankList rows={sources} empty={volumeEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
-        <RankList rows={talkers} empty={flowEmpty} formatValue={formatBytes} />
+        <RankList rows={talkers} empty={volumeEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} description={<Text className={styles.muted}>Recent TLS SNI, HTTP host, DNS, or reverse DNS labels</Text>} />
-        <RankList rows={domains} empty={flowEmpty} formatValue={formatBytes} />
+        <RankList rows={domains} empty={flowEmpty} formatValue={value => `${value} flow${value === 1 ? "" : "s"}`} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
@@ -4114,31 +4151,9 @@ function StackBars({ samples, colors }: { samples: number[][]; colors: string[] 
   );
 }
 
-function ConnectionSummaryCharts({ groups }: { groups: { key: string; rows: ConnectionEntry[] }[] }) {
+function ConnectionClassificationSummary({ entries }: { entries?: ConnectionEntry[] }) {
   const styles = useStyles();
-  const max = Math.max(1, ...groups.map(group => group.rows.length));
-  if (groups.length === 0) return <Text className={styles.muted}>No active connections reported</Text>;
-  return (
-    <div className={styles.connectionSummaryGrid}>
-      {groups.map(group => {
-        const label = connectionGroupLabel(group.key);
-        return (
-          <div className={styles.connectionSummaryCard} key={group.key}>
-            <div className={styles.interfaceHeader}>
-              <Text weight="semibold">{label.family}/{label.protocol.toUpperCase()}</Text>
-              <Badge appearance="tint" color={label.family === "IPv6" ? "brand" : "success"}>{group.rows.length}</Badge>
-            </div>
-            <div className={styles.firewallBar} style={{ width: `${Math.max(3, (group.rows.length / max) * 100)}%` }} />
-            <Text size={200} className={styles.muted}>{connectionStateSummary(group.rows).map(row => `${row.label} ${row.count}`).join(" / ") || "stateless"}</Text>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ConnectionClassificationSummary({ entries }: { entries: ConnectionEntry[] }) {
-  const styles = useStyles();
+  if (!entries) return <Text className={styles.muted}>Connection observation unavailable</Text>;
   const stats = connectionClassificationStats(entries);
   return (
     <div className={styles.connectionSummaryGrid}>
@@ -4190,7 +4205,19 @@ function parseConfig(text?: string): { value?: unknown; errors: string[] } {
   try {
     const document = parseDocument(text);
     const errors = [...document.errors, ...document.warnings].map(error => error.message || String(error));
-    return { value: document.toJS(), errors };
+    const value: unknown = document.toJS();
+    const parents = new WeakSet<object>();
+    const visited = new WeakSet<object>();
+    const visit = (item: unknown) => {
+      if (!item || typeof item !== "object" || visited.has(item)) return;
+      if (parents.has(item)) throw new Error("Recursive YAML aliases cannot be shown as a tree; raw YAML is available below");
+      parents.add(item);
+      Object.values(item).forEach(visit);
+      parents.delete(item);
+      visited.add(item);
+    };
+    visit(value);
+    return { value, errors };
   } catch (error) {
     return { value: undefined, errors: [String(error)] };
   }
@@ -4293,7 +4320,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function ResourceTable({ resources, controllers, navigateTo }: { resources: ResourceStatus[]; controllers: ControllerStatus[]; navigateTo?: (view: ViewKey, targetID?: string) => void }) {
   const styles = useStyles();
-  const dryRunByKind = useMemo(() => dryRunControllerByKind(controllers), [controllers]);
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
   const [kind, setKind] = useState("all");
@@ -4356,13 +4382,13 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
           <TableBody>
             {filtered.slice(0, 120).map(resource => {
               const status = resource.status ?? {};
-              const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
+              const controllerMode = resourceControllerMode(resource, controllers);
               return (
                 <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`} className={styles.stableTableRow}>
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={resourcePhaseColor(resource)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
-                  <TableCell>{dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
+                  <TableCell><ModeBadge mode={controllerMode} /></TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
                       <OwnershipLine resource={resource} />
@@ -4380,7 +4406,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       <div className={styles.resourceMobileList}>
         {filtered.slice(0, 120).map(resource => {
           const status = resource.status ?? {};
-          const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
+          const controllerMode = resourceControllerMode(resource, controllers);
           return (
             <div className={styles.resourceMobileCard} key={`m-${resource.apiVersion}/${resource.kind}/${resource.name}`}>
               <div className={styles.resourceMobileHeader}>
@@ -4389,7 +4415,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
               </div>
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
-                {dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}
+                <ModeBadge mode={controllerMode} />
                 <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                 <ResourceStatusExtra resource={resource} />
@@ -4591,7 +4617,7 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
           description={<Text className={styles.muted}>SAM node mesh: Spine (RR) and Leaf nodes</Text>}
         />
         {nodes.length === 0 ? (
-          <Text className={styles.muted} style={{ padding: "1rem" }}>No SAMNodeSet configured</Text>
+          <Text className={styles.muted} style={{ padding: "1rem" }}>No SAM node status returned</Text>
         ) : (
           <>
             {spineNodes.length > 0 && (
@@ -4652,11 +4678,10 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
           />
           <div className={styles.grid}>
             <Metric label="phase" value={pool.phase || "-"} />
-            <Metric label="BGP paths" value={String(pool.generatedBGPPaths ?? 0)} />
-            <Metric label="members" value={String(pool.resolvedMemberCount ?? 0)} />
+            <Metric label="BGP paths" value={String(pool.generatedBGPPaths ?? "-")} />
+            <Metric label="members" value={String(pool.resolvedMemberCount ?? "-")} />
             <Metric label="discovery" value={pool.discoveryPhase || "-"} />
             {pool.placementActiveNode ? <Metric label="active node" value={pool.placementActiveNode} /> : null}
-            {pool.stoppedInstancePolicy ? <Metric label="stopped policy" value={pool.stoppedInstancePolicy} /> : null}
           </div>
           {(pool.addresses ?? []).length > 0 && (
             <>
@@ -4680,11 +4705,6 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
                 </TableBody>
               </Table>
             </>
-          )}
-          {(pool.heldAddresses ?? []).length > 0 && (
-            <div style={{ padding: "0.5rem 1rem" }}>
-              <Text size={200} className={styles.muted}>Held (stopped VM): {pool.heldAddresses!.join(", ")}</Text>
-            </div>
           )}
         </Card>
       ))}
@@ -4728,7 +4748,7 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
             <TableHeader><TableRow>
               <TableHeaderCell>Group</TableHeaderCell>
               <TableHeaderCell>Phase</TableHeaderCell>
-              <TableHeaderCell>Peers</TableHeaderCell>
+              <TableHeaderCell>Peer status rows</TableHeaderCell>
               <TableHeaderCell>Listen</TableHeaderCell>
               <TableHeaderCell>Reason</TableHeaderCell>
             </TableRow></TableHeader>
@@ -4799,7 +4819,7 @@ function RoutesView({ status }: { status: RoutesStatus | null }) {
         description={<Text className={styles.muted}>Kernel, configured, DHCP, and BGP routes with next-hop and observation state</Text>}
       />
       <div className={styles.grid}>
-        <Metric label="total routes" value={String(routes.length)} />
+        <Metric label="route rows" value={status ? String(routes.length) : "-"} />
         <Metric label="BGP" value={String(routes.filter(route => routeProtocolBucket(route) === "bgp").length)} />
         <Metric label="static" value={String(routes.filter(route => routeProtocolBucket(route) === "static").length)} />
         <Metric label="connected" value={String(routes.filter(route => routeProtocolBucket(route) === "connected").length)} />
@@ -4998,6 +5018,7 @@ function OwnershipLine({ resource }: { resource: ResourceStatus }) {
   const managedBy = String(resource.managedBy ?? status.managedBy ?? "").trim();
   const management = String(resource.management ?? status.management ?? "").trim();
   const parts = [
+    resource.declared === false ? "retained status; not declared in current config" : "",
     owner ? `owner ${owner}` : "",
     managedBy ? `managed-by ${managedBy}` : "",
     management ? management : "",
@@ -5154,7 +5175,7 @@ function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEv
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.slice(0, 100).map(event => {
+          {events.map(event => {
             const key = eventKey(event);
             return (
               <TableRow key={key} className={`${styles.stableTableRow} ${key === selectedKey ? styles.eventRowSelected : ""}`} onClick={() => onSelect(event)}>
@@ -5288,8 +5309,8 @@ function ConnectionCard({
   const proto = (entry.protocol || "?").toUpperCase();
   const family = entry.family || "";
   const orig = entry.original ?? {};
-  const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (orig.source ? `${orig.source}${orig.sourcePort ? ":" + orig.sourcePort : ""}` : "-");
-  const destLabel = orig.destinationHostname || (orig.destination ? `${orig.destination}${orig.destinationPort ? ":" + orig.destinationPort : ""}` : "-");
+  const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (hostPort(orig.source, orig.sourcePort) || "-");
+  const destLabel = orig.destinationHostname || (hostPort(orig.destination, orig.destinationPort) || "-");
   const destService = orig.destinationService || "";
   const destServiceApp = connectionServiceApp(destService);
   const traffic = connectionTrafficBytes(entry);
@@ -5476,7 +5497,7 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
   return (
     <div className={styles.interfaceGrid}>
       {interfaces.map(item => (
-        <div className={styles.interfaceCard} key={`${item.name}-${item.ifname}`}>
+        <div className={styles.interfaceCard} key={`${item.name}-${item.ifname}`} role="group" aria-label={`Interface ${item.ifname || item.name}`}>
           <div className={styles.interfaceHeader}>
             <div className={styles.interfaceName}>
               <Text weight="semibold">{item.name || item.ifname || "-"}</Text>
@@ -5490,11 +5511,19 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
             {item.mtu ? <Text size={200} className={styles.muted}>MTU {item.mtu}</Text> : null}
           </div>
           <div className={styles.addressList}>
+            <Text size={200} className={styles.muted}>{item.observationError ? "Previously observed addresses; current read failed" : "Observed addresses"}</Text>
             {(item.addresses ?? []).map(address => (
               <code className={styles.wrapCode} key={address}>{address}</code>
             ))}
-            {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>No address observed</Text> : null}
+            {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>{item.observationError ? "Current addresses unknown" : "No address observed"}</Text> : null}
+            {item.observationError ? <Text size={200} role="status" className={styles.muted}>{item.observationError}</Text> : null}
           </div>
+          {item.configuredAddresses?.length ? (
+            <div className={styles.addressList}>
+              <Text size={200} className={styles.muted}>Configured addresses</Text>
+              {item.configuredAddresses.map(address => <code className={styles.wrapCode} key={address}>{address}</code>)}
+            </div>
+          ) : null}
           <div className={styles.interfaceLine}>
             {item.hardwareAddress ? <Text size={200} className={styles.muted}>{item.hardwareAddress}</Text> : null}
             {item.owner ? <Text size={200} className={styles.muted}>owner {item.owner}</Text> : null}
@@ -5511,15 +5540,15 @@ function OverviewActivity({
   events,
   navigateTo,
 }: {
-  resources: ResourceStatus[];
-  events: RouterEvent[];
+  resources?: ResourceStatus[];
+  events?: RouterEvent[];
   navigateTo: (view: ViewKey, targetID?: string) => void;
 }) {
   const styles = useStyles();
-  const alerts = resources
+  const alerts = (resources ?? [])
     .filter(resource => ["danger", "warning"].includes(resourceStatusClassification(resource).disposition))
     .slice(0, 8);
-  const recent = events.slice(0, 8);
+  const recent = (events ?? []).slice(0, 8);
   return (
     <div id="overview-activity" className={`${styles.sectionGrid} ${styles.connectionAnchor}`}>
       <Card>
@@ -5529,7 +5558,7 @@ function OverviewActivity({
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("resources")}>Resources</Button>}
         />
         {alerts.length === 0 ? (
-          <Text className={styles.muted}>No active resource alerts</Text>
+          <Text className={styles.muted}>{resources ? "No active resource alerts" : "Resource observation unavailable"}</Text>
         ) : (
           <div className={styles.alertList}>
             {alerts.map(resource => (
@@ -5551,7 +5580,7 @@ function OverviewActivity({
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("events")}>Events</Button>}
         />
         {recent.length === 0 ? (
-          <Text className={styles.muted}>No recent events</Text>
+          <Text className={styles.muted}>{events ? "No recent events" : "Event observation unavailable"}</Text>
         ) : (
           <div className={styles.alertList}>
             {recent.map(event => (
@@ -5714,10 +5743,10 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
   );
 }
 
-function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[]; onShowConnections: (row: ClientRow) => void }) {
+function ClientInventory({ clients, onShowConnections }: { clients?: ClientEntry[]; onShowConnections: (row: ClientRow) => void }) {
   const styles = useStyles();
-  const rows = clients.map(clientEntryToRow);
-  const online = rows.filter(row => clientOnline(row)).length;
+  const rows = (clients ?? []).map(clientEntryToRow);
+  const reachable = rows.filter(row => clientReachable(row)).length;
   const addressCount = rows.reduce((sum, row) => sum + row.addresses.size, 0);
   const activeActivities = new Set(rows.map(row => row.primaryActivity).filter(Boolean));
   const sections = clientSections(rows);
@@ -5728,17 +5757,18 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
   }, [collapsedSections]);
   const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
   const toggleSection = (key: string) => setCollapsedSections(current => ({ ...current, [key]: !current[key] }));
+  if (!clients) return <Text className={styles.muted}>Client observation unavailable</Text>;
   return (
     <>
       <div className={styles.vpnSummaryGrid}>
         <Metric label="devices" value={String(rows.length)} />
-        <Metric label="online" value={`${online}/${rows.length}`} />
+        <Metric label="neighbor reachable" value={`${reachable}/${rows.length}`} />
         <Metric label="addresses" value={String(addressCount)} />
         <Metric label="activity types" value={String(activeActivities.size)} />
       </div>
       <div className={styles.clientSections}>
         {sections.map(section => {
-          const sectionOnline = section.rows.filter(row => clientOnline(row)).length;
+          const sectionReachable = section.rows.filter(row => clientReachable(row)).length;
           const isSectionCollapsed = !!collapsedSections[section.key];
           return (
             <section className={styles.clientSection} key={section.key}>
@@ -5753,13 +5783,13 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                     {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
                     <ClientSectionIcon family={section.label} />
                     <span>{section.label}</span>
-                    <span className={styles.muted}>({section.rows.length} devices, {sectionOnline} online)</span>
+                    <span className={styles.muted}>({section.rows.length} devices, {sectionReachable} reachable)</span>
                   </span>
                   <span className={`${styles.clientSectionTitle} ${styles.clientDesktopOnly}`}>
                     {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
                     <ClientSectionIcon family={section.label} />
                     <Text weight="semibold">{section.label}</Text>
-                    <Text size={200} className={styles.muted}>{section.rows.length} devices · {sectionOnline} online</Text>
+                    <Text size={200} className={styles.muted}>{section.rows.length} devices · {sectionReachable} reachable</Text>
                   </span>
                 </button>
                 <Text size={200} className={styles.muted}>{section.addressCount} addresses</Text>
@@ -5771,7 +5801,7 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                   const isExpanded = !!expanded[key];
                   const primaryAddress = primaryClientAddress(row) || "-";
                   return (
-                    <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} data-client-row="true" key={key}>
+                    <div className={`${styles.clientDeviceRow} ${clientReachable(row) ? "" : styles.clientDeviceRowOffline}`} data-client-row="true" data-reachability={clientReachabilityLabel(row)} key={key}>
                       <Button
                         className={styles.clientDesktopOnly}
                         appearance="subtle"
@@ -5791,8 +5821,8 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                           <span className={styles.clientMobileIcon}><ClientDeviceIcon row={row} /></span>
                           <Text weight="semibold" className={styles.clientMobileName}>{row.hostname || row.vendor || row.mac || "unknown client"}</Text>
                           <span className={styles.clientMobileStatus}>
-                            <span className={clientOnline(row) ? styles.clientOnlineDot : styles.clientOfflineDot} />
-                            <Text size={200}>{clientLastSeen(row)}</Text>
+                            <span className={clientReachable(row) ? styles.clientOnlineDot : styles.clientOfflineDot} />
+                            <Text size={200}>{clientReachabilityLabel(row)}</Text>
                           </span>
                         </span>
                         <span className={styles.clientMobileSubLine}>
@@ -5808,7 +5838,7 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                         <Text weight="semibold">{row.hostname || "unknown client"}</Text>
                         <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
                         <div className={styles.badges}>
-                          <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
+                          <Badge appearance="tint" color={clientReachable(row) ? "success" : "subtle"}>{clientReachabilityLabel(row)}</Badge>
                           {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
                           {row.clientPolicy ? <Badge appearance="tint" color={row.clientPolicyMode === "trusted" ? "success" : "warning"}>{formatClientPolicyMode(row.clientPolicyMode)}</Badge> : null}
                         </div>
@@ -5830,11 +5860,10 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                         <div className={styles.clientDeviceDetails}>
                           <div className={styles.clientDetailStack}>
                             <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
-                            <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
-                            <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
+                            <ClientAddressGroup label="IPv6" addresses={groups.ipv6} />
                             <div className={styles.clientMetaLine}>
                               <code className={styles.wrapCode}>{row.mac || "-"}</code>
-                              <Text size={200} className={styles.muted}>last seen {clientLastSeen(row)}</Text>
+                              <Text size={200} className={styles.muted}>reachability {clientReachabilityLabel(row)}</Text>
                               {row.primaryActivity ? <Text size={200} className={styles.muted}>activity {formatClientActivity(row.primaryActivity)}</Text> : null}
                               {row.lastProtocol ? <Text size={200} className={styles.muted}>last protocol {formatConnectionApp(row.lastProtocol)}{row.lastProtocolDetail ? ` ${row.lastProtocolDetail}` : ""}</Text> : null}
                               {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
@@ -6053,8 +6082,9 @@ function ClientTraffic({ flows, onShowConnectionsForAddress }: { flows: TrafficF
   );
 }
 
-function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
+function DHCPLeaseTable({ leases }: { leases?: DHCPLease[] }) {
   const styles = useStyles();
+  if (!leases) return <Text className={styles.muted}>DHCP lease observation unavailable</Text>;
   const rows = [...leases].sort((a, b) => stringSort(a.ip ?? "", b.ip ?? ""));
   return (
     <div className={styles.tableWrap} data-routerd-scroll-key="dhcp-leases">
@@ -6073,7 +6103,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
             <TableHeaderCell>Family</TableHeaderCell>
             <TableHeaderCell>IP</TableHeaderCell>
             <TableHeaderCell>Hostname</TableHeaderCell>
-            <TableHeaderCell>MAC</TableHeaderCell>
+            <TableHeaderCell>MAC / IAID</TableHeaderCell>
             <TableHeaderCell>Vendor</TableHeaderCell>
             <TableHeaderCell>Expires</TableHeaderCell>
             <TableHeaderCell>Sticky</TableHeaderCell>
@@ -6085,7 +6115,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
               <TableCell><Badge appearance="tint" color={lease.family === "ipv6" ? "brand" : "success"}>{lease.family || "-"}</Badge></TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.ip || "-"}</code></TableCell>
               <TableCell>{lease.hostname || "-"}</TableCell>
-              <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{lease.mac || (lease.iaid ? `IAID ${lease.iaid}` : "-")}</code></TableCell>
               <TableCell>{lease.vendor || "-"}</TableCell>
               <TableCell><RelativeTime value={lease.expiresAt} /></TableCell>
               <TableCell>{lease.stickyUntil && !isZeroTime(lease.stickyUntil) ? <Text size={200} className={styles.muted}>until <RelativeTime value={lease.stickyUntil} /></Text> : "-"}</TableCell>
@@ -6099,7 +6129,8 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
 
 function ConntrackTuningView({ tuning }: { tuning?: ConntrackTuningSummary }) {
   const styles = useStyles();
-  const suggestions = tuning?.suggestions ?? [];
+  if (!tuning) return <Text className={styles.muted}>Conntrack tuning observation unavailable</Text>;
+  const suggestions = tuning.suggestions ?? [];
   if (suggestions.length === 0) {
     return <Text className={styles.muted}>No tuning suggestions from the current observation window</Text>;
   }
@@ -6183,8 +6214,9 @@ function RecentDeny({
   );
 }
 
-function DenyRateChart({ timeline }: { timeline: FirewallDenyTimelineBucket[] }) {
+function DenyRateChart({ timeline }: { timeline?: FirewallDenyTimelineBucket[] }) {
   const styles = useStyles();
+  if (!timeline) return <Text className={styles.muted}>Firewall deny observation unavailable</Text>;
   const samples = denyTimelineSamples(timeline);
   const peak = denyTimelinePeak(timeline);
   const total = denyTimelineTotal(timeline);
@@ -6303,7 +6335,7 @@ function FirewallTimeline({
         <span>DPI</span>
         <span>Rule</span>
       </div>
-      {logs.slice(0, 50).map((log, index) => (
+      {logs.map((log, index) => (
         <div className={styles.firewallTimelineRow} role="row" key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
           <FirewallCell label="Time"><RelativeTime value={log.ts} /></FirewallCell>
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
@@ -6364,7 +6396,7 @@ function firewallDestinationSetTitle(match: AddressSetMatch) {
 }
 
 function FirewallCorrelationBadge({ correlation }: { correlation?: string }) {
-  const value = correlation || "true_suspicious";
+  const value = correlation || "unknown";
   if (value === "orphan_return") return <Badge appearance="tint" color="warning">orphan return</Badge>;
   if (value === "true_suspicious") return <Badge appearance="tint" color="danger">true suspicious</Badge>;
   return <Badge appearance="outline">{value}</Badge>;
@@ -6439,8 +6471,8 @@ async function fetchJSON<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function fetchText(path: string): Promise<string> {
-  const response = await fetch(basePath + path, { cache: "no-store" });
+async function fetchText(path: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(basePath + path, { cache: "no-store", signal });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
   return response.text();
 }
@@ -6453,7 +6485,7 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
     gatewayHealth: collected.has("resources") ? next.gatewayHealth : current?.gatewayHealth,
     phases: collected.has("resources") ? next.phases ?? {} : current?.phases,
     resources: collected.has("resources") ? reconcileRecords(current?.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`) : current?.resources,
-    interfaces: collected.has("resources") ? reconcileRecords(current?.interfaces, next.interfaces, row => row.ifname ?? row.name ?? "") : current?.interfaces,
+    interfaces: collected.has("resources") ? reconcileInterfaces(current?.interfaces, next.interfaces) : current?.interfaces,
     events: collected.has("events") ? reconcileRecords(current?.events, next.events, row => eventKey(row)) : current?.events,
     connections: collected.has("connections") ? reconcileConnectionTable(current?.connections, next.connections) : current?.connections,
     dnsQueries: collected.has("dnsQueries") ? reconcileRecords(current?.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`) : current?.dnsQueries,
@@ -6466,6 +6498,16 @@ function reconcileSummary(current: Summary | null, next: Summary): Summary {
     clients: collected.has("clients") ? reconcileRecords(current?.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")) : current?.clients,
     vpn: collected.has("vpn") ? reconcileVPNStatus(current?.vpn, next.vpn) : current?.vpn,
   };
+}
+
+function reconcileInterfaces(current?: InterfaceSummary[], next?: InterfaceSummary[]): InterfaceSummary[] {
+  const previous = new Map((current ?? []).filter(row => row.ifname).map(row => [row.ifname!, row]));
+  const incoming = (next ?? []).map(row => {
+    const old = row.ifname ? previous.get(row.ifname) : undefined;
+    if (!row.observationError || !old) return row;
+    return { ...row, addresses: old.addresses, mtu: old.mtu, flags: old.flags, hardwareAddress: old.hardwareAddress };
+  });
+  return reconcileRecords(current, incoming, row => row.ifname ?? row.name ?? "");
 }
 
 function reconcileConnectionTable(current?: ConnectionTable, next?: ConnectionTable): ConnectionTable | undefined {
@@ -6493,13 +6535,8 @@ function reconcileVPNStatus(current?: VPNStatus, next?: VPNStatus): VPNStatus | 
 function reconcileRecords<T>(current: T[] | undefined, next: T[] | undefined, keyFn: (row: T) => string): T[] {
   if (!next) return [];
   if (!current || current.length === 0) return next;
-  const previous = new Map<string, T>();
   const incoming = new Map<string, T>();
   const used = new Set<string>();
-  for (const row of current) {
-    const key = keyFn(row);
-    if (key) previous.set(key, row);
-  }
   for (const row of next) {
     const key = keyFn(row);
     if (key) incoming.set(key, row);
@@ -6537,10 +6574,11 @@ function normalizeBasePath(value: string) {
 
 function phaseColor(phase: unknown): StatusBadgeColor {
   const text = String(phase ?? "");
-  if (/Disabled|Standby|NotApplicable/.test(text)) return "subtle";
-  if (/Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed/.test(text)) return "success";
-  if (/Pending|Drifted|Unknown/.test(text)) return "warning";
-  if (/Error|Failed|Down|Unhealthy/.test(text)) return "danger";
+  if (/^(Disabled|Standby|NotApplicable)$/.test(text)) return "subtle";
+  if (text === "NotObserved") return "warning";
+  if (/^(Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed)$/.test(text)) return "success";
+  if (/^(Pending|Drifted|Unknown)$/.test(text)) return "warning";
+  if (/^(Error|Failed|Down|Unhealthy)$/.test(text)) return "danger";
   return "informative";
 }
 
@@ -6550,6 +6588,7 @@ function resourcePhaseColor(resource: ResourceStatus): StatusBadgeColor {
 
 function resourceStatusClassification(resource: ResourceStatus): { disposition: ResourceDisposition; color: StatusBadgeColor } {
   const status = resource.status ?? {};
+  if (resource.declared === false) return { disposition: "neutral", color: "subtle" };
   const phase = String(status.phase ?? "");
   const reason = String(status.reason ?? "");
   if (resourcePhaseSuppressedByReason(phase, reason)) return { disposition: "neutral", color: "subtle" };
@@ -6615,12 +6654,12 @@ function gatewaySummaryStatusLabel(status: string) {
     case "skip":
       return "skip";
     default:
-      return "skip";
+      return "unknown";
   }
 }
 
 function gatewayHealthCounts(components: GatewayHealthComponent[]) {
-  const counts = { pass: 0, warn: 0, fail: 0, skip: 0 };
+  const counts = { pass: 0, warn: 0, fail: 0, skip: 0, unknown: 0 };
   for (const component of components) {
     switch (normalizeGatewayStatus(component.status)) {
       case "ok":
@@ -6634,6 +6673,9 @@ function gatewayHealthCounts(components: GatewayHealthComponent[]) {
         break;
       case "skip":
         counts.skip += 1;
+        break;
+      default:
+        counts.unknown += 1;
         break;
     }
   }
@@ -6687,7 +6729,7 @@ function formatGatewayWaiting(waiting: Record<string, string>) {
 }
 
 function neutralPhase(phase: unknown) {
-  return /Disabled|Standby|NotApplicable/.test(String(phase ?? ""));
+  return /^(Disabled|Standby|NotApplicable)$/.test(String(phase ?? ""));
 }
 
 function stateColor(state: unknown): "success" | "warning" | "informative" | "subtle" {
@@ -6714,18 +6756,14 @@ function roleColor(role: unknown): "success" | "warning" | "danger" | "informati
   return "informative";
 }
 
-function importantResources(resources: ResourceStatus[]) {
-  return resources.filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|VirtualAddress|WireGuard|VXLAN/.test(resource.kind ?? ""));
-}
-
 function conntrackLabel(table?: ConnectionTable) {
   if (!table) return "-";
-  if (table.max) return `${table.count ?? 0}/${table.max}`;
+  if (table.max) return `${table.count ?? "-"}/${table.max}`;
   return String(table.count ?? "-");
 }
 
-function connectionFamilyCount(table: ConnectionTable | undefined, family: string): number {
-  if (!table) return 0;
+function connectionFamilyCount(table: ConnectionTable | undefined, family: string): number | undefined {
+  if (!table) return undefined;
   const want = family.toLowerCase();
   if (table.byFamily && Object.keys(table.byFamily).length > 0) {
     let total = 0;
@@ -6734,12 +6772,15 @@ function connectionFamilyCount(table: ConnectionTable | undefined, family: strin
     }
     return total;
   }
+  if (table.count === 0) return 0;
+  if (table.entries?.length !== table.count) return undefined;
   return (table.entries ?? []).filter(entry => String(entry.family ?? "").toLowerCase() === want).length;
 }
 
 function connectionFamilyCounts(table?: ConnectionTable) {
   if (!table) return "-";
   const counts = { ipv4: 0, ipv6: 0, other: 0 };
+  if (!table.byFamily && table.count !== 0 && table.entries?.length !== table.count) return "not collected";
   if (table?.byFamily && Object.keys(table.byFamily).length > 0) {
     for (const [family, value] of Object.entries(table.byFamily)) {
       const key = family.toLowerCase();
@@ -6759,7 +6800,7 @@ function connectionFamilyCounts(table?: ConnectionTable) {
 }
 
 function connectionShowingValue(table: ConnectionTable | undefined, filtered: number) {
-  if (!table) return "0 / 0";
+  if (!table) return "not collected";
   const loaded = table.entries?.length ?? 0;
   const observedTotal = Math.max(Number(table.count ?? 0), loaded);
   if (observedTotal > loaded) {
@@ -7731,7 +7772,7 @@ function topDomains(flows: TrafficFlow[]) {
   for (const flow of flows) {
     const label = trafficFlowDomain(flow);
     if (!label) continue;
-    totals.set(label, (totals.get(label) ?? 0) + Math.max(1, trafficFlowBytes(flow)));
+    totals.set(label, (totals.get(label) ?? 0) + 1);
   }
   return topRows(totals, 5);
 }
@@ -7799,6 +7840,7 @@ function trafficFlowDomain(flow: TrafficFlow) {
 }
 
 function trafficFlowBytes(flow: TrafficFlow) {
+  if (!flow.accounting) return 0;
   return Math.max(0, Number(flow.bytesOut ?? 0)) + Math.max(0, Number(flow.bytesIn ?? 0));
 }
 
@@ -8027,7 +8069,7 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     ];
   }
   if (selected === "resources") {
-    const resources = importantResources(summary?.resources ?? []);
+    const resources = summary?.resources ?? [];
     return [
       { key: "resources", label: "Resources", count: resources.length, view: "resources", targetID: "resources-table" },
     ];
@@ -8328,11 +8370,12 @@ function endpoint(tuple?: ConnTuple) {
 }
 
 function hostPort(host?: string, port?: string) {
-  return host ? `${host}${port ? `:${port}` : ""}` : "";
+  if (!host) return "";
+  return port ? `${host.includes(":") ? `[${host}]` : host}:${port}` : host;
 }
 
 function firewallEndpoint(host?: string, port?: number) {
-  return host ? `${host}${port ? `:${port}` : ""}` : "-";
+  return hostPort(host, port ? String(port) : undefined) || "-";
 }
 
 function flowKey(entry: ConnectionEntry) {
@@ -8349,21 +8392,17 @@ function eventKey(event?: RouterEvent) {
 }
 
 function resourceDetail(status: Record<string, unknown>) {
-  return ["selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "backendState", "tailnetName", "tailscaleIPs", "peerCount", "changedFields"]
-    .map(key => status[key] ? `${key}=${status[key]}` : "")
+  return ["reason", "message", "selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "backendState", "tailnetName", "tailscaleIPs", "peerCount", "changedFields"]
+    .map(key => status[key] !== undefined && status[key] !== null && status[key] !== "" ? `${key}=${status[key]}` : "")
     .filter(Boolean)
     .join(" ");
 }
 
-function dryRunControllerByKind(controllers: ControllerStatus[]) {
-  const byKind = new Map<string, ControllerStatus>();
-  for (const controller of controllers) {
-    if (controller.mode !== "dry-run") continue;
-    for (const kind of controller.resourceKinds ?? []) {
-      byKind.set(kind, controller);
-    }
-  }
-  return byKind;
+function resourceControllerMode(resource: ResourceStatus, controllers: ControllerStatus[]) {
+  const owner = controllers.find(controller => controller.name === resource.owner);
+  if (owner) return owner.mode;
+  const modes = new Set(controllers.filter(controller => controller.resourceKinds?.includes(resource.kind ?? "")).map(controller => controller.mode || "unknown"));
+  return modes.size === 1 ? [...modes][0] : undefined;
 }
 
 function resourceName(event: RouterEvent) {
@@ -8388,35 +8427,6 @@ function formatDetailValue(value: unknown) {
   } catch {
     return String(value);
   }
-}
-
-function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
-  if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
-  const from = fromText.replace(/\n$/, "").split(/\n/);
-  const to = toText.replace(/\n$/, "").split(/\n/);
-  const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
-  for (let i = from.length - 1; i >= 0; i--) {
-    for (let j = to.length - 1; j >= 0; j--) {
-      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
-  }
-  const lines = [`--- ${fromName}`, `+++ ${toName}`];
-  let i = 0;
-  let j = 0;
-  while (i < from.length || j < to.length) {
-    if (i < from.length && j < to.length && from[i] === to[j]) {
-      lines.push(` ${from[i]}`);
-      i++;
-      j++;
-    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
-      lines.push(`+${to[j]}`);
-      j++;
-    } else if (i < from.length) {
-      lines.push(`-${from[i]}`);
-      i++;
-    }
-  }
-  return `${lines.join("\n")}\n`;
 }
 
 function clientTrafficRows(flows: TrafficFlow[]) {
@@ -8445,9 +8455,8 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     vendor: entry.vendor ?? "",
     state: entry.state ?? "",
     sources: new Set(entry.sources ?? []),
-    expiresAt: "",
-    bytesOut: entry.bytesOut,
-    bytesIn: entry.bytesIn,
+    bytesOut: entry.accounting ? entry.bytesOut ?? 0 : undefined,
+    bytesIn: entry.accounting ? entry.bytesIn ?? 0 : undefined,
     peers: new Set(entry.peers ?? []),
     primaryActivity: entry.primaryActivity ?? "",
     lastProtocol: entry.lastProtocol ?? "",
@@ -8691,16 +8700,14 @@ function generationSearchText(row: GenerationRecord) {
   ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
 }
 
-function clientOnline(row: ClientRow) {
-  const state = String(row.state ?? "").toLowerCase();
-  if (/failed|stale|expired|offline/.test(state)) return false;
-  return row.addresses.size > 0 || !!row.bytesIn || !!row.bytesOut || row.peers.size > 0;
+function clientReachable(row: ClientRow) {
+  // Cached leases and traffic history identify inventory, not present reachability.
+  return String(row.state ?? "").toUpperCase().split(",").some(state => ["REACHABLE", "R"].includes(state.trim()));
 }
 
 function primaryClientAddress(row: ClientRow) {
   const addresses = Array.from(row.addresses);
-  return addresses.find(address => address.includes("."))
-    ?? addresses.find(address => isStableIPv6(address))
+  return addresses.find(address => !address.includes(":"))
     ?? addresses[0]
     ?? row.ip
     ?? "";
@@ -8729,18 +8736,12 @@ function formatPrimaryClientAddress(address: string) {
 }
 
 function groupedClientAddresses(addresses: string[]) {
-  const groups = { ipv4: [] as string[], ipv6Stable: [] as string[], ipv6Privacy: [] as string[] };
+  const groups = { ipv4: [] as string[], ipv6: [] as string[] };
   for (const address of addresses) {
-    if (address.includes(".")) groups.ipv4.push(address);
-    else if (isStableIPv6(address)) groups.ipv6Stable.push(address);
-    else groups.ipv6Privacy.push(address);
+    if (address.includes(":")) groups.ipv6.push(address);
+    else groups.ipv4.push(address);
   }
   return groups;
-}
-
-function isStableIPv6(address: string) {
-  const text = address.split("/")[0].toLowerCase();
-  return text.includes(":ff:fe") || /(^|:)0*1[123]$/.test(text) || text.endsWith("::1");
 }
 
 function clientOSFamily(row: ClientRow) {
@@ -8787,10 +8788,8 @@ function clientOSBadgeColor(family: string) {
   }
 }
 
-function clientLastSeen(row: ClientRow) {
-  if (clientOnline(row)) return "now";
-  if (row.expiresAt) return relativeTimeText(row.expiresAt) || absoluteTime(row.expiresAt);
-  return "-";
+function clientReachabilityLabel(row: ClientRow) {
+  return clientReachable(row) ? "reachable" : "unknown";
 }
 
 function formatBytes(value?: number) {
@@ -8839,13 +8838,13 @@ function systemCPULabel(usage?: SystemUsage) {
 }
 
 function systemMemoryLabel(usage?: SystemUsage) {
-  if (!usage?.memoryUsedPercent) return "-";
+  if (typeof usage?.memoryUsedPercent !== "number" || !Number.isFinite(usage.memoryUsedPercent)) return "-";
   return `${formatPercent(usage.memoryUsedPercent)} / ${formatBytes(usage.memoryTotalBytes)}`;
 }
 
 function systemDiskLabel(usage?: SystemUsage) {
   const disk = usage?.disks?.[0];
-  if (!disk?.usedPercent) return "-";
+  if (typeof disk?.usedPercent !== "number" || !Number.isFinite(disk.usedPercent)) return "-";
   return `${formatPercent(disk.usedPercent)} / ${formatBytes(disk.totalBytes)}`;
 }
 
@@ -8899,7 +8898,7 @@ function firewallLogKey(log: FirewallLog) {
 }
 
 function firewallCorrelation(log: FirewallLog) {
-  return log.correlation || "true_suspicious";
+  return log.correlation || "unknown";
 }
 
 function firewallTCPFlags(log: FirewallLog) {
@@ -8909,14 +8908,14 @@ function firewallTCPFlags(log: FirewallLog) {
 function firewallTrafficClass(log: FirewallLog) {
   if (firewallDPIText(log)) return "DPI label";
   const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
-  if (protocol === "udp" || protocol === "icmp" || protocol === "icmpv6") return "stateless probe";
+  if (protocol === "udp" || protocol === "icmp" || protocol === "icmpv6") return `${protocol.toUpperCase()} packet`;
   if (protocol === "tcp") {
     const flags = new Set(firewallTCPFlags(log).split(/[, ]+/).map(flag => flag.trim().toUpperCase()).filter(Boolean));
-    if (flags.size === 1 && flags.has("SYN")) return "new-connection attempt / scan";
+    if (flags.size === 1 && flags.has("SYN")) return "SYN packet";
     if (flags.size === 1 && flags.has("ACK")) {
-      return firewallCorrelation(log) === "orphan_return" ? "orphan return" : "established follow";
+      return firewallCorrelation(log) === "orphan_return" ? "orphan return" : "ACK packet";
     }
-    if (flags.has("RST") || flags.has("FIN")) return "termination";
+    if (flags.has("RST") || flags.has("FIN")) return "termination flags";
   }
   if (firewallCorrelation(log) === "orphan_return") return "orphan return";
   return "unclassified";
@@ -8924,11 +8923,11 @@ function firewallTrafficClass(log: FirewallLog) {
 
 function firewallTrafficClassColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
   const normalized = value.toLowerCase();
-  if (normalized.includes("scan")) return "danger";
+  if (normalized.includes("syn")) return "warning";
   if (normalized.includes("orphan")) return "warning";
-  if (normalized.includes("established")) return "informative";
+  if (normalized.includes("ack")) return "informative";
   if (normalized.includes("termination")) return "subtle";
-  if (normalized.includes("stateless")) return "warning";
+
   if (normalized.includes("dpi")) return "brand";
   return "subtle";
 }

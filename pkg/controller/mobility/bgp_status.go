@@ -3,6 +3,8 @@
 package mobility
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/netip"
 	"strings"
 
@@ -14,7 +16,7 @@ import (
 // collect a BGP observation.  No planner receives this interface: it receives
 // the resulting BGPSnapshot instead.
 type bgpStatusStore interface {
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 // BGPSnapshot is the typed BGP observation used by both Mobility and
@@ -44,7 +46,7 @@ func (s BGPSnapshot) RIBObserved() bool {
 // reconciliation. Every value returned here is a fact, never desired state;
 // member identity comes from the already-normalized Pool rather than a second
 // projection of MobilityPoolSpec.
-func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool NormalizedMobilityPool) BGPSnapshot {
+func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool NormalizedMobilityPool) (BGPSnapshot, error) {
 	snapshot := BGPSnapshot{
 		InstalledNextHops: map[string][]string{},
 		CaptureNextHops:   map[string][]string{},
@@ -54,11 +56,11 @@ func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool Normalize
 		LivenessMarkers:   map[string]string{},
 	}
 	if router == nil || store == nil {
-		return snapshot
+		return snapshot, nil
 	}
 	poolPrefix := pool.Prefix
 	if !poolPrefix.IsValid() {
-		return snapshot
+		return snapshot, nil
 	}
 	communityOwners := map[string]string{}
 	for _, member := range pool.Members {
@@ -70,16 +72,27 @@ func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool Normalize
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "BGPRouter" {
 			continue
 		}
-		status := store.ObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		status, err := store.ReadObjectStatus(api.NetAPIVersion, "BGPRouter", resource.Metadata.Name)
+		if err != nil {
+			return BGPSnapshot{}, fmt.Errorf("read %s BGP observation: %w", resource.ID(), err)
+		}
 		if raw, ok := status["livenessMarkers"]; ok {
+			markers, err := bgpLivenessMarkersValue(raw)
+			if err != nil {
+				return BGPSnapshot{}, fmt.Errorf("%s livenessMarkers: %w", resource.ID(), err)
+			}
 			snapshot.LivenessObserved = true
-			for community, prefix := range bgpLivenessMarkersValue(raw) {
+			for community, prefix := range markers {
 				snapshot.LivenessMarkers[community] = prefix
 			}
 		}
 		if raw, ok := status["installedNextHops"]; ok {
+			nextHopsByPrefix, err := bgpInstalledNextHopsValue(raw)
+			if err != nil {
+				return BGPSnapshot{}, fmt.Errorf("%s installedNextHops: %w", resource.ID(), err)
+			}
 			snapshot.InstalledObserved = true
-			for prefix, nextHops := range bgpstate.InstalledNextHopsFromStatus(raw) {
+			for prefix, nextHops := range nextHopsByPrefix {
 				snapshot.InstalledNextHops[prefix] = mergeStringSet(snapshot.InstalledNextHops[prefix], nextHops)
 			}
 		}
@@ -87,8 +100,12 @@ func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool Normalize
 		if !ok {
 			continue
 		}
+		prefixes, err := bgpStatusPrefixesValue(rawPrefixes)
+		if err != nil {
+			return BGPSnapshot{}, fmt.Errorf("%s prefixes: %w", resource.ID(), err)
+		}
 		snapshot.CaptureRIBObserved = true
-		for _, prefix := range bgpStatusPrefixesValue(rawPrefixes) {
+		for _, prefix := range prefixes {
 			if !prefix.Valid || prefix.Stale {
 				continue
 			}
@@ -120,32 +137,109 @@ func collectBGPSnapshot(router *api.Router, store bgpStatusStore, pool Normalize
 			snapshot.CaptureNextHops[address] = mergeStringSet(snapshot.CaptureNextHops[address], []string{nextHop})
 		}
 	}
-	return snapshot
+	return snapshot, nil
 }
 
-func bgpStatusPrefixesValue(value any) []bgpstate.Prefix {
-	// BGPRouter writes a typed []bgpstate.Prefix and SQLite returns the same
-	// JSON shape as []any/map[string]any. Keep their one store-boundary codec
-	// instead of maintaining a second field-by-field status parser here.
-	out := decodeStatusValue[[]bgpstate.Prefix](value)
-	for i := range out {
-		out[i].Prefix = strings.TrimSpace(out[i].Prefix)
-		out[i].NextHop = strings.TrimSpace(out[i].NextHop)
-		out[i].Communities = cleanStrings(out[i].Communities)
+func bgpStatusPrefixesValue(value any) ([]bgpstate.Prefix, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
 	}
-	return out
-}
-
-func bgpLivenessMarkersValue(value any) map[string]string {
-	out := map[string]string{}
-	for community, prefix := range decodeStatusValue[map[string]string](value) {
-		community = strings.TrimSpace(community)
-		prefix = normalizeObservedBGPPrefix(prefix)
-		if community != "" && prefix != "" {
-			out[community] = prefix
+	var records []json.RawMessage
+	if err := json.Unmarshal(data, &records); err != nil {
+		return nil, err
+	}
+	if records == nil {
+		return nil, fmt.Errorf("must be a non-null prefix array")
+	}
+	out := make([]bgpstate.Prefix, 0, len(records))
+	for _, record := range records {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(record, &fields); err != nil {
+			return nil, err
 		}
+		for _, field := range []string{"prefix", "best", "valid"} {
+			raw, present := fields[field]
+			if !present || string(raw) == "null" {
+				return nil, fmt.Errorf("prefix observation requires %s", field)
+			}
+		}
+		for _, field := range []string{"nextHop", "communities", "stale"} {
+			if raw, present := fields[field]; present && string(raw) == "null" {
+				return nil, fmt.Errorf("prefix observation %s must not be null", field)
+			}
+		}
+		var prefix bgpstate.Prefix
+		if err := json.Unmarshal(record, &prefix); err != nil {
+			return nil, err
+		}
+		normalized := normalizeObservedBGPPrefix(prefix.Prefix)
+		if normalized == "" {
+			return nil, fmt.Errorf("invalid or incomplete BGP prefix observation %q", prefix.Prefix)
+		}
+		prefix.Prefix = normalized
+		prefix.NextHop = strings.TrimSpace(prefix.NextHop)
+		if prefix.NextHop != "" {
+			if _, err := netip.ParseAddr(prefix.NextHop); err != nil {
+				return nil, fmt.Errorf("invalid BGP next hop %q", prefix.NextHop)
+			}
+		}
+		prefix.Communities = cleanStrings(prefix.Communities)
+		out = append(out, prefix)
 	}
-	return out
+	return out, nil
+}
+
+func bgpLivenessMarkersValue(value any) (map[string]string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		return nil, fmt.Errorf("must be a non-null liveness marker map")
+	}
+	out := map[string]string{}
+	for community, raw := range decoded {
+		community = strings.TrimSpace(community)
+		prefix := normalizeObservedBGPPrefix(raw)
+		if !bgpstate.IsMobilityNodeIdentityCommunity(community) || prefix == "" {
+			return nil, fmt.Errorf("invalid liveness marker %q=%q", community, raw)
+		}
+		out[community] = prefix
+	}
+	return out, nil
+}
+
+func bgpInstalledNextHopsValue(value any) (map[string][]string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var decoded map[string][]string
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		return nil, fmt.Errorf("must be a non-null installed next-hop map")
+	}
+	out := map[string][]string{}
+	for raw, hops := range decoded {
+		prefix := normalizeObservedBGPPrefix(raw)
+		if prefix == "" || len(hops) == 0 {
+			return nil, fmt.Errorf("invalid installed prefix or empty next-hop set %q", raw)
+		}
+		for _, hop := range hops {
+			if _, err := netip.ParseAddr(strings.TrimSpace(hop)); err != nil {
+				return nil, fmt.Errorf("invalid installed next hop %q", hop)
+			}
+		}
+		out[prefix] = cleanStrings(hops)
+	}
+	return out, nil
 }
 
 func normalizeObservedBGPPrefix(value string) string {

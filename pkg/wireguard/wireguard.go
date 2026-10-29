@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -51,6 +53,7 @@ type PeerConfig struct {
 }
 
 type PeerStatus struct {
+	PresharedKeyDigest  [32]byte `json:"-"`
 	PublicKey           string
 	AllowedIPs          []string
 	LatestHandshake     time.Time
@@ -72,6 +75,7 @@ type Controller struct {
 	Command      CommandRunner
 	CommandStdin CommandStdinRunner
 	DryRun       bool
+	OS           platform.OS
 }
 
 func DefaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -170,18 +174,19 @@ func RenderSetConf(cfg InterfaceConfig) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, error) {
-	if !c.DryRun {
+func PrepareConfig(cfg InterfaceConfig, dryRun bool) (InterfaceConfig, error) {
+	if !dryRun {
 		if err := EnsurePrivateKeyFile(cfg.PrivateKeyFile); err != nil {
-			return nil, err
+			return InterfaceConfig{}, err
 		}
 	}
 	resolved, err := ResolveKeyFiles(cfg)
 	if err != nil {
-		if !c.DryRun {
-			return nil, err
+		if !dryRun {
+			return InterfaceConfig{}, err
 		}
 		resolved = cfg
+		resolved.Peers = append([]PeerConfig(nil), cfg.Peers...)
 		if resolved.PrivateKey == "" && resolved.PrivateKeyFile != "" {
 			resolved.PrivateKey = "REDACTED_FROM_FILE"
 		}
@@ -191,7 +196,12 @@ func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, err
 			}
 		}
 	}
-	cfg = resolved
+	return resolved, nil
+}
+
+// Configure changes an existing interface whose native lifetime is owned by
+// its caller. Key-file observations must have passed through PrepareConfig.
+func (c Controller) Configure(ctx context.Context, cfg InterfaceConfig) ([]byte, error) {
 	conf, err := RenderSetConf(cfg)
 	if err != nil {
 		return nil, err
@@ -208,15 +218,25 @@ func (c Controller) Apply(ctx context.Context, cfg InterfaceConfig) ([]byte, err
 		if c.Command == nil {
 			runStdin = runCommandStdin
 		} else {
-			runStdin = func(ctx context.Context, _ []byte, name string, args ...string) ([]byte, error) {
-				return run(ctx, name, args...)
-			}
+			return nil, fmt.Errorf("WireGuard configuration requires a stdin command collaborator")
 		}
 	}
-	return applyWithCommands(ctx, run, runStdin, cfg, conf)
+	osName := c.OS
+	if osName == "" {
+		osName = platform.CurrentOS()
+	}
+	switch osName {
+	case platform.OSLinux:
+		return applyLinux(ctx, run, runStdin, cfg, conf)
+	case platform.OSFreeBSD:
+		return applyFreeBSD(ctx, run, runStdin, cfg, conf)
+	default:
+		return nil, fmt.Errorf("WireGuard is unsupported on %s", osName)
+	}
 }
 
 func ResolveKeyFiles(cfg InterfaceConfig) (InterfaceConfig, error) {
+	cfg.Peers = append([]PeerConfig(nil), cfg.Peers...)
 	if cfg.PrivateKey == "" && cfg.PrivateKeyFile != "" {
 		value, err := readSecretFile(cfg.PrivateKeyFile)
 		if err != nil {
@@ -260,18 +280,45 @@ func EnsurePrivateKeyFile(path string) error {
 			return fmt.Errorf("create WireGuard private key directory %s: %w", dir, err)
 		}
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.CreateTemp(dir, ".routerd-wg-key-*")
 	if err != nil {
-		if os.IsExist(err) {
-			return nil
-		}
 		return fmt.Errorf("create WireGuard private key file %s: %w", path, err)
 	}
-	defer f.Close()
+	defer os.Remove(f.Name())
 	if _, err := f.WriteString(key + "\n"); err != nil {
+		f.Close()
 		return fmt.Errorf("write WireGuard private key file %s: %w", path, err)
 	}
-	return nil
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync WireGuard private key: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close WireGuard private key: %w", err)
+	}
+	// Publishing an already complete inode preserves O_EXCL semantics without
+	// exposing a truncated key to another generation or a crash recovery read.
+	if err := os.Link(f.Name(), path); err != nil {
+		if !os.IsExist(err) {
+			return fmt.Errorf("publish WireGuard private key: %w", err)
+		}
+		value, err := readSecretFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = PublicKeyFromPrivateKey(value)
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = directory.Sync()
+	closeErr := directory.Close()
+	if err != nil {
+		return err
+	}
+	return closeErr
 }
 
 func GeneratePrivateKey() (string, error) {
@@ -312,19 +359,7 @@ func readSecretFile(path string) (string, error) {
 	return value, nil
 }
 
-func applyWithCommands(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		return applyFreeBSD(ctx, run, runStdin, cfg, conf)
-	}
-	return applyLinux(ctx, run, runStdin, cfg, conf)
-}
-
 func applyLinux(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
-	if _, err := run(ctx, "ip", "link", "show", cfg.Name); err != nil {
-		if _, err := run(ctx, "ip", "link", "add", "dev", cfg.Name, "type", "wireguard"); err != nil {
-			return nil, err
-		}
-	}
 	if cfg.MTU != 0 {
 		if _, err := run(ctx, "ip", "link", "set", "dev", cfg.Name, "mtu", strconv.Itoa(cfg.MTU)); err != nil {
 			return nil, err
@@ -340,14 +375,6 @@ func applyLinux(ctx context.Context, run CommandRunner, runStdin CommandStdinRun
 }
 
 func applyFreeBSD(ctx context.Context, run CommandRunner, runStdin CommandStdinRunner, cfg InterfaceConfig, conf []byte) ([]byte, error) {
-	_, _ = run(ctx, "kldload", "if_wg")
-	if _, err := run(ctx, "ifconfig", cfg.Name); err != nil {
-		if _, err := run(ctx, "ifconfig", cfg.Name, "create"); err != nil {
-			if _, err := run(ctx, "ifconfig", "wg", "create", "name", cfg.Name); err != nil {
-				return nil, err
-			}
-		}
-	}
 	if _, err := runStdin(ctx, conf, "wg", "setconf", cfg.Name, "/dev/stdin"); err != nil {
 		return nil, err
 	}
@@ -372,16 +399,17 @@ func ParseDump(data []byte) ([]PeerStatus, error) {
 
 func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) <= 1 || strings.TrimSpace(string(data)) == "" {
+	if strings.TrimSpace(string(data)) == "" {
 		return InterfaceStatus{Name: name}, nil
 	}
 	status := InterfaceStatus{Name: name}
 	interfaceFields := strings.Split(lines[0], "\t")
-	if len(interfaceFields) >= 4 {
-		status.PublicKey = wireGuardDumpValue(interfaceFields[1])
-		status.ListenPort = parseInt(interfaceFields[2])
-		status.FwMark = wireGuardDumpValue(interfaceFields[3])
+	if len(interfaceFields) < 4 {
+		return InterfaceStatus{Name: name}, fmt.Errorf("wg dump interface line has %d fields, want >=4", len(interfaceFields))
 	}
+	status.PublicKey = wireGuardDumpValue(interfaceFields[1])
+	status.ListenPort = parseInt(interfaceFields[2])
+	status.FwMark = wireGuardDumpValue(interfaceFields[3])
 	var peers []PeerStatus
 	for _, line := range lines[1:] {
 		fields := strings.Split(line, "\t")
@@ -396,6 +424,7 @@ func ParseInterfaceDump(name string, data []byte) (InterfaceStatus, error) {
 			handshake = time.Unix(handshakeUnix, 0).UTC()
 		}
 		peers = append(peers, PeerStatus{
+			PresharedKeyDigest:  sha256.Sum256([]byte(wireGuardDumpValue(fields[1]))),
 			PublicKey:           wireGuardDumpValue(fields[0]),
 			AllowedIPs:          parseDumpAllowedIPs(fields[3]),
 			LatestEndpoint:      wireGuardDumpValue(fields[2]),
@@ -441,6 +470,7 @@ func ParseAllDump(data []byte) ([]InterfaceStatus, error) {
 				handshake = time.Unix(handshakeUnix, 0).UTC()
 			}
 			status.Peers = append(status.Peers, PeerStatus{
+				PresharedKeyDigest:  sha256.Sum256([]byte(wireGuardDumpValue(fields[2]))),
 				PublicKey:           wireGuardDumpValue(fields[1]),
 				AllowedIPs:          parseDumpAllowedIPs(fields[4]),
 				LatestEndpoint:      wireGuardDumpValue(fields[3]),
@@ -514,11 +544,27 @@ func RecordPeerMetrics(ctx context.Context, iface string, peers []PeerStatus) {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, hostcmd.Resolve(name), args...).CombinedOutput()
+	return runCommandStdin(ctx, nil, name, args...)
 }
 
 func runCommandStdin(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, hostcmd.Resolve(name), args...)
+	commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, hostcmd.Resolve(name), args...)
+	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(stdin)
-	return cmd.CombinedOutput()
+	stdout := subprocessio.NewCapture(subprocessio.StdoutLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	if commandCtx.Err() != nil {
+		return nil, commandCtx.Err()
+	}
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, limitErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }

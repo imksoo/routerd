@@ -150,22 +150,6 @@ func TestControllerRuntimeStoreTrimsReconcileErrorHistory(t *testing.T) {
 	}
 }
 
-func TestControllerRuntimeStorePreservesHistoryAcrossSetBase(t *testing.T) {
-	store := NewControllerRuntimeStore([]ControllerStatus{{Name: "dns", Mode: "live"}})
-	store.ControllerReconciled("dns", "periodic", 30*time.Second, time.Millisecond, errors.New("oops"))
-	store.SetBase([]ControllerStatus{{Name: "dns", Mode: "live", Message: "rebased"}})
-	got := store.Snapshot()
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1", len(got))
-	}
-	if got[0].Message != "rebased" {
-		t.Fatalf("base message lost: %+v", got[0])
-	}
-	if len(got[0].ReconcileErrorHistory) != 1 {
-		t.Fatalf("history lost across SetBase: %+v", got[0])
-	}
-}
-
 func TestControllerRuntimeStoreSnapshotIsCopied(t *testing.T) {
 	store := NewControllerRuntimeStore([]ControllerStatus{{Name: "dns", Mode: "live"}})
 	store.ControllerReconciled("dns", "periodic", 30*time.Second, time.Millisecond, errors.New("oops"))

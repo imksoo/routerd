@@ -15,6 +15,10 @@ import (
 // underlying SQLiteStore has been closed.
 var errStoreClosed = errors.New("state store is closed")
 
+// ErrFederationEventIdentityConflict means an existing event ID names a
+// different fact. Authentication for one fact cannot retag another ID.
+var ErrFederationEventIdentityConflict = errors.New("federation event ID belongs to a different fact")
+
 const (
 	mobilityObservedEventType       = "routerd.client.ipv4.observed"
 	mobilityProviderDiscoverySource = "provider-discovery"
@@ -37,9 +41,9 @@ type EventRecord struct {
 	RecordedAt time.Time
 }
 
-// RecordFederationEvent persists a federation event idempotently. A duplicate ID
-// is a no-op (ON CONFLICT(id) DO NOTHING), matching the at-least-once delivery
-// model: re-recording the same event id returns nil without overwriting.
+// RecordFederationEvent binds an ID to immutable fact identity. Redelivery may
+// refresh observation/expiry only for the identical fact; it cannot change the
+// authenticated group, source, topic, subject or payload of an existing ID.
 func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,17 +81,29 @@ func (s *SQLiteStore) RecordFederationEvent(rec EventRecord) error {
 	if !rec.ExpiresAt.IsZero() {
 		expiresAt = sql.NullInt64{Int64: rec.ExpiresAt.UTC().Unix(), Valid: true}
 	}
-	_, err := s.db.Exec(`
+	result, err := s.db.Exec(`
 		INSERT INTO federation_events (id, group_name, source_node, type, subject, dedupe_key, payload, observed_at, expires_at, recorded_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			source_node = excluded.source_node,
 			observed_at = MAX(excluded.observed_at, federation_events.observed_at),
 			expires_at  = MAX(excluded.expires_at,  federation_events.expires_at),
 			recorded_at = excluded.recorded_at
+		WHERE federation_events.group_name = excluded.group_name
+		  AND coalesce(federation_events.source_node, '') = excluded.source_node
+		  AND federation_events.type = excluded.type
+		  AND coalesce(federation_events.subject, '') = excluded.subject
+		  AND coalesce(federation_events.dedupe_key, '') = excluded.dedupe_key
+		  AND federation_events.payload = excluded.payload
 	`, rec.ID, rec.Group, rec.SourceNode, rec.Type, rec.Subject, rec.DedupeKey, payloadJSON, rec.ObservedAt.UTC().Unix(), expiresAt, rec.RecordedAt.UTC().Unix())
 	if err != nil {
 		return fmt.Errorf("record federation event: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("record federation event result: %w", err)
+	}
+	if changed == 0 {
+		return fmt.Errorf("%w: %s", ErrFederationEventIdentityConflict, rec.ID)
 	}
 	if isCompactableMobilityObserved(rec) {
 		if _, err := s.compactFederationEventsByTypeAndDedupeLocked(rec.Type, rec.Group, rec.DedupeKey); err != nil {

@@ -58,6 +58,10 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 	if err := idx.build(router, targetOS, allowRuntimePayloads); err != nil {
 		return err
 	}
+	if err := validateTunnelUnderlayGraph(router, idx.Interfaces); err != nil {
+		return err
+	}
+
 	if err := validateUniqueSysctlKeys(router); err != nil {
 		return err
 	}
@@ -99,13 +103,13 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 		}
 		if address := strings.TrimSpace(spec.Address); address != "" {
 			if prefix, err := netip.ParsePrefix(address); err == nil {
-				if existing := idx.StaticByInterfaceAddress[spec.Interface+"|"+prefix.Masked().String()]; existing != "" {
+				if existing := idx.StaticByInterfaceAddress[api.ResolveInterfaceIfName(router, spec.Interface)+"|"+prefix.Addr().String()]; existing != "" {
 					return fmt.Errorf("%s spec.address conflicts with IPv4StaticAddress %s on interface %q", res.ID(), existing, spec.Interface)
 				}
 			}
 		}
 		if kind, name, ok := strings.Cut(strings.TrimSpace(spec.AddressFrom.Resource), "/"); ok && kind == "IPv4StaticAddress" {
-			if source, ok := idx.StaticIPv4ByName[name]; ok && source.iface == spec.Interface {
+			if source, ok := idx.StaticIPv4ByName[name]; ok && source.iface == api.ResolveInterfaceIfName(router, spec.Interface) {
 				return fmt.Errorf("%s spec.addressFrom conflicts with %s on interface %q; do not manage %s as both IPv4StaticAddress and VirtualAddress", res.ID(), source.id, spec.Interface, source.address)
 			}
 		}
@@ -120,9 +124,9 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 			return fmt.Errorf("spec.apply.protectedZones[%d] references missing FirewallZone %q", i, name)
 		}
 	}
-	for iface, pd := range idx.ExternalPDByInterface {
-		if dhcpv6, ok := idx.DHCPv6AddressByInterface[iface]; ok && dhcpv6.client != pd.client {
-			return fmt.Errorf("%s conflicts with %s on interface %q: client=%s must own DHCPv6 on that interface", pd.id, dhcpv6.id, iface, pd.client)
+	for iface, managed := range idx.ManagedDHCPv6ByInterface {
+		if address, ok := idx.DHCPv6AddressByInterface[iface]; ok {
+			return fmt.Errorf("%s conflicts with %s on interface %q: separate DHCPv6 address and managed prefix/information clients cannot both own UDP port 546", managed.id, address, iface)
 		}
 	}
 
@@ -340,18 +344,6 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 				return fmt.Errorf("%s references missing Interface %q", res.ID(), spec.Interface)
 			}
 		}
-		if res.Kind == "LogSink" {
-			spec, err := res.LogSinkSpec()
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(spec.OTLP.TelemetryRef) != "" {
-				kind, name := splitKindNameRef(spec.OTLP.TelemetryRef, "Telemetry")
-				if kind != "Telemetry" || !idx.Telemetries[name] {
-					return fmt.Errorf("%s spec.otlp.telemetryRef references missing Telemetry %q", res.ID(), spec.OTLP.TelemetryRef)
-				}
-			}
-		}
 		if res.Kind == "LogRetention" {
 			spec, err := res.LogRetentionSpec()
 			if err != nil {
@@ -437,6 +429,31 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 			}
 			if !idx.PrefixDelegations[spec.PrefixDelegation] {
 				return fmt.Errorf("%s references missing DHCPv6PrefixDelegation %q", res.ID(), spec.PrefixDelegation)
+			}
+		}
+		if res.Kind == "DHCPv6Information" {
+			spec, err := res.DHCPv6InformationSpec()
+			if err != nil {
+				return err
+			}
+			if !idx.Interfaces[spec.Interface] {
+				return fmt.Errorf("%s spec.interface references missing Interface %q", res.ID(), spec.Interface)
+			}
+			pd := idx.ManagedDHCPv6ByInterface[api.ResolveInterfaceIfName(router, spec.Interface)]
+			if pd.id == "" {
+				return fmt.Errorf("%s requires a DHCPv6PrefixDelegation on the same interface; information requests use that managed client", res.ID())
+			}
+			owned := false
+			for _, owner := range res.Metadata.OwnerRefs {
+				if owner.Kind == "DHCPv6PrefixDelegation" {
+					if pd.id != api.NetAPIVersion+"/DHCPv6PrefixDelegation/"+owner.Name {
+						return fmt.Errorf("%s DHCPv6PrefixDelegation owner %q must be the client on spec.interface", res.ID(), owner.Name)
+					}
+					owned = true
+				}
+			}
+			if !owned && spec.Interface != pd.logicalInterface {
+				return fmt.Errorf("%s spec.interface must use the DHCPv6PrefixDelegation logical interface %q or reference that client in metadata.ownerRefs", res.ID(), pd.logicalInterface)
 			}
 		}
 		if res.Kind == "SelfAddressPolicy" {
@@ -911,15 +928,6 @@ func validateBGPDynamicEffectiveImportPolicy(resourceID string, spec api.BGPDyna
 		return fmt.Errorf("%s effective import policy %s.allowedPrefixes[%d] must be an IPv4 MobilityPool prefix for dynamic leaf route admission", resourceID, sourcePath, i)
 	}
 	return nil
-}
-
-func isExternalIPv6PDClient(client string) bool {
-	switch client {
-	case "dhcp6c", "dhcpcd":
-		return true
-	default:
-		return false
-	}
 }
 
 func splitFirewallInterfaceRef(ref string) (string, string) {
@@ -1529,6 +1537,13 @@ func validateResource(router *api.Router, res api.Resource, targetOS platform.OS
 	}
 	if res.Metadata.Name == "" {
 		return fmt.Errorf("%s/%s metadata.name is required", res.APIVersion, res.Kind)
+	}
+	if res.Metadata.Name != strings.TrimSpace(res.Metadata.Name) || res.Metadata.Name == "." || res.Metadata.Name == ".." || strings.ContainsAny(res.Metadata.Name, "/\\\x00\r\n") {
+		return fmt.Errorf("%s/%s metadata.name must be a single safe resource name", res.APIVersion, res.Kind)
+	}
+
+	if res.Kind == "IPv4StaticRoute" && !allowRuntimePayloads {
+		return api.RemovedLegacyKindError(res.Kind, res.ID())
 	}
 
 	validators := []func(api.Resource, platform.OS) (bool, error){

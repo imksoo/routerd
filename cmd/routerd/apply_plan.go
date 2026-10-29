@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 // planApply reads current observations and computes intent without running
 // controllers, journaling simulated events, or opening a writable state DB.
 // Observations can change during evaluation; apply observes again before effects.
-func planApply(router *api.Router, opts applyOptions) (*apply.Result, error) {
+func planApply(ctx context.Context, router *api.Router, opts applyOptions) (*apply.Result, error) {
 	store, err := routerstate.LoadReadOnlyLive(defaultString(opts.StatePath, defaultStatePath))
 	if err != nil {
 		return nil, fmt.Errorf("read plan state: %w", err)
@@ -31,12 +32,12 @@ func planApply(router *api.Router, opts applyOptions) (*apply.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New().PlanEffective(effective, declared)
+	result, err := apply.New(ctx).PlanEffective(effective, declared)
 	if err != nil {
 		return nil, err
 	}
 	appendPrefixDelegationStateWarnings(result, declared, store)
-	if err := appendLedgerOwnedOrphans(result, effective, declared, opts.LedgerPath, true); err != nil {
+	if err := appendLedgerOwnedOrphans(ctx, result, effective, declared, opts.LedgerPath, true); err != nil {
 		return nil, err
 	}
 	return result, nil

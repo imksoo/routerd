@@ -3,7 +3,7 @@
 package webconsole
 
 import (
-	"net/netip"
+	"net"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/dhcpfingerprint"
@@ -15,8 +15,6 @@ type clientFingerprint struct {
 	DeviceClass string
 	Confidence  int
 	Signals     []string
-	Hostname    string
-	Vendor      string
 }
 
 type fingerprintAccumulator struct {
@@ -25,9 +23,6 @@ type fingerprintAccumulator struct {
 	osClassScores map[string]int
 	signals       map[string]bool
 	signalScores  map[string]fingerprintSignalScore
-	hostname      string
-	vendor        string
-	hasMulticast  bool
 }
 
 type fingerprintSignalScore struct {
@@ -36,7 +31,7 @@ type fingerprintSignalScore struct {
 	Score       int
 }
 
-func buildPassiveFingerprints(_ []DHCPLease, flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) map[string]*fingerprintAccumulator {
+func buildPassiveFingerprints(flows []logstore.TrafficFlow, queries []logstore.DNSQuery, firewallLogs []logstore.FirewallLogEntry) map[string]*fingerprintAccumulator {
 	out := map[string]*fingerprintAccumulator{}
 	acc := func(ip string) *fingerprintAccumulator {
 		ip = strings.TrimSpace(ip)
@@ -319,13 +314,10 @@ func applyTransportFingerprint(item *fingerprintAccumulator, proto, peer string,
 	}
 	switch {
 	case port == 5353 || peer == "224.0.0.251" || peer == "ff02::fb":
-		item.hasMulticast = true
 		addFingerprintSignal(item, "", "", 20, "multicast/mdns")
 	case port == 1900 || peer == "239.255.255.250" || peer == "ff02::c":
-		item.hasMulticast = true
 		addFingerprintSignal(item, "iot", "iot", 55, "multicast/ssdp")
 	case port == 137 || port == 138 || port == 139:
-		item.hasMulticast = true
 		addFingerprintSignal(item, "Windows", "computer", 60, "multicast/netbios")
 	}
 }
@@ -403,12 +395,6 @@ func applyDHCPFingerprint(item *fingerprintAccumulator, fp *logstore.DHCPFingerp
 		return
 	}
 	applyHostVendorFingerprint(item, fp.Hostname, fp.VendorClass, "")
-	if fp.Hostname != "" {
-		item.hostname = fp.Hostname
-	}
-	if fp.VendorClass != "" {
-		item.vendor = fp.VendorClass
-	}
 	osFamily := fp.OSFamily
 	deviceClass := fp.DeviceClass
 	confidence := fp.Confidence
@@ -458,73 +444,6 @@ func latestDHCPFingerprintByMAC(groups ...[]logstore.DHCPFingerprint) map[string
 		}
 	}
 	return out
-}
-
-func matchFingerprintToClient(rows map[string]*clientMutableEntry, ip string, fingerprint *fingerprintAccumulator) string {
-	if fingerprint == nil {
-		return ""
-	}
-	fp := fingerprint.result()
-	if fp.Confidence < 60 || fp.OSFamily == "" {
-		return ""
-	}
-	var matched string
-	var samePrefixMatched string
-	for key, row := range rows {
-		if row.MAC == "" {
-			continue
-		}
-		rowFP := inferClientFingerprint(row.ClientEntry, nil, nil)
-		if rowFP.OSFamily != fp.OSFamily {
-			continue
-		}
-		if fp.DeviceClass != "" && rowFP.DeviceClass != "" && fp.DeviceClass != rowFP.DeviceClass {
-			continue
-		}
-		if clientHasSameIPv6Prefix(row.addresses, ip, 64) {
-			if samePrefixMatched != "" {
-				return ""
-			}
-			samePrefixMatched = key
-			continue
-		}
-		if matched != "" {
-			return ""
-		}
-		matched = key
-	}
-	if samePrefixMatched != "" {
-		return samePrefixMatched
-	}
-	return matched
-}
-
-func clientHasSameIPv6Prefix(addresses map[string]bool, ip string, bits int) bool {
-	addrText, _, _ := strings.Cut(strings.TrimSpace(ip), "/")
-	addr, err := netip.ParseAddr(addrText)
-	if err != nil || !addr.Is6() || addr.Is4In6() {
-		return false
-	}
-	prefix := netip.PrefixFrom(addr, bits).Masked()
-	for candidate := range addresses {
-		candidateText, _, _ := strings.Cut(strings.TrimSpace(candidate), "/")
-		other, err := netip.ParseAddr(candidateText)
-		if err == nil && other.Is6() && !other.Is4In6() && prefix.Contains(other) {
-			return true
-		}
-	}
-	return false
-}
-
-func passiveCorrelationKey(fingerprint *fingerprintAccumulator, ip string) string {
-	if fingerprint == nil {
-		return ip
-	}
-	fp := fingerprint.result()
-	if fp.Confidence >= 60 && fingerprint.hostname != "" {
-		return "host:" + strings.ToLower(fingerprint.hostname)
-	}
-	return ip
 }
 
 func inferClientFingerprint(entry ClientEntry, passive map[string]*fingerprintAccumulator, dhcpFingerprint *logstore.DHCPFingerprint) clientFingerprint {
@@ -582,9 +501,6 @@ func (f *fingerprintAccumulator) merge(other *fingerprintAccumulator) {
 			f.signals[key] = true
 		}
 	}
-	f.hostname = firstNonEmptyString(f.hostname, other.hostname)
-	f.vendor = firstNonEmptyString(f.vendor, other.vendor)
-	f.hasMulticast = f.hasMulticast || other.hasMulticast
 }
 
 func (f *fingerprintAccumulator) result() clientFingerprint {
@@ -611,8 +527,6 @@ func (f *fingerprintAccumulator) result() clientFingerprint {
 		DeviceClass: deviceClass,
 		Confidence:  confidence,
 		Signals:     sortedSet(f.signals),
-		Hostname:    f.hostname,
-		Vendor:      f.vendor,
 	}
 }
 
@@ -665,12 +579,15 @@ func shortFingerprintSignal(name string) string {
 }
 
 func macVendor(mac string) string {
-	oui := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(mac), "-", ":"))
-	parts := strings.Split(oui, ":")
-	if len(parts) < 3 {
+	hardware, err := net.ParseMAC(strings.TrimSpace(mac))
+	if err != nil || (len(hardware) != 6 && len(hardware) != 8) {
 		return ""
 	}
-	oui = strings.Join(parts[:3], ":")
+	// Locally assigned and multicast addresses do not identify an IEEE vendor.
+	if hardware[0]&3 != 0 {
+		return ""
+	}
+	oui := strings.ToUpper(hardware[:3].String())
 	vendors := map[string]string{
 		"00:01:4A": "Sony",
 		"00:13:A9": "Sony",
@@ -698,7 +615,6 @@ func macVendor(mac string) string {
 		"44:65:0D": "Amazon",
 		"48:A5:E7": "Nintendo",
 		"48:D6:D5": "Google",
-		"4E:20:15": "Apple private address",
 		"50:1A:C5": "Microsoft Xbox",
 		"50:F5:DA": "Amazon",
 		"54:42:49": "Sony",

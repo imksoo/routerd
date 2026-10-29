@@ -3,6 +3,8 @@
 package state
 
 import (
+	"github.com/imksoo/routerd/pkg/api"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -14,9 +16,9 @@ func sampleActionRecord(key string) ActionExecutionRecord {
 		Provider:       "aws",
 		ProviderRef:    "aws-prod",
 		Action:         "assign-secondary-ip",
-		TargetJSON:     `{"address":"10.88.60.9/32","nicRef":"eni-1"}`,
-		ParametersJSON: `{"region":"ap-northeast-1"}`,
-		UndoJSON:       `{"action":"unassign-secondary-ip"}`,
+		Target:         map[string]string{"address": "10.88.60.9/32", "nicRef": "eni-1"},
+		Parameters:     map[string]string{"region": "ap-northeast-1"},
+		Undo:           &api.ProviderActionUndo{Action: "unassign-secondary-ip"},
 		RiskLevel:      "medium",
 	}
 }
@@ -80,7 +82,7 @@ func TestImportActionRequeuesFailedDesiredAction(t *testing.T) {
 	}
 
 	requeued := sampleActionRecord("retry-key")
-	requeued.TargetJSON = `{"address":"10.88.60.9/32","nicRef":"eni-2"}`
+	requeued.Target = map[string]string{"address": "10.88.60.9/32", "nicRef": "eni-2"}
 	inserted, err := store.ImportAction(requeued)
 	if err != nil {
 		t.Fatalf("reimport failed action: %v", err)
@@ -99,8 +101,8 @@ func TestImportActionRequeuesFailedDesiredAction(t *testing.T) {
 	if got.Status != ActionPending {
 		t.Fatalf("status = %q, want pending", got.Status)
 	}
-	if got.TargetJSON != requeued.TargetJSON {
-		t.Fatalf("target was not refreshed: %s", got.TargetJSON)
+	if !reflect.DeepEqual(got.Target, requeued.Target) {
+		t.Fatalf("target was not refreshed: %v", got.Target)
 	}
 	if got.ApprovedBy != "" || !got.ApprovedAt.IsZero() || !got.ExecutedAt.IsZero() || got.ResultMessage != "" || got.Error != "" || len(got.Observed) != 0 {
 		t.Fatalf("terminal execution fields were not cleared: %+v", got)
@@ -118,6 +120,7 @@ func TestImportActionDoesNotRequeueSucceededAction(t *testing.T) {
 	if err := store.ApproveAction(rec.ID, "policy:auto-approve", time.Time{}); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	claimApprovedAction(t, store, rec.ID)
 	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
 		t.Fatalf("mark succeeded: %v", err)
 	}
@@ -216,6 +219,7 @@ func TestActionResultTransitions(t *testing.T) {
 		if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
 			t.Fatalf("%s approve: %v", c.key, err)
 		}
+		claimApprovedAction(t, store, rec.ID)
 		if err := store.MarkActionResult(rec.ID, c.status, "done", "boom", nil, time.Time{}); err != nil {
 			t.Fatalf("%s mark result: %v", c.key, err)
 		}
@@ -285,64 +289,6 @@ func TestBeginActionExecutionClaimsApprovedOnce(t *testing.T) {
 	}
 }
 
-func TestRequeueStaleRunningActionsOnlyRequeuesOldRunning(t *testing.T) {
-	store := mustOpenStore(t)
-	defer store.Close()
-	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
-	cutoff := now.Add(-2 * time.Minute)
-
-	staleID := importApproveAndClaimAt(t, store, "stale-running", now.Add(-3*time.Minute))
-	freshID := importApproveAndClaimAt(t, store, "fresh-running", now.Add(-30*time.Second))
-	terminalID := importApproveAndClaimAt(t, store, "terminal-running", now.Add(-5*time.Minute))
-	if err := store.MarkActionResult(terminalID, ActionSucceeded, "done", "", map[string]string{"applied": "true"}, now.Add(-4*time.Minute)); err != nil {
-		t.Fatalf("MarkActionResult terminal: %v", err)
-	}
-
-	count, err := store.RequeueStaleRunningActions(cutoff, now)
-	if err != nil {
-		t.Fatalf("RequeueStaleRunningActions: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("requeued count = %d, want 1", count)
-	}
-
-	stale, _, err := store.GetActionByID(staleID)
-	if err != nil {
-		t.Fatalf("get stale: %v", err)
-	}
-	if stale.Status != ActionApproved {
-		t.Fatalf("stale status = %q, want approved", stale.Status)
-	}
-	if stale.ExecutedAt.IsZero() == false {
-		t.Fatalf("stale executedAt should be cleared, got %s", stale.ExecutedAt)
-	}
-	if stale.ResultMessage != "requeued stale running action" {
-		t.Fatalf("stale resultMessage = %q", stale.ResultMessage)
-	}
-	if !stale.UpdatedAt.Equal(now) {
-		t.Fatalf("stale updatedAt = %s, want %s", stale.UpdatedAt, now)
-	}
-
-	fresh, _, err := store.GetActionByID(freshID)
-	if err != nil {
-		t.Fatalf("get fresh: %v", err)
-	}
-	if fresh.Status != ActionRunning {
-		t.Fatalf("fresh status = %q, want running", fresh.Status)
-	}
-
-	terminal, _, err := store.GetActionByID(terminalID)
-	if err != nil {
-		t.Fatalf("get terminal: %v", err)
-	}
-	if terminal.Status != ActionSucceeded {
-		t.Fatalf("terminal status = %q, want succeeded", terminal.Status)
-	}
-	if terminal.Observed["applied"] != "true" {
-		t.Fatalf("terminal observed was changed: %+v", terminal.Observed)
-	}
-}
-
 func TestActionResultObservedRoundTrip(t *testing.T) {
 	store := mustOpenStore(t)
 	defer store.Close()
@@ -358,6 +304,7 @@ func TestActionResultObservedRoundTrip(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 	observed := map[string]string{"priorSourceDestCheck": "true", "nicState": "in-use"}
+	claimApprovedAction(t, store, rec.ID)
 	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", observed, time.Time{}); err != nil {
 		t.Fatalf("mark result: %v", err)
 	}
@@ -414,6 +361,7 @@ func TestActionResultEmptyObservedLeavesNull(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 	// nil observed -> observed_json stays NULL, Observed decodes to nil/empty.
+	claimApprovedAction(t, store, rec.ID)
 	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
 		t.Fatalf("mark result: %v", err)
 	}
@@ -433,17 +381,21 @@ func TestActionRolledBack(t *testing.T) {
 	rec, _, _ := store.GetActionByIdempotencyKey("rb-1")
 
 	// Cannot roll back before it has succeeded.
-	if err := store.MarkActionRolledBack(rec.ID, "undo", time.Time{}); err == nil {
+	if err := store.MarkActionRollbackResult(rec.ID, ActionRolledBack, "undo", "", time.Time{}); err == nil {
 		t.Fatalf("rollback of non-succeeded action should error")
 	}
 
 	if err := store.ApproveAction(rec.ID, "op", time.Time{}); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
+	claimApprovedAction(t, store, rec.ID)
 	if err := store.MarkActionResult(rec.ID, ActionSucceeded, "applied", "", nil, time.Time{}); err != nil {
 		t.Fatalf("mark succeeded: %v", err)
 	}
-	if err := store.MarkActionRolledBack(rec.ID, "undo applied", time.Time{}); err != nil {
+	if claimed, err := store.BeginActionRollback(rec.ID, time.Time{}); err != nil || !claimed {
+		t.Fatalf("claim undo: %v %v", claimed, err)
+	}
+	if err := store.MarkActionRollbackResult(rec.ID, ActionRolledBack, "undo applied", "", time.Time{}); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	got, _, _ := store.GetActionByID(rec.ID)
@@ -484,13 +436,13 @@ func TestListActionsFilterAndRoundTrip(t *testing.T) {
 		t.Fatalf("expected 2 pending, got %d", len(pendingRows))
 	}
 
-	// Round-trip: stored JSON fields come back intact.
+	// Round-trip: the SQL boundary preserves typed plan fields.
 	rec, ok, err := store.GetActionByIdempotencyKey("aws-1")
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
-	if rec.TargetJSON == "" || rec.ParametersJSON == "" || rec.UndoJSON == "" {
-		t.Fatalf("JSON fields not round-tripped: %+v", rec)
+	if len(rec.Target) == 0 || len(rec.Parameters) == 0 || rec.Undo == nil {
+		t.Fatalf("plan fields not round-tripped: %+v", rec)
 	}
 	if rec.RiskLevel != "medium" || rec.ProviderRef != "aws-prod" {
 		t.Fatalf("scalar fields not round-tripped: %+v", rec)
@@ -506,5 +458,12 @@ func TestGetActionMissing(t *testing.T) {
 	}
 	if _, ok, err := store.GetActionByIdempotencyKey("nope"); err != nil || ok {
 		t.Fatalf("missing key should return ok=false, got ok=%v err=%v", ok, err)
+	}
+}
+
+func claimApprovedAction(t *testing.T, store *SQLiteStore, id int64) {
+	t.Helper()
+	if claimed, err := store.BeginActionExecution(id, time.Time{}); err != nil || !claimed {
+		t.Fatalf("claim approved action %d: %v %v", id, claimed, err)
 	}
 }

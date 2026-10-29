@@ -96,3 +96,28 @@ func testNetlinkPacketMessage(attrs ...[]byte) []byte {
 	copy(out[16:], body)
 	return out
 }
+
+func TestUnpaddedFinalNetlinkMessageAndAttributeDoNotPanic(t *testing.T) {
+	// Netlink length excludes optional final alignment padding.
+	attribute := []byte{5, 0, nfulaPrefix, 0, 'x'}
+	body := append([]byte{0, 0, 0, 0}, attribute...)
+	message := make([]byte, 16+len(body))
+	binary.LittleEndian.PutUint32(message[:4], uint32(len(message)))
+	binary.LittleEndian.PutUint16(message[4:6], uint16(nfnlSubsysULog<<8)|nfulnlMsgPacket)
+	copy(message[16:], body)
+	if _, err := ParseMessages(message); err != nil {
+		t.Fatal(err)
+	}
+	if err := parseAck(message, 42); err == nil {
+		t.Fatal("unrelated message certified ACK")
+	}
+}
+
+func TestCanceledNFLogReadDoesNotConsumePendingObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	r := &Reader{fd: -1, pending: []Packet{{Prefix: "retained"}}}
+	if _, err := r.Read(ctx); err != context.Canceled || len(r.pending) != 1 {
+		t.Fatalf("canceled read consumed pending: %v %+v", err, r.pending)
+	}
+}

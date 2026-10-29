@@ -145,7 +145,7 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady
 	})
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return nil }
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) { return nil, nil }
 	supervisedDaemonSocketReady = func(string) bool { return false }
 
 	router := &api.Router{}

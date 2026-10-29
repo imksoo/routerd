@@ -451,12 +451,12 @@ func TestSAMTransportProfilePairStableCollisionIsDegraded(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile with collision: %v", err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("pair-stable collision must fail before desired publication")
 	}
-	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "pve-rt")).ResourcesJSON)
-	if len(resources) != 0 {
-		t.Fatalf("resources = %#v, want none for pair-stable collision", resources)
+	parts, err := store.GetDynamicConfigPartsBySource(TransportDynamicSource("svnet1", "pve-rt"))
+	if err != nil || len(parts) != 0 {
+		t.Fatalf("collision published a desired part: %v %v", parts, err)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
 	if status["phase"] != "Degraded" {
@@ -2285,8 +2285,8 @@ func TestSAMTransportProfileRejectsUnknownAddressingMode(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile unknown mode: %v", err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("unsupported addressing mode must fail")
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
 	if reason, _ := status["reason"].(string); !strings.Contains(reason, "unsupported addressingMode") {

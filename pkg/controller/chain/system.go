@@ -1571,7 +1571,10 @@ func appendMissingStrings(values []string, additions ...string) []string {
 
 func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, bool, error) {
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
-	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
+	resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
+	if err != nil {
+		return false, false, err
+	}
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:             resourceName,
 		Target:               resolved.Target,

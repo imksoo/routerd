@@ -17,6 +17,7 @@ import (
 type DnsmasqRuntime struct {
 	DHCPv4DNSServersByInterface map[string][]string
 	DHCPv6DNSServersByInterface map[string][]string
+	IPv4AddressesByInterface    map[string][]string
 	IPv6AddressesByInterface    map[string][]string
 	IPv6PrefixesByInterface     map[string][]string
 	StickyHosts                 []DHCPStickyHost
@@ -210,9 +211,9 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			return nil, warnings, err
 		}
 		ifname := aliases[spec.Interface]
-		addrPrefix := staticIPv4[spec.Interface]
+		addrPrefix := dnsmasqPoolInterfaceAddress(router, staticIPv4, spec)
 		if !addrPrefix.IsValid() {
-			return nil, warnings, fmt.Errorf("%s needs an IPv4StaticAddress on %s to derive DHCP netmask/options", res.ID(), spec.Interface)
+			return nil, warnings, fmt.Errorf("%s needs an IPv4StaticAddress on %s whose subnet contains the DHCP pool to derive DHCP netmask/options", res.ID(), spec.Interface)
 		}
 		netmask, err := ipv4Netmask(addrPrefix.Bits())
 		if err != nil {
@@ -236,7 +237,7 @@ func DnsmasqConfig(router *api.Router, runtime DnsmasqRuntime) ([]byte, []string
 			buf.WriteString(fmt.Sprintf("dhcp-option=tag:%s,option:router\n", tag))
 		}
 
-		dnsServers, err := dnsmasqDNSServers(spec, aliases, staticIPv4, runtime)
+		dnsServers, err := dnsmasqDNSServers(spec, aliases, addrPrefix, runtime)
 		if err != nil {
 			if errors.Is(err, errObservedDataNotReady) {
 				warnings = append(warnings, fmt.Sprintf("%s: %v; emitting empty DHCP dns-server option until observed", res.ID(), err))
@@ -541,6 +542,13 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		}
 		buf.WriteString("interface=" + ifname + "\n")
 		buf.WriteString("enable-ra\n")
+		prefixRange, err := DnsmasqStaticRouterAdvertisementRange(res.Metadata.Name, spec)
+		if err != nil {
+			return err
+		}
+		if prefixRange != "" {
+			buf.WriteString(prefixRange + "\n")
+		}
 		var params []string
 		mtu := firstNonZero(raMTUByScope[res.Metadata.Name], spec.MTU)
 		if mtu != 0 {
@@ -702,7 +710,7 @@ func dnsmasqResolveStatusSource(router *api.Router, source api.StatusValueSource
 		}
 		switch defaultString(source.Field, "ipv4Addresses") {
 		case "ipv4Addresses":
-			return filterIPv4Strings(runtime.DHCPv4DNSServersByInterface[ifname]), nil
+			return filterIPv4Strings(runtime.IPv4AddressesByInterface[ifname]), nil
 		case "ipv6Addresses":
 			return filterGlobalIPv6Strings(runtime.IPv6AddressesByInterface[ifname]), nil
 		default:
@@ -842,7 +850,6 @@ func dnsmasqInputs(router *api.Router) (map[string]string, map[string]netip.Pref
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
-			staticIPv4[spec.Interface] = prefix
 			staticIPv4[res.Metadata.Name] = prefix
 		case "IPv6DelegatedAddress":
 			spec, err := res.IPv6DelegatedAddressSpec()
@@ -886,7 +893,35 @@ func serverListensOn(listenInterfaces []string, iface string) bool {
 	return false
 }
 
-func dnsmasqDNSServers(spec api.DHCPv4ServerSpec, aliases map[string]string, staticIPv4 map[string]netip.Prefix, runtime DnsmasqRuntime) ([]string, error) {
+func dnsmasqPoolInterfaceAddress(router *api.Router, addresses map[string]netip.Prefix, spec api.DHCPv4ServerSpec) netip.Prefix {
+	start, startErr := netip.ParseAddr(dhcpv4PoolStart(spec))
+	end, endErr := netip.ParseAddr(dhcpv4PoolEnd(spec))
+	if startErr != nil || endErr != nil {
+		return netip.Prefix{}
+	}
+	var selected netip.Prefix
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		address, err := resource.IPv4StaticAddressSpec()
+		if err != nil || address.Interface != spec.Interface {
+			continue
+		}
+		prefix := addresses[resource.Metadata.Name]
+		if !prefix.Contains(start) || !prefix.Contains(end) {
+			continue
+		}
+		// Prefer the most specific subnet, then a stable address independently
+		// of declaration order when the interface has several addresses.
+		if !selected.IsValid() || prefix.Bits() > selected.Bits() || (prefix.Bits() == selected.Bits() && prefix.Addr().Less(selected.Addr())) {
+			selected = prefix
+		}
+	}
+	return selected
+}
+
+func dnsmasqDNSServers(spec api.DHCPv4ServerSpec, aliases map[string]string, prefix netip.Prefix, runtime DnsmasqRuntime) ([]string, error) {
 	switch defaultString(spec.DNSSource, "self") {
 	case "dhcpv4":
 		ifname := aliases[spec.DNSInterface]
@@ -898,7 +933,6 @@ func dnsmasqDNSServers(spec api.DHCPv4ServerSpec, aliases map[string]string, sta
 	case "static":
 		return spec.DNSServers, nil
 	case "self":
-		prefix := staticIPv4[spec.Interface]
 		if !prefix.IsValid() {
 			return nil, fmt.Errorf("self DNS needs an IPv4StaticAddress on %s", spec.Interface)
 		}

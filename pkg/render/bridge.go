@@ -33,7 +33,10 @@ func linkAliases(router *api.Router) map[string]string {
 				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 			}
 		case "WireGuardInterface":
-			aliases[res.Metadata.Name] = res.Metadata.Name
+			spec, err := res.WireGuardInterfaceSpec()
+			if err == nil {
+				aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+			}
 		}
 	}
 	return aliases

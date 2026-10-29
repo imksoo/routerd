@@ -12,6 +12,23 @@ not listed; the UI retains its previous observation and shows collection errors.
 The response timestamp alone does not make every retained section current.
 Requests pass cancellation into their command and SQLite enrichment work.
 
+Resource rows carry a web-only `declared` field when the current configuration is
+available. An undeclared retained row can still contain a pending native cleanup
+receipt; it stays visible and is not proof that its effects have disappeared.
+Native interface `addresses` remain separate from `configuredAddresses` and an
+`observationError`. Failed reads do not make configured addresses native facts.
+A dnsmasq IPv6 lease exposes IAID and client DUID separately; IAID is not a MAC.
+Client `accounting` distinguishes unavailable transfer data from measured zero;
+lease presence and transfer history do not establish current reachability.
+
+Current configuration diffs are computed by the server against the selected
+stored generation with secret redaction and bounded subprocess output. A new
+refresh invalidates an old current-file comparison. Recursive YAML anchors fall
+back to the raw view with a notice. Missing counters, missing firewall correlation
+and unknown controller modes remain unknown rather than inferred success or
+an adverse classification.
+
+
 Connections includes per-DS-Lite local IPv4 SNAT counts from the complete
 conntrack snapshot, independent of display limits and filters. Total/TCP/UDP/other
 counts are keyed by observed `innerLocalIPv4`; shared addresses show combined

@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -55,22 +57,29 @@ func New(router *api.Router) (*Logger, error) {
 }
 
 // NewSelected builds a logger from named LogSink resources. An empty selection
-// preserves the existing behaviour of selecting every enabled sink.
+// selects every enabled sink for ordinary logging. Explicit selections are
+// archive destinations: each requested sink must exist, be enabled, and accept
+// the info records emitted before retention deletes the original rows.
 func NewSelected(router *api.Router, refs []string) (*Logger, error) {
+	if router == nil {
+		return nil, fmt.Errorf("logger router is required")
+	}
+	explicitSelection := len(refs) > 0
 	selected := map[string]bool{}
 	for _, ref := range refs {
 		const prefix = "LogSink/"
 		name := strings.TrimPrefix(strings.TrimSpace(ref), prefix)
-		if name != "" {
-			selected[name] = true
+		if name == "" {
+			return nil, fmt.Errorf("selected LogSink reference is empty")
 		}
+		selected[name] = true
 	}
 	var sinks []Sink
 	for _, res := range router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogSink" {
 			continue
 		}
-		if len(selected) > 0 && !selected[res.Metadata.Name] {
+		if explicitSelection && !selected[res.Metadata.Name] {
 			continue
 		}
 		spec, err := res.LogSinkSpec()
@@ -78,13 +87,28 @@ func NewSelected(router *api.Router, refs []string) (*Logger, error) {
 			return nil, err
 		}
 		if !api.BoolDefault(spec.Enabled, true) {
+			if explicitSelection {
+				return nil, fmt.Errorf("selected %s is disabled; archive cannot be delivered", res.ID())
+			}
 			continue
+		}
+		if explicitSelection && parseLevel(defaultString(spec.MinLevel, "info")) > parseLevel("info") {
+			return nil, fmt.Errorf("selected %s minLevel %q suppresses archived info records", res.ID(), spec.MinLevel)
 		}
 		sink, err := NewSink(spec)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", res.ID(), err)
 		}
 		sinks = append(sinks, sink)
+		delete(selected, res.Metadata.Name)
+	}
+	if explicitSelection && len(selected) > 0 {
+		missing := make([]string, 0, len(selected))
+		for name := range selected {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("selected LogSink not found: %s", strings.Join(missing, ", "))
 	}
 	return &Logger{router: router.Metadata.Name, sinks: sinks}, nil
 }
@@ -106,10 +130,7 @@ func NewSink(spec api.LogSinkSpec) (Sink, error) {
 			minLevel: minLevel,
 		}, nil
 	case "otlp":
-		if strings.TrimSpace(spec.OTLP.TelemetryRef) == "" && strings.TrimSpace(spec.OTLP.Endpoint) == "" {
-			return nil, fmt.Errorf("otlp.telemetryRef or otlp.endpoint is required")
-		}
-		return &OTLPSink{minLevel: minLevel}, nil
+		return nil, fmt.Errorf("LogSink type otlp is unsupported; use Telemetry or ObservabilityPipeline OTLP export")
 	case "webhook":
 		timeout := 5 * time.Second
 		if spec.Webhook.Timeout != "" {
@@ -197,6 +218,8 @@ func (l *Logger) Close() error {
 }
 
 type SyslogSink struct {
+	mu       sync.Mutex
+	closed   bool
 	network  string
 	address  string
 	facility syslog.Priority
@@ -208,6 +231,11 @@ type SyslogSink struct {
 func (s *SyslogSink) Emit(event Event) error {
 	if !shouldEmit(event.Level, s.minLevel) {
 		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("syslog sink is closed")
 	}
 	if s.writer == nil {
 		writer, err := syslog.Dial(s.network, s.address, s.facility|syslog.LOG_INFO, s.tag)
@@ -230,6 +258,12 @@ func (s *SyslogSink) Emit(event Event) error {
 }
 
 func (s *SyslogSink) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	if s.writer == nil {
 		return nil
 	}
@@ -322,21 +356,6 @@ func (s *JournaldSink) Emit(event Event) error {
 }
 
 func (s *JournaldSink) Close() error {
-	return nil
-}
-
-type OTLPSink struct {
-	minLevel int
-}
-
-func (s *OTLPSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
-		return nil
-	}
-	return nil
-}
-
-func (s *OTLPSink) Close() error {
 	return nil
 }
 

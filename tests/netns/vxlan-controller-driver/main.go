@@ -19,14 +19,6 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-type store struct{ values map[string]routerstate.Value }
-
-func (s *store) SaveObjectStatus(string, string, string, map[string]any) error { return nil }
-func (s *store) ObjectStatus(string, string, string) map[string]any            { return nil }
-func (s *store) Get(name string) routerstate.Value                             { return s.values[name] }
-func (s *store) Age(name string) time.Duration                                 { return s.Now().Sub(s.values[name].UpdatedAt) }
-func (s *store) Now() time.Time                                                { return time.Now().UTC() }
-
 func main() {
 	if len(os.Args) != 7 {
 		panic("usage: driver NETNS ROLE WITNESS LOCAL PEER VNI")
@@ -36,11 +28,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	current, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		panic(err)
+	}
+	host, err := os.Readlink("/proc/1/ns/net")
+	if err != nil || current == host {
+		panic("VXLAN test driver requires a separate network namespace")
+	}
 	now := time.Now().UTC()
-	s := &store{values: map[string]routerstate.Value{
-		"ha.role":    {Status: routerstate.StatusSet, Value: role, Since: now, UpdatedAt: now},
-		"ha.witness": {Status: routerstate.StatusSet, Value: witness, Since: now, UpdatedAt: now},
-	}}
 	when := api.ResourceWhenSpec{All: []api.ResourceWhenSpec{
 		{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master", MaxAge: "5s"}}},
 		{State: map[string]api.StateMatchSpec{"ha.witness": {Equals: "leader", MaxAge: "5s"}}},
@@ -49,6 +45,17 @@ func main() {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
 	dir := filepath.Join(os.TempDir(), "routerd-netns-controller", ns)
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		panic(err)
+	}
+	s, err := routerstate.OpenSQLite(filepath.Join(dir, "state.db"))
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close()
+	if _, err := s.Set("ha.role", role, "netns fixture"); err != nil {
+		panic(err)
+	}
+	if _, err := s.Set("ha.witness", witness, "netns fixture"); err != nil {
 		panic(err)
 	}
 	c := chain.VXLANTunnelController{Router: router, DeclaredRouter: router, Store: s, OperatingSystem: platform.OSLinux, NetworkdDir: dir, StartedAt: now.Add(-time.Second)}
@@ -68,9 +75,4 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-}
-
-// This forwarding fixture has no Health daemon.
-func (s *store) HealthObservation(string) (api.HealthObservation, error) {
-	return api.HealthObservation{}, nil
 }

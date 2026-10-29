@@ -60,10 +60,10 @@ var serviceDeclarations = []serviceDeclaration{
 			if err != nil || defaultString(spec.Mode, "static") != "vrrp" {
 				return nil
 			}
-			service := servicemgr.Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
 			if ctx.targetOS == platform.OSFreeBSD {
-				service = servicemgr.Service{RCDName: "routerd_carp", SystemdName: "routerd-carp.service"}
+				return nil // the native VRRP actor owns CARP; no boot helper
 			}
+			service := servicemgr.Service{SystemdName: "keepalived.service", RCDName: "keepalived"}
 			return []resource.Intent{serviceIntent(ctx, service, resource.ActionEnsure, nil)}
 		},
 	},
@@ -256,7 +256,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		if defaultString(spec.Mode, "static") == "vrrp" {
 			if targetOS == platform.OSFreeBSD {
 				intents := []resource.Intent{artifact("freebsd.carp", aliases[spec.Interface]+":"+spec.Address, resource.ActionEnsure, "ifconfig", map[string]string{"interface": aliases[spec.Interface]})}
-				intents = append(intents, declaredServiceIntents(serviceContext)...)
 				intents = append(intents, artifact("sysctl", "net.inet.carp.preempt", resource.ActionEnsure, "sysctl", nil))
 				return intents
 			}

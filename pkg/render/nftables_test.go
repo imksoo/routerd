@@ -453,7 +453,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 	}
 }
 
-func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
+func TestNftablesBridgeOverlayAllowsLocalNeighborDiscovery(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{
@@ -474,7 +474,7 @@ func TestNftablesBridgeOverlayICMPAccept(t *testing.T) {
 		t.Fatalf("render nftables: %v", err)
 	}
 	got := string(data)
-	want := `meta l4proto ipv6-icmp counter accept`
+	want := `meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept`
 	if !strings.Contains(got, want) {
 		t.Fatalf("nftables output missing bridge ICMP accept rule %q:\n%s", want, got)
 	}
@@ -779,8 +779,8 @@ func TestNftablesTCPMSSClamp(t *testing.T) {
 		"flush table inet routerd_mss",
 		"table inet routerd_mss",
 		"type filter hook forward priority mangle; policy accept;",
-		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`,
-		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394`,
+		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1420 tcp option maxseg size set 1420`,
+		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1400 tcp option maxseg size set 1400`,
 		`iifname "ens19" oifname "ppp0" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1452 tcp option maxseg size set 1452`,
 		`iifname "ens19" oifname "ppp0" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1432 tcp option maxseg size set 1432`,
 	} {
@@ -877,8 +877,8 @@ func TestNftablesTCPMSSClampOnlyLowersMSS(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414`,
-		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394`,
+		`iifname "ens19" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1420 tcp option maxseg size set 1420`,
+		`iifname "ens19" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1400 tcp option maxseg size set 1400`,
 		`iifname "tailscale0" oifname "ds-lite-a" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1240 tcp option maxseg size set 1240`,
 		`iifname "tailscale0" oifname "ds-lite-a" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1220 tcp option maxseg size set 1220`,
 	} {
@@ -966,7 +966,7 @@ func TestNftablesIPv4ForceFragmentForBGPMobilityOverlay(t *testing.T) {
 		"flush table ip routerd_forcefrag",
 		"table ip routerd_forcefrag",
 		`type filter hook prerouting priority mangle; policy accept;`,
-		`iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`,
+		`iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1420 ip frag-off 0x4000 ip frag-off set 0`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("forcefrag output missing %q:\n%s", want, got)
@@ -1007,7 +1007,7 @@ func TestNftablesTCPMSSClampForBGPMobilityOverlay(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"table inet routerd_mss",
-		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`,
+		`iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("nftables output missing BGP mobility clamp %q:\n%s", want, got)
@@ -1081,11 +1081,11 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 		"type filter hook input priority filter; policy drop;",
 		"ct state invalid counter drop",
 		"ct state { established, related } counter accept",
-		"meta l4proto ipv6-icmp counter accept",
+		"meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept",
 		`set if_lan { type ifname; elements = { "ens19" } }`,
 		`set if_wan { type ifname; elements = { "ppp0" } }`,
 		`chain lan_to_wan`,
-		`ip saddr 203.0.113.0/24 ip daddr 198.51.100.10/32 tcp dport 443 log prefix "routerd firewall nas-https " group 7 counter accept`,
+		`ip saddr 203.0.113.0/24 ip daddr 198.51.100.10/32 tcp dport 443 log prefix "routerd firewall nas-https accept " group 7 counter accept`,
 		`counter log prefix "routerd firewall wan-to-lan deny " group 7 drop`,
 	} {
 		if !strings.Contains(got, want) {
@@ -1537,8 +1537,8 @@ func TestNftablesFirewallRuleStatefulExpressions(t *testing.T) {
 	for _, want := range []string{
 		`tcp sport 1024-65535 tcp dport { 80, 443 } counter accept`,
 		`ip protocol icmp icmp type echo-request counter accept`,
-		`tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-flood rate-limit " counter reject`,
-		`meter routerd_conn_ssh_flood_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-flood conn-limit "`,
+		`tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-flood rate-limit reject " counter reject`,
+		`meter routerd_conn_ssh_flood_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-flood conn-limit reject "`,
 		`meta l4proto ipv6-icmp icmpv6 type nd-neighbor-solicit counter accept`,
 	} {
 		if !strings.Contains(got, want) {
@@ -1653,7 +1653,7 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	if inputStart >= 0 {
 		inputEnd = strings.Index(got[inputStart:], "\n  }")
 	}
-	const inputPrefix = "chain input {\n    type filter hook input priority filter; policy drop;\n    ct state invalid counter drop\n    ct state { established, related } counter accept\n    iifname \"lo\" counter accept\n    meta l4proto ipv6-icmp counter accept\n    iifname @if_mgmt jump mgmt_to_self\n"
+	const inputPrefix = "chain input {\n    type filter hook input priority filter; policy drop;\n    ct state invalid counter drop\n    ct state { established, related } counter accept\n    iifname \"lo\" counter accept\n    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept\n    iifname @if_mgmt jump mgmt_to_self\n"
 	if !strings.Contains(got, `set if_mgmt { type ifname; elements = { "ens20" } }`) ||
 		inputEnd < 0 || !strings.HasPrefix(got[inputStart:inputStart+inputEnd], inputPrefix) {
 		t.Fatalf("protected management interface set is not bound to its self chain:\n%s", got)
@@ -1806,7 +1806,7 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 	for _, want := range []string{
 		"add table inet routerd_filter",
 		"flush table inet routerd_filter",
-		"meta l4proto ipv6-icmp counter accept",
+		"meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept",
 		`udp dport 546 counter accept`,
 	} {
 		if !strings.Contains(got, want) {

@@ -43,7 +43,7 @@ type HealthCheckDaemonUnitOptions struct {
 	LogRoot     string
 }
 
-func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.SystemdUnitSpec {
+func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) (api.SystemdUnitSpec, error) {
 	resource := options.Resource
 	spec := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
 	runtimeRoot := defaultString(options.RuntimeRoot, "/run")
@@ -55,9 +55,14 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 	}
 	sourceAddress := strings.TrimSpace(spec.SourceAddress)
 	if sourceAddress == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
-		if value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom); err == nil {
-			sourceAddress = value
+		value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom)
+		if err != nil {
+			return api.SystemdUnitSpec{}, fmt.Errorf("HealthCheck/%s sourceAddressFrom: %w", resource, err)
 		}
+		if value == "" && !spec.SourceAddressFrom.Optional {
+			return api.SystemdUnitSpec{}, fmt.Errorf("HealthCheck/%s sourceAddressFrom is unavailable in static render", resource)
+		}
+		sourceAddress = value
 	}
 	socket := runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
 	execStart := []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", resource}
@@ -110,7 +115,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		CapabilityBoundingSet:    capabilities,
 		AmbientCapabilities:      capabilities,
 		NoNewPrivileges:          &noNewPrivileges,
-	}
+	}, nil
 }
 
 func boolValuePtr(value bool) *bool {
@@ -213,7 +218,7 @@ func systemdEnvironmentLines(values []string) string {
 	var b strings.Builder
 	for _, value := range values {
 		b.WriteString("Environment=")
-		b.WriteString(strconv.Quote(value))
+		b.WriteString(strconv.Quote(strings.ReplaceAll(value, "%", "%%")))
 		b.WriteString("\n")
 	}
 	return b.String()

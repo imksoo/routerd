@@ -42,9 +42,9 @@ type Controller struct {
 	Interval               time.Duration
 	ThresholdRatio         float64
 	Logger                 *slog.Logger
-	Snapshot               func() (conntrack.Snapshot, error)
+	Snapshot               func(context.Context) (conntrack.Snapshot, error)
 	SnapshotSource         string
-	Connections            func(limit int) (*observe.ConnectionTable, error)
+	Connections            func(context.Context, int) (*observe.ConnectionTable, error)
 	ApplicationLayerStatus func(context.Context, string) api.TrafficFlowApplicationLayerStatus
 	lastCount              int
 	aboveThreshold         bool
@@ -82,7 +82,7 @@ func (c *Controller) reconcileLogged(ctx context.Context) {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
-	snapshot, err := c.readSnapshot()
+	snapshot, err := c.readSnapshot(ctx)
 	if err != nil {
 		if conntrack.IsUnavailable(err) {
 			return c.recordUnavailable(err)
@@ -133,9 +133,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) readSnapshot() (conntrack.Snapshot, error) {
+func (c *Controller) readSnapshot(ctx context.Context) (conntrack.Snapshot, error) {
 	if c.Snapshot != nil {
-		return c.Snapshot()
+		return c.Snapshot(ctx)
 	}
 	return conntrack.ReadSnapshot(c.Paths)
 }
@@ -170,7 +170,9 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if connections == nil {
 		connections = observe.Connections
 	}
-	table, err := connections(10000)
+	// SyncActive retires every absent flow, so only a complete native snapshot
+	// can authorize it. Display limits must never become deletion authority.
+	table, err := connections(ctx, -1)
 	if err != nil {
 		return err
 	}

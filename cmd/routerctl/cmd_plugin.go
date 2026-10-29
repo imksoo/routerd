@@ -110,6 +110,10 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 			return err
 		}
 	}
+	pluginContext, err := routerplugin.BuildPluginContext(pluginSpec.Context.Resources, router.Spec.Resources)
+	if err != nil {
+		return fmt.Errorf("prepare plugin context: %w", err)
+	}
 	now := time.Now().UTC()
 	runOpts := routerplugin.RunOptions{
 		Now:                 now,
@@ -117,6 +121,7 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		StartupConfigHash:   startupConfigHash(router),
 		EffectiveGeneration: 0,
 		Trigger:             routerplugin.TriggerRef{Type: "manual"},
+		Context:             pluginContext,
 	}
 
 	var store *routerstate.SQLiteStore
@@ -150,7 +155,7 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		}
 		return runErr
 	}
-	part, err := routerplugin.DynamicConfigPartFromResult(source, previousGeneration+1, result, now)
+	part, err := routerplugin.DynamicConfigPartFromResult(source, previousGeneration+1, result, time.Now().UTC())
 	if err != nil {
 		if store != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
@@ -178,7 +183,7 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 			return err
 		}
-		if err := store.UpsertDynamicConfigPart(record); err != nil {
+		if err := store.PublishManualPluginResult(context.Background(), previousGeneration, record); err != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
 			recordDynamicPartRejectedEvent(store, source, err)
 			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
@@ -298,6 +303,11 @@ func parsePluginRunOptions(args []string, stdout io.Writer) (pluginRunOptions, e
 	}
 	if strings.TrimSpace(opts.name) == "" {
 		return opts, errors.New("plugin run requires <name>")
+	}
+	switch opts.output {
+	case "", "table", "json", "yaml":
+	default:
+		return opts, fmt.Errorf("unsupported output %q", opts.output)
 	}
 	return opts, nil
 }

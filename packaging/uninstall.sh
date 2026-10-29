@@ -142,13 +142,20 @@ case "${os}" in
         if [ "${manage_host_service}" -eq 1 ] && ! manage_owned_service_artifact "${systemd_system_dir}/routerd.service" "systemd service"; then
             manage_host_service=0
         fi
-        if [ "${manage_host_service}" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
-            run systemctl disable --now routerd.service || true
+        service_artifact_present=0
+        if [ "${manage_host_service}" -eq 1 ] && [ -f "${systemd_system_dir}/routerd.service" ]; then
+            service_artifact_present=1
+            if command -v systemctl >/dev/null 2>&1; then
+                run systemctl disable --now routerd.service
+            else
+                echo "cannot stop owned routerd.service: systemctl is unavailable" >&2
+                exit 1
+            fi
         fi
         if [ "${manage_host_service}" -eq 1 ]; then
             rm_path "${systemd_system_dir}/routerd.service"
-            if command -v systemctl >/dev/null 2>&1; then
-                run systemctl daemon-reload || true
+            if [ "${service_artifact_present}" -eq 1 ]; then
+                run systemctl daemon-reload
             fi
             rm_path /run/routerd
         fi
@@ -157,8 +164,13 @@ case "${os}" in
         if [ "${manage_host_service}" -eq 1 ] && ! manage_owned_service_artifact "${rcd_dir}/routerd" "rc.d service"; then
             manage_host_service=0
         fi
-        if [ "${manage_host_service}" -eq 1 ] && command -v service >/dev/null 2>&1; then
-            run service routerd stop || true
+        if [ "${manage_host_service}" -eq 1 ] && [ -f "${rcd_dir}/routerd" ]; then
+            if command -v service >/dev/null 2>&1; then
+                run service routerd stop
+            else
+                echo "cannot stop owned routerd: service is unavailable" >&2
+                exit 1
+            fi
         fi
         if [ "${manage_host_service}" -eq 1 ] && command -v sysrc >/dev/null 2>&1; then
             run sysrc -x routerd_enable || true

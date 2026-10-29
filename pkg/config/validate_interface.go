@@ -25,6 +25,10 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if spec.IfName == "" {
 			return true, fmt.Errorf("%s spec.ifname is required", res.ID())
 		}
+		if strings.ContainsAny(spec.IfName, " \t\r\n/\x00") {
+			return true, fmt.Errorf("%s spec.ifname contains invalid whitespace, slash, or NUL", res.ID())
+		}
+
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
@@ -46,6 +50,9 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		spec, err := res.BridgeSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSLinux && spec.RSTP != nil && *spec.RSTP {
+			return true, fmt.Errorf("%s spec.rstp is unsupported on Linux; the managed kernel bridge supports STP and has no RSTP daemon owner", res.ID())
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
 		if strings.ContainsAny(ifname, " \t\n/") {
@@ -342,8 +349,8 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if addr == "" {
 			return true, fmt.Errorf("%s spec.address is required", res.ID())
 		}
-		if _, err := netip.ParsePrefix(addr); err != nil {
-			return true, fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
+		if prefix, err := netip.ParsePrefix(addr); err != nil || !prefix.Addr().Is4() {
+			return true, fmt.Errorf("%s spec.address must be an IPv4 CIDR", res.ID())
 		}
 		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
 			return true, fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())

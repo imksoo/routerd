@@ -549,16 +549,7 @@ func validateLogSinkSpec(resourceID string, spec api.LogSinkSpec) error {
 			return fmt.Errorf("%s spec.syslog.facility is invalid", resourceID)
 		}
 	case "otlp":
-		hasTelemetry := strings.TrimSpace(spec.OTLP.TelemetryRef) != ""
-		hasEndpoint := strings.TrimSpace(spec.OTLP.Endpoint) != ""
-		if hasTelemetry == hasEndpoint {
-			return fmt.Errorf("%s spec.otlp must set exactly one of telemetryRef or endpoint", resourceID)
-		}
-		if hasEndpoint {
-			if _, err := url.ParseRequestURI(strings.TrimSpace(spec.OTLP.Endpoint)); err != nil {
-				return fmt.Errorf("%s spec.otlp.endpoint is invalid: %w", resourceID, err)
-			}
-		}
+		return fmt.Errorf("%s LogSink type otlp is unsupported; use Telemetry or ObservabilityPipeline for OTLP export", resourceID)
 	case "webhook":
 		if strings.TrimSpace(spec.Webhook.URL) == "" {
 			return fmt.Errorf("%s spec.webhook.url is required when type is webhook", resourceID)
@@ -578,7 +569,10 @@ func validateLogSinkSpec(resourceID string, spec api.LogSinkSpec) error {
 		}
 	case "journald":
 	default:
-		return fmt.Errorf("%s spec.type must be syslog, otlp, webhook, file, or journald", resourceID)
+		return fmt.Errorf("%s spec.type must be syslog, webhook, file, or journald", resourceID)
+	}
+	if spec.OTLP.TelemetryRef != "" || spec.OTLP.Endpoint != "" {
+		return fmt.Errorf("%s spec.otlp is unsupported; use Telemetry or ObservabilityPipeline for OTLP export", resourceID)
 	}
 	switch defaultString(spec.MinLevel, "info") {
 	case "debug", "info", "warning", "error":
@@ -642,24 +636,6 @@ func validateBGPTimerProfile(resourceID, path string, spec api.BGPTimersSpec) er
 	return nil
 }
 
-func validateBGPTimers(resourceID, path string, spec api.BGPTimersSpec) error {
-	keepalive, err := validateOptionalDuration(resourceID, path+".keepalive", spec.Keepalive)
-	if err != nil {
-		return err
-	}
-	holdTime, err := validateOptionalDuration(resourceID, path+".holdTime", spec.HoldTime)
-	if err != nil {
-		return err
-	}
-	if _, err := validateOptionalDuration(resourceID, path+".connectRetry", spec.ConnectRetry); err != nil {
-		return err
-	}
-	if keepalive > 0 && holdTime > 0 && holdTime <= keepalive {
-		return fmt.Errorf("%s %s.holdTime must be greater than keepalive", resourceID, path)
-	}
-	return nil
-}
-
 func validateBGPGracefulRestart(resourceID string, spec api.BGPGracefulRestartSpec) error {
 	if _, err := validateOptionalDuration(resourceID, "spec.gracefulRestart.restartTime", spec.RestartTime); err != nil {
 		return err
@@ -682,17 +658,6 @@ func validateOptionalDuration(resourceID, path, value string) (time.Duration, er
 		return 0, fmt.Errorf("%s %s must be positive", resourceID, path)
 	}
 	return duration, nil
-}
-
-func validateDSLiteInnerLocalAddress(value string) error {
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return fmt.Errorf("must be an IPv4 address")
-	}
-	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
-		return fmt.Errorf("must be a usable unicast IPv4 address")
-	}
-	return nil
 }
 
 func validateSourceResourceRef(value string) error {
@@ -1061,23 +1026,6 @@ func validateHealthCheckDerivedFwMark(router *api.Router, res api.Resource, spec
 	return nil
 }
 
-func isStatusExpression(value string) bool {
-	value = strings.TrimSpace(value)
-	return strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") && strings.Contains(value, ".status.")
-}
-
-func parseRetentionDuration(value string) (time.Duration, error) {
-	value = strings.TrimSpace(value)
-	if strings.HasSuffix(value, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
-		if err != nil {
-			return 0, err
-		}
-		return time.Duration(days) * 24 * time.Hour, nil
-	}
-	return time.ParseDuration(value)
-}
-
 func validEnvironmentName(value string) bool {
 	if value == "" {
 		return false
@@ -1238,9 +1186,9 @@ func validateFirewallRateLimit(resourceID string, limit api.FirewallRateLimitSpe
 func validateObservabilitySink(resourceID string, index int, sink api.ObservabilityPipelineLogSink) error {
 	path := fmt.Sprintf("spec.logs.sinks[%d]", index)
 	switch sink.Type {
-	case "stdout", "syslog", "loki", "kafka":
+	case "stdout", "syslog", "loki":
 	default:
-		return fmt.Errorf("%s %s.type must be stdout, syslog, loki, or kafka", resourceID, path)
+		return fmt.Errorf("%s %s.type must be stdout, syslog, or loki; Kafka export is unsupported", resourceID, path)
 	}
 	switch defaultString(sink.MinLevel, "info") {
 	case "debug", "info", "warning", "error":
@@ -1261,10 +1209,9 @@ func validateObservabilitySink(resourceID string, index int, sink api.Observabil
 		default:
 			return fmt.Errorf("%s %s.syslog.network must be unix, unixgram, tcp, or udp", resourceID, path)
 		}
-	case "kafka":
-		if len(compactStrings(sink.Kafka.Brokers)) == 0 || strings.TrimSpace(sink.Kafka.Topic) == "" {
-			return fmt.Errorf("%s %s.kafka.brokers and kafka.topic document the intended sink and must be set", resourceID, path)
-		}
+	}
+	if len(sink.Kafka.Brokers) != 0 || sink.Kafka.Topic != "" {
+		return fmt.Errorf("%s %s.kafka is unsupported; configure stdout, syslog, or loki", resourceID, path)
 	}
 	return nil
 }

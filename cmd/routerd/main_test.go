@@ -607,12 +607,12 @@ func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
 	platformFeatures = platform.Features{HasIproute2: true}
 	var gotName string
 	var gotArgs []string
-	runCleanupCommand = func(name string, args ...string) error {
+	runCleanupCommand = func(_ context.Context, name string, args ...string) error {
 		gotName = name
 		gotArgs = append([]string(nil), args...)
 		return nil
 	}
-	label, err := cleanupLedgerOwnedArtifact(resource.Artifact{
+	label, err := cleanupLedgerOwnedArtifact(t.Context(), resource.Artifact{
 		Kind:  "net.ipv6.address",
 		Name:  "ens19:2001:db8::1/64",
 		Owner: api.NetAPIVersion + "/VirtualAddress/old-v6",
@@ -634,12 +634,12 @@ func TestCleanupServeLedgerOwnedOrphansUsesConfiguredLedger(t *testing.T) {
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
 	var gotRouter *api.Router
 	var gotLedgerPath string
-	cleanupLedgerOwnedOrphansForServe = func(r *api.Router, ledgerPath string) ([]string, error) {
+	cleanupLedgerOwnedOrphansForServe = func(_ context.Context, r *api.Router, ledgerPath string) ([]string, error) {
 		gotRouter = r
 		gotLedgerPath = ledgerPath
 		return []string{"systemd.service/routerd-old.service"}, nil
 	}
-	removed, err := cleanupServeLedgerOwnedOrphans(router, "/var/lib/routerd/ledger.db", nil)
+	removed, err := cleanupServeLedgerOwnedOrphans(t.Context(), router, "/var/lib/routerd/ledger.db", nil)
 	if err != nil {
 		t.Fatalf("cleanup serve ledger owned orphans: %v", err)
 	}
@@ -655,10 +655,10 @@ func TestCleanupServeLedgerOwnedOrphansReturnsErrorWithoutFailingCaller(t *testi
 	oldCleanup := cleanupLedgerOwnedOrphansForServe
 	t.Cleanup(func() { cleanupLedgerOwnedOrphansForServe = oldCleanup })
 	wantErr := errors.New("ledger locked")
-	cleanupLedgerOwnedOrphansForServe = func(*api.Router, string) ([]string, error) {
+	cleanupLedgerOwnedOrphansForServe = func(context.Context, *api.Router, string) ([]string, error) {
 		return nil, wantErr
 	}
-	removed, err := cleanupServeLedgerOwnedOrphans(&api.Router{}, "/var/lib/routerd/ledger.db", nil)
+	removed, err := cleanupServeLedgerOwnedOrphans(t.Context(), &api.Router{}, "/var/lib/routerd/ledger.db", nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -2715,7 +2715,7 @@ func TestRecordHostInventoryState(t *testing.T) {
 	if _, err := store.BeginGeneration("test"); err != nil {
 		t.Fatalf("begin generation: %v", err)
 	}
-	if err := recordHostInventoryState(store); err != nil {
+	if err := recordHostInventoryState(context.Background(), store); err != nil {
 		t.Fatalf("record inventory: %v", err)
 	}
 	status := store.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
@@ -2726,7 +2726,7 @@ func TestRecordHostInventoryState(t *testing.T) {
 	if len(events) != 1 || events[0].Reason != "InventoryObserved" {
 		t.Fatalf("events = %#v", events)
 	}
-	if err := recordHostInventoryState(store); err != nil {
+	if err := recordHostInventoryState(context.Background(), store); err != nil {
 		t.Fatalf("record inventory again: %v", err)
 	}
 	events = store.Events(api.RouterAPIVersion, "Inventory", "host", 10)

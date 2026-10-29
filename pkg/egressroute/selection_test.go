@@ -27,6 +27,10 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestControllerSelectsHighestWeightReady(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{

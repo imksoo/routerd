@@ -403,6 +403,7 @@ check-routerd15-focused: check-spec
 	go test ./cmd/routerd-bgp -run '^(TestRestoreAppliedDoesNotRestorePendingRemoval|TestGoBGPDynamic|TestDynamicPath|TestDynamicPending|TestPendingNative|TestControllerCheckpoint|TestDaemonRestart|TestInitialController|TestRestoreRejectsPrevious)' -count=1
 	go test ./pkg/controller/dhcpv4client -run '^(TestApply|TestDefaultRouteMetric|TestRemovedLease|TestWhen|TestNextExpiry|TestReconcileAllForRouter|TestDryRunUnavailableWorker)' -count=1
 	$(MAKE) check-routerd15-recovery
+	$(MAKE) check-routerd15-robustness
 	go vet ./...
 
 .PHONY: check-routerd15-recovery
@@ -411,6 +412,15 @@ check-routerd15-recovery:
 	go test ./pkg/controller/chain -run '^(TestPrepared|TestGenerationPreparationFailureWaits|TestMobilityNative|TestMobilityStore|TestOrdinaryRoute|TestFreeBSDOrdinaryRoute|TestTypedPD|TestPDAtomicReview|TestPDStage|TestRunnerKeepsDependsOnFalse|TestRunnerClearsWhenFalse|TestTunnelUnderlayRemovalOrder|TestLAN|TestDelegatedAddressObservation|TestDSLite(Custom|Source|Shared|RechecksPD|FiniteEndpoint)|TestSAMController|TestSAMJournal)' -count=1
 	go test ./cmd/routerd -run '^(TestMutation|TestNoReconcilePlan|TestDriftedPlan|TestServeOnceRejectsNonconvergence|TestDeletePublishes|TestInspectionCarriesTypedPD|TestActualPDObservation|TestEventConsumerChanges)' -count=1
 	go test ./cmd/routerctl -run '^(TestRollbackListDoesNotLabel|TestApplyTransportFailure|TestMutationResultPolicy|TestPDLeaseOutput|TestFirewallCLI)' -count=1
+
+.PHONY: check-routerd15-robustness
+check-routerd15-robustness:
+	go test ./pkg/subprocessio ./pkg/provideraction ./pkg/providerinventory ./pkg/eventd ./pkg/eventfile ./pkg/eventlog ./pkg/federation ./pkg/federationguard ./pkg/controller/eventsubscription ./pkg/controller/eventfederation ./pkg/controller/provideraction ./pkg/controller/bfd ./pkg/controller/vrrp ./pkg/ha ./pkg/observabilitypipeline ./pkg/observe ./pkg/conntrack ./pkg/conntracktuning ./pkg/dpi ./pkg/nflog ./pkg/dhcpfingerprint ./pkg/wireguard ./pkg/otel ./pkg/status ./pkg/logstore ./pkg/bgp
+	go test ./pkg/controller/pppoesession -run '^(TestStatusEndpoint|TestDaemonProjection)' -count=1
+	go test ./pkg/controlapi -run '^(TestControllerRuntime|TestApplyRejectsUnknown|TestClientRejectsTrailing|TestClientChecksEncoded)' -count=1
+	go test ./pkg/source/daemon -run '^TestDaemonSource(Incomplete|Worker|Rejects)' -count=1
+	go test ./cmd/routerctl -run '^(TestAction(EndToEnd|RollbackDryRun|Resolve|Help)|TestPluginRun)' -count=1
+	go test ./pkg/controller/chain -run '^(TestBridge|TestSupervisorRetainsOwnershipUntilCompletion|TestSupervisorReadFailureRetainsMarkerAndSuppressesReplacement|TestSupervisorWaitsForOwnedInitializingDaemonWithoutReadySocket|TestSupervisorCancellationAllowsActualNativeGracefulExit|TestPPPoESource|TestFailedNativeCaptureWithdrawalStillBlocksFederationFeedback|TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting|TestPipeline)' -count=1
 
 .PHONY: generate-spec check-spec
 generate-spec:

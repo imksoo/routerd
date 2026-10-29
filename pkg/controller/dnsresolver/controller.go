@@ -32,6 +32,7 @@ import (
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
@@ -228,7 +229,10 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
 	var zones []preparedZone
 	servedZones := dnsResolverZoneRefs(spec)
-	autoRecords := c.hostnameRecordsForResolver(servedZones)
+	autoRecords, err := c.hostnameRecordsForResolver(servedZones)
+	if err != nil {
+		return config, nil, err
+	}
 	runtimeDir, _ := c.dirs()
 	hostsPath := c.DHCPHostsPath
 	if hostsPath == "" {
@@ -270,10 +274,10 @@ type hostnameRecord struct {
 	Family   string
 }
 
-func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[string][]hostnameRecord {
+func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) (map[string][]hostnameRecord, error) {
 	out := map[string][]hostnameRecord{}
 	if c.Router == nil || c.Store == nil {
-		return out
+		return out, nil
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
@@ -292,7 +296,11 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if hostname == "" {
 				continue
 			}
-			address := statusvalue.Address(statusvalue.Text(c.Store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", resource.Metadata.Name)["address"]))
+			status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "VirtualAddress", resource.Metadata.Name)
+			if err != nil {
+				return nil, err
+			}
+			address := statusvalue.Address(statusvalue.Text(status["address"]))
 			if address == "" {
 				address = statusvalue.Address(spec.Address)
 			}
@@ -312,17 +320,25 @@ func (c Controller) hostnameRecordsForResolver(servedZones map[string]bool) map[
 			if hostname == "" {
 				continue
 			}
-			address := statusvalue.Address(statusvalue.Text(c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)["listenAddress"]))
+			status, err := c.Store.ReadObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
+			if err != nil {
+				return nil, err
+			}
+			address := statusvalue.Address(statusvalue.Text(status["listenAddress"]))
 			if address == "" {
 				address = statusvalue.Address(spec.Listen.Address)
 			}
 			if address == "" && strings.TrimSpace(spec.Listen.AddressFrom.Resource) != "" {
-				address = statusvalue.Address(resourcequery.Value(c.Store, spec.Listen.AddressFrom))
+				value, err := resourcequery.ReadValue(c.Store, spec.Listen.AddressFrom)
+				if err != nil {
+					return nil, err
+				}
+				address = statusvalue.Address(value)
 			}
 			c.addHostnameRecord(out, servedZones, hostname, address)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (c Controller) addHostnameRecord(out map[string][]hostnameRecord, servedZones map[string]bool, hostname, address string) {
@@ -552,7 +568,10 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 	var waiting []map[string]string
 	var expandedListen []api.DNSResolverListenSpec
 	for i := range spec.Listen {
-		addresses, listenWaiting, blockReason := expandListenAddresses(c.Store, c.Router, spec.Listen[i])
+		addresses, listenWaiting, blockReason, err := expandListenAddresses(c.Store, c.Router, spec.Listen[i])
+		if err != nil {
+			return spec, nil, "", err
+		}
 		if blockReason != "" {
 			return spec, waiting, blockReason, nil
 		}
@@ -573,12 +592,18 @@ func (c Controller) expandSpec(spec api.DNSResolverSpec) (api.DNSResolverSpec, [
 	var expandedSources []api.DNSResolverSourceSpec
 	for i := range spec.Sources {
 		source := spec.Sources[i]
-		upstreams, upstreamWaiting := expandUpstreams(c.Store, source.Upstreams, source.UpstreamFrom)
+		upstreams, upstreamWaiting, err := expandUpstreams(c.Store, source.Upstreams, source.UpstreamFrom)
+		if err != nil {
+			return spec, nil, "", err
+		}
 		if len(upstreamWaiting) > 0 {
 			waiting = append(waiting, waitingForSource(source, upstreamWaiting)...)
 			continue
 		}
-		bootstrapResolvers, bootstrapWaiting := expandBootstrapResolvers(c.Store, source.BootstrapResolverFrom, source.BootstrapResolver)
+		bootstrapResolvers, bootstrapWaiting, err := expandBootstrapResolvers(c.Store, source.BootstrapResolverFrom, source.BootstrapResolver)
+		if err != nil {
+			return spec, nil, "", err
+		}
 		if len(bootstrapWaiting) > 0 {
 			waiting = append(waiting, waitingForSource(source, bootstrapWaiting)...)
 			continue
@@ -839,10 +864,13 @@ func joinPorts(listen []api.DNSResolverListenSpec) string {
 	return out
 }
 
-func expandStrings(store Store, values []string) []string {
+func expandStrings(store Store, values []string) ([]string, error) {
 	var out []string
 	for _, value := range values {
-		resolved := valueFromStatusRef(store, value)
+		resolved, err := valueFromStatusRef(store, value)
+		if err != nil {
+			return nil, err
+		}
 		if list := decodeStringList(resolved); len(list) > 0 {
 			out = append(out, list...)
 			continue
@@ -851,16 +879,23 @@ func expandStrings(store Store, values []string) []string {
 			out = append(out, strings.TrimSpace(resolved))
 		}
 	}
-	return out
+	return out, nil
 }
 
-func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, values []string) ([]string, []map[string]string) {
-	static := expandStrings(store, values)
+func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, values []string) ([]string, []map[string]string, error) {
+	static, err := expandStrings(store, values)
+	if err != nil {
+		return nil, nil, err
+	}
 	var out []string
 	var waiting []map[string]string
 	for _, source := range sources {
 		resolved := false
-		for _, value := range resourcequery.Values(store, source) {
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, value := range values {
 			if strings.TrimSpace(value) == "" {
 				continue
 			}
@@ -884,16 +919,16 @@ func expandBootstrapResolvers(store Store, sources []api.StatusValueSourceSpec, 
 		}
 	}
 	out = append(out, static...)
-	return compactStrings(out), waiting
+	return compactStrings(out), waiting, nil
 }
 
-func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolverListenSpec) ([]string, []map[string]string, string) {
+func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolverListenSpec) ([]string, []map[string]string, string, error) {
 	var out []string
 	var waiting []map[string]string
 	for _, value := range listen.Addresses {
 		trimmed := strings.TrimSpace(value)
 		if isStatusRef(trimmed) {
-			return nil, waiting, "AddressUsesOldStatusExpression: " + trimmed
+			return nil, waiting, "AddressUsesOldStatusExpression: " + trimmed, nil
 		}
 		resolved := value
 		if list := decodeStringList(resolved); len(list) > 0 {
@@ -909,7 +944,11 @@ func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolv
 		}
 	}
 	for _, source := range listen.AddressFrom {
-		resolved := strings.Join(resourcequery.ValuesFromStoreOrRouter(store, router, source), ",")
+		values, err := resourcequery.ReadValuesFromStoreOrRouter(store, router, source)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		resolved := strings.Join(values, ",")
 		if strings.TrimSpace(resolved) == "" {
 			if source.Optional {
 				continue
@@ -935,11 +974,15 @@ func expandListenAddresses(store Store, router *api.Router, listen api.DNSResolv
 			out = append(out, address)
 		}
 	}
-	return compactStrings(out), waiting, ""
+	return compactStrings(out), waiting, "", nil
 }
 
 func resolveRecordAddress(store Store, source api.StatusValueSourceSpec, wantIPv4 bool) (string, string, error) {
-	resolved := strings.TrimSpace(resourcequery.Value(store, source))
+	value, err := resourcequery.ReadValue(store, source)
+	if err != nil {
+		return "", "", err
+	}
+	resolved := strings.TrimSpace(value)
 	if resolved == "" {
 		if source.Optional {
 			return "", "", nil
@@ -979,7 +1022,7 @@ func resolveRecordAddress(store Store, source api.StatusValueSourceSpec, wantIPv
 // expandUpstreams resolves a source's static upstreams plus any upstreamFrom
 // references into concrete upstream values. It returns waiting entries when a
 // required dynamic upstream has not published a value yet.
-func expandUpstreams(store Store, values []string, sources []api.StatusValueSourceSpec) ([]string, []map[string]string) {
+func expandUpstreams(store Store, values []string, sources []api.StatusValueSourceSpec) ([]string, []map[string]string, error) {
 	var out []string
 	var waiting []map[string]string
 	for _, value := range values {
@@ -988,7 +1031,10 @@ func expandUpstreams(store Store, values []string, sources []api.StatusValueSour
 			continue
 		}
 		if isStatusRef(trimmed) {
-			resolved := valueFromStatusRef(store, trimmed)
+			resolved, err := valueFromStatusRef(store, trimmed)
+			if err != nil {
+				return nil, nil, err
+			}
 			if strings.TrimSpace(resolved) == "" {
 				waiting = append(waiting, map[string]string{"field": "upstream", "source": statusRefSource(trimmed), "reason": "UpstreamUnresolved"})
 				continue
@@ -1008,7 +1054,11 @@ func expandUpstreams(store Store, values []string, sources []api.StatusValueSour
 	}
 	for _, source := range sources {
 		resolved := false
-		for _, value := range resourcequery.Values(store, source) {
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, value := range values {
 			if strings.TrimSpace(value) != "" {
 				out = append(out, dnsresolver.NormalizeUpstream(value))
 				resolved = true
@@ -1022,7 +1072,7 @@ func expandUpstreams(store Store, values []string, sources []api.StatusValueSour
 			})
 		}
 	}
-	return out, waiting
+	return out, waiting, nil
 }
 
 func waitingForSource(source api.DNSResolverSourceSpec, waiting []map[string]string) []map[string]string {
@@ -1280,36 +1330,20 @@ func decodeStringList(raw string) []string {
 	return out
 }
 
-func valueFromStatusRef(store Store, ref string) string {
+func valueFromStatusRef(store Store, ref string) (string, error) {
+	if !isStatusRef(ref) {
+		return ref, nil
+	}
 	ref = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(ref, "${"), "}"))
 	if ref == "" || !strings.Contains(ref, ".status.") || store == nil {
-		return ref
+		return ref, nil
 	}
 	parts := strings.SplitN(ref, ".status.", 2)
 	left, field := parts[0], parts[1]
 	segments := strings.Split(left, "/")
 	if len(segments) != 2 {
-		return ""
+		return "", fmt.Errorf("invalid DNS status source %q", ref)
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, segments[0], segments[1])
-	value := status[field]
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case []string:
-		data, _ := json.Marshal(typed)
-		return string(data)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, fmt.Sprint(item))
-		}
-		data, _ := json.Marshal(out)
-		return string(data)
-	default:
-		if value == nil {
-			return ""
-		}
-		return fmt.Sprint(value)
-	}
+	values, err := resourcequery.ReadValues(store, api.StatusValueSourceSpec{Resource: left, Field: field})
+	return strings.Join(values, ","), err
 }

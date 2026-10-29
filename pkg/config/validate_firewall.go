@@ -724,6 +724,9 @@ func validateFirewallResource(res api.Resource, targetOS platform.OS) (bool, err
 		if err != nil {
 			return true, err
 		}
+		if targetOS == platform.OSFreeBSD && (spec.ToZone != "self" || spec.FromZone == "self") {
+			return true, fmt.Errorf("%s FreeBSD PF cannot enforce forwarded/output zone pairs on the supported target; FirewallRule currently supports only input rules from a zone to self", res.ID())
+		}
 		if spec.FromZone == "" {
 			return true, fmt.Errorf("%s spec.fromZone is required", res.ID())
 		}

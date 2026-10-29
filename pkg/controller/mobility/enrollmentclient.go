@@ -47,7 +47,7 @@ const (
 
 type SAMEnrollmentClientStore interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	UpsertDynamicConfigPart(routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 }
@@ -72,7 +72,6 @@ func (c SAMEnrollmentClientController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMEnrollmentClient" {
 			continue
@@ -81,7 +80,10 @@ func (c SAMEnrollmentClientController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := c.reconcileOne(ctx, resource, spec, now); err != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := c.reconcileOne(ctx, resource, spec, controllerNow(c.Now)); err != nil {
 			return err
 		}
 	}
@@ -121,7 +123,14 @@ func (c SAMEnrollmentClientController) NextReconcileAfter() time.Duration {
 		if name == "" {
 			continue
 		}
-		status := decodeStatusValue[samEnrollmentClientStatus](c.Store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", name))
+		rawStatus, err := c.Store.ReadObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", name)
+		if err != nil {
+			return 0
+		}
+		status, err := decodeSAMEnrollmentClientStatus(rawStatus)
+		if err != nil {
+			return 0
+		}
 		consider(status.NextAttempt)
 		if status.LastSuccess.IsZero() {
 			continue
@@ -142,22 +151,29 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 	// The object store exposes JSON-shaped status, but enrollment continuation
 	// is a typed retry state. Decode it once at the controller boundary rather
 	// than making the retry branches interpret individual map fields.
-	previous := decodeStatusValue[samEnrollmentClientStatus](c.Store.ObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", owner.Metadata.Name))
+	rawStatus, err := c.Store.ReadObjectStatus(api.MobilityAPIVersion, "SAMEnrollmentClient", owner.Metadata.Name)
+	if err != nil {
+		return fmt.Errorf("read enrollment continuation: %w", err)
+	}
+	previous, err := decodeSAMEnrollmentClientStatus(rawStatus)
+	if err != nil {
+		return err
+	}
 	claimResource, claim, err := samEnrollmentClientClaim(c.Router, spec.ClaimRef)
 	if err != nil {
-		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+		return c.saveSAMEnrollmentClientFailure(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:    "Degraded",
 			ClaimRef: spec.ClaimRef,
 			Reason:   err.Error(),
-		}, now)
+		}, now, err)
 	}
 	rrSetName, err := samEnrollmentClientRRSetName(claim.RRSetRef)
 	if err != nil {
-		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+		return c.saveSAMEnrollmentClientFailure(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:    "Degraded",
 			ClaimRef: spec.ClaimRef,
 			Reason:   err.Error(),
-		}, now)
+		}, now, err)
 	}
 	claimDigest := samEnrollmentClientClaimDigest(claimResource)
 	source := "SAMRRSet/" + rrSetName
@@ -170,7 +186,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		// unreachable. Remove the already-fetched higher-preference group
 		// before attempting the ordinary claim refresh, and keep retrying this
 		// local safety action until its atomic RR-only replacement succeeds.
-		stripped, stripErr := c.persistCachedRRSetWithoutDirect(rrSetName, now)
+		stripped, stripErr := c.persistCachedRRSetWithoutDirect(ctx, rrSetName, controllerNow(c.Now))
 		if stripErr != nil {
 			failures := previous.FailureCount + 1
 			backoff := samEnrollmentClientBackoff(spec, failures)
@@ -178,20 +194,20 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			if rrState.Found {
 				cachedRRSet = source
 			}
-			return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+			return c.saveSAMEnrollmentClientFailure(owner.Metadata.Name, samEnrollmentClientStatus{
 				Phase:         "Degraded",
 				ClaimRef:      spec.ClaimRef,
 				ObservedRRSet: cachedRRSet,
 				LastAttempt:   now,
 				LastSuccess:   previous.LastSuccess,
-				NextAttempt:   now.Add(backoff),
+				NextAttempt:   controllerNow(c.Now).Add(backoff),
 				Backoff:       backoff.String(),
 				FailureCount:  failures,
 				// Preserve the prior digest so an unsuccessful opt-out can never
 				// be mistaken for a completed claim transition.
 				ClaimDigest: previous.ClaimDigest,
 				Reason:      fmt.Sprintf("withdraw cached direct topology: %v", stripErr),
-			}, now)
+			}, now, stripErr)
 		}
 		if stripped {
 			rrState, err = c.fetchedRRSetState(source, claim.PolicyRef, now)
@@ -233,23 +249,6 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		}, now)
 	}
 	nextAttempt := previous.NextAttempt
-	// v2333 rewrote a failed direct-refresh diagnostic to the generic trigger
-	// on its immediate status-driven reconcile. Recognize only that legacy
-	// shape and shorten it for one GET-only recovery probe. Newer failures keep
-	// their real reason and retain the configured exponential backoff.
-	legacyDirectProbe := reason == "direct-topology-refresh" &&
-		!previous.DirectTopologyPending &&
-		previous.FailureCount > 0 &&
-		strings.TrimSpace(previous.Backoff) != "" &&
-		strings.TrimSpace(previous.Reason) == "direct-topology-refresh"
-	legacyProbeBackoff := time.Duration(0)
-	if legacyDirectProbe && !previous.LastAttempt.IsZero() {
-		legacyProbeBackoff = samEnrollmentClientConvergenceBackoff(spec, previous.FailureCount)
-		retryAt := previous.LastAttempt.Add(legacyProbeBackoff)
-		if nextAttempt.IsZero() || retryAt.Before(nextAttempt) {
-			nextAttempt = retryAt
-		}
-	}
 	// NextAttempt has two meanings: a successful RR lease schedules its normal
 	// renewal at expiry, while a failed request schedules a retry backoff.  A
 	// direct topology refresh must not inherit the former.  Otherwise a leaf
@@ -266,9 +265,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			backoffReason = previous.Reason
 		}
 		backoff := previous.Backoff
-		if legacyProbeBackoff > 0 {
-			backoff = legacyProbeBackoff.String()
-		}
+
 		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:                   "Backoff",
 			ClaimRef:                spec.ClaimRef,
@@ -289,7 +286,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 		}, now)
 	}
 	if reason == "direct-topology-refresh" {
-		err = c.refreshDirectTopologyAndPersist(ctx, spec, claimResource, claim, rrSetName, rrState, now, !legacyDirectProbe)
+		err = c.refreshDirectTopologyAndPersist(ctx, spec, claimResource, claim, rrSetName, rrState, now)
 	} else {
 		// A differing active identity may be deliberately replaced only for an
 		// initial admission (no recorded local identity) or a local claim
@@ -318,8 +315,8 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			// Retain only the independently valid RRSet and retry the optional
 			// direct view promptly. Never install a subset or a one-RR-only
 			// direct topology.
-			if _, fallbackErr := c.persistCachedRRSetWithoutDirect(rrSetName, now); fallbackErr != nil {
-				err = fmt.Errorf("%w (RR fallback retention failed: %v)", err, fallbackErr)
+			if _, fallbackErr := c.persistCachedRRSetWithoutDirect(ctx, rrSetName, controllerNow(c.Now)); fallbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("retain RR fallback: %w", fallbackErr))
 			} else {
 				attempts := previous.FailureCount + 1
 				backoff := samEnrollmentClientConvergenceBackoff(spec, attempts)
@@ -332,7 +329,7 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 				if retryFrom.Before(now) {
 					retryFrom = now
 				}
-				return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+				return c.saveSAMEnrollmentClientFailure(owner.Metadata.Name, samEnrollmentClientStatus{
 					Phase:                 "Backoff",
 					ClaimRef:              spec.ClaimRef,
 					ObservedRRSet:         source,
@@ -344,13 +341,13 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 					ClaimDigest:           claimDigest,
 					DirectTopologyPending: true,
 					Reason:                err.Error(),
-				}, now)
+				}, now, err)
 			}
 		}
 		failures := previous.FailureCount + 1
 		backoff := samEnrollmentClientBackoff(spec, failures)
-		if stripped, fallbackErr := c.persistCachedRRSetWithoutDirect(rrSetName, now); fallbackErr != nil {
-			err = fmt.Errorf("%w (RR fallback retention failed: %v)", err, fallbackErr)
+		if stripped, fallbackErr := c.persistCachedRRSetWithoutDirect(ctx, rrSetName, controllerNow(c.Now)); fallbackErr != nil {
+			err = errors.Join(err, fmt.Errorf("retain RR fallback: %w", fallbackErr))
 		} else if stripped {
 			// A direct peer group has a higher BGP preference than the RR
 			// topology. Every failed enrollment refresh must therefore remove a
@@ -359,14 +356,14 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			// safe path.
 			observedDirectPeerGroup = ""
 		}
-		return c.saveSAMEnrollmentClientStatus(owner.Metadata.Name, samEnrollmentClientStatus{
+		return c.saveSAMEnrollmentClientFailure(owner.Metadata.Name, samEnrollmentClientStatus{
 			Phase:                   "Degraded",
 			ClaimRef:                spec.ClaimRef,
 			ObservedRRSet:           observedRRSet,
 			ObservedDirectPeerGroup: observedDirectPeerGroup,
 			LastAttempt:             now,
 			LastSuccess:             previous.LastSuccess,
-			NextAttempt:             now.Add(backoff),
+			NextAttempt:             controllerNow(c.Now).Add(backoff),
 			Backoff:                 backoff.String(),
 			FailureCount:            failures,
 			// claimDigest denotes the last successfully confirmed claim. Do not
@@ -378,13 +375,21 @@ func (c SAMEnrollmentClientController) reconcileOne(ctx context.Context, owner a
 			// longer the narrow all-RRs-valid convergence state.
 			DirectTopologyPending: false,
 			Reason:                err.Error(),
-		}, now)
+		}, now, err)
 	}
 	records, err := c.Store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
 		return err
 	}
-	refreshed := latestActiveSAMEnrollmentRRSet(records, claim.PolicyRef, now)
+	completedAt := controllerNow(c.Now)
+	refreshed, err := latestActiveSAMEnrollmentRRSet(records, claim.PolicyRef, completedAt)
+	if err != nil {
+		return err
+	}
+	if !refreshed.Found {
+		return fmt.Errorf("enrollment topology was not active at completion")
+	}
+	now = completedAt
 	refreshedRefreshBefore := samEnrollmentClientRefreshBefore(spec, refreshed)
 	if claim.DirectMesh && refreshed.PeerGroupName != "" {
 		observedDirectPeerGroup = "SAMPeerGroup/" + refreshed.PeerGroupName
@@ -439,6 +444,9 @@ func validateSAMEnrollmentClaimSubmitResult(result *controlapi.SAMEnrollmentClai
 	if strings.TrimSpace(result.ClaimRef) != want {
 		return fmt.Errorf("SAM enrollment claim submit returned claimRef %q, want %q", result.ClaimRef, want)
 	}
+	if result.Generation <= 0 || result.ObservedAt.IsZero() || result.ExpiresAt.IsZero() || !result.ExpiresAt.After(result.ObservedAt) {
+		return fmt.Errorf("SAM enrollment claim submit returned an invalid admission lease")
+	}
 	if strings.TrimSpace(result.DynamicSource) != want {
 		return fmt.Errorf("SAM enrollment claim submit returned dynamicSource %q, want %q", result.DynamicSource, want)
 	}
@@ -467,6 +475,9 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		requestCtx, cancel := c.enrollmentRequestContext(ctx)
 		submit, err := client.SubmitSAMEnrollmentClaim(requestCtx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claimResource})
 		cancel()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -481,14 +492,7 @@ func (c SAMEnrollmentClientController) joinFetchAndPersist(ctx context.Context, 
 		return c.fetchAndPersistAgreedDirectTopology(ctx, submitted, len(clients), claimResource, claim, rrSetName, now, lastErr)
 	}
 	for _, item := range submitted {
-		observedAt := item.result.ObservedAt
-		if observedAt.IsZero() {
-			observedAt = now
-		}
-		expiresAt := item.result.ExpiresAt
-		if expiresAt.IsZero() {
-			expiresAt = now.Add(DefaultLeaseTTL)
-		}
+		observedAt, expiresAt := item.result.ObservedAt, item.result.ExpiresAt
 		if err := c.fetchAndPersistTopology(ctx, item.client, claimResource, claim, rrSetName, observedAt, expiresAt); err != nil {
 			lastErr = err
 			continue
@@ -544,7 +548,7 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 	firstSet := false
 	firstDigest := ""
 	topologyMismatch := false
-	observedAt, expiresAt := now, now.Add(DefaultLeaseTTL)
+	var observedAt, expiresAt time.Time
 	for _, item := range submitted {
 		topology, err := c.fetchSAMEnrollmentTopology(ctx, item.client, claimResource, claim, rrSetName)
 		if err != nil {
@@ -563,17 +567,18 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 		if !firstSet {
 			first = topology
 			firstSet = true
-			if !item.result.ObservedAt.IsZero() {
-				observedAt = item.result.ObservedAt
-			}
-			if !item.result.ExpiresAt.IsZero() {
-				expiresAt = item.result.ExpiresAt
-			}
+			observedAt, expiresAt = item.result.ObservedAt, item.result.ExpiresAt
 			firstDigest, err = samEnrollmentDirectTopologyDigest(topology.directPeerGroup)
 			if err != nil {
 				return err
 			}
 			continue
+		}
+		if item.result.ExpiresAt.Before(expiresAt) {
+			expiresAt = item.result.ExpiresAt
+		}
+		if item.result.ObservedAt.After(observedAt) {
+			observedAt = item.result.ObservedAt
 		}
 		digest, err := samEnrollmentDirectTopologyDigest(topology.directPeerGroup)
 		if err != nil {
@@ -591,10 +596,10 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 		return fmt.Errorf("no SAM enrollment topology could be fetched")
 	}
 	if allAgreed {
-		return c.persistFetchedSAMEnrollmentTopology(first, observedAt, expiresAt)
+		return c.persistFetchedSAMEnrollmentTopology(ctx, first, observedAt, expiresAt)
 	}
 	first.directPeerGroup = nil
-	if err := c.persistFetchedSAMEnrollmentTopology(first, observedAt, expiresAt); err != nil {
+	if err := c.persistFetchedSAMEnrollmentTopology(ctx, first, observedAt, expiresAt); err != nil {
 		return err
 	}
 	if lastErr != nil {
@@ -611,9 +616,8 @@ func (c SAMEnrollmentClientController) fetchAndPersistAgreedDirectTopology(ctx c
 // existing RR lease remains the authority for claim lifetime. Its caller
 // removes a high-preference direct group on every enrollment-refresh failure
 // while retaining the independently valid RR fallback from the same dynamic
-// part. allowReadmission is false for the one-time legacy recovery probe, so
-// that migration path remains strictly GET-only.
-func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, rrState samEnrollmentRRSetState, now time.Time, allowReadmission bool) error {
+// part. Only an exact current identity-absent response allows readmission.
+func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx context.Context, spec api.SAMEnrollmentClientSpec, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string, rrState samEnrollmentRRSetState, now time.Time) error {
 	clients, err := c.clients(spec)
 	if err != nil {
 		return err
@@ -629,7 +633,7 @@ func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx conte
 		// project the optional direct topology again. Reuse the normal
 		// all-endpoint admission path rather than retaining a stale direct group
 		// or waiting for the much later RR lease renewal.
-		if allowReadmission && samEnrollmentClientReadmissionRequired(err, claimResource) {
+		if samEnrollmentClientReadmissionRequired(err, claimResource) {
 			// fetchAgreedDirectTopology already queried every RR and established
 			// that no replica holds an explicit revoke, so do not issue a redundant
 			// second GET before re-admitting this unchanged claim.
@@ -637,7 +641,7 @@ func (c SAMEnrollmentClientController) refreshDirectTopologyAndPersist(ctx conte
 		}
 		return err
 	}
-	return c.persistFetchedSAMEnrollmentTopology(topology, now, rrState.ExpiresAt)
+	return c.persistFetchedSAMEnrollmentTopology(ctx, topology, now, rrState.ExpiresAt)
 }
 
 // samEnrollmentClientReadmissionRequired recognizes only the identity-aware
@@ -719,7 +723,7 @@ func (c SAMEnrollmentClientController) fetchAndPersistTopology(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	return c.persistFetchedSAMEnrollmentTopology(topology, observedAt, expiresAt)
+	return c.persistFetchedSAMEnrollmentTopology(ctx, topology, observedAt, expiresAt)
 }
 
 func (c SAMEnrollmentClientController) fetchAgreedDirectTopology(ctx context.Context, clients []SAMEnrollmentJoinClient, claimResource api.Resource, claim api.SAMEnrollmentClaimSpec, rrSetName string) (samEnrollmentFetchedTopology, error) {
@@ -934,9 +938,12 @@ func (c SAMEnrollmentClientController) fetchSAMEnrollmentTopology(ctx context.Co
 	return samEnrollmentFetchedTopology{rrSet: topology.RRSet, directPeerGroup: directPeerGroup, directPayloadError: directPayloadError, directAttested: directAttested}, nil
 }
 
-func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(topology samEnrollmentFetchedTopology, observedAt, expiresAt time.Time) error {
-	if expiresAt.IsZero() {
-		expiresAt = observedAt.Add(DefaultLeaseTTL)
+func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(ctx context.Context, topology samEnrollmentFetchedTopology, observedAt, expiresAt time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if observedAt.IsZero() || expiresAt.IsZero() || !expiresAt.After(observedAt) || !expiresAt.After(controllerNow(c.Now)) {
+		return fmt.Errorf("enrollment admission lease expired or is invalid before topology publication")
 	}
 	recordOptions := codec.FetchedSAMEnrollmentTopologyRecordOptions{
 		Name:                              safeName("fetched-sam-enrollment-topology-" + topology.rrSet.Metadata.Name),
@@ -952,6 +959,9 @@ func (c SAMEnrollmentClientController) persistFetchedSAMEnrollmentTopology(topol
 		record, err = codec.FetchedSAMEnrollmentTopologyRecord(topology.rrSet, nil, observedAt, expiresAt, recordOptions)
 	}
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return c.Store.UpsertDynamicConfigPart(record)
@@ -995,7 +1005,7 @@ func samEnrollmentDirectTopologyDigest(peerGroup *api.Resource) (string, error) 
 // while retaining its accompanying RRSet. The cached policy may differ from
 // the current claim during a policy migration, so selection is intentionally
 // by source and RRSet name rather than by the current policy reference.
-func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(rrSetName string, now time.Time) (bool, error) {
+func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(ctx context.Context, rrSetName string, now time.Time) (bool, error) {
 	source := "SAMRRSet/" + strings.TrimSpace(rrSetName)
 	records, err := c.Store.GetDynamicConfigPartsBySource(source)
 	if err != nil {
@@ -1009,7 +1019,7 @@ func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(rrSetName
 		}
 		resources, err := codec.DecodeGenericResources(record)
 		if err != nil {
-			continue
+			return false, fmt.Errorf("read cached enrollment topology: %w", err)
 		}
 		var rrSet api.Resource
 		hasDirectPeerGroup := false
@@ -1042,6 +1052,9 @@ func (c SAMEnrollmentClientController) persistCachedRRSetWithoutDirect(rrSetName
 		Digest:                            digestDynamicPart,
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if err := c.Store.UpsertDynamicConfigPart(fallback); err != nil {
@@ -1153,6 +1166,27 @@ type samEnrollmentClientStatus struct {
 	Reason                  string
 }
 
+func decodeSAMEnrollmentClientStatus(raw map[string]any) (samEnrollmentClientStatus, error) {
+	var status samEnrollmentClientStatus
+	data, err := json.Marshal(raw)
+	if err == nil {
+		err = json.Unmarshal(data, &status)
+	}
+	if err != nil {
+		return status, fmt.Errorf("decode enrollment continuation: %w", err)
+	}
+	return status, nil
+}
+
+func (c SAMEnrollmentClientController) saveSAMEnrollmentClientFailure(name string, status samEnrollmentClientStatus, now time.Time, cause error) error {
+	statusErr := c.saveSAMEnrollmentClientStatus(name, status, now)
+	var converging *samEnrollmentDirectTopologyConvergingError
+	if errors.As(cause, &converging) {
+		return statusErr
+	}
+	return errors.Join(cause, statusErr)
+}
+
 func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string, status samEnrollmentClientStatus, now time.Time) error {
 	out := map[string]any{
 		"phase":        firstNonEmpty(status.Phase, "Unknown"),
@@ -1205,10 +1239,10 @@ func (c SAMEnrollmentClientController) fetchedRRSetState(source, policyRef strin
 	if err != nil {
 		return samEnrollmentRRSetState{}, err
 	}
-	return latestActiveSAMEnrollmentRRSet(records, policyRef, now), nil
+	return latestActiveSAMEnrollmentRRSet(records, policyRef, now)
 }
 
-func latestActiveSAMEnrollmentRRSet(records []routerstate.DynamicConfigPartRecord, policyRef string, now time.Time) samEnrollmentRRSetState {
+func latestActiveSAMEnrollmentRRSet(records []routerstate.DynamicConfigPartRecord, policyRef string, now time.Time) (samEnrollmentRRSetState, error) {
 	var latest *routerstate.DynamicConfigPartRecord
 	for _, record := range records {
 		if record.EffectiveStatus(now) != "active" {
@@ -1220,28 +1254,31 @@ func latestActiveSAMEnrollmentRRSet(records []routerstate.DynamicConfigPartRecor
 		}
 	}
 	if latest == nil {
-		return samEnrollmentRRSetState{}
+		return samEnrollmentRRSetState{}, nil
 	}
-	validRRSet, peerGroupName := samEnrollmentTopologyRecordPeerGroupName(*latest, policyRef)
+	validRRSet, peerGroupName, err := samEnrollmentTopologyRecordPeerGroupName(*latest, policyRef)
+	if err != nil {
+		return samEnrollmentRRSetState{}, err
+	}
 	if !validRRSet {
-		return samEnrollmentRRSetState{}
+		return samEnrollmentRRSetState{}, nil
 	}
 	return samEnrollmentRRSetState{
 		Found:         true,
 		PeerGroupName: peerGroupName,
 		ObservedAt:    latest.ObservedAt,
 		ExpiresAt:     latest.ExpiresAt,
-	}
+	}, nil
 }
 
-func samEnrollmentTopologyRecordPeerGroupName(record routerstate.DynamicConfigPartRecord, policyRef string) (bool, string) {
+func samEnrollmentTopologyRecordPeerGroupName(record routerstate.DynamicConfigPartRecord, policyRef string) (bool, string, error) {
 	sourceKind, sourceName, sourceOK := strings.Cut(strings.TrimSpace(record.Source), "/")
 	if !sourceOK || sourceKind != "SAMRRSet" || strings.TrimSpace(sourceName) == "" {
-		return false, ""
+		return false, "", fmt.Errorf("invalid enrollment topology source %q", record.Source)
 	}
 	resources, err := codec.DecodeGenericResources(record)
 	if err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("decode cached enrollment topology: %w", err)
 	}
 	validRRSet := false
 	peerGroupName := ""
@@ -1252,17 +1289,23 @@ func samEnrollmentTopologyRecordPeerGroupName(record routerstate.DynamicConfigPa
 		switch resource.Kind {
 		case "SAMRRSet":
 			spec, err := resource.SAMRRSetSpec()
-			if err == nil && strings.TrimSpace(resource.Metadata.Name) == strings.TrimSpace(sourceName) && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) {
+			if err != nil {
+				return false, "", fmt.Errorf("decode cached RRSet: %w", err)
+			}
+			if strings.TrimSpace(resource.Metadata.Name) == strings.TrimSpace(sourceName) && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) {
 				validRRSet = true
 			}
 		case "SAMPeerGroup":
 			spec, err := resource.SAMPeerGroupSpec()
-			if err == nil && strings.TrimSpace(resource.Metadata.Name) != "" && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) && strings.TrimSpace(spec.TransportFingerprint) != "" {
+			if err != nil {
+				return false, "", fmt.Errorf("decode cached direct peer group: %w", err)
+			}
+			if strings.TrimSpace(resource.Metadata.Name) != "" && strings.TrimSpace(spec.EnrollmentPolicyRef) == strings.TrimSpace(policyRef) && strings.TrimSpace(spec.TransportFingerprint) != "" {
 				peerGroupName = strings.TrimSpace(resource.Metadata.Name)
 			}
 		}
 	}
-	return validRRSet, peerGroupName
+	return validRRSet, peerGroupName, nil
 }
 
 // samEnrollmentClientRefreshBefore returns the requested renewal lead time,

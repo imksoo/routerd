@@ -42,7 +42,10 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 	if len(payload.PeerGroups) != 1 || payload.PeerGroups[0].Metadata.Name != "svnet1-rrs" {
 		t.Fatalf("peer groups = %#v, want svnet1-rrs", payload.PeerGroups)
 	}
-	metadata := syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	metadata, err := syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if metadata.Revision == 0 || metadata.ValidUntil.IsZero() {
 		t.Fatalf("resource metadata = %#v, want source generation and TTL", metadata)
 	}
@@ -53,7 +56,10 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	metadata = syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	metadata, err = syncMetadataForResource(payload.PeerGroups[0], "rr-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if metadata.Revision != firstRevision || !metadata.ValidUntil.Equal(firstValidUntil) || resourceDigest(payload.PeerGroups[0]) != firstDigest {
 		t.Fatalf("unchanged resource changed sync metadata: %#v digest=%s", metadata, resourceDigest(payload.PeerGroups[0]))
 	}
@@ -62,11 +68,11 @@ func TestPeerGroupSyncServerReturnsPublishedGroups(t *testing.T) {
 func TestSelectSyncCandidateUsesRevisionNotArrivalOrder(t *testing.T) {
 	older := syncCandidate{
 		resource: samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "old"}}),
-		meta:     syncMetadata{PublisherID: "rr-a", Revision: 10, Digest: "sha256:old"},
+		meta:     syncMetadata{PublisherID: "rr-a", Revision: 10, ValidUntil: time.Now().Add(time.Hour), Digest: "sha256:old"},
 	}
 	newer := syncCandidate{
 		resource: samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "new"}}),
-		meta:     syncMetadata{PublisherID: "rr-b", Revision: 11, Digest: "sha256:new"},
+		meta:     syncMetadata{PublisherID: "rr-b", Revision: 11, ValidUntil: time.Now().Add(time.Hour), Digest: "sha256:new"},
 	}
 	for _, candidates := range [][]syncCandidate{{older, newer}, {newer, older}} {
 		selected, err := selectSyncCandidate(candidates, time.Now())
@@ -86,8 +92,8 @@ func TestSelectSyncCandidateUsesRevisionNotArrivalOrder(t *testing.T) {
 func TestSelectSyncCandidateRejectsSameRevisionConflict(t *testing.T) {
 	resource := samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "rr"}})
 	_, err := selectSyncCandidate([]syncCandidate{
-		{resource: resource, meta: syncMetadata{PublisherID: "rr-a", Revision: 10, Digest: "sha256:a"}},
-		{resource: resource, meta: syncMetadata{PublisherID: "rr-b", Revision: 10, Digest: "sha256:b"}},
+		{resource: resource, meta: syncMetadata{PublisherID: "rr-a", Revision: 10, ValidUntil: time.Now().Add(time.Hour), Digest: "sha256:a"}},
+		{resource: resource, meta: syncMetadata{PublisherID: "rr-b", Revision: 10, ValidUntil: time.Now().Add(time.Hour), Digest: "sha256:b"}},
 	}, time.Now())
 	if err == nil {
 		t.Fatal("same-revision digest conflict was accepted")
@@ -97,15 +103,9 @@ func TestSelectSyncCandidateRejectsSameRevisionConflict(t *testing.T) {
 func TestPeerGroupSyncClientFetchesAndStoresGroup(t *testing.T) {
 	now := time.Date(2026, 6, 8, 10, 1, 0, 0, time.UTC)
 	store := testStore(t, now)
-	srv := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != peerGroupSyncPath {
-			t.Fatalf("request path = %s, want %s", r.URL.Path, peerGroupSyncPath)
-		}
-		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{PeerGroups: []api.Resource{samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{
-			NodeRef:        "rr-rt01",
-			RemoteEndpoint: "10.252.0.1",
-		}})}})
-	}))
+	publisher := testStore(t, now)
+	writePeerGroupPart(t, publisher, TransportPeerGroupDynamicSource("rr"), "svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "rr-rt01", RemoteEndpoint: "10.252.0.1"}}, now)
+	srv := newIPv4TestServer(t, &PeerGroupSyncServer{Store: publisher, Now: func() time.Time { return now }})
 	defer srv.Close()
 	addr, port := serverAddr(t, srv)
 
@@ -147,12 +147,9 @@ func TestSAMTransportProfilePeersFromSyncResolvesMissingGroup(t *testing.T) {
 	}
 	spec.PeersFrom = []api.SAMTransportPeersSourceSpec{{Resource: "SAMPeerGroup/svnet1-rrs"}}
 	router.Spec.Resources[0].Spec = spec
-	srv := newIPv4TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(PeerGroupSyncResponse{PeerGroups: []api.Resource{samPeerGroupResource("svnet1-rrs", []api.SAMTransportPeerSpec{{
-			NodeRef:        "rr-rt01",
-			RemoteEndpoint: "10.252.0.1",
-		}})}})
-	}))
+	publisher := testStore(t, now)
+	writePeerGroupPart(t, publisher, TransportPeerGroupDynamicSource("rr"), "svnet1-rrs", []api.SAMTransportPeerSpec{{NodeRef: "rr-rt01", RemoteEndpoint: "10.252.0.1"}}, now)
+	srv := newIPv4TestServer(t, &PeerGroupSyncServer{Store: publisher, Now: func() time.Time { return now }})
 	defer srv.Close()
 	addr, port := serverAddr(t, srv)
 

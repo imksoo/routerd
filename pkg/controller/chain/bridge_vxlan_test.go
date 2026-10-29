@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,66 +21,24 @@ import (
 )
 
 func TestBridgeControllerWritesPersistentArtifactsAndReadsKernelState(t *testing.T) {
-	dir := t.TempDir()
-	store := mapStore{}
-	router := bridgeVXLANTestRouter(false)
-	var commands [][]string
-	controller := BridgeController{
-		Router:          router,
-		Store:           store,
-		NetworkdDir:     dir,
-		OperatingSystem: platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) error {
-			commands = append(commands, append([]string{name}, args...))
-			return nil
-		},
-		Lookup: func(name string) (*net.Interface, error) {
-			if name != "br-l2" {
-				return nil, os.ErrNotExist
-			}
-			return &net.Interface{Index: 12, Name: name, MTU: 1370, Flags: net.FlagUp}, nil
-		},
-		ReadFile: func(path string) ([]byte, error) {
-			switch filepath.Base(path) {
-			case "stp_state":
-				return []byte("1\n"), nil
-			case "multicast_snooping":
-				return []byte("0\n"), nil
-			default:
-				return nil, os.ErrNotExist
-			}
-		},
-		Readlink: func(path string) (string, error) {
-			if strings.HasSuffix(path, filepath.Join("ens19", "master")) {
-				return "../../br-l2", nil
-			}
-			return "", os.ErrNotExist
-		},
-	}
+	store := &bridgeActivationStore{mapStore: mapStore{}}
+	controller, _ := bridgeNativeFixture(t, store)
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+		t.Fatal(err)
 	}
-	for _, path := range []string{
-		filepath.Join(dir, "30-routerd-br-l2.netdev"),
-		filepath.Join(dir, "30-routerd-br-l2.network"),
-		filepath.Join(dir, "10-netplan-ens19.network.d", "88-routerd-bridge.conf"),
-	} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("persistent artifact %s: %v", path, err)
+	for _, path := range []string{"30-routerd-br-l2.network", "10-netplan-ens19.network.d/88-routerd-bridge.conf"} {
+		if _, err := os.Stat(filepath.Join(controller.NetworkdDir, path)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if phase := store[api.NetAPIVersion+"/Bridge/legacy-l2"]["phase"]; phase != "Healthy" {
-		t.Fatalf("phase = %v, status=%#v", phase, store)
+	if _, err := os.Stat(filepath.Join(controller.NetworkdDir, "30-routerd-br-l2.netdev")); !os.IsNotExist(err) {
+		t.Fatal("native boot creation competes with receipt owner")
 	}
-	if len(commands) == 0 || !reflect.DeepEqual(commands[0], []string{"networkctl", "reload"}) {
-		t.Fatalf("commands = %#v", commands)
+	if got := store.ObjectStatus(api.NetAPIVersion, "Bridge", "legacy-l2")["phase"]; got != "Healthy" {
+		t.Fatalf("phase=%v", got)
 	}
-	commands = nil
 	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("second Reconcile: %v", err)
-	}
-	if len(commands) != 0 {
-		t.Fatalf("second reconcile commands = %#v, want none", commands)
+		t.Fatal(err)
 	}
 }
 

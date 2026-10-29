@@ -223,7 +223,7 @@ func TestFirewallBackendRenderMetadata(t *testing.T) {
 	if nftRuleset.Backend != "nftables" || nftRuleset.Path != "/tmp/routerd/custom.nft" || nftRuleset.InternalHoles == 0 {
 		t.Fatalf("nft ruleset metadata = %#v", nftRuleset)
 	}
-	pfRuleset, err := PF{}.Render(pfBespokeRouter(), "/tmp/routerd/custom.nft", nil)
+	pfRuleset, err := PF{}.Render(pfInputRouter(), "/tmp/routerd/custom.nft", nil)
 	if err != nil {
 		t.Fatalf("render pf: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestNftablesBespokeExpressionsSurviveBackendRefactor(t *testing.T) {
 }
 
 func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
-	ruleset, err := PF{}.Render(pfBespokeRouter(), "", nil)
+	ruleset, err := PF{}.Render(pfInputRouter(), "", nil)
 	if err != nil {
 		t.Fatalf("render pf firewall: %v", err)
 	}
@@ -350,7 +350,8 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 		`nat-anchor "routerd_nat"`,
 		`rdr-anchor "routerd_nat"`,
 		`anchor "routerd_nat" quick`,
-		`pass in quick on $wan_if proto tcp to 172.18.1.10/32 port 6443 keep state label "routerd:api"`,
+		`anchor "routerd_input_wan" in on $wan_if to { self, 255.255.255.255, 224.0.0.0/24, ff02::/16 } {`,
+		`pass in quick on $wan_if proto tcp to 203.0.113.10/32 port 6443 keep state label "routerd:api"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pf output missing %q:\n%s", want, got)
@@ -359,6 +360,30 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 	if strings.Contains(got, "rdr pass") || strings.Contains(got, "nat on ") {
 		t.Fatalf("root firewall retained translations owned by NAT controller:\n%s", got)
 	}
+}
+
+func TestPFBackendRejectsForwardedDestinationCIDRRule(t *testing.T) {
+	ruleset, err := PF{}.Render(pfBespokeRouter(), "", nil)
+	if err == nil || !strings.Contains(err.Error(), "FirewallRule/api") || !strings.Contains(err.Error(), "forwarding/output zone selectors") {
+		t.Fatalf("forwarded-CIDR rule must report its unsupported zone semantics: %v", err)
+	}
+	if len(ruleset.Data) != 0 {
+		t.Fatalf("unsupported forwarded rule produced an applicable ruleset: %s", ruleset.Data)
+	}
+}
+
+func pfInputRouter() *api.Router {
+	router := pfBespokeRouter()
+	for i := range router.Spec.Resources {
+		res := &router.Spec.Resources[i]
+		if res.Kind == "FirewallRule" {
+			spec := res.Spec.(api.FirewallRuleSpec)
+			spec.ToZone = "self"
+			spec.DestinationCIDRs = []string{"203.0.113.10/32"}
+			res.Spec = spec
+		}
+	}
+	return router
 }
 
 func nftBespokeRouter() *api.Router {

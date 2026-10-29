@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -44,6 +45,7 @@ type DiscoveryStore interface {
 	ListActions(routerstate.ActionExecutionFilter) ([]routerstate.ActionExecutionRecord, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type DiscoveryController struct {
@@ -72,29 +74,38 @@ func (c DiscoveryController) Reconcile(ctx context.Context) error {
 }
 
 func (c DiscoveryController) reconcile(ctx context.Context, forceProviderScan bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
+	var errs []error
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "MobilityPool" {
 			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return errors.Join(errors.Join(errs...), err)
+		}
 		spec, err := res.MobilityPoolSpec()
 		if err != nil {
 			c.saveDiscoveryError(res.Metadata.Name, err)
+			errs = append(errs, fmt.Errorf("MobilityPool/%s discovery: %w", res.Metadata.Name, err))
 			continue
 		}
 		normalized, err := resolveNormalizedMobilityPool(c.Router, spec)
 		if err != nil {
 			c.saveDiscoveryError(res.Metadata.Name, err)
+			errs = append(errs, fmt.Errorf("MobilityPool/%s discovery: %w", res.Metadata.Name, err))
 			continue
 		}
-		if err := c.reconcilePoolDiscovery(ctx, res, normalized, now, forceProviderScan); err != nil {
+		if err := c.reconcilePoolDiscovery(ctx, res, normalized, controllerNow(c.Now), forceProviderScan); err != nil {
 			c.saveDiscoveryError(res.Metadata.Name, err)
+			errs = append(errs, fmt.Errorf("MobilityPool/%s discovery: %w", res.Metadata.Name, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api.Resource, normalized resolvedMobilityPool, now time.Time, forceProviderScan bool) error {
@@ -105,7 +116,11 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 	// bootstrap is emitted independently from the final PoolPlan. Write an empty
 	// intent set for any non-onprem/pending shape to withdraw a prior observer
 	// without making chain reopen the raw MobilityPool.
-	if err := c.upsertARPObserverIntents(pool, c.arpObserverIntents(pool), now); err != nil {
+	observerIntents, err := c.arpObserverIntents(pool)
+	if err != nil {
+		return err
+	}
+	if err := c.upsertARPObserverIntents(pool, observerIntents, now); err != nil {
 		return fmt.Errorf("upsert ARP observer intents: %w", err)
 	}
 	if len(normalized.Resolved.PendingSources) > 0 {
@@ -133,9 +148,6 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 	}
 	if strings.TrimSpace(discovery.Mode) == "onprem-l2" {
 		return c.reconcileOnPremL2Discovery(pool, pool.Prefix, facts.Events, facts.OnPremIntentReady, now)
-	}
-	if shardPrefixes := ResolveShardScope(c.Store, pool.Spec.GroupRef, pool.Name, pool.SelfNode, now); len(shardPrefixes) > 0 {
-		discovery.Scope.IncludeAddresses = shardPrefixes
 	}
 	if pool.Self.Role != "cloud" || pool.Self.Capture.Type != "provider-secondary-ip" {
 		return fmt.Errorf("ownershipDiscovery requires cloud provider-secondary-ip member %q", pool.Self.NodeRef)
@@ -178,8 +190,27 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 		Context:       pluginContext,
 	})
 	result, _, err := c.runner()(ctx, pluginSpec, req)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
 	if err != nil {
 		return fmt.Errorf("run provider inventory plugin %q: %w", pluginName, err)
+	}
+	// The inventory process can outlive the facts that admitted its scan. Read
+	// current placement and leases again before publishing its observation.
+	now = controllerNow(c.Now)
+	facts, err = collectPoolPlanningFacts(c.Router, c.Store, pool, now)
+	if err != nil {
+		return err
+	}
+	placementSnapshot = poolRuntimeSnapshotFromFacts(pool, facts, c.StartedAt, now)
+	placement, _ = EvaluatePlacementFromObservations(placementSnapshot.Pool.Self, placementSnapshot.Pool.Members, placementSnapshot.PlacementObservations, placementSnapshot.Now)
+	shardPrefixes, err := ResolveShardScope(c.Store, pool.Spec.GroupRef, pool.Name, pool.SelfNode, now)
+	if err != nil {
+		return err
+	}
+	if len(shardPrefixes) > 0 {
+		discovery.Scope.IncludeAddresses = shardPrefixes
 	}
 	switch result.Status.Status {
 	case providerinventory.ResultSucceeded:
@@ -201,16 +232,19 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 	// safety boundary.
 	excludedNICs := discoveryRouterNICRefs(pool)
 	selfInventory := resolvedDiscoverySelfInventory(pool, result.Status.Self)
-	rawLocalInventory := filterProviderInventoryRecords(result.Status.LocalInventoryRecords(), profileRef, "", prefix)
+	rawLocalInventory := filterProviderInventoryRecords(result.Status.LocalIPs, profileRef, "", prefix)
 	selfInventory = scopedDiscoverySelfInventory(selfInventory, rawLocalInventory, prefix)
 	trustedSubnetRef := trustedDiscoverySelfSubnetRef(selfInventory, rawLocalInventory)
-	observedCandidates := filterProviderInventoryRecords(result.Status.ObservedCandidateRecords(), profileRef, trustedSubnetRef, netip.Prefix{})
+	observedCandidates := filterProviderInventoryRecords(result.Status.ObservedCandidates, profileRef, trustedSubnetRef, netip.Prefix{})
 	ttl := discoveryLeaseTTL(discovery)
 	previousRuntime, _ := facts.Ownership.providerRuntimeForNode(pool.SelfNode)
 	if !placement.Active {
 		runtime, err := providerDiscoveryRuntimeEvent(pool, selfInventory, nil, placement, now, ttl)
 		if err != nil {
 			return fmt.Errorf("encode standby provider discovery runtime fact: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if err := c.Store.RecordFederationEvent(runtime); err != nil {
 			return fmt.Errorf("record standby provider discovery runtime fact: %w", err)
@@ -235,7 +269,7 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 	}
 	trapAddresses := discoveryCurrentTrapAddresses(actionHistory, pool, profileRef, prefix)
 	observedThisScan := map[string]providerDiscoveryAddressFact{}
-	invalidThisScan := scopedOutProviderCandidateAddresses(result.Status.ObservedCandidateRecords(), observedCandidates, prefix)
+	invalidThisScan := scopedOutProviderCandidateAddresses(result.Status.ObservedCandidates, observedCandidates, prefix)
 	observed := 0
 	for _, rec := range sortedPrivateIPs(observedCandidates) {
 		address, ok := normalizeLeaseAddress(rec.Address, prefix)
@@ -285,6 +319,9 @@ func (c DiscoveryController) reconcilePoolDiscovery(ctx context.Context, res api
 	runtime, err := providerDiscoveryRuntimeEvent(pool, selfInventory, addresses, placement, now, ttl)
 	if err != nil {
 		return fmt.Errorf("encode provider discovery runtime fact: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := c.Store.RecordFederationEvent(runtime); err != nil {
 		return fmt.Errorf("record provider discovery runtime fact: %w", err)

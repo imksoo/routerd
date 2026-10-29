@@ -15,7 +15,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -24,7 +24,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname "ens18" ip daddr 192.168.10.20 tcp dport 443 counter accept comment "routerd PortForward web-https"
     iifname "ens19" ip daddr 192.168.10.20 tcp dport 443 counter accept comment "routerd PortForward web-https hairpin"
     iifname @if_lan oifname @if_lan jump lan_to_lan
@@ -68,7 +67,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -77,7 +76,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname "ens18" ip daddr 192.168.10.20 tcp dport 443 counter accept comment "routerd PortForward web-https"
     iifname "ens19" ip daddr 192.168.10.20 tcp dport 443 counter accept comment "routerd PortForward web-https hairpin"
     iifname @if_lan oifname @if_lan jump lan_to_lan

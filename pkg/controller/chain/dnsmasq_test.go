@@ -235,7 +235,7 @@ func TestDnsmasqLANServiceLinesAddsDefaultIntervalForPartialRAParams(t *testing.
 		t.Fatalf("render lines: %v", err)
 	}
 	for _, want := range []string{
-		"ra-param=ens19,mtu:1454,0",
+		"ra-param=ens19,mtu:1460,0",
 		"ra-param=ens19,high,0",
 	} {
 		if !containsLine(lines, want) {
@@ -3082,7 +3082,7 @@ func TestDaemonStatusControllerDiscoversDaemonSockets(t *testing.T) {
 
 func TestDSLiteTunnelResolveRemoteDirectIPv6SkipsDNS(t *testing.T) {
 	controller := DSLiteTunnelController{ResolverPort: 9}
-	name, remote, err := controller.resolveRemote(t.Context(), api.DSLiteTunnelSpec{AFTRIPv6: "2404:8e00::feed:100"})
+	name, remote, err := controller.resolveRemote(t.Context(), api.DSLiteTunnelSpec{AFTRIPv6: "2404:8e00::feed:100"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3151,7 +3151,7 @@ func TestDSLiteTunnelInnerLocalAddressFromStaticAddress(t *testing.T) {
 }
 
 func TestDSLiteInnerLocalIPv4PendingWhenSourceUnresolved(t *testing.T) {
-	got, pending, err := dsliteInnerLocalIPv4(&api.Router{}, nil, api.DSLiteTunnelSpec{
+	got, pending, err := dsliteInnerLocalIPv4(&api.Router{}, mapStore{}, api.DSLiteTunnelSpec{
 		LocalAddressFrom: api.StatusValueSourceSpec{Resource: "IPv4StaticAddress/missing", Field: "address"},
 	})
 	if err != nil {
@@ -3221,5 +3221,8 @@ func (s statefulDHCPMapStore) ReadVariable(name string) (routerstate.Value, erro
 }
 
 func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	if _, exists := s[apiVersion+"/"+kind+"/"+name]; !exists {
+		return nil, nil
+	}
 	return s.ObjectStatus(apiVersion, kind, name), nil
 }

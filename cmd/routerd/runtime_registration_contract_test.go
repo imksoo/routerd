@@ -50,7 +50,6 @@ func TestContractControllerDisplayKindsHaveLifecycleOrDerivedReason(t *testing.T
 		"KernelModule":    "required modules are derived; the former config kind is rejected",
 		"NetworkAdoption": "adoption is derived from interfaces and service requirements",
 		"IPv4StaticRoute": "route lowerings are generated from declared route resources",
-		"IPv6StaticRoute": "route lowerings are generated from declared route resources",
 	}
 	known := map[string]bool{}
 	for _, kind := range api.ConfigResourceKinds() {

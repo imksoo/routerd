@@ -41,8 +41,8 @@ func TestDrainAndUndrainIngressBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open state: %v", err)
 	}
-	if state, ok := ingressdrain.Current(store, "kubernetes-api", "cp-01"); !ok || state.DrainedUntil == "" {
-		t.Fatalf("drain state = %#v ok=%v", state, ok)
+	if state, ok, err := ingressdrain.Current(store, "kubernetes-api", "cp-01"); err != nil || !ok || state.DrainedUntil == "" {
+		t.Fatalf("drain state = %#v ok=%v err=%v", state, ok, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("close state: %v", err)
@@ -57,8 +57,8 @@ func TestDrainAndUndrainIngressBackend(t *testing.T) {
 		t.Fatalf("reopen state: %v", err)
 	}
 	defer store.Close()
-	if _, ok := ingressdrain.Current(store, "kubernetes-api", "cp-01"); ok {
-		t.Fatalf("drain state still present")
+	if _, ok, err := ingressdrain.Current(store, "kubernetes-api", "cp-01"); err != nil || ok {
+		t.Fatalf("drain state still present: err=%v", err)
 	}
 }
 

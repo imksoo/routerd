@@ -13,7 +13,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -22,7 +22,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan
@@ -39,9 +38,9 @@ table inet routerd_filter {
     counter accept
   }
   chain wan_to_self {
-    meta nfproto ipv4 meter routerd_conn_ssh_bruteforce_over_limit_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit " tcp dport 22 counter reject
-    meta nfproto ipv6 meter routerd_conn_ssh_bruteforce_over_limit_v6 { ip6 saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit " tcp dport 22 counter reject
-    tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-bruteforce-over-limit rate-limit " counter reject
+    meta nfproto ipv4 meter routerd_conn_ssh_bruteforce_over_limit_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit reject " tcp dport 22 counter reject
+    meta nfproto ipv6 meter routerd_conn_ssh_bruteforce_over_limit_v6 { ip6 saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit reject " tcp dport 22 counter reject
+    tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-bruteforce-over-limit rate-limit reject " counter reject
     ip protocol icmp icmp type echo-request counter accept
     tcp dport { 80, 443 } counter accept
     counter log prefix "routerd firewall wan-to-self deny " drop
@@ -68,7 +67,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -77,7 +76,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan
@@ -94,9 +92,9 @@ table inet routerd_filter {
     counter accept
   }
   chain wan_to_self {
-    meta nfproto ipv4 meter routerd_conn_ssh_bruteforce_over_limit_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit " tcp dport 22 counter reject
-    meta nfproto ipv6 meter routerd_conn_ssh_bruteforce_over_limit_v6 { ip6 saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit " tcp dport 22 counter reject
-    tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-bruteforce-over-limit rate-limit " counter reject
+    meta nfproto ipv4 meter routerd_conn_ssh_bruteforce_over_limit_v4 { ip saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit reject " tcp dport 22 counter reject
+    meta nfproto ipv6 meter routerd_conn_ssh_bruteforce_over_limit_v6 { ip6 saddr ct count over 4 } log prefix "routerd firewall ssh-bruteforce-over-limit conn-limit reject " tcp dport 22 counter reject
+    tcp dport 22 limit rate over 8/minute burst 16 packets log prefix "routerd firewall ssh-bruteforce-over-limit rate-limit reject " counter reject
     ip protocol icmp icmp type echo-request counter accept
     tcp dport { 80, 443 } counter accept
     counter log prefix "routerd firewall wan-to-self deny " drop

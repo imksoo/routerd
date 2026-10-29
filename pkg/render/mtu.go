@@ -92,7 +92,7 @@ func pathMTUPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynami
 			if sourceMTU < mtu {
 				mtu = sourceMTU
 			}
-			if mtu < 1280 {
+			if mtu < 1280 && (spec.IPv6RA.Enabled || (spec.TCPMSSClamp.Enabled && pathMTUFamilyEnabled(spec.TCPMSSClamp.Families, "ipv6"))) {
 				return nil, fmt.Errorf("%s computed MTU %d is below the IPv6 minimum MTU 1280", specResourceID(spec), mtu)
 			}
 			toInterfacesByMTU[mtu] = append(toInterfacesByMTU[mtu], name)
@@ -309,7 +309,7 @@ func pathMTUForwardingTunnels(router *api.Router) map[string]pathMTUForwardingTu
 		if err != nil {
 			continue
 		}
-		mtu := pathMTUForwardingTunnelMTU(router, spec)
+		mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
 		if mtu == 0 {
 			continue
 		}
@@ -320,50 +320,6 @@ func pathMTUForwardingTunnels(router *api.Router) map[string]pathMTUForwardingTu
 		}
 	}
 	return out
-}
-
-func pathMTUForwardingTunnelMTU(router *api.Router, spec api.TunnelInterfaceSpec) int {
-	if router == nil {
-		return 0
-	}
-	mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
-	if mtu == 0 {
-		return 0
-	}
-	mtu -= pathMTUUnderlayOverlayOverhead(router, spec.UnderlayInterface)
-	if mtu <= 0 {
-		return 0
-	}
-	return mtu
-}
-
-func pathMTUUnderlayOverlayOverhead(router *api.Router, interfaceName string) int {
-	return pathMTUUnderlayOverlayOverheadSeen(router, strings.TrimSpace(interfaceName), map[string]bool{})
-}
-
-func pathMTUUnderlayOverlayOverheadSeen(router *api.Router, interfaceName string, seen map[string]bool) int {
-	if router == nil || interfaceName == "" || seen[interfaceName] {
-		return 0
-	}
-	seen[interfaceName] = true
-	for _, res := range router.Spec.Resources {
-		if strings.TrimSpace(res.Metadata.Name) != interfaceName {
-			continue
-		}
-		switch res.Kind {
-		case "WireGuardInterface":
-			return hybrid.WireGuardOverheadBytes
-		case "TunnelInterface":
-			spec, err := res.TunnelInterfaceSpec()
-			if err != nil {
-				return 0
-			}
-			return hybrid.TunnelInterfaceOverhead(spec) + pathMTUUnderlayOverlayOverheadSeen(router, spec.UnderlayInterface, seen)
-		default:
-			return 0
-		}
-	}
-	return 0
 }
 
 func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
@@ -523,7 +479,7 @@ func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunn
 		item.MTU = spec.MTU
 		item.Underlay = spec.Interface
 		if item.MTU == 0 {
-			item.MTU = 1454
+			item.MTU = 1492
 		}
 	case "DSLiteTunnel":
 		spec, err := res.DSLiteTunnelSpec()
@@ -533,7 +489,7 @@ func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunn
 		item.MTU = spec.MTU
 		item.Underlay = spec.Interface
 		if item.MTU == 0 {
-			item.MTU = 1454
+			item.MTU = 1460
 		}
 	case "TunnelInterface":
 		spec, err := res.TunnelInterfaceSpec()

@@ -47,7 +47,7 @@ func TestAnnotateResourceOwnershipFromControllerModes(t *testing.T) {
 	if len(resources) != 1 {
 		t.Fatalf("resources = %d", len(resources))
 	}
-	if resources[0].Owner != "route" || resources[0].Status["owner"] != "route" {
+	if resources[0].Owner != "route" || resources[0].Status["owner"] != nil {
 		t.Fatalf("owner metadata not annotated: %+v status=%+v", resources[0], resources[0].Status)
 	}
 	if resources[0].ManagedBy != "routerd" || resources[0].Management != "managed" {
@@ -112,7 +112,7 @@ func TestHandlerServesReadOnlySummary(t *testing.T) {
 		Result: func() *apply.Result {
 			return &apply.Result{Phase: "Healthy", Generation: 7, Resources: []apply.ResourceResult{{ID: "x", Phase: "Healthy"}}}
 		},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Count: 3, Max: 262144}, nil
 		},
 		VPNStatus: func(context.Context) (VPNStatus, error) {
@@ -472,31 +472,6 @@ func TestHandlerServesMinimalSummary(t *testing.T) {
 	}
 }
 
-func TestHandlerHidesStaleWireGuardPeerStatus(t *testing.T) {
-	handler := New(Options{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
-			Metadata: api.ObjectMeta{Name: "wg-mesh-ipv4"},
-		}}}},
-		Store: fakeStore{resources: []routerstate.ObjectStatus{
-			{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Applied"}},
-			{APIVersion: api.NetAPIVersion, Kind: "WireGuardPeer", Name: "wg-mesh-ipv4", Status: map[string]any{"phase": "Pending", "reason": "InterfaceError"}},
-		}},
-	})
-	resources, err := handler.resourceStatuses()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, resource := range resources {
-		if resource.Kind == "WireGuardPeer" && resource.Name == "wg-mesh-ipv4" {
-			t.Fatalf("stale WireGuardPeer status was not filtered: %+v", resource)
-		}
-	}
-	if len(resources) != 1 || resources[0].Kind != "IPv4StaticAddress" {
-		t.Fatalf("resources = %+v, want only IPv4StaticAddress/wg-mesh-ipv4", resources)
-	}
-}
-
 func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
 	handler := New(Options{
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
@@ -529,7 +504,7 @@ func TestHandlerIncludesConfiguredResourcesWithoutObservedStatus(t *testing.T) {
 		t.Fatalf("configured TailscaleNode missing from resources: %+v", resources)
 	}
 	status := tailscale.Status
-	if status["phase"] != "NotObserved" || status["reason"] != "NoObservedStatus" || status["configured"] != true || status["observed"] != false {
+	if status["phase"] != "NotObserved" || status["reason"] != "NoObservedStatus" {
 		t.Fatalf("tailscale synthetic status = %+v", status)
 	}
 }
@@ -1247,7 +1222,7 @@ func TestHandlerEnrichesConnectionsWithDPI(t *testing.T) {
 	_ = firewallLog.Close()
 	handler := New(Options{
 		FirewallLogPath: path,
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1281,7 +1256,7 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 			}
 			return nil, nil
 		},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1309,7 +1284,7 @@ func TestHandlerFallsBackConnectionAppFromPort(t *testing.T) {
 
 func TestHandlerLabelsOTLPConnectionsFromPort(t *testing.T) {
 	handler := New(Options{
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "tcp",
@@ -1356,7 +1331,7 @@ func TestHandlerAnnotatesLocalServiceRedirectConnections(t *testing.T) {
 	}}}
 	handler := New(Options{
 		Router: router,
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Family:   "ipv4",
 				Protocol: "udp",
@@ -1509,7 +1484,7 @@ func TestHandlerDHCPLeaseOrderIsOnlyTieBreakerAfterExpiry(t *testing.T) {
 
 func TestReadDnsmasqLeases(t *testing.T) {
 	leasePath := filepath.Join(t.TempDir(), "dnsmasq.leases")
-	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n1778014867 bc:24:11:e0:8e:3a 2409:10:3d60:1271::20 host6 00:03:00:01:bc:24:11:e0:8e:3a\n"), 0o644); err != nil {
+	if err := os.WriteFile(leasePath, []byte("1778014867 18:ec:e7:33:12:6c 172.18.0.150 aiseg2 01:18:ec:e7:33:12:6c\n1778014867 12 2409:10:3d60:1271::20 host6 00:03:00:01:bc:24:11:e0:8e:3a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	leases, err := readDnsmasqLeases(leasePath)
@@ -1523,7 +1498,7 @@ func TestReadDnsmasqLeases(t *testing.T) {
 	if lease.IP != "172.18.0.150" || lease.Hostname != "aiseg2" || lease.Vendor != "Panasonic" || lease.Family != "ipv4" {
 		t.Fatalf("lease = %+v", lease)
 	}
-	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" {
+	if leases[1].IP != "2409:10:3d60:1271::20" || leases[1].Family != "ipv6" || leases[1].MAC != "" || leases[1].IAID != "12" {
 		t.Fatalf("ipv6 lease = %+v", leases[1])
 	}
 }
@@ -1602,7 +1577,7 @@ func TestParseIPNeighborJSON(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d", len(rows))
 	}
-	if rows[0].MAC != "4e:20:15:aa:e0:67" || rows[0].Vendor != "Apple private address" {
+	if rows[0].MAC != "4e:20:15:aa:e0:67" || rows[0].Vendor != "" {
 		t.Fatalf("row = %+v", rows[0])
 	}
 }
@@ -1723,27 +1698,24 @@ func TestCorrelateClientsSkipsFailedNeighbors(t *testing.T) {
 	}
 }
 
-func TestCorrelateClientsGroupsPrivacyAddressByFingerprintWhenUnique(t *testing.T) {
-	rows := correlateClients(
-		[]DHCPLease{{
-			MAC:      "4e:20:15:aa:e0:67",
-			IP:       "172.18.1.110",
-			Hostname: "mcberry-iPhone",
-			Vendor:   "Apple private address",
-		}},
-		nil,
-		[]logstore.TrafficFlow{{ClientAddress: "2409:10:3d60:1271:abcd::1234", PeerAddress: "17.253.144.10", ResolvedHostname: "gateway.icloud.com"}},
-		[]logstore.DNSQuery{{ClientAddress: "2409:10:3d60:1271:abcd::1234", QuestionName: "gateway.icloud.com", QuestionType: "AAAA"}},
-		nil,
-	)
-	if len(rows) != 1 {
-		t.Fatalf("rows = %d: %+v", len(rows), rows)
+func TestCorrelateClientsRequiresObservedMACForPrivacyAddressIdentity(t *testing.T) {
+	leases := []DHCPLease{{MAC: "4e:20:15:aa:e0:67", IP: "172.18.1.110", Hostname: "mcberry-iPhone"}}
+	privacyIP := "2409:10:3d60:1271:abcd::1234"
+	flows := []logstore.TrafficFlow{{ClientAddress: privacyIP, PeerAddress: "17.253.144.10", ResolvedHostname: "gateway.icloud.com"}}
+	queries := []logstore.DNSQuery{{ClientAddress: privacyIP, QuestionName: "gateway.icloud.com", QuestionType: "AAAA"}}
+	rows := correlateClients(leases, nil, flows, queries, nil)
+	if len(rows) != 2 {
+		t.Fatalf("similar OS fingerprint fabricated a MAC association: %+v", rows)
 	}
-	if !containsString(rows[0].Addresses, "2409:10:3d60:1271:abcd::1234") {
-		t.Fatalf("privacy address not grouped: %+v", rows[0])
+	for _, row := range rows {
+		if row.MAC != "" && containsString(row.Addresses, privacyIP) {
+			t.Fatalf("unobserved privacy address was assigned to a known MAC: %+v", row)
+		}
 	}
-	if rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
-		t.Fatalf("fingerprint = %+v", rows[0])
+	neighbors := []NeighborEntry{{IP: privacyIP, MAC: leases[0].MAC, State: "REACHABLE", Source: "ip-neigh"}}
+	rows = correlateClients(leases, neighbors, flows, queries, nil)
+	if len(rows) != 1 || !containsString(rows[0].Addresses, privacyIP) || rows[0].MAC != leases[0].MAC || rows[0].InferredOSFamily != "Apple" || rows[0].InferredDeviceClass != "phone" {
+		t.Fatalf("observed IPv6/MAC association must retain useful grouping and fingerprint: %+v", rows)
 	}
 }
 

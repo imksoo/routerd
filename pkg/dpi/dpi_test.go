@@ -29,6 +29,7 @@ func TestClassifyTLSSNIFromIPv4Packet(t *testing.T) {
 		0, 0, 0, 0,
 		0x50, 0x18, 0, 0, 0, 0, 0, 0,
 	}, payload...)
+	packet[2], packet[3] = byte(len(packet)>>8), byte(len(packet))
 	got := Classify(ClassifyRequest{Packet: packet})
 	if got.TLSSNI != "routerd.example" || got.SrcAddress != "172.18.0.101" || got.DstPort != 443 {
 		t.Fatalf("classification = %+v", got)
@@ -237,4 +238,17 @@ func dhcpDiscoverPayload(hostname string) []byte {
 	payload = append(payload, []byte(hostname)...)
 	payload = append(payload, 255)
 	return payload
+}
+
+func TestClassifyDNSRetainsNameWithUnknownQuestionTypeAndCompression(t *testing.T) {
+	payload := []byte{0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0xc0, 18, 0x01, 0x01, 0, 1, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', 0}
+	if name, ok := ExtractDNSQuery(payload); !ok || name != "example" {
+		t.Fatalf("usable compressed unknown-type question: %q %t", name, ok)
+	}
+}
+
+func TestTLSSingleLabelServerNameIsUsable(t *testing.T) {
+	if name, ok := ExtractTLSSNI(MinimalTLSClientHello("intranet")); !ok || name != "intranet" {
+		t.Fatalf("single-label SNI: %q %t", name, ok)
+	}
 }

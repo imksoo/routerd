@@ -4,14 +4,12 @@ package webconsole
 
 import (
 	"time"
-
-	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 type OperationalStatus struct {
-	GeneratedAt time.Time                  `json:"generatedAt"`
-	Kind        string                     `json:"kind"`
-	Resources   []routerstate.ObjectStatus `json:"resources"`
+	GeneratedAt time.Time        `json:"generatedAt"`
+	Kind        string           `json:"kind"`
+	Resources   []ResourceStatus `json:"resources"`
 }
 
 type SAMStatus struct {
@@ -39,8 +37,8 @@ type SAMPool struct {
 	Reason              string           `json:"reason,omitempty"`
 	DiscoveryMode       string           `json:"discoveryMode,omitempty"`
 	DiscoveryPhase      string           `json:"discoveryPhase,omitempty"`
-	GeneratedBGPPaths   int              `json:"generatedBGPPaths,omitempty"`
-	ResolvedMemberCount int              `json:"resolvedMemberCount,omitempty"`
+	GeneratedBGPPaths   *int             `json:"generatedBGPPaths,omitempty"`
+	ResolvedMemberCount *int             `json:"resolvedMemberCount,omitempty"`
 	PlacementActive     bool             `json:"placementActive,omitempty"`
 	PlacementActiveNode string           `json:"placementActiveNode,omitempty"`
 	Addresses           []SAMPoolAddress `json:"addresses,omitempty"`

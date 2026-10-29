@@ -4,6 +4,8 @@ package render
 
 import (
 	"fmt"
+	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -63,7 +65,7 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 	if len(selected.Attributes) > 0 {
 		var attrs []string
 		for _, key := range mapsort.Keys(selected.Attributes) {
-			attrs = append(attrs, key+"="+selected.Attributes[key])
+			attrs = append(attrs, key+"="+url.PathEscape(selected.Attributes[key]))
 		}
 		env = append(env, "OTEL_RESOURCE_ATTRIBUTES="+strings.Join(attrs, ","))
 	}
@@ -80,13 +82,24 @@ func TelemetryEnvironment(router *api.Router) ([]string, error) {
 func observabilityPipelineEnvironment(spec api.ObservabilityPipelineSpec) []string {
 	var env []string
 	env = append(env, "OTEL_EXPORTER_OTLP_ENDPOINT="+strings.TrimSpace(spec.OTLP.Endpoint))
-	if spec.OTLP.Insecure || spec.OTLP.TLS.InsecureSkipVerify {
+	if spec.OTLP.Insecure {
 		env = append(env, "OTEL_EXPORTER_OTLP_INSECURE=true")
+	} else if spec.OTLP.TLS.InsecureSkipVerify {
+		env = append(env, "ROUTERD_OTLP_TLS_SKIP_VERIFY=true")
+	}
+	for _, field := range []struct{ name, path string }{
+		{"OTEL_EXPORTER_OTLP_CERTIFICATE", spec.OTLP.TLS.CAFile},
+		{"OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE", spec.OTLP.TLS.CertFile},
+		{"OTEL_EXPORTER_OTLP_CLIENT_KEY", spec.OTLP.TLS.KeyFile},
+	} {
+		if field.path != "" {
+			env = append(env, field.name+"="+field.path)
+		}
 	}
 	if len(spec.OTLP.Headers) > 0 {
 		var headers []string
 		for _, key := range mapsort.Keys(spec.OTLP.Headers) {
-			headers = append(headers, key+"="+spec.OTLP.Headers[key])
+			headers = append(headers, key+"="+url.PathEscape(spec.OTLP.Headers[key]))
 		}
 		env = append(env, "OTEL_EXPORTER_OTLP_HEADERS="+strings.Join(headers, ","))
 	}
@@ -98,7 +111,7 @@ func observabilityPipelineEnvironment(spec api.ObservabilityPipelineSpec) []stri
 	if len(spec.Attributes) > 0 {
 		var attrs []string
 		for _, key := range mapsort.Keys(spec.Attributes) {
-			attrs = append(attrs, key+"="+spec.Attributes[key])
+			attrs = append(attrs, key+"="+url.PathEscape(spec.Attributes[key]))
 		}
 		env = append(env, "OTEL_RESOURCE_ATTRIBUTES="+strings.Join(attrs, ","))
 	}
@@ -142,7 +155,7 @@ func mergeEnvironment(base, extra []string) []string {
 	}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(base)+len(extra))
-	for _, value := range append(base, extra...) {
+	for _, value := range slices.Concat(extra, base) {
 		key, _, _ := strings.Cut(value, "=")
 		if key == "" || seen[key] {
 			continue

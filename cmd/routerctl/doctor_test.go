@@ -2704,7 +2704,7 @@ spec:
       metadata:
         name: wan-masq
       spec:
-        action: masquerade
+        type: masquerade
         outboundInterface: wan
 `)
 	if err := os.WriteFile(configPath, data, 0644); err != nil {

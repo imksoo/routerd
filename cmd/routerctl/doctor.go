@@ -238,6 +238,9 @@ func doctorCommand(args []string, stdout, stderr io.Writer) error {
 		}
 		return err
 	}
+	if closer, ok := store.(io.Closer); ok {
+		defer closer.Close()
+	}
 	runner := doctorRunner{opts: opts, router: router, store: store}
 	collectChecks := opts.Target != "incident"
 	areas := doctorAreas

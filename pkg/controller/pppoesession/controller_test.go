@@ -40,10 +40,11 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 		status.Phase = daemonapi.PhaseRunning
 		status.Health = daemonapi.HealthOK
 		status.Resources = []daemonapi.ResourceStatus{{
-			Resource:   daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: "wan"},
-			Phase:      pppoeclient.PhaseConnected,
-			Health:     daemonapi.HealthOK,
-			Conditions: []daemonapi.Condition{},
+			PPPoEIdentity: &pppoeclient.SessionIdentity{},
+			Resource:      daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "PPPoESession", Name: "wan"},
+			Phase:         pppoeclient.PhaseConnected,
+			Health:        daemonapi.HealthOK,
+			Conditions:    []daemonapi.Condition{},
 			Observed: map[string]string{
 				"interface":      "ens18",
 				"ifname":         "ppp-wan",
@@ -61,6 +62,7 @@ func TestControllerReconcilesDaemonStatus(t *testing.T) {
 
 	store := mapStore{}
 	controller := Controller{Router: &api.Router{}, Bus: bus.New(), Store: store, DaemonSockets: map[string]string{"wan": socket}, DryRun: true}
+	controller.Source = func(string) (Source, bool, error) { return Source{Interface: "ens18", Device: "ppp-wan"}, true, nil }
 	if err := controller.Reconcile(context.Background(), "wan"); err != nil {
 		t.Fatal(err)
 	}

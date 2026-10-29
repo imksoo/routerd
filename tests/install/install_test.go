@@ -199,7 +199,7 @@ func TestInstallConfigureUsesCurrentRouterdServeCLI(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`"${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${final_config}" --once`,
+		`"${routerd_bin}" serve --sandbox --root "${sandbox_root}" --config "${candidate}" --once`,
 		`"${routerd_bin}" serve --config "${final_config}" --once`,
 	} {
 		if !strings.Contains(text, want) {
@@ -485,7 +485,7 @@ esac
 	}
 }
 
-func TestInstallReplacesLegacyRouterdServiceBeforeRestart(t *testing.T) {
+func TestInstallDoesNotTreatObsoleteArgumentsAsServiceOwnership(t *testing.T) {
 	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
@@ -530,19 +530,16 @@ ExecStart=/usr/local/sbin/routerd serve --controller-chain --controller-chain-dr
 	if err != nil {
 		t.Fatalf("install failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "replacing legacy routerd.service") {
-		t.Fatalf("missing legacy replacement warning:\n%s", out)
+	if !strings.Contains(out, "refusing to mutate foreign") {
+		t.Fatalf("missing foreign ownership diagnostic:\n%s", out)
 	}
 	data, err := os.ReadFile(filepath.Join(systemdDir, "routerd.service"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(data)
-	if strings.Contains(got, "--controller-chain") || strings.Contains(got, "# Managed by routerd.") {
-		t.Fatalf("legacy unit was preserved:\n%s", got)
-	}
-	if !strings.Contains(got, "routerd serve --config") {
-		t.Fatalf("new unit was not installed:\n%s", got)
+	if got != legacyUnit {
+		t.Fatalf("unowned unit was replaced:\n%s", got)
 	}
 }
 

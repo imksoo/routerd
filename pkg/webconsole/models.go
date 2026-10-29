@@ -40,7 +40,7 @@ type Snapshot struct {
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
 	GatewayHealth    GatewayHealth                 `json:"gatewayHealth"`
 	Phases           map[string]int                `json:"phases,omitempty"`
-	Resources        []routerstate.ObjectStatus    `json:"resources,omitempty"`
+	Resources        []ResourceStatus              `json:"resources,omitempty"`
 	Interfaces       []InterfaceSummary            `json:"interfaces,omitempty"`
 	Events           []routerstate.StoredEvent     `json:"events,omitempty"`
 	Connections      *observe.ConnectionTable      `json:"connections,omitempty"`
@@ -56,6 +56,13 @@ type Snapshot struct {
 	DPI              *DPIStatus                    `json:"dpi,omitempty"`
 	SystemUsage      SystemUsage                   `json:"systemUsage,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+// Declared describes this exact row's presence in the current declaration.
+// An undeclared row may still carry a generated effect or pending withdrawal.
+type ResourceStatus struct {
+	routerstate.ObjectStatus
+	Declared *bool `json:"declared,omitempty"`
 }
 
 func (s Snapshot) collected(section SnapshotSection) bool {
@@ -158,6 +165,7 @@ type DHCPLease struct {
 	IP        string    `json:"ip"`
 	Hostname  string    `json:"hostname,omitempty"`
 	ClientID  string    `json:"clientId,omitempty"`
+	IAID      string    `json:"iaid,omitempty"`
 	Vendor    string    `json:"vendor,omitempty"`
 	Family    string    `json:"family,omitempty"`
 	Source    string    `json:"source,omitempty"`
@@ -186,8 +194,9 @@ type ClientEntry struct {
 	State                 string   `json:"state,omitempty"`
 	Sources               []string `json:"sources,omitempty"`
 	Peers                 []string `json:"peers,omitempty"`
-	BytesOut              int64    `json:"bytesOut,omitempty"`
-	BytesIn               int64    `json:"bytesIn,omitempty"`
+	Accounting            bool     `json:"accounting"`
+	BytesOut              int64    `json:"bytesOut"`
+	BytesIn               int64    `json:"bytesIn"`
 	PrimaryActivity       string   `json:"primaryActivity,omitempty"`
 	LastProtocol          string   `json:"lastProtocol,omitempty"`
 	LastProtocolDetail    string   `json:"lastProtocolDetail,omitempty"`
@@ -204,17 +213,19 @@ type ClientEntry struct {
 }
 
 type InterfaceSummary struct {
-	Name            string   `json:"name"`
-	IfName          string   `json:"ifname"`
-	Phase           string   `json:"phase,omitempty"`
-	Role            string   `json:"role,omitempty"`
-	Zone            string   `json:"zone,omitempty"`
-	Managed         bool     `json:"managed,omitempty"`
-	Owner           string   `json:"owner,omitempty"`
-	MTU             int      `json:"mtu,omitempty"`
-	HardwareAddress string   `json:"hardwareAddress,omitempty"`
-	Flags           string   `json:"flags,omitempty"`
-	Addresses       []string `json:"addresses,omitempty"`
+	Name                string   `json:"name"`
+	IfName              string   `json:"ifname"`
+	Phase               string   `json:"phase,omitempty"`
+	Role                string   `json:"role,omitempty"`
+	Zone                string   `json:"zone,omitempty"`
+	Managed             bool     `json:"managed,omitempty"`
+	Owner               string   `json:"owner,omitempty"`
+	MTU                 int      `json:"mtu,omitempty"`
+	HardwareAddress     string   `json:"hardwareAddress,omitempty"`
+	Flags               string   `json:"flags,omitempty"`
+	Addresses           []string `json:"addresses,omitempty"`
+	ConfiguredAddresses []string `json:"configuredAddresses,omitempty"`
+	ObservationError    string   `json:"observationError,omitempty"`
 }
 
 type VPNStatus struct {
@@ -236,8 +247,8 @@ type WireGuardPeerStatus struct {
 	Endpoint               string    `json:"endpoint,omitempty"`
 	AllowedIPs             []string  `json:"allowedIPs,omitempty"`
 	LatestHandshake        time.Time `json:"latestHandshake,omitempty"`
-	TransferRxBytes        int64     `json:"transferRxBytes,omitempty"`
-	TransferTxBytes        int64     `json:"transferTxBytes,omitempty"`
+	TransferRxBytes        int64     `json:"transferRxBytes"`
+	TransferTxBytes        int64     `json:"transferTxBytes"`
 	PersistentKeepaliveSec int       `json:"persistentKeepaliveSec,omitempty"`
 }
 

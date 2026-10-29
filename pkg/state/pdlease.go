@@ -403,22 +403,51 @@ func (s *SQLiteStore) readPDLeaseLocked(name string) (PDLease, bool, error) {
 	if s.closed {
 		return PDLease{}, false, sql.ErrConnDone
 	}
-	var raw sql.NullString
-	err := s.db.QueryRow(`SELECT json_extract(status,'$.observation') FROM objects WHERE api_version=? AND kind='DHCPv6PrefixDelegation' AND name=?`, "net.routerd.net/v1alpha1", name).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !raw.Valid) {
+	_, _, raw, err := s.loadStatusDocument("net.routerd.net/v1alpha1", "DHCPv6PrefixDelegation", name)
+	if errors.Is(err, sql.ErrNoRows) {
 		return PDLease{}, false, nil
 	}
 	if err != nil {
 		return PDLease{}, false, err
 	}
-	var l PDLease
-	if err := json.Unmarshal([]byte(raw.String), &l); err != nil {
+	observation, err := decodePDObservation(raw)
+	if err != nil {
 		return PDLease{}, false, fmt.Errorf("decode PD observation %s: %w", name, err)
 	}
-	if err := validatePDLease(l); err != nil {
-		return PDLease{}, false, err
+	if observation == nil {
+		return PDLease{}, false, nil
 	}
-	return l, true, nil
+	return *observation, true, nil
+}
+
+// decodePDObservation is the closed SQLite observation boundary, shared by
+// explicit lease reads, status projections and atomic observation publication.
+func decodePDObservation(raw string) (*PDLease, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var document struct {
+		Observation json.RawMessage `json:"observation"`
+	}
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return nil, err
+	}
+	if len(document.Observation) == 0 {
+		return nil, nil
+	}
+	if strings.TrimSpace(string(document.Observation)) == "null" {
+		return nil, fmt.Errorf("expected an observation object")
+	}
+	var lease PDLease
+	decoder := json.NewDecoder(strings.NewReader(string(document.Observation)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&lease); err != nil {
+		return nil, err
+	}
+	if err := validatePDLease(lease); err != nil {
+		return nil, err
+	}
+	return &lease, nil
 }
 
 func (s *SQLiteStore) savePDLeaseLocked(name string, l PDLease) error {
@@ -549,13 +578,11 @@ func cleanPDStatus(status map[string]any) objectStatus {
 }
 
 func projectPDStatus(status map[string]any, raw string, now time.Time) error {
-	var document struct {
-		Observation *PDLease `json:"observation"`
-	}
-	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+	observation, err := decodePDObservation(raw)
+	if err != nil {
 		return err
 	}
-	return projectTypedPDStatus(status, document.Observation, now)
+	return projectTypedPDStatus(status, observation, now)
 }
 
 func projectTypedPDStatus(status map[string]any, observation *PDLease, now time.Time) error {

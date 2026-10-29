@@ -8,6 +8,7 @@ import (
 )
 
 var removedLegacyKindMessages = map[string]string{
+	"IPv4StaticRoute":        "%s is not supported in operator configuration; use IPv4Route with destination, device, gateway, and metric",
 	"SystemdUnit":            "%s is not supported; declare router intent and let routerd generate service units",
 	"KernelModule":           "%s is not supported; routerd derives required kernel modules from declared resources",
 	"NetworkAdoption":        "%s is not supported; routerd derives networkd/resolved adoption from Interface and service resources",

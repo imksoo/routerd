@@ -29,7 +29,7 @@ type mobilityPoolValidation struct {
 	Members  []api.ResolvedMobilityPoolMember
 }
 
-func validateMobilityResource(router *api.Router, res api.Resource, _ platform.OS, allowRuntimePayloads bool, idx *RouterIndex) (bool, error) {
+func validateMobilityResource(router *api.Router, res api.Resource, targetOS platform.OS, allowRuntimePayloads bool, idx *RouterIndex) (bool, error) {
 	switch res.Kind {
 	case "MobilityPool":
 		if res.APIVersion != api.MobilityAPIVersion {
@@ -221,6 +221,9 @@ func validateMobilityResource(router *api.Router, res api.Resource, _ platform.O
 		spec, err := res.SAMTransportProfileSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSFreeBSD && (spec.Mode == "fou" || spec.Mode == "gue") {
+			return true, fmt.Errorf("%s spec.mode %s is unsupported on FreeBSD; use ipip or gre", res.ID(), spec.Mode)
 		}
 		if err := validateSAMTransportProfile(router, res, spec); err != nil {
 			return true, err

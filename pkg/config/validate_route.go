@@ -535,8 +535,8 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 		if spec.Destination == "" {
 			return true, fmt.Errorf("%s spec.destination is required", res.ID())
 		}
-		if _, err := netip.ParsePrefix(spec.Destination); err != nil {
-			return true, fmt.Errorf("%s spec.destination is invalid: %w", res.ID(), err)
+		if prefix, err := netip.ParsePrefix(spec.Destination); err != nil || !prefix.Addr().Is4() {
+			return true, fmt.Errorf("%s spec.destination must be an IPv4 CIDR", res.ID())
 		}
 		routeType := defaultString(spec.Type, "unicast")
 		switch routeType {

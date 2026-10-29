@@ -78,7 +78,11 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		if res.Kind != "WireGuardInterface" {
 			continue
 		}
-		aliases[res.Metadata.Name] = res.Metadata.Name
+		spec, err := res.WireGuardInterfaceSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		managed[res.Metadata.Name] = true
 	}
 
@@ -127,6 +131,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
 	staticBridgeV4 := map[string][]string{}
+	primaryV4 := map[string]bool{}
 	raInterfaces := map[string]bool{}
 	var ntpConfig []byte
 	var pppoes []freeBSDPPPoE
@@ -172,10 +177,16 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				if resourceKind(router, spec.Interface) == "Bridge" {
 					staticBridgeV4[aliases[spec.Interface]] = append(staticBridgeV4[aliases[spec.Interface]], address)
 				} else if resourceKind(router, spec.Interface) == "WireGuardInterface" {
-					// WireGuard interfaces are created by their rc.d service; that
-					// service applies static addresses after the interface exists.
+					// The WireGuard and static-address controllers own this interface
+					// and its addresses after routerd starts.
 				} else {
-					rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", aliases[spec.Interface], address))
+					ifname := aliases[spec.Interface]
+					if primaryV4[ifname] {
+						staticBridgeV4[ifname] = append(staticBridgeV4[ifname], address)
+					} else {
+						rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", ifname, address))
+						primaryV4[ifname] = true
+					}
 				}
 			}
 		case "IPv4StaticRoute":

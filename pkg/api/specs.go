@@ -11,11 +11,11 @@ import (
 )
 
 type LogSinkSpec struct {
-	Type     string              `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=otlp,enum=webhook,enum=file,enum=journald"`
+	Type     string              `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=webhook,enum=file,enum=journald"`
 	Enabled  *bool               `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	MinLevel string              `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
 	Syslog   LogSinkSyslogSpec   `yaml:"syslog,omitempty" json:"syslog,omitempty"`
-	OTLP     LogSinkOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty"`
+	OTLP     LogSinkOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty" jsonschema:"-"`
 	Webhook  LogSinkWebhookSpec  `yaml:"webhook,omitempty" json:"webhook,omitempty"`
 	File     LogSinkFileSpec     `yaml:"file,omitempty" json:"file,omitempty"`
 	Journald LogSinkJournaldSpec `yaml:"journald,omitempty" json:"journald,omitempty"`
@@ -68,13 +68,13 @@ type ObservabilityPipelineLogsSpec struct {
 
 type ObservabilityPipelineLogSink struct {
 	Name     string                     `yaml:"name,omitempty" json:"name,omitempty"`
-	Type     string                     `yaml:"type" json:"type" jsonschema:"enum=stdout,enum=syslog,enum=loki,enum=kafka"`
+	Type     string                     `yaml:"type" json:"type" jsonschema:"enum=stdout,enum=syslog,enum=loki"`
 	Enabled  *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	MinLevel string                     `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
 	Labels   map[string]string          `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Loki     ObservabilityLokiSinkSpec  `yaml:"loki,omitempty" json:"loki,omitempty"`
 	Syslog   LogSinkSyslogSpec          `yaml:"syslog,omitempty" json:"syslog,omitempty"`
-	Kafka    ObservabilityKafkaSinkSpec `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+	Kafka    ObservabilityKafkaSinkSpec `yaml:"kafka,omitempty" json:"kafka,omitempty" jsonschema:"-"`
 }
 
 type ObservabilityLokiSinkSpec struct {
@@ -1686,8 +1686,10 @@ type DSLiteTunnelSpec struct {
 }
 
 type IPv4RouteSpec struct {
-	Destination string                `yaml:"destination" json:"destination"`
-	Type        string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
+	Destination string `yaml:"destination" json:"destination"`
+	Type        string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
+	// Device is a kernel interface name. Use deviceFrom with Interface.ifname
+	// to resolve a declared logical interface from current observations.
 	Device      string                `yaml:"device,omitempty" json:"device,omitempty"`
 	DeviceFrom  StatusValueSourceSpec `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
 	Gateway     string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
@@ -2189,9 +2191,8 @@ type ProviderActionPolicySpec struct {
 	MaxActionsPerRun int `yaml:"maxActionsPerRun,omitempty" json:"maxActionsPerRun,omitempty"`
 	// AllowUndo permits best-effort rollback. The zero value (false) disables it.
 	AllowUndo bool `yaml:"allowUndo,omitempty" json:"allowUndo,omitempty"`
-	// ExecutionWindow optionally restricts execution to a time window. It is
-	// validated leniently (free-form, cron-ish); empty = no window restriction.
-	ExecutionWindow string `yaml:"executionWindow,omitempty" json:"executionWindow,omitempty"`
+	// ExecutionWindow must be empty: provider action scheduling is unsupported.
+	ExecutionWindow string `yaml:"executionWindow,omitempty" json:"executionWindow,omitempty" jsonschema:"maxLength=0"`
 }
 
 type HealthCheckSpec struct {

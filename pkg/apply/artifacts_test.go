@@ -129,11 +129,11 @@ func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	kinds := map[string]bool{}
 	for _, intent := range intents {
 		kinds[intent.Artifact.Kind] = true
-		if intent.ApplyWith == "keepalived" || intent.ApplyWith == "systemctl" {
+		if intent.ApplyWith == "keepalived" || intent.ApplyWith == "systemctl" || intent.Artifact.Kind == "rc.d.service" {
 			t.Fatalf("FreeBSD CARP intent used Linux backend: %+v", intent)
 		}
 	}
-	for _, want := range []string{"freebsd.carp", "rc.d.service", "sysctl"} {
+	for _, want := range []string{"freebsd.carp", "sysctl"} {
 		if !kinds[want] {
 			t.Fatalf("missing FreeBSD intent kind %q in %+v", want, intents)
 		}
@@ -462,6 +462,12 @@ func TestServiceDeclarationsUsePlatformManagerMatrix(t *testing.T) {
 		for _, platformCase := range platforms {
 			t.Run(res.Kind+"/"+platformCase.name, func(t *testing.T) {
 				intents := resourceArtifactIntentsForPlatform(res, map[string]string{"lan": "eth0", "wan": "eth1"}, platformCase.targetOS, platformCase.features)
+				if res.Kind == "VirtualAddress" && platformCase.targetOS == platform.OSFreeBSD {
+					if hasArtifactKind(intents, "rc.d.service") {
+						t.Fatalf("native CARP actor duplicated by boot helper: %+v", intents)
+					}
+					return
+				}
 				wantKind := platformCase.kind
 				if res.Kind == "TailscaleNode" && platformCase.name == "systemd" {
 					wantKind = "systemd.unit"

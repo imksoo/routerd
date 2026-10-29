@@ -54,6 +54,13 @@ func TestParseResourceAttributesIgnoresMalformedFields(t *testing.T) {
 	}
 }
 
+func TestParseResourceAttributesPreservesEscapedValues(t *testing.T) {
+	attrs := parseResourceAttributes("location=site%2C%20lab%2B1%25")
+	if len(attrs) != 1 || attrs[0].Value.AsString() != "site, lab+1%" {
+		t.Fatalf("escaped environment value changed: %+v", attrs)
+	}
+}
+
 func TestRuntimeCachesMetricInstruments(t *testing.T) {
 	r := &Runtime{ServiceName: "routerd-test"}
 	if r.Counter("events") != r.Counter("events") {

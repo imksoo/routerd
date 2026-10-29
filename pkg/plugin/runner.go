@@ -100,7 +100,7 @@ func Run(ctx context.Context, spec api.PluginSpec, name string, opts RunOptions)
 	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	runErr := cmd.Run()
+	runErr := subprocessio.Run(cmd)
 	duration := time.Since(started)
 
 	outcome := RunOutcome{

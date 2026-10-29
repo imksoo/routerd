@@ -82,11 +82,11 @@ func TestPFRenderFirewallAndNAT(t *testing.T) {
 		`block drop all`,
 		`pass out quick all keep state`,
 		`pass in quick on $lan_if inet6 proto icmp6 to { (em1), ff02::1, ff02::2, ff02::1:ff00:0/104 } icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label "routerd:lan:ipv6-control"`,
-		`pass in quick on $lan_if to (em1) keep state`,
-		`pass in quick on $mgmt_if to (em2) keep state`,
+		`pass in quick on $lan_if to any keep state`,
+		`pass in quick on $mgmt_if to any keep state`,
 		`block drop in quick on $lan_if to (em2:network) label "routerd:lan-to-mgmt-deny"`,
 		`pass in quick on $lan_if keep state label "routerd:lan-to-wan"`,
-		`pass in quick on $wan_if proto udp to (em0) port 546 keep state label "routerd:dhcpv6-client"`,
+		`pass in quick on $wan_if proto udp to any port 546 keep state label "routerd:dhcpv6-client"`,
 		`pass in log quick on $wan_if proto tcp from 192.0.2.0/24 to 198.51.100.10/32 port 22 keep state label "routerd:wan-ssh"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -385,7 +385,7 @@ func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 		t.Fatalf("render pf: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, `pass in quick on $lan_if to (em1) keep state`) {
+	if !strings.Contains(got, `pass in quick on $lan_if to any keep state`) {
 		t.Fatalf("pf output missing broad trust-to-self rule:\n%s", got)
 	}
 	for _, redundant := range []string{
@@ -442,8 +442,8 @@ func TestPFClientPolicyUsesIPv4Reservations(t *testing.T) {
 	}
 	got := string(data)
 	for _, want := range []string{
-		`pass in quick on vtnet1 proto udp from 192.168.160.184 to (vtnet1) port 53 keep state label "routerd:client-policy:guest-devices:dns"`,
-		`pass in quick on vtnet1 proto udp from 192.168.160.184 to (vtnet1) port 67 keep state label "routerd:client-policy:guest-devices:dhcp"`,
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to any port 53 keep state label "routerd:client-policy:guest-devices:dns"`,
+		`pass in quick on vtnet1 proto udp from 192.168.160.184 to any port 67 keep state label "routerd:client-policy:guest-devices:dhcp"`,
 		`block drop in log quick on vtnet1 from 192.168.160.184 to 192.168.0.0/16 label "routerd:client-policy:guest-devices:deny"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -612,7 +612,7 @@ func TestPFInternalWANHolesUseOwningInterface(t *testing.T) {
 		t.Fatalf("render pf: %v", err)
 	}
 	got := string(data)
-	want := `pass in quick on em0 proto udp to (em0) port 546 keep state label "routerd:wan-pd-dhcpv6-client"`
+	want := `pass in quick on em0 proto udp to any port 546 keep state label "routerd:wan-pd-dhcpv6-client"`
 	if !strings.Contains(got, want) {
 		t.Fatalf("pf output missing interface-scoped DHCPv6 hole %q:\n%s", want, got)
 	}
@@ -801,7 +801,7 @@ func TestPFWithLocalCaptureIntentsRendersMobilityMSSClamp(t *testing.T) {
 		t.Fatalf("render PF with local capture intent: %v", err)
 	}
 	got := string(data)
-	if want := `scrub out on wg-hybrid proto tcp max-mss 1300`; !strings.Contains(got, want) {
+	if want := `scrub out on wg-hybrid proto tcp max-mss 1380`; !strings.Contains(got, want) {
 		t.Fatalf("PF output missing local capture MSS clamp %q:\n%s", want, got)
 	}
 

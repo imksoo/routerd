@@ -69,7 +69,7 @@ func TestFederationSLO_PeerPartitionReplayRecoversWithinSLO(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	noSleep := func(time.Duration) {}
+	noSleep := func(context.Context, time.Duration) error { return nil }
 	peers := []eventd.PeerConfig{{NodeName: peerName, Endpoint: srv.URL}}
 	pusher := eventd.NewPusher(senderStore, testSecret, peers,
 		eventd.PushRetry{MaxAttempts: 1, BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond},

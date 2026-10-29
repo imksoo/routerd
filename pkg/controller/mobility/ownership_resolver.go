@@ -687,11 +687,14 @@ func captureStatesForSelf(self memberPlanInfo, history ProviderActionHistory, se
 			confirmed[address] = state
 			continue
 		}
-		if tr.assign {
+		if tr.assign || tr.uncertain {
 			stale[address] = state
 		}
 	}
 	for _, plan := range history.previousCaptureAssigns {
+		if history.capturePlanWasUndone(plan) {
+			continue
+		}
 		address := normalizeAddressString(plan.Target["address"])
 		providerRef := firstNonEmpty(plan.ProviderRef, plan.Target["providerRef"])
 		targetRef := providerCaptureRefFromTarget(plan.Target)

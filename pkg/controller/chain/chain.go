@@ -86,6 +86,7 @@ type dnsmasqSystemdState struct {
 
 type Store interface {
 	HealthObservation(string) (api.HealthObservation, error)
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
@@ -213,8 +214,8 @@ func (s eventSubscriptionStore) MarkSubscriptionRunResult(subscription, eventID,
 	return s.data.MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource, dynamicGeneration, errMsg)
 }
 
-func (s eventSubscriptionStore) UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error {
-	return s.data.UpsertDynamicConfigPart(part)
+func (s eventSubscriptionStore) CommitSubscriptionResult(ctx context.Context, subscription string, eventIDs []string, part routerstate.DynamicConfigPartRecord) error {
+	return s.data.CommitSubscriptionResult(ctx, subscription, eventIDs, part)
 }
 
 func (s eventSubscriptionStore) GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error) {
@@ -1985,20 +1986,65 @@ type controllerGeneration struct {
 	lifetimes        controllerLifetimes
 }
 
-// These are the two auxiliary consumers whose timer callbacks can publish
+// These auxiliary consumers have timer callbacks that can publish
 // effects. A replacement generation waits for their actual exit after cancel.
 type controllerLifetimes struct {
-	eventRuleDone <-chan struct{}
-	derivedDone   <-chan struct{}
+	eventRuleDone     <-chan struct{}
+	derivedDone       <-chan struct{}
+	eventSubscription *eventsubscriptioncontroller.Controller
+	pipeline          *observabilitypipeline.Controller
 }
 
-func (l controllerLifetimes) wait() {
+func (l controllerLifetimes) wait() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return l.waitContext(ctx)
+}
+
+func (l controllerLifetimes) waitContext(ctx context.Context) error {
+	if l.eventSubscription != nil {
+		l.eventSubscription.Stop()
+	}
 	if l.eventRuleDone != nil {
 		<-l.eventRuleDone
 	}
 	if l.derivedDone != nil {
 		<-l.derivedDone
 	}
+	if l.pipeline != nil {
+		if err := l.pipeline.Stop(ctx); err != nil {
+			return fmt.Errorf("stop observability pipeline: %w", err)
+		}
+	}
+	return nil
+}
+
+func closeControllerLifetimes(lifetimes controllerLifetimes, releaseLease func() error) error {
+	if err := lifetimes.wait(); err != nil {
+		if releaseLease != nil {
+			go func() {
+				if stopErr := lifetimes.waitContext(context.Background()); stopErr != nil {
+					slog.Error("unconfirmed controller cleanup failed; retaining cluster lease", "error", stopErr)
+					return
+				}
+				if closeErr := releaseLease(); closeErr != nil {
+					slog.Error("release cluster lease after controller exit", "error", closeErr)
+				}
+			}()
+		}
+		return err
+	}
+	if releaseLease != nil {
+		return releaseLease()
+	}
+	return nil
+}
+
+func generationLeaseRelease(decision ha.Decision) func() error {
+	if decision.Lease == nil {
+		return nil
+	}
+	return decision.Lease.Close
 }
 
 func (r *Runner) prepareControllerGeneration(ctx context.Context, logger *slog.Logger, store eventedStore) (*controllerGeneration, error) {
@@ -2010,6 +2056,9 @@ func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger
 }
 
 func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
+	if err := r.RuntimeMutationError(); err != nil {
+		return nil, err
+	}
 	r.startedAt()
 	generationCtx, cancel := context.WithCancel(ctx)
 	// The request may cancel preparation, but a confirmed generation belongs
@@ -2036,9 +2085,9 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	if err != nil {
 		cancel()
-		lifetimes.wait()
-		if decision.Lease != nil {
-			_ = decision.Lease.Close()
+		if stopErr := closeControllerLifetimes(lifetimes, generationLeaseRelease(decision)); stopErr != nil {
+			r.fenceRuntime(true)
+			err = errors.Join(err, stopErr)
 		}
 		return nil, err
 	}
@@ -2060,9 +2109,9 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	if err != nil {
 		cancel()
-		lifetimes.wait()
-		if decision.Lease != nil {
-			_ = decision.Lease.Close()
+		if stopErr := closeControllerLifetimes(lifetimes, generationLeaseRelease(decision)); stopErr != nil {
+			r.fenceRuntime(true)
+			err = errors.Join(err, stopErr)
 		}
 		return nil, err
 	}
@@ -2085,9 +2134,21 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	var pending *generationReload
 	var reloadErr error
 	var restored bool
+	teardownUnconfirmed := false
+	stopCurrentGeneration := func() error {
+		current := generation
+		generation = nil
+		stopErr := closeControllerGeneration(current)
+		if stopErr != nil {
+			teardownUnconfirmed = true
+		}
+		return stopErr
+	}
 	defer func() {
-		closeControllerGeneration(generation)
-		r.clearRuntimeGeneration(true)
+		if stopErr := stopCurrentGeneration(); stopErr != nil {
+			err = errors.Join(err, stopErr)
+		}
+		r.clearRuntimeGeneration(!teardownUnconfirmed)
 		r.fenceRuntime(err != nil && ctx.Err() == nil)
 		r.markRuntimeReady()
 		if pending != nil {
@@ -2117,8 +2178,9 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			return ErrRuntimeMutationStopped
 		}
 		if generation.ctx.Err() != nil {
-			closeControllerGeneration(generation)
-			generation = nil
+			if err := stopCurrentGeneration(); err != nil {
+				return err
+			}
 			r.clearRuntimeGeneration(false)
 			if pending != nil {
 				return context.Canceled
@@ -2145,9 +2207,11 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		if !r.publishRuntimeGeneration(generation) {
 			generation.cancel()
 			<-loopDone
-			closeControllerGeneration(generation)
-			generation = nil
-			return runtimeStoppedError(ctx.Err())
+			failure := runtimeStoppedError(ctx.Err())
+			if stopErr := stopCurrentGeneration(); stopErr != nil {
+				return errors.Join(failure, stopErr)
+			}
+			return failure
 		}
 		r.markRuntimeReady()
 		if pending != nil {
@@ -2160,14 +2224,16 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
-			closeControllerGeneration(generation)
-			generation = nil
+			if stopErr := stopCurrentGeneration(); stopErr != nil {
+				return errors.Join(ctx.Err(), stopErr)
+			}
 			return ctx.Err()
 		case <-generation.ctx.Done():
 			r.clearRuntimeGeneration(false)
 			<-loopDone
-			closeControllerGeneration(generation)
-			generation = nil
+			if err := stopCurrentGeneration(); err != nil {
+				return err
+			}
 			r.clearRuntimeGeneration(false)
 		case request := <-reloads:
 			if request.ctx != nil && request.ctx.Err() != nil {
@@ -2178,7 +2244,9 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
-			closeControllerGeneration(generation)
+			if err := stopCurrentGeneration(); err != nil {
+				return err
+			}
 			r.clearRuntimeGeneration(false)
 			generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 			if generation == nil {
@@ -2225,15 +2293,12 @@ func (r *Runner) prepareRuntimeReload(ctx context.Context, logger *slog.Logger, 
 	return rollback, true, err
 }
 
-func closeControllerGeneration(generation *controllerGeneration) {
+func closeControllerGeneration(generation *controllerGeneration) error {
 	if generation == nil {
-		return
+		return nil
 	}
 	generation.cancel()
-	generation.lifetimes.wait()
-	if generation.decision.Lease != nil {
-		_ = generation.decision.Lease.Close()
-	}
+	return closeControllerLifetimes(generation.lifetimes, generationLeaseRelease(generation.decision))
 }
 
 func clusterRetryInterval(router *api.Router) time.Duration {
@@ -2252,7 +2317,10 @@ func clusterRetryInterval(router *api.Router) time.Duration {
 	return interval
 }
 
-func (r *Runner) ReconcileOnce(ctx context.Context) error {
+func (r *Runner) ReconcileOnce(ctx context.Context) (err error) {
+	if err := r.RuntimeMutationError(); err != nil {
+		return err
+	}
 	if err := r.validatePFNATOptions(platform.CurrentOS(), r.Opts); err != nil {
 		return err
 	}
@@ -2268,8 +2336,13 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeLease()
-	controllers, _, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	controllers, _, lifetimes, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	defer func() {
+		if stopErr := closeControllerLifetimes(lifetimes, closeLease); stopErr != nil {
+			r.fenceRuntime(true)
+			err = errors.Join(err, stopErr)
+		}
+	}()
 	if err != nil {
 		return err
 	}
@@ -2277,7 +2350,10 @@ func (r *Runner) ReconcileOnce(ctx context.Context) error {
 	return loop.RunOnce(ctx, controllers...)
 }
 
-func (r *Runner) ReconcileScheduled(ctx context.Context) error {
+func (r *Runner) ReconcileScheduled(ctx context.Context) (err error) {
+	if err := r.RuntimeMutationError(); err != nil {
+		return err
+	}
 	if err := r.validatePFNATOptions(platform.CurrentOS(), r.Opts); err != nil {
 		return err
 	}
@@ -2293,8 +2369,13 @@ func (r *Runner) ReconcileScheduled(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeLease()
-	controllers, _, _, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	controllers, _, lifetimes, err := r.frameworkControllers(ctx, logger, store, false, decision)
+	defer func() {
+		if stopErr := closeControllerLifetimes(lifetimes, closeLease); stopErr != nil {
+			r.fenceRuntime(true)
+			err = errors.Join(err, stopErr)
+		}
+	}()
 	if err != nil {
 		return err
 	}
@@ -2333,20 +2414,16 @@ func scheduledReconcileSkipsController(name string) bool {
 	}
 }
 
-func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func(), error) {
+func (r *Runner) oneShotHADecision(ctx context.Context, store eventedStore) (ha.Decision, func() error, error) {
 	r.startedAt()
 	if r.HADecision != nil {
-		return *r.HADecision, func() {}, nil
+		return *r.HADecision, func() error { return nil }, nil
 	}
 	decision, err := acquireClusterLease(ctx, r.currentRouter(), store)
 	if err != nil {
-		return decision, func() {}, err
+		return decision, nil, err
 	}
-	return decision, func() {
-		if decision.Lease != nil {
-			_ = decision.Lease.Close()
-		}
-	}, nil
+	return decision, generationLeaseRelease(decision), nil
 }
 
 func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, store eventedStore, startAuxiliary bool, haDecision ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
@@ -2415,6 +2492,26 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	dhcpv6 := DHCPv6ServerController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
 	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
 	pppoeSession := pppoesession.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunPPPoESession, Logger: logger}
+	reconcilePPPoESessions := func(ctx context.Context) error {
+		prepared, err := r.currentPreparedRouter()
+		if err != nil {
+			return err
+		}
+		current := pppoeSession
+		current.Router = prepared.startup.Router()
+		current.Store = store.withRouter(prepared.declared)
+		current.Source = func(name string) (pppoesession.Source, bool, error) {
+			return r.currentPPPoESource(prepared.declared, name, store)
+		}
+		for _, resource := range current.Router.Spec.Resources {
+			if resource.Kind == "PPPoESession" {
+				if err := current.Reconcile(ctx, resource.Metadata.Name); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
 	defaults, features := platform.Current()
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
@@ -2446,6 +2543,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			DryRun:     opts.DryRunEventSubscription,
 			RuntimeDir: defaults.RuntimeDir,
 			StateDir:   defaults.StateDir,
+		}
+		if r.controllerEnabled("event-subscription") {
+			eventSubscription.Start(ctx)
+			lifetimes.eventSubscription = &eventSubscription
 		}
 	}
 	var mobility mobilitycontroller.Controller
@@ -2509,8 +2610,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents, Logger: logger}
 	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
+	if r.controllerEnabled("observability-pipeline") {
+		lifetimes.pipeline = &observabilityPipeline
+	}
 	nat := nat44.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNAT, IngressLive: !opts.DryRunIngress, NftablesPath: opts.NftablesPath, NftCommand: opts.NftCommand, Logger: logger}
-	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Resolver: ingressServiceDNSResolver(r.currentRouter(), store), Logger: logger}
+	ingressService := ingressservicecontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunIngress, Logger: logger}
 	bfd := bfdcontroller.Controller{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBGP, RuntimeDir: defaults.RuntimeDir}
 	bgp := bgpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunBGP, Logger: logger, Daemon: bgpDaemon, MutationGate: opts.MutationGate}
 	serviceUnits.BGPController = &bgp
@@ -2536,8 +2640,8 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	conntrackObs := conntrackobserver.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Interval: opts.ConntrackInterval, Logger: logger}
 	if features.HasPF && !features.HasIproute2 {
 		conntrackObs.SnapshotSource = "pf"
-		conntrackObs.Snapshot = func() (conntrack.Snapshot, error) {
-			table, err := observe.PFStateSnapshot()
+		conntrackObs.Snapshot = func(ctx context.Context) (conntrack.Snapshot, error) {
+			table, err := observe.PFStateSnapshot(ctx)
 			if err != nil {
 				return conntrack.Snapshot{}, conntrack.UnavailableError{
 					CountPath:   "pfctl -ss -v",
@@ -2961,16 +3065,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return didWorkError(dhcp4Client.ReconcileAllForRouter(ctx, prepared.declared, store.withRouter(prepared.declared)))
 		}},
-		framework.FuncController{ControllerName: "pppoe-session", Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
-			for _, resource := range r.currentRouter().Spec.Resources {
-				if resource.Kind == "PPPoESession" {
-					if err := pppoeSession.Reconcile(ctx, resource.Metadata.Name); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}},
+		framework.FuncController{ControllerName: "pppoe-session", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.pppoe.client.**"}}}, ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error { return reconcilePPPoESessions(ctx) }, PeriodicFunc: func(ctx context.Context) (bool, error) { return didWorkError(reconcilePPPoESessions(ctx)) }},
 		framework.FuncController{ControllerName: "dns-resolver", Subs: dnsResolverStatusSubscriptions(r.currentRouter()), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			observation, err := effectiveForReconcile()
 			if err != nil {
@@ -3118,7 +3213,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = effective
 			currentStore := store.withRouter(observation.DeclaredRouter)
 			current.Store = currentStore
-			current.Resolver = ingressServiceDNSResolver(effective, currentStore)
+			current.Resolver, err = ingressServiceDNSResolver(effective, currentStore)
+			if err != nil {
+				return false, err
+			}
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "nat44", Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44Rule", "NAT44FlowDNATPinhole", "LocalServiceRedirect"}, "EgressRoutePolicy", "IngressService"), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -3133,14 +3231,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bfd", Every: time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"BFD"}, "BGPPeer", "BFD", "SAMTransportProfile")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			observation, err := effectiveForReconcile()
+			view, err := r.effectiveDynamicRouteSAMViewForReconcile(store, time.Now().UTC(), platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
-			effective := observation.EffectiveRouter
 			current := bfd
-			current.Router = effective
-			current.Store = store.withRouter(observation.DeclaredRouter)
+			current.Router = view.EffectiveRouter
+			current.Store = store.withRouter(view.EffectiveRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "bgp", Every: bgpcontroller.PollInterval(r.currentRouter()), Subs: bgpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -3349,10 +3446,13 @@ func routerdClusterResource(router *api.Router) (api.Resource, api.RouterdCluste
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
 }
 
-func ingressServiceDNSResolver(router *api.Router, store Store) *net.Resolver {
-	endpoint, ok := dnsResolverEndpoint(router, store)
+func ingressServiceDNSResolver(router *api.Router, store Store) (*net.Resolver, error) {
+	endpoint, ok, err := dnsResolverEndpoint(router, store)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	return &net.Resolver{
 		PreferGo: true,
@@ -3360,12 +3460,12 @@ func ingressServiceDNSResolver(router *api.Router, store Store) *net.Resolver {
 			dialer := net.Dialer{}
 			return dialer.DialContext(ctx, network, endpoint)
 		},
-	}
+	}, nil
 }
 
-func dnsResolverEndpoint(router *api.Router, store Store) (string, bool) {
+func dnsResolverEndpoint(router *api.Router, store Store) (string, bool, error) {
 	if router == nil {
-		return "", false
+		return "", false, nil
 	}
 	var candidates []string
 	for _, resource := range router.Spec.Resources {
@@ -3385,7 +3485,11 @@ func dnsResolverEndpoint(router *api.Router, store Store) (string, bool) {
 				candidates = append(candidates, net.JoinHostPort(normalizeResolverAddress(address), strconv.Itoa(port)))
 			}
 			for _, source := range listen.AddressFrom {
-				if address := normalizeResolverAddress(resourcequery.Value(store, source)); address != "" {
+				value, err := resourcequery.ReadValue(store, source)
+				if err != nil {
+					return "", false, err
+				}
+				if address := normalizeResolverAddress(value); address != "" {
 					candidates = append(candidates, net.JoinHostPort(address, strconv.Itoa(port)))
 				}
 			}
@@ -3394,13 +3498,13 @@ func dnsResolverEndpoint(router *api.Router, store Store) (string, bool) {
 	for _, candidate := range candidates {
 		host, _, err := net.SplitHostPort(candidate)
 		if err == nil && (host == "127.0.0.1" || host == "::1") {
-			return candidate, true
+			return candidate, true, nil
 		}
 	}
 	if len(candidates) > 0 {
-		return candidates[0], true
+		return candidates[0], true, nil
 	}
-	return "", false
+	return "", false, nil
 }
 
 func normalizeResolverAddress(value string) string {
@@ -3607,7 +3711,6 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 			continue
 		}
 		state.Cancel()
-		delete(r.clientDaemonStates, key)
 		stale = append(stale, state)
 	}
 	r.supervisedMu.Unlock()
@@ -3618,22 +3721,49 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		}
 	}
 
+	failedCleanup := make(map[string]bool)
 	for _, state := range stale {
-		stopSupervisedDaemonProcess(state.Spec, logger)
+		key := supervisedDaemonKey(state.Spec.Binary, state.Spec.ResourceName)
+		if err := stopSupervisedDaemonState(state, logger); err != nil {
+			failedCleanup[key] = true
+			delete(pendingStart, key)
+			if logger != nil {
+				logger.Error("retain supervised daemon ownership after incomplete cleanup", "binary", state.Spec.Binary, "resource", state.Spec.ResourceName, "error", err)
+			}
+			continue
+		}
+		r.supervisedMu.Lock()
+		if current, ok := r.clientDaemonStates[key]; ok && current.Done == state.Done {
+			delete(r.clientDaemonStates, key)
+		}
+		r.supervisedMu.Unlock()
 	}
 	for _, marker := range staleMarkers {
+		key := supervisedDaemonKey(marker.Binary, marker.Resource)
+		if failedCleanup[key] {
+			continue
+		}
 		if err := stopOwnedSupervisedDaemon(marker, logger); err != nil {
 			if logger != nil {
 				logger.Error("retaining supervised daemon ownership record after failed cleanup", "binary", marker.Binary, "resource", marker.Resource, "error", err)
 			}
+			failedCleanup[key] = true
+			delete(pendingStart, key)
 			continue
 		}
-		if err := removeSupervisedDaemonMarker(marker); err != nil && logger != nil {
-			logger.Error("remove supervised daemon ownership record", "binary", marker.Binary, "resource", marker.Resource, "error", err)
+		if err := removeSupervisedDaemonMarker(marker); err != nil {
+			failedCleanup[key] = true
+			delete(pendingStart, key)
+			if logger != nil {
+				logger.Error("remove supervised daemon ownership record", "binary", marker.Binary, "resource", marker.Resource, "error", err)
+			}
 		}
 	}
 
 	for key, spec := range desiredAll {
+		if failedCleanup[key] {
+			continue
+		}
 		if marker, ok := markers[key]; ok && marker.SpecHash == supervisedDaemonSpecHash(supervisedDaemonSpec{ResourceName: spec.ResourceName, Binary: spec.Binary, Args: spec.Args}) {
 			continue
 		}
@@ -3877,17 +4007,11 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 	go func() {
 		defer close(done)
 		for ctx.Err() == nil {
-			if supervisedDaemonSocketReady(defaultClientSocket(binary, resourceName)) {
-				if !supervisedDaemonOwnedProcessRunning(spec) {
-					if logger != nil {
-						logger.Error("refusing to adopt ready foreign supervised daemon socket", "binary", binary, "resource", resourceName)
-					}
-					select {
-					case <-time.After(10 * time.Second):
-						continue
-					case <-ctx.Done():
-						return
-					}
+			running, ownershipErr := supervisedDaemonOwnedProcessRunning(spec)
+			ready := supervisedDaemonSocketReady(defaultClientSocket(binary, resourceName))
+			if ownershipErr != nil || running || ready {
+				if logger != nil && (ownershipErr != nil || (ready && !running)) {
+					logger.Error("supervised daemon ownership is unavailable or foreign; refusing replacement", "binary", binary, "resource", resourceName, "error", ownershipErr)
 				}
 				select {
 				case <-time.After(10 * time.Second):
@@ -3902,6 +4026,8 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 				cmdArgs = append(cmdArgs, "--supervisor-owner", spec.OwnerToken)
 			}
 			cmd := exec.CommandContext(ctx, path, cmdArgs...)
+			cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+			cmd.WaitDelay = supervisedDaemonStopGrace(binary)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if logger != nil {
@@ -3920,7 +4046,9 @@ func (r *Runner) startSupervisedDaemonSpec(ctx context.Context, logger *slog.Log
 			}
 			if err := writeSupervisedDaemonMarker(supervisedDaemonMarker{Version: 1, Binary: binary, Resource: resourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: spec.OwnerToken, PID: cmd.Process.Pid}); err != nil {
 				_ = cmd.Process.Signal(syscall.SIGTERM)
+				timer := time.AfterFunc(supervisedDaemonStopGrace(binary), func() { _ = cmd.Process.Kill() })
 				_ = cmd.Wait()
+				timer.Stop()
 				if logger != nil {
 					logger.Error("supervised daemon ownership record write failed", "binary", path, "resource", resourceName, "error", err)
 				}
@@ -4174,69 +4302,113 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-func stopSupervisedDaemonProcess(spec supervisedDaemonSpec, logger *slog.Logger) {
-	marker := supervisedDaemonMarker{Version: 1, Binary: spec.Binary, Resource: spec.ResourceName, SpecHash: supervisedDaemonSpecHash(spec), OwnerToken: spec.OwnerToken}
-	if err := stopOwnedSupervisedDaemon(marker, logger); err != nil && logger != nil {
-		logger.Error("stop supervised routerd client daemon", "binary", spec.Binary, "resource", spec.ResourceName, "error", err)
+func supervisedDaemonStopGrace(binary string) time.Duration {
+	if binary == "routerd-pppoe-client" {
+		return 10 * time.Second
+	} // mpd grace3s + native interface withdrawal5s
+	return 2 * time.Second
+}
+
+func stopSupervisedDaemonState(state supervisedDaemonState, logger *slog.Logger) error {
+	if state.Done == nil {
+		return errors.New("supervised daemon completion observation is unavailable")
+	}
+	marker := supervisedDaemonMarker{Version: 1, Binary: state.Spec.Binary, Resource: state.Spec.ResourceName, SpecHash: supervisedDaemonSpecHash(state.Spec), OwnerToken: state.Spec.OwnerToken}
+	if err := stopOwnedSupervisedDaemon(marker, logger); err != nil {
+		return err
+	}
+	timer := time.NewTimer(supervisedDaemonStopGrace(state.Spec.Binary) + 2*time.Second)
+	defer timer.Stop()
+	select {
+	case <-state.Done:
+		return nil
+	case <-timer.C:
+		return errors.New("supervised daemon stop has not completed")
 	}
 }
 
 func stopOwnedSupervisedDaemon(marker supervisedDaemonMarker, logger *slog.Logger) error {
-	pids := matchingOwnedSupervisedDaemonPIDs(marker)
+	pids, err := matchingOwnedSupervisedDaemonPIDs(marker)
+	if err != nil {
+		return err
+	}
 	if len(pids) == 0 {
 		return nil
 	}
 	if logger != nil {
 		logger.Info("stopping stale supervised routerd client daemon", "binary", marker.Binary, "resource", marker.Resource, "pids", pids)
 	}
+	var signalErr error
 	for _, pid := range pids {
-		_ = supervisedDaemonSignal(pid, syscall.SIGTERM)
+		if err := supervisedDaemonSignal(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			signalErr = errors.Join(signalErr, err)
+		}
 	}
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(supervisedDaemonStopGrace(marker.Binary))
 	for time.Now().Before(deadline) {
-		if len(matchingOwnedSupervisedDaemonPIDs(marker)) == 0 {
+		pids, err = matchingOwnedSupervisedDaemonPIDs(marker)
+		if err != nil {
+			return errors.Join(signalErr, err)
+		}
+		if len(pids) == 0 {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	for _, pid := range matchingOwnedSupervisedDaemonPIDs(marker) {
-		_ = supervisedDaemonSignal(pid, syscall.SIGKILL)
+	for _, pid := range pids {
+		if err := supervisedDaemonSignal(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+			signalErr = errors.Join(signalErr, err)
+		}
 	}
 	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(matchingOwnedSupervisedDaemonPIDs(marker)) == 0 {
+		pids, err = matchingOwnedSupervisedDaemonPIDs(marker)
+		if err != nil {
+			return errors.Join(signalErr, err)
+		}
+		if len(pids) == 0 {
 			return nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return fmt.Errorf("owned supervised daemon remained after SIGKILL: binary=%s resource=%s", marker.Binary, marker.Resource)
+	return errors.Join(signalErr, fmt.Errorf("owned supervised daemon remained after SIGKILL: binary=%s resource=%s", marker.Binary, marker.Resource))
 }
 
-func supervisedDaemonOwnedProcessRunning(spec supervisedDaemonSpec) bool {
+func supervisedDaemonOwnedProcessRunning(spec supervisedDaemonSpec) (bool, error) {
 	markers, err := readSupervisedDaemonMarkers()
 	if err != nil {
-		return false
+		return false, err
 	}
 	marker, ok := markers[supervisedDaemonKey(spec.Binary, spec.ResourceName)]
 	if !ok || marker.OwnerToken != spec.OwnerToken || marker.SpecHash != supervisedDaemonSpecHash(spec) {
-		return false
+		return false, errors.New("supervised daemon ownership record does not match current intent")
 	}
-	pids := matchingOwnedSupervisedDaemonPIDs(marker)
-	if len(pids) != 1 {
-		return false
+	pids, err := matchingOwnedSupervisedDaemonPIDs(marker)
+	if err != nil {
+		return false, err
+	}
+	if len(pids) > 1 {
+		return false, errors.New("multiple processes claim supervised daemon ownership")
+	}
+	if len(pids) == 0 {
+		return false, nil
 	}
 	if marker.PID == 0 {
 		marker.PID = pids[0]
 		if err := writeSupervisedDaemonMarker(marker); err != nil {
-			return false
+			return false, err
 		}
 	}
-	return true
+	return true, nil
 }
 
-func matchingOwnedSupervisedDaemonPIDs(marker supervisedDaemonMarker) []int {
+func matchingOwnedSupervisedDaemonPIDs(marker supervisedDaemonMarker) ([]int, error) {
+	processes, err := supervisedDaemonProcesses(marker)
+	if err != nil {
+		return nil, err
+	}
 	var out []int
-	for _, process := range supervisedDaemonProcesses() {
+	for _, process := range processes {
 		if process.PID <= 0 || process.PID == os.Getpid() {
 			continue
 		}
@@ -4248,23 +4420,34 @@ func matchingOwnedSupervisedDaemonPIDs(marker supervisedDaemonMarker) []int {
 		}
 	}
 	sort.Ints(out)
-	return out
+	return out, nil
 }
 
-func listSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	if runtime.GOOS == "linux" {
-		return listLinuxSupervisedDaemonProcesses()
+func listSupervisedDaemonProcesses(marker supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+	switch runtime.GOOS {
+	case "linux":
+		return listLinuxSupervisedDaemonProcesses(marker)
+	case "freebsd":
+		return listFreeBSDSupervisedDaemonProcesses(marker)
+	default:
+		return nil, errors.New("supervised process observation is unsupported on this platform")
 	}
-	if runtime.GOOS == "freebsd" {
-		return listFreeBSDSupervisedDaemonProcesses()
-	}
-	return nil
 }
 
-func listLinuxSupervisedDaemonProcesses() []supervisedDaemonProcess {
+func listLinuxSupervisedDaemonProcesses(marker supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+	if marker.PID > 0 {
+		process, err := readLinuxSupervisedDaemonProcess(marker.PID)
+		if err != nil {
+			return nil, err
+		}
+		if process.Command == "" {
+			return nil, nil
+		}
+		return []supervisedDaemonProcess{process}, nil
+	}
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []supervisedDaemonProcess
 	for _, entry := range entries {
@@ -4275,35 +4458,70 @@ func listLinuxSupervisedDaemonProcesses() []supervisedDaemonProcess {
 		if err != nil {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-		if err == nil && len(data) > 0 {
-			out = append(out, supervisedDaemonProcess{PID: pid, Command: strings.ReplaceAll(strings.TrimRight(string(data), "\x00"), "\x00", " ")})
+		process, err := readLinuxSupervisedDaemonProcess(pid)
+		if err != nil {
+			// An unreadable unrelated executable does not hide this owner's PID.
+			comm, commErr := os.ReadFile(filepath.Join("/proc", entry.Name(), "comm"))
+			want := marker.Binary
+			if len(want) > 15 {
+				want = want[:15]
+			}
+			if errors.Is(commErr, os.ErrNotExist) {
+				continue
+			}
+			if commErr == nil && strings.TrimSpace(string(comm)) != want {
+				continue
+			}
+			return nil, err
+		}
+		if process.Command != "" {
+			out = append(out, process)
 		}
 	}
-	return out
+	return out, nil
 }
 
-func listFreeBSDSupervisedDaemonProcesses() []supervisedDaemonProcess {
-	data, err := freeBSDSupervisedDaemonPSCommand().Output()
+func readLinuxSupervisedDaemonProcess(pid int) (supervisedDaemonProcess, error) {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return supervisedDaemonProcess{}, nil
+	}
 	if err != nil {
-		return nil
+		return supervisedDaemonProcess{}, err
+	}
+	return supervisedDaemonProcess{PID: pid, Command: strings.ReplaceAll(strings.TrimRight(string(data), "\x00"), "\x00", " ")}, nil
+}
+
+func listFreeBSDSupervisedDaemonProcesses(marker supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	data, err := freeBSDSupervisedDaemonPSCommand(ctx).Output()
+	if err != nil {
+		return nil, err
 	}
 	var out []supervisedDaemonProcess
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) == 0 {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[0])
-		if err == nil {
-			out = append(out, supervisedDaemonProcess{PID: pid, Command: strings.TrimSpace(strings.TrimPrefix(line, fields[0]))})
+		if len(fields) < 2 {
+			return nil, errors.New("supervised process observation has incomplete command")
 		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			return nil, fmt.Errorf("invalid supervised process PID %q", fields[0])
+		}
+		if marker.PID > 0 && pid != marker.PID {
+			continue
+		}
+		out = append(out, supervisedDaemonProcess{PID: pid, Command: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))})
 	}
-	return out
+	return out, nil
 }
 
-func freeBSDSupervisedDaemonPSCommand() *exec.Cmd {
-	return exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=")
+func freeBSDSupervisedDaemonPSCommand(ctx context.Context) *exec.Cmd {
+	return exec.CommandContext(ctx, "ps", "-axww", "-o", "pid=", "-o", "command=")
 }
 
 func routerdDaemonCmdlineMatches(args []string, binary, resourceName string) bool {
@@ -4578,6 +4796,9 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		for _, observed := range status.Resources {
+			if observed.Resource.Kind == "PPPoESession" {
+				continue
+			} // the source-bound PPPoE actor is the sole projection owner
 			if observed.Resource.Kind == "DHCPv6PrefixDelegation" {
 				if err := c.observePDLease(ctx, observed.Resource.Name, socket, observed); err != nil {
 					return err
@@ -5711,6 +5932,16 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 			}
 			continue
 		}
+		dependenciesReady, err := c.delegatedAddressDependenciesReady(spec.DependsOn, spec.Interface, pdName, stagingVMAC)
+		if err != nil {
+			return err
+		}
+		if !dependenciesReady {
+			if err := c.saveAddressPending(resource.Metadata.Name, "DependsOnFalse", ""); err != nil {
+				return err
+			}
+			continue
+		}
 		if stagingVMAC {
 			if err := c.ensureStagingVMAC(ctx, spec.Interface); err != nil || !c.stagingVMACPresent(spec.Interface) {
 				reason := "VMACMissing"
@@ -5725,12 +5956,12 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 				continue
 			}
 		}
-		linkUp := c.linkReady(spec.Interface) || stagingVMAC
-		if !c.delegatedAddressDependenciesReady(spec.DependsOn, spec.Interface, pdName, stagingVMAC) {
-			if err := c.saveAddressPending(resource.Metadata.Name, "DependsOnFalse", ""); err != nil {
+		linkUp := stagingVMAC
+		if !stagingVMAC {
+			linkUp, err = c.linkReady(spec.Interface)
+			if err != nil {
 				return err
 			}
-			continue
 		}
 		if !linkUp {
 			if err := c.saveAddressPending(resource.Metadata.Name, "", ""); err != nil {
@@ -6138,9 +6369,9 @@ func (c LANAddressController) delegatedAddressStagingEligible(resource api.Resou
 	return resourcequery.ResourceWhenEligible(when, stateStore)
 }
 
-func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) bool {
+func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []api.ResourceDependencySpec, iface, pdName string, stagingVMAC bool) (bool, error) {
 	if !stagingVMAC {
-		return resourcequery.DependenciesReady(c.Store, dependencies)
+		return resourcequery.ReadDependenciesReady(c.Store, dependencies)
 	}
 	filtered := make([]api.ResourceDependencySpec, 0, len(dependencies))
 	for _, dep := range dependencies {
@@ -6152,7 +6383,7 @@ func (c LANAddressController) delegatedAddressDependenciesReady(dependencies []a
 		}
 		filtered = append(filtered, dep)
 	}
-	return resourcequery.DependenciesReady(c.Store, filtered)
+	return resourcequery.ReadDependenciesReady(c.Store, filtered)
 }
 
 // stagingVMACPresent accepts only the fully cold BACKUP shape.  In particular,
@@ -6553,10 +6784,14 @@ func statusStringPreferObserved(status map[string]any, field string) string {
 	return text
 }
 
-func (c LANAddressController) linkReady(name string) bool {
-	if status := c.Store.ObjectStatus(api.NetAPIVersion, "Interface", name); status != nil {
+func (c LANAddressController) linkReady(name string) (bool, error) {
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "Interface", name)
+	if err != nil {
+		return false, err
+	}
+	if status != nil {
 		if phase := fmt.Sprint(status["phase"]); phase != "" && phase != "<nil>" {
-			return phase == "Up"
+			return phase == "Up", nil
 		}
 	}
 	ifname := interfaceIfName(c.Router, name)
@@ -6565,10 +6800,12 @@ func (c LANAddressController) linkReady(name string) bool {
 	}
 	ifi, err := net.InterfaceByName(ifname)
 	if err == nil && ifi.Flags&net.FlagUp != 0 {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", name, map[string]any{"phase": "Up", "ifname": ifname})
-		return true
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Interface", name, map[string]any{"phase": "Up", "ifname": ifname}); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func interfaceIfName(router *api.Router, name string) string {
@@ -6654,16 +6891,16 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	b.WriteString(routerdGeneratedDNSMasqMarker)
 	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
 	hostsFile := dnsmasqHostsFile(path)
+	lines, err := dnsmasqLANServiceLines(router, store)
+	if err != nil {
+		return false, false, err
+	}
 	hostsChanged, err := writeDnsmasqHostsFile(router, hostsFile)
 	if err != nil {
 		return false, false, err
 	}
 	if routerHasDnsmasqHostsFile(router) {
 		b.WriteString("dhcp-hostsfile=" + hostsFile + "\n")
-	}
-	lines, err := dnsmasqLANServiceLines(router, store)
-	if err != nil {
-		return false, false, err
 	}
 	for _, line := range lines {
 		b.WriteString(line)
@@ -6759,7 +6996,11 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if ifname == "" {
 			continue
 		}
-		if pending := dhcpv4ServerPending(router, store, spec); pending != "" {
+		pending, err := dhcpv4ServerPending(router, store, spec)
+		if err != nil {
+			return nil, err
+		}
+		if pending != "" {
 			continue
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
@@ -6768,12 +7009,25 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		start := stringutil.FirstNonEmpty(spec.AddressPool.Start, spec.RangeStart)
 		end := stringutil.FirstNonEmpty(spec.AddressPool.End, spec.RangeEnd)
 		leaseTime := stringutil.FirstNonEmpty(spec.AddressPool.LeaseTime, spec.LeaseTime, "12h")
-		gateway := stringutil.FirstNonEmpty(statusvalue.Address(resourcequery.Value(store, spec.GatewayFrom)), spec.Gateway)
-		dnsServerSources, _ := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
-		ntpServerSources, _ := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom")
+		gatewayValue, err := resourcequery.ReadValue(store, spec.GatewayFrom)
+		if err != nil {
+			return nil, err
+		}
+		gateway := stringutil.FirstNonEmpty(statusvalue.Address(gatewayValue), spec.Gateway)
+		dnsServerSources, _, err := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
+		if err != nil {
+			return nil, err
+		}
+		ntpServerSources, _, err := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom")
+		if err != nil {
+			return nil, err
+		}
 		dnsServers := append(expandIPv4DHCPServers(spec.DNSServers), dnsServerSources...)
 		ntpServers := append(expandIPv4DHCPServers(spec.NTPServers), ntpServerSources...)
-		domains, _ := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom")
+		domains, _, err := expandDomainValues(router, store, []string{spec.Domain}, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom")
+		if err != nil {
+			return nil, err
+		}
 		profiles := make(map[string]api.DHCPv4ServerProfileSpec, len(spec.Profiles))
 		for _, profile := range spec.Profiles {
 			profiles[profile.Name] = profile
@@ -6867,11 +7121,22 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if err != nil || spec.Interface == "" {
 			continue
 		}
+		ready, err := resourcequery.ReadDependenciesReady(store, spec.DependsOn)
+		if err != nil {
+			return nil, err
+		}
+		if !ready {
+			continue
+		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
 			ifname = spec.Interface
 		}
-		if pending := dhcpv6ServerPending(router, store, spec); pending != "" {
+		pending, err := dhcpv6ServerPending(router, store, spec)
+		if err != nil {
+			return nil, err
+		}
+		if pending != "" {
 			continue
 		}
 		tag := sanitizeChainTag(resource.Metadata.Name)
@@ -6885,16 +7150,25 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		default:
 			lines = append(lines, fmt.Sprintf("dhcp-range=set:%s,::,constructor:%s,ra-stateless,64,%s", tag, ifname, leaseTime))
 		}
-		dnsServerSources, _ := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
-		for _, server := range append(expandServers(store, spec.DNSServers), dnsServerSources...) {
+		dnsServerSources, _, err := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom")
+		if err != nil {
+			return nil, err
+		}
+		for _, server := range append(expandServers(spec.DNSServers), dnsServerSources...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:dns-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
-		searchDomains, _ := expandDomainValues(router, store, spec.DomainSearch, spec.DomainSearchFrom, "DomainSearchFrom")
+		searchDomains, _, err := expandDomainValues(router, store, spec.DomainSearch, spec.DomainSearchFrom, "DomainSearchFrom")
+		if err != nil {
+			return nil, err
+		}
 		if len(searchDomains) > 0 {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:domain-search,%s", tag, strings.Join(searchDomains, ",")))
 		}
-		sntpServerSources, _ := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom")
-		for _, server := range append(expandServers(store, spec.SNTPServers), sntpServerSources...) {
+		sntpServerSources, _, err := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom")
+		if err != nil {
+			return nil, err
+		}
+		for _, server := range append(expandServers(spec.SNTPServers), sntpServerSources...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=tag:%s,option6:sntp-server,[%s]", tag, dnsmasqIPv6Address(server)))
 		}
 		if spec.RapidCommit {
@@ -6909,11 +7183,25 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if err != nil {
 			continue
 		}
+		ready, err := resourcequery.ReadDependenciesReady(store, spec.DependsOn)
+		if err != nil {
+			return nil, err
+		}
+		if !ready {
+			continue
+		}
 		ifname := aliases[spec.Interface]
 		if ifname == "" {
 			ifname = spec.Interface
 		}
 		lines = append(lines, "interface="+ifname, "enable-ra")
+		prefixRange, err := render.DnsmasqStaticRouterAdvertisementRange(resource.Metadata.Name, spec)
+		if err != nil {
+			return nil, err
+		}
+		if prefixRange != "" {
+			lines = append(lines, prefixRange)
+		}
 		var params []string
 		mtu := chainFirstNonZero(raMTUByScope[resource.Metadata.Name], spec.MTU)
 		if mtu != 0 {
@@ -6933,11 +7221,17 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if len(params) > 0 {
 			lines = append(lines, fmt.Sprintf("ra-param=%s,%s", ifname, strings.Join(params, ",")))
 		}
-		rdnssFrom, _ := expandServerSources(store, spec.RDNSSFrom, "RDNSSFrom")
-		for _, server := range append(expandServers(store, spec.RDNSS), rdnssFrom...) {
+		rdnssFrom, _, err := expandServerSources(store, spec.RDNSSFrom, "RDNSSFrom")
+		if err != nil {
+			return nil, err
+		}
+		for _, server := range append(expandServers(spec.RDNSS), rdnssFrom...) {
 			lines = append(lines, fmt.Sprintf("dhcp-option=option6:dns-server,[%s]", dnsmasqIPv6Address(server)))
 		}
-		dnssl, _ := expandDomainValues(router, store, spec.DNSSL, spec.DNSSLFrom, "DNSSLFrom")
+		dnssl, _, err := expandDomainValues(router, store, spec.DNSSL, spec.DNSSLFrom, "DNSSLFrom")
+		if err != nil {
+			return nil, err
+		}
 		if len(dnssl) > 0 {
 			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(dnssl, ","))
 		}
@@ -7213,22 +7507,26 @@ func expandIPv4DHCPServers(values []string) []string {
 	return out
 }
 
-func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
+func expandIPv4DHCPServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string, error) {
 	var out []string
 	for _, source := range sources {
 		before := len(out)
-		for _, value := range resourcequery.Values(store, source) {
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, "", err
+		}
+		for _, value := range values {
 			if address := statusvalue.Address(value); address != "" {
 				out = append(out, address)
 			}
 		}
 		if len(out) == before {
 			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
-				return out, pending
+				return out, pending, nil
 			}
 		}
 	}
-	return out, ""
+	return out, "", nil
 }
 
 func dnsmasqIPv6Address(value string) string {
@@ -7245,10 +7543,10 @@ func sanitizeChainTag(value string) string {
 	return value
 }
 
-func expandServers(store Store, values []string) []string {
+func expandServers(values []string) []string {
 	var out []string
 	for _, value := range values {
-		resolved := valueFromStatusRef(store, value)
+		resolved := value
 		if list := decodeStringList(resolved); len(list) > 0 {
 			out = append(out, list...)
 			continue
@@ -7260,22 +7558,26 @@ func expandServers(store Store, values []string) []string {
 	return out
 }
 
-func expandServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
+func expandServerSources(store Store, sources []api.StatusValueSourceSpec, label string) ([]string, string, error) {
 	var out []string
 	for _, source := range sources {
-		values := compactNonEmptyStrings(resourcequery.Values(store, source))
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, "", err
+		}
+		values = compactNonEmptyStrings(values)
 		if len(values) == 0 {
 			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
-				return out, pending
+				return out, pending, nil
 			}
 			continue
 		}
 		out = append(out, values...)
 	}
-	return out, ""
+	return out, "", nil
 }
 
-func expandDomainValues(router *api.Router, store Store, values []string, sources []api.StatusValueSourceSpec, label string) ([]string, string) {
+func expandDomainValues(router *api.Router, store Store, values []string, sources []api.StatusValueSourceSpec, label string) ([]string, string, error) {
 	var out []string
 	for _, value := range values {
 		value = strings.TrimSpace(value)
@@ -7287,49 +7589,57 @@ func expandDomainValues(router *api.Router, store Store, values []string, source
 		if strings.TrimSpace(source.Resource) == "" {
 			continue
 		}
-		resolved := compactNonEmptyStrings(resourcequery.ValuesFromStoreOrRouter(store, router, source))
+		resolved, err := resourcequery.ReadValuesFromStoreOrRouter(store, router, source)
+		if err != nil {
+			return nil, "", err
+		}
+		resolved = compactNonEmptyStrings(resolved)
 		if len(resolved) == 0 {
 			if pending := unresolvedStatusSourceReason(label, source); pending != "" {
-				return compactNonEmptyStrings(out), pending
+				return compactNonEmptyStrings(out), pending, nil
 			}
 			continue
 		}
 		out = append(out, resolved...)
 	}
-	return compactNonEmptyStrings(out), ""
+	return compactNonEmptyStrings(out), "", nil
 }
 
-func dhcpv4ServerPending(router *api.Router, store Store, spec api.DHCPv4ServerSpec) string {
+func dhcpv4ServerPending(router *api.Router, store Store, spec api.DHCPv4ServerSpec) (string, error) {
 	if strings.TrimSpace(spec.GatewayFrom.Resource) != "" {
-		if address := statusvalue.Address(resourcequery.Value(store, spec.GatewayFrom)); address == "" {
+		value, err := resourcequery.ReadValue(store, spec.GatewayFrom)
+		if err != nil {
+			return "", err
+		}
+		if address := statusvalue.Address(value); address == "" {
 			if pending := unresolvedStatusSourceReason("GatewayFrom", spec.GatewayFrom); pending != "" {
-				return pending
+				return pending, nil
 			}
 		}
 	}
-	if _, pending := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" {
-		return pending
+	if _, pending, err := expandIPv4DHCPServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	if _, pending := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom"); pending != "" {
-		return pending
+	if _, pending, err := expandIPv4DHCPServerSources(store, spec.NTPServerFrom, "NTPServerFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	if _, pending := expandDomainValues(router, store, nil, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom"); pending != "" {
-		return pending
+	if _, pending, err := expandDomainValues(router, store, nil, []api.StatusValueSourceSpec{spec.DomainFrom}, "DomainFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	return ""
+	return "", nil
 }
 
-func dhcpv6ServerPending(router *api.Router, store Store, spec api.DHCPv6ServerSpec) string {
-	if _, pending := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" {
-		return pending
+func dhcpv6ServerPending(router *api.Router, store Store, spec api.DHCPv6ServerSpec) (string, error) {
+	if _, pending, err := expandServerSources(store, spec.DNSServerFrom, "DNSServerFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	if _, pending := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom"); pending != "" {
-		return pending
+	if _, pending, err := expandServerSources(store, spec.SNTPServerFrom, "SNTPServerFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	if _, pending := expandDomainValues(router, store, nil, spec.DomainSearchFrom, "DomainSearchFrom"); pending != "" {
-		return pending
+	if _, pending, err := expandDomainValues(router, store, nil, spec.DomainSearchFrom, "DomainSearchFrom"); pending != "" || err != nil {
+		return pending, err
 	}
-	return ""
+	return "", nil
 }
 
 func unresolvedStatusSourceReason(label string, source api.StatusValueSourceSpec) string {

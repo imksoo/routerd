@@ -619,7 +619,7 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 		api.NetAPIVersion + "/HealthCheck/hc-c": {"phase": "Unhealthy", "lastCheckedAt": now},
 	}
 	controller := IPv4PolicyRouteController{Router: router, Store: store}
-	data, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{}))
+	data, err := render.NftablesIPv4PolicyRoutes(effectivePolicyRouterForTest(t, controller, context.Background(), map[string]bool{}))
 	if err != nil {
 		t.Fatalf("render policy routes: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}}
-	if !controller.targetHealthy("internet") {
+	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("single transient failing probe should not remove a policy route candidate")
 	}
 	controller.Store = mapStore{
@@ -657,7 +657,7 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
-	if controller.targetHealthy("internet") {
+	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("failing probe at unhealthy threshold should remove a policy route candidate")
 	}
 	controller.Store = mapStore{
@@ -666,7 +666,7 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
-	if controller.targetHealthy("internet") {
+	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("unhealthy healthcheck should remove a policy route candidate")
 	}
 }
@@ -685,7 +685,7 @@ func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
 			},
 		},
 	}}
-	if !controller.targetHealthy("internet") {
+	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("fresh observed healthcheck status should keep a policy route candidate ready")
 	}
 }
@@ -695,13 +695,13 @@ func TestIPv4PolicyRouteRejectsDSLiteTargetUntilTunnelIsUp(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}}
-	if controller.dsliteResourceReady("ds-lite-a") {
+	if policyDSLiteReadyForTest(t, controller, "ds-lite-a") {
 		t.Fatal("DS-Lite target without an Up status must not be used")
 	}
 	controller.Store = mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite-a": {"phase": "Up"},
 	}
-	if !controller.dsliteResourceReady("DSLiteTunnel/ds-lite-a") {
+	if !policyDSLiteReadyForTest(t, controller, "DSLiteTunnel/ds-lite-a") {
 		t.Fatal("DS-Lite target with an Up status must be usable")
 	}
 	controller.Store = mapStore{
@@ -713,7 +713,7 @@ func TestIPv4PolicyRouteRejectsDSLiteTargetUntilTunnelIsUp(t *testing.T) {
 			},
 		},
 	}
-	if controller.dsliteResourceReady("DSLiteTunnel/ds-lite-a") {
+	if policyDSLiteReadyForTest(t, controller, "DSLiteTunnel/ds-lite-a") {
 		t.Fatal("WhenFalse DS-Lite target must not inherit a stale observed Up phase")
 	}
 }
@@ -796,7 +796,7 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 		}
 		return nil, fmt.Errorf("fixture has no link for %s %v", name, args)
 	}
-	effective := controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{"ipv4-default/dslite-balanced": true})
+	effective := effectivePolicyRouterForTest(t, controller, context.Background(), map[string]bool{"ipv4-default/dslite-balanced": true})
 	spec, err := effective.Spec.Resources[2].EgressRoutePolicySpec()
 	if err != nil {
 		t.Fatal(err)
@@ -911,14 +911,14 @@ func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
 		}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{}}
-	inactive, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{}))
+	inactive, err := render.NftablesIPv4PolicyRoutes(effectivePolicyRouterForTest(t, controller, context.Background(), map[string]bool{}))
 	if err != nil {
 		t.Fatalf("render inactive policy routes: %v", err)
 	}
 	if strings.Contains(string(inactive), "0x110") {
 		t.Fatalf("inactive target candidate should not render marks:\n%s", inactive)
 	}
-	active, err := render.NftablesIPv4PolicyRoutes(controller.effectivePolicyRouteRouter(context.Background(), map[string]bool{"lan-default/dslite": true}))
+	active, err := render.NftablesIPv4PolicyRoutes(effectivePolicyRouterForTest(t, controller, context.Background(), map[string]bool{"lan-default/dslite": true}))
 	if err != nil {
 		t.Fatalf("render active policy routes: %v", err)
 	}
@@ -1320,7 +1320,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 			"lastCheckedAt": time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339Nano),
 		},
 	}}
-	if controller.targetHealthy("internet") {
+	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("stale healthcheck status should not be treated as healthy")
 	}
 	controller.Store = mapStore{
@@ -1329,7 +1329,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
-	if !controller.targetHealthy("internet") {
+	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("fresh healthy status should be treated as healthy")
 	}
 }

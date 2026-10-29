@@ -76,7 +76,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
 				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 3, Bytes: 300, Accounting: true},
@@ -171,7 +171,7 @@ func TestControllerReportsApplicationLayerUnavailableWithoutBlockingFlowLog(t *t
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
 				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 1, Bytes: 100, Accounting: true},
@@ -235,7 +235,7 @@ func TestControllerMarksApplicationLayerAvailable(t *testing.T) {
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{}, nil
 		},
 		ApplicationLayerStatus: func(context.Context, string) api.TrafficFlowApplicationLayerStatus {
@@ -384,7 +384,7 @@ func TestControllerUsesPFConnectionsForFreeBSDSnapshot(t *testing.T) {
 		Bus:            bus.New(),
 		Store:          store,
 		SnapshotSource: "pf",
-		Snapshot: func() (conntrack.Snapshot, error) {
+		Snapshot: func(context.Context) (conntrack.Snapshot, error) {
 			return conntrack.Snapshot{Count: 7, Max: 100}, nil
 		},
 	}
@@ -402,7 +402,7 @@ func TestControllerRecordsUnavailableWhenFreeBSDPFConnectionsFail(t *testing.T) 
 	controller := &Controller{
 		Bus:   bus.New(),
 		Store: store,
-		Snapshot: func() (conntrack.Snapshot, error) {
+		Snapshot: func(context.Context) (conntrack.Snapshot, error) {
 			err := errors.New("pfctl: device not configured")
 			return conntrack.Snapshot{}, conntrack.UnavailableError{
 				CountPath: "pfctl -ss -v", EntriesPath: "pfctl -sm", CountErr: err, EntriesErr: err,

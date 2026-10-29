@@ -155,6 +155,12 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 }
 
 func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
+	// Match `routerd render freebsd`: unsupported intent must be recorded as
+	// its operator-facing diagnostic before a renderer can export a partial
+	// configuration that silently omits the unsupported resource.
+	if err := config.ValidateForOS(router, platform.OSFreeBSD); err != nil {
+		return nil, err
+	}
 	files := map[string][]byte{}
 	data, err := render.FreeBSDWithPPPoEPasswords(router, func(api.Resource, api.PPPoESessionSpec) (string, error) { return "", nil })
 	if err != nil {

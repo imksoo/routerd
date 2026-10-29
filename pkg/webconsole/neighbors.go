@@ -74,7 +74,7 @@ func parseFreeBSDARP(data []byte) []NeighborEntry {
 				break
 			}
 		}
-		out = append(out, NeighborEntry{IP: ip, IfName: ifname, MAC: mac, State: "REACHABLE", Source: "arp", Vendor: macVendor(mac)})
+		out = append(out, NeighborEntry{IP: ip, IfName: ifname, MAC: mac, Source: "arp", Vendor: macVendor(mac)})
 	}
 	return out
 }

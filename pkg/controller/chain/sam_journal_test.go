@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -94,7 +95,7 @@ func TestSAMJournalPendingSurvivesEffectSuccessSaveFailureAndRestart(t *testing.
 		t.Fatalf("final-save failure = %v", err)
 	}
 	status := samJournalStatus(t, store)
-	pending, err := samPendingProxyNeighbors(status["pendingProxyNeighbors"], true)
+	pending, err := sam.DecodePendingProxyNeighbors(status["pendingProxyNeighbors"], true)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending neighbor was not durable: %+v %v", pending, err)
 	}
@@ -124,7 +125,7 @@ func TestSAMJournalPendingSurvivesEffectSuccessSaveFailureAndRestart(t *testing.
 		t.Fatalf("failed removal was acknowledged: %v", err)
 	}
 	assertSAMJournalAcks(t, samJournalStatus(t, store), nil)
-	pending, err = samPendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
+	pending, err = sam.DecodePendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("failed removal lost pending ownership: %+v %v", pending, err)
 	}
@@ -176,7 +177,7 @@ func TestSAMJournalGARPIsRetriedUntilFinalCommit(t *testing.T) {
 	if err := controller.Reconcile(t.Context()); err == nil || !strings.Contains(err.Error(), garp.err.Error()) {
 		t.Fatalf("GARP error = %v", err)
 	}
-	pending, err := samPendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
+	pending, err := sam.DecodePendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("GARP failure lost pending acquisition: %+v %v", pending, err)
 	}
@@ -250,7 +251,7 @@ func TestSAMJournalAcquisitionCommitFailurePreventsSysctlWrite(t *testing.T) {
 	if applier.writes != 0 || len(applier.calls) != 0 || len(applier.acceptLocal) != 0 {
 		t.Fatalf("uncommitted ownership reached native writes: %+v", applier)
 	}
-	pending, err := samPendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
+	pending, err := sam.DecodePendingProxyNeighbors(samJournalStatus(t, store)["pendingProxyNeighbors"], true)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("scope must remain recoverable: %+v %v", pending, err)
 	}
@@ -268,8 +269,8 @@ func TestSAMJournalUnownedPendingNeighborDoesNotAuthorizeDeletion(t *testing.T) 
 	}
 	defer store.Close()
 	capture := samJournalCapture()
-	row := samPendingProxyNeighbor{samAppliedProxyNeighbor: samAppliedProxyNeighbor{ID: capture.ID, PoolRef: capture.PoolRef, PoolPrefix: capture.PoolPrefix, Address: capture.Address, Interface: capture.CaptureInterface}}
-	if err := store.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingProxyNeighbors": []samPendingProxyNeighbor{row}}); err != nil {
+	row := sam.PendingProxyNeighbor{AppliedProxyNeighbor: sam.AppliedProxyNeighbor{ID: capture.ID, PoolRef: capture.PoolRef, PoolPrefix: capture.PoolPrefix, Address: capture.Address, Interface: capture.CaptureInterface}}
+	if err := store.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingProxyNeighbors": []sam.PendingProxyNeighbor{row}}); err != nil {
 		t.Fatal(err)
 	}
 	applier := &fakeSAMApplier{}

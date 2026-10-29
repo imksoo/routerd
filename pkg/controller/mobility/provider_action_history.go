@@ -3,7 +3,6 @@
 package mobility
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,7 +17,7 @@ import (
 // journal and the preceding provider plan for a pool reconciliation.  The
 // controller shell builds it once; ownership, capture planning, status, and
 // transition recording consume the same interpretation rather than each
-// rescanning action records and JSON fields.
+// rescanning action records.
 type ProviderActionHistory struct {
 	// sourceRevision identifies the most recent DynamicConfigPart for this
 	// pool/node, including an empty or expired one. It gives a reintroduced
@@ -40,9 +39,8 @@ type ProviderActionHistory struct {
 }
 
 // providerActionJournalRecord is the in-memory representation of the action
-// journal row used by the mobility core. JSON decoding is deliberately kept at
-// this durable-store boundary so status, discovery, and fence code consume the
-// same typed target and parameter maps.
+// journal row used by the mobility core. SQLite owns decoding, so status,
+// discovery and fence code consume the same typed target and parameter maps.
 type providerActionJournalRecord struct {
 	id             int64
 	idempotencyKey string
@@ -50,6 +48,7 @@ type providerActionJournalRecord struct {
 	action         string
 	target         map[string]string
 	parameters     map[string]string
+	undo           *api.ProviderActionUndo
 	status         string
 	errorMessage   string
 	resultMessage  string
@@ -63,25 +62,15 @@ func providerActionJournalRecordFrom(row routerstate.ActionExecutionRecord) prov
 		idempotencyKey: row.IdempotencyKey,
 		providerRef:    row.ProviderRef,
 		action:         row.Action,
-		target:         decodeActionRecordMap(row.TargetJSON),
-		parameters:     decodeActionRecordMap(row.ParametersJSON),
+		target:         row.Target,
+		parameters:     row.Parameters,
+		undo:           row.Undo,
 		status:         row.Status,
 		errorMessage:   row.Error,
 		resultMessage:  row.ResultMessage,
 		executedAt:     row.ExecutedAt,
 		updatedAt:      row.UpdatedAt,
 	}
-}
-
-func decodeActionRecordMap(raw string) map[string]string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var out map[string]string
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil
-	}
-	return out
 }
 
 type providerActionHistoryStore interface {
@@ -135,7 +124,7 @@ func newProviderActionHistoryWithRevision(previousPlans []dynamicconfig.ActionPl
 
 func providerActionStatusPending(status string) bool {
 	switch strings.TrimSpace(status) {
-	case routerstate.ActionPending, routerstate.ActionApproved, routerstate.ActionRunning:
+	case routerstate.ActionPending, routerstate.ActionApproved, routerstate.ActionRunning, routerstate.ActionOutcomeUnknown, routerstate.ActionRollingBack, routerstate.ActionRollbackFailed, routerstate.ActionRollbackUnknown:
 		return true
 	default:
 		return false
@@ -201,9 +190,17 @@ func captureAssignmentsFromActionPlans(plans []dynamicconfig.ActionPlan) map[str
 	return out
 }
 
+func (h ProviderActionHistory) capturePlanWasUndone(plan dynamicconfig.ActionPlan) bool {
+	row, found := h.latestByKey[plan.IdempotencyKey]
+	return found && row.status == routerstate.ActionRolledBack && row.undo != nil && isProviderCaptureUnassignAction(row.undo.Action)
+}
+
 func (h ProviderActionHistory) priorCaptureAssignment(address string) (dynamicconfig.ActionPlan, bgpCaptureAssignment, bool) {
 	address = normalizeAddressString(address)
 	for _, plan := range h.previousCaptureAssigns {
+		if row, found := h.latestByKey[plan.IdempotencyKey]; found && providerActionRollbackState(row.status) {
+			continue
+		}
 		assignment, ok := captureAssignmentFromActionPlan(plan)
 		if ok && assignment.Address == address {
 			return plan, assignment, true
@@ -225,16 +222,41 @@ func (h ProviderActionHistory) nextCaptureAssignmentGeneration(poolName, address
 	return strings.Join([]string{scope, safeName(address), bgpPathSigHash(seed + "\x00" + captureAssignmentIntentKey(plan))}, "/")
 }
 
+func providerActionRollbackState(status string) bool {
+	switch status {
+	case routerstate.ActionRollingBack, routerstate.ActionRollbackFailed, routerstate.ActionRollbackUnknown, routerstate.ActionRolledBack:
+		return true
+	}
+	return false
+}
+
 func providerCaptureTransitionFromActionRecord(row providerActionJournalRecord) (string, providerCaptureTransition, bool) {
-	if row.status != routerstate.ActionSucceeded {
+	action := row.action
+	params := copyStringMap(row.parameters)
+	succeeded := row.status == routerstate.ActionSucceeded
+	uncertain := false
+	switch row.status {
+	case routerstate.ActionSucceeded, routerstate.ActionPending, routerstate.ActionApproved:
+	case routerstate.ActionRunning, routerstate.ActionOutcomeUnknown, routerstate.ActionRollingBack, routerstate.ActionRollbackFailed, routerstate.ActionRollbackUnknown:
+		uncertain = true
+	case routerstate.ActionRolledBack:
+		if row.undo != nil && (isProviderCaptureAssignAction(row.undo.Action) || isProviderCaptureUnassignAction(row.undo.Action)) {
+			action = row.undo.Action
+			if params == nil {
+				params = map[string]string{}
+			}
+			for key, value := range row.undo.Parameters {
+				params[key] = value
+			}
+			succeeded = true
+		} else {
+			uncertain = true
+		}
+	default:
 		return "", providerCaptureTransition{}, false
 	}
-	assign := false
-	switch {
-	case isProviderCaptureAssignAction(row.action):
-		assign = true
-	case isProviderCaptureUnassignAction(row.action):
-	default:
+	assign := isProviderCaptureAssignAction(action)
+	if !assign && !isProviderCaptureUnassignAction(action) {
 		return "", providerCaptureTransition{}, false
 	}
 	key := providerCaptureTransitionKey(firstNonEmpty(row.providerRef, row.target["providerRef"]), providerCaptureRefFromTarget(row.target), row.target["address"])
@@ -242,19 +264,7 @@ func providerCaptureTransitionFromActionRecord(row providerActionJournalRecord) 
 		return "", providerCaptureTransition{}, false
 	}
 	at := actionRecordCompletedAt(row)
-	return key, providerCaptureTransition{
-		at:        at,
-		id:        row.id,
-		assign:    assign,
-		succeeded: true,
-		plan: dynamicconfig.ActionPlan{
-			IdempotencyKey: row.idempotencyKey,
-			ProviderRef:    row.providerRef,
-			Action:         row.action,
-			Target:         copyStringMap(row.target),
-			Parameters:     copyStringMap(row.parameters),
-		},
-	}, true
+	return key, providerCaptureTransition{at: at, id: row.id, assign: assign, succeeded: succeeded, uncertain: uncertain, plan: dynamicconfig.ActionPlan{IdempotencyKey: row.idempotencyKey, ProviderRef: row.providerRef, Action: action, Target: copyStringMap(row.target), Parameters: params}}, true
 }
 
 func replaceProviderCaptureTransition(transitions map[string]providerCaptureTransition, key string, candidate providerCaptureTransition) bool {
@@ -288,6 +298,9 @@ func (h ProviderActionHistory) releaseSourceFor(self memberPlanInfo, address str
 	var previous dynamicconfig.ActionPlan
 	found := false
 	for _, plan := range h.previousCaptureAssigns {
+		if h.capturePlanWasUndone(plan) {
+			continue
+		}
 		if normalizeAddressString(plan.Target["address"]) != address {
 			continue
 		}

@@ -58,7 +58,10 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	policyPath := firstNonEmpty(c.PolicyPath, "/run/routerd/policy-route.nft")
 	defaultRoutePath := firstNonEmpty(c.DefaultRoutePath, "/run/routerd/default-route.nft")
 	aliases := c.aliases()
-	activeTargetCandidates := c.activeTargetCandidates(ctx)
+	activeTargetCandidates, err := c.activeTargetCandidates(ctx)
+	if err != nil {
+		return err
+	}
 
 	if err := c.applyRouteTables(ctx, aliases); err != nil {
 		return err
@@ -71,8 +74,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	}
 	// Host-only IPv6 policy is deliberately last and isolated: an RA address
 	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
-	c.reconcileIPv6HostPolicies(ctx)
-	return nil
+	return c.reconcileIPv6HostPolicies(ctx)
 }
 
 func (c IPv4PolicyRouteController) hasIPRoute2() bool {
@@ -107,45 +109,47 @@ func (p ipv6HostPolicy) isSourceRule() bool {
 	return p.RuleFrom || (p.Lookup != "" && p.Table == 0 && p.Gateway == "" && p.Interface == "" && p.Source != "")
 }
 
-func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
+func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) error {
 	path := firstNonEmpty(c.HostPolicyStatePath, "/run/routerd/ipv6-host-policy.json")
 	previous, err := loadIPv6HostPolicyState(path)
 	if err != nil {
 		c.logHostPolicyError("load IPv6 host policy state", err)
-		return
+		return err
 	}
 	desired, unavailable, err := c.desiredIPv6HostPolicies(ctx)
 	if err != nil {
 		c.logHostPolicyError("derive IPv6 host policy", err)
-		return
+		return err
 	}
 	previousByName := make(map[string]ipv6HostPolicy, len(previous.Policies))
 	for _, policy := range previous.Policies {
 		previousByName[policy.Name] = policy
 	}
 	for name := range unavailable {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
 			"phase": "Pending", "reason": "PreferredSourceUnavailable", "dryRun": c.DryRun,
-		})
+		}); err != nil {
+			return err
+		}
 		if old, ok := previousByName[name]; ok {
 			desired = append(desired, old) // retain a known-good rule until RA returns.
 		}
 	}
 	if len(unavailable) > 0 && len(desired) == 0 && len(previous.Policies) == 0 {
-		return // first acquisition is intentionally unapplied.
+		return nil // first acquisition is intentionally unapplied.
 	}
 	applied, transient, err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable)
 	if err != nil {
 		c.logHostPolicyError("reconcile IPv6 host policy", err)
 		for _, policy := range desired {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun})
+			err = errors.Join(err, c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun}))
 		}
-		return
+		return err
 	}
 	if !c.DryRun {
 		if err := writeIPv6HostPolicyState(path, applied); err != nil {
 			c.logHostPolicyError("write IPv6 host policy state", err)
-			return
+			return err
 		}
 	}
 	for _, policy := range desired {
@@ -155,8 +159,11 @@ func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context
 		if unavailable[policy.Name] || transient[policy.Name] {
 			continue
 		}
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun})
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun}); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error) {
@@ -224,7 +231,11 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			if firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 				continue
 			}
-			local := strings.TrimSpace(resourcequery.Value(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"}))
+			value, err := resourcequery.ReadValue(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"})
+			if err != nil {
+				return nil, nil, err
+			}
+			local := strings.TrimSpace(value)
 			if local == "" {
 				continue
 			}
@@ -474,7 +485,7 @@ func (c IPv4PolicyRouteController) aliases() map[string]string {
 	return aliases
 }
 
-func (c IPv4PolicyRouteController) activeTargetCandidates(ctx context.Context) map[string]bool {
+func (c IPv4PolicyRouteController) activeTargetCandidates(ctx context.Context) (map[string]bool, error) {
 	active := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -487,42 +498,63 @@ func (c IPv4PolicyRouteController) activeTargetCandidates(ctx context.Context) m
 		if unsupportedPrioritySelection(spec) {
 			continue
 		}
-		healthy := c.availableDefaultRouteCandidates(ctx, spec)
+		healthy, err := c.availableDefaultRouteCandidates(ctx, spec)
+		if err != nil {
+			return nil, err
+		}
 		candidate, ok := selectDefaultRouteCandidate(healthy)
 		if ok && len(candidate.Targets) > 0 {
 			active[egressCandidateKey(res.Metadata.Name, candidate)] = true
 		}
 	}
-	return active
+	return active, nil
 }
 
 func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
 	var failures []string
-	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
-		if !c.egressTargetAvailable(ctx, aliases, target) {
-			return
+	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) error {
+		available, err := c.egressTargetAvailable(ctx, aliases, target)
+		if err != nil || !available {
+			return err
 		}
-		if !c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark) {
-			return
+		install, err := c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark)
+		if err != nil || !install {
+			return err
 		}
-		gateway := firstNonEmpty(resourcequery.Value(c.Store, target.GatewayFrom), strings.TrimSpace(target.Gateway))
+		value, err := resourcequery.ReadValue(c.Store, target.GatewayFrom)
+		if err != nil {
+			return err
+		}
+		gateway := firstNonEmpty(value, strings.TrimSpace(target.Gateway))
 		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, &failures)
+		return nil
 	}
-	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
+	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) error {
 		if egressRoutePolicyCandidateDisabled(candidate) {
-			return
+			return nil
 		}
 		// A candidate can become eligible as soon as its when condition flips,
 		// before the referenced DS-Lite tunnel has been recreated.  Do not turn
 		// that normal HA transition into a controller-wide hard error, and do not
 		// install a bootstrap rule from a stale health-check result.
-		if !c.egressCandidateAvailable(candidate) {
-			return
+		available, err := c.egressCandidateAvailable(candidate)
+		if err != nil || !available {
+			return err
 		}
-		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
-			return
+		install, err := c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark)
+		if err != nil || !install {
+			return err
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), &failures)
+		device, err := c.candidateDevice(candidate)
+		if err != nil {
+			return err
+		}
+		gateway, err := c.candidateGateway(candidate)
+		if err != nil {
+			return err
+		}
+		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), device, candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), gateway, c.candidateReferencesDSLite(candidate), &failures)
+		return nil
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -554,14 +586,18 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 					if target.Name == "" {
 						target.Name = fmt.Sprintf("%s-%d", firstNonEmpty(candidate.Name, res.Metadata.Name), i)
 					}
-					applyTarget(res.ID(), target, true)
+					if err := applyTarget(res.ID(), target, true); err != nil {
+						return err
+					}
 				}
 				continue
 			}
 			if candidate.Mark == 0 {
 				continue
 			}
-			applyCandidate(res.ID(), candidate)
+			if err := applyCandidate(res.ID(), candidate); err != nil {
+				return err
+			}
 		}
 	}
 	if len(failures) > 0 {
@@ -573,11 +609,12 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 	return nil
 }
 
-func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) bool {
-	if c.targetHealthy(name) {
-		return true
+func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) (bool, error) {
+	healthy, err := c.targetHealthy(name)
+	if err != nil || healthy {
+		return healthy, err
 	}
-	return c.healthCheckUsesFwMark(name, mark)
+	return c.healthCheckUsesFwMark(name, mark), nil
 }
 
 func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Context, aliases map[string]string) error {
@@ -833,7 +870,11 @@ func hasField(fields []string, key string) bool {
 }
 
 func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path string, activeTargetCandidates map[string]bool) error {
-	data, err := render.NftablesIPv4PolicyRoutes(c.effectivePolicyRouteRouter(ctx, activeTargetCandidates))
+	router, err := c.effectivePolicyRouteRouter(ctx, activeTargetCandidates)
+	if err != nil {
+		return err
+	}
+	data, err := render.NftablesIPv4PolicyRoutes(router)
 	if err != nil {
 		return err
 	}
@@ -846,6 +887,8 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 		name      string
 		status    map[string]any
 		candidate *api.EgressRoutePolicyCandidate
+		previous  map[string]any
+		role      egressRoleObservation
 	}
 	var results []policyStatus
 	for _, res := range c.Router.Spec.Resources {
@@ -868,7 +911,10 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			}})
 			continue
 		}
-		healthy := c.availableDefaultRouteCandidates(ctx, spec)
+		healthy, err := c.availableDefaultRouteCandidates(ctx, spec)
+		if err != nil {
+			return err
+		}
 		active, ok := selectDefaultRouteCandidate(healthy)
 		if !ok {
 			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun}})
@@ -891,13 +937,29 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
 		}
 		if len(active.Targets) == 0 {
-			status["selectedDevice"] = c.candidateDevice(active)
-			status["selectedGateway"] = c.candidateGateway(active)
+			device, err := c.candidateDevice(active)
+			if err != nil {
+				return err
+			}
+			gateway, err := c.candidateGateway(active)
+			if err != nil {
+				return err
+			}
+			status["selectedDevice"] = device
+			status["selectedGateway"] = gateway
 			status["selectedGatewaySource"] = firstNonEmpty(active.GatewaySource, "none")
 			status["selectedRouteTable"] = active.EffectiveTable()
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
-		results = append(results, policyStatus{name: res.Metadata.Name, status: status, candidate: &active})
+		previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		role, err := c.readHADatapathRole(res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		results = append(results, policyStatus{name: res.Metadata.Name, status: status, candidate: &active, previous: previous, role: role})
 	}
 	applyErr := c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
 	var statusErr error
@@ -910,8 +972,7 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 		if applyErr == nil && result.candidate != nil {
 			now := c.now()
 			result.status["updatedAt"] = now.Format(time.RFC3339Nano)
-			previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", result.name)
-			c.addHADatapathStatus(result.name, *result.candidate, previous, result.status, now)
+			c.addHADatapathStatus(result.name, *result.candidate, result.previous, result.status, now, result.role)
 		}
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", result.name, result.status); err != nil {
 			statusErr = errors.Join(statusErr, fmt.Errorf("save policy %s result: %w", result.name, err))
@@ -936,7 +997,28 @@ func (g egressVRRPMasterGate) reference() string {
 	return g.Kind + "/" + g.Name
 }
 
-func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time) {
+type egressRoleObservation struct {
+	role         string
+	transitionAt string
+}
+
+func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egressRoleObservation, error) {
+	spec, ok := c.declaredEgressRoutePolicySpec(policyName)
+	if !ok {
+		return egressRoleObservation{}, nil
+	}
+	gate, ok := egressPolicyVRRPMasterGate(spec)
+	if !ok {
+		return egressRoleObservation{}, nil
+	}
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, gate.Kind, gate.Name)
+	if err != nil {
+		return egressRoleObservation{}, err
+	}
+	return egressRoleObservation{role: cleanStatusString(status["role"]), transitionAt: cleanStatusString(status["lastRoleTransitionAt"])}, nil
+}
+
+func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time, observation egressRoleObservation) {
 	spec, ok := c.declaredEgressRoutePolicySpec(policyName)
 	if !ok {
 		return
@@ -945,9 +1027,7 @@ func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active
 	if !ok {
 		return
 	}
-	roleStatus := c.Store.ObjectStatus(api.NetAPIVersion, gate.Kind, gate.Name)
-	role := strings.TrimSpace(fmt.Sprint(roleStatus["role"]))
-	transitionAt := strings.TrimSpace(fmt.Sprint(roleStatus["lastRoleTransitionAt"]))
+	role, transitionAt := observation.role, observation.transitionAt
 	status["datapathRoleResource"] = gate.reference()
 	status["datapathRole"] = role
 	status["datapathRoleTransitionAt"] = transitionAt
@@ -1062,22 +1142,34 @@ func whenStateReferenceField(reference string) string {
 	return reference[index+1:]
 }
 
-func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.Context, spec api.EgressRoutePolicySpec) []api.EgressRoutePolicyCandidate {
+func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.Context, spec api.EgressRoutePolicySpec) ([]api.EgressRoutePolicyCandidate, error) {
 	var out []api.EgressRoutePolicyCandidate
 	aliases := c.aliases()
 	for _, candidate := range spec.Candidates {
 		if egressRoutePolicyCandidateDisabled(candidate) {
 			continue
 		}
-		if !c.targetHealthy(candidate.HealthCheck) {
+		healthy, err := c.targetHealthy(candidate.HealthCheck)
+		if err != nil {
+			return nil, err
+		}
+		if !healthy {
 			continue
 		}
 		if len(candidate.Targets) > 0 {
 			for _, target := range candidate.Targets {
-				if !c.targetHealthy(target.HealthCheck) {
+				healthy, err := c.targetHealthy(target.HealthCheck)
+				if err != nil {
+					return nil, err
+				}
+				if !healthy {
 					continue
 				}
-				if !c.egressTargetAvailable(ctx, aliases, target) {
+				available, err := c.egressTargetAvailable(ctx, aliases, target)
+				if err != nil {
+					return nil, err
+				}
+				if !available {
 					continue
 				}
 				if ifname := aliases[target.EffectiveInterface()]; ifname != "" && c.linkExists(ctx, ifname) {
@@ -1087,45 +1179,56 @@ func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.C
 			}
 			continue
 		}
-		device := c.candidateDevice(candidate)
-		if !c.egressCandidateAvailable(candidate) {
+		device, err := c.candidateDevice(candidate)
+		if err != nil {
+			return nil, err
+		}
+		available, err := c.egressCandidateAvailable(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if !available {
 			continue
 		}
 		if ifname := firstNonEmpty(aliases[device], device); ifname != "" && c.linkExists(ctx, ifname) {
 			out = append(out, candidate)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // egressTargetAvailable rejects a stale health-check result until its DS-Lite
 // tunnel has been reconciled for the current master.  A link name alone is not
 // sufficient: a previous master can leave a stale status briefly while its
 // tunnel no longer exists on this host.
-func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, aliases map[string]string, target api.EgressRoutePolicyTarget) bool {
+func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, aliases map[string]string, target api.EgressRoutePolicyTarget) (bool, error) {
 	logical := target.EffectiveInterface()
 	ifname := firstNonEmpty(aliases[logical], logical)
 	if ifname == "" || !c.linkExists(ctx, ifname) {
-		return false
+		return false, nil
 	}
 	return c.dsliteResourceReady(logical)
 }
 
-func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) bool {
-	if !resourcequery.DependenciesReady(c.Store, candidate.DependsOn) {
-		return false
+func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) (bool, error) {
+	ready, err := resourcequery.ReadDependenciesReady(c.Store, candidate.DependsOn)
+	if err != nil || !ready {
+		return false, err
 	}
 	for _, reference := range []string{candidate.Source, candidate.DeviceFrom.Resource} {
-		if c.dsliteResourceReference(reference) && !c.dsliteResourceReady(reference) {
-			return false
+		if c.dsliteResourceReference(reference) {
+			ready, err := c.dsliteResourceReady(reference)
+			if err != nil || !ready {
+				return false, err
+			}
 		}
 	}
-	return true
+	return true, nil
 }
 
-func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
+func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) (bool, error) {
 	if c.Router == nil || reference == "" || !c.dsliteResourceReference(reference) {
-		return true
+		return true, nil
 	}
 	kind, name, qualified := resourcequery.SplitResource(reference)
 	for _, res := range c.Router.Spec.Resources {
@@ -1139,9 +1242,13 @@ func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
 		// observed substatus should override the controller phase.  In
 		// particular, phase=Disabled/reason=WhenFalse must win over a retained
 		// observed.phase=Up from the previous MASTER generation.
-		return strings.TrimSpace(fmt.Sprint(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["phase"])) == "Up"
+		status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)
+		if err != nil {
+			return false, err
+		}
+		return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Up", nil
 	}
-	return false
+	return false, nil
 }
 
 func (c IPv4PolicyRouteController) dsliteResourceReference(reference string) bool {
@@ -1167,21 +1274,26 @@ func (c IPv4PolicyRouteController) candidateReferencesDSLite(candidate api.Egres
 	return c.dsliteResourceReference(candidate.Source) || c.dsliteResourceReference(candidate.DeviceFrom.Resource)
 }
 
-func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) string {
-	if device := resourcequery.Value(c.Store, candidate.DeviceFrom); device != "" {
-		return device
+func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) (string, error) {
+	device, err := resourcequery.ReadValue(c.Store, candidate.DeviceFrom)
+	if err != nil {
+		return "", err
+	}
+	if device != "" {
+		return device, nil
 	}
 	logical := candidate.EffectiveInterface()
-	return firstNonEmpty(c.aliases()[logical], logical)
+	return firstNonEmpty(c.aliases()[logical], logical), nil
 }
 
-func (c IPv4PolicyRouteController) candidateGateway(candidate api.EgressRoutePolicyCandidate) string {
-	return firstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), candidate.Gateway)
+func (c IPv4PolicyRouteController) candidateGateway(candidate api.EgressRoutePolicyCandidate) (string, error) {
+	value, err := resourcequery.ReadValue(c.Store, candidate.GatewayFrom)
+	return firstNonEmpty(value, candidate.Gateway), err
 }
 
-func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Context, activeTargetCandidates map[string]bool) *api.Router {
+func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Context, activeTargetCandidates map[string]bool) (*api.Router, error) {
 	if c.Router == nil {
-		return nil
+		return nil, nil
 	}
 	out := *c.Router
 	out.Spec.Resources = make([]api.Resource, 0, len(c.Router.Spec.Resources))
@@ -1206,7 +1318,10 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Contex
 				if egressRoutePolicyCandidateDisabled(candidate) || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
-				targets, ready := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				targets, ready, err := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				if err != nil {
+					return nil, err
+				}
 				if !ready {
 					continue
 				}
@@ -1226,14 +1341,25 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Contex
 			if egressRoutePolicyCandidateDisabled(candidate) {
 				continue
 			}
-			if !c.targetHealthy(candidate.HealthCheck) {
+			healthy, err := c.targetHealthy(candidate.HealthCheck)
+			if err != nil {
+				return nil, err
+			}
+			if !healthy {
 				continue
 			}
-			if !c.egressCandidateAvailable(candidate) {
+			available, err := c.egressCandidateAvailable(candidate)
+			if err != nil {
+				return nil, err
+			}
+			if !available {
 				continue
 			}
 			if len(candidate.Targets) > 0 {
-				targets, ready := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				targets, ready, err := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				if err != nil {
+					return nil, err
+				}
 				if !ready {
 					continue
 				}
@@ -1248,26 +1374,35 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Contex
 		res.Spec = spec
 		out.Spec.Resources = append(out.Spec.Resources, res)
 	}
-	return &out
+	return &out, nil
 }
 
-func (c IPv4PolicyRouteController) targetsWithRuntimeReadiness(ctx context.Context, aliases map[string]string, declared []api.EgressRoutePolicyTarget) ([]api.EgressRoutePolicyTarget, bool) {
+func (c IPv4PolicyRouteController) targetsWithRuntimeReadiness(ctx context.Context, aliases map[string]string, declared []api.EgressRoutePolicyTarget) ([]api.EgressRoutePolicyTarget, bool, error) {
 	targets := append([]api.EgressRoutePolicyTarget(nil), declared...)
 	readyCount := 0
 	for i := range targets {
-		ready := c.targetHealthy(targets[i].HealthCheck) && (!c.dsliteResourceReference(targets[i].EffectiveInterface()) || c.egressTargetAvailable(ctx, aliases, targets[i]))
+		ready, err := c.targetHealthy(targets[i].HealthCheck)
+		if err != nil {
+			return nil, false, err
+		}
+		if ready && c.dsliteResourceReference(targets[i].EffectiveInterface()) {
+			ready, err = c.egressTargetAvailable(ctx, aliases, targets[i])
+			if err != nil {
+				return nil, false, err
+			}
+		}
 		targets[i].RuntimeReady = new(bool)
 		*targets[i].RuntimeReady = ready
 		if ready {
 			readyCount++
 		}
 	}
-	return targets, readyCount > 0
+	return targets, readyCount > 0, nil
 }
 
-func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
+func (c IPv4PolicyRouteController) targetHealthy(name string) (bool, error) {
 	if name == "" {
-		return true
+		return true, nil
 	}
 	var spec api.HealthCheckSpec
 	for _, resource := range c.Router.Spec.Resources {
@@ -1275,19 +1410,16 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
 			var err error
 			spec, err = resource.HealthCheckSpec()
 			if err != nil {
-				return false
+				return false, err
 			}
 			break
 		}
 	}
 	observation, err := c.Store.HealthObservation(name)
 	if err != nil {
-		if c.Logger != nil {
-			c.Logger.Error("read Health observation", "resource", name, "error", err)
-		}
-		return false
+		return false, err
 	}
-	return observation.Usable(c.now(), spec)
+	return observation.Usable(c.now(), spec), nil
 }
 
 func statusInt(value any) (int, bool) {

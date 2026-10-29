@@ -32,24 +32,28 @@ func egressRoutePolicyCandidateDisabled(candidate api.EgressRoutePolicyCandidate
 	return !api.BoolDefault(candidate.Enabled, true)
 }
 
-func dependencyUnavailablePhase(router *api.Router, store resourcequery.Store, dependencies []api.ResourceDependencySpec, standby bool) string {
+func dependencyUnavailablePhase(router *api.Router, store resourcequery.StatusReader, dependencies []api.ResourceDependencySpec, standby bool) (string, error) {
 	for _, dependency := range dependencies {
 		kind, name, ok := resourcequery.SplitResource(dependency.Resource)
 		if !ok {
 			continue
 		}
-		phase := fmt.Sprint(store.ObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)["phase"])
+		status, err := store.ReadObjectStatus(resourcequery.APIVersionForKind(kind), kind, name)
+		if err != nil {
+			return "", err
+		}
+		phase := fmt.Sprint(status["phase"])
 		if neutralDependencyPhase(phase) || specDisabled(router, kind, name) {
 			if standby {
-				return PhaseStandby
+				return PhaseStandby, nil
 			}
-			return PhaseNotApplicable
+			return PhaseNotApplicable, nil
 		}
 	}
 	if standby {
-		return PhaseStandby
+		return PhaseStandby, nil
 	}
-	return "Pending"
+	return "Pending", nil
 }
 
 func neutralDependencyPhase(phase string) bool {

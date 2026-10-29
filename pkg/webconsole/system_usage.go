@@ -64,13 +64,22 @@ func readCPUTimes() (cpuTimes, bool) {
 	if err != nil {
 		return cpuTimes{}, false
 	}
+	return parseCPUTimes(data)
+}
+
+func parseCPUTimes(data []byte) (cpuTimes, bool) {
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "cpu" {
 			continue
 		}
 		values := make([]uint64, 0, len(fields)-1)
-		for _, field := range fields[1:] {
+		// Linux accounts guest and guest_nice in user and nice already.
+		// Sum only user through steal, without counting the guests twice.
+		for index, field := range fields[1:] {
+			if index >= 8 {
+				break
+			}
 			value, err := strconv.ParseUint(field, 10, 64)
 			if err != nil {
 				return cpuTimes{}, false
@@ -79,6 +88,9 @@ func readCPUTimes() (cpuTimes, bool) {
 		}
 		total := uint64(0)
 		for _, value := range values {
+			if value > ^uint64(0)-total {
+				return cpuTimes{}, false
+			}
 			total += value
 		}
 		idle := values[3]
@@ -111,6 +123,10 @@ func readMemoryInfo() (total uint64, available uint64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
+	return parseMemoryInfo(data)
+}
+
+func parseMemoryInfo(data []byte) (total uint64, available uint64, ok bool) {
 	values := map[string]uint64{}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
@@ -118,16 +134,19 @@ func readMemoryInfo() (total uint64, available uint64, ok bool) {
 			continue
 		}
 		key := strings.TrimSuffix(fields[0], ":")
-		value, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
+		if key != "MemTotal" && key != "MemAvailable" {
 			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil || len(fields) != 3 || fields[2] != "kB" || value > ^uint64(0)/1024 {
+			return 0, 0, false
 		}
 		values[key] = value * 1024
 	}
 	total = values["MemTotal"]
-	available = values["MemAvailable"]
-	if available == 0 {
-		available = values["MemFree"] + values["Buffers"] + values["Cached"]
+	available, present := values["MemAvailable"]
+	if !present || available > total {
+		return 0, 0, false
 	}
 	return total, available, total > 0
 }

@@ -45,128 +45,132 @@ The table records the initial scope inventory (before removal), not current file
 It includes production files, not generated assets or *_test.go files.
 "In progress" means selected bodies/call paths reviewed; it does not mean the
 package is fully audited. "Pending" means inventoried/scanned only.
+"Bodies reviewed; integration in progress" records complete body reading by the
+owning reviewer(s), including the affected callers, while repair integration and
+qualification remain open. It is not a compliance certification. Original file
+counts stay fixed so removals and newly written files do not inflate coverage.
 
 | Directory | Production files | Semantic review |
 | --- | ---: | --- |
-| `cmd/routerctl` | 26 | In progress |
-| `cmd/routerd` | 29 | In progress |
-| `cmd/routerd-arp-observer` | 4 | Pending |
+| `cmd/routerctl` | 26 | Bodies reviewed; integration in progress |
+| `cmd/routerd` | 29 | Bodies reviewed; integration in progress |
+| `cmd/routerd-arp-observer` | 4 | Bodies reviewed; integration in progress |
 | `cmd/routerd-bgp` | 1 | In progress |
-| `cmd/routerd-dhcp-event-relay` | 1 | Pending |
-| `cmd/routerd-dhcp-fingerprint-watcher` | 1 | Pending |
+| `cmd/routerd-dhcp-event-relay` | 1 | Bodies reviewed; integration in progress |
+| `cmd/routerd-dhcp-fingerprint-watcher` | 1 | Bodies reviewed; integration in progress |
 | `cmd/routerd-dhcpv4-client` | 4 | In progress |
 | `cmd/routerd-dhcpv6-client` | 3 | In progress |
 | `cmd/routerd-dns-resolver` | 9 | In progress |
-| `cmd/routerd-dpi-classifier` | 1 | Pending |
-| `cmd/routerd-eventd` | 1 | Pending |
-| `cmd/routerd-firewall-logger` | 3 | Pending |
+| `cmd/routerd-dpi-classifier` | 1 | Bodies reviewed; integration in progress |
+| `cmd/routerd-eventd` | 1 | Bodies reviewed; integration in progress |
+| `cmd/routerd-firewall-logger` | 3 | Bodies reviewed; integration in progress |
 | `cmd/routerd-healthcheck` | 1 | In progress |
-| `cmd/routerd-ndpi-agent` | 4 | Pending |
-| `cmd/routerd-pppoe-client` | 4 | Pending |
+| `cmd/routerd-ndpi-agent` | 4 | Bodies reviewed; integration in progress |
+| `cmd/routerd-pppoe-client` | 4 | Bodies reviewed; integration in progress |
 | `cmd/routerd-ra-observer` | 4 | In progress |
-| `cmd/routerd-schema` | 1 | Pending |
-| `cmd/routerd-vrrp-vmac` | 1 | Pending |
-| `internal/cmd/specgen` | 1 | Pending |
-| `internal/freebsdpcap` | 1 | Pending |
-| `internal/hostcmd` | 1 | Pending |
-| `internal/mapsort` | 1 | Pending |
-| `internal/statusvalue` | 1 | Pending |
-| `internal/stringutil` | 1 | Pending |
-| `pkg/api` | 13 | In progress |
-| `pkg/apply` | 5 | Pending |
-| `pkg/bgp` | 1 | Pending |
+| `cmd/routerd-schema` | 1 | Bodies reviewed; integration in progress |
+| `cmd/routerd-vrrp-vmac` | 1 | Bodies reviewed; integration in progress |
+| `internal/cmd/specgen` | 1 | Bodies reviewed; integration in progress |
+| `internal/freebsdpcap` | 1 | Bodies reviewed; integration in progress |
+| `internal/hostcmd` | 1 | Bodies reviewed; integration in progress |
+| `internal/mapsort` | 1 | Bodies reviewed; integration in progress |
+| `internal/statusvalue` | 1 | Bodies reviewed; integration in progress |
+| `internal/stringutil` | 1 | Bodies reviewed; integration in progress |
+| `pkg/api` | 13 | Bodies reviewed; integration in progress |
+| `pkg/apply` | 5 | Bodies reviewed; integration in progress |
+| `pkg/bgp` | 1 | Bodies reviewed; integration in progress |
 | `pkg/bgpdaemon` | 2 | In progress |
-| `pkg/bus` | 1 | Pending |
-| `pkg/config` | 22 | In progress |
-| `pkg/conntrack` | 1 | Pending |
-| `pkg/conntracktuning` | 1 | Pending |
-| `pkg/controlapi` | 5 | In progress |
-| `pkg/controller/bfd` | 1 | Pending |
+| `pkg/bus` | 1 | Bodies reviewed; integration in progress |
+| `pkg/config` | 22 | Bodies reviewed; integration in progress |
+| `pkg/conntrack` | 1 | Bodies reviewed; integration in progress |
+| `pkg/conntracktuning` | 1 | Bodies reviewed; integration in progress |
+| `pkg/controlapi` | 5 | Bodies reviewed; integration in progress |
+| `pkg/controller/bfd` | 1 | Bodies reviewed; integration in progress |
 | `pkg/controller/bgp` | 7 | In progress |
 | `pkg/controller/chain` | 34 | In progress |
-| `pkg/controller/conntrackobserver` | 1 | Pending |
+| `pkg/controller/conntrackobserver` | 1 | Bodies reviewed; integration in progress |
 | `pkg/controller/dhcpv4client` | 1 | In progress |
 | `pkg/controller/dnsresolver` | 1 | In progress |
-| `pkg/controller/eventfederation` | 1 | Pending |
-| `pkg/controller/eventsubscription` | 1 | Pending |
+| `pkg/controller/eventfederation` | 1 | Bodies reviewed; integration in progress |
+| `pkg/controller/eventsubscription` | 1 | Bodies reviewed; integration in progress |
 | `pkg/controller/firewall` | 1 | In progress |
 | `pkg/controller/framework` | 1 | In progress |
-| `pkg/controller/ingressservice` | 1 | In progress |
-| `pkg/controller/mobility` | 37 | In progress |
-| `pkg/controller/mobilityfib` | 1 | Pending |
+| `pkg/controller/ingressservice` | 1 | Bodies reviewed; integration in progress |
+| `pkg/controller/mobility` | 37 | Bodies reviewed; integration in progress |
+| `pkg/controller/mobilityfib` | 1 | Bodies reviewed; integration in progress |
 | `pkg/controller/nat44` | 1 | In progress |
-| `pkg/controller/pppoesession` | 1 | Pending |
-| `pkg/controller/provideraction` | 1 | Pending |
-| `pkg/controller/vrrp` | 2 | In progress |
-| `pkg/daemonapi` | 2 | Pending |
+| `pkg/controller/pppoesession` | 1 | Bodies reviewed; integration in progress |
+| `pkg/controller/provideraction` | 1 | Bodies reviewed; integration in progress |
+| `pkg/controller/vrrp` | 2 | Bodies reviewed; integration in progress |
+| `pkg/daemonapi` | 2 | Bodies reviewed; integration in progress |
 | `pkg/derived` | 1 | In progress |
-| `pkg/dhcpeventqueue` | 3 | Pending |
-| `pkg/dhcpfingerprint` | 1 | Pending |
+| `pkg/dhcpeventqueue` | 3 | Bodies reviewed; integration in progress |
+| `pkg/dhcpfingerprint` | 1 | Bodies reviewed; integration in progress |
 | `pkg/dhcpv4client` | 2 | In progress |
 | `pkg/dnsresolver` | 1 | In progress |
-| `pkg/dpi` | 2 | Pending |
+| `pkg/dpi` | 2 | Bodies reviewed; integration in progress |
 | `pkg/dynamicconfig` | 2 | In progress |
 | `pkg/dynamicconfig/codec` | 2 | In progress |
-| `pkg/egressroute` | 1 | In progress |
-| `pkg/eventconsumer` | 1 | Pending |
-| `pkg/eventd` | 7 | Pending |
-| `pkg/eventfile` | 1 | Pending |
-| `pkg/eventlog` | 2 | Pending |
+| `pkg/egressroute` | 1 | Bodies reviewed; integration in progress |
+| `pkg/eventconsumer` | 1 | Bodies reviewed; integration in progress |
+| `pkg/eventd` | 7 | Bodies reviewed; integration in progress |
+| `pkg/eventfile` | 1 | Bodies reviewed; integration in progress |
+| `pkg/eventlog` | 2 | Bodies reviewed; integration in progress |
 | `pkg/eventrule` | 1 | In progress |
-| `pkg/federation` | 2 | Pending |
-| `pkg/federationguard` | 1 | Pending |
+| `pkg/federation` | 2 | Bodies reviewed; integration in progress |
+| `pkg/federationguard` | 1 | Bodies reviewed; integration in progress |
 | `pkg/firewallbackend` | 1 | In progress |
-| `pkg/ha` | 1 | Pending |
+| `pkg/ha` | 1 | Bodies reviewed; integration in progress |
 | `pkg/healthcheck` | 10 | In progress |
-| `pkg/hostdeps` | 1 | Pending |
-| `pkg/hybrid` | 1 | Pending |
-| `pkg/ingressdrain` | 1 | In progress |
-| `pkg/inventory` | 1 | Pending |
-| `pkg/ipsec` | 1 | Pending |
-| `pkg/lan` | 1 | Pending |
-| `pkg/lan/dhcpv4server` | 1 | Pending |
-| `pkg/lifecycle` | 3 | In progress |
-| `pkg/lock` | 2 | Pending |
-| `pkg/logstore` | 7 | Pending |
-| `pkg/manageddaemon` | 1 | Pending |
-| `pkg/mobilityconfig` | 4 | Pending |
-| `pkg/netconfigbackend` | 1 | Pending |
-| `pkg/nflog` | 2 | Pending |
+| `pkg/hostdeps` | 1 | Bodies reviewed; integration in progress |
+| `pkg/hybrid` | 1 | Bodies reviewed; integration in progress |
+| `pkg/ingressdrain` | 1 | Bodies reviewed; integration in progress |
+| `pkg/inventory` | 1 | Bodies reviewed; integration in progress |
+| `pkg/ipsec` | 1 | Bodies reviewed; integration in progress |
+| `pkg/lan` | 1 | Bodies reviewed; integration in progress |
+| `pkg/lan/dhcpv4server` | 1 | Bodies reviewed; integration in progress |
+| `pkg/lifecycle` | 3 | Bodies reviewed; integration in progress |
+| `pkg/lock` | 2 | Bodies reviewed; integration in progress |
+| `pkg/logstore` | 7 | Bodies reviewed; integration in progress |
+| `pkg/manageddaemon` | 1 | Bodies reviewed; integration in progress |
+| `pkg/mobilityconfig` | 4 | Bodies reviewed; integration in progress |
+| `pkg/netconfigbackend` | 1 | Bodies reviewed; integration in progress |
+| `pkg/nflog` | 2 | Bodies reviewed; integration in progress |
 | `pkg/nftstate` | 1 | In progress |
-| `pkg/observabilitypipeline` | 1 | Pending |
-| `pkg/observe` | 2 | Pending |
-| `pkg/otel` | 3 | Pending |
+| `pkg/observabilitypipeline` | 1 | Bodies reviewed; integration in progress |
+| `pkg/observe` | 2 | Bodies reviewed; integration in progress |
+| `pkg/otel` | 3 | Bodies reviewed; integration in progress |
 | `pkg/pdclient` | 4 | In progress |
-| `pkg/platform` | 5 | Pending |
-| `pkg/plugin` | 6 | In progress |
-| `pkg/pppoeclient` | 1 | Pending |
-| `pkg/provideraction` | 4 | Pending |
-| `pkg/providercontract` | 1 | Pending |
-| `pkg/providerinventory` | 2 | Pending |
+| `pkg/platform` | 5 | Bodies reviewed; integration in progress |
+| `pkg/plugin` | 6 | Bodies reviewed; integration in progress |
+| `pkg/pppoeclient` | 1 | Bodies reviewed; integration in progress |
+| `pkg/provideraction` | 4 | Bodies reviewed; integration in progress |
+| `pkg/providercontract` | 1 | Removed: unused production simulator |
+| `pkg/providerinventory` | 2 | Bodies reviewed; integration in progress |
 | `pkg/raobserver` | 1 | In progress |
-| `pkg/render` | 32 | In progress |
-| `pkg/resource` | 3 | In progress |
-| `pkg/resourcequery` | 2 | In progress |
-| `pkg/sam` | 1 | Pending |
-| `pkg/samenrollment` | 1 | Pending |
-| `pkg/servicemgr` | 1 | Pending |
-| `pkg/source/daemon` | 1 | Pending |
-| `pkg/state` | 12 | In progress |
-| `pkg/status` | 2 | Pending |
-| `pkg/subprocessio` | 1 | Pending |
-| `pkg/sysctlprofile` | 2 | Pending |
-| `pkg/tailscale` | 1 | Pending |
-| `pkg/version` | 1 | Pending |
-| `pkg/vrf` | 1 | Pending |
-| `pkg/vxlan` | 1 | Pending |
-| `pkg/webconsole` | 25 | In progress |
-| `pkg/wireguard` | 1 | Pending |
+| `pkg/render` | 32 | Bodies reviewed; integration in progress |
+| `pkg/resource` | 3 | Bodies reviewed; integration in progress |
+| `pkg/resourcequery` | 2 | Bodies reviewed; integration in progress |
+| `pkg/sam` | 1 | Bodies reviewed; integration in progress |
+| `pkg/samenrollment` | 1 | Bodies reviewed; integration in progress |
+| `pkg/servicemgr` | 1 | Bodies reviewed; integration in progress |
+| `pkg/source/daemon` | 1 | Bodies reviewed; integration in progress |
+| `pkg/state` | 12 | Bodies reviewed; integration in progress |
+| `pkg/status` | 2 | Bodies reviewed; integration in progress |
+| `pkg/subprocessio` | 1 | Bodies reviewed; integration in progress |
+| `pkg/sysctlprofile` | 2 | Bodies reviewed; integration in progress |
+| `pkg/tailscale` | 1 | Bodies reviewed; integration in progress |
+| `pkg/version` | 1 | Bodies reviewed; integration in progress |
+| `pkg/vrf` | 1 | Bodies reviewed; integration in progress |
+| `pkg/vxlan` | 1 | Bodies reviewed; integration in progress |
+| `pkg/webconsole` | 25 | Bodies reviewed; integration in progress |
+| `pkg/wireguard` | 1 | Bodies reviewed; integration in progress |
 
 ## Other surfaces
 
 - Web console source and generated assets: refresh, current-config snapshots and
   diff paths reviewed and fixed; remaining UI/enrichment review is pending.
-- Shell/Python test and lab tools: pending semantic review.
+- Shell/Python test and lab tools: semantic review in progress; full remaining release/lab bodies are not yet reviewed.
 - Build, installation, packaging, release and platform integration: installer
   config/restart-result paths reviewed and fixed; remaining review is pending.
 - Schemas/examples/operator documentation: update contracts changed here; complete
@@ -553,3 +557,135 @@ results. GitHub Actions completion is not awaited.
   acceptance/independent network peers, native kernel/supervisor crash recovery,
   native FreeBSD execution and PVE management/traffic qualification. The browser
   regression above does not replace these gates.
+
+## Second semantic pass, 2026-10-29
+
+The first native-ownership checkpoint is published as `64b29b8`. This additional
+pass continues the repository-wide work; it is not a release or a completion
+claim. The table records source reading, while the following lists distinguish
+implemented paths from the remaining integration work.
+
+### Implemented paths and scope-local evidence
+
+- Provider operations: one database-side process guard, running-only result CAS,
+  pending undo, explicit unknown forward/undo results and no age-based requeue.
+  Unknown results fence other keys as well. `action resolve` records independently
+  verified operator evidence under that same guard. Target/parameters/undo remain
+  typed inward and are decoded strictly at SQLite. Completed undo invalidates the
+  earlier capture assignment; unresolved transitions are protective, never proof
+  of successful ownership. Actual SQLite/process/CLI race fixtures pass.
+- Federation: group identity is bound to authenticated input; an event ID binds
+  its complete immutable fact. Refresh cannot replace its payload/group/source.
+  Arithmetic, body bounds, expiry and cancellation are enforced at their owning
+  boundaries. Actual applied/pending SAM receipts prevent self-capture feedback
+  after a failed native withdrawal. Loopback/SQLite/native-command-fixture races
+  pass; native packet communication remains a separate gate.
+- Subscription and exporter lifetime: stop/cancel waits for the actual owner;
+  generation replacement cannot outlive an unacknowledged predecessor. A blocked
+  exporter retains the actual cluster lease until it exits. Subscription desired
+  output and whole-batch deduplication commit together. Archive sink selection
+  fails before deleting if any required destination is absent, disabled or would
+  filter the archive record. Real process/SQLite/flock/webhook fixtures pass.
+- Configuration/API: strict YAML/JSON shapes, catalog-consistent kind/API groups,
+  exact metadata and explicit unsupported-selector diagnostics. The migrated required current
+  resource reads return errors instead of silently choosing absence/fallback.
+  Control requests reject unknown intent/trailing bodies and share the encoded
+  size budget with clients. Complete response decoding does not confirm a partial
+  response. Plugin credential headers are removed at the IPC boundary, and a slow
+  manual plugin cannot overwrite concurrent publication. Focused races pass.
+- State: malformed present variables, null native receipts and null/malformed PD
+  authority are errors, preserving the source record through failed writes.
+  Variable decoding no longer serializes internal status just to reinterpret it.
+  Event attribute corruption fails the required event read. Provider journal
+  timestamps and shapes are validated at the SQLite boundary. Shared-writer
+  event budgeting notices external commits through SQLite data_version.
+- Native/runtime boundaries: BFD and static VIP/CARP record pending intent and
+  exact ownership before effects; failed cleanup retains receipts. PPP status is
+  bound to the current desired supervisor token and public session identity.
+  Ingress fallback is bound to the current target. Required source read errors,
+  failed native effects and failed result publication remain failures. Native
+  BFD/CARP/PPP communication and target FreeBSD behavior remain unqualified.
+- Auxiliary workers: generation-bound PPP observations and secret-safe logs;
+  exact VMAC parent/type/mode ownership; bounded NFLOG/DPI/ARP packet reads;
+  fingerprint transaction identity; explicit firewall verdicts; owned child/socket
+  shutdown. Ordinary fixtures do not mutate host networking. Optional libndpi
+  builds and native independent-peer behavior are not established here.
+- Console/observation: complete snapshot accounting, accurate FreeBSD PF tuples,
+  explicit unavailable/empty/declaration states, current bounded redacted diffs,
+  request/SSE cancellation, IAID/DUID distinction and no fabricated MAC vendors,
+  reachability, byte counts or firewall classifications. Actual Chromium and Go
+  HTTP/SQLite regressions pass. The full handwritten UI body pass is complete;
+  the routerctl/routerd diagnostic and effect bodies have now also been read.
+  The separately recorded defects remain open implementation work.
+
+### Still open at this pass
+
+- Validate the integrated native Bridge and WireGuard ownership changes,
+  including boot, peer/member changes, foreign resources, failed cleanup and
+  restart. Scope-local fixture/race tests pass; global gates are recorded below.
+  Native networking and peer behavior remain separate acceptance gates.
+- Mobility core, BGP, command, packaging, release and lab-driver body reviews
+  identified the concrete findings linked below. Reading those bodies does not
+  establish compliance; the recorded implementation gaps still require repair.
+- Required production resourcequery consumers now use error-bearing reads.
+  Static exact /64 RA ranges are emitted, but dynamic prefix selection and finite
+  lifetime semantics remain open. Prefix/PrefixFrom must match native output.
+- Distributed capture assignment retains all configured non-drained members;
+  automatic dead-member redistribution is not implemented safely. Existing local
+  generations, BGP marker absence and per-host file locks are not cross-node
+  fencing authority. Current provider executors also classify ambiguous mutating
+  CLI failures as ordinary failures; their complete unknown-outcome contract
+  still needs correction before claiming safe cloud retry/recovery.
+- Linux VXLANSegment has no confirmed live owner in the actual caller path;
+  FreeBSD VXLAN stop receipts still need protection against a same-name foreign
+  replacement. These are source implementation findings.
+- Packaging/release/lab follow-up includes restart/rollback ordering, safe liveISO
+  mount cleanup and firstboot validation ordering, durable mutation launch before
+  child effects, pinned admission inputs, exact process/token cleanup and truthful
+  measured protocol results. Remaining CLI bodies also expose unchecked duration
+  arithmetic, lossy observation reads and mutation before output validation.
+- FreeBSD 14.3 forward-zone FirewallRule parity is unfinished. This pass rejects
+  unsupported forwarding rules rather than silently ignoring ToZone; supported
+  router-input rules remain separately scoped. A complete outgoing/tagging design
+  and native qualification are still required for cross-zone parity.
+- The integrated local gates below have run after source convergence. Their
+  results do not close the remaining implementation or native acceptance gaps.
+- Unrestricted Unix/raw/Netlink, PVE, independent peers, provider-cloud mutations,
+  physical NICs and native FreeBSD qualification remain unrun in this environment.
+
+The follow-up body review identified further concrete native, BGP, command and
+release defects. Their exact repair boundaries are recorded in
+[routerd15-open-findings.md](routerd15-open-findings.md). They remain implementation
+work even where existing tests pass. Source reading is not a compliance verdict.
+
+### Integrated validation of the second semantic checkpoint
+
+Final source convergence was checked on 2026-10-29 with Go 1.25.9 and
+ShellCheck 0.10.0, before committing this checkpoint.
+
+- PASS: `make check-routerd15-focused check-schema check-website-schemas`,
+  including recovery/robustness tests and vet. Generated schema content and the
+  website copies agree.
+- PASS: `make check-freebsd-cross-compile build-daemons
+  build-provider-executors check-linux-static`. This compiles FreeBSD tests; it
+  does not execute them on FreeBSD. Linux release binaries use CGO_ENABLED=0.
+- COMPLETE RUN, NOT PASS: `go test -json ./... -timeout 180s` yielded 103 passing
+  packages, 14 failing packages and 9 packages without tests. All 52 failing
+  top-level tests require forbidden AF_UNIX listeners, directly or through a
+  startup timeout; the two failing subtests are the same restriction. Assertions
+  were retained. Ten real integration failures from the preceding run were fixed
+  and rerun: subscription lifetime, lifecycle catalog, NAT fixtures, native MTU
+  expectations and reviewed golden output. No unexplained failure remains in
+  this run, but the complete gate has not passed here.
+- PASS: whole-repository test compilation; full golden normal/race tests; actual
+  Chromium console regressions; UI typecheck/build; wizard fixture regeneration
+  and schema validation. All eight wizard configurations also passed production
+  config admission. The full wizard daemon gate is blocked by AF_UNIX.
+- PASS: final subscription normal/race repetition (20 runs each), final VRRP/CARP
+  race regressions, and the required WG/CARP driver syntax/config render checks.
+- NOT RUN: production Unix HTTP roundtrips, isolated kernel/netns communication,
+  real provider mutations, native FreeBSD/PVE/independent-peer qualification and
+  optional libndpi builds. No GitHub Actions result was awaited.
+
+The focused gate deliberately remains separate from the complete gate. The
+concrete open findings above remain work even when their existing tests pass.

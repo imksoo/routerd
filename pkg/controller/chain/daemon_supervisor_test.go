@@ -123,6 +123,8 @@ func TestSupervisedDaemonAlreadyCanceledReportsCompletion(t *testing.T) {
 }
 
 func TestReconcileSupervisedDaemonSpecsStopsStaleDaemon(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
 	useSupervisedDaemonMarkerTestRoot(t)
 	canceled := false
 	runner := &Runner{
@@ -134,6 +136,7 @@ func TestReconcileSupervisedDaemonSpecsStopsStaleDaemon(t *testing.T) {
 					Args:         []string{"daemon", "--resource", "stale-pd"},
 				},
 				Cancel: func() { canceled = true },
+				Done:   done,
 			},
 		},
 	}
@@ -173,10 +176,8 @@ func TestSupervisedDaemonCrashRestartAdoptsExactOwnedToken(t *testing.T) {
 	_ = root
 	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
 	t.Cleanup(func() { supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady })
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess {
-		{
-			return []supervisedDaemonProcess{{PID: 4242, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --interface vtnet0 --supervisor-owner owned-token"}}
-		}
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+		return []supervisedDaemonProcess{{PID: 4242, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --interface vtnet0 --supervisor-owner owned-token"}}, nil
 	}
 	supervisedDaemonSocketReady = func(string) bool { return true }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,8 +203,8 @@ func TestSupervisedDaemonSurvivesGenerationAndStopsWithServe(t *testing.T) {
 	}
 	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
 	t.Cleanup(func() { supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady })
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess {
-		return []supervisedDaemonProcess{{PID: 4242, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --supervisor-owner owned-token"}}
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+		return []supervisedDaemonProcess{{PID: 4242, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --supervisor-owner owned-token"}}, nil
 	}
 	supervisedDaemonSocketReady = func(string) bool { return true }
 	serve, stopServe := context.WithCancel(context.Background())
@@ -251,7 +252,7 @@ func TestSupervisedDaemonDeletedResourceStopsOwnedOrphanAndRemovesMarker(t *test
 	processes := []supervisedDaemonProcess{{PID: marker.PID, Command: "/usr/local/sbin/routerd-dhcpv6-client daemon --resource wan-pd --supervisor-owner owned-token"}}
 	oldProcesses, oldSignal := supervisedDaemonProcesses, supervisedDaemonSignal
 	t.Cleanup(func() { supervisedDaemonProcesses, supervisedDaemonSignal = oldProcesses, oldSignal })
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return processes }
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) { return processes, nil }
 	var signals []syscall.Signal
 	supervisedDaemonSignal = func(pid int, sig syscall.Signal) error {
 		signals = append(signals, sig)
@@ -281,7 +282,7 @@ func TestSupervisedDaemonChangedSpecStopsOwnedOrphanAndRemovesMarker(t *testing.
 	t.Cleanup(func() {
 		supervisedDaemonProcesses, supervisedDaemonSocketReady, supervisedDaemonSignal = oldProcesses, oldReady, oldSignal
 	})
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return processes }
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) { return processes, nil }
 	supervisedDaemonSocketReady = func(string) bool { return true }
 	var signals []syscall.Signal
 	supervisedDaemonSignal = func(pid int, sig syscall.Signal) error {
@@ -309,8 +310,8 @@ func TestSupervisedDaemonMarkerlessReadySocketIsForeign(t *testing.T) {
 	t.Cleanup(func() {
 		supervisedDaemonProcesses, supervisedDaemonSocketReady, supervisedDaemonSignal = oldProcesses, oldReady, oldSignal
 	})
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess {
-		return []supervisedDaemonProcess{{PID: 4444, Command: "/usr/local/sbin/routerd-pppoe-client daemon --resource wan --supervisor-owner foreign-token"}}
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+		return []supervisedDaemonProcess{{PID: 4444, Command: "/usr/local/sbin/routerd-pppoe-client daemon --resource wan --supervisor-owner foreign-token"}}, nil
 	}
 	supervisedDaemonSocketReady = func(string) bool { return true }
 	supervisedDaemonSignal = func(int, syscall.Signal) error { t.Fatal("markerless foreign daemon must not be signaled"); return nil }
@@ -344,7 +345,7 @@ func TestRouterdDaemonCommandMatchesExactBinaryResourceAndToken(t *testing.T) {
 }
 
 func TestFreeBSDSupervisedDaemonPSCommandSeparatesPIDAndCommandFields(t *testing.T) {
-	got := freeBSDSupervisedDaemonPSCommand().Args
+	got := freeBSDSupervisedDaemonPSCommand(context.Background()).Args
 	want := []string{"ps", "-axww", "-o", "pid=", "-o", "command="}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("ps argv = %q, want %q", got, want)
@@ -355,13 +356,13 @@ func TestMatchingOwnedSupervisedDaemonPIDRejectsPIDReuse(t *testing.T) {
 	old := supervisedDaemonProcesses
 	t.Cleanup(func() { supervisedDaemonProcesses = old })
 	marker := supervisedDaemonMarker{Binary: "routerd-dhcpv4-client", Resource: "wan", OwnerToken: "exact", PID: 5151}
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess {
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
 		return []supervisedDaemonProcess{
 			{PID: 5150, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --supervisor-owner exact"},
 			{PID: 5151, Command: "/usr/local/sbin/routerd-dhcpv4-client daemon --resource wan --supervisor-owner exact"},
-		}
+		}, nil
 	}
-	if got := matchingOwnedSupervisedDaemonPIDs(marker); len(got) != 1 || got[0] != 5151 {
+	if got, err := matchingOwnedSupervisedDaemonPIDs(marker); err != nil || len(got) != 1 || got[0] != 5151 {
 		t.Fatalf("owned PIDs = %#v, want only recorded PID", got)
 	}
 }

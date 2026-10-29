@@ -112,3 +112,37 @@ func changeToRepositoryRoot(t *testing.T) {
 		}
 	})
 }
+
+func TestSchemaIncludesSupportedStaticNetworkKindsAndRejectsUnsupportedIntent(t *testing.T) {
+	changeToRepositoryRoot(t)
+	encoded, err := json.Marshal(configSchema())
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(encoded)
+	for _, kind := range []string{"Bridge", "VXLANSegment", "IPv6StaticRoute"} {
+		if !strings.Contains(schema, `"kind":{"const":"`+kind+`"`) {
+			t.Fatalf("schema omitted working static resource %s", kind)
+		}
+	}
+	if !strings.Contains(schema, `"maxLength":0`) {
+		t.Fatal("schema still permits unimplemented provider execution window")
+	}
+	if strings.Contains(schema, `"enum":["stdout","syslog","loki","kafka"]`) {
+		t.Fatal("schema still advertises unavailable Kafka exporter")
+	}
+}
+
+func TestMetadataSchemaMatchesTypedConfigurationBoundary(t *testing.T) {
+	changeToRepositoryRoot(t)
+	schema := metadataSchema()
+	properties := schema["properties"].(map[string]any)
+	for _, field := range []string{"name", "ownerRefs", "annotations"} {
+		if properties[field] == nil {
+			t.Fatalf("schema rejects admitted ObjectMeta.%s", field)
+		}
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatal("metadata unknown fields must remain closed")
+	}
+}

@@ -34,15 +34,16 @@ var runFreeBSDPPPoEObserverCommand = func(ctx context.Context, name string, args
 }
 
 var freeBSDPPPoEInterfaceExists = func(ctx context.Context, ifname string) (bool, error) {
-	_, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", ifname)
-	if err == nil {
-		return true, nil
+	out, err := runFreeBSDPPPoEObserverCommand(ctx, "ifconfig", "-l")
+	if err != nil {
+		return false, fmt.Errorf("inspect FreeBSD PPPoE interface %q ownership: %w", ifname, err)
 	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
-		return false, nil
+	for _, name := range strings.Fields(string(out)) {
+		if name == ifname {
+			return true, nil
+		}
 	}
-	return false, fmt.Errorf("inspect FreeBSD PPPoE interface %q ownership: %w", ifname, err)
+	return false, nil
 }
 
 func ensureFreeBSDPPPoEInterfaceAbsent(ctx context.Context, ifname string) error {
@@ -88,7 +89,7 @@ func (d *daemon) watchFreeBSDPPPoEInterface(cmd *exec.Cmd, ifname string) {
 	defer ticker.Stop()
 	for {
 		d.mu.Lock()
-		active := d.cmd == cmd && d.snapshot.Phase != pppoeclient.PhaseFailed && d.snapshot.Phase != pppoeclient.PhaseDisconnecting
+		active := d.cmd == cmd && !d.teardownFailed && d.snapshot.Phase != pppoeclient.PhaseDisconnecting
 		d.mu.Unlock()
 		if !active {
 			return
@@ -99,10 +100,28 @@ func (d *daemon) watchFreeBSDPPPoEInterface(cmd *exec.Cmd, ifname string) {
 		cancel()
 		if err == nil {
 			d.recordFreeBSDPPPoEObservation(cmd, observation)
+		} else {
+			d.recordFreeBSDPPPoEObservationError(cmd, err)
 		}
 
 		<-ticker.C
 	}
+}
+
+func (d *daemon) recordFreeBSDPPPoEObservationError(cmd *exec.Cmd, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.cmd != cmd || d.teardownFailed || d.snapshot.Phase != pppoeclient.PhaseConnected {
+		return
+	}
+	d.snapshot.Phase = pppoeclient.PhaseIPCP
+	d.snapshot.CurrentAddress, d.snapshot.PeerAddress = "", ""
+	d.snapshot.DNSServers = nil
+	d.snapshot.ConnectedAt = time.Time{}
+	d.snapshot.LastError = err.Error()
+	d.snapshot.UpdatedAt = time.Now().UTC()
+	_ = d.saveStateLocked()
+	d.publishLocked("routerd.pppoe.client.session.unavailable", daemonapi.SeverityWarning, "ObservationFailed", err.Error(), nil)
 }
 
 func (d *daemon) recordFreeBSDPPPoEObservation(cmd *exec.Cmd, observation freeBSDPPPoEObservation) {
@@ -111,7 +130,7 @@ func (d *daemon) recordFreeBSDPPPoEObservation(cmd *exec.Cmd, observation freeBS
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.cmd != cmd || d.snapshot.Phase == pppoeclient.PhaseFailed || d.snapshot.Phase == pppoeclient.PhaseDisconnecting {
+	if d.cmd != cmd || d.teardownFailed || d.snapshot.Phase == pppoeclient.PhaseDisconnecting {
 		return
 	}
 	previous := d.snapshot.Phase

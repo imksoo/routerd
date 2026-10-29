@@ -63,9 +63,9 @@ func TestReloadEnablesReplacesAndDisablesQueryLog(t *testing.T) {
 			t.Fatalf("query log did not switch to %s", config.Spec.QueryLog.Path)
 		}
 		d.recordQuery("192.0.2.1:53000", request, resolveResult{ResponseCode: "NOERROR"}, time.Millisecond)
-		rows, err := active.List(context.Background(), logstore.DNSQueryFilter{Limit: 10})
-		if err != nil || len(rows) != 1 || rows[0].QuestionName != "router.lab.example" {
-			t.Fatalf("query was not recorded in replacement log: rows=%+v error=%v", rows, err)
+		_, rows := awaitQueryHistory(t, d, 1)
+		if len(rows) != 1 || rows[0].QuestionName != "router.lab.example" {
+			t.Fatalf("query was not recorded in replacement log: rows=%+v", rows)
 		}
 		if _, err := d.reload(context.Background()); err != nil {
 			t.Fatal(err)

@@ -641,11 +641,8 @@ type ActionCheck struct {
 	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
-// ActionUndo describes the inverse provider operation for display only.
-type ActionUndo struct {
-	Action     string            `yaml:"action" json:"action"`
-	Parameters map[string]string `yaml:"parameters,omitempty" json:"parameters,omitempty"`
-}
+// ActionUndo is the inverse operation used by the gated provider executor.
+type ActionUndo = api.ProviderActionUndo
 
 // IsExpired reports whether the part's expiresAt timestamp is at or before now.
 func (p *DynamicConfigPart) IsExpired(now time.Time) bool {

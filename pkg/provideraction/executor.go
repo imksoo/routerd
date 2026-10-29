@@ -96,7 +96,7 @@ func RunExecutor(ctx context.Context, spec api.PluginSpec, req ExecuteActionRequ
 	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	runErr := cmd.Run()
+	runErr := subprocessio.Run(cmd)
 	duration := time.Since(started)
 
 	outcome := RunOutcome{
@@ -124,6 +124,11 @@ func RunExecutor(ctx context.Context, spec api.PluginSpec, req ExecuteActionRequ
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		err = fmt.Errorf("decode executor %s stdout: %w", spec.Executable, err)
+		outcome.Error = err.Error()
+		return result, outcome, err
+	}
+	if result.APIVersion != ProtocolAPIVersion || result.Kind != KindExecuteActionResult {
+		err := fmt.Errorf("executor %s returned unsupported result envelope %q %q", spec.Executable, result.APIVersion, result.Kind)
 		outcome.Error = err.Error()
 		return result, outcome, err
 	}

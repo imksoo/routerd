@@ -60,7 +60,7 @@ func (h Handler) Snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 	}
 	var connections *observe.ConnectionTable
 	if h.opts.Connections != nil && opts.ConnectionsLimit >= 0 {
-		connections, err = h.opts.Connections(opts.ConnectionsLimit)
+		connections, err = h.opts.Connections(ctx, opts.ConnectionsLimit)
 		if err != nil {
 			errors = append(errors, err.Error())
 		} else {
@@ -73,7 +73,9 @@ func (h Handler) Snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		} else {
 			applyConnectionTablePortFallback(connections)
 		}
-		h.enrichConnectionsWithLocalRedirect(connections)
+		if err := h.enrichConnectionsWithLocalRedirect(connections); err != nil {
+			errors = append(errors, err.Error())
+		}
 		if err := h.enrichConnectionsWithRemoteIdentity(ctx, connections); err != nil {
 			errors = append(errors, err.Error())
 		}
@@ -137,7 +139,9 @@ func (h Handler) Snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		if err := h.enrichFirewallLogsWithRemoteIdentity(ctx, firewallLogs); err != nil {
 			errors = append(errors, err.Error())
 		}
-		h.enrichFirewallLogsWithAddressSets(firewallLogs)
+		if err := h.enrichFirewallLogsWithAddressSets(firewallLogs); err != nil {
+			errors = append(errors, err.Error())
+		}
 	}
 	var conntrackTuning *conntracktuning.Summary
 	if opts.IncludeConntrackTuning {
@@ -227,8 +231,7 @@ func (h Handler) Snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		Controllers:      controllers,
 		GatewayHealth:    gatewayHealth(resources),
 		Phases:           phaseCounts(resources),
-		Resources:        resources,
-		Interfaces:       h.interfaceSummaries(resources),
+		Resources:        h.resourceRows(resources),
 		Events:           events,
 		Connections:      connections,
 		DNSQueries:       dnsQueries,
@@ -243,6 +246,9 @@ func (h Handler) Snapshot(ctx context.Context, opts SnapshotOptions) Snapshot {
 		DPI:              dpiStatus,
 		SystemUsage:      systemUsage,
 		Errors:           errors,
+	}
+	if snapshot.collected(SectionResources) {
+		snapshot.Interfaces = h.interfaceSummaries(resources)
 	}
 	getConsoleMetrics().record(ctx, snapshot, stickyLeases, now)
 	return snapshot
@@ -298,5 +304,5 @@ func (h Handler) resources(w http.ResponseWriter) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, resources)
+	writeJSON(w, h.resourceRows(resources))
 }

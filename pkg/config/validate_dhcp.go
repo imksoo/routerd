@@ -35,6 +35,15 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 		if spec.Prefix == "" && spec.PrefixFrom.Resource == "" {
 			return true, fmt.Errorf("%s spec.prefix or spec.prefixFrom is required", res.ID())
 		}
+		if spec.Prefix != "" && spec.PrefixFrom.Resource != "" {
+			return true, fmt.Errorf("%s spec.prefix and spec.prefixFrom cannot both be set", res.ID())
+		}
+		if spec.Prefix != "" {
+			prefix, err := netip.ParsePrefix(spec.Prefix)
+			if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 64 {
+				return true, fmt.Errorf("%s spec.prefix must be an IPv6 /64 supported by dnsmasq RA", res.ID())
+			}
+		}
 		if spec.MTU != 0 && (spec.MTU < 1280 || spec.MTU > 65535) {
 			return true, fmt.Errorf("%s spec.mtu must be within 1280-65535", res.ID())
 		}

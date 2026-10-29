@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# Exercise current routerd FreeBSD WireGuard rc.d rendering against a real
-# if_wg peer, then carry a unicast VXLAN over that encrypted underlay.
+# Exercise the current routerd WireGuard actor and its persisted ownership
+# journal against an if_wg peer, then configure VXLAN over that underlay.
 set -eu
 
 routerd=
@@ -19,6 +19,7 @@ done
 [ "$(uname -s)" = FreeBSD ]
 command -v wg >/dev/null
 command -v jq >/dev/null
+command -v sqlite3 >/dev/null
 
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-wireguard-runtime.XXXXXX)
@@ -27,13 +28,47 @@ peer_if=rdwg1
 client_vx=rdvx0
 peer_vx=rdvx1
 client_bridge=rdbr0
-client_script=
 client_started=0
+foreign_client_created=0
 peer_created=0
 vx_script=
 vx_started=0
 peer_vx_created=0
 bridge_created=0
+state="$work/state.db"
+ledger="$work/ledger.db"
+empty_config="$work/empty.yaml"
+cat >"$empty_config" <<'EOF'
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: lifecycle-wireguard-vxlan}
+spec: {resources: []}
+EOF
+
+apply_wireguard() {
+  label=$1
+  config=$2
+  "$routerd" serve --once --controllers wireguard,ipv4-static-address \
+    --config "$config" --state-file "$state" --ledger-file "$ledger" \
+    --status-file "$work/status-$label.json" --socket "$work/api-$label.sock" \
+    --status-socket "$work/status-$label.sock"
+}
+
+observe_wireguard() {
+  label=$1
+  sqlite3 "$state" "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='WireGuardInterface' AND name='$client_if';" >"$evidence_dir/wireguard-$label.json"
+  jq -e --arg ifname "$client_if" '.phase == "Up" and .ifname == $ifname and .peerCount == 1' "$evidence_dir/wireguard-$label.json" >/dev/null
+  sqlite3 "$state" "SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='wireguard-native';" >"$evidence_dir/wireguard-native-$label.json"
+  jq -e --arg ifname "$client_if" '.interfaces | length == 1 and .[0].name == $ifname and .[0].resource == $ifname and .[0].os == "freebsd" and .[0].pending == false and (.[0].token | length == 32)' "$evidence_dir/wireguard-native-$label.json" >/dev/null
+}
+
+capture_wireguard_traffic() {
+  label=$1
+  # wg dump includes the interface private key and peer PSK. Keep only the
+  # public identity, endpoint, handshake and transfer observations as evidence.
+  wg show "$client_if" dump | awk 'BEGIN { FS=OFS="\t" } NR==1 {$1="[REDACTED]"} NR>1 {$2="[REDACTED]"} {print}' >"$evidence_dir/wireguard-dump-$label.log"
+  awk -F '\t' 'NR == 2 && $5 > 0 && ($6 + $7) > 0 { ok=1 } END { exit ok ? 0 : 1 }' "$evidence_dir/wireguard-dump-$label.log"
+}
 
 cleanup() {
   rc=$?
@@ -55,7 +90,10 @@ cleanup() {
     ifconfig "$client_bridge" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
   if [ "$client_started" -eq 1 ]; then
-    "$client_script" onestop >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
+    apply_wireguard cleanup "$empty_config" >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
+  fi
+  if [ "$foreign_client_created" -eq 1 ]; then
+    ifconfig "$client_if" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
   if [ "$peer_created" -eq 1 ]; then
     ifconfig "$peer_if" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
@@ -90,7 +128,9 @@ wg set "$peer_if" listen-port 51891 private-key "$peer_key" peer "$client_pub" \
 ifconfig "$peer_if" inet 10.250.89.2/24 alias
 ifconfig "$peer_if" up
 
-cat >"$work/router.yaml" <<EOF
+write_router() {
+  mtu=$1
+  cat >"$work/router.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
@@ -102,9 +142,10 @@ spec:
       metadata:
         name: $client_if
       spec:
-        ifName: $client_if
+        ifname: $client_if
         privateKeyFile: $client_key
         listenPort: 51890
+        mtu: $mtu
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata:
@@ -129,7 +170,7 @@ spec:
       metadata:
         name: $client_vx
       spec:
-        ifName: $client_vx
+        ifname: $client_vx
         vni: 899
         localAddress: 10.250.89.1
         remotes:
@@ -141,26 +182,42 @@ spec:
       metadata:
         name: $client_bridge
       spec:
-        ifName: $client_bridge
+        ifname: $client_bridge
         members:
           - $client_vx
 EOF
+}
+write_router 1420
 "$routerd" render freebsd --config "$work/router.yaml" --out-dir "$work/rendered" >"$evidence_dir/render.log"
-client_script="$work/rendered/rc.d-routerd_wireguard_$client_if"
-test -x "$client_script"
-grep -F "kldload if_wg" "$client_script" >"$evidence_dir/render-wireguard.log"
+test ! -e "$work/rendered/rc.d-routerd_wireguard_$client_if"
 vx_script="$work/rendered/rc.d-routerd_vxlan_$client_vx"
 test -x "$vx_script"
 grep -F "vxlanid' '899'" "$vx_script" >"$evidence_dir/render-vxlan.log"
 grep -F "vxlanremote' '10.250.89.2'" "$vx_script" >>"$evidence_dir/render-vxlan.log"
 grep -F "vxlandev' '$client_if'" "$vx_script" >>"$evidence_dir/render-vxlan.log"
 
-"$client_script" start >"$evidence_dir/wireguard-start.log" 2>&1
+# Mark the attempt before mutation: the actor may have a pending receipt even
+# if its first application fails, and cleanup must use that same SQLite owner.
 client_started=1
-"$client_script" onestatus >"$evidence_dir/wireguard-status-initial.log" 2>&1
+apply_wireguard boot "$work/router.yaml" >"$evidence_dir/wireguard-boot.log" 2>&1
+observe_wireguard boot
 ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-initial.log"
-wg show "$client_if" dump >"$evidence_dir/wireguard-dump-initial.log"
-awk -F '\t' 'NR == 2 && $5 > 0 && ($6 + $7) > 0 { ok=1 } END { exit ok ? 0 : 1 }' "$evidence_dir/wireguard-dump-initial.log"
+capture_wireguard_traffic initial
+# Every invocation is a new routerd process. The persisted receipt must permit
+# an unchanged restart to observe ownership without creating another owner.
+apply_wireguard restart "$work/router.yaml" >"$evidence_dir/wireguard-restart.log" 2>&1
+observe_wireguard restart
+jq -e '.reason == "AlreadyConfigured"' "$evidence_dir/wireguard-restart.json" >/dev/null
+cmp "$evidence_dir/wireguard-native-boot.json" "$evidence_dir/wireguard-native-restart.json"
+write_router 1380
+apply_wireguard reload "$work/router.yaml" >"$evidence_dir/wireguard-reload.log" 2>&1
+observe_wireguard reload
+ifconfig "$client_if" >"$evidence_dir/wireguard-interface-reload.log"
+grep -E 'mtu 1380([[:space:]]|$)' "$evidence_dir/wireguard-interface-reload.log"
+jq -e '.mtu == 1380' "$evidence_dir/wireguard-reload.json" >/dev/null
+cmp "$evidence_dir/wireguard-native-boot.json" "$evidence_dir/wireguard-native-reload.json"
+ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-reload.log"
+capture_wireguard_traffic reload
 
 ifconfig "$peer_vx" create >>"$evidence_dir/vxlan-create.log" 2>&1 || \
   ifconfig vxlan create name "$peer_vx" >>"$evidence_dir/vxlan-create.log" 2>&1
@@ -202,29 +259,33 @@ fi
 ifconfig "$client_vx" >"$evidence_dir/vxlan-foreign-preserved.log"
 ifconfig "$client_vx" destroy >>"$evidence_dir/vxlan-foreign-preserved.log" 2>&1
 
-"$client_script" onerestart >"$evidence_dir/wireguard-restart.log" 2>&1
-ping -S 10.250.89.1 -c 3 10.250.89.2 >"$evidence_dir/wireguard-ping-restart.log"
-wg show "$client_if" dump >"$evidence_dir/wireguard-dump-restart.log"
-awk -F '\t' 'NR == 2 && $5 > 0 && ($6 + $7) > 0 { ok=1 } END { exit ok ? 0 : 1 }' "$evidence_dir/wireguard-dump-restart.log"
-"$client_script" onestop >"$evidence_dir/wireguard-stop.log" 2>&1
+apply_wireguard withdraw "$empty_config" >"$evidence_dir/wireguard-withdraw.log" 2>&1
 client_started=0
 if ifconfig "$client_if" >/dev/null 2>&1; then
   echo "routerd-owned WireGuard interface survived stop" >&2
   exit 1
 fi
-# A manually created same-name interface is foreign. The generated service
+sqlite3 "$state" "SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='wireguard-native';" >"$evidence_dir/wireguard-native-withdraw.json"
+jq -e '.interfaces | length == 0' "$evidence_dir/wireguard-native-withdraw.json" >/dev/null
+# A manually created same-name interface is foreign. The actor
 # must reject it and leave it for the fixture owner to remove.
 ifconfig "$client_if" create >"$evidence_dir/wireguard-foreign-create.log" 2>&1 || \
   ifconfig wg create name "$client_if" >>"$evidence_dir/wireguard-foreign-create.log" 2>&1
-if "$client_script" start >"$evidence_dir/wireguard-foreign-refusal.log" 2>&1; then
-  echo "generated WireGuard service adopted a foreign interface" >&2
+foreign_client_created=1
+ifconfig "$client_if" >"$evidence_dir/wireguard-foreign-before.log"
+if apply_wireguard foreign "$work/router.yaml" >"$evidence_dir/wireguard-foreign-refusal.log" 2>&1; then
+  echo "WireGuard actor adopted a foreign interface" >&2
   exit 1
 fi
 ifconfig "$client_if" >"$evidence_dir/wireguard-foreign-preserved.log"
+cmp "$evidence_dir/wireguard-foreign-before.log" "$evidence_dir/wireguard-foreign-preserved.log"
 ifconfig "$client_if" destroy >>"$evidence_dir/wireguard-foreign-preserved.log" 2>&1
+foreign_client_created=0
 printf '%s\n' \
-  'wireguard-render-configure-handshake-observe-restart-stop=ok' \
-  'wireguard-foreign-interface=generated-refusal-preserved' \
+  'wireguard-actor-boot-handshake-observe-restart-reload-withdraw=ok' \
+  'wireguard-persisted-native-owner=one-stable-token' \
+  'wireguard-ping-forwarding=unverified-same-stack-fixture' \
+  'wireguard-foreign-interface=actor-refusal-preserved' \
   'vxlan-generated-configure-restart-stop=ok' \
   'vxlan-over-wireguard-forwarding=unverified-same-stack-fixture' \
   'vxlan-generated-bridge-attach-detach=ok' \

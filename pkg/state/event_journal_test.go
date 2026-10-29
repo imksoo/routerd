@@ -184,3 +184,35 @@ func TestWriteStorageAlertFilePreservesTimestamp(t *testing.T) {
 		t.Fatalf("alert file: %v %s", err, data)
 	}
 }
+
+func TestEventJournalBudgetIncludesOtherLiveDatabaseWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	first, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	for _, store := range []*SQLiteStore{first, second} {
+		store.eventJournalMaxRows = 10
+		store.eventJournalMaxBytes = 1 << 20
+	}
+	for _, store := range []*SQLiteStore{first, second} {
+		for i := 0; i < 7; i++ {
+			if err := store.RecordEvent("v1", "Fixture", "item", "Normal", "Observed", "fixture"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var rows int
+	if err := first.db.QueryRow(`SELECT count(*) FROM events`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows > 10 {
+		t.Fatalf("external writer bypassed journal budget: %d rows", rows)
+	}
+}

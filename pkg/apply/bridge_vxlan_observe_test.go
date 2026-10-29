@@ -20,7 +20,7 @@ func TestMissingBridgeAndVXLANTunnelAreDriftedNotHealthy(t *testing.T) {
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx-l2", VNI: 200001, LocalAddress: "10.254.200.1", Peers: []string{"10.254.200.2"}, UnderlayInterface: "wg-l2", Bridge: "legacy-l2"}},
 		}},
 	}
-	engine := New()
+	engine := New(t.Context())
 	engine.Command = func(name string, args ...string) ([]byte, error) {
 		return nil, errors.New("not found")
 	}
