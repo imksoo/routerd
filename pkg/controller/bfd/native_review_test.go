@@ -96,3 +96,50 @@ func TestBFDReviewUnreadableCLIWithEmptyJSONRetainsReceipt(t *testing.T) {
 		t.Fatalf("unknown CLI became absence and forgot ownership: effects=%d actual=%+v previous=%+v reconcile=%v read=%v", writes, actual, previous, reconcileErr, readErr)
 	}
 }
+
+func TestBFDReviewPreApplyAbortCannotGrantOwnershipOnRetry(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSLinux, RuntimeDir: t.TempDir()}
+	foreignHeader := " peer 10.99.0.2 vrf default interface operator0"
+	at := strings.Index(nativePeersText, foreignHeader)
+	if at < 0 {
+		t.Fatal("missing foreign tuple fixture")
+	}
+	reads, writes, attempt := 0, 0, 0
+	controller.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "-f" {
+			writes++
+			return nil, errors.New("review blocked modification of independently created peers")
+		}
+		if args[1] == "show bfd peers json" {
+			reads++
+			if attempt == 0 {
+				return []byte("[" + foreignPeer + "]"), nil
+			}
+			return []byte("[" + nativePeerA + "," + nativePeerB + "," + foreignPeer + "]"), nil
+		}
+		if attempt == 0 && reads == 1 {
+			return []byte("BFD Peers:\n" + nativePeersText[at:]), nil
+		}
+		return []byte(nativePeersText), nil
+	}
+	firstErr := controller.Reconcile(t.Context())
+	if firstErr == nil || writes != 0 {
+		t.Fatalf("pre-apply mismatch did not abort before all native effects: writes=%d err=%v", writes, firstErr)
+	}
+	attempt = 1
+	secondErr := controller.Reconcile(t.Context())
+	adopted, readErr := controller.readNativeReceipt()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	controller.Router = &api.Router{}
+	withdrawErr := controller.Reconcile(t.Context())
+	if secondErr == nil || len(adopted.Held) != 0 || writes != 0 {
+		t.Fatalf("known no-effect abort became foreign ownership on retry: held=%+v effects=%d first=%v retry=%v removal=%v", adopted.Held, writes, firstErr, secondErr, withdrawErr)
+	}
+}
