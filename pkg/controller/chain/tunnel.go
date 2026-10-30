@@ -902,7 +902,7 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD {
-		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress)
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress, "alias")
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
