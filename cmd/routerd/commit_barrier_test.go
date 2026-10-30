@@ -19,6 +19,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
+	"github.com/imksoo/routerd/pkg/ha"
 	"github.com/imksoo/routerd/pkg/logstore"
 	"gopkg.in/yaml.v3"
 )
@@ -93,11 +94,38 @@ func TestCanonicalBarrierRequiresDurabilityAcknowledgement(t *testing.T) {
 }
 
 func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *testing.T) {
-	for _, mode := range []string{"rejected", "directory-sync", "durable"} {
+	for _, mode := range []string{"rejected", "directory-sync", "durable", "ha-leader", "add-ha"} {
 		t.Run(mode, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
 			opts.Sandbox = true
-			_, encoded, queryPath := barrierRetentionCandidate(t)
+			candidate, encoded, queryPath := barrierRetentionCandidate(t)
+			leasePath := ""
+			if mode == "ha-leader" || mode == "add-ha" {
+				opts.Sandbox = false
+				leasePath = filepath.Join(t.TempDir(), "cluster.lease")
+				cluster := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "RouterdCluster"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.RouterdClusterSpec{Identity: "local", Peers: []string{"local", "peer"}, LeasePath: leasePath}}
+				candidate.Spec.Resources = append(candidate.Spec.Resources, cluster)
+				data, err := yaml.Marshal(candidate)
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded = string(data)
+				if mode == "ha-leader" {
+					before, err := config.Load(opts.ConfigPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					before.Spec.Resources = append(before.Spec.Resources, cluster)
+					data, err := yaml.Marshal(before)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(opts.ConfigPath, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			committed := mode == "durable" || mode == "ha-leader" || mode == "add-ha"
 			current, err := config.Load(opts.ConfigPath)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +149,7 @@ func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *test
 				}
 			}()
 			failure := errors.New("candidate canonical write rejected")
-			if mode != "durable" {
+			if !committed {
 				opts.attemptHooks.writeCanonical = func(path string, data []byte) (config.AtomicWriteOutcome, error) {
 					if mode == "rejected" {
 						return config.AtomicWriteOutcome{}, failure
@@ -136,7 +164,7 @@ func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *test
 			}
 			mutator := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, applyRuntimeWithOutcome: runner.ApplyRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot}
 			result, err := mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: encoded, Replace: true})
-			if mode == "durable" {
+			if committed {
 				if err != nil || result == nil {
 					t.Fatalf("durable apply failed: %v", err)
 				}
@@ -154,13 +182,28 @@ func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *test
 			if err := db.QueryRow(`SELECT COUNT(*) FROM dns_queries WHERE question_name='sentinel.example'`).Scan(&count); err != nil {
 				t.Fatal(err)
 			}
-			if mode == "durable" {
+			if committed {
 				if count != 0 || current == initial || runner.ActiveRuntimeSnapshot().Router == initial {
 					t.Fatalf("durable candidate did not own actual retention effect/runtime: count=%d", count)
 				}
 			} else {
 				if count != 1 || current != initial || runner.ActiveRuntimeSnapshot().Router != initial {
 					t.Fatalf("rejected candidate activated actual worker: count=%d currentChanged=%t", count, current != initial)
+				}
+			}
+			if leasePath != "" {
+				probe, err := ha.Acquire(t.Context(), ha.Config{Identity: "observer", Peers: []string{"local", "observer"}, LeasePath: leasePath})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if probe.Lease != nil {
+					defer probe.Lease.Close()
+				}
+				if probe.Leader {
+					t.Fatal("live apply returned without the selected generation retaining its actual HA lease")
+				}
+				if result.Result.Phase == "Standby" {
+					t.Fatal("active leader misclassified itself through a second lease acquisition")
 				}
 			}
 			canonical, err := os.ReadFile(opts.ConfigPath)

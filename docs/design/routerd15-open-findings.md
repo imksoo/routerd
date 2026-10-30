@@ -166,8 +166,10 @@ Health/PD values. Failed writes, lost replies, restart and removal/readdition
 have actual SQLite regressions. One loop owns and joins timer work. The deadline
 does not prove continuous observation across downtime. Auxiliary engine
 activation follows selected runtime generation. Canonical durable replacement
-now precedes candidate workers, HTTP binding, PD reset and native reconciliation
-through one apply-attempt activation boundary. Rejected writes and unconfirmed
+now precedes candidate workers, HTTP binding, PD reset and native reconciliation.
+The selected Runner owns live HA admission, the apply attempt's canonical
+callback and required controller effects; live API does not acquire a second
+native lease or publish HTTP after terminal history. Rejected writes and unconfirmed
 fsync cannot activate the candidate; postcommit failures preserve new desired
 intent and report actual runtime separately. See
 [configuration activation](../reference/configuration-activation.md). Local

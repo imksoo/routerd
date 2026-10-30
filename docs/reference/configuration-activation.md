@@ -12,8 +12,13 @@ control API's apply/delete path use the same ordering:
 4. Record the actual terminal result and publish a response.
 
 The existing live mutation gate owns the transaction from reading its canonical
-base through activation and result publication. The native operation owner still
-coordinates serve, one-shot apply and rollback. Pending generation history and
+base through activation and result publication. The selected Runner admits a
+live request using its actual HA lease, consumes the canonical commit callback,
+and runs its selected controllers once. A generation replacement transfers the
+same locked lease descriptor without an unlock/reacquire gap. Adding HA obtains
+one lease before commit and hands that lease to the replacement generation.
+Standalone apply and rollback retain their existing native operation owner.
+Pending generation history and
 ordinary current-host inventory observations are bookkeeping; they do not
 activate a candidate. Candidate PD resets and warning events follow the commit.
 
@@ -42,17 +47,21 @@ configuration remains desired. An accepted reload whose actual state is unknown
 retains that uncertainty. A failed terminal history write or response write also
 does not reverse an acknowledged commit or manufacture success.
 
-The activation callback belongs to the existing apply attempt. It is called
-only after durable commit and before candidate effects; it does not create a
-second transaction or configuration writer. A commit-only request has no such
-callback. HTTP candidate binding and controller-generation preparation occur
-inside this committed activation boundary, not while the canonical write can
-still be rejected.
+The commit callback belongs to the existing apply attempt and is consumed at
+most once by the selected Runner after admission. It acknowledges durability
+before candidate activation. The existing control-http controller owns listener
+preparation and publication as a required effect; the API handler has no second
+HTTP publisher after terminal history. A failed effect returns an error before
+a successful terminal result. A selected controller graph is not proof that
+every native resource or HTTP listener has converged. A commit-only request does
+not enter the Runner.
 
 Local regressions use separate real SQLite DNS logs and the actual LogRetention
 controller/Runner to verify rejected writes cannot prune candidate logs, durable
 activation can, and an explicit durable retry works after unconfirmed fsync.
-Other regressions cover actual runtime cancellation after commit, admission
-failure, terminal failure and truthful desired/active snapshots. These checks do
+Other regressions cover actual runtime cancellation after commit, held-lease
+standby, live leader admission, introduction of HA, HTTP token and listener
+changes, bind failure and retry, terminal failure and truthful desired/active
+snapshots. These checks do
 not qualify native forwarding, native OS service installation or crash durability
 on target storage.

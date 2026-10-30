@@ -182,9 +182,20 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	console, _, err := webConsoleFromRouter(canonical, store)
-	activeConsole, _, activeErr := webConsoleFromRouter(current.Load(), store)
-	if err != nil || activeErr != nil || console.Title != "after recovery" || activeConsole.Title != "updated console" {
-		t.Fatalf("failed activation confused desired and active HTTP configuration: desired=%+v active=%+v errors=%v/%v", console, activeConsole, err, activeErr)
+	if err != nil || console.Title != "after recovery" {
+		t.Fatalf("failed activation lost committed desired HTTP configuration: %+v %v", console, err)
+	}
+	// The selected controller graph now owns the durable candidate. Its HTTP
+	// effect failed, so observe the published handler rather than treating that
+	// selected graph as proof that every resource has converged.
+	response, err = http.Get(webURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || !strings.Contains(string(body), "updated console") || strings.Contains(string(body), "after recovery") {
+		t.Fatalf("failed bind replaced the prior actual web handler: %q %v", body, readErr)
 	}
 	if _, err := client.Status(t.Context()); err != nil {
 		t.Fatalf("failed bind stopped prior listener: %v", err)
