@@ -52,7 +52,7 @@ case "$routerd:$evidence" in
   *) echo 'runner and evidence paths must be absolute' >&2; exit 2 ;;
 esac
 
-for command in ifconfig jail jexec kldload kldstat kldunload pfctl tcpdump ping sysctl; do
+for command in ifconfig jail jls jexec kldload kldstat kldunload pfctl tcpdump ping sysctl; do
   command -v "$command" >/dev/null 2>&1 || { echo "missing command: $command" >&2; exit 2; }
 done
 
@@ -95,19 +95,49 @@ cleanup() {
     pfctl -d >>"$evidence/pf-disable.log" 2>&1 || cleanup_rc=70
     pf_enabled=0
   fi
-  [ "$src_created" -eq 1 ] && jail -r "$src_jail" >>"$evidence/jail-cleanup.log" 2>&1
-  [ "$sink_a_created" -eq 1 ] && jail -r "$sink_a_jail" >>"$evidence/jail-cleanup.log" 2>&1
-  [ "$sink_b_created" -eq 1 ] && jail -r "$sink_b_jail" >>"$evidence/jail-cleanup.log" 2>&1
-  [ -n "$in_a" ] && ifconfig "$in_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
-  [ -n "$out_a" ] && ifconfig "$out_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
-  [ -n "$out2_a" ] && ifconfig "$out2_a" destroy >>"$evidence/interface-cleanup.log" 2>&1
-  [ -n "$forwarding" ] && sysctl net.inet.ip.forwarding="$forwarding" >>"$evidence/forwarding-restore.log" 2>&1
+  if [ "$src_created" -eq 1 ]; then
+    jail -r "$src_jail" >>"$evidence/jail-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ "$sink_a_created" -eq 1 ]; then
+    jail -r "$sink_a_jail" >>"$evidence/jail-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ "$sink_b_created" -eq 1 ]; then
+    jail -r "$sink_b_jail" >>"$evidence/jail-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ -n "$in_a" ]; then
+    ifconfig "$in_a" destroy >>"$evidence/interface-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ -n "$out_a" ]; then
+    ifconfig "$out_a" destroy >>"$evidence/interface-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ -n "$out2_a" ]; then
+    ifconfig "$out2_a" destroy >>"$evidence/interface-cleanup.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ -n "$forwarding" ]; then
+    sysctl net.inet.ip.forwarding="$forwarding" >>"$evidence/forwarding-restore.log" 2>&1 || cleanup_rc=70
+  fi
+  for name in "$src_jail" "$sink_a_jail" "$sink_b_jail"; do
+    if jls -j "$name" >/dev/null 2>&1; then cleanup_rc=70; fi
+  done
+  for name in "$in_a" "$out_a" "$out2_a"; do
+    if [ -n "$name" ] && ifconfig "$name" >/dev/null 2>&1; then cleanup_rc=70; fi
+  done
+  if [ -n "$forwarding" ]; then
+    restored=$(sysctl -n net.inet.ip.forwarding 2>>"$evidence/forwarding-restore.log") || cleanup_rc=70
+    [ "$restored" = "$forwarding" ] || cleanup_rc=70
+  fi
   if [ "$pf_loaded_by_runner" -eq 1 ]; then
     kldunload pf >>"$evidence/pf-kldunload.log" 2>&1 || cleanup_rc=70
+  fi
+  if [ "$cleanup_rc" -ne 0 ]; then
+    printf 'fixture cleanup or restoration failed\n' >>"$evidence/cleanup-failure.log"
   fi
   rm -rf "$work"
   if [ "$rc" -eq 0 ] && [ "$cleanup_rc" -ne 0 ]; then
     exit "$cleanup_rc"
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf 'freebsd-vnet-firewall-dataplane=ok\n' >"$evidence/result"
   fi
   exit "$rc"
 }
@@ -310,4 +340,3 @@ awk '
   printf 'independent-peer-echo-replies=12\n'
   printf 'source-affinity-across-repeated-requests=1\n'
 } >"$evidence/summary.log"
-printf 'freebsd-vnet-firewall-dataplane=ok\n' >"$evidence/result"
