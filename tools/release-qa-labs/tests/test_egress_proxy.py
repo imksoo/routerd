@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import pwd
 import shutil
+import signal
 import socket
 import socketserver
 import subprocess
@@ -256,8 +257,10 @@ class EgressProxyTests(unittest.TestCase):
             worker.start()
             clients = []
             try:
-                for _ in range(proxy.MAX_HANDLERS):
-                    clients.append(socket.create_connection(server.server_address, timeout=1))
+                for count in range(proxy.MAX_HANDLERS):
+                    clients.append(socket.create_connection(server.server_address, timeout=2))
+                    with changed:
+                        self.assertTrue(changed.wait_for(lambda: active == count + 1, timeout=2))
                 with changed:
                     self.assertTrue(changed.wait_for(lambda: active == proxy.MAX_HANDLERS, timeout=1))
                 with socket.create_connection(server.server_address, timeout=1) as rejected:
@@ -304,6 +307,61 @@ class EgressProxyTests(unittest.TestCase):
                     server.shutdown()
                     worker.join(timeout=1)
                 self.assertFalse(worker.is_alive())
+
+    def test_executable_sigterm_reaps_resolver_before_stopped_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "runs"
+            run_root = runs / "proxy-lifetime"
+            marker = root / "resolver.pid"
+            script = root / "egress_proxy.py"
+            source = (ROOT / "egress_proxy.py").read_text()
+            source = source.replace('Path("/var/lib/routerd-release-qa")', f"Path({str(runs)!r})")
+            # Keep the actual child/entry/signal code. Block only its OS lookup
+            # boundary so this test requires neither external DNS nor a provider.
+            source = source.replace(
+                'def lookup_public_ipv4(host: str) -> list[str]:\n',
+                'def lookup_public_ipv4(host: str) -> list[str]:\n'
+                '    if host == "blocked.example":\n'
+                f'        Path({str(marker)!r}).write_text(str(os.getpid()))\n'
+                '        time.sleep(30)\n',
+            )
+            script.write_text(source)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            process = subprocess.Popen(
+                [sys.executable, str(script), "--run-root", str(run_root), "--port", str(port)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            try:
+                status_path = run_root / "runtime/evidence/egress-proxy/status.json"
+                deadline = time.monotonic() + 2
+                while not status_path.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(status_path.exists(), "proxy did not publish readiness")
+                with socket.create_connection(("127.0.0.1", port), timeout=1) as client:
+                    client.sendall(b"CONNECT blocked.example:443 HTTP/1.1\r\n\r\n")
+                    deadline = time.monotonic() + 2
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(marker.exists(), "resolver never reached the blocked boundary")
+                    resolver_pid = int(marker.read_text())
+                    self.assertNotEqual(resolver_pid, process.pid)
+                    process.send_signal(signal.SIGTERM)
+                    stdout, stderr = process.communicate(timeout=2)
+                    self.assertEqual(process.returncode, 0, (stdout, stderr))
+                    self.assertEqual(json.loads(status_path.read_text())["status"], "stopped")
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(resolver_pid, 0)
+            finally:
+                # The fixture owns a private process group, including a resolver
+                # if a regression prevents the parent from acknowledging stop.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=2)
 
     def test_tracked_units_bound_proxy_outside_main_lifecycle(self):
         proxy_unit = (ROOT / "supervisor/routerd-release-qa-egress-proxy@.service").read_text()

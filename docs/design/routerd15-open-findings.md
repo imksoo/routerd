@@ -228,8 +228,12 @@ establish independent RR/leaf interoperability.
   lifecycle qualification remains unexecuted. The proxy now has one header
   deadline, bounded tunnel writes and a shared TCP-connect budget; bytes received
   with CONNECT are retained, and established tunnels never receive an injected
-  HTTP error. Real socket regressions pass. Synchronous OS name resolution and
-  concurrent handler admission still need lifetime/resource-bound review.
+  HTTP error. The proxy caps active handlers at 16 and isolates synchronous DNS
+  in an owned child with the shared DNS/TCP deadline. Timeout/cancellation kills
+  and reaps that child; admission remains held until actual handler exit.
+  Shutdown cancels owned sockets and joins handlers before publishing stopped.
+  Real socket/process/SIGTERM regressions pass; actual confined-unit staging and
+  systemd stop qualification remain unexecuted.
 - Unimplemented labctl live operations now fail and preserve manifests. Required
   protocol evidence cannot be promoted to PASS by a result override. Remaining
   collectors still need complete parse/measurement identity; capture
