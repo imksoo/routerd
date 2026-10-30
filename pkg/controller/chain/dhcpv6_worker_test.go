@@ -3,6 +3,7 @@
 package chain
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,8 +42,11 @@ func TestDHCPv6ObservedWorkerFollowsResolvedPDCondition(t *testing.T) {
 			t.Fatal(sourceErr)
 		}
 		sockets, err := (DaemonStatusController{Router: router, Store: store}).daemonSockets()
-		if err != nil || len(sockets) != 1 || sockets[0] != want || len(sources) != 1 {
+		if err != nil || !slices.Contains(sockets, want) || len(sources) != 1 {
 			t.Fatalf("role %s observes a different worker: want=%s sockets=%v sources=%v err=%v", role, want, sockets, sources, err)
+		}
+		if !slices.Contains(sockets, defaultClientSocket("routerd-dhcpv6-client", "pd")) {
+			t.Fatal("declared PD snapshot recovery must remain reachable while its worker is disabled")
 		}
 		for _, source := range sources {
 			if source.Socket != want {
