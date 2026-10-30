@@ -956,7 +956,7 @@ func TestTunnelInterfaceControllerFreeBSDGIFLifecycle(t *testing.T) {
 		{"ifconfig", "gif0", "tunnel", "192.0.2.10", "192.0.2.20"},
 		{"ifconfig", "gif0", "mtu", "1400", "up"},
 		{"ifconfig", "gif0"},
-		{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"},
+		{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2", "alias"},
 		{"ifconfig", "gif0"},
 	}
 	if !reflect.DeepEqual(calls, want) {
@@ -991,7 +991,7 @@ func TestTunnelInterfaceControllerFreeBSDReconfiguresChangedPeerAddress(t *testi
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			call := append([]string{name}, args...)
 			calls = append(calls, call)
-			if reflect.DeepEqual(call, []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"}) {
+			if reflect.DeepEqual(call, []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2", "alias"}) {
 				configured = true
 			}
 			if reflect.DeepEqual(call, []string{"ifconfig", "gif0"}) {
@@ -1007,7 +1007,7 @@ func TestTunnelInterfaceControllerFreeBSDReconfiguresChangedPeerAddress(t *testi
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2"}
+	want := []string{"ifconfig", "gif0", "inet", "10.99.0.1/30", "10.99.0.2", "alias"}
 	found := false
 	for _, call := range calls {
 		if reflect.DeepEqual(call, want) {
