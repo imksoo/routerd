@@ -16,6 +16,10 @@ Generated anchor components, packet tags and rule labels fit FreeBSD 14.3's
 63-byte content limit. Overlong internal names use a stable digest of their full
 name; operator resource names keep their existing configuration limits.
 
+DS-Lite references in zones, NAT, MSS and internal service exceptions resolve to
+the gif interface name chosen by the native tunnel owner. Explicit gif unit
+names remain unchanged. Rendering uses the target OS for this resolution.
+
 The root firewall ruleset remains owned by the firewall controller. Runtime
 translations remain in `routerd_nat`; SAM keeps its existing forward anchor.
 Replacing the root ruleset withdraws a removed explicit rule while retaining

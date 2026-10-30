@@ -1065,9 +1065,9 @@ not a release or a whole-product qualification.
 The resumed branch was read and verified at public `921d6f61`. Completed changes
 were published separately; intermediate combined work was also preserved on an
 explicit WIP branch. The final checked checkpoint is public
-`a7c4dd7a085eaa7354586b4d30763c8b81a15a81`, tree
-`27882457c2a3b2622703c0b6eee48ee727bf6f3b`; the equivalent local commit is
-`1d4235dd8e15405464177bb63ccd8afb1f35e4ee`. All 2669 tracked blobs matched that
+`c5085332aabb6f14707ea1c9c390dbaa651777cd`, tree
+`1755f47b2f1f14ce746b9aaee9915d24a9b85d02`; the equivalent local commit is
+`a8c35cd595c09565321308b2865324f420551b6c`. All 2672 tracked blobs matched that
 tree during and after the final whole-suite/build checks. Later changes are
 audit documentation only. Checks used Go 1.25.9, ShellCheck 0.10.0,
 `GOMAXPROCS=2` and `GOFLAGS="-p=2 -buildvcs=false"`; GitHub Actions was not awaited.
@@ -1098,7 +1098,9 @@ Implemented and independently reviewed production paths:
   receipts/native cookies in addition to VXLAN proof. Pending/foreign parents,
   changed sources and masked declarations cannot authorize effects; recorded
   cleanup survives declaration removal. FreeBSD aliases share the native naming
-  rule. Bridge, WireGuardInterface, VRF and TunnelInterface proof remains open.
+  rule. PF, runtime NAT, MSS and service exceptions now resolve aliases for the
+  explicit target OS through that same owner rule, including omitted names.
+  Bridge, WireGuardInterface, VRF and TunnelInterface proof remains open.
 - FreeBSD PF ordinary zone forwarding matches actual ingress and egress, keeps
   explicit decisions ahead of role defaults and separates local output. Native
   name bounds and every possible failover hairpin backend are checked. Unsupported
@@ -1115,7 +1117,7 @@ Implemented and independently reviewed production paths:
 | Whole-repository vet and generated/website schemas | Pass |
 | Linux release binaries and static-link checks | Pass; 20 binaries, CGO disabled; routerd/routerctl version output confirms the public checked commit |
 | FreeBSD release build and complete test compilation | Pass; 20 binaries and 128 packages, compile-only |
-| Complete normal Go suite | 129 packages: 104 pass, 16 fail, nine without tests; 4023 top-level pass, 57 fail, seven skip |
+| Complete normal Go suite | 129 packages: 104 pass, 16 fail, nine without tests; 4028 top-level pass, 57 fail, seven skip |
 | Related race, persistence-fault and actual loopback checks | Pass; includes final combined canonical/HA/HTTP, DNS privacy/source freshness, DS-Lite and PF regressions |
 | Release-QA offline suite | 495 cases: 486 pass, nine existing skips, no failures |
 
@@ -1129,10 +1131,15 @@ The first whole-suite run found eight stale FreeBSD PF snapshots and a missing
 ShellCheck executable on its PATH. The snapshots were independently reviewed:
 seven change only the intended PF filtering, and the rate-limit example now
 records the documented unsupported-capability error. Their assertions were not
-weakened. The final complete suite used the real ShellCheck executable. Supporting
-race/vet/schema and QA checks ran on identical production/QA source before this
-snapshot-only follow-up; final normal/build checks and blob verification used
-the exact published checkpoint above.
+weakened. A final production-path review then reproduced raw DS-Lite aliases in
+PF and runtime NAT despite the native owner creating a gif interface. The fix
+uses explicit target-OS alias and service-hole producers, including the actual
+runtime NAT controller. Independent actual-output regressions changed RED to
+GREEN, and two additional snapshots now use the native gif names. Feature races
+and independent fault/wire reviews passed at their corresponding checkpoints.
+The complete normal suite, vet, schemas, QA, builds and final blob verification
+were rerun on the exact published checkpoint above, with the real ShellCheck
+executable on PATH.
 
 Native Linux/FreeBSD forwarding, independent router peers/clients, target-storage
 crash durability, PVE/systemd, cloud mutations and image boot remain unexecuted.
