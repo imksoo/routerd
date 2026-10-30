@@ -576,6 +576,22 @@ func (c VRFController) withdraw(ctx context.Context, record vrfReceipt) error {
 	if err := c.checkScope(ctx, record); err != nil {
 		return err
 	}
+	// Native observation may block. A retained cookie does not authorize a
+	// deletion whose actual withdrawal receipt was replaced during that wait.
+	current, err := c.readReceipts()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, candidate := range current {
+		if sameVRFReceipt(candidate, record) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("VRF receipt changed before native withdrawal")
+	}
 	if link.Exists {
 		if err := c.native().Delete(ctx, link, record.Token); err != nil {
 			return err

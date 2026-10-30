@@ -1176,15 +1176,15 @@ func firewallStatusSubscriptions(router *api.Router) []bus.Subscription {
 }
 
 func ipv4RouteStatusSubscriptions() []bus.Subscription {
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("DSLiteTunnel", "TunnelInterface", "VRF", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func ipv4StaticAddressStatusSubscriptions() []bus.Subscription {
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptions("WireGuardInterface", "TunnelInterface", "VRF")))
 }
 
 func ipv4RouteControllerStatusSubscriptions(router *api.Router) []bus.Subscription {
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"ClusterNetworkRoute"}, "DSLiteTunnel", "TunnelInterface", "VRF", "EgressRoutePolicy", "VirtualAddress", "DHCPv4Client", "SAMTransportProfile")))
 }
 
 func pathMTUStatusSubscriptions(router *api.Router) []bus.Subscription {
@@ -2407,7 +2407,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
 		// without adding a stronger convergence signal.
-		"link", "tunnel", "wireguard", "ipv4-static-address", "vxlan-segment", "ipv4-policy-route", "ipv4-route", "hybrid-route",
+		"link", "tunnel", "wireguard", "vrf", "ipv4-static-address", "vxlan-segment", "ipv4-policy-route", "ipv4-route", "hybrid-route",
 		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
@@ -2905,13 +2905,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "vrf", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("VRF", "Interface", "Bridge", "WireGuardInterface", "VXLANSegment", "VXLANTunnel")), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			observation, err := effectiveForReconcile()
+			effective, err := effectiveDynamicForReconcile()
 			if err != nil {
 				return false, err
 			}
 			current := vrfs
-			current.Router = observation.EffectiveRouter
-			current.Store = store.withRouter(observation.EffectiveRouter)
+			current.Router = effective
+			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "ipv4-static-address", Subs: ipv4StaticAddressStatusSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -2955,7 +2955,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return nil
 		}},
-		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface", "VRF"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			observation, err := effectiveForReconcile()
 			if err != nil {
 				return err

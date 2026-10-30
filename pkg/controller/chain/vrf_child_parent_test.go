@@ -280,6 +280,42 @@ func TestVRFFailedWithdrawalBlocksChildrenAndRetriesExactOwner(t *testing.T) {
 	}
 }
 
+func TestVRFPendingOrReplacedParentCannotAcquireStaticAddress(t *testing.T) {
+	for _, changed := range []string{"pending", "foreign"} {
+		t.Run(changed, func(t *testing.T) {
+			owner, native := vrfTestOwner(t)
+			if err := owner.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			record := vrfOneReceipt(t, owner)
+			if changed == "pending" {
+				pending := record
+				pending.Pending = true
+				if err := owner.saveReceipt(t.Context(), record, pending); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				foreign := native.links["vrf101"]
+				foreign.Index++
+				foreign.Token = ""
+				native.links["vrf101"] = foreign
+			}
+			present, writes := false, 0
+			child := vrfStaticChild(&owner, native, &present, &writes)
+			if err := child.Reconcile(t.Context()); err == nil || writes != 0 || present {
+				t.Fatalf("%s parent admitted static child: writes=%d err=%v", changed, writes, err)
+			}
+			if changed == "foreign" {
+				before := len(native.ops)
+				owner.Router = &api.Router{}
+				if err := owner.Reconcile(t.Context()); err == nil || len(native.ops) != before || !sameVRFReceipt(record, vrfOneReceipt(t, owner)) {
+					t.Fatal("foreign replacement was mutated or its receipt discarded")
+				}
+			}
+		})
+	}
+}
+
 func TestVRFParentProofRejectsChangesAfterNativeWait(t *testing.T) {
 	for _, change := range []string{"intent", "receipt", "scope"} {
 		t.Run(change, func(t *testing.T) {
@@ -317,5 +353,15 @@ func TestVRFParentProofRejectsChangesAfterNativeWait(t *testing.T) {
 				t.Fatalf("changed %s admitted child proof: %+v err=%v", change, link, err)
 			}
 		})
+	}
+}
+
+func TestVRFStatusWakesDirectChildControllers(t *testing.T) {
+	event := statusChangedEvent("VRF", "tenant")
+	if !subscriptionSetAccepts(ipv4StaticAddressStatusSubscriptions(), event) {
+		t.Fatal("VRF activation did not wake child addresses")
+	}
+	if !subscriptionSetAccepts(ipv4RouteControllerStatusSubscriptions(&api.Router{}), event) {
+		t.Fatal("VRF activation did not wake child routes")
 	}
 }

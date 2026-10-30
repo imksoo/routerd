@@ -197,6 +197,23 @@ func TestVRFParentNativeLinuxPeerLifecycle(t *testing.T) {
 	checkNative()
 	checkProof()
 	checkPeer()
+	run("ip", "link", "set", "dev", "vrf-proof", "down")
+	if err := parent.Reconcile(ctx); err != nil {
+		t.Fatalf("native VRF administrative-down recovery: %v", err)
+	}
+	if err := address.Reconcile(ctx); err != nil {
+		t.Fatalf("native VRF recovery child addresses: %v", err)
+	}
+	if err := route.reconcile(ctx); err != nil {
+		t.Fatalf("native VRF recovery child route: %v", err)
+	}
+	records, err = parent.readReceipts()
+	if err != nil || len(records) != 1 || !sameVRFReceipt(record, records[0]) {
+		t.Fatalf("administrative recovery replaced the owned VRF generation: %+v err=%v", records, err)
+	}
+	checkNative()
+	checkProof()
+	checkPeer()
 	// Withdraw actual children before deleting the master. Physical member
 	// addresses survive master deletion and must be removed by their own owner.
 	empty := &api.Router{}
