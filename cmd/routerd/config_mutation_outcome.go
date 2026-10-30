@@ -9,90 +9,58 @@ import (
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 )
 
-// mutateRuntime runs under the caller's exclusive mutation gate through reload,
-// apply, persistence and any acknowledged restoration. Post-rename failures keep
-// the requested runtime; a restoration error never proves that the old one runs.
+// mutateRuntime retains the existing exclusive mutation owner through canonical
+// persistence and activation. Candidate workers, sockets and native effects are
+// authorized only by the durably acknowledged desired configuration. A later
+// apply failure records partial progress; it does not silently restore old intent.
 func (m serveConfigMutator) mutateRuntime(next *api.Router, configYAML string) (outcome applyAttemptOutcome, err error) {
 	previous := m.getRouter()
-	shapeChanged, _ := runtimeShapeChanged(previous, next)
-	outcome = applyAttemptOutcome{Stage: "runtime-reload", Canonical: canonicalNotRequested}
-	if m.activeRuntime != nil {
-		outcome.Runtime.Active = m.activeRuntime()
-	}
-	defer func() {
-		if err != nil {
-			// The outer attempt includes restoration, which can change the active
-			// snapshot after the one-shot apply has already returned its error.
-			outcome.wrapError(&err, m.logger)
-			m.cache.StoreAttempt(outcome, err)
-		} else {
-			m.cache.StoreAttempt(outcome, nil)
-		}
+	shapeChanged, _ := runtimeShapeChanged(previous,next)
+	initialRuntime:=controllerchain.RuntimeReloadOutcome{}
+	if m.activeRuntime!=nil {initialRuntime.Active=m.activeRuntime()}
+	defer func(){
+		if err!=nil {outcome.wrapError(&err,m.logger)}
+		m.cache.StoreAttempt(outcome,err)
 	}()
 	var preparedServers *preparedServeHTTPServers
-	if m.servers != nil {
-		outcome.Stage = "server-prepare"
-		preparedServers, err = m.servers.prepareCandidate(next)
-		if err != nil {
-			return outcome, err
+	defer func(){preparedServers.close()}()
+	activationAttempted,activationSucceeded:=false,false
+	operation:=m
+	operation.baseOpts.activateCommittedRuntime=func(ctx context.Context)(controllerchain.RuntimeReloadOutcome,error){
+		activationAttempted=true
+		active:=initialRuntime
+		if err:=ctx.Err();err!=nil{return active,err}
+		if m.servers!=nil {
+			var err error
+			preparedServers,err=m.servers.prepareCandidate(next)
+			if err!=nil{return active,err}
 		}
-		defer preparedServers.close()
-	}
-	if shapeChanged {
-		outcome.Runtime, err = m.reloadRuntimeOutcome(next)
-		if err != nil {
-			m.publishConfirmedRuntime(outcome.Runtime.Active)
-			return outcome, err
-		}
-		if !outcome.Runtime.Active.Known || !outcome.Runtime.Active.Available {
-			return outcome, errors.New("reload did not confirm an active runtime")
-		}
-	}
-	runtimeOutcome := outcome.Runtime
-	outcome, err = m.reconcileWithOutcome(next, configYAML)
-	outcome.Runtime = runtimeOutcome
-	// Standby is an intentional successful runtime update without a canonical
-	// commit; preserve the existing HA contract on this normal path as well.
-	standby := err == nil && outcome.Result != nil && outcome.Result.Phase == "Standby"
-	if err == nil && !standby && (outcome.Canonical != canonicalReplaced || !outcome.DurabilityConfirmed) {
-		outcome.Stage = "canonical-confirmation"
-		err = errors.New("apply did not acknowledge durable canonical configuration replacement")
-	}
-	if outcome.Canonical == canonicalReplaced || standby {
 		if shapeChanged {
-			m.publishConfirmedRuntime(outcome.Runtime.Active)
+			var err error
+			active,err=m.reloadRuntimeOutcome(next)
+			m.publishConfirmedRuntime(active.Active)
+			if err!=nil{return active,err}
+			if !active.Active.Known||!active.Active.Available{return active,errors.New("reload did not confirm an active runtime")}
 		} else {
-			if updateErr := m.updateConfirmedRuntime(next); updateErr != nil {
-				if err == nil {
-					outcome.Stage = "runtime-publish"
-				}
-				err = errors.Join(err, updateErr)
+			if err:=m.updateConfirmedRuntime(next);err!=nil {
+				if m.activeRuntime!=nil {active.Active=m.activeRuntime()}
+				return active,err
 			}
+			if m.activeRuntime!=nil {active.Active=m.activeRuntime()}else{active.Active=controllerchain.RuntimeSnapshot{Router:next,Known:true,Available:true}}
 		}
-		if preparedServers != nil {
-			if serverErr := preparedServers.publish(); serverErr != nil {
-				outcome.Stage = "server-publish"
-				err = errors.Join(err, serverErr)
-			}
-		}
-	} else if shapeChanged && outcome.Canonical != canonicalUnknown {
-		restored, restoreErr := m.reloadRuntimeOutcome(previous)
-		outcome.Runtime = restored
-		m.publishConfirmedRuntime(restored.Active)
-		if restoreErr != nil {
-			if err == nil {
-				outcome.Stage = "runtime-restore"
-			}
-			err = errors.Join(err, restoreErr)
+		activationSucceeded=true
+		return active,nil
+	}
+	outcome,err=operation.reconcileWithOutcome(next,configYAML)
+	if !activationAttempted {outcome.Runtime=initialRuntime}
+	if activationSucceeded&&preparedServers!=nil {
+		if publishErr:=preparedServers.publish();publishErr!=nil {
+			outcome.Stage="server-publish"
+			err=errors.Join(err,publishErr)
 		}
 	}
-	if m.activeRuntime != nil {
-		outcome.Runtime.Active = m.activeRuntime()
-	}
-	if err != nil {
-		return outcome, err
-	}
-	return outcome, nil
+	if m.activeRuntime!=nil {outcome.Runtime.Active=m.activeRuntime()}
+	return outcome,err
 }
 
 func (m serveConfigMutator) publishConfirmedRuntime(active controllerchain.RuntimeSnapshot) {

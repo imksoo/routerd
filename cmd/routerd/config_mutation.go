@@ -414,8 +414,11 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 	defer outcome.finishEarlyFailure(store, m.baseOpts, &err)
 	opts := m.baseOpts
 	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
-	if err := outcome.commit(opts, configYAML); err != nil {
-		return outcome, err
+	if err := outcome.commit(opts, configYAML); err != nil { return outcome, err }
+	if opts.activateCommittedRuntime != nil {
+		outcome.Stage="runtime-activation"
+		outcome.Runtime,err=opts.activateCommittedRuntime(context.Background())
+		if err!=nil {return outcome,err}
 	}
 	outcome.Stage = "record-applied-path"
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {

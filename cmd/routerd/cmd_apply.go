@@ -69,6 +69,8 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 }
 
 type applyOptions struct {
+	// Supplied only by live mutation; candidate workers/effects start after durable commit.
+	activateCommittedRuntime func(context.Context) (controllerchain.RuntimeReloadOutcome,error)
 	ConfigPath           string
 	StatusFile           string
 	NetplanPath          string
@@ -591,10 +593,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	eventBus := bus.NewWithStore(stateStore)
 	eventBus.SetLogger(slog.Default())
 	outcome.Stage = "plan"
-	err = recordObservedPrefixDelegationState(router, stateStore, eventBus)
-	if err != nil {
-		return nil, err
-	}
 	runner := &controllerchain.Runner{Router: router, Bus: eventBus, Store: stateStore}
 	defer func() {
 		if runner.RuntimeMutationError() != nil {
@@ -647,8 +645,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			outcome.Stage = "complete"
 			return result, nil
 		}
-		recordWarningEvents(router, stateStore, result.Warnings)
-		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
 	controllerOpts := applyChainControllerOptions(opts)
@@ -657,6 +653,19 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	runner.Opts = controllerOpts
 	runner.HADecision = &decision
+	// Canonical intent authorizes the new side effects. A native effect cannot
+	// be made transactional with a later filesystem rename or fsync.
+	if err := ctx.Err(); err != nil { return result,err }
+	if err := outcome.commit(opts,configYAML); err != nil { return result,err }
+	if opts.activateCommittedRuntime != nil {
+		outcome.Stage="runtime-activation"
+		outcome.Runtime,err=opts.activateCommittedRuntime(ctx)
+		if err!=nil { return result,err }
+	}
+	outcome.Stage="observe-prefix-delegation"
+	if err:=recordObservedPrefixDelegationState(router,stateStore,eventBus);err!=nil { return result,err }
+	recordWarningEvents(router,stateStore,result.Warnings)
+	recordKnownNGCombinationEvents(router,stateStore,optionWarnings)
 	outcome.Stage = "reconcile"
 	if err := runner.ReconcileOnce(ctx); err != nil {
 		return nil, err
@@ -686,18 +695,13 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
-	if !opts.DryRun && configCommitPhase(result.Phase) {
-		if err := outcome.commit(opts, configYAML); err != nil {
-			return result, err
-		}
-	}
 	outcome.Stage = "finish-generation"
 	if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
 	}
 	if !configCommitPhase(result.Phase) {
 		outcome.Stage = "observe-result"
-		return result, fmt.Errorf("apply finished with phase %s; canonical config was not committed", result.Phase)
+		return result, fmt.Errorf("apply finished with phase %s; desired router state was not confirmed (canonical=%s)", result.Phase,outcome.Canonical)
 	}
 	outcome.Stage = "output"
 
