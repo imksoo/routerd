@@ -57,7 +57,7 @@ func TestMobilityNativeRouteReacquisitionAckFailureRetainsPending(t *testing.T) 
 	store.failure = failure
 	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, err := native.command(ctx, name, args...)
-		if len(args) > 1 && args[0] == "route" && args[1] == "add" {
+		if name == "ip" && len(args) > 1 && args[0] == "route" && args[1] == "add" || name == "route" && len(args) > 1 && args[1] == "add" {
 			store.failField = "appliedMobilityRoutes"
 		}
 		return out, err
@@ -219,7 +219,7 @@ func TestMobilityNativeRouteUnchangedPathRechecksSourceBeforeSuccess(t *testing.
 	changed := false
 	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, err := native.command(ctx, name, args...)
-		if !changed && len(args) > 0 && args[0] == "-j" {
+		if !changed && (name == "ip" && len(args) > 0 && args[0] == "-j" || name == "route" && len(args) > 1 && args[1] == "get") {
 			changed = true
 			c.MobilityDataplane.Routes = nil
 			storeMobilityOwnerPlan(t, c, store)
@@ -250,7 +250,7 @@ func TestMobilityNativeReviewWithdrawalRechecksAfterFinalNativeRead(t *testing.T
 			reads := 0
 			c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				out, err := native.command(ctx, name, args...)
-				if len(args) > 0 && args[0] == "-j" {
+				if name == "ip" && len(args) > 0 && args[0] == "-j" || name == "route" && len(args) > 1 && args[1] == "get" {
 					reads++
 					if reads == 2 {
 						if mode == "index" {
@@ -281,7 +281,7 @@ func TestMobilityNativeReviewAcquisitionRechecksAfterFinalCollisionRead(t *testi
 			reads := 0
 			c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 				out, err := native.command(ctx, name, args...)
-				if len(args) > 0 && args[0] == "-j" {
+				if name == "ip" && len(args) > 0 && args[0] == "-j" || name == "route" && len(args) > 1 && args[1] == "get" {
 					reads++
 					if reads == 2 {
 						if mode == "index" {

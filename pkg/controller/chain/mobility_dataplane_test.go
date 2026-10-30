@@ -10,6 +10,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -60,7 +61,7 @@ func (s *mobilityEffectStore) ListObjectStatuses() ([]routerstate.ObjectStatus, 
 func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
-	applied := false
+	native := &nativeRouteFixture{}
 	controller := IPv4RouteController{
 		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
@@ -69,18 +70,9 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 			Destination: "10.77.60.0/24", Device: "lan0", Metric: 90,
 		}}},
 		DevicePresent: func(context.Context, string) bool { return true },
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
-			if name == "ip" && len(args) > 0 && args[0] == "-j" {
-				if applied {
-					return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"boot","metric":90}]`), nil
-				}
-				return []byte("[]"), nil
-			}
-			if name == "ip" && len(args) > 1 && args[0] == "route" && args[1] == "add" {
-				applied = true
-			}
-			return nil, nil
+			return native.command(ctx, name, args...)
 		},
 	}
 	if err := controller.reconcile(context.Background()); err != nil {
@@ -89,7 +81,11 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 	if len(controller.Router.Spec.Resources) != 0 {
 		t.Fatalf("typed mobility route must not become a generic resource: %#v", controller.Router.Spec.Resources)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route add 10.77.60.0/24 dev lan0 metric 90 proto boot") {
+	want := "ip route add 10.77.60.0/24 dev lan0 metric 90 proto boot"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		want = "route -n add -net 10.77.60.0/24 -interface lan0"
+	}
+	if !containsMobilityDataplaneCommand(commands, want) {
 		t.Fatalf("commands = %#v", commands)
 	}
 	routes, err := controller.appliedMobilityRoutes()
@@ -111,25 +107,26 @@ func TestIPv4RouteControllerDoesNotDeleteBGPRouteWhenTypedMobilityEffectWithdraw
 		},
 	}}
 	var commands []string
+	native := &nativeRouteFixture{route: &ordinaryIPv4RouteObservation{Type: "unicast", Destination: "10.77.60.0/24", Device: "lan0", Protocol: "bgp", Metric: 90}}
 	controller := IPv4RouteController{
 		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip -j -d -4 route show 10.77.60.0/24" {
-				return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"bgp","metric":90}]`), nil
-			}
-			return nil, nil
+			return native.command(ctx, name, args...)
 		},
 	}
 	if err := controller.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	for _, command := range commands {
-		if strings.Contains(command, " route del ") {
+		if strings.Contains(command, " route del ") || strings.Contains(command, "route -n delete ") {
 			t.Fatalf("BGP route must not be deleted: commands = %#v", commands)
 		}
+	}
+	if native.writes != 0 || native.route == nil || native.route.Protocol != "bgp" {
+		t.Fatalf("foreign BGP route was changed: writes=%d route=%+v", native.writes, native.route)
 	}
 	if routes, err := controller.appliedMobilityRoutes(); err != nil || len(routes) != 0 {
 		t.Fatalf("withdrawn BGP-protected mobility ledger = %#v, want empty", routes)
@@ -146,30 +143,24 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 		},
 	}}
 	var commands []string
-	deleted := false
+	native := &nativeRouteFixture{route: &ordinaryIPv4RouteObservation{Type: "unicast", Destination: "10.77.60.20", Device: "lan0", Protocol: "boot", PreferredSource: "10.77.60.1", Metric: 90}}
 	controller := IPv4RouteController{
 		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot" {
-				deleted = true
-				return nil, nil
-			}
-			if command == "ip -j -d -4 route show 10.77.60.20/32" {
-				if deleted {
-					return []byte(`[]`), nil
-				}
-				return []byte(`[{"dst":"10.77.60.20","dev":"lan0","protocol":"boot","prefsrc":"10.77.60.1","metric":90}]`), nil
-			}
-			return nil, nil
+			return native.command(ctx, name, args...)
 		},
 	}
 	if err := controller.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot") {
+	want := "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		want = "route -n delete -host 10.77.60.20 -interface lan0 -ifp lan0"
+	}
+	if !containsMobilityDataplaneCommand(commands, want) {
 		t.Fatalf("typed mobility ledger route was not withdrawn: commands = %#v", commands)
 	}
 	if routes, err := controller.appliedMobilityRoutes(); err != nil || len(routes) != 0 {
@@ -197,7 +188,14 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commands = append(commands, name+" "+strings.Join(args, " "))
-			present = args[2] == "add"
+			switch name {
+			case "ip":
+				present = args[2] == "add"
+			case "ifconfig":
+				present = args[3] == "alias"
+			default:
+				t.Fatalf("unexpected address command: %s %v", name, args)
+			}
 			return nil
 		},
 	}
@@ -207,7 +205,11 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 1 {
 		t.Fatalf("applied mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 1 || commands[0] != "ip -4 addr add 10.77.60.1/32 dev lan0" {
+	want := "ip -4 addr add 10.77.60.1/32 dev lan0"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		want = "ifconfig lan0 inet 10.77.60.1/32 alias"
+	}
+	if len(commands) != 1 || commands[0] != want {
 		t.Fatalf("apply commands = %#v", commands)
 	}
 
@@ -219,7 +221,11 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 0 {
 		t.Fatalf("withdrawn mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 2 || commands[1] != "ip -4 addr del 10.77.60.1/32 dev lan0" {
+	want = "ip -4 addr del 10.77.60.1/32 dev lan0"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		want = "ifconfig lan0 inet 10.77.60.1/32 -alias"
+	}
+	if len(commands) != 2 || commands[1] != want {
 		t.Fatalf("apply/withdraw commands = %#v", commands)
 	}
 }
