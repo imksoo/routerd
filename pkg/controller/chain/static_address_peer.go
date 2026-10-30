@@ -50,8 +50,11 @@ func staticAddressAddCommand(osName platform.OS, receipt staticAddressReceipt) (
 	return ipv4StaticAddressApplyCommand(osName, receipt.IfName, receipt.Address)
 }
 
-func parseFreeBSDStaticPeers(data []byte) (staticAddressSnapshot, error) {
+func parseFreeBSDStaticPeers(name string, data []byte) (staticAddressSnapshot, error) {
 	var snapshot staticAddressSnapshot
+	if !strings.HasPrefix(strings.TrimSpace(string(data)), name+":") {
+		return snapshot, errors.New("native P2P interface observation has a different name")
+	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] != "inet" {
@@ -133,7 +136,7 @@ func observeFreeBSDStaticPeers(ctx context.Context, iface net.Interface) (static
 	if err != nil {
 		return staticAddressSnapshot{}, fmt.Errorf("observe P2P interface %s: %w: %s", iface.Name, err, strings.TrimSpace(string(out)))
 	}
-	snapshot, err := parseFreeBSDStaticPeers(out)
+	snapshot, err := parseFreeBSDStaticPeers(iface.Name, out)
 	if err != nil {
 		return snapshot, err
 	}

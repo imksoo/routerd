@@ -27,7 +27,7 @@ func TestStaticAddressPeerNativeDecode(t *testing.T) {
 		{"invalid-mask", "inet 192.0.2.1 --> 198.51.100.2 netmask 0xff00ff00", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			observed, err := parseFreeBSDStaticPeers([]byte(tt.frame))
+			observed, err := parseFreeBSDStaticPeers("gif0", []byte("gif0: flags=8011<UP,POINTOPOINT> mtu 1400\n"+tt.frame))
 			if !tt.valid {
 				if err == nil {
 					t.Fatalf("unusable peer observation was accepted: %+v", observed)
@@ -39,6 +39,9 @@ func TestStaticAddressPeerNativeDecode(t *testing.T) {
 				t.Fatalf("usable native P2P pair was lost: %+v %v", observed, err)
 			}
 		})
+	}
+	if _, err := parseFreeBSDStaticPeers("gif0", []byte("gre0: flags=8011<UP,POINTOPOINT>\ninet 192.0.2.1 --> 198.51.100.2 netmask 0xffffff00")); err == nil {
+		t.Fatal("peer readback from a different interface was accepted")
 	}
 }
 
