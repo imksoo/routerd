@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/netip"
 	"strings"
+ "time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
@@ -93,12 +93,16 @@ func serveDescribeHandler(currentRouter func() *api.Router, store *routerstate.S
 }
 
 func serveProbeHandler(currentRouter func() *api.Router, store *routerstate.SQLiteStore) func(*http.Request, controlapi.ProbeRequest) (*controlapi.ProbeResult, error) {
+ slots:=make(chan struct{},4)
 	return func(r *http.Request, req controlapi.ProbeRequest) (*controlapi.ProbeResult, error) {
 		subject := strings.TrimSpace(req.Subject)
 		if subject == "" {
 			return nil, fmt.Errorf("%w: doctor --probe requires subject", controlapi.ErrBadRequest)
 		}
-		checks, err := serveProbeChecks(currentRouter(), store, subject, strings.TrimSpace(req.Target))
+		select {case slots<-struct{}{}: defer func(){<-slots}()
+		default: result:=controlapi.NewProbeResult(subject,req.Target,[]controlapi.ProbeCheck{{Name:"probe admission",Status:"warn",Kind:"scope",Detail:"unobserved: four active probe requests already own the available slots"}});return &result,nil}
+		ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second);defer cancel()
+		checks, err := serveProbeChecks(ctx,currentRouter(), store, subject, strings.TrimSpace(req.Target))
 		if err != nil {
 			return nil, err
 		}
@@ -229,20 +233,14 @@ func serveInspectionLedger(store *routerstate.SQLiteStore, limit int) (controlap
 	return controlapi.LedgerReport{Integrity: integrity, Generations: generations}, nil
 }
 
-func serveProbeChecks(router *api.Router, store *routerstate.SQLiteStore, subject, target string) ([]controlapi.ProbeCheck, error) {
-	switch canonicalInspectionSubject(subject) {
-	case "egress":
-		return resourcePhaseProbe(router, store, "EgressRoutePolicy", target)
-	case "dns":
-		return resourcePhaseProbe(router, store, "DNSResolver", target)
-	case "lan-client":
-		if _, err := netip.ParseAddr(target); err != nil {
-			return []controlapi.ProbeCheck{{Name: "target", Status: "fail", Detail: "lan-client probe requires a literal target IP"}}, nil
-		}
-		return []controlapi.ProbeCheck{{Name: "network probe", Status: "warn", Detail: "unobserved: LAN client communication has not been probed for " + target}}, nil
-	default:
-		return []controlapi.ProbeCheck{{Name: "subject", Status: "fail", Detail: "unknown probe subject " + subject}}, nil
-	}
+func serveProbeChecks(ctx context.Context,router *api.Router, store *routerstate.SQLiteStore, subject, target string) ([]controlapi.ProbeCheck, error) {
+ if err:=ctx.Err();err!=nil{return nil,err}
+ switch canonicalInspectionSubject(subject) {
+ case "egress":return daemonEgressProbe(ctx,router,store,target)
+ case "dns":return daemonDNSProbe(ctx,router,store,target)
+ case "lan-client":return daemonLANClientProbe(ctx,router,store,target)
+ default:return []controlapi.ProbeCheck{{Name:"subject",Status:"fail",Kind:"scope",Detail:"unknown probe subject "+subject}},nil
+ }
 }
 
 func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind, name string) ([]controlapi.ProbeCheck, error) {
@@ -275,9 +273,8 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 		if phase == "" {
 			detail = "unobserved: resource is declared without an observed phase"
 		}
-		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail})
+		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail,Kind:"reported-status"})
 	}
-	out = append(out, controlapi.ProbeCheck{Name: "network probe", Status: "warn", Detail: "unobserved: reported resource phases do not establish current network communication"})
 	return out, nil
 }
 
