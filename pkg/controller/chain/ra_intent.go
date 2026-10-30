@@ -412,7 +412,13 @@ func resolveRAPrefixes(ctx context.Context, router *api.Router, store Store, ifn
 		if err != nil {
 			return nil, err
 		}
-		if status["reason"] == "AddressNotReady" || status["reason"] == "AddressDADFailed" || status["reason"] == "NativeOwnershipUnknown" {
+		// DAD is asynchronous after a successful native address add. Keep
+		// advertisements pending until the LAN owner confirms readiness;
+		// ordinary convergence is not a failed configuration apply.
+		if status["reason"] == "AddressNotReady" {
+			return nil, nil
+		}
+		if status["reason"] == "AddressDADFailed" || status["reason"] == "NativeOwnershipUnknown" {
 			return nil, fmt.Errorf("RA LAN readiness is unresolved")
 		}
 

@@ -25,6 +25,12 @@ lifetime zero. Native addresses unrelated to that ownership are not advertised.
 The service preserves independent Managed/Other flags, MTU/path-MTU selection,
 router preference and DNS option lifetimes.
 
+A newly added delegated address may be tentative while the kernel performs DAD.
+The RA result remains Pending and sends no positive delegated prefix or default
+router claim until the LAN address owner reports readiness. This normal wait
+does not fail configuration apply. Failed DAD and unknown native ownership still
+report errors and cannot authorize an advertisement.
+
 Normal unsolicited scheduling is randomized, with at least three seconds between
 multicast sends and a maximum of sixteen seconds (shorter for a short router
 lifetime). Solicitation replies share the owner and its pacing. Final withdrawal
