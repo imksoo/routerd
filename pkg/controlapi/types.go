@@ -272,6 +272,9 @@ type DHCPLeaseEventRequest struct {
 	IP        string `json:"ip" yaml:"ip"`
 	Hostname  string `json:"hostname,omitempty" yaml:"hostname,omitempty"`
 	Interface string `json:"interface,omitempty" yaml:"interface,omitempty"`
+	Tags      []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty" yaml:"expiresAt,omitempty"`
+	Infinite  bool `json:"infinite,omitempty" yaml:"infinite,omitempty"`
 }
 
 type DHCPLeaseEventResult struct {

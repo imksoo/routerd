@@ -25,16 +25,16 @@ import (
 const raJournalName = "router-advertisements-native"
 
 type raResourceIntent struct {
-	StatusKind          string
-	ResourceID          string
-	Name                string
-	Spec                api.IPv6RouterAdvertisementSpec
-	Limits              api.RouterAdvertisementLifetimes
-	Delegated           *api.IPv6DelegatedAddressSpec
-	DelegatedName       string
-	DefaultDelegatedDNS bool
-	Native              bool
-	Autonomous          bool
+	StatusKind    string
+	ResourceID    string
+	Name          string
+	Spec          api.IPv6RouterAdvertisementSpec
+	Limits        api.RouterAdvertisementLifetimes
+	Delegated     *api.IPv6DelegatedAddressSpec
+	DelegatedName string
+	SelfDNS       []raSelfDNSCandidate
+	Native        bool
+	Autonomous    bool
 }
 
 type raInterfacePlan struct {

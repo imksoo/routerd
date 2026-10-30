@@ -19,7 +19,7 @@ import (
 
 // Native address discovery is used only for DHCPv6Server's implicit RA mode.
 // An explicit RA prefix source never falls back to native interface addresses.
-func nativeRAPrefixes(ctx context.Context, ifname string) ([]raPrefixValue, error) {
+func nativeRAAddresses(ctx context.Context, ifname string) ([]raNativeAddress, error) {
 	name, args := "ip", []string{"-j", "-6", "addr", "show", "dev", ifname}
 	if platform.CurrentOS() == platform.OSFreeBSD {
 		name, args = "ifconfig", []string{"-L", ifname}
@@ -28,7 +28,33 @@ func nativeRAPrefixes(ctx context.Context, ifname string) ([]raPrefixValue, erro
 	if err != nil {
 		return nil, fmt.Errorf("observe RA interface %s: %w", ifname, err)
 	}
-	return parseNativeRAPrefixes(out, ifname, platform.CurrentOS())
+	return parseNativeRAAddresses(out, ifname, platform.CurrentOS())
+}
+
+func nativeRAPrefixes(ctx context.Context, ifname string) ([]raPrefixValue, error) {
+	addresses, err := nativeRAAddresses(ctx, ifname)
+	return nativeRAPrefixValues(addresses), err
+}
+
+type raNativeAddress struct {
+	Address          netip.Prefix
+	Preferred, Valid uint32
+	LifetimeKnown    bool
+}
+
+func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raPrefixValue, error) {
+	addresses, err := parseNativeRAAddresses(out, ifname, osName)
+	return nativeRAPrefixValues(addresses), err
+}
+
+func nativeRAPrefixValues(addresses []raNativeAddress) []raPrefixValue {
+	var prefixes []raPrefixValue
+	for _, address := range addresses {
+		if address.Address.Bits() <= 64 {
+			prefixes = append(prefixes, raPrefixValue{Prefix: netip.PrefixFrom(address.Address.Addr(), 64).Masked(), Preferred: address.Preferred, Valid: address.Valid})
+		}
+	}
+	return mergeNativeRAPrefixes(prefixes)
 }
 
 type raNativeLifetime uint32
@@ -46,17 +72,20 @@ func (l *raNativeLifetime) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raPrefixValue, error) {
-	var result []raPrefixValue
-	appendPrefix := func(address string, bits int, preferred, valid uint32) error {
+func parseNativeRAAddresses(out []byte, ifname string, osName platform.OS) ([]raNativeAddress, error) {
+	var result []raNativeAddress
+	appendAddress := func(address string, bits int, preferred, valid uint32, known bool) error {
 		local, err := netip.ParseAddr(strings.Split(address, "%")[0])
 		if err != nil {
 			return err
 		}
-		if !local.Is6() || local.Is4In6() || local.IsLinkLocalUnicast() || local.IsLoopback() || local.IsUnspecified() || local.IsMulticast() || bits > 64 || valid == 0 {
+		if !local.Is6() || local.Is4In6() || local.IsLinkLocalUnicast() || local.IsLoopback() || local.IsUnspecified() || local.IsMulticast() || valid == 0 {
 			return nil
 		}
-		result = append(result, raPrefixValue{Prefix: netip.PrefixFrom(local, 64).Masked(), Preferred: min(preferred, valid), Valid: valid})
+		if bits < 0 || bits > 128 {
+			return fmt.Errorf("native RA address has invalid prefix length")
+		}
+		result = append(result, raNativeAddress{Address: netip.PrefixFrom(local, bits), Preferred: min(preferred, valid), Valid: valid, LifetimeKnown: known})
 		return nil
 	}
 	if osName == platform.OSLinux {
@@ -94,11 +123,11 @@ func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raP
 			if address.Deprecated || fieldsContain(address.Flags, "deprecated") {
 				preferred = 0
 			}
-			if err := appendPrefix(address.Local, *address.Prefix, preferred, uint32(*address.Valid)); err != nil {
+			if err := appendAddress(address.Local, *address.Prefix, preferred, uint32(*address.Valid), true); err != nil {
 				return nil, err
 			}
 		}
-		return mergeNativeRAPrefixes(result), nil
+		return result, nil
 	}
 	if osName != platform.OSFreeBSD {
 		return nil, fmt.Errorf("native RA observation unsupported on %s", osName)
@@ -116,6 +145,7 @@ func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raP
 		}
 		bits := -1
 		preferred, valid := uint32(math.MaxUint32), uint32(math.MaxUint32)
+		preferredKnown, validKnown := false, false
 		for i := 2; i+1 < len(fields); i++ {
 			switch fields[i] {
 			case "prefixlen":
@@ -135,8 +165,10 @@ func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raP
 				}
 				if fields[i] == "pltime" {
 					preferred = uint32(value)
+					preferredKnown = true
 				} else {
 					valid = uint32(value)
+					validKnown = true
 				}
 			}
 		}
@@ -146,11 +178,11 @@ func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raP
 		if fieldsContain(fields, "deprecated") {
 			preferred = 0
 		}
-		if err := appendPrefix(fields[1], bits, preferred, valid); err != nil {
+		if err := appendAddress(fields[1], bits, preferred, valid, preferredKnown && validKnown); err != nil {
 			return nil, err
 		}
 	}
-	return mergeNativeRAPrefixes(result), nil
+	return result, nil
 }
 
 func mergeNativeRAPrefixes(values []raPrefixValue) []raPrefixValue {

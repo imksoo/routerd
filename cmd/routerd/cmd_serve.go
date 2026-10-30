@@ -739,7 +739,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}()
 	observed, err := startControllerRuntime(ctx, stop, func(ctx context.Context) error {
 		if observation, observeErr := chainRunner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS); observeErr == nil {
-			if result, observeErr := apply.New(ctx).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter); observeErr == nil {
+			if result, observeErr := applyEngine(ctx, observation.RouteRouter).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter); observeErr == nil {
 				cache.Store(result)
 				_ = statuswriter.Write(*statusFile, result)
 			} else {
@@ -2708,7 +2708,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	if err != nil {
 		return nil, err
 	}
-	result, err = apply.New(ctx).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter)
+	result, err = applyEngine(ctx, observation.RouteRouter).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
