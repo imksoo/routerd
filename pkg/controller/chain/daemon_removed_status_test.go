@@ -23,6 +23,10 @@ func TestSupervisedRemovedStatusRequiresAcknowledgedStop(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := store.SavePDLease("removed", state.PDLease{LastPrefix: "2001:db8:1200::/60", Phase: "Expired"}); err != nil {
+		t.Fatal(err)
+	}
+	recordLANReceiptForTest(t, store, "lan", "lan0", "removed", "2001:db8:1200::1/64")
 	marker := supervisedDaemonMarker{Version: 1, Binary: "routerd-dhcpv6-client", Resource: "removed", SpecHash: "hash", OwnerToken: "owner"}
 	if err := writeSupervisedDaemonMarker(marker); err != nil {
 		t.Fatal(err)
@@ -37,7 +41,11 @@ func TestSupervisedRemovedStatusRequiresAcknowledgedStop(t *testing.T) {
 		t.Fatal("unobserved stop acknowledged")
 	}
 	for _, kind := range []string{"DHCPv6PrefixDelegation", "DNSResolver"} {
-		if status := store.ObjectStatus(api.NetAPIVersion, kind, "removed"); status["phase"] != "Pending" {
+		want := "Pending"
+		if kind == "DHCPv6PrefixDelegation" {
+			want = "Expired"
+		}
+		if status := store.ObjectStatus(api.NetAPIVersion, kind, "removed"); status["phase"] != want {
 			t.Fatalf("%s failure hidden: %v", kind, status)
 		}
 	}
@@ -49,6 +57,12 @@ func TestSupervisedRemovedStatusRequiresAcknowledgedStop(t *testing.T) {
 		if status := store.ObjectStatus(api.NetAPIVersion, kind, "removed"); status != nil {
 			t.Errorf("stopped removed %s retains status: %v", kind, status)
 		}
+	}
+	if _, found, err := store.ReadPDLease("removed"); err != nil || found {
+		t.Fatalf("removed canonical PD observation survived: found=%v err=%v", found, err)
+	}
+	if receipt, err := delegatedReceipt(store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan")); err != nil || receipt == nil {
+		t.Fatalf("supervisor removed LAN controller's native ownership: %v, %v", receipt, err)
 	}
 }
 

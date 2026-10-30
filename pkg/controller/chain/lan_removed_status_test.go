@@ -35,6 +35,14 @@ func TestLANExpiredThenRemovedDeletesStatus(t *testing.T) {
 			}
 			c.Router = &api.Router{}
 			c.DeclaredRouter = c.Router
+			c.DryRun = true
+			if err := c.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address"); got["phase"] != "Pending" {
+				t.Fatalf("dry-run deleted status: %v", got)
+			}
+			c.DryRun = false
 			if err := c.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}

@@ -28,20 +28,24 @@ import (
 	"github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
+	"github.com/imksoo/routerd/pkg/state"
 )
 
 type Store interface {
+	state.ObjectStatusLister
+	state.ObjectDeleteStore
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
 	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	DryRun bool
-	Binary string
+	Router         *api.Router
+	DeclaredRouter *api.Router
+	Bus            *bus.Bus
+	Store          Store
+	DryRun         bool
+	Binary         string
 
 	RuntimeDir    string
 	StateDir      string
@@ -221,6 +225,9 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DNSResolver", Name: resolver.name}
 			_ = c.Bus.Publish(ctx, event)
 		}
+	}
+	if reconcileErr == nil && !c.DryRun {
+		return c.cleanupRemovedZones()
 	}
 	return reconcileErr
 }
