@@ -547,24 +547,6 @@ func egressRoutePolicyArtifacts(res api.Resource, aliases map[string]string) []r
 			ApplyWith: "nft",
 		})
 	}
-	if mode == "priority" && defaultString(spec.Selection, "highest-weight-ready") != "highest-weight-ready" {
-		return intents
-	}
-	for _, candidate := range spec.Candidates {
-		if !api.BoolDefault(candidate.Enabled, true) {
-			continue
-		}
-		if len(candidate.Targets) > 0 {
-			for i, target := range candidate.Targets {
-				if target.Name == "" {
-					target.Name = fmt.Sprintf("%s-%d", defaultString(candidate.Name, res.Metadata.Name), i)
-				}
-				intents = append(intents, egressPolicyTargetArtifacts(res.ID(), target, aliases)...)
-			}
-			continue
-		}
-		intents = append(intents, egressPolicyTargetArtifacts(res.ID(), egressTargetFromCandidate(candidate), aliases)...)
-	}
 	return intents
 }
 
@@ -575,52 +557,6 @@ func egressRoutePolicyHasTargetCandidates(spec api.EgressRoutePolicySpec) bool {
 		}
 	}
 	return false
-}
-
-func egressPolicyTargetArtifacts(owner string, target api.EgressRoutePolicyTarget, aliases map[string]string) []resource.Intent {
-	table := target.EffectiveTable()
-	if target.Priority == 0 || target.Mark == 0 || table == 0 {
-		return nil
-	}
-	ifname := aliases[target.EffectiveInterface()]
-	if ifname == "" {
-		ifname = target.EffectiveInterface()
-	}
-	routeName := fmt.Sprintf("table=%d", table)
-	return []resource.Intent{
-		{
-			Artifact: resource.Artifact{
-				Kind:  "linux.ipv4.routeTable",
-				Name:  routeName,
-				Owner: owner,
-				Attributes: map[string]string{
-					"table":  fmt.Sprintf("%d", table),
-					"ifname": ifname,
-				},
-			},
-			Action:    resource.ActionEnsure,
-			ApplyWith: "ip-route",
-		},
-		{
-			Artifact:  newIPv4FwmarkRuleArtifact(owner, target.Priority, target.Mark, table),
-			Action:    resource.ActionEnsure,
-			ApplyWith: "ip-rule",
-		},
-	}
-}
-
-func egressTargetFromCandidate(candidate api.EgressRoutePolicyCandidate) api.EgressRoutePolicyTarget {
-	return api.EgressRoutePolicyTarget{
-		Name:        candidate.Name,
-		Interface:   candidate.EffectiveInterface(),
-		Table:       candidate.Table,
-		RouteTable:  candidate.RouteTable,
-		Priority:    candidate.Priority,
-		Mark:        candidate.Mark,
-		RouteMetric: candidate.RouteMetric,
-		Metric:      candidate.Metric,
-		HealthCheck: candidate.HealthCheck,
-	}
 }
 
 func artifactIntentsForResult(intents []resource.Intent) []ArtifactIntent {

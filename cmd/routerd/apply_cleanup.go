@@ -203,14 +203,6 @@ func (e routerdArtifactTeardownExecutor) RemoveAll(path string) error {
 	return os.RemoveAll(path)
 }
 
-func (e routerdArtifactTeardownExecutor) DeleteIPv4FwmarkRule(priority, mark, table int) error {
-	return e.Run("ip", "-4", "rule", "del", "priority", fmt.Sprint(priority), "fwmark", fmt.Sprintf("0x%x", mark), "table", fmt.Sprint(table))
-}
-
-func (e routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
-	return e.Run("ip", "-4", "route", "flush", "table", fmt.Sprint(table))
-}
-
 func recordLastAppliedPath(router *api.Router, store resourcequery.StateStore, path string) error {
 	if path == "" {
 		return nil
