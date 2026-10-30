@@ -5,10 +5,8 @@ package chain
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -34,6 +32,9 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 	command := c.Command
 	if command == nil {
 		command = runOutputCommandContext
+	}
+	if err := c.cleanupObsoleteNTPClients(ctx, command); err != nil {
+		return err
 	}
 	if err := c.cleanupWhenFalseNTPClients(ctx, command); err != nil {
 		return err
@@ -117,7 +118,8 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 		}
 		configPath := c.ntpConfigPath(provider, defaults)
 		data := renderNTPConfig(provider, servers, compactNTPList(spec.FallbackServers))
-		changed, err := writeFileIfChanged(configPath, data, 0o644, c.DryRun)
+		owner := ntpConfigOwner{store: c.Store, kind: "NTPClient"}
+		changed, receipt, err := owner.write(resource.Metadata.Name, provider, configPath, data, c.DryRun)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
 				"phase":    "Error",
@@ -134,9 +136,14 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 		timesyncdDisabled := false
 		if !c.DryRun {
 			var err error
-			timesyncdDisabled, err = c.applyNTPService(ctx, resource.Metadata.Name, provider, configPath, changed, command)
+			timesyncdDisabled, err = c.applyNTPService(ctx, resource.Metadata.Name, provider, configPath, changed, owner.command(*receipt, command))
 			if err != nil {
 				return c.saveNTPCommandError(resource.Metadata.Name, provider, servers, "ServiceApplyFailed", err)
+			}
+		}
+		if !c.DryRun {
+			if err := owner.confirm(*receipt); err != nil {
+				return err
 			}
 		}
 		status := map[string]any{
@@ -190,13 +197,18 @@ func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context, com
 		}
 		provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
 		configPath := c.ntpConfigPath(provider, defaults)
-		changed, err := removeNTPClientConfig(configPath, c.DryRun)
+		owner := ntpConfigOwner{store: c.Store, kind: "NTPClient"}
+		receipt, err := owner.get(resource.Metadata.Name)
 		if err != nil {
-			return c.saveNTPCommandError(resource.Metadata.Name, provider, nil, "WhenFalseCleanupFailed", err)
+			return err
 		}
-		if changed && !c.DryRun {
-			if err := c.reloadNTPClientProvider(ctx, provider, command); err != nil {
-				return c.saveNTPCommandError(resource.Metadata.Name, provider, nil, "WhenFalseCleanupReloadFailed", err)
+		changed := false
+		if receipt != nil {
+			changed, err = owner.withdraw(ctx, *receipt, c.DryRun, func(ctx context.Context, provider string) error {
+				return c.reloadNTPClientProvider(ctx, provider, command)
+			})
+			if err != nil {
+				return c.saveNTPCommandError(resource.Metadata.Name, provider, nil, "WhenFalseCleanupFailed", err)
 			}
 		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
@@ -211,21 +223,6 @@ func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context, com
 		}
 	}
 	return nil
-}
-
-func removeNTPClientConfig(path string, dryRun bool) (bool, error) {
-	if dryRun {
-		_, err := os.Stat(path)
-		return err == nil, nil
-	}
-	err := os.Remove(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (c NTPClientController) reloadNTPClientProvider(ctx context.Context, provider string, command outputCommandFunc) error {
@@ -477,6 +474,9 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 	if command == nil {
 		command = runOutputCommandContext
 	}
+	if err := c.cleanupObsoleteNTPServers(ctx, command); err != nil {
+		return err
+	}
 	if err := c.cleanupWhenFalseNTPServers(ctx, command); err != nil {
 		return err
 	}
@@ -562,7 +562,8 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		data := renderNTPServerConfig(provider, servers, allowCIDRs, listenAddresses)
-		changed, err := writeFileIfChanged(configPath, data, 0o644, c.DryRun)
+		owner := ntpConfigOwner{store: c.Store, kind: "NTPServer"}
+		changed, receipt, err := owner.write(resource.Metadata.Name, provider, configPath, data, c.DryRun)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
 				"phase":    "Error",
@@ -578,7 +579,7 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 		timesyncdDisabled := false
 		if !c.DryRun {
 			var err error
-			timesyncdDisabled, err = c.applyNTPServer(ctx, resource.Metadata.Name, provider, configPath, changed, command)
+			timesyncdDisabled, err = c.applyNTPServer(ctx, resource.Metadata.Name, provider, configPath, changed, owner.command(*receipt, command))
 			if err != nil {
 				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
 					"phase":    "Error",
@@ -589,6 +590,11 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 				}); saveErr != nil {
 					return saveErr
 				}
+				return err
+			}
+		}
+		if !c.DryRun {
+			if err := owner.confirm(*receipt); err != nil {
 				return err
 			}
 		}
@@ -646,13 +652,27 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 			continue
 		}
 		configPath := c.serverConfigPath(provider)
-		changed, err := writeFileIfChanged(configPath, renderNTPServerConfig(provider, nil, nil, nil), 0o644, c.DryRun)
+		owner := ntpConfigOwner{store: c.Store, kind: "NTPServer"}
+		acquired, err := owner.get(resource.Metadata.Name)
 		if err != nil {
-			return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupWriteFailed", err)
+			return err
 		}
-		if changed && !c.DryRun {
-			if err := c.reloadNTPServerProvider(ctx, provider, command); err != nil {
-				return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupReloadFailed", err)
+		changed := false
+		if acquired != nil {
+			var receipt *ntpConfigRecord
+			changed, receipt, err = owner.write(resource.Metadata.Name, provider, configPath, renderNTPServerConfig(provider, nil, nil, nil), c.DryRun)
+			if err != nil {
+				return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupWriteFailed", err)
+			}
+			if !c.DryRun {
+				if changed {
+					if err := c.reloadNTPServerProvider(ctx, provider, owner.command(*receipt, command)); err != nil {
+						return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupReloadFailed", err)
+					}
+				}
+				if err := owner.confirm(*receipt); err != nil {
+					return err
+				}
 			}
 		}
 		if err := c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "", nil); err != nil {
@@ -870,4 +890,89 @@ func ntpListenAddresses(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func (c NTPClientController) cleanupObsoleteNTPClients(ctx context.Context, command outputCommandFunc) error {
+	owner := ntpConfigOwner{store: c.Store, kind: "NTPClient"}
+	records, err := owner.read()
+	if err != nil {
+		return err
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	if declared == nil {
+		return fmt.Errorf("NTP client requires a current declaration")
+	}
+	defaults, _ := platform.Current()
+	for _, record := range records {
+		keep := false
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind != "NTPClient" || resource.Metadata.Name != record.Name {
+				continue
+			}
+			spec, err := resource.NTPClientSpec()
+			if err != nil {
+				return err
+			}
+			if !spec.Managed {
+				keep = true
+				break
+			}
+			provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
+			keep = record.Provider == provider && record.Path == c.ntpConfigPath(provider, defaults) && !(provider == "ntpd" && hasManagedNTPServer(c.Router, provider))
+		}
+		if keep && !record.Withdrawing {
+			continue
+		}
+		if _, err := owner.withdraw(ctx, record, c.DryRun, func(ctx context.Context, provider string) error {
+			return c.reloadNTPClientProvider(ctx, provider, command)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c NTPServerController) cleanupObsoleteNTPServers(ctx context.Context, command outputCommandFunc) error {
+	owner := ntpConfigOwner{store: c.Store, kind: "NTPServer"}
+	records, err := owner.read()
+	if err != nil {
+		return err
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	if declared == nil {
+		return fmt.Errorf("NTP server requires a current declaration")
+	}
+	for _, record := range records {
+		keep := false
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind != "NTPServer" || resource.Metadata.Name != record.Name {
+				continue
+			}
+			spec, err := resource.NTPServerSpec()
+			if err != nil {
+				return err
+			}
+			if !spec.Managed {
+				keep = true
+				break
+			}
+			provider := firstNonEmpty(spec.Provider, defaultNTPServerProvider())
+			keep = record.Provider == provider && record.Path == c.serverConfigPath(provider)
+		}
+		if keep && !record.Withdrawing {
+			continue
+		}
+		if _, err := owner.withdraw(ctx, record, c.DryRun, func(ctx context.Context, provider string) error {
+			return c.reloadNTPServerProvider(ctx, provider, command)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
