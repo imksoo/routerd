@@ -3651,28 +3651,6 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 				"--event-file", filepath.Join(defaults.StateDir, "dns-resolver", name, "events.jsonl"),
 			}
 			out = append(out, supervisedDaemonSpec{ResourceName: name, Binary: "routerd-dns-resolver", Args: args})
-		case "DHCPv6PrefixDelegation":
-			spec, err := resource.DHCPv6PrefixDelegationSpec()
-			if err != nil {
-				continue
-			}
-			ifname := interfaceIfName(router, spec.Interface)
-			if ifname == "" {
-				ifname = spec.Interface
-			}
-			defaults, _ := platform.Current()
-			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname,
-				"--socket", filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock"),
-				"--lease-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "lease.json"),
-				"--event-file", filepath.Join(defaults.StateDir, "dhcpv6-client", resource.Metadata.Name, "events.jsonl"),
-			}
-			if spec.IAID != "" {
-				args = append(args, "--iaid", spec.IAID)
-			}
-			if spec.ClientDUID != "" {
-				args = append(args, "--client-duid", spec.ClientDUID)
-			}
-			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv6-client", Args: args})
 		case "DHCPv4Client":
 			spec, err := resource.DHCPv4ClientSpec()
 			if err != nil {
@@ -3739,6 +3717,9 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			}
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
+	}
+	for _, worker := range dhcpv6Workers(router) {
+		out = append(out, worker.daemonSpec())
 	}
 	return out
 }
@@ -3859,6 +3840,12 @@ func (r *Runner) reconcileSupervisedDaemonSpecs(ctx context.Context, logger *slo
 		}
 	}
 
+	// A renamed worker can need the same native socket as an obsolete worker.
+	// Marker keys alone do not prove that those owners are independent. Finish
+	// every obsolete stop before creating any replacement ownership record.
+	if len(failures) != 0 {
+		return errors.Join(failures...)
+	}
 	for key, spec := range desiredAll {
 		if failedCleanup[key] {
 			continue
@@ -4818,7 +4805,7 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 
 func daemonStatusObservedOnlyKind(kind string) bool {
 	switch kind {
-	case "DHCPv4Client", "PPPoESession", "DHCPv6PrefixDelegation", "DNSResolver", "HealthCheck":
+	case "DHCPv4Client", "PPPoESession", "DHCPv6PrefixDelegation", "DHCPv6Address", "DNSResolver", "HealthCheck":
 		return true
 	default:
 		return false
@@ -4957,13 +4944,6 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
-		case "DHCPv6PrefixDelegation":
-			socket := c.DaemonSockets[resource.Metadata.Name]
-			if socket == "" {
-				defaults, _ := platform.Current()
-				socket = filepath.Join(defaults.RuntimeDir, "dhcpv6-client", resource.Metadata.Name+".sock")
-			}
-			add(socket)
 		case "DHCPv4Client":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
@@ -5011,6 +4991,13 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 			}
 			add(socket)
 		}
+	}
+	workers, err := observedDHCPv6Workers(c.Router, c.Store)
+	if err != nil {
+		return nil, err
+	}
+	for _, worker := range workers {
+		add(worker.socket(c.DaemonSockets))
 	}
 	runner := Runner{Router: c.Router, Store: c.Store, Opts: Options{DaemonSockets: c.DaemonSockets}}
 	observers, err := runner.mobilityARPObserverDaemonSpecs()

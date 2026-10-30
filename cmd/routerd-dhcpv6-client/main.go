@@ -63,25 +63,27 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 type options struct {
-	resource     string
-	ifname       string
-	clientDUID   string
-	iaid         uint
-	timeout      time.Duration
-	socketPath   string
-	leaseFile    string
-	eventFile    string
-	srcLL        string
-	srcMAC       string
-	hopLimit     int
-	listenPort   int
-	renewMargin  time.Duration
-	rebindMargin time.Duration
-	requestMode  string
+	resource        string
+	addressResource string
+	ifname          string
+	clientDUID      string
+	iaid            uint
+	timeout         time.Duration
+	socketPath      string
+	leaseFile       string
+	eventFile       string
+	srcLL           string
+	srcMAC          string
+	hopLimit        int
+	listenPort      int
+	renewMargin     time.Duration
+	rebindMargin    time.Duration
+	requestMode     string
 }
 
 func bindOptions(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.resource, "resource", "wan-pd", "resource name")
+	fs.StringVar(&opts.addressResource, "address-resource", "", "DHCPv6Address resource served by this worker")
 	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.clientDUID, "client-duid", "", "client DUID hex; default derives DUID-LL from interface MAC")
@@ -114,6 +116,9 @@ func parseOptions(name string, args []string) (options, error) {
 	}
 	if _, err := requestMode(opts.requestMode); err != nil {
 		return options{}, err
+	}
+	if opts.addressResource != "" && (opts.requestMode == "pd" || strings.ContainsAny(opts.addressResource, "/\\\x00\r\n") || strings.TrimSpace(opts.addressResource) != opts.addressResource) {
+		return options{}, errors.New("--address-resource requires address or pd-address mode and a single resource name")
 	}
 	if strings.TrimSpace(opts.srcMAC) != "" {
 		return options{}, errors.New("--src-mac requires raw Ethernet transport, which is not implemented in Phase 0")
@@ -768,7 +773,7 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 		attribute.String("routerd.dhcpv6.state", string(snapshot.State)),
 	))
 	resourceStatus := daemonapi.ResourceStatus{
-		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource},
+		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.resourceName()},
 		Phase:    phase,
 		Health:   daemonapi.HealthOK,
 		Since:    snapshot.UpdatedAt,
@@ -796,15 +801,26 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 			"lastError":      snapshot.LastError,
 		},
 	}
+	resources := []daemonapi.ResourceStatus{resourceStatus}
+	if snapshot.Mode == pdclient.RequestPrefixAndAddress && d.opts.addressResource != "" {
+		address := resourceStatus
+		address.Resource = daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6Address", Name: d.opts.addressResource}
+		address.Phase = resourcePhase(snapshot.State)
+		ready := len(snapshot.Addresses) > 0
+		if !ready && address.Phase == daemonapi.ResourcePhaseBound {
+			address.Phase = daemonapi.ResourcePhasePending
+		}
+		address.Conditions = append([]daemonapi.Condition(nil), resourceStatus.Conditions...)
+		address.Conditions[0].Status = conditionStatus(ready && (snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding))
+		resources = append(resources, address)
+	}
 	return daemonapi.DaemonStatus{
-		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonStatus},
-		Daemon:   d.daemonRef(),
-		Phase:    daemonapi.PhaseRunning,
-		Health:   daemonapi.HealthOK,
-		Since:    d.startedAt,
-		Resources: []daemonapi.ResourceStatus{
-			resourceStatus,
-		},
+		TypeMeta:  daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonStatus},
+		Daemon:    d.daemonRef(),
+		Phase:     daemonapi.PhaseRunning,
+		Health:    daemonapi.HealthOK,
+		Since:     d.startedAt,
+		Resources: resources,
 	}
 }
 
@@ -882,7 +898,10 @@ func (d *dhcpv6Daemon) publish(topic, severity, reason, message string, attrs ma
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.resourceName()}
+	if topic == daemonapi.EventDHCPv6AddressesChanged && d.opts.addressResource != "" {
+		event.Resource.Kind, event.Resource.Name = "DHCPv6Address", d.opts.addressResource
+	}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs
