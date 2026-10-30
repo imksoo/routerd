@@ -69,6 +69,8 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 }
 
 type applyOptions struct {
+	// The selected live owner admits once and consumes the canonical commit before effects.
+	applyRuntime         func(context.Context, func() error) (controllerchain.RuntimeReloadOutcome, error)
 	ConfigPath           string
 	StatusFile           string
 	NetplanPath          string
@@ -507,7 +509,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 }
 
 func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (outcome applyAttemptOutcome, err error) {
-	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil {
+	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil && opts.applyRuntime == nil {
 		owner, acquireErr := acquireNativeOperationOwner(ctx)
 		if acquireErr != nil {
 			return outcome, acquireErr
@@ -591,10 +593,6 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	eventBus := bus.NewWithStore(stateStore)
 	eventBus.SetLogger(slog.Default())
 	outcome.Stage = "plan"
-	err = recordObservedPrefixDelegationState(router, stateStore, eventBus)
-	if err != nil {
-		return nil, err
-	}
 	runner := &controllerchain.Runner{Router: router, Bus: eventBus, Store: stateStore}
 	defer func() {
 		if runner.RuntimeMutationError() != nil {
@@ -620,7 +618,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	decision := ha.Decision{Leader: true}
-	if !opts.DryRun {
+	if !opts.DryRun && opts.applyRuntime == nil {
 		outcome.Stage = "ha-admission"
 		var clusterName string
 		decision, clusterName, err = acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
@@ -647,19 +645,46 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			outcome.Stage = "complete"
 			return result, nil
 		}
-		recordWarningEvents(router, stateStore, result.Warnings)
-		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
-	controllerOpts := applyChainControllerOptions(opts)
-	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
-		opts.attemptHooks.configureControllers(&controllerOpts)
+	if opts.applyRuntime == nil {
+		controllerOpts := applyChainControllerOptions(opts)
+		if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
+			opts.attemptHooks.configureControllers(&controllerOpts)
+		}
+		runner.Opts = controllerOpts
+		runner.HADecision = &decision
 	}
-	runner.Opts = controllerOpts
-	runner.HADecision = &decision
-	outcome.Stage = "reconcile"
-	if err := runner.ReconcileOnce(ctx); err != nil {
-		return nil, err
+	if err := outcome.commitAndApplyRuntime(ctx, opts, configYAML, func() error {
+		outcome.Stage = "observe-prefix-delegation"
+		if err := recordObservedPrefixDelegationState(router, stateStore, eventBus); err != nil {
+			return err
+		}
+		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
+		return nil
+	}); err != nil {
+		return result, err
+	}
+	if outcome.Runtime.Standby {
+		result.Phase = "Standby"
+		result.Warnings = append(result.Warnings, "active HA ownership did not admit candidate apply; canonical configuration was not committed")
+		outcome.Stage = "finish-generation"
+		if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
+			return result, err
+		}
+		outcome.Stage = "output"
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return result, err
+		}
+		outcome.Stage = "complete"
+		return result, nil
+	}
+	if opts.applyRuntime == nil {
+		outcome.Stage = "reconcile"
+		if err := runner.ReconcileOnce(ctx); err != nil {
+			return nil, err
+		}
 	}
 	view, err = runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
 	if err != nil {
@@ -686,18 +711,13 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
-	if !opts.DryRun && configCommitPhase(result.Phase) {
-		if err := outcome.commit(opts, configYAML); err != nil {
-			return result, err
-		}
-	}
 	outcome.Stage = "finish-generation"
 	if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
 	}
 	if !configCommitPhase(result.Phase) {
 		outcome.Stage = "observe-result"
-		return result, fmt.Errorf("apply finished with phase %s; canonical config was not committed", result.Phase)
+		return result, fmt.Errorf("apply finished with phase %s; desired router state was not confirmed (canonical=%s)", result.Phase, outcome.Canonical)
 	}
 	outcome.Stage = "output"
 

@@ -670,10 +670,11 @@ func TestServeConfigMutatorApplyReplaceCommitsCanonicalAndGeneration(t *testing.
 			DnsmasqConfigPath:  filepath.Join(dir, "dnsmasq.conf"),
 			NftablesPath:       filepath.Join(dir, "nat44.nft"),
 		},
-		cache:     &resultCache{},
-		logger:    &eventlog.Logger{},
-		getRouter: func() *api.Router { return router },
-		setRouter: func(next *api.Router) { router = next },
+		cache:                   &resultCache{},
+		logger:                  &eventlog.Logger{},
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return router }),
+		getRouter:               func() *api.Router { return router },
+		setRouter:               func(next *api.Router) { router = next },
 	}
 	candidate := `# replacement comment
 apiVersion: routerd.net/v1alpha1
@@ -844,10 +845,11 @@ func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) 
 			SkipServiceManager: true,
 			Sandbox:            true,
 		},
-		cache:     &resultCache{},
-		logger:    &eventlog.Logger{},
-		getRouter: func() *api.Router { return router },
-		setRouter: func(next *api.Router) { router = next },
+		cache:                   &resultCache{},
+		logger:                  &eventlog.Logger{},
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return router }),
+		getRouter:               func() *api.Router { return router },
+		setRouter:               func(next *api.Router) { router = next },
 	}
 	result, err := mutator.apply(nil, controlapi.ApplyRequest{
 		CandidateYAML: testRouterYAML("sandbox-router"),

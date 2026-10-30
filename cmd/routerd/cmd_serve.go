@@ -771,18 +771,17 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	go runDHCPEventQueue(ctx, platformDefaults.DHCPEventQueueFile(), dhcpStickyLogPath(), platformDefaults.DnsmasqLeaseFile(), currentRouter, controllerBus)
 	mutator := serveConfigMutator{
-		configPath:           *configPath,
-		statePath:            *statePath,
-		baseOpts:             applyOpts,
-		cache:                cache,
-		logger:               logger,
-		getRouter:            currentRouter,
-		setRouter:            setCurrentRouter,
-		reloadWithOutcome:    chainRunner.ReloadRuntimeWithOutcome,
-		activeRuntime:        chainRunner.ActiveRuntimeSnapshot,
-		updateRuntime:        chainRunner.UpdateRuntimeRouter,
-		runtimeMutationError: chainRunner.RuntimeMutationError,
-		stopping:             stopping.Load,
+		configPath:              *configPath,
+		statePath:               *statePath,
+		baseOpts:                applyOpts,
+		cache:                   cache,
+		logger:                  logger,
+		getRouter:               currentRouter,
+		setRouter:               setCurrentRouter,
+		applyRuntimeWithOutcome: chainRunner.ApplyRuntimeWithOutcome,
+		activeRuntime:           chainRunner.ActiveRuntimeSnapshot,
+		runtimeMutationError:    chainRunner.RuntimeMutationError,
+		stopping:                stopping.Load,
 	}
 	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping, runtimeMutationError: chainRunner.RuntimeMutationError}
 	if *applyInterval > 0 {
@@ -1027,8 +1026,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		},
 	}
 	servers := &serveHTTPServers{
-		observations:   stateStore,
-		targetOS:       platformDefaults.OS,
 		stopping:       stopping.Load,
 		controlHandler: handler,
 		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {
@@ -1041,7 +1038,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return webConsoleHTTPHandler(spec, candidate, currentRouter, stateStore, controllerBus, cache, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath))
 		},
 	}
-	mutator.servers = servers
 	initialObservation, err := chainRunner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
 	if err != nil {
 		return err

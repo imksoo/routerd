@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
@@ -60,6 +61,14 @@ func awaitRetiredHTTP(t *testing.T, owner *ownedHTTPServer) {
 }
 
 func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
+	for _, reload := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reload-%t", reload), func(t *testing.T) {
+			testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t, reload)
+		})
+	}
+}
+
+func testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T, reload bool) {
 	t.Setenv("ROUTERD_HTTP_OLD_TOKEN", "old-token")
 	t.Setenv("ROUTERD_HTTP_NEW_TOKEN", "new-token")
 	controlPort, webPort := unusedHTTPPort(t), unusedHTTPPort(t)
@@ -92,7 +101,7 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 			return mutator.apply(r, request)
 		},
 	}
-	servers := &serveHTTPServers{observations: store, targetOS: platformDefaults.OS, controlHandler: handler,
+	servers := &serveHTTPServers{controlHandler: handler,
 		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {
 			return resolveControlAPIHTTPConfig(candidate, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, nil)
 		},
@@ -102,22 +111,32 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		newWebHandler: func(spec api.WebConsoleSpec, candidate *api.Router) http.Handler {
 			return webConsoleHTTPHandler(spec, candidate, current.Load, store, nil, cache, path, nil, nil)
 		}}
-	mutator.servers = servers
+	gate := &sync.RWMutex{}
+	mutator.baseOpts.MutationGate = gate
+	runner := &controllerchain.Runner{Router: initial, Store: store, Bus: bus.NewWithStore(store), Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}, MutationGate: gate, ReconcileHTTPServers: func(ctx context.Context, observation controllerchain.RuntimeRouterObservation) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return servers.reconcile(observation)
+	}}}
+	mutator.applyRuntimeWithOutcome = runner.ApplyRuntimeWithOutcome
+	mutator.activeRuntime = runner.ActiveRuntimeSnapshot
+	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
+	if err := runner.Start(runtimeCtx); err != nil {
+		stopRuntime()
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
+		stopRuntime()
 		ctx, cancel := context.WithTimeout(context.Background(), controllerchain.RuntimeShutdownGrace)
 		defer cancel()
+		if err := runner.Wait(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Error(err)
+		}
 		if err := servers.close(ctx); err != nil {
 			t.Error(err)
 		}
 	})
-	prepared, err := servers.prepareCandidate(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.close()
-	if err := prepared.publish(); err != nil {
-		t.Fatal(err)
-	}
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", controlPort)
 	old := controlapi.NewHTTPClient(baseURL).WithBearerToken("old-token")
 	if _, err := old.Status(t.Context()); err != nil {
@@ -135,6 +154,18 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		return err
 	}
 	updated := httpConfigRouter(controlPort, webPort, "ROUTERD_HTTP_NEW_TOKEN", "updated console", true)
+	if reload {
+		// Exercise the actual generation replacement path together with HTTP
+		// publication. The selected test controllers do not start DNS services.
+		dns, err := config.LoadBytes([]byte(dnsRuntimeYAML("127.0.0.1")), "candidate")
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated.Spec.Resources = append(updated.Spec.Resources, dns.Spec.Resources...)
+	}
+	if changed, _ := runtimeShapeChanged(initial, updated); changed != reload {
+		t.Fatalf("HTTP fixture selected wrong runtime path: reload=%t changed=%t", reload, changed)
+	}
 	if err := apply(old, updated); err != nil {
 		t.Fatalf("same-listener self mutation: %v", err)
 	}
@@ -171,8 +202,20 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	console, _, err := webConsoleFromRouter(canonical, store)
-	if err != nil || console.Title != "updated console" || current.Load().Spec.Resources[0].Metadata.Name != "control" {
-		t.Fatalf("failed preparation changed canonical state: %+v %v", console, err)
+	if err != nil || console.Title != "after recovery" {
+		t.Fatalf("failed activation lost committed desired HTTP configuration: %+v %v", console, err)
+	}
+	// The selected controller graph now owns the durable candidate. Its HTTP
+	// effect failed, so observe the published handler rather than treating that
+	// selected graph as proof that every resource has converged.
+	response, err = http.Get(webURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || !strings.Contains(string(body), "updated console") || strings.Contains(string(body), "after recovery") {
+		t.Fatalf("failed bind replaced the prior actual web handler: %q %v", body, readErr)
 	}
 	if _, err := client.Status(t.Context()); err != nil {
 		t.Fatalf("failed bind stopped prior listener: %v", err)
@@ -202,8 +245,17 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		}
 	}
 	rows, err := store.ListGenerations(10)
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("successful and failed mutation generations: %+v %v", rows, err)
+	failed, committed := 0, 0
+	for _, row := range rows {
+		if row.Phase == "Errored" {
+			failed++
+		}
+		if row.Phase == "Committed" {
+			committed++
+		}
+	}
+	if err != nil || len(rows) != 4 || failed != 1 || committed != 3 {
+		t.Fatalf("failed postcommit activation and its durable retry lost generation evidence: %+v %v", rows, err)
 	}
 }
 

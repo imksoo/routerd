@@ -146,9 +146,10 @@ spec:
 			LedgerPath: filepath.Join(dir, "ledger.db"),
 			Sandbox:    true, SkipServiceManager: true, MutationGate: &sync.RWMutex{},
 		},
-		cache:     &resultCache{},
-		getRouter: func() *api.Router { return current },
-		setRouter: func(next *api.Router) { current = next },
+		cache:                   &resultCache{},
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }),
+		getRouter:               func() *api.Router { return current },
+		setRouter:               func(next *api.Router) { current = next },
 	}
 }
 

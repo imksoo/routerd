@@ -5,13 +5,16 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -33,7 +36,7 @@ const missingBridgeYAML = `
       spec: {ifname: rd-phase-test, members: [test-member]}
 `
 
-func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *testing.T) {
+func TestMutationDriftFailureRetainsCommittedIntentAndTerminalEvidence(t *testing.T) {
 	for _, operation := range []string{"apply", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
@@ -69,15 +72,22 @@ func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *tes
 				configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache,
 				getRouter: func() *api.Router { return current },
 				setRouter: func(router *api.Router) {
-					if router != old {
-						t.Error("uncommitted candidate was published")
+					canonical, err := os.ReadFile(opts.ConfigPath)
+					if err != nil || string(canonical) == before {
+						t.Error("candidate was published before durable desired replacement")
 					}
 					current = router
 				},
 				activeRuntime: func() controllerchain.RuntimeSnapshot { return active },
-				reloadWithOutcome: func(_ context.Context, router *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
-					reloads++
-					active = controllerchain.RuntimeSnapshot{Router: router, Known: true, Available: true, Epoch: active.Epoch + 1}
+				applyRuntimeWithOutcome: func(_ context.Context, router *api.Router, reload bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
+					if err := commit(); err != nil {
+						return controllerchain.RuntimeReloadOutcome{Active: active}, err
+					}
+					if reload {
+						reloads++
+						active.Epoch++
+					}
+					active.Router = router
 					return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true}, nil
 				},
 			}
@@ -97,18 +107,18 @@ func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *tes
 				t.Fatalf("failed mutation reported success: HTTP %d %s", response.Code, response.Body.String())
 			}
 			canonical, err := os.ReadFile(opts.ConfigPath)
-			if err != nil || string(canonical) != before || current != old || active.Router != old {
-				t.Fatalf("failed mutation changed canonical or active runtime: config=%s error=%v current=%p active=%p old=%p", canonical, err, current, active.Router, old)
+			if err != nil || string(canonical) == before || current == old || active.Router != current {
+				t.Fatalf("nonconvergence lost committed desired or actual runtime: config=%s error=%v current=%p active=%p old=%p", canonical, err, current, active.Router, old)
 			}
 			wantReloads := 0
 			if operation == "apply" {
-				wantReloads = 2
+				wantReloads = 1
 			}
 			if reloads != wantReloads {
 				t.Fatalf("reload/restore count=%d, want %d", reloads, wantReloads)
 			}
 			attempt, _, ok := cache.LastAttempt()
-			if !ok || attempt.Result == nil || attempt.Result.Phase != "Drifted" || !attempt.TerminalSucceeded || attempt.Canonical == canonicalReplaced || cache.Load().Phase != "Error" {
+			if !ok || attempt.Result == nil || attempt.Result.Phase != "Drifted" || !attempt.TerminalSucceeded || attempt.Canonical != canonicalReplaced || !attempt.DurabilityConfirmed || cache.Load().Phase != "Error" {
 				t.Fatalf("failed mutation lost its evidence: %+v", attempt)
 			}
 			store := faultGenerationStore(t, opts.StatePath, false)
@@ -139,7 +149,8 @@ func TestMutationPublishesChangedShapeAfterCanonicalAcknowledgement(t *testing.T
 	}
 	m := serveConfigMutator{
 		configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{},
-		getRouter: func() *api.Router { return current },
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }),
+		getRouter:               func() *api.Router { return current },
 		setRouter: func(router *api.Router) {
 			data, err := os.ReadFile(opts.ConfigPath)
 			if err != nil || !strings.Contains(string(data), "127.0.0.2") {
@@ -148,7 +159,6 @@ func TestMutationPublishesChangedShapeAfterCanonicalAcknowledgement(t *testing.T
 			current = router
 			published++
 		},
-		reload: func(context.Context, *api.Router) error { return nil },
 	}
 	if _, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: dnsRuntimeYAML("127.0.0.2"), Replace: true}); err != nil {
 		t.Fatal(err)
@@ -165,7 +175,7 @@ func TestNoReconcilePlanReadsCommittedIntentWithoutPublishingRuntime(t *testing.
 		t.Fatal(err)
 	}
 	current := old
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }}
 	candidate := strings.Replace(testRouterYAML("new-router"), "resources: []", `resources:
     - apiVersion: net.routerd.net/v1alpha1
       kind: Hostname
@@ -243,7 +253,7 @@ func TestServeOnceRejectsNonconvergenceWithoutLatchingScheduledHealth(t *testing
 }
 
 func TestDeletePublishesIntentAndOnlyAcknowledgedDeletion(t *testing.T) {
-	for _, mode := range []string{"dry-run", "no-reconcile", "standby", "sandbox"} {
+	for _, mode := range []string{"dry-run", "no-reconcile", "standby", "standby-sandbox", "sandbox"} {
 		t.Run(mode, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
 			router, err := config.LoadBytes([]byte(testRouterYAML("old-router")), "current")
@@ -254,7 +264,7 @@ func TestDeletePublishesIntentAndOnlyAcknowledgedDeletion(t *testing.T) {
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
 				Metadata: api.ObjectMeta{Name: "appliance"}, Spec: api.HostnameSpec{Hostname: "appliance.example"},
 			})
-			if mode == "standby" {
+			if mode == "standby" || mode == "standby-sandbox" {
 				leasePath := filepath.Join(t.TempDir(), "lease")
 				leader, err := ha.Acquire(context.Background(), ha.Config{Identity: "leader", Peers: []string{"leader", "standby"}, LeasePath: leasePath})
 				if err != nil {
@@ -275,11 +285,35 @@ func TestDeletePublishesIntentAndOnlyAcknowledgedDeletion(t *testing.T) {
 			}
 			old := router
 			current := old
-			opts.Sandbox = mode == "sandbox"
-			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }}
+			opts.Sandbox = mode == "sandbox" || mode == "standby-sandbox"
+			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }}
+			if mode == "standby" || mode == "standby-sandbox" {
+				gate := &sync.RWMutex{}
+				m.baseOpts.MutationGate = gate
+				store := faultGenerationStore(t, opts.StatePath, false)
+				runner := &controllerchain.Runner{Router: old, Store: store, Bus: bus.NewWithStore(store), Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}, MutationGate: gate}}
+				ctx, cancel := context.WithCancel(t.Context())
+				if err := runner.Start(ctx); err != nil {
+					cancel()
+					t.Fatal(err)
+				}
+				defer func() {
+					cancel()
+					waitCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+					defer stop()
+					if err := runner.Wait(waitCtx); err != nil && !errors.Is(err, context.Canceled) {
+						t.Error(err)
+					}
+				}()
+				m.applyRuntimeWithOutcome = runner.ApplyRuntimeWithOutcome
+				m.activeRuntime = runner.ActiveRuntimeSnapshot
+			}
 			result, err := m.delete(nil, controlapi.DeleteRequest{Target: "Hostname/appliance", DryRun: mode == "dry-run", NoReconcile: mode == "no-reconcile"})
 			if err != nil || result == nil || result.Target != api.NetAPIVersion+"/Hostname/appliance" {
 				t.Fatalf("delete intent/result = %+v %v", result, err)
+			}
+			if (mode == "standby" || mode == "standby-sandbox") && (result.Result == nil || result.Result.Phase != "Standby" || current != old) {
+				t.Fatalf("HA denial committed or activated candidate: %+v", result)
 			}
 			committed := mode == "no-reconcile" || mode == "sandbox"
 			if (len(result.Deleted) != 0) != committed {

@@ -103,7 +103,7 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			mutator := serveConfigMutator{configPath: configPath, statePath: statePath, baseOpts: applyOptions{ConfigPath: configPath, StatePath: statePath, LedgerPath: filepath.Join(dir, "ledger.db"), Sandbox: true, SkipServiceManager: true, MutationGate: gate}, cache: &resultCache{}, logger: &eventlog.Logger{}, getRouter: func() *api.Router { return runner.ActiveRuntimeSnapshot().Router }, reloadWithOutcome: runner.ReloadRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot, updateRuntime: runner.UpdateRuntimeRouter, runtimeMutationError: runner.RuntimeMutationError}
+			mutator := serveConfigMutator{configPath: configPath, statePath: statePath, baseOpts: applyOptions{ConfigPath: configPath, StatePath: statePath, LedgerPath: filepath.Join(dir, "ledger.db"), Sandbox: true, SkipServiceManager: true, MutationGate: gate}, cache: &resultCache{}, logger: &eventlog.Logger{}, getRouter: func() *api.Router { return runner.ActiveRuntimeSnapshot().Router }, applyRuntimeWithOutcome: runner.ApplyRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot, runtimeMutationError: runner.RuntimeMutationError}
 			if _, err := mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: string(candidate), Replace: true}); err != nil {
 				t.Fatal(err)
 			}
