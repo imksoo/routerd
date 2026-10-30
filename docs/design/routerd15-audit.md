@@ -1693,3 +1693,23 @@ failure. Production classification was retained. The complete normal FreeBSD
 gate remains open, including the remaining chain failures. Exact test-binary hashes and scoped
 exclusions are retained in the feature-qualification ledger. Whole-function
 and whole-platform verdicts remain unknown.
+
+
+The complete Linux Go suite subsequently passed at clean `52a52b4c`: 120
+packages passed, nine had no tests, 4,148 top-level tests passed, 13 skipped and
+none failed (6,237 passing entries including subtests). The opt-in namespace
+and FRR gates remain separately bound to the executed `3e58c93a` revision.
+
+The FreeBSD PF data-plane script was strengthened at `4dc78020`. Its previous
+outbound-capture check did not require replies. Each independent egress VNET
+now owns the routed destination; all four three-packet requests must receive
+all three replies. Repeated requests from each source must retain one egress,
+and both egress peers must be exercised. Capture completion is observed before
+stopping tcpdump, rather than treating its buffered final packet as absent.
+With the production binary built from clean `52a52b4c` (SHA-256 in the ledger),
+all 12 replies arrived; both peers captured six translated requests, no private
+source leaked, and each PF state showed 3:3 packets. Independent post-inspection
+found no trial jail/interface, restored forwarding=0, empty rules/states and
+PF returned to its previously unloaded state. This qualifies rendered PF
+source-affinity/NAT traffic in VNET, not controller-owned reconciliation,
+IPv6, physical failover or complete firewall parity.

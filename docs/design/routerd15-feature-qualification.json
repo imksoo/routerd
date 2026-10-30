@@ -588,6 +588,46 @@
         "Real SAM data-plane mobility or enrollment against remote peers",
         "FreeBSD whole normal-suite pass"
       ]
+    },
+    "normal-code-gate-52a52b4c": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "52a52b4cfd56c5e2f6f304475c20bb2711cd5462",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "environment": "Clean Linux source, Go 1.25.9, CGO_ENABLED=0, GOMAXPROCS=2, GOFLAGS=-p=2 -buildvcs=false.",
+      "reproduction": "go test -json -count=1 ./...",
+      "checks": [
+        "120 packages passed; nine packages had no tests; zero failures",
+        "4,148 top-level tests passed; 13 skipped; 6,237 passing entries including subtests",
+        "Opt-in native parent and FRR tests are separately executed and recorded at 3e58c93a; normal-suite skips are not native passes"
+      ],
+      "excludes": [
+        "FreeBSD native normal-suite pass",
+        "Whole baseline feature parity",
+        "Unexecuted opt-in/browser/platform scenarios"
+      ]
+    },
+    "freebsd-pf-two-egress-52a52b4c": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "52a52b4cfd56c5e2f6f304475c20bb2711cd5462",
+      "fixture_revision": "4dc78020673d19498a00cbd45e77a17ef605d391",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "binary_sha256": "612627dea49c96df127a8d369dae39ca027f899540d99545c53f46264394b079",
+      "environment": "FreeBSD 14.3 VM; source VNET with two addresses and two distinct VNET egress peers. Actual production-rendered PF EgressRoutePolicy and NAT44Rule output.",
+      "reproduction": "sh scripts/freebsd-vnet-firewall-dataplane-smoke.sh --routerd /absolute/routerd --evidence-dir /absolute/new-dir",
+      "checks": [
+        "Twelve of twelve ICMP echo requests received replies through real PF/NAT state",
+        "Each original source retained its selected egress across two requests; both egress peers received six translated requests",
+        "No original private source address appeared at the egress captures",
+        "Actual PF state showed 3:3 packet counts for each request pair",
+        "Independent post-check found only original interfaces, no VNET jails, original forwarding=0 and PF module unloaded; empty PF rules/states before disable"
+      ],
+      "excludes": [
+        "Controller-owned apply/reconcile/withdrawal or service restart: fixture renders rules then loads them explicitly",
+        "Physical or separate-OS-host failure domains; peers use distinct VNET kernel stacks",
+        "All firewall actions, IPv6 PF, port forwarding or complete baseline NAT/policy functions"
+      ]
     }
   },
   "features": [
@@ -1969,7 +2009,8 @@
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-smokes-86ffc265"
+          "freebsd-smokes-86ffc265",
+          "freebsd-pf-two-egress-52a52b4c"
         ]
       },
       "required_remaining_checks": [
@@ -2060,7 +2101,8 @@
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-smokes-86ffc265"
+          "freebsd-smokes-86ffc265",
+          "freebsd-pf-two-egress-52a52b4c"
         ]
       },
       "required_remaining_checks": [
@@ -2150,7 +2192,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-pf-two-egress-52a52b4c"
+        ]
       },
       "required_remaining_checks": [
         "Independent accept/deny and zone/client isolation",
