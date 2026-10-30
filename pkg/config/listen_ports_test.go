@@ -194,3 +194,17 @@ func TestValidateRejectsDuplicateDHCPv6AddressOwners(t *testing.T) {
 		t.Fatal("duplicate IA_NA ownership admitted through interface alias")
 	}
 }
+
+func TestValidateDHCPv6AddressUsesManagedClient(t *testing.T) {
+	for _, client := range []string{"", "routerd-dhcpv6-client", "networkd", "dhcp6c"} {
+		router := routerWithResources(
+			testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "wan0"}),
+			testResource(api.NetAPIVersion, "DHCPv6Address", "address", api.DHCPv6AddressSpec{Interface: "wan", Client: client}),
+		)
+		err := Validate(router)
+		managed := client == "" || client == "routerd-dhcpv6-client"
+		if managed && err != nil || !managed && err == nil {
+			t.Errorf("client %q validation=%v", client, err)
+		}
+	}
+}
