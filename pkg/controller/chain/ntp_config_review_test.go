@@ -126,3 +126,53 @@ func TestNTPReviewWithdrawalRechecksRecordAndFileAfterWait(t *testing.T) {
 		}
 	}
 }
+
+func TestNTPReviewCanceledCreationCannotWriteAfterReceiptWait(t *testing.T) {
+	for _, kind := range []string{"NTPClient", "NTPServer"} {
+		t.Run(kind, func(t *testing.T) {
+			store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			owner := ntpConfigOwner{store: store, kind: kind}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			path := filepath.Join(t.TempDir(), "routerd.conf")
+			router := ntpRouter(api.NTPClientSpec{Provider: "chrony", Managed: true, Servers: []string{"192.0.2.123"}})
+			if kind == "NTPServer" {
+				router = ntpServerRouter(api.NTPServerSpec{Provider: "chrony", Managed: true, Servers: []string{"192.0.2.123"}, AllowCIDRs: []string{"192.0.2.0/24"}})
+			}
+			name := router.Spec.Resources[0].Metadata.Name
+			injected := false
+			wrapped := &ntpReviewReadStore{SQLiteStore: store, ownerKey: "_" + kind + "-configs"}
+			wrapped.after = func() {
+				receipt, err := owner.get(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if receipt != nil && receipt.NextDigest != "" && receipt.Digest == "" {
+					wrapped.after = nil
+					injected = true
+					cancel()
+				}
+			}
+			commandCalls := 0
+			command := func(ctx context.Context, _ string, _ ...string) ([]byte, error) {
+				commandCalls++
+				return nil, ctx.Err()
+			}
+			var reconcileErr error
+			if kind == "NTPClient" {
+				reconcileErr = (NTPClientController{Router: router, DeclaredRouter: router, Store: wrapped, ConfigPath: path, Command: command}).Reconcile(ctx)
+			} else {
+				reconcileErr = (NTPServerController{Router: router, DeclaredRouter: router, Store: wrapped, ConfigPath: path, Command: command}).Reconcile(ctx)
+			}
+			data, fileErr := os.ReadFile(path)
+			receipt, readErr := owner.get(name)
+			if !injected || !errors.Is(reconcileErr, context.Canceled) || !errors.Is(fileErr, os.ErrNotExist) || commandCalls != 0 || readErr != nil || receipt == nil || receipt.Digest != "" || receipt.NextDigest == "" {
+				t.Fatalf("cancelled creation wrote after storage wait: injected=%v err=%v file=%q fileErr=%v commands=%d receipt=%+v readErr=%v", injected, reconcileErr, data, fileErr, commandCalls, receipt, readErr)
+			}
+		})
+	}
+}
