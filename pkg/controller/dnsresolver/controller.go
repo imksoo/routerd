@@ -242,7 +242,11 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
 		return config, zones, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}
-	dhcpHostRecords := dnsresolver.ParseDNSMasqHostRecords(hostData)
+	scopes := dnsresolver.DHCPScopes(c.Router)
+	dhcpHostRecords, err := c.namedDHCPAssignments(dnsresolver.ParseDNSMasqHostRecords(hostData), scopes)
+	if err != nil {
+		return config, zones, err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSZone" {
 			continue
@@ -259,9 +263,9 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 			return config, zones, err
 		}
 		zones = append(zones, preparedZone{Name: resource.Metadata.Name, Zone: zoneSpec.Zone, Records: len(zoneSpec.Records), PendingRecords: pendingRecords})
-		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec}
+		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec, DHCPScopes: scopes}
 		if len(zoneSpec.DHCPDerived.Sources) > 0 {
-			runtimeZone.DHCPHostRecords = append([]dnsresolver.RuntimeDHCPHostRecord(nil), dhcpHostRecords...)
+			runtimeZone.DHCPHostRecords = assignmentsForSources(dhcpHostRecords, zoneSpec.DHCPDerived.Sources)
 		}
 		config.Zones = append(config.Zones, runtimeZone)
 	}

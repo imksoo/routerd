@@ -278,6 +278,9 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 	d.sourceCtx, d.sourceCancel = context.WithCancel(context.Background())
 	d.cond = sync.NewCond(&d.mu)
 	d.zones = newZoneTable(config.Zones)
+	if err := d.zones.LoadError(); err != nil {
+		return nil, err
+	}
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
 		return nil, err
@@ -943,6 +946,9 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}
 	zones := newZoneTable(config.Zones)
+	if err := zones.LoadError(); err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
 
 	d.stateMu.RLock()
 	oldZones := d.zones

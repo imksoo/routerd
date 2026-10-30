@@ -47,16 +47,24 @@ type RuntimeZone struct {
 	Name            string                  `json:"name"`
 	Spec            api.DNSZoneSpec         `json:"spec"`
 	DHCPHostRecords []RuntimeDHCPHostRecord `json:"dhcpHostRecords,omitempty"`
+	DHCPScopes      []DHCPAddressScope      `json:"dhcpScopes,omitempty"`
 }
 
-// RuntimeDHCPHostRecord is a routerd-generated dnsmasq host entry captured in
-// the resolver runtime snapshot. It lets a freshly started resolver restore a
-// sticky DHCP hostname even when that client is not present in the active
-// dnsmasq lease file and has not emitted a new lease event yet.
+// RuntimeDHCPHostRecord represents configured assignment intent, not evidence of
+// an active lease. Held assignments retain the actual sticky-hold deadline.
 type RuntimeDHCPHostRecord struct {
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
+	Hostname  string    `json:"hostname"`
+	IP        string    `json:"ip"`
+	MAC       string    `json:"mac"`
+	Source    string    `json:"source"`
+	Origin    string    `json:"origin"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
+
+const (
+	DHCPAssignmentReservation = "reservation"
+	DHCPAssignmentHeld        = "held"
+)
 
 // ParseDNSMasqHostRecords extracts hostname/address pairs from routerd's
 // dnsmasq-hosts sidecar. The sidecar contains both reservation form
@@ -101,7 +109,7 @@ func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
 			continue
 		}
 		seen[key] = true
-		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip})
+		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip, MAC: fields[0]})
 	}
 	sort.Slice(records, func(i, j int) bool {
 		left := strings.ToLower(records[i].Hostname) + "|" + records[i].IP
