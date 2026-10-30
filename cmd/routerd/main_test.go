@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -2376,16 +2377,27 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 }
 
 func TestManagedPDClientSnapshotMatchesDefaultProfileImplicitDUID(t *testing.T) {
-	duid, err := interfacePDClientDUID("lo")
+	interfaces, err := net.Interfaces()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if duid == "" {
-		t.Skip("loopback MAC is unavailable")
+	ifname := ""
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagLoopback == 0 && len(iface.HardwareAddr) == 6 {
+			ifname = iface.Name
+			break
+		}
+	}
+	if ifname == "" {
+		t.Skip("an Ethernet interface is unavailable")
+	}
+	duid, err := interfacePDClientDUID(ifname)
+	if err != nil || duid == "" {
+		t.Fatalf("read default interface DUID: %v", err)
 	}
 	now := time.Now().UTC()
-	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute), Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1200::/60", Preferred: 60, Valid: 60, AcquiredAt: now}}}
-	if !managedPDClientSnapshotIdentityMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, duid) {
+	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: ifname, State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute), Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1200::/60", Preferred: 60, Valid: 60, AcquiredAt: now}}}
+	if !managedPDClientSnapshotIdentityMatches(snapshot, "wan-pd", ifname, api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, duid) {
 		t.Fatal("default profile implicit link-layer DUID must match daemon rule")
 	}
 }

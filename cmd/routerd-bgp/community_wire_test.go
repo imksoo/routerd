@@ -21,6 +21,9 @@ import (
 
 // A raw peer inspects UPDATE bytes independently of GoBGP's remote RIB/API.
 func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
+	// Both endpoints can share a loopback address; their TCP ports distinguish
+	// them. FreeBSD does not bind unconfigured addresses from 127.0.0.0/8.
+	const peerAddress = "127.0.0.1"
 	for _, dynamic := range []bool{false, true} {
 		for _, mode := range []struct {
 			name               string
@@ -50,18 +53,18 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 					t.Fatal(err)
 				}
 				state, applied := dynamicJournal(t)
-				intent := bgpdaemon.PolicyIntent{RouterName: "community", Scopes: []bgpdaemon.PolicyScope{{Name: "community", Neighbors: []string{"127.0.0.2/32"}, ExportPolicyName: "community-export", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.11/32"}}}}}
+				intent := bgpdaemon.PolicyIntent{RouterName: "community", Scopes: []bgpdaemon.PolicyScope{{Name: "community", Neighbors: []string{peerAddress + "/32"}, ExportPolicyName: "community-export", ExportPolicy: api.BGPExportPolicySpec{AllowedPrefixes: []string{"10.77.60.11/32"}}}}}
 				if _, err := reconcilePolicyConfig(ctx, &localPathServer{BgpServer: server}, state, applied, intent); err != nil {
 					t.Fatal(err)
 				}
-				peer := appliedPeer(bgpdaemon.AppliedPeer{Address: "127.0.0.2", ASN: 64513, PassiveMode: true, SendCommunity: mode.mask}, global)
+				peer := appliedPeer(bgpdaemon.AppliedPeer{Address: peerAddress, ASN: 64513, PassiveMode: true, SendCommunity: mode.mask}, global)
 				peer.AfiSafis = peer.AfiSafis[:1]
 				if dynamic {
 					group := &gobgpapi.PeerGroup{Conf: &gobgpapi.PeerGroupConf{PeerGroupName: "clients", PeerAsn: 64513, SendCommunity: mode.mask}, AfiSafis: peer.AfiSafis}
 					if err := server.AddPeerGroup(ctx, &gobgpapi.AddPeerGroupRequest{PeerGroup: group}); err != nil {
 						t.Fatal(err)
 					}
-					if err := server.AddDynamicNeighbor(ctx, &gobgpapi.AddDynamicNeighborRequest{DynamicNeighbor: &gobgpapi.DynamicNeighbor{Prefix: "127.0.0.2/32", PeerGroup: "clients"}}); err != nil {
+					if err := server.AddDynamicNeighbor(ctx, &gobgpapi.AddDynamicNeighborRequest{DynamicNeighbor: &gobgpapi.DynamicNeighbor{Prefix: peerAddress + "/32", PeerGroup: "clients"}}); err != nil {
 						t.Fatal(err)
 					}
 					var observed uint32
@@ -74,7 +77,7 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 				} else if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: peer}); err != nil {
 					t.Fatal(err)
 				}
-				dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.2")}}
+				dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(peerAddress)}}
 				conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 				if err != nil {
 					t.Fatal(err)

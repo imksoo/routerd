@@ -26,7 +26,7 @@ func TestFreeBSDProviderLauncherTransfersExclusiveLeaseToOSSupervisor(t *testing
 			}
 		}
 	})
-	if output, err := runIPsecCommand(t.Context(), "/usr/sbin/daemon", "-S", "-P", pidfile, "/bin/sleep", "60"); err != nil {
+	if output, err := runIPsecCommand(t.Context(), "/usr/sbin/daemon", "-f", "-S", "-P", pidfile, "/bin/sleep", "60"); err != nil {
 		t.Fatalf("provider launcher: %v %s", err, output)
 	}
 	if err := waitForFile(pidfile, 2*time.Second); err != nil {
@@ -41,7 +41,7 @@ func TestFreeBSDProviderLauncherTransfersExclusiveLeaseToOSSupervisor(t *testing
 		t.Fatalf("OS supervisor did not retain its exclusive provider lease: %v", err)
 	}
 	marker := filepath.Join(directory, "duplicate-started")
-	_, err = runIPsecCommand(t.Context(), "/usr/sbin/daemon", "-S", "-P", pidfile, "/usr/bin/touch", marker)
+	_, err = runIPsecCommand(t.Context(), "/usr/sbin/daemon", "-f", "-S", "-P", pidfile, "/usr/bin/touch", marker)
 	var exitError *exec.ExitError
 	if !errors.As(err, &exitError) || exitError.ExitCode() != 3 {
 		t.Fatalf("duplicate provider did not lose pidfile admission: %v", err)

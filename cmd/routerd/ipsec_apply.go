@@ -83,7 +83,7 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	// The OS supervisor retains it for the provider lifetime. A competing
 	// package/routerd start cannot create another supervisor under that lease.
 	// Calling the rc start hook would also perform a destructive global load-all.
-	output, err := runIPsecCommand(serviceCtx, "/usr/sbin/daemon", "-S", "-P", filepath.Join(filepath.Dir(platformDefaults.RuntimeDir), "daemon-charon.pid"), "/usr/local/libexec/ipsec/charon", "--use-syslog")
+	output, err := runIPsecCommand(serviceCtx, "/usr/sbin/daemon", "-f", "-S", "-P", filepath.Join(filepath.Dir(platformDefaults.RuntimeDir), "daemon-charon.pid"), "/usr/local/libexec/ipsec/charon", "--use-syslog")
 	if err != nil {
 		var exitError *exec.ExitError
 		if !errors.As(err, &exitError) || exitError.ExitCode() != 3 {
