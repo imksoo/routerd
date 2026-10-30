@@ -5,6 +5,7 @@ package routeradvertisement
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"sync/atomic"
@@ -172,5 +173,33 @@ func TestLoopRetiresUnavailableNativeSource(t *testing.T) {
 	err := (Loop{Conn: conn, Source: netip.MustParseAddr("fe80::1"), InterfaceIndex: 7, Transmit: func(time.Time, bool) error { sends++; return syscall.EADDRNOTAVAIL }}).Run(t.Context())
 	if !errors.Is(err, syscall.EADDRNOTAVAIL) || sends != 1 || !conn.closed.Load() {
 		t.Fatalf("stale native source not retired: sends=%d closed=%t err=%v", sends, conn.closed.Load(), err)
+	}
+}
+
+func TestLinkLocalSourceRemainsIndependentOfReceiverBind(t *testing.T) {
+	addresses := []net.Addr{
+		&net.IPNet{IP: net.ParseIP("169.254.1.1"), Mask: net.CIDRMask(16, 32)},
+		&net.IPNet{IP: net.ParseIP("192.0.2.1"), Mask: net.CIDRMask(24, 32)},
+		&net.IPNet{IP: net.ParseIP("2001:db8::1"), Mask: net.CIDRMask(64, 128)},
+		&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)},
+	}
+	source, err := linkLocalSource(addresses, "lan0")
+	if err != nil || source != netip.MustParseAddr("fe80::1%lan0") {
+		t.Fatalf("explicit RA source = %s, error = %v", source, err)
+	}
+	if _, err := linkLocalSource(addresses[:3], "lan0"); err == nil {
+		t.Fatal("missing link-local source became an unspecified transmit source")
+	}
+}
+
+func TestSolicitationMulticastDestinationAndInterfaceSelection(t *testing.T) {
+	source := netip.MustParseAddr("fe80::2")
+	cm := &ipv6.ControlMessage{HopLimit: 255, IfIndex: 7, Dst: allRouters.AsSlice()}
+	packet := solicitation(t, source, 0, make([]byte, 4))
+	if !ValidSolicitation(packet, cm, source, 7) {
+		t.Fatal("all-routers multicast solicitation rejected")
+	}
+	if ValidSolicitation(packet, cm, source, 8) {
+		t.Fatal("wildcard receiver accepted a different interface's solicitation")
 	}
 }
