@@ -83,7 +83,7 @@ PY
   ip netns exec rd15-wan-peer ip route add 198.18.15.0/24 via 198.18.16.2
   ip netns exec rd15-admin-peer ip addr add 198.18.17.2/24 dev peer0
   ip netns exec rd15-admin-peer ip route add default via 198.18.17.1
-  cat > "$work/http.py" <<'PY'
+  cat > "$work/peer_http.py" <<'PY'
 import sys
 from http.server import BaseHTTPRequestHandler,HTTPServer
 class Handler(BaseHTTPRequestHandler):
@@ -95,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('0.0.0.0',8080),Handler).serve_forever()
 PY
   for side in lan wan admin; do
-   systemd-run --unit="rd15-http-$side" --property=Type=exec ip netns exec "rd15-$side-peer" python3 "$work/http.py" "$work/$side-http.log"
+   systemd-run --unit="rd15-http-$side" --property=Type=exec ip netns exec "rd15-$side-peer" python3 "$work/peer_http.py" "$work/$side-http.log"
    for _ in {1..10}; do
     if ip netns exec "rd15-$side-peer" curl --noproxy '*' --fail --silent --max-time 1 http://127.0.0.1:8080/ready >/dev/null; then break; fi
     sleep 1
@@ -147,7 +147,12 @@ HOOK
   ;;
  cleanup-peer)
   test "$(cat "$work/role")" = setup-peer
-  systemctl stop rd15-dhcp-client rd15-upstream-dns rd15-http-lan rd15-http-wan rd15-http-admin
+  for unit in rd15-dhcp-client rd15-upstream-dns rd15-http-lan rd15-http-wan rd15-http-admin; do
+   if [ "$(systemctl show -p LoadState --value "$unit.service")" != not-found ]; then
+    systemctl stop "$unit"
+    if systemctl is-failed --quiet "$unit"; then systemctl reset-failed "$unit"; fi
+   fi
+  done
   for side in lan wan admin; do ip netns del "rd15-$side-peer"; done
   rm -r -- "$work"
   ;;
