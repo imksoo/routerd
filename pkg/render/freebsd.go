@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type FreeBSDConfig struct {
@@ -40,7 +40,6 @@ func FreeBSD(router *api.Router) (FreeBSDConfig, error) {
 func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource, api.PPPoESessionSpec) (string, error)) (FreeBSDConfig, error) {
 	router = api.ExpandClusterNetworkRoutes(router)
 	aliases := map[string]string{}
-	managed := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
 			continue
@@ -50,7 +49,6 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			return FreeBSDConfig{}, err
 		}
 		aliases[res.Metadata.Name] = spec.IfName
-		managed[res.Metadata.Name] = spec.Managed && spec.Owner != "external"
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Bridge" {
@@ -61,7 +59,6 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			return FreeBSDConfig{}, err
 		}
 		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
-		managed[res.Metadata.Name] = true
 	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "VXLANSegment" {
@@ -72,14 +69,27 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			return FreeBSDConfig{}, err
 		}
 		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
-		managed[res.Metadata.Name] = true
 	}
+	for _, res := range router.Spec.Resources {
+		if res.Kind != "VXLANTunnel" {
+			continue
+		}
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "WireGuardInterface" {
 			continue
 		}
-		aliases[res.Metadata.Name] = res.Metadata.Name
-		managed[res.Metadata.Name] = true
+		spec, err := res.WireGuardInterfaceSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 	}
 
 	var rc bytes.Buffer
@@ -88,7 +98,6 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	rc.WriteString("ipv6_gateway_enable=\"YES\"\n")
 
 	adminUpIfaces := map[string]string{}
-	hasPrimaryIfconfig := map[string]bool{}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "Interface" {
 			continue
@@ -101,35 +110,20 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			adminUpIfaces[res.Metadata.Name] = spec.IfName
 		}
 	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "IPv4StaticAddress" {
-			continue
-		}
-		spec, err := res.IPv4StaticAddressSpec()
-		if err != nil {
-			return FreeBSDConfig{}, err
-		}
-		if managed[spec.Interface] && resourceKind(router, spec.Interface) != "Bridge" && resourceKind(router, spec.Interface) != "WireGuardInterface" {
-			hasPrimaryIfconfig[spec.Interface] = true
-		}
-	}
 	adminNames := make([]string, 0, len(adminUpIfaces))
 	for name := range adminUpIfaces {
 		adminNames = append(adminNames, name)
 	}
 	sort.Strings(adminNames)
 	for _, name := range adminNames {
-		if !hasPrimaryIfconfig[name] {
-			rc.WriteString(fmt.Sprintf("ifconfig_%s=\"up\"\n", adminUpIfaces[name]))
-		}
+		rc.WriteString(fmt.Sprintf("ifconfig_%s=\"up\"\n", adminUpIfaces[name]))
 	}
 
 	var staticV4Routes []freeBSDStaticRoute
 	var staticV6Routes []freeBSDStaticRoute
-	staticBridgeV4 := map[string][]string{}
+	raInterfaces := map[string]bool{}
 	var ntpConfig []byte
 	var pppoes []freeBSDPPPoE
-	var dslites []freeBSDDSLite
 	bridges, err := bridgeConfigs(router, aliases)
 	if err != nil {
 		return FreeBSDConfig{}, err
@@ -140,8 +134,29 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	}
 	var warnings []string
 	for _, vxlan := range vxlans {
-		if len(vxlan.Remotes) > 1 {
-			warnings = append(warnings, fmt.Sprintf("VXLANSegment %s: FreeBSD vxlan(4) supports a single unicast remote; using %s as the seed and ignoring %v. Reach the other peers via a Linux relay or a multicast underlay.", vxlan.Name, vxlan.Remotes[0], vxlan.Remotes[1:]))
+		if vxlan.Kind == "VXLANTunnel" {
+			for _, resource := range router.Spec.Resources {
+				if resource.Kind == vxlan.Kind && resource.Metadata.Name == vxlan.Name {
+					spec, err := resource.VXLANTunnelSpec()
+					if err != nil {
+						return FreeBSDConfig{}, err
+					}
+					if spec.OuterDF != "" {
+						return FreeBSDConfig{}, fmt.Errorf("%s: FreeBSD VXLAN does not expose an outer DF control", resource.ID())
+					}
+				}
+			}
+		}
+		unique := map[netip.Addr]bool{}
+		for _, remote := range vxlan.Remotes {
+			address, err := netip.ParseAddr(remote)
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			unique[address.Unmap()] = true
+		}
+		if len(unique) > 1 {
+			return FreeBSDConfig{}, fmt.Errorf("%s %s: FreeBSD vxlan(4) does not support multiple unicast remotes; use multicast or a single peer", vxlan.Kind, vxlan.Name)
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -152,28 +167,11 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 				return FreeBSDConfig{}, err
 			}
 			if api.BoolDefault(spec.Managed, true) {
-				rc.WriteString(fmt.Sprintf("ifconfig_%s_ipv6=\"inet6 accept_rtadv\"\n", aliases[spec.Interface]))
-				rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", aliases[spec.Interface]))
-				rc.WriteString("rtsold_enable=\"YES\"\n")
-			}
-		case "IPv4StaticAddress":
-			spec, err := res.IPv4StaticAddressSpec()
-			if err != nil {
-				return FreeBSDConfig{}, err
-			}
-			if managed[spec.Interface] {
-				address, err := freeBSDIPv4CIDR(spec.Address)
-				if err != nil {
-					return FreeBSDConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
+				ifname := aliases[spec.Interface]
+				if ifname == "" {
+					return FreeBSDConfig{}, fmt.Errorf("%s references interface with empty ifname", res.ID())
 				}
-				if resourceKind(router, spec.Interface) == "Bridge" {
-					staticBridgeV4[aliases[spec.Interface]] = append(staticBridgeV4[aliases[spec.Interface]], address)
-				} else if resourceKind(router, spec.Interface) == "WireGuardInterface" {
-					// WireGuard interfaces are created by their rc.d service; that
-					// service applies static addresses after the interface exists.
-				} else {
-					rc.WriteString(fmt.Sprintf("ifconfig_%s=\"inet %s\"\n", aliases[spec.Interface], address))
-				}
+				raInterfaces[ifname] = true
 			}
 		case "IPv4StaticRoute":
 			spec, err := res.IPv4StaticRouteSpec()
@@ -202,31 +200,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			}
 			pppoes = append(pppoes, freeBSDPPPoE{Name: res.Metadata.Name, IfName: defaultString(spec.IfName, "ppp-"+res.Metadata.Name), LowerIfName: lowerIfName, Password: password, Spec: spec})
 		case "DSLiteTunnel":
-			spec, err := res.DSLiteTunnelSpec()
-			if err != nil {
-				return FreeBSDConfig{}, err
-			}
-			if !api.BoolDefault(spec.Enabled, true) {
-				continue
-			}
-			local := strings.TrimSpace(spec.LocalAddress)
-			remote := defaultString(spec.RemoteAddress, spec.AFTRIPv6)
-			if local == "" || remote == "" {
-				// Dynamic DS-Lite is applied by routerd at runtime, after PD,
-				// AFTR resolution, and IPv4StaticAddress references converge.
-				// The rc.conf renderer intentionally leaves it out instead of
-				// emitting noisy warnings for the normal declarative path.
-				continue
-			}
-			ifname := freeBSDGifIfName(spec.TunnelName, len(dslites))
-			innerLocal, err := freeBSDDSLiteInnerLocalIPv4(spec)
-			if err != nil {
-				return FreeBSDConfig{}, fmt.Errorf("%s: %w", res.ID(), err)
-			}
-			dslites = append(dslites, freeBSDDSLite{Name: res.Metadata.Name, IfName: ifname, LocalAddress: local, RemoteAddress: remote, InnerLocalAddress: innerLocal, MTU: spec.MTU, DefaultRoute: spec.DefaultRoute})
-			if spec.DefaultRoute {
-				staticV4Routes = append(staticV4Routes, freeBSDStaticRoute{Name: res.Metadata.Name + "-default", IfName: ifname, Destination: "default", Via: dsliteInnerRemoteIPv4})
-			}
+			// The native actor journals and owns both static and dynamic tunnels.
+			continue
 		case "NTPClient":
 			if freeBSDHasManagedNTPServer(router) {
 				continue
@@ -272,12 +247,24 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 			ntpConfig = freeBSDNTPServerConfig(servers, spec.ListenAddresses, len(spec.ListenAddressFrom) > 0)
 		}
 	}
+	if len(raInterfaces) > 0 {
+		ifnames := mapsort.Keys(raInterfaces)
+		// Native CPE setup enables RA reception while IPv6 forwarding is on.
+		// Its singleton field selects the bootstrap interface; every managed RA
+		// interface explicitly enables default-router learning below.
+		rc.WriteString(fmt.Sprintf("ipv6_cpe_wanif=\"%s\"\n", ifnames[0]))
+		for _, ifname := range ifnames {
+			rc.WriteString(fmt.Sprintf("ifconfig_%s_ipv6=\"inet6 -no_radr accept_rtadv\"\n", ifname))
+		}
+		rc.WriteString(fmt.Sprintf("rtsold_flags=\"%s\"\n", strings.Join(ifnames, " ")))
+		rc.WriteString("rtsold_enable=\"YES\"\n")
+	}
 
 	if hasManagedFreeBSDPPPoE(pppoes) {
 		rc.WriteString("mpd_enable=\"YES\"\n")
 		rc.WriteString("mpd_flags=\"-b\"\n")
 	}
-	pf, err := PF(router, InternalFirewallHoles(router))
+	pf, err := PF(router, InternalFirewallHoles(router, platform.OSFreeBSD))
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
@@ -299,10 +286,8 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	for _, name := range mapsort.Keys(rcdScripts) {
 		rc.WriteString(name + "_enable=\"YES\"\n")
 	}
-	writeFreeBSDClonedInterfaces(&rc, bridges, dslites)
-	writeFreeBSDDSLites(&rc, dslites)
+	writeFreeBSDClonedInterfaces(&rc, bridges)
 	writeFreeBSDBridges(&rc, bridges, freeBSDVXLANIfNames(vxlans))
-	writeFreeBSDBridgeAliases(&rc, staticBridgeV4)
 	writeFreeBSDStaticRoutes(&rc, staticV4Routes, false)
 	writeFreeBSDStaticRoutes(&rc, staticV6Routes, true)
 
@@ -312,11 +297,6 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	}
 	return FreeBSDConfig{RCConf: rc.Bytes(), NTP: ntpConfig, MPD5: mpd5, PF: pf, PackageInstall: packageInstall, RCDScripts: rcdScripts, Warnings: warnings}, nil
 }
-
-const (
-	dsliteDefaultInnerLocalIPv4 = "192.0.0.2"
-	dsliteInnerRemoteIPv4       = "192.0.0.1"
-)
 
 type freeBSDPPPoE struct {
 	Name        string
@@ -331,34 +311,6 @@ type freeBSDStaticRoute struct {
 	IfName      string
 	Destination string
 	Via         string
-}
-
-type freeBSDDSLite struct {
-	Name              string
-	IfName            string
-	LocalAddress      string
-	RemoteAddress     string
-	InnerLocalAddress string
-	MTU               int
-	DefaultRoute      bool
-}
-
-func freeBSDDSLiteInnerLocalIPv4(spec api.DSLiteTunnelSpec) (string, error) {
-	value := ""
-	if strings.TrimSpace(spec.LocalAddressFrom.Resource) != "" {
-		return "", fmt.Errorf("localAddressFrom is resolved by the runtime controller")
-	}
-	if value == "" {
-		value = dsliteDefaultInnerLocalIPv4
-	}
-	addr, err := netip.ParseAddr(value)
-	if err != nil || !addr.Is4() {
-		return "", fmt.Errorf("innerLocalAddress %q is not an IPv4 address", value)
-	}
-	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLoopback() {
-		return "", fmt.Errorf("innerLocalAddress %q must be a usable unicast IPv4 address", value)
-	}
-	return addr.String(), nil
 }
 
 func freeBSDNTPServers(spec api.NTPClientSpec) []string {
@@ -462,20 +414,6 @@ func compactRenderNTPServers(values []string) []string {
 	return out
 }
 
-func writeFreeBSDDSLites(buf *bytes.Buffer, dslites []freeBSDDSLite) {
-	for _, tunnel := range dslites {
-		args := []string{
-			"inet6 tunnel " + tunnel.LocalAddress + " " + tunnel.RemoteAddress,
-			"inet " + tunnel.InnerLocalAddress + " " + dsliteInnerRemoteIPv4 + " netmask 255.255.255.255",
-		}
-		if tunnel.MTU != 0 {
-			args = append(args, "mtu "+strconv.Itoa(tunnel.MTU))
-		}
-		args = append(args, "up")
-		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", tunnel.IfName, strings.Join(args, " ")))
-	}
-}
-
 func writeFreeBSDBridges(buf *bytes.Buffer, bridges []bridgeConfig, deferredMembers map[string]bool) {
 	if len(bridges) == 0 {
 		return
@@ -510,46 +448,6 @@ func freeBSDVXLANIfNames(vxlans []vxlanConfig) map[string]bool {
 	return out
 }
 
-func writeFreeBSDBridgeAliases(buf *bytes.Buffer, addresses map[string][]string) {
-	var ifnames []string
-	for ifname := range addresses {
-		ifnames = append(ifnames, ifname)
-	}
-	sort.Strings(ifnames)
-	for _, ifname := range ifnames {
-		sort.Strings(addresses[ifname])
-		for i, address := range addresses[ifname] {
-			buf.WriteString(fmt.Sprintf("ifconfig_%s_alias%d=\"inet %s\"\n", ifname, i, address))
-		}
-	}
-}
-
-func writeFreeBSDVXLANS(buf *bytes.Buffer, vxlans []vxlanConfig) {
-	if len(vxlans) == 0 {
-		return
-	}
-	for _, vxlan := range vxlans {
-		var args []string
-		args = append(args, "vxlanid "+strconv.Itoa(vxlan.VNI))
-		args = append(args, "vxlanlocal "+vxlan.LocalAddress)
-		if vxlan.MulticastGroup != "" {
-			args = append(args, "vxlangroup "+vxlan.MulticastGroup)
-		} else if len(vxlan.Remotes) > 0 {
-			args = append(args, "vxlanremote "+vxlan.Remotes[0])
-		}
-		if vxlan.UnderlayIfName != "" {
-			args = append(args, "vxlandev "+vxlan.UnderlayIfName)
-		}
-		args = append(args, "vxlanlocalport "+strconv.Itoa(vxlan.UDPPort))
-		args = append(args, "vxlanremoteport "+strconv.Itoa(vxlan.UDPPort))
-		if vxlan.MTU != 0 {
-			args = append(args, "mtu "+strconv.Itoa(vxlan.MTU))
-		}
-		args = append(args, "up")
-		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", vxlan.IfName, strings.Join(args, " ")))
-	}
-}
-
 func resourceKind(router *api.Router, name string) string {
 	for _, res := range router.Spec.Resources {
 		if res.Metadata.Name == name {
@@ -559,11 +457,8 @@ func resourceKind(router *api.Router, name string) string {
 	return ""
 }
 
-func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig, dslites []freeBSDDSLite) {
+func writeFreeBSDClonedInterfaces(buf *bytes.Buffer, bridges []bridgeConfig) {
 	var names []string
-	for _, tunnel := range dslites {
-		names = append(names, tunnel.IfName)
-	}
 	for _, bridge := range bridges {
 		names = append(names, bridge.IfName)
 	}
@@ -578,19 +473,26 @@ func writeFreeBSDStaticRoutes(buf *bytes.Buffer, routes []freeBSDStaticRoute, ip
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Name < routes[j].Name })
 	var names []string
+	used := map[string]bool{}
 	for _, route := range routes {
-		names = append(names, freeBSDRouteLabel(route.Name))
+		base := freeBSDRouteLabel(route.Name)
+		label := base
+		for suffix := 1; used[label]; suffix++ {
+			label = base + "_" + strconv.Itoa(suffix)
+		}
+		used[label] = true
+		names = append(names, label)
 	}
 	if ipv6 {
 		buf.WriteString("ipv6_static_routes=\"" + strings.Join(names, " ") + "\"\n")
 	} else {
 		buf.WriteString("static_routes=\"" + strings.Join(names, " ") + "\"\n")
 	}
-	for _, route := range routes {
-		label := freeBSDRouteLabel(route.Name)
+	for i, route := range routes {
+		label := names[i]
 		via := route.Via
-		if ipv6 && strings.HasPrefix(strings.ToLower(via), "fe80:") && route.IfName != "" && !strings.Contains(via, "%") {
-			via += "%" + route.IfName
+		if addr, err := netip.ParseAddr(via); ipv6 && err == nil && addr.Is6() && addr.IsLinkLocalUnicast() && route.IfName != "" && addr.Zone() == "" {
+			via = addr.WithZone(route.IfName).String()
 		}
 		if ipv6 {
 			buf.WriteString(fmt.Sprintf("ipv6_route_%s=\"%s %s\"\n", label, route.Destination, via))
@@ -600,15 +502,6 @@ func writeFreeBSDStaticRoutes(buf *bytes.Buffer, routes []freeBSDStaticRoute, ip
 			buf.WriteString(fmt.Sprintf("route_%s=\"-net %s %s\"\n", label, route.Destination, via))
 		}
 	}
-}
-
-var freeBSDGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
-
-func freeBSDGifIfName(value string, index int) string {
-	if freeBSDGIFNamePattern.MatchString(value) {
-		return value
-	}
-	return "gif" + strconv.Itoa(index)
 }
 
 func freeBSDRouteLabel(name string) string {
@@ -775,14 +668,6 @@ func freeBSDMPD5(pppoes []freeBSDPPPoE) ([]byte, error) {
 		buf.WriteString("  open\n\n")
 	}
 	return buf.Bytes(), nil
-}
-
-func freeBSDIPv4CIDR(value string) (string, error) {
-	prefix, err := netip.ParsePrefix(value)
-	if err != nil {
-		return "", err
-	}
-	return prefix.Addr().String() + "/" + fmt.Sprintf("%d", prefix.Bits()), nil
 }
 
 func sortedFreeBSDMapKeys(values map[string]bool) []string {

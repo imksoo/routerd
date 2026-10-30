@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -100,10 +101,14 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 		writeError(w, http.StatusBadRequest, "invalid from generation id")
 		return
 	}
-	to, err := strconv.ParseInt(toText, 10, 64)
-	if err != nil || to <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid to generation id")
-		return
+	currentFile := toText == "current"
+	var to int64
+	if !currentFile {
+		to, err = strconv.ParseInt(toText, 10, 64)
+		if err != nil || to <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid to generation id")
+			return
+		}
 	}
 	fromYAML, found, err := reader.GenerationConfig(from)
 	if err != nil {
@@ -119,22 +124,42 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 		writeError(w, http.StatusInternalServerError, "failed to redact from generation config: "+err.Error())
 		return
 	}
-	toYAML, found, err := reader.GenerationConfig(to)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !found {
-		writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", to))
-		return
+	toName := fmt.Sprintf("generation-%d.yaml", to)
+	var toYAML string
+	if currentFile {
+		if strings.TrimSpace(h.opts.ConfigPath) == "" {
+			writeError(w, http.StatusNotFound, "config path is unavailable")
+			return
+		}
+		data, err := os.ReadFile(h.opts.ConfigPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		toYAML = string(data)
+		toName = "current-file.yaml"
+	} else {
+		toYAML, found, err = reader.GenerationConfig(to)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !found {
+			writeError(w, http.StatusConflict, fmt.Sprintf("generation %d has no stored YAML", to))
+			return
+		}
 	}
 	toYAML, err = api.RedactYAMLSecrets(toYAML)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to redact to generation config: "+err.Error())
 		return
 	}
-	diff := unifiedDiff(fmt.Sprintf("generation-%d.yaml", from), fmt.Sprintf("generation-%d.yaml", to), fromYAML, toYAML)
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+	diff, err := unifiedDiff(r.Context(), fmt.Sprintf("generation-%d.yaml", from), toName, fromYAML, toYAML)
+	if err != nil {
+		writeError(w, http.StatusRequestTimeout, err.Error())
+		return
+	}
+	if !currentFile && strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, GenerationDiff{From: from, To: to, Diff: diff})
 		return
 	}
@@ -143,25 +168,41 @@ func (h Handler) generationDiff(w http.ResponseWriter, r *http.Request, fromText
 	_, _ = w.Write([]byte(diff))
 }
 
-func unifiedDiff(fromName, toName, fromText, toText string) string {
+func unifiedDiff(ctx context.Context, fromName, toName, fromText, toText string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if fromText == toText {
-		return fmt.Sprintf("--- %s\n+++ %s\n", fromName, toName)
+		return fmt.Sprintf("--- %s\n+++ %s\n", fromName, toName), nil
 	}
 	fromLines := splitDiffLines(fromText)
 	toLines := splitDiffLines(toText)
-	ops := diffLineOps(fromLines, toLines)
+	ops, err := diffLineOps(ctx, fromLines, toLines)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n", fromName)
 	fmt.Fprintf(&b, "+++ %s\n", toName)
-	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(fromLines), len(toLines))
+	fromStart, toStart := 1, 1
+	if len(fromLines) == 0 {
+		fromStart = 0
+	}
+	if len(toLines) == 0 {
+		toStart = 0
+	}
+	fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", fromStart, len(fromLines), toStart, len(toLines))
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		b.WriteByte(op.prefix)
 		b.WriteString(op.line)
 		if !strings.HasSuffix(op.line, "\n") {
-			b.WriteByte('\n')
+			b.WriteString("\n\\ No newline at end of file\n")
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 type diffLineOp struct {
@@ -180,43 +221,45 @@ func splitDiffLines(text string) []string {
 	return lines
 }
 
-func diffLineOps(a, b []string) []diffLineOp {
-	lcs := make([][]int, len(a)+1)
-	for i := range lcs {
-		lcs[i] = make([]int, len(b)+1)
+func diffLineOps(ctx context.Context, a, b []string) ([]diffLineOp, error) {
+	// Preserve common edges and replace the changed span. This is a valid diff
+	// even for separated edits, with linear work and memory for large configs.
+	prefix := 0
+	for prefix < len(a) && prefix < len(b) && a[prefix] == b[prefix] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		prefix++
 	}
-	for i := len(a) - 1; i >= 0; i-- {
-		for j := len(b) - 1; j >= 0; j-- {
-			if a[i] == b[j] {
-				lcs[i][j] = lcs[i+1][j+1] + 1
-			} else if lcs[i+1][j] >= lcs[i][j+1] {
-				lcs[i][j] = lcs[i+1][j]
-			} else {
-				lcs[i][j] = lcs[i][j+1]
+	suffix := 0
+	for suffix < len(a)-prefix && suffix < len(b)-prefix && a[len(a)-1-suffix] == b[len(b)-1-suffix] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		suffix++
+	}
+	ops := make([]diffLineOp, 0, len(a)+len(b)-prefix-suffix)
+	appendLines := func(lines []string, marker byte) error {
+		for _, line := range lines {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
+			ops = append(ops, diffLineOp{prefix: marker, line: line})
+		}
+		return nil
+	}
+	for _, span := range []struct {
+		lines  []string
+		marker byte
+	}{
+		{a[:prefix], ' '},
+		{a[prefix : len(a)-suffix], '-'},
+		{b[prefix : len(b)-suffix], '+'},
+		{a[len(a)-suffix:], ' '},
+	} {
+		if err := appendLines(span.lines, span.marker); err != nil {
+			return nil, err
 		}
 	}
-	var ops []diffLineOp
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		switch {
-		case a[i] == b[j]:
-			ops = append(ops, diffLineOp{prefix: ' ', line: a[i]})
-			i++
-			j++
-		case lcs[i+1][j] >= lcs[i][j+1]:
-			ops = append(ops, diffLineOp{prefix: '-', line: a[i]})
-			i++
-		default:
-			ops = append(ops, diffLineOp{prefix: '+', line: b[j]})
-			j++
-		}
-	}
-	for ; i < len(a); i++ {
-		ops = append(ops, diffLineOp{prefix: '-', line: a[i]})
-	}
-	for ; j < len(b); j++ {
-		ops = append(ops, diffLineOp{prefix: '+', line: b[j]})
-	}
-	return ops
+	return ops, nil
 }

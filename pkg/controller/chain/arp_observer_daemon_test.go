@@ -18,6 +18,9 @@ import (
 
 func arpObserverIntentRecord(t *testing.T, intents []dynamicconfig.ARPObserverIntent, expiresAt time.Time) routerstate.DynamicConfigPartRecord {
 	t.Helper()
+	if intents == nil {
+		intents = []dynamicconfig.ARPObserverIntent{}
+	}
 	raw, err := json.Marshal(intents)
 	if err != nil {
 		t.Fatalf("marshal ARP observer intents: %v", err)
@@ -45,7 +48,10 @@ func TestRunnerMobilityARPObserverDaemonSpecsFromTypedIntents(t *testing.T) {
 	}
 	store := &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, intents, time.Now().Add(time.Hour))}}
 	runner := Runner{Store: store}
-	specs := runner.mobilityARPObserverDaemonSpecs()
+	specs, err := runner.mobilityARPObserverDaemonSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(specs) != 3 {
 		t.Fatalf("daemon specs = %d, want 3: %#v", len(specs), specs)
 	}
@@ -92,7 +98,10 @@ func TestRunnerMobilityARPObserverDaemonSpecsPreserveTypedIgnoredSenderMACs(t *t
 		},
 	}}, time.Now().Add(time.Hour))}}
 	runner := Runner{Store: store}
-	specs := runner.mobilityARPObserverDaemonSpecs()
+	specs, err := runner.mobilityARPObserverDaemonSpecs()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(specs) != 1 {
 		t.Fatalf("daemon specs = %#v, want one arp-observer spec", specs)
 	}
@@ -113,8 +122,8 @@ func TestRunnerMobilityARPObserverDaemonSpecsRejectsWrongSourceOrPool(t *testing
 	wrongPool := arpObserverIntentRecord(t, []dynamicconfig.ARPObserverIntent{intent}, now.Add(time.Hour))
 	wrongPool.Source = "MobilityPool/other/node/pve-rt08/arp-observer"
 	runner := Runner{Store: &dynamicRouteSAMStore{records: []routerstate.DynamicConfigPartRecord{mainSource, wrongPool}}}
-	if specs := runner.mobilityARPObserverDaemonSpecs(); len(specs) != 0 {
-		t.Fatalf("untrusted ARP observer records produced daemon specs: %#v", specs)
+	if specs, err := runner.mobilityARPObserverDaemonSpecs(); err == nil || len(specs) != 0 {
+		t.Fatalf("untrusted ARP observer records became an ordinary empty plan: %#v err=%v", specs, err)
 	}
 }
 
@@ -145,7 +154,7 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 	t.Cleanup(func() {
 		supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady
 	})
-	supervisedDaemonProcesses = func() []supervisedDaemonProcess { return nil }
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) { return nil, nil }
 	supervisedDaemonSocketReady = func(string) bool { return false }
 
 	router := &api.Router{}
@@ -154,7 +163,10 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 		{ResourceName: "mobility-arp-cloudedge-demand-1", PoolRef: "svnet1", Prefix: "10.77.60.0/24", SourceType: "on-demand-arp", IfName: "eth1", EventInterface: "capture", SourceAddress: "10.77.60.1", OnDemand: true, ScanInterval: "1s"},
 	}, time.Now().Add(time.Hour))}}
 	runner := &Runner{Router: router, Store: store}
-	specs := runner.clientDaemonSpecs(router)
+	specs, err := runner.supervisedDaemonSpecs(router)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(specs) != 2 {
 		t.Fatalf("client daemon specs = %#v, want two ARP observers", specs)
 	}
@@ -180,7 +192,11 @@ func TestARPObserverDaemonsUseSupervisedOwnerTokenLifecycle(t *testing.T) {
 	}
 
 	store.records = []routerstate.DynamicConfigPartRecord{arpObserverIntentRecord(t, nil, time.Now().Add(time.Hour))}
-	runner.reconcileSupervisedDaemonSpecs(ctx, nil, runner.clientDaemonSpecs(router))
+	specs, err = runner.supervisedDaemonSpecs(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.reconcileSupervisedDaemonSpecs(ctx, nil, specs)
 	markers, err = readSupervisedDaemonMarkers()
 	if err != nil {
 		t.Fatal(err)

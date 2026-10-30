@@ -29,7 +29,7 @@ type mobilityPoolValidation struct {
 	Members  []api.ResolvedMobilityPoolMember
 }
 
-func validateMobilityResource(router *api.Router, res api.Resource, _ platform.OS, allowRuntimePayloads bool, idx *RouterIndex) (bool, error) {
+func validateMobilityResource(router *api.Router, res api.Resource, targetOS platform.OS, allowRuntimePayloads bool, idx *RouterIndex) (bool, error) {
 	switch res.Kind {
 	case "MobilityPool":
 		if res.APIVersion != api.MobilityAPIVersion {
@@ -221,6 +221,9 @@ func validateMobilityResource(router *api.Router, res api.Resource, _ platform.O
 		spec, err := res.SAMTransportProfileSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSFreeBSD && (spec.Mode == "fou" || spec.Mode == "gue") {
+			return true, fmt.Errorf("%s spec.mode %s is unsupported on FreeBSD; use ipip or gre", res.ID(), spec.Mode)
 		}
 		if err := validateSAMTransportProfile(router, res, spec); err != nil {
 			return true, err
@@ -1308,6 +1311,7 @@ func validateMobilityStaticOwnedAddresses(res api.Resource, index int, member ap
 
 func validateMobilityStaticHandovers(res api.Resource, spec api.MobilityPoolSpec, pool netip.Prefix, nodeRefs map[string]bool, memberRoles, staticOwners map[string]string) error {
 	seen := map[string]bool{}
+	seenIDs := map[string]bool{}
 	for i, handover := range spec.StaticHandovers {
 		address, err := parseMobilityStaticAddress(handover.Address, pool)
 		if err != nil {
@@ -1339,6 +1343,14 @@ func validateMobilityStaticHandovers(res api.Resource, spec api.MobilityPoolSpec
 		if seen[address] {
 			return fmt.Errorf("%s spec.staticHandovers[%d] duplicates handover for %s", res.ID(), i, address)
 		}
+		id := strings.TrimSpace(handover.ID)
+		if id == "" {
+			return fmt.Errorf("%s spec.staticHandovers[%d].id is required for this transfer attempt", res.ID(), i)
+		}
+		if seenIDs[id] {
+			return fmt.Errorf("%s spec.staticHandovers[%d].id %q duplicates another handover", res.ID(), i, id)
+		}
+		seenIDs[id] = true
 		seen[address] = true
 	}
 	return nil

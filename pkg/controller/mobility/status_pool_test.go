@@ -46,14 +46,17 @@ func TestMobilityPoolStatusSerializeClearsTransitionMarkersAfterPartialMerge(t *
 	next := MobilityPoolStatus{Phase: "Ready"}.Serialize()
 	if completed, ok := next[bgpCaptureTransitionCompletedKey]; !ok {
 		t.Fatalf("serialized transition completion key missing: %#v", next)
-	} else if got := decodeBGPCaptureTransitionState(map[string]any{bgpCaptureTransitionCompletedKey: completed}); len(got.SeizeComplete) != 0 || len(got.CaptureConfirmed) != 0 {
+	} else if got, err := decodeBGPCaptureTransitionState(map[string]any{bgpCaptureTransitionCompletedKey: completed}); err != nil || len(got.SeizeComplete) != 0 || len(got.CaptureConfirmed) != 0 {
 		t.Fatalf("serialized transition state = %#v, want empty", got)
 	}
 	if err := controller.savePlannerStatus(poolName, next); err != nil {
 		t.Fatalf("save cleared planner transition status: %v", err)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "MobilityPool", poolName)
-	transitions := decodeBGPCaptureTransitionState(status)
+	transitions, err := decodeBGPCaptureTransitionState(status)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(transitions.SeizeComplete) != 0 || len(transitions.CaptureConfirmed) != 0 {
 		t.Fatalf("merged transition state = %#v, want old completion markers cleared", transitions)
 	}

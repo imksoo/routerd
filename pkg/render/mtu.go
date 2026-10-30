@@ -4,7 +4,6 @@ package render
 
 import (
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,7 +92,7 @@ func pathMTUPoliciesWithLocalCaptureIntents(router *api.Router, intents []dynami
 			if sourceMTU < mtu {
 				mtu = sourceMTU
 			}
-			if mtu < 1280 {
+			if mtu < 1280 && (spec.IPv6RA.Enabled || (spec.TCPMSSClamp.Enabled && pathMTUFamilyEnabled(spec.TCPMSSClamp.Families, "ipv6"))) {
 				return nil, fmt.Errorf("%s computed MTU %d is below the IPv6 minimum MTU 1280", specResourceID(spec), mtu)
 			}
 			toInterfacesByMTU[mtu] = append(toInterfacesByMTU[mtu], name)
@@ -310,7 +309,7 @@ func pathMTUForwardingTunnels(router *api.Router) map[string]pathMTUForwardingTu
 		if err != nil {
 			continue
 		}
-		mtu := pathMTUForwardingTunnelMTU(router, spec)
+		mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
 		if mtu == 0 {
 			continue
 		}
@@ -321,50 +320,6 @@ func pathMTUForwardingTunnels(router *api.Router) map[string]pathMTUForwardingTu
 		}
 	}
 	return out
-}
-
-func pathMTUForwardingTunnelMTU(router *api.Router, spec api.TunnelInterfaceSpec) int {
-	if router == nil {
-		return 0
-	}
-	mtu := hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
-	if mtu == 0 {
-		return 0
-	}
-	mtu -= pathMTUUnderlayOverlayOverhead(router, spec.UnderlayInterface)
-	if mtu <= 0 {
-		return 0
-	}
-	return mtu
-}
-
-func pathMTUUnderlayOverlayOverhead(router *api.Router, interfaceName string) int {
-	return pathMTUUnderlayOverlayOverheadSeen(router, strings.TrimSpace(interfaceName), map[string]bool{})
-}
-
-func pathMTUUnderlayOverlayOverheadSeen(router *api.Router, interfaceName string, seen map[string]bool) int {
-	if router == nil || interfaceName == "" || seen[interfaceName] {
-		return 0
-	}
-	seen[interfaceName] = true
-	for _, res := range router.Spec.Resources {
-		if strings.TrimSpace(res.Metadata.Name) != interfaceName {
-			continue
-		}
-		switch res.Kind {
-		case "WireGuardInterface":
-			return hybrid.WireGuardOverheadBytes
-		case "TunnelInterface":
-			spec, err := res.TunnelInterfaceSpec()
-			if err != nil {
-				return 0
-			}
-			return hybrid.TunnelInterfaceOverhead(spec) + pathMTUUnderlayOverlayOverheadSeen(router, spec.UnderlayInterface, seen)
-		default:
-			return 0
-		}
-	}
-	return 0
 }
 
 func pathMTUOverlayPeerEffectiveMTU(router *api.Router, peerName string) int {
@@ -476,85 +431,78 @@ func pathMTUResourceInterface(router *api.Router, res api.Resource) (pathMTUTunn
 	if strings.TrimSpace(res.Metadata.Name) == "" {
 		return pathMTUTunnel{}, false
 	}
-	value := reflect.ValueOf(res.Spec)
-	if !value.IsValid() {
-		return pathMTUTunnel{}, false
-	}
-	if value.Kind() == reflect.Pointer {
-		if value.IsNil() {
-			return pathMTUTunnel{}, false
-		}
-		value = value.Elem()
-	}
-	if value.Kind() != reflect.Struct || !pathMTUResourceEnabled(value) || !pathMTUResourceLooksLikeInterface(res, value) {
-		return pathMTUTunnel{}, false
-	}
-	mtu := pathMTUResourceMTU(router, res, value)
-	if mtu == 0 {
-		return pathMTUTunnel{}, false
-	}
-	return pathMTUTunnel{Name: res.Metadata.Name, Underlay: pathMTUResourceUnderlay(value), MTU: mtu}, true
-}
-
-func pathMTUResourceEnabled(value reflect.Value) bool {
-	field := value.FieldByName("Enabled")
-	if !field.IsValid() {
-		return true
-	}
-	switch field.Kind() {
-	case reflect.Bool:
-		return field.Bool()
-	case reflect.Pointer:
-		if field.IsNil() {
-			return true
-		}
-		if field.Elem().Kind() == reflect.Bool {
-			return field.Elem().Bool()
-		}
-	}
-	return true
-}
-
-func pathMTUResourceLooksLikeInterface(res api.Resource, value reflect.Value) bool {
-	if value.FieldByName("IfName").IsValid() || value.FieldByName("TunnelName").IsValid() || value.FieldByName("UnderlayInterface").IsValid() {
-		return true
-	}
-	return strings.HasSuffix(res.Kind, "Interface")
-}
-
-func pathMTUResourceMTU(router *api.Router, res api.Resource, value reflect.Value) int {
-	if field := value.FieldByName("MTU"); field.IsValid() && field.Kind() == reflect.Int && field.Int() > 0 {
-		return int(field.Int())
-	}
-	// Keep zero-value compatibility for resources whose existing renderers
-	// already imply a non-1500 tunnel MTU. New tunnel-like resources participate
-	// automatically when they expose an explicit spec.mtu.
+	item := pathMTUTunnel{Name: res.Metadata.Name}
 	switch res.Kind {
 	case "Interface":
-		return 1500
-	case "PPPoESession", "DSLiteTunnel":
-		return 1454
+		spec, err := res.InterfaceSpec()
+		if err != nil {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		if item.MTU == 0 {
+			item.MTU = 1500
+		}
+	case "Bridge":
+		spec, err := res.BridgeSpec()
+		if err != nil {
+			return item, false
+		}
+		item.MTU = spec.MTU
+	case "VXLANSegment":
+		spec, err := res.VXLANSegmentSpec()
+		if err != nil {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		item.Underlay = spec.UnderlayInterface
+	case "VXLANTunnel":
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		item.Underlay = spec.UnderlayInterface
 	case "WireGuardInterface":
-		return 1420
+		spec, err := res.WireGuardInterfaceSpec()
+		if err != nil {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		if item.MTU == 0 {
+			item.MTU = 1420
+		}
+	case "PPPoESession":
+		spec, err := res.PPPoESessionSpec()
+		if err != nil || !api.BoolDefault(spec.Enabled, true) {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		item.Underlay = spec.Interface
+		if item.MTU == 0 {
+			item.MTU = 1492
+		}
+	case "DSLiteTunnel":
+		spec, err := res.DSLiteTunnelSpec()
+		if err != nil || !api.BoolDefault(spec.Enabled, true) {
+			return item, false
+		}
+		item.MTU = spec.MTU
+		item.Underlay = spec.Interface
+		if item.MTU == 0 {
+			item.MTU = 1460
+		}
 	case "TunnelInterface":
 		spec, err := res.TunnelInterfaceSpec()
 		if err != nil || router == nil {
-			return 0
+			return item, false
 		}
-		return hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
+		item.MTU = hybrid.TunnelInterfaceEffectiveMTU(*router, spec)
+		item.Underlay = spec.UnderlayInterface
 	default:
-		return 0
+		return item, false
 	}
-}
-
-func pathMTUResourceUnderlay(value reflect.Value) string {
-	for _, name := range []string{"UnderlayInterface", "Interface"} {
-		field := value.FieldByName(name)
-		if field.IsValid() && field.Kind() == reflect.String {
-			return strings.TrimSpace(field.String())
-		}
-	}
-	return ""
+	item.Underlay = strings.TrimSpace(item.Underlay)
+	return item, item.MTU > 0
 }
 
 func compactPathMTUPolicySpecs(specs []pathMTUPolicySpec) []pathMTUPolicySpec {

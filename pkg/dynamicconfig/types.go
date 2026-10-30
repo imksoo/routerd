@@ -190,11 +190,12 @@ type MobilityDataplanePlan struct {
 	Captures        []LocalCaptureIntent        `yaml:"captures,omitempty" json:"captures,omitempty"`
 	Routes          []MobilityIPv4RouteIntent   `yaml:"routes,omitempty" json:"routes,omitempty"`
 	StaticAddresses []MobilityIPv4AddressIntent `yaml:"staticAddresses,omitempty" json:"staticAddresses,omitempty"`
+	Withdrawals     []MobilityWithdrawalRequest `yaml:"withdrawals,omitempty" json:"withdrawals,omitempty"`
 }
 
 // IsEmpty reports whether the plan carries no desired local dataplane effects.
 func (p MobilityDataplanePlan) IsEmpty() bool {
-	return len(p.Captures) == 0 && len(p.Routes) == 0 && len(p.StaticAddresses) == 0
+	return len(p.Captures) == 0 && len(p.Routes) == 0 && len(p.StaticAddresses) == 0 && len(p.Withdrawals) == 0
 }
 
 // MobilityIPv4RoutePurpose identifies why a typed mobility route is needed.
@@ -420,6 +421,22 @@ func ValidateMobilityDataplanePlanScope(plan MobilityDataplanePlan, sourcePoolRe
 			return fmt.Errorf("static address %q: %w", address.ID, err)
 		}
 	}
+	seenWithdrawals := map[string]bool{}
+	for _, request := range plan.Withdrawals {
+		if err := ValidateMobilityWithdrawalRequest(request); err != nil {
+			return err
+		}
+		if request.PoolRef != sourcePoolRef || request.PoolPrefix != plan.PoolPrefix {
+			return fmt.Errorf("withdrawal %q has a different pool scope", request.ID)
+		}
+		if request.PlanDigest != MobilityNativePlanDigest(plan) {
+			return fmt.Errorf("withdrawal %q native plan digest differs", request.ID)
+		}
+		if seenWithdrawals[request.ID] {
+			return fmt.Errorf("duplicate withdrawal %q", request.ID)
+		}
+		seenWithdrawals[request.ID] = true
+	}
 	return nil
 }
 
@@ -624,11 +641,8 @@ type ActionCheck struct {
 	Target map[string]string `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
-// ActionUndo describes the inverse provider operation for display only.
-type ActionUndo struct {
-	Action     string            `yaml:"action" json:"action"`
-	Parameters map[string]string `yaml:"parameters,omitempty" json:"parameters,omitempty"`
-}
+// ActionUndo is the inverse operation used by the gated provider executor.
+type ActionUndo = api.ProviderActionUndo
 
 // IsExpired reports whether the part's expiresAt timestamp is at or before now.
 func (p *DynamicConfigPart) IsExpired(now time.Time) bool {

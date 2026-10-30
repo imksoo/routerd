@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/storage"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
@@ -24,19 +25,17 @@ import (
 )
 
 type serveConfigMutator struct {
-	configPath           string
-	statePath            string
-	baseOpts             applyOptions
-	cache                *resultCache
-	logger               *eventlog.Logger
-	getRouter            func() *api.Router
-	setRouter            func(*api.Router)
-	reload               func(context.Context, *api.Router) error
-	reloadWithOutcome    func(context.Context, *api.Router) (controllerchain.RuntimeReloadOutcome, error)
-	activeRuntime        func() controllerchain.RuntimeSnapshot
-	updateRuntime        func(*api.Router) error
-	runtimeMutationError func() error
-	stopping             func() bool
+	configPath              string
+	statePath               string
+	baseOpts                applyOptions
+	cache                   *resultCache
+	logger                  *eventlog.Logger
+	getRouter               func() *api.Router
+	setRouter               func(*api.Router)
+	applyRuntimeWithOutcome func(context.Context, *api.Router, bool, func() error) (controllerchain.RuntimeReloadOutcome, error)
+	activeRuntime           func() controllerchain.RuntimeSnapshot
+	runtimeMutationError    func() error
+	stopping                func() bool
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
@@ -45,6 +44,14 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 	}
 	if strings.TrimSpace(req.CandidateYAML) == "" {
 		return nil, fmt.Errorf("%w: apply requires candidateYaml", controlapi.ErrBadRequest)
+	}
+	// Read and merge the canonical base under the same gate as its commit.
+	if !req.DryRun {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
 	nextYAML, nextRouter, err := m.mutatedCandidate(req.CandidateYAML, req.Replace)
 	if err != nil {
@@ -59,11 +66,6 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		return &apiResult, nil
 	}
 	if req.NoReconcile {
-		unlock, err := m.lockMutationTransaction()
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
 		result, err := m.commitOnly(nextRouter, nextYAML)
 		if err != nil {
 			return nil, err
@@ -71,24 +73,24 @@ func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) 
 		apiResult := controlapi.NewApplyResult(result)
 		return &apiResult, nil
 	}
-	unlock, err := m.lockMutationTransaction()
+	outcome, err := m.mutateRuntime(nextRouter, nextYAML)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
-	result, err := m.mutateRuntime(nextRouter, nextYAML)
-	if err != nil {
-		return nil, err
-	}
-	apiResult := controlapi.NewApplyResult(result)
+	apiResult := controlapi.NewApplyResult(outcome.Result)
 	return &apiResult, nil
 }
 
 func (m serveConfigMutator) plan(r *http.Request, req controlapi.PlanRequest) (*controlapi.PlanResult, error) {
-	router := m.getRouter()
-	configYAML := ""
-	if strings.TrimSpace(req.CandidateYAML) != "" {
-		var err error
+	var router *api.Router
+	var configYAML string
+	var err error
+	if strings.TrimSpace(req.CandidateYAML) == "" {
+		configYAML, router, err = m.currentCanonical()
+		if err != nil {
+			return nil, fmt.Errorf("read canonical configuration for plan: %w", err)
+		}
+	} else {
 		configYAML, router, err = m.mutatedCandidate(req.CandidateYAML, req.Replace)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", controlapi.ErrBadRequest, err)
@@ -126,6 +128,14 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	if strings.TrimSpace(req.Target) == "" {
 		return nil, controlapi.ErrBadRequest
 	}
+	// Resolve the target and read its canonical base within the transaction.
+	if !req.DryRun {
+		unlock, err := m.lockMutationTransaction()
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+	}
 	target, err := deleteTargetFromArg(req.Target)
 	if err != nil {
 		if !req.Force {
@@ -153,7 +163,7 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 	}
 	result := controlapi.DeleteResult{
 		TypeMeta: controlapi.TypeMeta{APIVersion: controlapi.APIVersion, Kind: "DeleteResult"},
-		Deleted:  []string{target.APIVersion + "/" + target.Kind + "/" + target.Name},
+		Target:   target.APIVersion + "/" + target.Kind + "/" + target.Name,
 		DryRun:   req.DryRun,
 	}
 	if req.DryRun {
@@ -165,28 +175,22 @@ func (m serveConfigMutator) delete(r *http.Request, req controlapi.DeleteRequest
 		return &result, nil
 	}
 	if req.NoReconcile {
-		unlock, err := m.lockMutationTransaction()
-		if err != nil {
-			return nil, err
-		}
-		defer unlock()
 		committed, err := m.commitOnly(nextRouter, string(nextYAML))
 		if err != nil {
 			return nil, err
 		}
 		result.Result = committed
+		result.Deleted = []string{result.Target}
 		return &result, nil
 	}
-	unlock, err := m.lockMutationTransaction()
+	outcome, err := m.mutateRuntime(nextRouter, string(nextYAML))
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
-	applied, err := m.mutateRuntime(nextRouter, string(nextYAML))
-	if err != nil {
-		return nil, err
+	result.Result = outcome.Result
+	if outcome.Canonical == canonicalReplaced {
+		result.Deleted = []string{result.Target}
 	}
-	result.Result = applied
 	return &result, nil
 }
 
@@ -195,7 +199,9 @@ var runtimeShapeKinds = map[string]bool{
 	"DHCPv6Client": true, "DHCPv6Server": true, "DHCPv6PrefixDelegation": true,
 	"PPPoESession": true, "HealthCheck": true, "DNSResolver": true,
 	"DSLiteTunnel": true,
-	"EventGroup":   true, "EventSubscription": true, "WebConsole": true,
+	"EventGroup":   true, "EventSubscription": true,
+	"EventRule": true, "DerivedEvent": true,
+	"Plugin":              true,
 	"SAMTransportProfile": true,
 	"MobilityPool":        true, "ServiceUnit": true,
 }
@@ -279,14 +285,8 @@ func (m serveConfigMutator) planRouter(router *api.Router, configYAML string) (*
 	if err == nil {
 		return result, nil
 	}
-	if errors.Is(err, routerstate.ErrSchemaNotInitialized) {
-		if m.logger != nil {
-			m.logger.Emit(eventlog.LevelError, "plan", "routerd plan could not read state database", map[string]string{
-				"error":     err.Error(),
-				"statePath": m.statePath,
-			})
-		}
-		return nil, errors.New("routerd state database is not initialized; restart routerd serve and verify its --state path")
+	if errors.Is(err, storage.ErrSchemaVersion) {
+		return nil, errors.New("unsupported routerd state database format; select a fresh routerd 1.5 database for cutover")
 	}
 	return nil, err
 }
@@ -302,20 +302,22 @@ func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML 
 		return outcome, err
 	}
 	if m.baseOpts.Sandbox {
-		committed, err := m.commitOnlyWithOutcome(router, configYAML)
-		if err != nil {
-			return committed, err
-		}
-		// The caller owns the exclusive mutation gate for the whole live-apply
-		// transaction. Avoid recursively taking it in the sandbox plan runner.
 		planner := m
 		planner.baseOpts.MutationGate = nil
 		result, err := planner.planRouter(router, configYAML)
 		if err != nil {
-			committed.Stage = "sandbox-plan"
+			outcome.Stage = "sandbox-plan"
+			return outcome, err
+		}
+		committed, err := m.commitOnlyWithOutcome(router, configYAML)
+		if err != nil {
 			return committed, err
 		}
+		if committed.Runtime.Standby {
+			return committed, nil
+		}
 		result.Generation = committed.Generation
+		result.Phase = "Committed"
 		committed.Result = result
 		committed.Stage = "complete"
 		return committed, nil
@@ -355,29 +357,17 @@ func (m serveConfigMutator) rejectIfStopping() error {
 	return nil
 }
 
-func (m serveConfigMutator) reloadRuntime(router *api.Router) error {
-	_, err := m.reloadRuntimeOutcome(router)
-	return err
-}
-
-func (m serveConfigMutator) reloadRuntimeOutcome(router *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+func (m serveConfigMutator) applyRuntimeOutcome(ctx context.Context, router *api.Router, reload bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
 	outcome := controllerchain.RuntimeReloadOutcome{}
 	if err := m.rejectIfStopping(); err != nil {
 		return outcome, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	if m.applyRuntimeWithOutcome == nil {
+		return outcome, errors.New("selected runtime configuration apply is unavailable")
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	if m.reloadWithOutcome != nil {
-		return m.reloadWithOutcome(ctx, router)
-	}
-	if m.reload == nil {
-		return outcome, errors.New("runtime generation reload is unavailable")
-	}
-	err := m.reload(ctx, router)
-	if err == nil {
-		outcome.Active = controllerchain.RuntimeSnapshot{Router: router, Known: true, Available: true}
-	}
-	return outcome, err
+	return m.applyRuntimeWithOutcome(operationCtx, router, reload, commit)
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {
@@ -410,8 +400,17 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 	defer outcome.finishEarlyFailure(store, m.baseOpts, &err)
 	opts := m.baseOpts
 	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
-	if err := outcome.commit(opts, configYAML); err != nil {
+	if err := outcome.commitAndApplyRuntime(context.Background(), opts, configYAML, nil); err != nil {
 		return outcome, err
+	}
+	if outcome.Runtime.Standby {
+		outcome.Result = &apply.Result{Generation: generation, Timestamp: time.Now().UTC(), Phase: "Standby"}
+		outcome.Stage = "finish-generation"
+		if err := outcome.finish(store, opts, "Standby", nil); err != nil {
+			return outcome, err
+		}
+		outcome.Stage = "complete"
+		return outcome, nil
 	}
 	outcome.Stage = "record-applied-path"
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {
@@ -423,7 +422,11 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 		return outcome, err
 	}
 	if m.logger != nil {
-		m.logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config without reconcile", map[string]string{"config": m.configPath})
+		message := "committed canonical router config without reconcile"
+		if opts.applyRuntime != nil {
+			message = "committed canonical router config and applied the selected runtime"
+		}
+		m.logger.Emit(eventlog.LevelInfo, "apply", message, map[string]string{"config": m.configPath})
 	}
 	outcome.Stage = "complete"
 	return outcome, nil

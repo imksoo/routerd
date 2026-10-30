@@ -15,21 +15,22 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
-
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/sys/unix"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventfile"
 	routerotel "github.com/imksoo/routerd/pkg/otel"
 	"github.com/imksoo/routerd/pkg/pdclient"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+	"golang.org/x/sys/unix"
 )
 
 const daemonKind = "routerd-dhcpv6-client"
@@ -140,7 +141,13 @@ func daemonCommand(args []string, _ io.Writer) error {
 	}
 	daemon.telemetry = telemetry
 	daemon.initTelemetry()
-	return daemon.Run(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	err = daemon.Run(ctx)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func onceCommand(args []string, stdout io.Writer) error {
@@ -155,10 +162,11 @@ func onceCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer daemon.conn.Close()
 	if err := daemon.startClient(ctx); err != nil {
 		return err
 	}
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65527)
 	for {
 		daemon.mu.Lock()
 		if daemon.client.State == pdclient.StateBound {
@@ -190,10 +198,14 @@ func onceCommand(args []string, stdout io.Writer) error {
 		if err := daemon.handlePayload(ctx, buf[:n]); err != nil {
 			return err
 		}
+		if err := daemon.tick(ctx); err != nil {
+			return err
+		}
 	}
 }
 
 type dhcpv6Daemon struct {
+	cancel     context.CancelFunc
 	opts       options
 	ifi        *net.Interface
 	clientDUID []byte
@@ -345,6 +357,9 @@ func (d *dhcpv6Daemon) initTelemetry() {
 }
 
 func (d *dhcpv6Daemon) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	d.cancel = cancel
+	defer cancel()
 	defer d.conn.Close()
 	if err := d.prepareFilesystem(); err != nil {
 		return err
@@ -360,7 +375,13 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer listener.Close()
-	defer server.Close()
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			_ = server.Close()
+		}
+	}()
 	go func() { _ = server.Serve(listener) }()
 
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DHCPv6 client daemon started", nil)
@@ -369,7 +390,7 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 	}
 	d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DHCPv6 client daemon is ready", nil)
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65527)
 	for {
 		if ctx.Err() != nil {
 			d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DHCPv6 client daemon stopped", nil)
@@ -389,6 +410,9 @@ func (d *dhcpv6Daemon) Run(ctx context.Context) error {
 		if err := d.handlePayload(ctx, buf[:n]); err != nil {
 			return err
 		}
+		if err := d.tick(ctx); err != nil {
+			return err
+		}
 	}
 }
 
@@ -404,21 +428,33 @@ func (d *dhcpv6Daemon) startClient(ctx context.Context) error {
 	switch d.client.State {
 	case pdclient.StateBound:
 		if err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin); err != nil {
+			if errors.Is(err, pdclient.ErrSend) {
+				return d.saveLeaseLocked(ctx)
+			}
 			return err
 		}
 		return d.saveLeaseLocked(ctx)
 	case pdclient.StateRenewing:
 		if err := d.client.Renew(ctx); err != nil {
+			if errors.Is(err, pdclient.ErrSend) {
+				return d.saveLeaseLocked(ctx)
+			}
 			return err
 		}
 		return d.saveLeaseLocked(ctx)
 	case pdclient.StateRebinding:
 		if err := d.client.Rebind(ctx); err != nil {
+			if errors.Is(err, pdclient.ErrSend) {
+				return d.saveLeaseLocked(ctx)
+			}
 			return err
 		}
 		return d.saveLeaseLocked(ctx)
 	}
 	if err := d.client.Start(ctx); err != nil {
+		if errors.Is(err, pdclient.ErrSend) {
+			return d.saveLeaseLocked(ctx)
+		}
 		return err
 	}
 	sentSolicit = true
@@ -426,7 +462,7 @@ func (d *dhcpv6Daemon) startClient(ctx context.Context) error {
 }
 
 func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error {
-	msg, err := pdclient.DecodeMessage(payload)
+	msg, err := pdclient.DecodeMessageForIAID(payload, d.client.Config.IAID)
 	if err != nil {
 		return nil
 	}
@@ -434,7 +470,13 @@ func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error 
 	d.publishReceiveEvent(msg)
 	d.mu.Lock()
 	before := d.client.Snapshot()
+	// Keep the owner transition for persistence/events even when the public
+	// snapshot already reports authority expired at this instant.
+	before.State = d.client.State
 	err = d.client.HandleMessage(ctx, msg)
+	if errors.Is(err, pdclient.ErrSend) {
+		err = nil
+	}
 	after := d.client.Snapshot()
 	if err == nil && snapshotChanged(before, after) {
 		err = d.saveLeaseLocked(ctx)
@@ -450,8 +492,12 @@ func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error 
 func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	d.mu.Lock()
 	before := d.client.Snapshot()
+	before.State = d.client.State
 	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcpv6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin)
+	if errors.Is(err, pdclient.ErrSend) {
+		err = nil
+	}
 	after := d.client.Snapshot()
 	if err == nil && snapshotChanged(before, after) {
 		err = d.saveLeaseLocked(ctx)
@@ -461,7 +507,7 @@ func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if before.State != pdclient.StateRenewing && after.State == pdclient.StateRenewing {
+	if (!before.LastSentAt.Equal(after.LastSentAt) || before.LastMessageType != after.LastMessageType) && after.LastMessageType == pdclient.MessageRenew {
 		d.renewCounter.Add(spanCtx, 1, metric.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	}
 	d.publishStateEvents(before, after)
@@ -555,11 +601,18 @@ func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/status", d.handleStatus)
+	mux.HandleFunc("/v1/lease", d.handleLease)
 	mux.HandleFunc("/v1/healthz", d.handleHealthz)
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	mux.HandleFunc("/v1/config/update", d.handleConfigUpdate)
 	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
+}
+
+func (d *dhcpv6Daemon) handleLease(w http.ResponseWriter, _ *http.Request) {
+	d.mu.Lock()
+	snapshot := d.client.Snapshot()
+	d.mu.Unlock()
+	writeHTTPJSON(w, snapshot)
 }
 
 func (d *dhcpv6Daemon) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -625,7 +678,6 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d.mu.Lock()
 	var err error
-	var infoRequestSent bool
 	switch command {
 	case daemonapi.CommandRenew:
 		err = d.client.Renew(ctx)
@@ -635,9 +687,17 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		err = d.client.Release(ctx)
 	case daemonapi.CommandInfoRequest:
 		err = d.client.InfoRequest(ctx)
-		infoRequestSent = err == nil
+		if err == nil && d.conn != nil {
+			_ = d.conn.SetReadDeadline(time.Now())
+		}
 	case daemonapi.CommandReload:
+		err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
 	case daemonapi.CommandStop:
+		if d.cancel == nil {
+			err = errors.New("daemon is not running")
+		} else {
+			defer d.cancel()
+		}
 	case daemonapi.CommandStart:
 		err = d.client.Start(ctx)
 	case daemonapi.CommandFlush:
@@ -646,6 +706,10 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		err = os.Truncate(d.opts.eventFile, 0)
 	default:
 		err = fmt.Errorf("unknown command %q", command)
+	}
+	if errors.Is(err, pdclient.ErrSend) {
+		result.Message = "send failed; retry scheduled: " + err.Error()
+		err = nil
 	}
 	if err == nil {
 		err = d.saveLeaseLocked(ctx)
@@ -660,21 +724,11 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result.Accepted = true
-	result.Message = "accepted"
-	if infoRequestSent {
-		d.publish(daemonapi.EventDHCPv6InfoRequestSent, daemonapi.SeverityInfo, "InfoRequestSent", "sent DHCPv6 Information-request", nil)
+	if result.Message == "" {
+		result.Message = "accepted"
 	}
 	d.publish(daemonapi.EventCommandExecuted, daemonapi.SeverityInfo, "CommandExecuted", command, map[string]string{"command": command})
 	writeHTTPJSON(w, result)
-}
-
-func (d *dhcpv6Daemon) handleConfigUpdate(w http.ResponseWriter, _ *http.Request) {
-	writeHTTPJSON(w, daemonapi.CommandResult{
-		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindCommandResult},
-		Command:  "config/update",
-		Accepted: true,
-		Message:  "accepted; dynamic config apply is pending Phase 1",
-	})
 }
 
 func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
@@ -690,20 +744,25 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 		Since:    snapshot.UpdatedAt,
 		Conditions: []daemonapi.Condition{{
 			Type:               "LeaseReady",
-			Status:             conditionStatus(snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding),
+			Status:             conditionStatus(snapshot.CurrentPrefix != "" && (snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding)),
 			Reason:             string(snapshot.State),
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
 		Observed: map[string]string{
-			"interface":     d.opts.ifname,
-			"leaseState":    string(snapshot.State),
-			"currentPrefix": snapshot.CurrentPrefix,
-			"serverDUID":    snapshot.ServerDUID,
-			"packetRing":    strconv.Itoa(len(d.recorder.snapshot())),
-			"aftrName":      snapshot.AFTRName,
-			"dnsServers":    jsonStringList(snapshot.DNSServers),
-			"sntpServers":   jsonStringList(snapshot.SNTPServers),
-			"domainSearch":  jsonStringList(snapshot.DomainSearch),
+			"interface":      d.opts.ifname,
+			"leaseState":     string(snapshot.State),
+			"currentPrefix":  snapshot.CurrentPrefix,
+			"serverDUID":     snapshot.ServerDUID,
+			"packetRing":     strconv.Itoa(len(d.recorder.snapshot())),
+			"aftrName":       snapshot.AFTRName,
+			"dnsServers":     jsonStringList(snapshot.DNSServers),
+			"sntpServers":    jsonStringList(snapshot.SNTPServers),
+			"domainSearch":   jsonStringList(snapshot.DomainSearch),
+			"infoPending":    strconv.FormatBool(snapshot.InfoPending),
+			"infoStatusCode": strconv.Itoa(int(snapshot.InfoStatusCode)),
+			"infoLastError":  snapshot.InfoLastError,
+			"prefixCount":    strconv.Itoa(len(snapshot.Prefixes)),
+			"lastError":      snapshot.LastError,
 		},
 	}
 	return daemonapi.DaemonStatus{
@@ -746,14 +805,12 @@ func (d *dhcpv6Daemon) publishReceiveEvent(msg pdclient.Message) {
 }
 
 func (d *dhcpv6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
-	if before.State == after.State && before.CurrentPrefix == after.CurrentPrefix && !infoChanged(before, after) {
+	if before.State == after.State && before.CurrentPrefix == after.CurrentPrefix && prefixSnapshotsEqual(before.Prefixes, after.Prefixes) && !infoChanged(before, after) && before.InfoLastSentAt.Equal(after.InfoLastSentAt) && before.LastSentAt.Equal(after.LastSentAt) && before.LastMessageType == after.LastMessageType {
 		return
 	}
-	if before.State != after.State || before.CurrentPrefix != after.CurrentPrefix {
+	if before.State != after.State || before.CurrentPrefix != after.CurrentPrefix || !prefixSnapshotsEqual(before.Prefixes, after.Prefixes) {
 		attrs := map[string]string{"prefix": after.CurrentPrefix}
 		switch {
-		case after.State == pdclient.StateRequesting && before.State == pdclient.StateSoliciting:
-			d.publish(daemonapi.EventDHCPv6RequestSent, daemonapi.SeverityInfo, "RequestSent", "sent DHCPv6 Request", nil)
 		case after.State == pdclient.StateBound && before.State == pdclient.StateRenewing:
 			d.publish(daemonapi.EventDHCPv6PrefixRenewed, daemonapi.SeverityInfo, "PrefixRenewed", "delegated prefix renewed", attrs)
 		case after.State == pdclient.StateBound && before.State == pdclient.StateRebinding:
@@ -763,6 +820,17 @@ func (d *dhcpv6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
 		case after.State == pdclient.StateExpired:
 			d.publish(daemonapi.EventDHCPv6PrefixExpired, daemonapi.SeverityWarning, "PrefixExpired", "delegated prefix expired", nil)
 		}
+	}
+	if !before.LastSentAt.Equal(after.LastSentAt) || before.LastMessageType != after.LastMessageType {
+		switch after.LastMessageType {
+		case pdclient.MessageRequest:
+			d.publish(daemonapi.EventDHCPv6RequestSent, daemonapi.SeverityInfo, "RequestSent", "sent DHCPv6 Request", nil)
+		case pdclient.MessageSolicit:
+			d.publish(daemonapi.EventDHCPv6SolicitSent, daemonapi.SeverityInfo, "SolicitSent", "sent DHCPv6 Solicit", nil)
+		}
+	}
+	if !before.InfoLastSentAt.Equal(after.InfoLastSentAt) {
+		d.publish(daemonapi.EventDHCPv6InfoRequestSent, daemonapi.SeverityInfo, "InfoRequestSent", "sent DHCPv6 Information-request", nil)
 	}
 	if infoChanged(before, after) {
 		d.publish(daemonapi.EventDHCPv6InfoReplyReceived, daemonapi.SeverityInfo, "InfoReplyReceived", "received DHCPv6 information Reply", map[string]string{
@@ -893,6 +961,9 @@ func (t *udpTransport) Send(ctx context.Context, packet pdclient.OutboundPacket)
 		TransactionID: fmt.Sprintf("%06x", packet.Message.TransactionID),
 		Bytes:         len(packet.Payload),
 	})
+	if len(t.sent) > 1000 {
+		t.sent = append([]sentPacket(nil), t.sent[len(t.sent)-1000:]...)
+	}
 	if t.recorder != nil {
 		t.recorder.add(packetRecordFromMessage("send", t.ifname, packet.Message, packet.Payload))
 	}
@@ -1014,12 +1085,7 @@ func selftestCommand(args []string, stdout io.Writer) error {
 		TransactionID: 0x010203,
 		ClientDUID:    clientDUID,
 		ServerDUID:    serverDUID,
-		IAID:          1,
-		T1:            7200,
-		T2:            12600,
-		Prefix:        prefix,
-		Preferred:     14400,
-		Valid:         14400,
+		IAPDs:         []pdclient.IAPD{{IAID: 1, T1: 7200, T2: 12600, Prefixes: []pdclient.IAPrefix{{Prefix: prefix, Preferred: 14400, Valid: 14400}}}},
 	})
 	if err != nil {
 		return err
@@ -1032,12 +1098,7 @@ func selftestCommand(args []string, stdout io.Writer) error {
 		TransactionID: 0x010204,
 		ClientDUID:    clientDUID,
 		ServerDUID:    serverDUID,
-		IAID:          1,
-		T1:            7200,
-		T2:            12600,
-		Prefix:        prefix,
-		Preferred:     14400,
-		Valid:         14400,
+		IAPDs:         []pdclient.IAPD{{IAID: 1, T1: 7200, T2: 12600, Prefixes: []pdclient.IAPrefix{{Prefix: prefix, Preferred: 14400, Valid: 14400}}}},
 	})
 	if err != nil {
 		return err
@@ -1097,7 +1158,7 @@ func duidLL(mac net.HardwareAddr) []byte {
 
 func resourcePhase(state pdclient.State) string {
 	switch state {
-	case pdclient.StateIdle:
+	case pdclient.StateIdle, pdclient.StateReleased:
 		return daemonapi.ResourcePhaseIdle
 	case pdclient.StateSoliciting, pdclient.StateRequesting:
 		return daemonapi.ResourcePhaseAcquiring
@@ -1133,6 +1194,18 @@ func leaseStateValue(state pdclient.State) int64 {
 func snapshotChanged(a, b pdclient.Snapshot) bool {
 	return a.State != b.State ||
 		a.CurrentPrefix != b.CurrentPrefix ||
+		!prefixSnapshotsEqual(a.Prefixes, b.Prefixes) ||
+		!a.LeaseUpdatedAt.Equal(b.LeaseUpdatedAt) ||
+		a.LastError != b.LastError ||
+		!a.LastSentAt.Equal(b.LastSentAt) ||
+		a.LastMessageType != b.LastMessageType ||
+		a.SOLMaxRTSeconds != b.SOLMaxRTSeconds ||
+		a.INFMaxRTSeconds != b.INFMaxRTSeconds ||
+		a.InfoPending != b.InfoPending ||
+		a.InfoStatusCode != b.InfoStatusCode ||
+		a.InfoLastError != b.InfoLastError ||
+		!a.InfoRefreshAt.Equal(b.InfoRefreshAt) ||
+		!a.InfoLastSentAt.Equal(b.InfoLastSentAt) ||
 		!previousPrefixSnapshotsEqual(a.PreviousPrefixes, b.PreviousPrefixes) ||
 		a.ServerDUID != b.ServerDUID ||
 		a.T1Seconds != b.T1Seconds ||
@@ -1144,6 +1217,18 @@ func snapshotChanged(a, b pdclient.Snapshot) bool {
 		!a.RebindAt.Equal(b.RebindAt) ||
 		!a.ExpiresAt.Equal(b.ExpiresAt) ||
 		infoChanged(a, b)
+}
+
+func prefixSnapshotsEqual(a, b []pdclient.PrefixSnapshot) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Prefix != b[i].Prefix || a[i].Preferred != b[i].Preferred || a[i].Valid != b[i].Valid || !a[i].AcquiredAt.Equal(b[i].AcquiredAt) {
+			return false
+		}
+	}
+	return true
 }
 
 func previousPrefixSnapshotsEqual(a, b []pdclient.PreviousPrefixSnapshot) bool {

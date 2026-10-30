@@ -3,8 +3,6 @@
 package main
 
 import (
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -13,66 +11,6 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
-
-func eventsCommand(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("events", flag.ContinueOnError)
-	fs.SetOutput(stdout)
-	fs.Usage = func() {
-		printSubcommandHelp(fs,
-			"routerd の event ledger (resource phase 遷移 / controller の reason) を表示する。",
-			"routerctl get events --limit 200 --resource DSLiteTunnel/home\n"+
-				"routerctl get events --topic routerd.controller.reconcile -o json\n"+
-				"routerctl get events --kind DSLiteTunnel --limit 50")
-	}
-	statePath := fs.String("state-file", defaultStatePath(), "routerd state database file")
-	output := "table"
-	fs.StringVar(&output, "o", "table", "output format: table, json, yaml")
-	fs.StringVar(&output, "output", "table", "output format: table, json, yaml")
-	limit := fs.Int("limit", 50, "maximum number of events")
-	since := fs.Int64("since", 0, "show events with id greater than this value")
-	topic := fs.String("topic", "", "event topic")
-	resource := fs.String("resource", "", "resource filter as <kind>/<name>")
-	kind := fs.String("kind", "", "legacy event kind filter")
-	name := fs.String("name", "", "legacy event name filter")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	store, err := routerstate.Open(*statePath)
-	if err != nil {
-		return err
-	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer closer.Close()
-	}
-	lister, ok := store.(routerstate.EventLister)
-	if !ok {
-		return fmt.Errorf("state file %s does not support event listing", *statePath)
-	}
-	events, err := lister.ListEvents(routerstate.EventQuery{
-		Limit:    *limit,
-		SinceID:  *since,
-		Topic:    *topic,
-		Kind:     *kind,
-		Name:     *name,
-		Resource: *resource,
-	})
-	if err != nil {
-		return err
-	}
-	switch output {
-	case "", "table":
-		return writeEventsTable(stdout, events)
-	case "json":
-		return writeJSON(stdout, events)
-	case "yaml":
-		return writeYAML(stdout, events)
-	default:
-		return fmt.Errorf("unsupported output %q", output)
-	}
-}
 
 func writeEventsTable(stdout io.Writer, events []routerstate.StoredEvent) error {
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)

@@ -109,13 +109,13 @@ spec:
             start: 1024
             end: 65535
     - apiVersion: net.routerd.net/v1alpha1
-      kind: IPv4StaticRoute
+      kind: IPv4Route
       metadata:
         name: lab-v4
       spec:
-        interface: wan
+        device: ens18
         destination: 192.0.2.0/24
-        via: 192.168.1.1
+        gateway: 192.168.1.1
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv6StaticRoute
       metadata:

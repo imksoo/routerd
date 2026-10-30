@@ -3,6 +3,7 @@ package main
 
 import (
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 	"os"
 )
@@ -26,7 +27,7 @@ func main() {
 		}
 		return
 	}
-	data, err := render.NftablesFirewall(r, render.InternalFirewallHoles(r))
+	data, err := render.NftablesFirewall(r, render.InternalFirewallHoles(r, platform.OSLinux))
 	if err != nil {
 		panic(err)
 	}

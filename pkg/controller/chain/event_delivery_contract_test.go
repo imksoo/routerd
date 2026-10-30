@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
-	"github.com/imksoo/routerd/pkg/eventconsumer"
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -33,17 +32,28 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if _, err := store.LoadOrInitializeEventConsumerCursor("eventrule/engine"); err != nil {
-				t.Fatal(err)
-			}
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"}, Metadata: api.ObjectMeta{Name: "status-count"}, Spec: api.EventRuleSpec{Pattern: api.EventRulePatternSpec{Operator: eventrule.OperatorCount, Topic: "routerd.resource.status.changed", Threshold: 1}, Emit: api.EventRuleEmitSpec{Topic: "routerd.test.transition"}}}}}}
 			events := bus.NewWithStore(store)
 			observed := eventedStore{Store: store, Bus: events, Router: router}
+			controller := eventrule.Controller{Router: router, Bus: events, Store: eventRuleStore{observed}, Poll: time.Millisecond}
+			ctx, cancel := context.WithCancel(t.Context())
+			done, err := controller.Start(ctx)
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			defer func() { cancel(); <-done }()
 			faultDB, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer faultDB.Close()
+			// The actual rule owner now commits its initial checkpoint/status
+			// before consuming inputs. Give this independent fault-injection
+			// connection a bounded wait for the same SQLite write lock.
+			if _, err := faultDB.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := faultDB.Exec(`CREATE TRIGGER fail_status_event BEFORE INSERT ON events WHEN NEW.topic = 'routerd.resource.status.changed' BEGIN SELECT RAISE(FAIL, 'injected status event failure'); END`); err != nil {
 				t.Fatal(err)
 			}
@@ -60,7 +70,13 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if got := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "uplink"); len(got) != 0 {
 				t.Fatalf("required history failed but status committed: %#v", got)
 			}
-			if got := len(events.Recent("routerd.resource.status.changed")); got != 0 {
+			got := 0
+			for _, event := range events.Recent("routerd.resource.status.changed") {
+				if event.Resource != nil && event.Resource.Kind == "DHCPv4Client" && event.Resource.Name == "uplink" {
+					got++
+				}
+			}
+			if got != 0 {
 				t.Fatalf("rolled-back transition delivered locally: %d", got)
 			}
 			if _, err := faultDB.Exec("DROP TRIGGER fail_status_event"); err != nil {
@@ -69,7 +85,7 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if err := save(); err != nil {
 				t.Fatal(err)
 			}
-			persisted, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed"})
+			persisted, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed", Kind: "DHCPv4Client", Name: "uplink"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,15 +95,11 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if got := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "uplink")["gateway"]; got != "192.0.2.1" {
 				t.Fatalf("retry status=%v", got)
 			}
-			controller := eventrule.Controller{Router: router, Bus: events, Store: observed, Events: store}
-			if err := eventconsumer.Drain(t.Context(), store, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
-				if event.Daemon.Kind == "routerd-eventrule" {
-					return nil
-				}
-				return controller.Reconcile(ctx, event)
-			}); err != nil {
-				t.Fatal(err)
+			deadline := time.Now().Add(3 * time.Second)
+			for len(events.Recent("routerd.test.transition")) == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
+
 			if got := len(events.Recent("routerd.test.transition")); got != 1 {
 				t.Fatalf("EventRule lost committed status transition after retry: emitted=%d, want 1", got)
 			}
@@ -153,7 +165,7 @@ func TestFaultNotificationLossPeriodicRouteConvergence(t *testing.T) {
 	savePart(10)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	runner := &Runner{Router: &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "notification-test"}}, Store: store, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"ipv4-route"}, DryRunRoute: true}}
-	controllers, _, err := runner.frameworkControllers(t.Context(), logger, eventedStore{Store: store, Bus: runner.Bus, Router: runner.Router}, false, ha.Decision{Leader: true})
+	controllers, _, _, err := runner.frameworkControllers(t.Context(), logger, eventedStore{Store: store, Bus: runner.Bus, Router: runner.Router}, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
 	}

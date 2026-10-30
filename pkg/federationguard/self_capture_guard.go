@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	"github.com/imksoo/routerd/pkg/federation"
+	"github.com/imksoo/routerd/pkg/sam"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -18,6 +20,7 @@ import (
 // observer feedback for addresses this node is already capturing.
 type DynamicConfigPartStore interface {
 	ListDynamicConfigParts() ([]routerstate.DynamicConfigPartRecord, error)
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 // SelfCapturedObservedEventError reports that an observed client event would
@@ -45,6 +48,11 @@ func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev federation
 	addr, ok := eventAddress(ev)
 	if !ok {
 		return nil
+	}
+	// A desired withdrawal is not evidence that the prior native capture is
+	// gone. Its owner retains applied/pending receipts until cleanup succeeds.
+	if err := rejectNativeCapture(store, addr); err != nil {
+		return err
 	}
 	parts, err := store.ListDynamicConfigParts()
 	if err != nil {
@@ -85,6 +93,46 @@ func RejectSelfCapturedObservedEvent(store DynamicConfigPartStore, ev federation
 			}
 			source := "MobilityPool/" + strings.TrimSpace(intent.PoolRef)
 			return SelfCapturedObservedEventError{Address: addr.String(), Source: source}
+		}
+	}
+	return nil
+}
+
+func rejectNativeCapture(store DynamicConfigPartStore, addr netip.Addr) error {
+	status, err := store.ReadObjectStatus(api.RouterAPIVersion, "Router", dynamicconfig.MobilityNativeStatusName)
+	if err != nil {
+		return fmt.Errorf("read native capture receipts: %w", err)
+	}
+	_, present := status["appliedProxyNeighbors"]
+	applied, err := sam.DecodeAppliedProxyNeighbors(status["appliedProxyNeighbors"], present)
+	if err != nil {
+		return fmt.Errorf("decode applied native capture receipts: %w", err)
+	}
+	_, present = status["pendingProxyNeighbors"]
+	pending, err := sam.DecodePendingProxyNeighbors(status["pendingProxyNeighbors"], present)
+	if err != nil {
+		return fmt.Errorf("decode pending native capture receipts: %w", err)
+	}
+	for _, row := range applied {
+		if host, ok := parseAddress(row.Address); ok && host == addr {
+			return SelfCapturedObservedEventError{Address: addr.String(), Source: "MobilityPool/" + row.PoolRef}
+		}
+	}
+	for _, row := range pending {
+		if host, ok := parseAddress(row.Address); ok && host == addr {
+			return SelfCapturedObservedEventError{Address: addr.String(), Source: "MobilityPool/" + row.PoolRef}
+		}
+	}
+	for _, field := range []string{"appliedForwardPaths", "pendingForwardPaths"} {
+		_, present := status[field]
+		paths, err := sam.DecodeAppliedForwardPaths(status[field], present)
+		if err != nil {
+			return fmt.Errorf("decode %s native capture receipts: %w", field, err)
+		}
+		for _, row := range paths {
+			if host, ok := parseAddress(row.Address); ok && host == addr {
+				return SelfCapturedObservedEventError{Address: addr.String(), Source: "MobilityPool/" + row.PoolRef}
+			}
 		}
 	}
 	return nil

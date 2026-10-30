@@ -92,6 +92,8 @@ func controllerResourceKinds(name string) []string {
 		return []string{"FirewallZone", "FirewallPolicy", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "IPAddressSet", "LocalServiceRedirect"}
 	case "ingress":
 		return []string{"IngressService"}
+	case "ipsec":
+		return []string{"IPsecConnection"}
 	case "bgp":
 		return []string{"BGPRouter", "BGPPeer", "BFD"}
 	case "vrrp":
@@ -147,8 +149,8 @@ func ensureLoopbackUp() error {
 	return exec.Command("ip", "link", "set", "lo", "up").Run()
 }
 
-func cleanupServeLedgerOwnedOrphans(router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
-	removed, err := cleanupLedgerOwnedOrphansForServe(router, ledgerPath)
+func cleanupServeLedgerOwnedOrphans(ctx context.Context, router *api.Router, ledgerPath string, logger *eventlog.Logger) ([]string, error) {
+	removed, err := cleanupLedgerOwnedOrphansForServe(ctx, router, ledgerPath)
 	if err != nil {
 		if logger != nil {
 			logger.Emit(eventlog.LevelWarning, "serve", "ledger orphan cleanup encountered an error", map[string]string{"error": err.Error()})
@@ -427,6 +429,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	enabledControllers := parseControllerNames(*controllerNames)
 	controllerStatuses := filterControllerDefaultStatuses(controllerDefaultStatuses(), enabledControllers)
 	controllerRuntime := controlapi.NewControllerRuntimeStore(controllerStatuses)
+	closeStateStore := true
+	var skipStateStoreClose atomic.Bool
+	var nativeOwner *nativeOperationOwner
+	if !*sandbox {
+		nativeOwner, err = acquireNativeOperationOwner(context.Background())
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, nativeOwner.finish(closeStateStore && !skipStateStoreClose.Load())) }()
+	}
 	var stateStore *routerstate.SQLiteStore
 	stateStore, err = routerstate.OpenSQLite(*statePath)
 	if err != nil {
@@ -437,11 +449,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	stateStore.SetStorageAlertHandler(mirrorStorageAlert)
 	clearStorageAlert()
-	closeStateStore := true
 	// A configuration mutation can be blocked inside SQLite when SIGTERM
 	// arrives.  The signal path must be able to leave without synchronously
 	// waiting for that request's store lock; process exit closes the descriptor.
-	var skipStateStoreClose atomic.Bool
 	defer func() {
 		// Bootstrap can still hold the store mutex after a stop request. The
 		// process is about to exit in this path, so leave descriptor cleanup to
@@ -461,6 +471,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	routerMu := &sync.RWMutex{}
 	var chainRunner *controllerchain.Runner
+	var httpServers atomic.Pointer[serveHTTPServers]
 	currentRouter := func() *api.Router {
 		if chainRunner != nil {
 			active := chainRunner.ActiveRuntimeSnapshot()
@@ -507,7 +518,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		StatusFile:           *statusFile,
 		NetplanPath:          *netplanPath,
 		DnsmasqConfigPath:    *dnsmasqConfigPath,
-		DnsmasqServicePath:   runtimeDnsmasqServicePath(*dnsmasqServicePath),
+		DnsmasqServicePath:   *dnsmasqServicePath,
 		NftablesPath:         *nftablesPath,
 		LedgerPath:           *ledgerPath,
 		StatePath:            *statePath,
@@ -531,6 +542,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	mutationGate := &sync.RWMutex{}
 	applyOpts.MutationGate = mutationGate
+	applyOpts.nativeOwner = nativeOwner
 	cache := &resultCache{}
 	applyMu := &sync.Mutex{}
 	var stopping atomic.Bool
@@ -556,66 +568,8 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		cancelControllers()
 	}()
 	var controllerBus *bus.Bus
-	if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
-		logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
-	}
-	_, _ = cleanupServeLedgerOwnedOrphans(router, *ledgerPath, logger)
-	engine := apply.New()
-	if result, observeErr := engine.Observe(router); observeErr == nil {
-		cache.Store(result)
-		_ = statuswriter.Write(*statusFile, result)
-	} else {
-		logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
-	}
-	controllerBus = bus.NewWithStore(stateStore)
-	controllerBus.SetLogger(slog.Default())
-	go publishVRRPTransitionSignals(ctx, vrrpSignalCh, controllerBus)
-	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
-	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
-	if !*once && !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
-		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
-			return err
-		}
-	}
-	controllerOpts := controllerchain.Options{
-		SuperviseClientDaemons: true,
-		SuperviseDNSResolvers:  false,
-		DnsmasqCommand:         "dnsmasq",
-		DnsmasqConfig:          *dnsmasqConfigPath,
-		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
-		DnsmasqPort:            53,
-		DnsmasqListen:          []string{"127.0.0.1"},
-		NftablesPath:           *nftablesPath,
-		FirewallPath:           "/run/routerd/firewall.nft",
-		LedgerPath:             *ledgerPath,
-		NftCommand:             "nft",
-		BGPSocketPath:          *bgpSocketPath,
-		BGPControlSocketPath:   *bgpControlSocketPath,
-		BGPStatePath:           *bgpStatePath,
-		ConntrackInterval:      30 * time.Second,
-		ControllerObserver:     controllerRuntime,
-		EnabledControllers:     enabledControllers,
-		PeerGroupSyncClient:    peerGroupSyncClient,
-		MutationGate:           mutationGate,
-	}
-	if *sandbox {
-		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
-	}
-	chainRunner = &controllerchain.Runner{
-		Router: router,
-		Bus:    controllerBus,
-		Store:  stateStore,
-		Opts:   controllerOpts,
-		CancelServe: func() {
-			stopping.Store(true)
-			cancelSignalCtx()
-		},
-	}
-	if *once {
-		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)
-		return err
-	}
-	// Start receiving stop signals before bootstrap.  A generated service-unit
+	var controllerOpts controllerchain.Options
+	// Start receiving stop signals before cleanup, observation and bootstrap. A generated service-unit
 	// update can legitimately ask systemd to restart routerd while its next
 	// process is still bootstrapping; waiting until Start returns leaves that
 	// SIGTERM queued behind the bootstrap and eventually reaches systemd's much
@@ -624,9 +578,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	shutdownComplete := make(chan struct{})
 	go func() {
 		defer close(shutdownComplete)
-		_, ok := <-signalCh
-		if !ok {
+		select {
+		case <-signalCtx.Done():
 			return
+		case _, ok := <-signalCh:
+			if !ok {
+				return
+			}
 		}
 		stopping.Store(true)
 		// Do not synchronously emit signal-path events. A configured external
@@ -639,6 +597,9 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		// in a provider or daemon call which cannot be interrupted here.
 		cancelControllers()
 		closeStop()
+		if servers := httpServers.Load(); servers != nil {
+			servers.stopAdmissions()
+		}
 		select {
 		case <-controllerRuntimeStarted:
 			// A shutdown must not wait unboundedly for an admitted mutation or an
@@ -689,6 +650,117 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		default:
 		}
 	}()
+	cleanupFinished, err := startControllerRuntime(ctx, stop, func(ctx context.Context) error {
+		if _, cleanupErr := cleanupUnsupportedLegacyObjectStatuses(router, stateStore, *statePath, time.Now().UTC(), logger); cleanupErr != nil {
+			logger.Emit(eventlog.LevelWarning, "serve", "stale state cleanup encountered an error", map[string]string{"error": cleanupErr.Error()})
+		}
+		_, _ = cleanupServeLedgerOwnedOrphans(ctx, router, *ledgerPath, logger)
+		return nil
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if !cleanupFinished {
+		closeStateStore = false
+		return nil
+	}
+	controllerBus = bus.NewWithStore(stateStore)
+	controllerBus.SetLogger(slog.Default())
+	go publishVRRPTransitionSignals(ctx, vrrpSignalCh, controllerBus)
+	publishControllerModeEvents(ctx, controllerBus, controllerStatuses)
+	peerGroupSyncClient := mobilitycontroller.NewPeerGroupSyncClient(stateStore)
+	if !*once && !*sandbox && mobilitycontroller.HasPublishedPeerGroups(router) {
+		if err := startPeerGroupSyncServer(ctx, stateStore, logger); err != nil {
+			return err
+		}
+	}
+	controllerOpts = controllerchain.Options{
+		SuperviseClientDaemons: true,
+		SuperviseDNSResolvers:  false,
+		DnsmasqCommand:         "dnsmasq",
+		DnsmasqConfig:          *dnsmasqConfigPath,
+		DnsmasqPID:             filepath.Join(platformDefaults.RuntimeDir, "dnsmasq.pid"),
+		DnsmasqPort:            53,
+		DnsmasqListen:          []string{"127.0.0.1"},
+		NftablesPath:           *nftablesPath,
+		FirewallPath:           "/run/routerd/firewall.nft",
+		LedgerPath:             *ledgerPath,
+		NftCommand:             "nft",
+		BGPSocketPath:          *bgpSocketPath,
+		BGPControlSocketPath:   *bgpControlSocketPath,
+		BGPStatePath:           *bgpStatePath,
+		ConntrackInterval:      30 * time.Second,
+		ControllerObserver:     controllerRuntime,
+		EnabledControllers:     enabledControllers,
+		PeerGroupSyncClient:    peerGroupSyncClient,
+		MutationGate:           mutationGate,
+	}
+	if *sandbox {
+		applySandboxControllerOptions(&controllerOpts, *dnsmasqConfigPath, *nftablesPath)
+	}
+	if !*sandbox {
+		controllerOpts.ReconcileIPsec = applyIPsecConnections
+	}
+	controllerOpts.ReconcileHTTPServers = func(ctx context.Context, observation controllerchain.RuntimeRouterObservation) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if servers := httpServers.Load(); servers != nil {
+			return servers.reconcile(observation)
+		}
+		return nil // the control handler is constructed after bootstrap
+	}
+	chainRunner = &controllerchain.Runner{
+		Router: router,
+		Bus:    controllerBus,
+		Store:  stateStore,
+		Opts:   controllerOpts,
+		CancelServe: func() {
+			stopping.Store(true)
+			cancelSignalCtx()
+		},
+	}
+	defer func() {
+		cancelControllers()
+		// RA withdrawal can require the RFC multicast spacing interval plus
+		// its bounded socket write before it acknowledges the final packet.
+		waitCtx, cancelWait := context.WithTimeout(context.Background(), controllerchain.RuntimeShutdownGrace)
+		defer cancelWait()
+		var serverErr error
+		if servers := httpServers.Load(); servers != nil {
+			serverErr = servers.close(waitCtx)
+		}
+		if err := errors.Join(serverErr, chainRunner.Wait(waitCtx)); err != nil {
+			// A worker still owns shared state. Process exit is the final fence;
+			// do not race it with a synchronous store or external-sink close.
+			skipStateStoreClose.Store(true)
+			skipLoggerClose.Store(true)
+		}
+	}()
+	observed, err := startControllerRuntime(ctx, stop, func(ctx context.Context) error {
+		if observation, observeErr := chainRunner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS); observeErr == nil {
+			if result, observeErr := applyEngine(ctx, observation.RouteRouter, stateStore).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter); observeErr == nil {
+				cache.Store(result)
+				_ = statuswriter.Write(*statusFile, result)
+			} else {
+				logger.Emit(eventlog.LevelWarning, "serve", "initial observe failed", map[string]string{"error": observeErr.Error()})
+			}
+		} else {
+			logger.Emit(eventlog.LevelWarning, "serve", "initial resource selection failed", map[string]string{"error": observeErr.Error()})
+		}
+		return nil
+	}, nil)
+	if err != nil {
+		return err
+	}
+	if !observed {
+		closeStateStore = false
+		return nil
+	}
+	if *once {
+		_, err := runServeChainOnce(ctx, chainRunner, router, applyOpts, stateStore, stdout, logger)
+		return err
+	}
 	runtimeStarted, err := startControllerRuntime(ctx, stop, chainRunner.Start, controllerRuntimeStarted)
 	if err != nil {
 		return err
@@ -699,47 +771,21 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	go runDHCPEventQueue(ctx, platformDefaults.DHCPEventQueueFile(), dhcpStickyLogPath(), platformDefaults.DnsmasqLeaseFile(), currentRouter, controllerBus)
 	mutator := serveConfigMutator{
-		configPath:           *configPath,
-		statePath:            *statePath,
-		baseOpts:             applyOpts,
-		cache:                cache,
-		logger:               logger,
-		getRouter:            currentRouter,
-		setRouter:            setCurrentRouter,
-		reloadWithOutcome:    chainRunner.ReloadRuntimeWithOutcome,
-		activeRuntime:        chainRunner.ActiveRuntimeSnapshot,
-		updateRuntime:        chainRunner.UpdateRuntimeRouter,
-		runtimeMutationError: chainRunner.RuntimeMutationError,
-		stopping:             stopping.Load,
+		configPath:              *configPath,
+		statePath:               *statePath,
+		baseOpts:                applyOpts,
+		cache:                   cache,
+		logger:                  logger,
+		getRouter:               currentRouter,
+		setRouter:               setCurrentRouter,
+		applyRuntimeWithOutcome: chainRunner.ApplyRuntimeWithOutcome,
+		activeRuntime:           chainRunner.ActiveRuntimeSnapshot,
+		runtimeMutationError:    chainRunner.RuntimeMutationError,
+		stopping:                stopping.Load,
 	}
 	mutationAdmission := serveMutationAdmission{mu: applyMu, stopping: &stopping, runtimeMutationError: chainRunner.RuntimeMutationError}
 	if *applyInterval > 0 {
 		go runApplySchedule(ctx, stop, *applyInterval, currentRouter, func() *controllerchain.Runner { return chainRunner }, applyOpts, stateStore, cache, logger, applyMu, &stopping)
-	}
-	if webConsoleResourcePresent(router) {
-		var webStore routerstate.Store
-		var webObjectStore routerstate.ObjectStatusStore
-		if stateStore != nil {
-			webStore = stateStore
-			webObjectStore = stateStore
-		} else {
-			opened, openErr := routerstate.OpenSQLite(*statePath)
-			if openErr != nil {
-				return openErr
-			}
-			defer opened.Close()
-			webStore = opened
-			webObjectStore = opened
-		}
-		console, ok, webErr := webConsoleFromRouter(router, webObjectStore)
-		if webErr != nil {
-			return webErr
-		}
-		if ok {
-			if err := startWebConsole(ctx, console, router, currentRouter, webStore, controllerBus, cache, logger, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath)); err != nil {
-				return err
-			}
-		}
 	}
 
 	listener, err := listenUnixSocket(*socketPath, 0o660)
@@ -750,14 +796,16 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	defer listener.Close()
 
 	statusHandler := func(r *http.Request) (*controlapi.Status, error) {
-		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore), currentRouter())
-		status.Status.Phase = overallStatusPhase(status.Status.Phase, stateStore)
-		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
-		status.Status.ResourcePhaseIssues = resourcePhaseIssues(stateStore)
-		controllers := controllerRuntime.Snapshot()
-		if stateStore != nil {
-			controllers = augmentControllerStatusesFromState(controllers, stateStore)
+		resources, err := stateStore.ListObjectStatuses()
+		if err != nil {
+			return nil, err
 		}
+		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore), currentRouter())
+		status.Status.Phase = overallStatusPhase(status.Status.Phase, resources)
+		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
+		status.Status.ResourcePhaseIssues = resourcePhaseIssues(resources)
+		controllers := controllerRuntime.Snapshot()
+		controllers = augmentControllerStatuses(controllers, resources)
 		status.Status.Controllers = controllers
 		if stateStore.StorageAlert() != nil {
 			status.Status.Phase = "Degraded"
@@ -765,10 +813,11 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		return &status, nil
 	}
 	controllersHandler := func(r *http.Request) (*controlapi.Controllers, error) {
-		statuses := controllerRuntime.Snapshot()
-		if stateStore != nil {
-			statuses = augmentControllerStatusesFromState(statuses, stateStore)
+		resources, err := stateStore.ListObjectStatuses()
+		if err != nil {
+			return nil, err
 		}
+		statuses := augmentControllerStatuses(controllerRuntime.Snapshot(), resources)
 		controllers := controlapi.NewControllers(statuses)
 		return &controllers, nil
 	}
@@ -790,7 +839,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		Describe:    serveDescribeHandler(currentRouter, stateStore),
 		Probe:       serveProbeHandler(currentRouter, stateStore),
 		Connections: func(r *http.Request, req controlapi.ConnectionsRequest) (*controlapi.ConnectionTable, error) {
-			table, err := observe.Connections(req.Limit)
+			table, err := observe.Connections(r.Context(), req.Limit)
 			if err != nil {
 				return nil, err
 			}
@@ -895,7 +944,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			result, err := submitSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			result, err := submitSAMEnrollmentClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
 			}
@@ -920,7 +969,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			result, err := revokeSAMEnrollmentClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			result, err := revokeSAMEnrollmentClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 			if err != nil {
 				return nil, err
 			}
@@ -946,7 +995,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 				return nil, err
 			}
 			defer unlock()
-			return getSAMEnrollmentTopologyForAcceptedClaim(currentRouter(), stateStore, req, time.Now().UTC())
+			return getSAMEnrollmentTopologyForAcceptedClaim(r.Context(), currentRouter(), stateStore, req, time.Now().UTC())
 		},
 		SetLogLevel: func(r *http.Request, req controlapi.LogLevelRequest) (*controlapi.LogLevelResult, error) {
 			level := strings.TrimSpace(req.Level)
@@ -976,6 +1025,32 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return &result, nil
 		},
 	}
+	servers := &serveHTTPServers{
+		stopping:       stopping.Load,
+		controlHandler: handler,
+		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {
+			return resolveControlAPIHTTPConfig(candidate, strings.TrimSpace(*httpListen), []string(httpAllowCIDRs), api.SecretValueSourceSpec{File: strings.TrimSpace(*httpTokenFile), Env: strings.TrimSpace(*httpTokenEnv)}, controlAPITLSConfig{CertFile: strings.TrimSpace(*httpTLSCertFile), KeyFile: strings.TrimSpace(*httpTLSKeyFile), ClientCAFile: strings.TrimSpace(*httpTLSClientCAFile)}, setFlags)
+		},
+		webConfiguration: func(candidate *api.Router) (api.WebConsoleSpec, bool, error) {
+			return webConsoleFromRouter(candidate, stateStore)
+		},
+		newWebHandler: func(spec api.WebConsoleSpec, candidate *api.Router) http.Handler {
+			return webConsoleHTTPHandler(spec, candidate, currentRouter, stateStore, controllerBus, cache, *configPath, controllerRuntime.Snapshot, configuredDHCPLeasePaths(*dnsmasqConfigPath))
+		},
+	}
+	initialObservation, err := chainRunner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
+	if err != nil {
+		return err
+	}
+	initialServers, err := servers.prepare(initialObservation.EffectiveRouter)
+	if err != nil {
+		return fmt.Errorf("prepare HTTP servers: %w", err)
+	}
+	defer initialServers.close()
+	if err := initialServers.publish(); err != nil {
+		return err
+	}
+	httpServers.Store(servers)
 	statusListener, err := listenUnixSocket(*statusSocketPath, 0o660)
 	if err != nil {
 		return err
@@ -1033,35 +1108,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		IdleTimeout:       2 * time.Minute,
 	}
 	server.SetKeepAlivesEnabled(false)
-	var httpServer *http.Server
-	if httpControl.Enabled {
-		httpListener, err := net.Listen("tcp", httpControl.Listen)
-		if err != nil {
-			return fmt.Errorf("listen control HTTP API: %w", err)
-		}
-		defer httpListener.Close()
-		if httpControl.TLS.CertFile != "" {
-			tlsConfig, err := controlAPIServerTLSConfig(httpControl.TLS)
-			if err != nil {
-				return fmt.Errorf("configure control HTTP API TLS: %w", err)
-			}
-			httpListener = tls.NewListener(httpListener, tlsConfig)
-		}
-		httpServer = &http.Server{
-			Handler:           controlAPIAdmissionHandler(handler, httpControl.AllowPrefixes, httpControl.Token),
-			ReadHeaderTimeout: 5 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      60 * time.Second,
-			IdleTimeout:       2 * time.Minute,
-		}
-		httpServer.SetKeepAlivesEnabled(false)
-		defer httpServer.Close()
-		go func() {
-			if serveErr := httpServer.Serve(httpListener); serveErr != nil && serveErr != http.ErrServerClosed {
-				logger.Emit(eventlog.LevelError, "serve", "control HTTP API stopped", map[string]string{"error": serveErr.Error(), "listen": httpControl.Listen})
-			}
-		}()
-	}
+
 	go func() {
 		// A SIGTERM closes stop before the optional handoff so the API shutdown
 		// can run in parallel.  A fatal controller error still uses the older
@@ -1076,9 +1123,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		// read-only status listener can have a slow in-flight request.
 		_ = server.Shutdown(shutdownCtx)
 		_ = statusServer.Shutdown(shutdownCtx)
-		if httpServer != nil {
-			_ = httpServer.Shutdown(shutdownCtx)
-		}
 	}()
 	fmt.Fprintf(stdout, "routerd serving control API on unix://%s\n", *socketPath)
 	fmt.Fprintf(stdout, "routerd serving read-only status API on unix://%s\n", *statusSocketPath)
@@ -1459,14 +1503,13 @@ func softFDLimit() uint64 {
 }
 
 func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
-	dir := filepathDir(path)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(dir, 0o755); err != nil {
+	if err := removeStaleUnixSocket(path); err != nil {
 		return nil, err
 	}
-	_ = os.Remove(path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err
@@ -1476,6 +1519,41 @@ func listenUnixSocket(path string, perm os.FileMode) (net.Listener, error) {
 		return nil, err
 	}
 	return listener, nil
+}
+
+func removeStaleUnixSocket(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("refuse to replace non-socket path %s", path)
+	}
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Geteuid()) {
+		return fmt.Errorf("refuse to replace socket not owned by this user: %s", path)
+	}
+	conn, err := net.DialTimeout("unix", path, 200*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("socket is already in use: %s", path)
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check existing socket %s: %w", path, err)
+	}
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, current) {
+		return fmt.Errorf("socket changed while checking ownership: %s", path)
+	}
+	return os.Remove(path)
 }
 
 func defaultControlAPIHTTPConfig() controlAPIHTTPConfig {
@@ -1665,13 +1743,7 @@ func parseControlAPIAllowCIDRs(cidrs []string) ([]netip.Prefix, error) {
 			return nil, fmt.Errorf("control HTTP API allow CIDR %d must be valid: %w", i, err)
 		}
 		if prefix.Bits() == 0 {
-			addr := prefix.Addr().Unmap()
-			if addr.Is4() && addr == netip.IPv4Unspecified() {
-				return nil, fmt.Errorf("control HTTP API allow CIDR %d must not be 0.0.0.0/0", i)
-			}
-			if addr.Is6() && addr == netip.IPv6Unspecified() {
-				return nil, fmt.Errorf("control HTTP API allow CIDR %d must not be ::/0", i)
-			}
+			return nil, fmt.Errorf("control HTTP API allow CIDR %d must not allow every source", i)
 		}
 		prefixes = append(prefixes, prefix.Masked())
 	}
@@ -1778,7 +1850,7 @@ func aggregateDNSQueriesReadOnly(ctx context.Context, path string, filter logsto
 }
 
 func listTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.TrafficFlowFilter) ([]logstore.TrafficFlow, error) {
-	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -1790,7 +1862,7 @@ func listTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.
 }
 
 func aggregateTrafficFlowsReadOnly(ctx context.Context, path string, filter logstore.TrafficFlowFilter) (logstore.TrafficFlowAggregate, error) {
-	store, err := logstore.OpenTrafficFlowLogReadOnly(path)
+	store, err := logstore.OpenTrafficFlowLogReadOnly(ctx, path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return logstore.TrafficFlowAggregate{Since: filter.Since, Until: filter.Until}, nil
@@ -1990,19 +2062,7 @@ func configuredFirewallLogPath(router *api.Router) string {
 	return fallback
 }
 
-func webConsoleResourcePresent(router *api.Router) bool {
-	if router == nil {
-		return false
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind == "WebConsole" {
-			return true
-		}
-	}
-	return false
-}
-
-func webConsoleFromRouter(router *api.Router, store routerstate.ObjectStatusStore) (api.WebConsoleSpec, bool, error) {
+func webConsoleFromRouter(router *api.Router, store resourcequery.StatusReader) (api.WebConsoleSpec, bool, error) {
 	if router == nil {
 		return api.WebConsoleSpec{}, false, nil
 	}
@@ -2036,9 +2096,13 @@ func webConsoleFromRouter(router *api.Router, store routerstate.ObjectStatusStor
 	return api.WebConsoleSpec{}, false, nil
 }
 
-func resolveWebConsoleListenAddress(router *api.Router, store routerstate.ObjectStatusStore, spec api.WebConsoleSpec) (string, error) {
+func resolveWebConsoleListenAddress(router *api.Router, store resourcequery.StatusReader, spec api.WebConsoleSpec) (string, error) {
 	if strings.TrimSpace(spec.ListenAddressFrom.Resource) != "" {
-		if address := firstAddressValue(resourcequery.Values(store, spec.ListenAddressFrom)); address != "" {
+		values, err := resourcequery.ReadValues(store, spec.ListenAddressFrom)
+		if err != nil {
+			return "", err
+		}
+		if address := firstAddressValue(values); address != "" {
 			return address, nil
 		}
 		if address := firstInterfaceAddressValue(router, spec.ListenAddressFrom); address != "" {
@@ -2130,9 +2194,8 @@ func statusAddressValue(value string) string {
 	return ""
 }
 
-func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.Router, currentRouter func() *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, logger *eventlog.Logger, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) error {
-	addr := net.JoinHostPort(spec.ListenAddress, fmt.Sprintf("%d", spec.Port))
-	handler := webconsole.New(webconsole.Options{
+func webConsoleHTTPHandler(spec api.WebConsoleSpec, router *api.Router, currentRouter func() *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) http.Handler {
+	return webconsole.New(webconsole.Options{
 		Router:                 router,
 		CurrentRouter:          currentRouter,
 		Store:                  store,
@@ -2151,26 +2214,6 @@ func startWebConsole(ctx context.Context, spec api.WebConsoleSpec, router *api.R
 		ControllerStatuses:     controllerStatuses,
 		Bus:                    eventBus,
 	})
-	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 2 * time.Minute}
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-	go func() {
-		if logger != nil {
-			logger.Emit(eventlog.LevelInfo, "serve", "routerd web console starting", map[string]string{"listen": addr, "basePath": spec.BasePath})
-		}
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed && logger != nil {
-			logger.Emit(eventlog.LevelWarning, "serve", "routerd web console stopped", map[string]string{"error": err.Error()})
-		}
-	}()
-	return nil
 }
 
 func webConsoleLinks(links []api.WebConsoleLinkSpec) []webconsole.ConsoleLink {
@@ -2262,16 +2305,9 @@ func resultWithLatestGeneration(result *apply.Result, store *routerstate.SQLiteS
 	return &apply.Result{Generation: generation, Phase: "Unknown"}
 }
 
-func overallStatusPhase(base string, lister routerstate.ObjectStatusLister) string {
+func overallStatusPhase(base string, statuses []routerstate.ObjectStatus) string {
 	if strings.TrimSpace(base) == "" {
 		base = "Unknown"
-	}
-	if lister == nil {
-		return base
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return base
 	}
 	phase := base
 	for _, item := range statuses {
@@ -2297,14 +2333,7 @@ func statusPhaseForRuntime(base string, active controllerchain.RuntimeSnapshot, 
 	return base
 }
 
-func resourcePhaseIssues(lister routerstate.ObjectStatusLister) []controlapi.ResourcePhaseIssue {
-	if lister == nil {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return nil
-	}
+func resourcePhaseIssues(statuses []routerstate.ObjectStatus) []controlapi.ResourcePhaseIssue {
 	var out []controlapi.ResourcePhaseIssue
 	for _, item := range statuses {
 		phase := strings.TrimSpace(statusStringMap(item.Status, "phase"))
@@ -2394,13 +2423,8 @@ func statusPhaseSuppressedByReason(phase, reason string) bool {
 	}
 }
 
-func augmentControllerStatusesFromState(controllers []controlapi.ControllerStatus, store routerstate.Store) []controlapi.ControllerStatus {
-	lister, ok := store.(routerstate.ObjectStatusLister)
-	if !ok || len(controllers) == 0 {
-		return controllers
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
+func augmentControllerStatuses(controllers []controlapi.ControllerStatus, statuses []routerstate.ObjectStatus) []controlapi.ControllerStatus {
+	if len(controllers) == 0 {
 		return controllers
 	}
 	var lastReloadAt *time.Time
@@ -2473,15 +2497,6 @@ func statusStringMap(status map[string]any, key string) string {
 	}
 }
 
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
 // startControllerRuntime keeps a stop request ahead of synchronous bootstrap.
 // A controller start is normally quick, but systemd may request another
 // routerd restart while that bootstrap is applying a generated service unit.
@@ -2537,15 +2552,6 @@ type serveMutationAdmission struct {
 	mu                   *sync.Mutex
 	stopping             *atomic.Bool
 	runtimeMutationError func() error
-}
-
-// runGracefulStopWhenIdle runs the optional mobility handoff only when no
-// admitted configuration transaction is active.  The process must always be
-// able to leave on SIGTERM; a blocked transaction is less harmful than
-// extending host shutdown indefinitely.
-func runGracefulStopWhenIdle(mu *sync.Mutex, handoff func() error) (bool, error) {
-	ran, _, err := runGracefulStopWhenIdleBounded(mu, 0, handoff)
-	return ran, err
 }
 
 // runGracefulStopWhenIdleBounded runs an optional handoff only while no
@@ -2679,7 +2685,7 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
 		defer outcome.finishEarlyFailure(store, opts, &err)
 		outcome.Stage = "inventory"
-		if err := recordHostInventoryState(store); err != nil {
+		if err := recordHostInventoryState(ctx, store); err != nil {
 			return nil, err
 		}
 	}
@@ -2694,7 +2700,11 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 		return nil, reconcileErr
 	}
 	outcome.Stage = "observe"
-	result, err = apply.New().Observe(router)
+	observation, err := runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
+	if err != nil {
+		return nil, err
+	}
+	result, err = applyEngine(ctx, observation.RouteRouter, store).ObserveEffective(observation.RouteRouter, observation.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -2704,6 +2714,10 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	outcome.Stage = "finish-generation"
 	if err := outcome.finish(store, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
+	}
+	if !scheduled && !opts.DryRun && !configCommitPhase(result.Phase) {
+		outcome.Stage = "observe-result"
+		return result, fmt.Errorf("reconcile finished with phase %s; desired router state was not confirmed", result.Phase)
 	}
 	outcome.Stage = "output"
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
@@ -2717,21 +2731,6 @@ func runServeChainOnceWith(ctx context.Context, runner *controllerchain.Runner, 
 	}
 	outcome.Stage = "complete"
 	return result, nil
-}
-
-func observedIPv6PrefixesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Prefixes(spec.IfName)
-	}
-	return out
 }
 
 func ipv6Prefixes(ifname string) []string {
@@ -2750,21 +2749,6 @@ func ipv6Prefixes(ifname string) []string {
 		}
 	}
 	return prefixes
-}
-
-func observedIPv6AddressesByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = ipv6Addresses(spec.IfName)
-	}
-	return out
 }
 
 func ipv6Addresses(ifname string) []string {
@@ -2867,35 +2851,4 @@ func parseFreeBSDIfconfigIPv6Entries(out string) ([]string, []ipv6AddressEntry) 
 		}
 	}
 	return prefixes, entries
-}
-
-func observedDNSServersByInterface(router *api.Router) map[string][]string {
-	out := map[string][]string{}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "Interface" {
-			continue
-		}
-		spec, err := res.InterfaceSpec()
-		if err != nil || spec.IfName == "" {
-			continue
-		}
-		out[spec.IfName] = resolvectlDNS(spec.IfName)
-	}
-	return out
-}
-
-func resolvectlDNS(ifname string) []string {
-	out, err := exec.Command("resolvectl", "dns", ifname).CombinedOutput()
-	if err != nil {
-		return nil
-	}
-	fields := strings.Fields(strings.ReplaceAll(string(out), ":", " "))
-	var servers []string
-	for _, field := range fields {
-		addr, err := netip.ParseAddr(field)
-		if err == nil {
-			servers = append(servers, addr.String())
-		}
-	}
-	return servers
 }

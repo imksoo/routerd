@@ -4,6 +4,7 @@ package webconsole
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"os"
 	"sort"
@@ -14,19 +15,30 @@ import (
 	"github.com/imksoo/routerd/pkg/logstore"
 )
 
-func (h Handler) dhcpFingerprintList(filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
+func (h Handler) dhcpFingerprintList(ctx context.Context, filter logstore.DHCPFingerprintFilter) ([]logstore.DHCPFingerprint, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.DHCPFingerprintLogPath) == "" {
 		return nil, nil
 	}
-	store, err := logstore.OpenDHCPFingerprintLog(h.opts.DHCPFingerprintLogPath)
+	store, err := logstore.OpenDHCPFingerprintLogReadOnly(h.opts.DHCPFingerprintLogPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
-func (h Handler) dhcpStickyLeaseList(filter logstore.DHCPStickyFilter) ([]logstore.DHCPStickyLease, error) {
+func (h Handler) dhcpStickyLeaseList(ctx context.Context, filter logstore.DHCPStickyFilter) ([]logstore.DHCPStickyLease, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(h.opts.DHCPStickyLogPath) == "" {
 		return nil, nil
 	}
@@ -41,7 +53,9 @@ func (h Handler) dhcpStickyLeaseList(filter logstore.DHCPStickyFilter) ([]logsto
 		return nil, err
 	}
 	defer store.Close()
-	return store.List(context.Background(), filter)
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	return store.List(ctx, filter)
 }
 
 func annotateDHCPLeasesWithSticky(leases []DHCPLease, sticky []logstore.DHCPStickyLease, now time.Time) []DHCPLease {
@@ -163,22 +177,30 @@ func readDnsmasqLeases(path string) ([]DHCPLease, error) {
 		return nil, err
 	}
 	var out []DHCPLease
-	for _, line := range strings.Split(string(data), "\n") {
+	for index, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 4 {
 			continue
 		}
-		expiresUnix, _ := strconv.ParseInt(fields[0], 10, 64)
+		expiresUnix, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || expiresUnix < 0 {
+			return nil, fmt.Errorf("%s:%d: invalid lease expiry %q", path, index+1, fields[0])
+		}
 		hostname := fields[3]
 		if hostname == "*" {
 			hostname = ""
 		}
 		lease := DHCPLease{
-			MAC:      strings.ToLower(fields[1]),
 			IP:       fields[2],
 			Hostname: hostname,
 			Family:   leaseAddressFamily(fields[2]),
 			Source:   path,
+		}
+		if lease.Family == "ipv6" {
+			// dnsmasq writes IAID here for IPv6, not a hardware address.
+			lease.IAID = fields[1]
+		} else {
+			lease.MAC = strings.ToLower(fields[1])
 		}
 		if expiresUnix > 0 {
 			lease.ExpiresAt = time.Unix(expiresUnix, 0).UTC()

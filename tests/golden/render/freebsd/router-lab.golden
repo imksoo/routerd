@@ -1,1 +1,1 @@
-ERROR: system.routerd.net/v1alpha1/NTPClient/system-time has unsupported FreeBSD provider "systemd-timesyncd"
+ERROR: net.routerd.net/v1alpha1/EgressRoutePolicy/default-v4 FreeBSD supports only the static sourceAddress hash PF route-to shape; mode "priority" is not supported

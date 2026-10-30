@@ -4,6 +4,7 @@ package logstore
 
 import (
 	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -18,7 +19,8 @@ func openReadOnlySQLite(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", "file:"+abs+"?mode=ro")
+	dsn := url.URL{Scheme: "file", Path: abs, RawQuery: "mode=ro"}
+	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
@@ -28,4 +30,9 @@ func openReadOnlySQLite(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// sqliteFileURI treats configured paths as filesystem names, not SQLite DSNs.
+func sqliteFileURI(path string) string {
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }

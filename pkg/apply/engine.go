@@ -4,6 +4,7 @@ package apply
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
@@ -19,19 +20,35 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
 
 type Engine struct {
-	Command      func(name string, args ...string) ([]byte, error)
-	OSNetworking *osNetworking
+	Command          func(name string, args ...string) ([]byte, error)
+	Segments         VXLANSegmentObserver
+	OSNetworking     *osNetworking
+	operationContext context.Context
 }
 
-func New() *Engine {
-	return &Engine{Command: runCommand}
+// New binds native observations to one request or serve operation. The engine
+// is ephemeral; it does not retain a context across unrelated requests.
+func New(ctx context.Context) *Engine {
+	return &Engine{operationContext: ctx, Command: func(name string, args ...string) ([]byte, error) { return runCommand(ctx, name, args...) }}
+}
+
+func (e *Engine) operationError() error {
+	if e.operationContext != nil {
+		return e.operationContext.Err()
+	}
+	// Explicitly injected command collaborators own their observation lifetime.
+	return nil
 }
 
 func (e *Engine) Validate(router *api.Router) error {
+	if err := e.operationError(); err != nil {
+		return err
+	}
 	return config.Validate(router)
 }
 
@@ -78,6 +95,9 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 	}
 
 	for _, res := range router.Spec.Resources {
+		if err := e.operationError(); err != nil {
+			return nil, err
+		}
 		rr := ResourceResult{
 			ID:       res.ID(),
 			Phase:    "Healthy",
@@ -118,7 +138,9 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "VRF":
 			e.observeVRF(res, aliases, includePlan, &rr)
 		case "VXLANTunnel":
-			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
+			e.observeVXLANSegment(res, includePlan, &rr)
+		case "VXLANSegment":
+			e.observeVXLANSegment(res, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "BFD":
@@ -182,7 +204,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 
 		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "VXLANSegment") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)
@@ -206,6 +228,9 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		}
 	}
 
+	if err := e.operationError(); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -464,7 +489,7 @@ func (e *Engine) observeDHCPv6PrefixDelegation(res api.Resource, aliases map[str
 		return
 	}
 	ifname := aliases[spec.Interface]
-	client := defaultString(spec.Client, "networkd")
+	client := api.EffectiveIPv6PDClient("", spec.Profile, spec.Client)
 	profile := defaultString(spec.Profile, api.IPv6PDProfileDefault)
 	rr.Observed["interface"] = spec.Interface
 	rr.Observed["ifname"] = ifname
@@ -691,7 +716,7 @@ func (e *Engine) observeBFD(res api.Resource, includePlan bool, rr *ResourceResu
 		rr.Observed["interface"] = spec.Interface
 	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, "record BFD intent (embedded GoBGP backend does not support BFD yet)")
+		rr.Plan = append(rr.Plan, "reconcile owned FRR bfdd sessions and feed observed peer state to BGP")
 	}
 }
 
@@ -964,75 +989,6 @@ func (e *Engine) observeVRF(res api.Resource, aliases map[string]string, include
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure Linux VRF %s with route table %d", ifname, spec.RouteTable))
 		for _, member := range spec.Members {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("enslave %s to VRF %s", aliases[member], ifname))
-		}
-	}
-}
-
-func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.VXLANTunnelSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	ifname := defaultString(spec.IfName, res.Metadata.Name)
-	rr.Observed["ifname"] = ifname
-	rr.Observed["vni"] = fmt.Sprintf("%d", spec.VNI)
-	rr.Observed["localAddress"] = spec.LocalAddress
-	rr.Observed["underlayInterface"] = spec.UnderlayInterface
-	rr.Observed["underlayIfname"] = aliases[spec.UnderlayInterface]
-	rr.Observed["peers"] = strings.Join(spec.Peers, ",")
-	bridgeIfName := aliases[spec.Bridge]
-	if spec.Bridge != "" {
-		rr.Observed["bridge"] = spec.Bridge
-		rr.Observed["bridgeIfname"] = bridgeIfName
-	}
-	out, observeErr := e.Command("ip", "-details", "link", "show", "dev", ifname)
-	if observeErr != nil {
-		rr.Phase = "Drifted"
-		rr.Observed["present"] = "false"
-		if includePlan {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("create VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
-		}
-		return
-	}
-	rr.Observed["present"] = "true"
-	port := spec.UDPPort
-	if port == 0 {
-		port = 4789
-	}
-	for _, want := range []string{
-		"vxlan id " + strconv.Itoa(spec.VNI),
-		"local " + spec.LocalAddress,
-		"dev " + aliases[spec.UnderlayInterface],
-		"dstport " + strconv.Itoa(port),
-		"nolearning",
-	} {
-		if !strings.Contains(string(out), want) {
-			rr.Phase = "Drifted"
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s readback is missing %q", ifname, want))
-		}
-	}
-	if spec.MTU != 0 && !strings.Contains(string(out), " mtu "+strconv.Itoa(spec.MTU)+" ") {
-		rr.Phase = "Drifted"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MTU does not match %d", ifname, spec.MTU))
-	}
-	if bridgeIfName != "" && !strings.Contains(string(out), "master "+bridgeIfName) {
-		rr.Phase = "Drifted"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", ifname, bridgeIfName))
-	}
-	for _, peer := range spec.Peers {
-		fdb, err := e.Command("bridge", "fdb", "show", "dev", ifname)
-		if err != nil || !strings.Contains(string(fdb), "00:00:00:00:00:00 dst "+peer) {
-			rr.Phase = "Drifted"
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s flood FDB entry for %s is absent", ifname, peer))
-		}
-	}
-	if includePlan {
-		if rr.Phase == "Healthy" {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("keep VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
-		} else {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("reconcile VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
 		}
 	}
 }
@@ -1458,7 +1414,12 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	spec = healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec)
+	spec, err = healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec)
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
 	checkType := defaultString(spec.Type, "ping")
 	role := defaultString(spec.Role, "next-hop")
 	targetSource := defaultString(spec.TargetSource, "auto")
@@ -1729,9 +1690,6 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 			return
 		}
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure IPv4 address %s on %s", addr, ifname))
-		if boolSpec(res, "exclusive") {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("remove other IPv4 addresses on %s", ifname))
-		}
 	}
 }
 
@@ -2227,18 +2185,28 @@ func interfacePolicies(router *api.Router, osNet osNetworking) map[string]interf
 	return policies
 }
 
-func runCommand(name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		if stderr.Len() > 0 {
-			return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
-		}
-		return out, err
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, name, args...)
+	cmd.WaitDelay = time.Second
+	stdout := subprocessio.NewCapture(subprocessio.StdoutLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	if commandCtx.Err() != nil {
+		return nil, commandCtx.Err()
 	}
-	return out, nil
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, limitErr
+	}
+	if err != nil {
+		if stderr.String() != "" {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
+	}
+	return stdout.Bytes(), nil
 }
 
 func ownerFromManaged(managed bool) string {
@@ -2390,8 +2358,6 @@ func boolSpec(res api.Resource, key string) bool {
 		}
 	case api.IPv4StaticAddressSpec:
 		switch key {
-		case "exclusive":
-			return spec.Exclusive
 		case "allowOverlap":
 			return spec.AllowOverlap
 		}

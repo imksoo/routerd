@@ -150,7 +150,11 @@ type DeleteRequest struct {
 }
 
 type DeleteResult struct {
-	TypeMeta  `json:",inline" yaml:",inline"`
+	TypeMeta `json:",inline" yaml:",inline"`
+	// Target is intent, including dry-run and standby responses.
+	Target string `json:"target" yaml:"target"`
+	// Deleted confirms removal from canonical configuration. Reconciliation
+	// may be deferred explicitly by the caller's NoReconcile option.
 	Deleted   []string      `json:"deleted,omitempty" yaml:"deleted,omitempty"`
 	Artifacts []string      `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
 	DryRun    bool          `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
@@ -209,15 +213,13 @@ type SAMEnrollmentClaimRevokeResult struct {
 type SAMEnrollmentTopologyGetRequest struct {
 	Name     string `json:"name" yaml:"name"`
 	ClaimRef string `json:"claimRef" yaml:"claimRef"`
-	// ClaimDigest is the caller's identity for its current submitted claim. It is
-	// optional for an RR-only compatibility response, but an RR must omit any
-	// direct peer group unless it matches its active accepted claim.
-	ClaimDigest string `json:"claimDigest,omitempty" yaml:"claimDigest,omitempty"`
-	// ClaimIdentityDigest identifies only client-authored claim material. With a
-	// join-token policy, that material is authenticated by JoinHMAC. It lets an
-	// RR distinguish an explicit revoke of this exact identity from a tombstone
-	// for an older claim with the same resource name before admission.
-	ClaimIdentityDigest string `json:"claimIdentityDigest,omitempty" yaml:"claimIdentityDigest,omitempty"`
+	// ClaimDigest must identify the caller's exact accepted claim. A topology
+	// response is usable only when it echoes this digest.
+	ClaimDigest string `json:"claimDigest" yaml:"claimDigest"`
+	// ClaimIdentityDigest identifies client-authored material authenticated by
+	// JoinHMAC, excluding RR-owned expiry and revocation state. It is required
+	// to distinguish this identity's revocation from a rotated same-name claim.
+	ClaimIdentityDigest string `json:"claimIdentityDigest" yaml:"claimIdentityDigest"`
 }
 
 type SAMEnrollmentTopologyGetResult struct {
@@ -265,11 +267,15 @@ type DHCPv6EventResult struct {
 
 type DHCPLeaseEventRequest struct {
 	TypeMeta  `json:",inline" yaml:",inline"`
-	Action    string `json:"action" yaml:"action"`
-	MAC       string `json:"mac,omitempty" yaml:"mac,omitempty"`
-	IP        string `json:"ip" yaml:"ip"`
-	Hostname  string `json:"hostname,omitempty" yaml:"hostname,omitempty"`
-	Interface string `json:"interface,omitempty" yaml:"interface,omitempty"`
+	Action    string    `json:"action" yaml:"action"`
+	MAC       string    `json:"mac,omitempty" yaml:"mac,omitempty"`
+	IP        string    `json:"ip" yaml:"ip"`
+	Hostname  string    `json:"hostname,omitempty" yaml:"hostname,omitempty"`
+	Interface string    `json:"interface,omitempty" yaml:"interface,omitempty"`
+	Source    string    `json:"source,omitempty" yaml:"source,omitempty"`
+	Tags      []string  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty" yaml:"expiresAt,omitempty"`
+	Infinite  bool      `json:"infinite,omitempty" yaml:"infinite,omitempty"`
 }
 
 type DHCPLeaseEventResult struct {
@@ -358,12 +364,13 @@ type GetRequest struct {
 }
 
 type ResourceView struct {
-	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string              `json:"kind" yaml:"kind"`
-	Name       string              `json:"name" yaml:"name"`
-	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Status     map[string]any      `json:"status,omitempty" yaml:"status,omitempty"`
-	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
+	PDLease    *routerstate.PDLease `json:"pdLease,omitempty" yaml:"pdLease,omitempty"`
+	APIVersion string               `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string               `json:"kind" yaml:"kind"`
+	Name       string               `json:"name" yaml:"name"`
+	Spec       any                  `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Status     map[string]any       `json:"status,omitempty" yaml:"status,omitempty"`
+	Events     []routerstate.Event  `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
 type GetResult struct {
@@ -398,9 +405,17 @@ type ProbeRequest struct {
 }
 
 type ProbeCheck struct {
-	Name   string `json:"name" yaml:"name"`
-	Status string `json:"status" yaml:"status"`
-	Detail string `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Name                 string    `json:"name" yaml:"name"`
+	Status               string    `json:"status" yaml:"status"`
+	Detail               string    `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Kind                 string    `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Protocol             string    `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+	Target               string    `json:"target,omitempty" yaml:"target,omitempty"`
+	ObservedAt           time.Time `json:"observedAt,omitempty" yaml:"observedAt,omitempty"`
+	DurationMilliseconds int64     `json:"durationMilliseconds,omitempty" yaml:"durationMilliseconds,omitempty"`
+	FailureKind          string    `json:"failureKind,omitempty" yaml:"failureKind,omitempty"`
+	BindingInterface     string    `json:"bindingInterface,omitempty" yaml:"bindingInterface,omitempty"`
+	BindingMark          int       `json:"bindingMark,omitempty" yaml:"bindingMark,omitempty"`
 }
 
 type ProbeResult struct {

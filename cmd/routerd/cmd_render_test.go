@@ -109,3 +109,44 @@ spec:
 		t.Fatalf("renderFreeBSDCommand rejected FreeBSD-valid CARP: %v", err)
 	}
 }
+
+func TestRenderFreeBSDReplacesPublicMPDFileWithPrivateSecretFile(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "router.yaml")
+	outputPath := filepath.Join(directory, "rendered")
+	if err := os.MkdirAll(outputPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mpdPath := filepath.Join(outputPath, "mpd5.conf")
+	if err := os.WriteFile(mpdPath, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	config := `apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: private-mpd}
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: wan}
+      spec: {ifname: em0, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: PPPoESession
+      metadata: {name: internet}
+      spec: {interface: wan, username: test-user, password: test-private-password}
+`
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := renderFreeBSDCommand([]string{"--config", configPath, "--out-dir", outputPath}, &strings.Builder{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(mpdPath)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("secret output mode=%v err=%v", info, err)
+	}
+	data, err := os.ReadFile(mpdPath)
+	if err != nil || !strings.Contains(string(data), "test-private-password") {
+		t.Fatalf("expected rendered secret file missing: %v", err)
+	}
+}

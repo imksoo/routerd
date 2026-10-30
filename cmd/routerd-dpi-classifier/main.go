@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/imksoo/routerd/internal/stringutil"
@@ -506,6 +507,9 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func unixHTTPClient(socket string, timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 200 * time.Millisecond
+	}
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -520,6 +524,14 @@ func removeStaleSocket(path string) error {
 	if err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return fmt.Errorf("refusing to remove non-socket path %s", path)
+		}
+		conn, dialErr := net.DialTimeout("unix", path, 200*time.Millisecond)
+		if dialErr == nil {
+			conn.Close()
+			return fmt.Errorf("socket %s is already active", path)
+		}
+		if !errors.Is(dialErr, syscall.ECONNREFUSED) && !errors.Is(dialErr, os.ErrNotExist) {
+			return fmt.Errorf("inspect socket %s before removal: %w", path, dialErr)
 		}
 		return os.Remove(path)
 	}

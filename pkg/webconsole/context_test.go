@@ -19,7 +19,7 @@ import (
 
 func TestLogHelpersHonorCancellationBeforeOpeningStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.db")
-	h := New(Options{DNSQueryLogPath: path, TrafficFlowLogPath: path, FirewallLogPath: path})
+	h := New(Options{DNSQueryLogPath: path, TrafficFlowLogPath: path, FirewallLogPath: path, DHCPFingerprintLogPath: path, DHCPStickyLogPath: path})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	calls := map[string]func() error{
@@ -28,6 +28,8 @@ func TestLogHelpersHonorCancellationBeforeOpeningStore(t *testing.T) {
 		"traffic list":      func() error { _, err := h.trafficFlowList(ctx, logstore.TrafficFlowFilter{}); return err },
 		"traffic aggregate": func() error { _, err := h.trafficFlowAggregate(ctx, logstore.TrafficFlowFilter{}); return err },
 		"firewall list":     func() error { _, err := h.firewallLogList(ctx, logstore.FirewallLogFilter{}); return err },
+		"fingerprint list":  func() error { _, err := h.dhcpFingerprintList(ctx, logstore.DHCPFingerprintFilter{}); return err },
+		"sticky list":       func() error { _, err := h.dhcpStickyLeaseList(ctx, logstore.DHCPStickyFilter{}); return err },
 		"timeline": func() error {
 			_, err := h.firewallDenyTimelineList(ctx, time.Now(), time.Now(), time.Minute)
 			return err
@@ -108,7 +110,7 @@ func TestDPIEnrichmentBatchPreservesExistingFieldsAndFallback(t *testing.T) {
 
 func TestMissingOptionalDPIStoreRetainsFallbackWithoutCreatingDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing", "firewall.db")
-	h := New(Options{FirewallLogPath: path, Connections: func(int) (*observe.ConnectionTable, error) {
+	h := New(Options{FirewallLogPath: path, Connections: func(context.Context, int) (*observe.ConnectionTable, error) {
 		return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{Protocol: "udp", Original: observe.ConntrackTuple{Source: "10.0.0.2", SourcePort: "12345", Destination: "192.0.2.1", DestinationPort: "53"}}}}, nil
 	}, ReverseLookup: func(context.Context, string) ([]string, error) { return nil, nil }})
 	flows, err := h.enrichTrafficFlowsWithDPI(context.Background(), []logstore.TrafficFlow{{Protocol: "udp", ClientAddress: "10.0.0.2", ClientPort: 12345, PeerAddress: "192.0.2.1", PeerPort: 53}}, time.Now(), time.Hour)

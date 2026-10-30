@@ -37,7 +37,7 @@ func TestFreeBSDSAMProxyAllRequiresRouteThroughAnotherInterface(t *testing.T) {
 		}
 		return &net.Interface{Name: name, HardwareAddr: net.HardwareAddr{2, 0, 0, 0, 0, 0x55}}, nil
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
+	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0", false, nil); err != nil {
 		t.Fatalf("EnsureProxyNeighbor: %v", err)
 	}
 	if got, want := strings.Join(commands, "\n"), "route -n get 192.0.2.55"; got != want {
@@ -49,7 +49,7 @@ func TestFreeBSDSAMProxyAllRequiresRouteThroughAnotherInterface(t *testing.T) {
 		commands = append(commands, name+" "+strings.Join(args, " "))
 		return []byte("route to: 192.0.2.55\ninterface: em0\n"), nil
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err == nil || !strings.Contains(err.Error(), "capture interface") {
+	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureProxyNeighbor(context.Background(), "192.0.2.55/32", "em0", false, nil); err == nil || !strings.Contains(err.Error(), "capture interface") {
 		t.Fatalf("same-interface EnsureProxyNeighbor error = %v", err)
 	}
 }
@@ -134,10 +134,10 @@ func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 		}
 	}
 	applier := freeBSDSAMProxyNeighborApplier{}
-	if _, err := applier.SetProxyARP(context.Background(), "", true, false); err != nil {
+	if _, err := applier.SetProxyARP(context.Background(), "", true, false, func() error { return nil }); err != nil {
 		t.Fatalf("SetProxyARP(true): %v", err)
 	}
-	if _, err := applier.SetProxyARP(context.Background(), "", false, true); err != nil {
+	if _, err := applier.SetProxyARP(context.Background(), "", false, true, nil); err != nil {
 		t.Fatalf("SetProxyARP(false): %v", err)
 	}
 	if err := applier.DeleteProxyNeighbor(context.Background(), "192.0.2.55/32", "em0"); err != nil {
@@ -148,7 +148,7 @@ func TestFreeBSDSAMProxyAllSysctlAndPerClaimDelete(t *testing.T) {
 	}
 
 	current = "1"
-	if _, err := applier.SetProxyARP(context.Background(), "", false, false); err == nil || !strings.Contains(err.Error(), "refusing disable") {
+	if _, err := applier.SetProxyARP(context.Background(), "", false, false, nil); err == nil || !strings.Contains(err.Error(), "refusing disable") {
 		t.Fatalf("foreign proxyall refusal = %v", err)
 	}
 }
@@ -166,7 +166,7 @@ func TestFreeBSDSAMCollisionAndPFEmptyCleanupContracts(t *testing.T) {
 			return nil, errors.New("unexpected command")
 		}
 	}
-	if _, err := (freeBSDSAMProxyNeighborApplier{}).EnsureOSAddressAbsent(context.Background(), "192.0.2.55/32"); err == nil || !strings.Contains(err.Error(), "foreign OS address") {
+	if err := (freeBSDSAMProxyNeighborApplier{}).EnsureOSAddressAbsent(context.Background(), "192.0.2.55/32"); err == nil || !strings.Contains(err.Error(), "foreign OS address") {
 		t.Fatalf("collision error = %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestFreeBSDSAMCollisionAndPFEmptyCleanupContracts(t *testing.T) {
 		}
 		return nil, errors.New("unexpected command")
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil); err != nil {
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil, nil); err != nil {
 		t.Fatalf("ReconcileForwardPaths empty: %v", err)
 	}
 	if got, want := strings.Join(commands, "\n"), "pfctl -a routerd_sam_forward -sr\npfctl -a routerd_sam_forward -F rules"; got != want {
@@ -199,11 +199,11 @@ func TestFreeBSDSAMPFDeviceMissingIsOnlyAnEmptyDesiredNoop(t *testing.T) {
 		return []byte("pfctl: /dev/pf: No such file or directory\n"), errors.New("exit status 1")
 	}
 	freeBSDSAMRunCommand = missing
-	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil); err != nil {
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), nil, nil); err != nil {
 		t.Fatalf("empty desired missing PF = %v", err)
 	}
 	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
-	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "/dev/pf") {
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths, nil); err == nil || !strings.Contains(err.Error(), "/dev/pf") {
 		t.Fatalf("non-empty desired missing PF error = %v", err)
 	}
 }
@@ -230,7 +230,7 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 		return nil, nil
 	}
 	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55/24", Interface: "em0", PeerInterface: "gif0"}}
-	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err != nil {
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths, nil); err != nil {
 		t.Fatalf("ReconcileForwardPaths: %v", err)
 	}
 	if !strings.Contains(input, "192.0.2.55/32") || strings.Contains(input, "192.0.2.55/24") {
@@ -250,7 +250,7 @@ func TestFreeBSDSAMPFForwardPathRequiresReachableAnchorAndUses32(t *testing.T) {
 		}
 		return nil, errors.New("unexpected command")
 	}
-	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "not reachable") {
+	if err := (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths, nil); err == nil || !strings.Contains(err.Error(), "not reachable") {
 		t.Fatalf("unreachable PF anchor error = %v", err)
 	}
 }
@@ -309,7 +309,9 @@ func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	}
 	paths := []sam.CaptureAction{{Kind: "forward-path", IntentID: "intent", Address: "192.0.2.55", Interface: "em0", PeerInterface: "gif0"}}
 	errCh := make(chan error, 2)
-	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
+	go func() {
+		errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths, nil)
+	}()
 	select {
 	case <-entered:
 	case <-time.After(10 * time.Second):
@@ -320,7 +322,9 @@ func TestFreeBSDSAMPFForwardPathSerializesAnchorTransactions(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("first PF transaction bypassed the state lock")
 	}
-	go func() { errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths) }()
+	go func() {
+		errCh <- (freeBSDSAMProxyNeighborApplier{}).ReconcileForwardPaths(context.Background(), paths, nil)
+	}()
 	select {
 	case <-entered:
 		t.Fatal("second PF transaction entered before the first completed")

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // RuntimeSnapshot describes the confirmed controller generation, independently
@@ -26,6 +27,7 @@ type RuntimeReloadOutcome struct {
 	Active      RuntimeSnapshot
 	OperationID uint64
 	Accepted    bool
+	Standby     bool
 	// Restored means the previous configuration was rebuilt after the requested
 	// configuration failed. During a rollback request this can be the new config.
 	Restored bool
@@ -38,6 +40,9 @@ type generationReload struct {
 	ctx    context.Context
 	id     uint64
 	done   chan generationReloadResult
+	apply  bool
+	reload bool
+	commit func() error
 }
 
 type generationReloadResult struct {
@@ -54,9 +59,22 @@ func (r *Runner) ReloadRuntime(ctx context.Context, router *api.Router) error {
 // until an accepted operation is acknowledged. In particular, the caller must
 // not release its exclusive mutation gate just because its context expires.
 func (r *Runner) ReloadRuntimeWithOutcome(ctx context.Context, router *api.Router) (RuntimeReloadOutcome, error) {
+	return r.submitRuntimeRequest(ctx, generationReload{router: router, ctx: ctx})
+}
+
+// ApplyRuntimeWithOutcome runs committed live application on the existing
+// generation actor. The caller owns its existing exclusive mutation gate.
+func (r *Runner) ApplyRuntimeWithOutcome(ctx context.Context, router *api.Router, reload bool, commit func() error) (RuntimeReloadOutcome, error) {
+	if commit == nil {
+		return RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot()}, errors.New("canonical commit acknowledgement is required")
+	}
+	return r.submitRuntimeRequest(ctx, generationReload{router: router, ctx: ctx, apply: true, reload: reload, commit: commit})
+}
+
+func (r *Runner) submitRuntimeRequest(ctx context.Context, request generationReload) (RuntimeReloadOutcome, error) {
 	initial := RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot()}
-	if router == nil {
-		return initial, errors.New("reload router is required")
+	if request.router == nil {
+		return initial, errors.New("runtime router is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return initial, err
@@ -68,7 +86,8 @@ func (r *Runner) ReloadRuntimeWithOutcome(ctx context.Context, router *api.Route
 		return initial, ErrRuntimeMutationStopped
 	}
 	r.runtimeOperation++
-	request := generationReload{router: router, ctx: ctx, id: r.runtimeOperation, done: make(chan generationReloadResult, 1)}
+	request.id = r.runtimeOperation
+	request.done = make(chan generationReloadResult, 1)
 	stopping := r.runtimeStop
 	grace := r.reloadCancelGrace
 	r.reloadMu.Unlock()
@@ -133,7 +152,11 @@ func (r *Runner) UpdateRuntimeRouter(router *api.Router) error {
 	if r.runtimeFenced || !r.runtimeSnapshot.Known || !r.runtimeSnapshot.Available {
 		return ErrRuntimeMutationStopped
 	}
-	r.setRuntimeRouter(router)
+	prepared, err := prepareRouterConfig(router, platform.CurrentOS())
+	if err != nil {
+		return err
+	}
+	r.publishPreparedRouter(prepared)
 	r.runtimeSnapshot.Router = router
 	return nil
 }
@@ -142,12 +165,6 @@ func (r *Runner) currentRouter() *api.Router {
 	r.routerMu.RLock()
 	defer r.routerMu.RUnlock()
 	return r.Router
-}
-
-func (r *Runner) setRuntimeRouter(router *api.Router) {
-	r.routerMu.Lock()
-	defer r.routerMu.Unlock()
-	r.Router = router
 }
 
 func (r *Runner) runtimeReloadChannel() chan generationReload {
@@ -189,7 +206,11 @@ func (r *Runner) publishRuntimeGeneration(generation *controllerGeneration) bool
 	if r.runtimeFenced || generation.ctx.Err() != nil {
 		return false
 	}
-	r.runtimeSnapshot = RuntimeSnapshot{Router: generation.router, Epoch: r.runtimeSnapshot.Epoch + 1, Known: true, Available: true}
+	epoch := r.runtimeSnapshot.Epoch
+	if !r.runtimeSnapshot.Available || r.runtimeSnapshot.Router != generation.router {
+		epoch++
+	}
+	r.runtimeSnapshot = RuntimeSnapshot{Router: generation.router, Epoch: epoch, Known: true, Available: true}
 	return true
 }
 

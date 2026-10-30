@@ -3,10 +3,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/apply"
@@ -40,12 +45,26 @@ func adoptCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ledger, err := resource.LoadLedger(*ledgerPath)
+	var ledger resource.Ledger
+	path := strings.TrimSpace(*ledgerPath)
+	if *candidatesOnly && path != "" {
+		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+			ledger = resource.NewLedger()
+		} else if statErr != nil {
+			return statErr
+		} else {
+			ledger, err = resource.OpenSQLiteLedgerReadOnly(path)
+		}
+	} else {
+		ledger, err = resource.LoadLedger(path)
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
-	engine := apply.New()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	engine := apply.New(ctx)
 	candidates, artifacts, err := engine.AdoptionCandidateArtifacts(router, ledger)
 	if err != nil {
 		return err
@@ -65,12 +84,13 @@ func adoptCommand(args []string, stdout io.Writer) error {
 			}
 			return errors.New("adoption blocked by drifted candidates")
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := ledger.Remember(artifacts); err != nil {
 			return err
 		}
-		if err := ledger.Save(*ledgerPath); err != nil {
-			return err
-		}
+
 		result.AdoptedArtifacts = adoptedArtifactsForResult(artifacts)
 		result.AdoptionCandidates = nil
 	}

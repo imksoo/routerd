@@ -1,177 +1,129 @@
-# AGENTS.md
+# routerd 1.5 development proposal
 
-## Project
+This branch proposes a compatibility-breaking revision of routerd. These rules
+apply to development on this branch; they do not declare a released version or
+change the policy of main until the proposal is accepted.
 
-This repository implements `routerd`, a declarative router resource applier.
+## Goal and scope
 
-Current primary target:
-- Ubuntu Server
-- install layout under `/usr/local`
-- Go 1.24+
-- YAML config
-- generated JSON Schema / OpenAPI for authoring and tool integration
-- trusted local plugins
-- systemd service
-- local HTTP+JSON control API over a Unix domain socket
-- `routerctl` client CLI
+Deliver the existing router functions with smaller, understandable code and real
+interoperability. KISS and robustness are the highest engineering priorities.
+Judge completion by forwarding, peer/client results, withdrawal, failure handling,
+and recovery. Code volume, coverage, reports, and passing unit tests are supporting
+evidence, not proof that a router function works.
 
-The implementation is pre-release. The MVP scope is a working boundary, not a
-permanent constraint. If a small design change prevents obvious future migration
-cost or improves router safety, propose it clearly and implement it after the
-tradeoff is understood.
+Start from routerd's production paths and operational knowledge. Read relevant
+callers before changing a feature. Reuse useful protocol and OS behavior, and
+selectively port proven routerd2 fixes. Neither existing architecture nor a new
+architecture is a requirement in itself. The working plan is
+[docs/design/routerd15-plan.md](docs/design/routerd15-plan.md).
 
-Current implemented scope includes:
-- Interface alias resources and ownership/adoption planning
-- IPv4 static address resources
-- DHCPv4 leases through `routerd-dhcpv4-client`
-- DHCPv4 server scopes and reservations through managed dnsmasq
-- DHCPv6 prefix delegation and information request through `routerd-dhcpv6-client`
-- DHCPv6 server scopes and RA through managed dnsmasq
-- delegated IPv6 LAN address derivation
-- self-address selection policies
-- DNS conditional forwarding
-- PPPoE sessions through `routerd-pppoe-client`
-- DS-Lite tunnels and AFTR address selection
-- IPv4 source NAT and NAT44 through nftables
-- IPv4 policy routing and route sets
-- IPv4 default route policy with health checks
-- IPv4 reverse path filter resources
-- Path MTU propagation and TCP MSS clamping
-- firewall resource groundwork; stateful filter rendering is still postponed
-- WireGuard, IPsec, VRF, and VXLAN resource groundwork
-- EgressRoutePolicy, EventRule, DerivedEvent, and HealthCheck controllers
-- OpenTelemetry SDK integration hooks
-- sysctl, hostname, NTP client, and log sink resources
-- plugin protocol
-- dry-run, plan, status JSON, and daemon apply
-- local NAPT/conntrack inspection through `routerctl`
+## Compatibility decision
 
-## API Groups
+The user authorizes replacing configuration, internal APIs/IPC, and event/state DB
+formats for this revision. Configurations may be rewritten and old databases may
+be discarded at cutover. Do not build old-format readers, migrations, dual writes,
+version negotiation, or fallback implementations merely to preserve them.
 
-Use:
-- `routerd.net/v1alpha1` for top-level Router config
-- `net.routerd.net/v1alpha1` for network resources
-- `firewall.routerd.net/v1alpha1` for firewall resources
-- `system.routerd.net/v1alpha1` for local system resources
-- `plugin.routerd.net/v1alpha1` for plugin manifests
+This is permission to change formats, not to remove existing product functions or
+to delete a running router's data during development. Preserve needed recovery
+semantics in the chosen new design. Lease validity, managed-resource ownership,
+and durable pending operations have functional meaning independent of old schemas.
+External network protocols still need interoperability with independent peers.
 
-Do not use placeholder groups such as `routerd.io`.
+## Real communication and robustness
 
-## Safety
+- Establish the operator problem, intended peer/client, result, and smallest
+  useful demonstration. Exercise the actual binary and kernel early.
+- Send correct, simple protocol messages. Accept usable input whose meaning is
+  clear; ignore unknown optional information where permitted. Discard an unusable
+  independent option without discarding unrelated usable information.
+- Preserve packet bounds, exchange/peer identity, authentication, resource bounds,
+  and actual protocol requirements. Reject at the narrowest necessary scope.
+  Do not infer receive rejection rules from our encoder or test fixtures.
+- Resolve uncertain behavior using applicable protocol specifications, established
+  peers, captures, and operational evidence. Do not encode invented restrictions
+  into tests. Do not add speculative device-specific compatibility frameworks.
+- Represent absent, stale, and unknown observations honestly. Recheck after a wait
+  when time or concurrent changes can invalidate the premise.
+- Report implementation, local checks, actual communication, and target-device
+  qualification separately. Missing observations do not prove success or failure.
 
-Do not mutate the host network in normal unit tests.
+## Architecture and ownership
 
-Test and harness changes must follow the mandatory design rules in
-docs/operations/development.md, including reusable helpers and templates.
-Keep diagnostic evidence separate from product acceptance and retain failed
-attempts and cleanup outcomes. Do not repeat failed live trials without cause
-analysis or treat missing observations as product PASS/FAIL.
+- Trace input, decisions, effects, and result publication as one visible path.
+  Give each mutable state and external side effect a clear owner.
+- Separate operator intent, current observations, derived decisions, and applied
+  results. Publish an applied result only after its effect succeeds. Preserve
+  failures rather than fabricating success.
+- Decode and normalize external data at its owning boundary; pass concrete typed
+  values inward. Confine dynamic dependency values and current generic status
+  maps to their boundaries while replacing their consumers coherently.
+- Do not add new untyped application contracts using any, interface{}, arbitrary
+  maps, reflection, or encoded payloads. Upstream APIs accepting any and real
+  generic algorithms are allowed without forwarding wrappers.
+- Do not serialize typed values to clone them or pass them between functions.
+  Use read-only sharing, ownership transfer, or explicit copies of mutable parts.
+- Prepare static configuration work once per configuration. Observation updates
+  should use the prepared values and current observations, not rebuild the world.
+- Separate read-only decisions from writes. Planning should not need to execute
+  controllers against a cloned database.
+- Retain persistence for a concrete recovery, pending-operation, or history-based
+  feature. Ordinary display history must not unnecessarily block forwarding.
+- Remove conflicting ownership and duplicate state before adding guards, caches,
+  retries, queues, registries, or managers. Necessary retries have one owner and
+  bounded lifetime. Choose process boundaries for actual privilege or isolation.
 
-Any test that changes network state must be isolated under:
-- `tests/netns`
-- explicit `sudo`
-- clear documentation
+## Direct Go and useful checks
 
-Be careful when applying config to a remote router. Prefer this sequence:
-- validate
-- plan
-- dry-run apply
-- confirm the management path is not being removed
-- apply
-- verify service state and connectivity
+- Use go.mod's toolchain, the standard library, and suitable existing dependencies.
+  Prefer concrete types and ordinary functions. Define small interfaces at actual
+  consuming boundaries; avoid mock-shaped production APIs and unused wrappers.
+- Keep dependencies directed. Protocol rules do not depend on CLI or orchestration.
+  Keep cohesive operations together; do not impose file/function-length quotas.
+- Make goroutine and resource lifetime explicit. Pass cancellation through blocking
+  work; give recovery that outlives a request its own bounded owner.
+- Handle errors at the responsible operation. Do not swallow a failed effect or
+  report success on a closed store. Avoid duplicate logs and repeated validation.
+- Remove superseded code, unused parameters/results, obsolete tests, and temporary
+  scaffolding in the feature path being changed. Avoid a repository-wide cleanup
+  campaign as a prerequisite to useful functionality.
+- Add focused tests for concrete behavior or reproduced failures. Use the actual
+  implementation. Avoid exhaustive hypothetical rejection matrices, algorithm
+  copies, global replacement hooks, and parallel product simulators.
+- Use and update Makefile targets for relevant local checks. Do not wait for GitHub
+  Actions. Broaden checks when changes or failures justify it. Never claim an
+  unrun test passed or weaken acceptance to hide a failure.
 
-Do not implement remote plugin install or a remote plugin registry yet.
+## Execution
 
-## Commands
+Use isolated VMs or explicit netns fixtures for network mutations; normal unit
+tests must not change host networking. Check management access and recovery before
+changing a real router. Use existing task authorization without repeated approval.
+No production deployment is implied by implementing a feature.
 
-Prefer Makefile targets when available:
+Protect concurrent edits and stage explicit paths. Keep credentials and private
+infrastructure details out of commits. Retain licenses and notices when reusing
+material. Use the project build paths; Linux Go release binaries use CGO_ENABLED=0
+except explicitly separate components requiring native libraries.
 
-```sh
-make test
-make build
-make check-schema
-make validate-example
-make dry-run-example
-make website-build
-```
+Update affected schemas and operator documentation together with contract changes;
+do not maintain discarded formats. Keep this policy in English and explain work
+in Japanese. Report the executed revision, relevant setup, observed result, and
+unverified scope concisely.
 
-Useful direct commands:
+## Checkpoint publication and progress reporting
 
-```sh
-go test ./...
-go build ./cmd/routerd
-go build ./cmd/routerctl
-routerctl validate -f examples/router-lab.yaml --replace
-routerctl plan -f examples/router-lab.yaml --replace
-routerctl apply -f examples/router-lab.yaml --replace --no-reconcile
-routerctl get status
-routerctl get connections --limit 20
-```
-
-Default source-install paths:
-
-- Config: `/usr/local/etc/routerd/router.yaml`
-- Plugin dir: `/usr/local/libexec/routerd/plugins`
-- Binary: `/usr/local/sbin/routerd`
-- Client binary: `/usr/local/sbin/routerctl`
-
-Linux runtime defaults are `/run/routerd` and `/var/lib/routerd`.
-
-OS-specific defaults (paths, feature flags) live in `pkg/platform`. New
-OS-specific behavior should consult `platform.Current()` rather than reading
-`runtime.GOOS` directly, and renderers that depend on Linux-only host
-integrations (netplan, systemd-networkd, nftables) should branch on the
-matching `platform.Features` flag or a build tag rather than failing at
-runtime on FreeBSD/NixOS.
-
-NixOS and FreeBSD are second-tier targets. The build, install layout, and
-service-manager integration scaffolds (`contrib/nix/` flake + module,
-`contrib/freebsd/routerd` rc.d script) are in place, but pf and NixOS-native
-interface renderers are still pending. Do not imply parity in user-facing
-text — keep the language scoped to "groundwork" until the matching renderer
-exists. The full matrix lives in `docs/platforms.md`.
-
-## Coding Rules
-
-- Keep changes scoped and explicit.
-- Treat MVP boundaries as guidance, not as an excuse to bake in avoidable technical debt.
-- Prefer early typed API shapes and generated machine-readable schema when resource fields are introduced.
-- Prefer explicit code over clever abstractions.
-- Keep plugin protocol documented.
-- Subprocess execution must be wrapped so it can be tested.
-- Config loading, validation, plugin discovery, dependency ordering, rendering, and apply behavior must have tests.
-- The same apply code must work in daemon mode and one-shot CLI mode.
-- Do not hardcode shell snippets in the core for resource-specific operations.
-- Core orchestrates; renderers and resource-specific apply helpers perform concrete OS work.
-- For firewall/NAT/routing changes, keep the default behavior conservative and add focused renderer tests.
-- For dnsmasq, nftables, iproute2, pppd, or systemd syntax changes, validate against the real command when practical.
-
-## Documentation
-
-Keep these documents updated:
-- `README.md`
-- `README.ja.md`
-- `docs/design.md`
-- website docs under `website/i18n/ja/docusaurus-plugin-content-docs/current/`
-
-Whenever the plugin protocol changes, update plugin protocol docs.
-Whenever the config schema changes, update API docs and regenerate schema:
-
-```sh
-make generate-schema
-make check-schema
-```
-
-When control API types change, update control API docs and generated schemas.
-When a resource kind starts managing a new host artifact, update resource
-ownership docs and keep artifact intent tests covering the resource.
-
-## Current Non-goals
-
-Do not implement without a separate design discussion:
-- remote plugin registry or remote plugin installation
-- full rollback of all OS-level changes
-- interactive config console
-- built-in LLM assistant
-- Proxmox lab automation
-- general-purpose firewall rule language beyond the current minimal model
+- Finish each small coherent change with relevant local checks, a commit, a push
+  through the authorized GitHub connection, and verification of the remote SHA.
+  Do not hold all changes until broad testing or GitHub Actions completes.
+- While changes exist, preserve a checkpoint on a clearly marked WIP branch at
+  least every ten minutes. Record which checks are pending. A local commit alone
+  is not a remote backup. If publication fails, report it immediately and pause
+  new implementation until the current changes are preserved remotely.
+- During sustained work, report progress about once a minute: the concrete change,
+  executed checks, published commit, next task and any blocker. Never label a
+  checkpoint complete merely because it was committed or compiled.
+- On resume, read these rules and verify the repository, branch, remote SHA and
+  working tree before editing. Do not infer an environment's retention guarantees
+  or the cause of a disconnection without evidence.

@@ -13,6 +13,11 @@ import (
 
 const keyPrefix = "ingressDrain."
 
+type Reader interface {
+	ReadVariable(name string) (routerstate.Value, error)
+	Now() time.Time
+}
+
 type State struct {
 	Service      string `json:"service" yaml:"service"`
 	Backend      string `json:"backend" yaml:"backend"`
@@ -48,7 +53,9 @@ func Drain(store routerstate.Store, service, backend string, duration time.Durat
 	if err != nil {
 		return State{}, err
 	}
-	store.Set(Key(service, backend), string(data), "IngressServiceBackendDrained")
+	if _, err := store.Set(Key(service, backend), string(data), "IngressServiceBackendDrained"); err != nil {
+		return State{}, err
+	}
 	return state, nil
 }
 
@@ -61,42 +68,37 @@ func Undrain(store routerstate.Store, service, backend string) error {
 	if service == "" || backend == "" {
 		return fmt.Errorf("service and backend are required")
 	}
-	store.Delete(Key(service, backend))
-	return nil
+	return store.Delete(Key(service, backend))
 }
 
-func Current(store routerstate.Store, service, backend string) (State, bool) {
+// Current evaluates expiry without changing the operator-owned drain record.
+func Current(store Reader, service, backend string) (State, bool, error) {
 	if store == nil {
-		return State{}, false
+		return State{}, false, fmt.Errorf("drain observation store is required")
 	}
-	value := store.Get(Key(service, backend))
-	if value.Status != routerstate.StatusSet || strings.TrimSpace(value.Value) == "" {
-		return State{}, false
+	value, err := store.ReadVariable(Key(service, backend))
+	if err != nil {
+		return State{}, false, err
+	}
+	if value.Status != routerstate.StatusSet {
+		return State{}, false, nil
 	}
 	var state State
 	if err := json.Unmarshal([]byte(value.Value), &state); err != nil {
-		return State{}, false
+		return State{}, false, fmt.Errorf("decode drain observation: %w", err)
 	}
-	if state.Service == "" {
-		state.Service = service
+	if state.Service != strings.TrimSpace(service) || state.Backend != strings.TrimSpace(backend) {
+		return State{}, false, fmt.Errorf("drain observation identity does not match requested backend")
 	}
-	if state.Backend == "" {
-		state.Backend = backend
+	if strings.TrimSpace(state.DrainedUntil) == "" {
+		return state, true, nil
 	}
-	if expired(store.Now().UTC(), state.DrainedUntil) {
-		store.Delete(Key(service, backend))
-		return State{}, false
-	}
-	return state, true
-}
-
-func expired(now time.Time, until string) bool {
-	if strings.TrimSpace(until) == "" {
-		return false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, until)
+	until, err := time.Parse(time.RFC3339Nano, state.DrainedUntil)
 	if err != nil {
-		return false
+		return State{}, false, fmt.Errorf("decode drain deadline: %w", err)
 	}
-	return !now.Before(parsed)
+	if !store.Now().UTC().Before(until) {
+		return State{}, false, nil
+	}
+	return state, true, nil
 }

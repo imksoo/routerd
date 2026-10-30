@@ -6,22 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
@@ -46,8 +38,7 @@ const (
 )
 
 type Store interface {
-	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type ProbeResult struct {
@@ -62,16 +53,15 @@ type ProbeResult struct {
 	ProbeEvidence
 }
 
-type ProbeFunc func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult
-
 type State struct {
-	Phase             string    `json:"phase"`
-	LastResult        string    `json:"lastResult,omitempty"`
-	LastMessage       string    `json:"message,omitempty"`
-	LastTransitionAt  time.Time `json:"lastTransitionAt,omitempty"`
-	LastCheckedAt     time.Time `json:"lastCheckedAt,omitempty"`
-	ConsecutivePassed int       `json:"consecutivePassed,omitempty"`
-	ConsecutiveFailed int       `json:"consecutiveFailed,omitempty"`
+	Probe             api.HealthProbe `json:"probe"`
+	Phase             string          `json:"phase"`
+	LastResult        string          `json:"lastResult,omitempty"`
+	LastMessage       string          `json:"message,omitempty"`
+	LastTransitionAt  time.Time       `json:"lastTransitionAt,omitempty"`
+	LastCheckedAt     time.Time       `json:"lastCheckedAt,omitempty"`
+	ConsecutivePassed int             `json:"consecutivePassed,omitempty"`
+	ConsecutiveFailed int             `json:"consecutiveFailed,omitempty"`
 
 	// Failure-history bookkeeping. FailureCount totals only consecutive
 	// failures; reset on the next success so it matches "ongoing outage
@@ -99,101 +89,6 @@ type Evaluation struct {
 	State  State
 	Result string
 	Event  daemonapi.DaemonEvent
-	Status map[string]any
-}
-
-type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Probe  ProbeFunc
-	Now    func() time.Time
-	Logger *slog.Logger
-
-	mu    sync.Mutex
-	state map[string]*State
-}
-
-type ProbeDaemon interface {
-	Run(ctx context.Context, resource api.Resource) error
-	Status(ctx context.Context) (daemonapi.DaemonStatus, error)
-}
-
-func (c *Controller) Start(ctx context.Context) {
-	if c.Router == nil || c.Bus == nil || c.Store == nil {
-		return
-	}
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.healthcheck.*.*"}}, 64)
-	go func() {
-		for event := range ch {
-			if event.Resource == nil || event.Resource.Kind != "HealthCheck" {
-				continue
-			}
-			c.saveEventStatus(event)
-		}
-	}()
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "HealthCheck" {
-			continue
-		}
-		if _, err := resource.HealthCheckSpec(); err == nil {
-			continue
-		}
-		resource := resource
-		go c.runResource(ctx, resource)
-	}
-}
-
-func (c *Controller) runResource(ctx context.Context, resource api.Resource) {
-	spec, err := resource.HealthCheckSpec()
-	if err != nil {
-		if c.Logger != nil {
-			c.Logger.Warn("healthcheck spec decode failed", "resource", resource.Metadata.Name, "error", err)
-		}
-		return
-	}
-	interval := durationOr(spec.Interval, 30*time.Second)
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
-	if err := c.ProbeOnce(ctx, resource, spec); err != nil && c.Logger != nil {
-		c.Logger.Warn("healthcheck probe failed", "resource", resource.Metadata.Name, "error", err)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.ProbeOnce(ctx, resource, spec); err != nil && c.Logger != nil {
-				c.Logger.Warn("healthcheck probe failed", "resource", resource.Metadata.Name, "error", err)
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func (c *Controller) ProbeOnce(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec) error {
-	spec = ResolveSpecWithStoreForResource(c.Router, c.Store, resource.Metadata.Name, spec)
-	timeout := durationOr(spec.Timeout, 3*time.Second)
-	if timeout <= 0 {
-		timeout = 3 * time.Second
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	probe := c.Probe
-	if probe == nil {
-		probe = Probe
-	}
-	result := probe(probeCtx, spec)
-	if probeCtx.Err() == context.DeadlineExceeded && !result.OK {
-		result.Timeout = true
-		if result.FailureKind == "" {
-			result.FailureKind = FailureKindTimeout
-		}
-	}
-	result.ProbeEvidence = EnrichEvidence(probeCtx, spec, result.ProbeEvidence)
-	return c.applyResult(ctx, resource, spec, result)
 }
 
 // EnrichEvidence fills route / tunnel information into the evidence
@@ -220,213 +115,93 @@ func EnrichEvidence(ctx context.Context, spec api.HealthCheckSpec, ev ProbeEvide
 	return ev
 }
 
-func (c *Controller) applyResult(ctx context.Context, resource api.Resource, spec api.HealthCheckSpec, result ProbeResult) error {
-	state := c.resourceState(resource.Metadata.Name)
-	now := c.now()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	previous := *state
-	evaluation := ApplyResult(resource, spec, previous, result, now)
-	*state = evaluation.State
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", resource.Metadata.Name, evaluation.Status); err != nil {
-		return err
-	}
-	if previous.Phase == evaluation.State.Phase && previous.LastResult == evaluation.State.LastResult {
-		return nil
-	}
-	return c.Bus.Publish(ctx, evaluation.Event)
-}
-
-func (c *Controller) saveEventStatus(event daemonapi.DaemonEvent) {
-	var current map[string]any
-	if c.Store != nil {
-		current = c.Store.ObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name)
-		if existing, ok := parseStatusTime(current["lastCheckedAt"]); ok && existing.After(event.Time) {
-			return
-		}
-	}
-	status := map[string]any{}
-	for key, value := range event.Attributes {
-		status[key] = value
-	}
-	if phase := event.Attributes["phase"]; phase != "" {
-		status["phase"] = phase
-	}
-	if result := event.Attributes["result"]; result != "" {
-		status["lastResult"] = result
-	}
-	status["lastCheckedAt"] = event.Time.UTC().Format(time.RFC3339Nano)
-	if current != nil && fmt.Sprint(current["phase"]) == fmt.Sprint(status["phase"]) && fmt.Sprint(current["lastTransitionAt"]) != "" {
-		status["lastTransitionAt"] = current["lastTransitionAt"]
-	} else if status["lastTransitionAt"] == nil {
-		status["lastTransitionAt"] = event.Time.UTC().Format(time.RFC3339Nano)
-	}
-	if event.Message != "" {
-		status["message"] = event.Message
-	}
-	_ = c.Store.SaveObjectStatus(event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name, status)
-}
-
-func parseStatusTime(value any) (time.Time, bool) {
-	text, ok := value.(string)
-	if !ok || strings.TrimSpace(text) == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, text)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return parsed, true
-}
-
-// FwMarkRef describes a routing resource that can supply a socket mark for a
-// HealthCheck probe.
-type FwMarkRef struct {
-	Resource string
-	Name     string
-	Mark     int
-}
-
-// ResolveSpec converts routerd resource names to the OS interface names used
-// by probe runtime calls. Standalone daemon flags still accept raw OS names.
-func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	if strings.TrimSpace(spec.SourceInterface) != "" {
-		spec.SourceInterface = resolveInterfaceName(router, spec.SourceInterface)
-	}
-	return spec
-}
-
-func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	if strings.TrimSpace(spec.SourceInterface) == "" {
-		if ifname, ok := DerivedSourceInterface(router, resourceName); ok {
-			spec.SourceInterface = ifname
-		}
-	}
-	if spec.FwMark == 0 {
-		if mark, ok := DerivedFwMark(router, resourceName); ok {
-			spec.FwMark = mark
-		}
-	}
-	return ResolveSpec(router, spec)
-}
-
-func DerivedSourceInterface(router *api.Router, healthCheckName string) (string, bool) {
-	healthCheckName = strings.TrimSpace(healthCheckName)
-	if router == nil || healthCheckName == "" {
-		return "", false
-	}
+// ResolveSpecForResource prepares one static probe binding. Interface names
+// enter in the declaration namespace and leave as native names; callers must
+// not apply a second alias lookup to the result.
+func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) (api.HealthCheckSpec, error) {
 	var source string
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "EgressRoutePolicy" {
-			continue
+	bindSource := func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return nil
 		}
-		spec, err := resource.EgressRoutePolicySpec()
+		native, err := resolveInterfaceName(router, value)
 		if err != nil {
-			continue
+			return err
 		}
-		for _, candidate := range spec.Candidates {
-			if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
-				if !sameDerivedSourceInterface(&source, candidate.EffectiveInterface()) {
-					return "", false
-				}
-			}
-			for _, target := range candidate.Targets {
-				if strings.TrimSpace(target.HealthCheck) != healthCheckName {
-					continue
-				}
-				if !sameDerivedSourceInterface(&source, target.EffectiveInterface()) {
-					return "", false
-				}
-			}
+		if source != "" && source != native {
+			return fmt.Errorf("HealthCheck/%s has conflicting source interfaces %q and %q", resourceName, source, native)
 		}
-	}
-	return source, source != ""
-}
-
-func sameDerivedSourceInterface(current *string, next string) bool {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return true
-	}
-	if *current == "" {
-		*current = next
-		return true
-	}
-	return *current == next
-}
-
-func ResolveSpecWithStore(router *api.Router, store Store, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	spec = ResolveSpec(router, spec)
-	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
-	}
-	return spec
-}
-
-func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	spec = ResolveSpecForResource(router, resourceName, spec)
-	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" && store != nil {
-		spec.SourceAddress = statusvalue.Address(resourcequery.Value(store, spec.SourceAddressFrom))
-	}
-	return spec
-}
-
-func DerivedFwMark(router *api.Router, healthCheckName string) (int, bool) {
-	refs := DerivedFwMarkRefs(router, healthCheckName)
-	var mark int
-	for _, ref := range refs {
-		if ref.Mark == 0 {
-			continue
-		}
-		if mark == 0 {
-			mark = ref.Mark
-			continue
-		}
-		if mark != ref.Mark {
-			return 0, false
-		}
-	}
-	return mark, mark != 0
-}
-
-func DerivedFwMarkRefs(router *api.Router, healthCheckName string) []FwMarkRef {
-	healthCheckName = strings.TrimSpace(healthCheckName)
-	if router == nil || healthCheckName == "" {
+		source = native
 		return nil
 	}
-	var refs []FwMarkRef
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion {
-			continue
+	for _, value := range []string{spec.Interface, spec.SourceInterface} {
+		if err := bindSource(value); err != nil {
+			return api.HealthCheckSpec{}, err
 		}
-		switch resource.Kind {
-		case "EgressRoutePolicy":
-			spec, err := resource.EgressRoutePolicySpec()
-			if err != nil {
+	}
+	var mark int
+	var markSet bool
+	bindReference := func(value string, nextMark int) error {
+		if err := bindSource(value); err != nil {
+			return err
+		}
+		if markSet && mark != nextMark {
+			return fmt.Errorf("HealthCheck/%s is referenced by routing targets with conflicting marks 0x%x and 0x%x", resourceName, mark, nextMark)
+		}
+		mark, markSet = nextMark, true
+		return nil
+	}
+	if router != nil && strings.TrimSpace(resourceName) != "" {
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "EgressRoutePolicy" {
 				continue
 			}
-			for _, candidate := range spec.Candidates {
-				if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
-					refs = append(refs, FwMarkRef{
-						Resource: resource.ID(),
-						Name:     strings.TrimSpace(candidate.Name),
-						Mark:     candidate.Mark,
-					})
+			policy, err := resource.EgressRoutePolicySpec()
+			if err != nil {
+				return api.HealthCheckSpec{}, err
+			}
+			for _, candidate := range policy.Candidates {
+				if strings.TrimSpace(candidate.HealthCheck) == resourceName {
+					if err := bindReference(candidate.EffectiveInterface(), candidate.Mark); err != nil {
+						return api.HealthCheckSpec{}, err
+					}
 				}
 				for _, target := range candidate.Targets {
-					if strings.TrimSpace(target.HealthCheck) != healthCheckName {
-						continue
+					if strings.TrimSpace(target.HealthCheck) == resourceName {
+						if err := bindReference(target.EffectiveInterface(), target.Mark); err != nil {
+							return api.HealthCheckSpec{}, err
+						}
 					}
-					refs = append(refs, FwMarkRef{
-						Resource: resource.ID(),
-						Name:     strings.TrimSpace(target.Name),
-						Mark:     target.Mark,
-					})
 				}
 			}
 		}
 	}
-	return refs
+	if markSet {
+		if spec.FwMark != 0 && spec.FwMark != mark {
+			return api.HealthCheckSpec{}, fmt.Errorf("HealthCheck/%s configured mark 0x%x conflicts with routing target mark 0x%x", resourceName, spec.FwMark, mark)
+		}
+		spec.FwMark = mark
+	}
+	spec.SourceInterface = source
+	return spec, nil
+}
+
+func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) (api.HealthCheckSpec, error) {
+	spec, err := ResolveSpecForResource(router, resourceName, spec)
+	if err != nil {
+		return api.HealthCheckSpec{}, err
+	}
+	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
+		value, err := resourcequery.ReadValue(store, spec.SourceAddressFrom)
+		if err != nil {
+			return api.HealthCheckSpec{}, err
+		}
+		spec.SourceAddress = statusvalue.Address(value)
+		if spec.SourceAddress == "" && !spec.SourceAddressFrom.Optional {
+			return api.HealthCheckSpec{}, fmt.Errorf("required health-check source address %s.%s is unresolved", spec.SourceAddressFrom.Resource, spec.SourceAddressFrom.Field)
+		}
+	}
+	return spec, nil
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
@@ -559,67 +334,6 @@ func ProbeHTTP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
 	return ProbeResult{Message: fmt.Sprintf("http status %d", resp.StatusCode)}
 }
 
-func ProbeICMP(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
-	target := strings.TrimSpace(spec.Target)
-	if target == "" {
-		return ProbeResult{Message: "target is required"}
-	}
-	ip, network, err := resolveICMPTarget(ctx, target, spec.AddressFamily)
-	if err != nil {
-		return resultFromError(ctx, err)
-	}
-	var conn *icmp.PacketConn
-	var messageType icmp.Type
-	var replyType icmp.Type
-	var protocol int
-	if network == "ip4:icmp" {
-		conn, err = icmp.ListenPacket(network, listenAddress(spec, "0.0.0.0"))
-		messageType = ipv4.ICMPTypeEcho
-		replyType = ipv4.ICMPTypeEchoReply
-		protocol = 1
-	} else {
-		conn, err = icmp.ListenPacket(network, listenAddress(spec, "::"))
-		messageType = ipv6.ICMPTypeEchoRequest
-		replyType = ipv6.ICMPTypeEchoReply
-		protocol = 58
-	}
-	if err != nil {
-		return resultFromError(ctx, err)
-	}
-	defer conn.Close()
-	identifier := os.Getpid() & 0xffff
-	msg := icmp.Message{
-		Type: messageType,
-		Code: 0,
-		Body: &icmp.Echo{ID: identifier, Seq: 1, Data: []byte("routerd-healthcheck")},
-	}
-	payload, err := msg.Marshal(nil)
-	if err != nil {
-		return ProbeResult{Message: err.Error()}
-	}
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	if _, err := conn.WriteTo(payload, &net.IPAddr{IP: ip}); err != nil {
-		return resultFromError(ctx, err)
-	}
-	buf := make([]byte, 1500)
-	for {
-		n, peer, err := conn.ReadFrom(buf)
-		if err != nil {
-			return resultFromError(ctx, err)
-		}
-		parsed, err := icmp.ParseMessage(protocol, buf[:n])
-		if err != nil {
-			continue
-		}
-		echo, ok := parsed.Body.(*icmp.Echo)
-		if parsed.Type == replyType && ok && echo.ID == identifier {
-			return ProbeResult{OK: true, Message: "icmp echo succeeded from " + peer.String()}
-		}
-	}
-}
-
 func dialContext(ctx context.Context, spec api.HealthCheckSpec, network, address string) (net.Conn, error) {
 	dialer, err := dialerForSpec(spec, network, address)
 	if err != nil {
@@ -654,58 +368,62 @@ func dialerForSpec(spec api.HealthCheckSpec, network, address string) (net.Diale
 	return dialer, nil
 }
 
-func resolveInterfaceName(router *api.Router, name string) string {
+func resolveInterfaceName(router *api.Router, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if router == nil || name == "" {
-		return name
+		return name, nil
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Metadata.Name != name {
+		if resource.APIVersion != api.NetAPIVersion || resource.Metadata.Name != name {
 			continue
 		}
+		var native string
+		var err error
 		switch resource.Kind {
 		case "Interface":
-			spec, err := resource.InterfaceSpec()
-			if err == nil && strings.TrimSpace(spec.IfName) != "" {
-				return spec.IfName
-			}
+			var spec api.InterfaceSpec
+			spec, err = resource.InterfaceSpec()
+			native = spec.IfName
 		case "DSLiteTunnel":
-			spec, err := resource.DSLiteTunnelSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
-			}
+			var spec api.DSLiteTunnelSpec
+			spec, err = resource.DSLiteTunnelSpec()
+			native = stringutil.FirstNonEmpty(spec.TunnelName, name)
 		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
-			}
+			var spec api.PPPoESessionSpec
+			spec, err = resource.PPPoESessionSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, "ppp-"+name)
 		case "Bridge":
-			spec, err := resource.BridgeSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.BridgeSpec
+			spec, err = resource.BridgeSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "VRF":
-			spec, err := resource.VRFSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.VRFSpec
+			spec, err = resource.VRFSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "VXLANTunnel":
-			spec, err := resource.VXLANTunnelSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.VXLANTunnelSpec
+			spec, err = resource.VXLANTunnelSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
+		case "VXLANSegment":
+			var spec api.VXLANSegmentSpec
+			spec, err = resource.VXLANSegmentSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "WireGuardInterface":
-			return resource.Metadata.Name
+			var spec api.WireGuardInterfaceSpec
+			spec, err = resource.WireGuardInterfaceSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
+		default:
+			continue
 		}
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(native) == "" {
+			return "", fmt.Errorf("%s has no native interface name", resource.ID())
+		}
+		return strings.TrimSpace(native), nil
 	}
-	return name
-}
-
-func listenAddress(spec api.HealthCheckSpec, fallback string) string {
-	if spec.SourceAddress == "" {
-		return fallback
-	}
-	return spec.SourceAddress
+	return name, nil
 }
 
 func resultFromError(ctx context.Context, err error) ProbeResult {
@@ -721,6 +439,16 @@ func resultFromError(ctx context.Context, err error) ProbeResult {
 }
 
 func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, result ProbeResult, now time.Time) Evaluation {
+	probe := spec.Probe()
+	if state.Probe != probe || state.LastCheckedAt.IsZero() || now.Before(state.LastCheckedAt) || now.After(state.LastCheckedAt.Add(probe.Freshness())) {
+		state.Phase = PhaseUnknown
+		state.LastTransitionAt = now
+		state.ConsecutivePassed, state.ConsecutiveFailed = 0, 0
+		state.FailureCount = 0
+		state.FirstFailureTime = time.Time{}
+	}
+	state.Probe = probe
+
 	if state.Phase == "" {
 		state.Phase = PhaseUnknown
 		state.LastTransitionAt = now
@@ -758,12 +486,13 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 		}
 		if state.ConsecutiveFailed >= unhealthyThreshold(spec) {
 			transition(&state, PhaseUnhealthy, now)
-		} else {
+		} else if state.Phase == PhaseHealthy || state.Phase == PhaseFailing {
 			transition(&state, PhaseFailing, now)
+		} else {
+			transition(&state, PhaseUnknown, now)
 		}
 	}
 	state.History = appendHistory(state.History, recordFromResult(spec, result, nextResult, now))
-	status := StatusMap(state)
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: DaemonKind + "-" + resource.Metadata.Name, Kind: DaemonKind, Instance: resource.Metadata.Name}, "routerd.healthcheck."+resource.Metadata.Name+"."+nextResult, daemonapi.SeverityInfo)
 	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: resource.Metadata.Name}
 	event.Reason = "HealthCheckProbe"
@@ -788,7 +517,6 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 	} {
 		if value != "" {
 			event.Attributes[key] = value
-			status[key] = value
 		}
 	}
 	for key, value := range evidenceAttributes(result.ProbeEvidence) {
@@ -797,7 +525,7 @@ func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, r
 	addTimeAttribute(event.Attributes, "lastSuccessAt", state.LastSuccessTime)
 	addTimeAttribute(event.Attributes, "lastFailureAt", state.LastFailureTime)
 	addTimeAttribute(event.Attributes, "firstFailureAt", state.FirstFailureTime)
-	return Evaluation{State: state, Result: nextResult, Event: event, Status: status}
+	return Evaluation{State: state, Result: nextResult, Event: event}
 }
 
 // evidenceAttributes returns a map keyed with OTel-style network.* names so
@@ -942,33 +670,6 @@ func transition(state *State, phase string, now time.Time) {
 	}
 }
 
-func (c *Controller) resourceState(name string) *State {
-	c.init()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	state := c.state[name]
-	if state == nil {
-		state = &State{Phase: PhaseUnknown}
-		c.state[name] = state
-	}
-	return state
-}
-
-func (c *Controller) init() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state == nil {
-		c.state = map[string]*State{}
-	}
-}
-
-func (c *Controller) now() time.Time {
-	if c.Now != nil {
-		return c.Now()
-	}
-	return time.Now().UTC()
-}
-
 func durationOr(value string, fallback time.Duration) time.Duration {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -1006,32 +707,4 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func resolveICMPTarget(ctx context.Context, target, family string) (net.IP, string, error) {
-	if ip := net.ParseIP(target); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			return ip4, "ip4:icmp", nil
-		}
-		return ip.To16(), "ip6:ipv6-icmp", nil
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, target)
-	if err != nil {
-		return nil, "", err
-	}
-	for _, addr := range addrs {
-		if family == "ipv6" {
-			if addr.IP.To4() == nil {
-				return addr.IP, "ip6:ipv6-icmp", nil
-			}
-			continue
-		}
-		if addr.IP.To4() != nil {
-			return addr.IP.To4(), "ip4:icmp", nil
-		}
-		if family != "ipv4" {
-			return addr.IP, "ip6:ipv6-icmp", nil
-		}
-	}
-	return nil, "", fmt.Errorf("no %s address found for %s", defaultString(family, "IP"), target)
 }

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,16 +53,23 @@ type daemon struct {
 	cancel     context.CancelFunc
 	runCtx     context.Context
 
-	stateMu      sync.RWMutex
-	reloadMu     sync.Mutex
-	zones        *zoneTable
-	sources      []runtimeSource
-	listeners    map[string]*boundListener
-	sourceCancel context.CancelFunc
-	generation   uint64
-	cache        map[string]cacheEntry
-	queryLogMu   sync.Mutex
-	queryLog     *logstore.DNSQueryLog
+	stateMu        sync.RWMutex
+	reloadMu       sync.Mutex
+	queryMu        sync.RWMutex
+	querySlots     chan struct{}
+	queryRejected  atomic.Uint64
+	requestTimeout time.Duration
+	zones          *zoneTable
+	sources        []runtimeSource
+	listeners      map[string]*boundListener
+	sourceCancel   context.CancelFunc
+	sourceCtx      context.Context
+	generation     uint64
+	configDigest   string
+	cache          map[string]cacheEntry
+	queryLogMu     sync.Mutex
+	queryLog       *logstore.DNSQueryLog
+	queryHistory   queryHistory
 }
 
 type runtimeSource struct {
@@ -70,22 +78,21 @@ type runtimeSource struct {
 }
 
 type boundListener struct {
-	Addr string
-	UDP  *dns.Server
-	TCP  *dns.Server
+	Addr    string
+	UDP     *dns.Server
+	TCP     *dns.Server
+	UDPDone chan struct{}
+	TCPDone chan struct{}
 }
 
 type cacheEntry struct {
 	Message    []byte
+	Stored     time.Time
 	Expires    time.Time
 	Generation uint64
 }
 
-type reloadSummary struct {
-	Reloaded  bool `json:"reloaded"`
-	Listeners int  `json:"listeners"`
-	Sources   int  `json:"sources"`
-}
+type reloadSummary = dnsresolver.ReloadResult
 
 type reloadError struct {
 	status int
@@ -236,25 +243,48 @@ func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return dnsresolver.RuntimeConfig{}, err
 	}
-	if config.Resource == "" {
-		config.Resource = opts.resource
+	if config.Resource == "" || config.Resource != opts.resource {
+		return config, fmt.Errorf("resolver config resource %q does not match worker %q", config.Resource, opts.resource)
+	}
+	if err := validateLocalZones(config); err != nil {
+		return config, err
 	}
 	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
 	return config, dnsresolver.Validate(config.Spec)
 }
 
 func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) {
-	d := &daemon{
-		opts:      opts,
-		config:    config,
-		startedAt: time.Now().UTC(),
-		phase:     daemonapi.PhaseStarting,
-		health:    daemonapi.HealthUnknown,
-		cache:     map[string]cacheEntry{},
-		listeners: map[string]*boundListener{},
+	if config.Resource == "" || config.Resource != opts.resource {
+		return nil, fmt.Errorf("resolver config resource %q does not match worker %q", config.Resource, opts.resource)
 	}
+	if err := validateLocalZones(config); err != nil {
+		return nil, err
+	}
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil {
+		return nil, err
+	}
+	d := &daemon{
+		opts:           opts,
+		config:         config,
+		startedAt:      time.Now().UTC(),
+		phase:          daemonapi.PhaseStarting,
+		health:         daemonapi.HealthUnknown,
+		cache:          map[string]cacheEntry{},
+		listeners:      map[string]*boundListener{},
+		querySlots:     make(chan struct{}, maxDNSQueries),
+		requestTimeout: requestTimeout,
+	}
+	d.sourceCtx, d.sourceCancel = context.WithCancel(context.Background())
 	d.cond = sync.NewCond(&d.mu)
-	d.zones = newZoneTable(config.Zones)
+	zones, err := currentLeaseZones(context.Background(), config)
+	if err != nil {
+		return nil, err
+	}
+	d.zones = newZoneTable(zones)
+	if err := d.zones.LoadError(); err != nil {
+		return nil, err
+	}
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
 		return nil, err
@@ -291,6 +321,11 @@ func buildRuntimeSources(config dnsresolver.RuntimeConfig) ([]runtimeSource, err
 }
 
 func (d *daemon) Run(ctx context.Context) error {
+	defer func() {
+		d.reloadMu.Lock()
+		defer d.reloadMu.Unlock()
+		d.closeQueryLog()
+	}()
 	d.runCtx = ctx
 	if err := os.MkdirAll(filepath.Dir(d.opts.socketPath), 0o755); err != nil {
 		return err
@@ -308,7 +343,6 @@ func (d *daemon) Run(ctx context.Context) error {
 	}
 	defer listener.Close()
 	apiServer := &http.Server{Handler: d.routes(), ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = apiServer.Serve(listener) }()
 	defer apiServer.Close()
 
 	d.publish(daemonapi.EventDaemonStarted, daemonapi.SeverityInfo, "Started", "DNS resolver daemon started", nil)
@@ -317,20 +351,26 @@ func (d *daemon) Run(ctx context.Context) error {
 		queryLogSpec := d.config.Spec.QueryLog
 		d.stateMu.RUnlock()
 		if queryLogSpec.Enabled {
-			queryLog, err := logstore.OpenDNSQueryLog(queryLogSpec.Path)
+			openCtx, cancelOpen := context.WithTimeout(ctx, queryHistoryOpenTimeout)
+			queryLog, err := logstore.OpenDNSQueryLogContext(openCtx, queryLogSpec.Path)
+			cancelOpen()
 			if err != nil {
-				d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
-				d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "QueryLogOpenFailed", err.Error(), nil)
-				return err
+				// Query history must not prevent serving the configured DNS
+				// zones and upstreams. Reload will retry opening the log and
+				// will not acknowledge the complete config until that succeeds.
+				d.publish("routerd.dns.query_log.failed", daemonapi.SeverityWarning, "QueryLogOpenFailed", err.Error(), nil)
+			} else {
+				d.queryLogMu.Lock()
+				d.queryLog = queryLog
+				d.queryHistory.generation++
+				d.queryLogMu.Unlock()
 			}
-			d.queryLogMu.Lock()
-			d.queryLog = queryLog
-			d.queryLogMu.Unlock()
-			defer d.closeQueryLog()
 		}
+		d.startQueryHistory(ctx)
 		sourceCtx, sourceCancel := context.WithCancel(ctx)
 		d.stateMu.Lock()
-		d.sourceCancel = sourceCancel
+		d.sourceCancel()
+		d.sourceCtx, d.sourceCancel = sourceCtx, sourceCancel
 		sources := append([]runtimeSource(nil), d.sources...)
 		d.stateMu.Unlock()
 		for i := range sources {
@@ -340,6 +380,7 @@ func (d *daemon) Run(ctx context.Context) error {
 		}
 		if err := d.startDNS(ctx); err != nil {
 			sourceCancel()
+			stopRuntimeSources(sources)
 			d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
 			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ListenFailed", err.Error(), nil)
 			return err
@@ -352,6 +393,8 @@ func (d *daemon) Run(ctx context.Context) error {
 		d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
 		d.publish(daemonapi.EventDaemonReady, daemonapi.SeverityInfo, "Ready", "DNS resolver daemon is ready", nil)
 	}
+	// Accept reloads only after startup owns its listeners and query log.
+	go func() { _ = apiServer.Serve(listener) }()
 	<-ctx.Done()
 	d.shutdownDNSServers()
 	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "DNS resolver daemon stopped", nil)
@@ -359,6 +402,8 @@ func (d *daemon) Run(ctx context.Context) error {
 }
 
 func (d *daemon) startDNS(ctx context.Context) error {
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
 	d.stateMu.RLock()
 	desired := listenAddressSet(d.config.Spec.Listen)
 	d.stateMu.RUnlock()
@@ -372,7 +417,7 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	d.stateMu.Unlock()
 	select {
 	case <-ctx.Done():
-		d.shutdownDNSServers()
+		d.shutdownDNSLocked()
 		return ctx.Err()
 	case <-time.After(200 * time.Millisecond):
 		return nil
@@ -380,7 +425,6 @@ func (d *daemon) startDNS(ctx context.Context) error {
 }
 
 func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct{}) (map[string]*boundListener, error) {
-	handler := dns.HandlerFunc(d.handleDNS)
 	listenConfig := dnsListenConfig()
 	listeners := map[string]*boundListener{}
 	for addr := range addrs {
@@ -396,13 +440,47 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 			return nil, fmt.Errorf("listen tcp %s: %w", addr, err)
 		}
 		bound := &boundListener{
-			Addr: addr,
-			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", Handler: handler},
-			TCP:  &dns.Server{Listener: listener, Net: "tcp", Handler: handler},
+			Addr:    addr,
+			UDP:     &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize},
+			TCP:     &dns.Server{Listener: dnsDeadlineListener{Listener: listener}, Net: "tcp"},
+			UDPDone: make(chan struct{}),
+			TCPDone: make(chan struct{}),
 		}
+		// Binding is staging, not publication. New sockets may already receive
+		// packets while retirement waits for old queries/history. Admit only
+		// the exact listener selected together with the current configuration.
+		// Rejection is immediate, so staged sockets create no waiting handlers.
+		handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) { d.handleDNSOnListener(w, req, bound) })
+		bound.UDP.Handler, bound.TCP.Handler = handler, handler
+		udpWrites := new(sync.Mutex)
+		bound.UDP.DecorateWriter = func(writer dns.Writer) dns.Writer {
+			return dnsPacketWriter{Writer: writer, packet: packetConn, mu: udpWrites}
+		}
+		udpReady, tcpReady := make(chan struct{}), make(chan struct{})
+		bound.UDP.NotifyStartedFunc = func() { close(udpReady) }
+		bound.TCP.NotifyStartedFunc = func() { close(tcpReady) }
 		listeners[addr] = bound
-		go d.serveDNS(bound.UDP, addr, "udp")
-		go d.serveDNS(bound.TCP, addr, "tcp")
+		go func() { defer close(bound.UDPDone); d.serveDNS(bound.UDP, addr, "udp") }()
+		go func() { defer close(bound.TCPDone); d.serveDNS(bound.TCP, addr, "tcp") }()
+		for i, ready := range []chan struct{}{udpReady, tcpReady} {
+			done := bound.UDPDone
+			if i == 1 {
+				done = bound.TCPDone
+			}
+			select {
+			case <-ready:
+			case <-done:
+				packetConn.Close()
+				listener.Close()
+				shutdownBoundListeners(listeners)
+				return nil, fmt.Errorf("DNS server %s exited before listener readiness", addr)
+			case <-ctx.Done():
+				packetConn.Close()
+				listener.Close()
+				shutdownBoundListeners(listeners)
+				return nil, ctx.Err()
+			}
+		}
 	}
 	return listeners, nil
 }
@@ -414,23 +492,98 @@ func (d *daemon) serveDNS(server *dns.Server, addr, network string) {
 }
 
 func (d *daemon) shutdownDNSServers() {
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
+	d.shutdownDNSLocked()
+}
+
+func (d *daemon) shutdownDNSLocked() {
 	d.stateMu.Lock()
 	listeners := d.listeners
 	d.listeners = map[string]*boundListener{}
+	cancel, sources := d.sourceCancel, append([]runtimeSource(nil), d.sources...)
 	d.stateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	stopRuntimeSources(sources)
 	shutdownBoundListeners(listeners)
+	// Stop admission before reporting exit; retained direct handlers also join.
+	d.queryMu.Lock()
+	d.queryMu.Unlock()
 }
 
 func shutdownBoundListeners(listeners map[string]*boundListener) {
 	for _, listener := range listeners {
 		_ = listener.UDP.Shutdown()
 		_ = listener.TCP.Shutdown()
+		if listener.UDPDone != nil {
+			<-listener.UDPDone
+		}
+		if listener.TCPDone != nil {
+			<-listener.TCPDone
+		}
 	}
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
+	d.handleDNSOnListener(w, req, nil)
+}
+
+func (d *daemon) handleDNSOnListener(w dns.ResponseWriter, req *dns.Msg, listener *boundListener) {
+	if listener != nil {
+		d.stateMu.RLock()
+		selected := d.listeners[listener.Addr] == listener
+		d.stateMu.RUnlock()
+		if !selected {
+			_ = w.Close()
+			return
+		}
+	}
+	select {
+	case d.querySlots <- struct{}{}:
+	default:
+		// No waiting query queue: UDP drops and TCP closes on saturation.
+		d.queryRejected.Add(1)
+		_ = w.Close()
+		return
+	}
+	d.queryMu.RLock()
+	defer func() {
+		<-d.querySlots
+		d.queryMu.RUnlock()
+	}()
+	d.stateMu.RLock()
+	// A listener may have retired while this request waited for the query lock.
+	// The writer lock keeps this admission and source selection in one generation.
+	if listener != nil && d.listeners[listener.Addr] != listener {
+		d.stateMu.RUnlock()
+		_ = w.Close()
+		return
+	}
+	ctx := d.sourceCtx
+	requestTimeout, generation := d.requestTimeout, d.generation
+	localAddr := w.LocalAddr().String()
+	if listener != nil {
+		localAddr = listener.Addr
+	}
+	d.stateMu.RUnlock()
+	if ctx.Err() != nil {
+		_ = w.Close()
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	started := time.Now()
-	result, err := d.resolve(w.LocalAddr().String(), req)
+	result, err := d.resolveContext(ctx, localAddr, req)
+	d.stateMu.RLock()
+	currentGeneration := d.generation
+	owner := d.sourceCtx
+	d.stateMu.RUnlock()
+	if owner.Err() != nil || generation != currentGeneration {
+		_ = w.Close()
+		return
+	}
 	resp := result.Response
 	if err != nil {
 		resp = new(dns.Msg)
@@ -438,7 +591,34 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 	}
-	_ = w.WriteMsg(resp)
+	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
+		// EDNS is negotiated on this hop. Without it the UDP limit is 512;
+		// smaller advertisements also mean 512 (RFC 6891, section 6.2.3).
+		const maxUDPPayload = 65507 // IPv4's largest usable UDP payload.
+		limit := dns.MinMsgSize
+		if opt := req.IsEdns0(); opt != nil {
+			if int(opt.UDPSize()) > limit {
+				limit = int(opt.UDPSize())
+			}
+			if resp.IsEdns0() == nil {
+				resp.SetEdns0(maxUDPPayload, false)
+			}
+		}
+		if limit > maxUDPPayload {
+			limit = maxUDPPayload
+		}
+		resp.Truncate(limit)
+	}
+	writeErr := w.WriteMsg(resp)
+	if ctx.Err() != nil {
+		return
+	}
+	if writeErr != nil {
+		d.publish("routerd.dns.reply.failed", daemonapi.SeverityWarning, "DNSReplyFailed", writeErr.Error(), nil)
+		result.ResponseCode = "WRITE_FAILED"
+		d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
+		return
+	}
 	if err != nil && len(req.Question) > 0 {
 		client := w.RemoteAddr().String()
 		if host, _, splitErr := net.SplitHostPort(client); splitErr == nil {
@@ -453,6 +633,10 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 }
 
 func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) {
+	return d.resolveContext(context.Background(), localAddr, req)
+}
+
+func (d *daemon) resolveContext(ctx context.Context, localAddr string, req *dns.Msg) (resolveResult, error) {
 	config, sources, zones, generation := d.runtimeSnapshot()
 	if len(req.Question) == 0 {
 		resp := new(dns.Msg)
@@ -465,6 +649,8 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			var msg dns.Msg
 			if err := msg.Unpack(cached); err == nil {
 				msg.Id = req.Id
+				msg.Question = append([]dns.Question(nil), req.Question...)
+				msg.RecursionDesired = req.RecursionDesired
 				return resolveResult{Response: &msg, CacheHit: true, Upstream: "cache", ResponseCode: dns.RcodeToString[msg.Rcode]}, nil
 			}
 		}
@@ -481,18 +667,31 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			}
 		case "forward", "upstream":
 			result := resolveResult{Upstream: sourceName(source.Spec)}
+			// RFC 1034 section 4.3.1 limits nonrecursive queries to local
+			// information. Keep source precedence: refusing this source must
+			// not expose a later authoritative view or export the question.
+			if !req.RecursionDesired {
+				resp := new(dns.Msg)
+				resp.SetRcode(req, dns.RcodeRefused)
+				result.Response, result.ResponseCode = resp, dns.RcodeToString[resp.Rcode]
+				return result, nil
+			}
 			if source.Pool == nil {
 				return result, fmt.Errorf("DNS source %q has no upstream pool", result.Upstream)
 			}
 			upstreamReq := req.Copy()
 			if source.Spec.DNSSECValidate {
-				upstreamReq.SetEdns0(1232, true)
+				if opt := upstreamReq.IsEdns0(); opt != nil {
+					opt.SetDo()
+				} else {
+					upstreamReq.SetEdns0(1232, true)
+				}
 			}
 			wire, err := upstreamReq.Pack()
 			if err != nil {
 				return result, err
 			}
-			out, err := source.Pool.Exchange(context.Background(), wire, d.publish)
+			out, err := source.Pool.Exchange(ctx, wire, d.publish)
 			if err != nil {
 				// Failover is limited to this source's explicitly configured
 				// upstreams. Falling through could leak a private query to a
@@ -553,36 +752,7 @@ func (d *daemon) recordQuery(remoteAddr string, req *dns.Msg, result resolveResu
 	if entry.ResponseCode == "" && result.Response != nil {
 		entry.ResponseCode = dns.RcodeToString[result.Response.Rcode]
 	}
-	d.queryLogMu.Lock()
-	defer d.queryLogMu.Unlock()
-	if d.queryLog == nil {
-		return
-	}
-	if err := d.queryLog.Record(context.Background(), entry); err == nil {
-		return
-	}
-
-	// A resolver must continue serving DNS even if its query log becomes
-	// unavailable. Reopen the log after a failed write so a transient or stale
-	// SQLite connection does not leave observability disabled until a restart.
-	path := d.queryLog.Stats().Path
-	_ = d.queryLog.Close()
-	queryLog, err := logstore.OpenDNSQueryLog(path)
-	if err != nil {
-		return
-	}
-	d.queryLog = queryLog
-	_ = d.queryLog.Record(context.Background(), entry)
-}
-
-func (d *daemon) closeQueryLog() {
-	d.queryLogMu.Lock()
-	defer d.queryLogMu.Unlock()
-	if d.queryLog == nil {
-		return
-	}
-	_ = d.queryLog.Close()
-	d.queryLog = nil
+	d.enqueueQueryHistory(entry)
 }
 
 func sourceName(source api.DNSResolverSourceSpec) string {
@@ -644,15 +814,38 @@ func (d *daemon) cacheGet(key string, generation uint64) ([]byte, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	entry, ok := d.cache[key]
-	if !ok || entry.Generation != generation || time.Now().After(entry.Expires) {
+	now := time.Now()
+	if !ok || entry.Generation != generation || !now.Before(entry.Expires) {
 		delete(d.cache, key)
 		return nil, false
 	}
-	return append([]byte(nil), entry.Message...), true
+	var msg dns.Msg
+	if err := msg.Unpack(entry.Message); err != nil {
+		delete(d.cache, key)
+		return nil, false
+	}
+	age := uint32(now.Sub(entry.Stored) / time.Second)
+	remaining := uint32(entry.Expires.Sub(now) / time.Second)
+	for _, section := range [][]dns.RR{msg.Answer, msg.Ns, msg.Extra} {
+		for _, rr := range section {
+			if rr.Header().Rrtype == dns.TypeOPT {
+				continue // OPT's TTL field contains EDNS flags, not a lifetime.
+			}
+			ttl := rr.Header().Ttl
+			if ttl < age {
+				ttl = 0
+			} else {
+				ttl -= age
+			}
+			rr.Header().Ttl = min(ttl, remaining)
+		}
+	}
+	wire, err := msg.Pack()
+	return wire, err == nil
 }
 
 func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries int, generation uint64) {
-	if ttl <= 0 {
+	if key == "" || ttl <= 0 {
 		return
 	}
 	d.mu.Lock()
@@ -669,7 +862,8 @@ func (d *daemon) cacheSet(key string, msg []byte, ttl time.Duration, maxEntries 
 			break
 		}
 	}
-	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Expires: time.Now().Add(ttl), Generation: generation}
+	now := time.Now()
+	d.cache[key] = cacheEntry{Message: append([]byte(nil), msg...), Stored: now, Expires: now.Add(ttl), Generation: generation}
 }
 
 func (d *daemon) routes() http.Handler {
@@ -700,7 +894,7 @@ func (d *daemon) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	if ctx == nil {
 		ctx = r.Context()
 	}
-	summary, err := d.reload(ctx)
+	summary, err := d.reloadConfig(ctx, r.Header.Get(dnsresolver.ConfigDigestHeader))
 	if err != nil {
 		status := http.StatusInternalServerError
 		var reloadErr *reloadError
@@ -720,8 +914,14 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var lease dhcpLeaseEvent
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&lease); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&lease); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		http.Error(w, "DHCP lease request must contain exactly one JSON value", http.StatusBadRequest)
 		return
 	}
 	topic, ok := daemonapi.DHCPLeaseEventType(lease.Action)
@@ -729,32 +929,87 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported DHCP lease action", http.StatusBadRequest)
 		return
 	}
+	// Reload snapshots and replaces the zone table under the same owner. A
+	// callback arriving during staging must update the table that is actually
+	// selected afterward, rather than acknowledge a write into the retired one.
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
+	if err := r.Context().Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusRequestTimeout)
+		return
+	}
 	d.stateMu.RLock()
-	zones := d.zones
+	zones, owner := d.zones, d.sourceCtx
 	d.stateMu.RUnlock()
-	zones.ApplyLease(lease)
+	if owner.Err() != nil {
+		http.Error(w, "DNS resolver owner is stopped", http.StatusServiceUnavailable)
+		return
+	}
+	if err := zones.ApplyLease(lease); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	d.stateMu.Lock()
+	d.generation++
+	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
 	d.publish(topic, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
 
 func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
+	return d.reloadConfig(ctx, "")
+}
+
+func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloadSummary, error) {
 	d.reloadMu.Lock()
 	defer d.reloadMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return reloadSummary{}, err
+	}
 
 	config, err := loadConfig(d.opts)
 	if err != nil {
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}
+	digest, err := config.Digest()
+	if err != nil {
+		return reloadSummary{}, err
+	}
+	if expectedDigest != "" && digest != expectedDigest {
+		return reloadSummary{}, &reloadError{status: http.StatusConflict, err: fmt.Errorf("desired configuration changed before reload")}
+	}
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
+	d.stateMu.RLock()
+	unchanged := expectedDigest != "" && d.configDigest == digest
+	summary := reloadSummary{ConfigDigest: d.configDigest, Listeners: len(d.listeners), Sources: len(d.sources)}
+	d.stateMu.RUnlock()
+	if unchanged {
+		return summary, nil
+	}
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}
-	zones := newZoneTable(config.Zones)
+	currentZones, err := currentLeaseZones(ctx, config)
+	if err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
+	zones := newZoneTable(currentZones)
+	if err := zones.LoadError(); err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
 
 	d.stateMu.RLock()
 	oldZones := d.zones
 	oldListeners := d.listeners
 	oldSourceCancel := d.sourceCancel
+	oldSources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	zones.CopyDynamicFrom(oldZones)
 
@@ -772,6 +1027,36 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		}
 	}
 
+	var stagedQueryLog *logstore.DNSQueryLog
+	replaceQueryLog := false
+	if !d.opts.dryRun {
+		d.queryLogMu.Lock()
+		currentQueryLog := d.queryLog
+		currentPath := ""
+		if currentQueryLog != nil {
+			currentPath = currentQueryLog.Stats().Path
+		}
+		d.queryLogMu.Unlock()
+		if config.Spec.QueryLog.Enabled {
+			if currentQueryLog == nil || currentPath != config.Spec.QueryLog.Path {
+				openCtx, cancelOpen := context.WithTimeout(ctx, queryHistoryOpenTimeout)
+				stagedQueryLog, err = logstore.OpenDNSQueryLogContext(openCtx, config.Spec.QueryLog.Path)
+				cancelOpen()
+				if err != nil {
+					return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: fmt.Errorf("open DNS query log: %w", err)}
+				}
+				replaceQueryLog = true
+			}
+		} else {
+			replaceQueryLog = true
+		}
+	}
+	defer func() {
+		if stagedQueryLog != nil {
+			_ = stagedQueryLog.Close()
+		}
+	}()
+
 	newListeners := map[string]*boundListener{}
 	if !d.opts.dryRun {
 		newListeners, err = d.openBoundListeners(ctx, additions)
@@ -779,19 +1064,50 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 			return reloadSummary{}, &reloadError{status: http.StatusInternalServerError, err: err}
 		}
 	}
-
-	var sourceCancel context.CancelFunc
-	if !d.opts.dryRun {
-		var sourceCtx context.Context
-		sourceCtx, sourceCancel = context.WithCancel(ctx)
-		for i := range sources {
-			if sources[i].Pool != nil {
-				sources[i].Pool.Start(sourceCtx, d.publish)
-			}
-		}
+	if err := ctx.Err(); err != nil {
+		shutdownBoundListeners(newListeners)
+		return reloadSummary{}, err
 	}
 
+	// Finish staging before retiring the current owner. History enqueue never
+	// takes this operation lock, so DNS work can always finish while we join it.
+	d.queryHistory.operation.Lock()
+	defer d.queryHistory.operation.Unlock()
+	if err := ctx.Err(); err != nil {
+		shutdownBoundListeners(newListeners)
+		return reloadSummary{}, err
+	}
+	if oldSourceCancel != nil {
+		oldSourceCancel()
+	}
+	stopRuntimeSources(oldSources)
+	// Stop removed listeners before taking the query writer lock: Shutdown
+	// joins their handlers, including ones waiting for query admission.
+	shutdownBoundListeners(removals)
+	d.queryMu.Lock()
+	if err := ctx.Err(); err != nil {
+		d.queryMu.Unlock()
+		shutdownBoundListeners(newListeners)
+		d.stateMu.Lock()
+		d.configDigest = ""
+		for addr := range removals {
+			delete(d.listeners, addr)
+		}
+		d.stateMu.Unlock()
+		d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
+		return reloadSummary{}, err
+	}
+	defer d.queryMu.Unlock()
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
 	d.stateMu.Lock()
+	d.queryLogMu.Lock()
+	var retiredQueryLog *logstore.DNSQueryLog
+	if replaceQueryLog {
+		retiredQueryLog = d.queryLog
+		d.queryLog = stagedQueryLog
+		d.queryHistory.generation++
+		stagedQueryLog = nil
+	}
 	mergedListeners := map[string]*boundListener{}
 	for addr, listener := range oldListeners {
 		if _, remove := removals[addr]; !remove {
@@ -802,20 +1118,27 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 		mergedListeners[addr] = listener
 	}
 	d.config = config
+	d.requestTimeout = requestTimeout
+	d.configDigest = digest
 	d.sources = sources
 	d.zones = zones
 	d.listeners = mergedListeners
-	d.sourceCancel = sourceCancel
+	d.sourceCtx, d.sourceCancel = sourceCtx, sourceCancel
 	d.generation++
+	d.queryLogMu.Unlock()
 	d.stateMu.Unlock()
+	if retiredQueryLog != nil {
+		_ = retiredQueryLog.Close()
+	}
+	for _, source := range sources {
+		if source.Pool != nil && !d.opts.dryRun {
+			source.Pool.Start(sourceCtx, d.publish)
+		}
+	}
 	d.mu.Lock()
 	clear(d.cache)
 	d.mu.Unlock()
 
-	shutdownBoundListeners(removals)
-	if oldSourceCancel != nil {
-		oldSourceCancel()
-	}
 	if !d.opts.dryRun {
 		if len(mergedListeners) > 0 {
 			d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
@@ -823,7 +1146,7 @@ func (d *daemon) reload(ctx context.Context) (reloadSummary, error) {
 			d.setState(daemonapi.PhaseStarting, daemonapi.HealthUnknown)
 		}
 	}
-	summary := reloadSummary{Reloaded: true, Listeners: len(mergedListeners), Sources: len(sources)}
+	summary = reloadSummary{Reloaded: true, ConfigDigest: digest, Listeners: len(mergedListeners), Sources: len(sources)}
 	d.publish("routerd.dns.resolver.reloaded", daemonapi.SeverityInfo, "Reloaded", "DNS resolver config reloaded", map[string]string{
 		"listeners": fmt.Sprintf("%d", summary.Listeners),
 		"sources":   fmt.Sprintf("%d", summary.Sources),
@@ -860,9 +1183,14 @@ func (d *daemon) observedStatus() map[string]string {
 	sources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	observed := map[string]string{"listeners": fmt.Sprintf("%d", listenerCount), "zones": fmt.Sprintf("%d", zones.ZoneCount())}
+	observed["queryRejected"] = fmt.Sprintf("%d", d.queryRejected.Load())
 	d.queryLogMu.Lock()
 	queryLog := d.queryLog
+	queue := d.queryHistory.queue
 	d.queryLogMu.Unlock()
+	observed["queryLogDropped"] = fmt.Sprintf("%d", d.queryHistory.dropped.Load())
+	observed["queryLogWriteErrors"] = fmt.Sprintf("%d", d.queryHistory.writeErrors.Load())
+	observed["queryLogQueueDepth"] = fmt.Sprintf("%d", len(queue))
 	if queryLog != nil {
 		stats := queryLog.Stats()
 		observed["queryLogEnabled"] = "true"

@@ -3,6 +3,7 @@
 package resourcequery
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -59,8 +60,6 @@ func TestDependencyReadyUsesKindAPIVersion(t *testing.T) {
 func TestDependencyReadyUsesObservedPhase(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {
-			"phase":  "Pending",
-			"reason": "WhenFalse",
 			"observed": map[string]any{
 				"phase": "Bound",
 			},
@@ -135,7 +134,6 @@ func TestSourceReadyUsesKindAPIVersion(t *testing.T) {
 func TestSourceReadyUsesObservedPhase(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {
-			"phase": "Pending",
 			"observed": map[string]any{
 				"phase": "Up",
 			},
@@ -162,7 +160,7 @@ func TestResourceWhenMatchesObjectStatusField(t *testing.T) {
 		"VirtualAddress/lan-vip.role": {Equals: "master", For: "1m"},
 	}}
 
-	if !ResourceWhenMatches(when, store) {
+	if matches, err := ResourceWhenMatches(when, store); err != nil || !matches {
 		t.Fatalf("expected VirtualAddress status role to satisfy when")
 	}
 }
@@ -187,11 +185,11 @@ func TestFilterRouterByWhenUsesObjectStatusField(t *testing.T) {
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 0 {
+	if got := mustWhenFilteredRouter(t, false, router, store); len(got.Spec.Resources) != 0 {
 		t.Fatalf("backup role resources = %d, want 0", len(got.Spec.Resources))
 	}
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 1 {
+	if got := mustWhenFilteredRouter(t, false, router, store); len(got.Spec.Resources) != 1 {
 		t.Fatalf("master role resources = %d, want 1", len(got.Spec.Resources))
 	}
 }
@@ -213,15 +211,15 @@ func TestFilterRouterByWhenKeepsResourceWhenStatusUnknown(t *testing.T) {
 		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "unknown"},
 	}}
 
-	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 1 {
+	if got := mustWhenFilteredRouter(t, false, router, store); len(got.Spec.Resources) != 1 {
 		t.Fatalf("unknown role resources = %d, want resource preserved", len(got.Spec.Resources))
 	}
-	if !ResourceWhenIndeterminate(ResourceWhen(address), store) {
+	if indeterminate, err := ResourceWhenIndeterminate(ResourceWhen(address), store); err != nil || !indeterminate {
 		t.Fatal("expected unknown role to make when indeterminate")
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"]["role"] = "backup"
-	if got := FilterRouterByWhen(router, store); len(got.Spec.Resources) != 0 {
+	if got := mustWhenFilteredRouter(t, false, router, store); len(got.Spec.Resources) != 0 {
 		t.Fatalf("backup role resources = %d, want 0", len(got.Spec.Resources))
 	}
 }
@@ -251,7 +249,7 @@ func TestFilterRouterByWhenClearsFilteredBFDRef(t *testing.T) {
 	}}}
 	store := statefulMapStore{}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	if len(got.Spec.Resources) != 1 {
 		t.Fatalf("resources = %d, want only BGPPeer", len(got.Spec.Resources))
 	}
@@ -278,7 +276,7 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 		},
 	}}}
 
-	got := FilterRouterByWhen(router, statefulMapStore{})
+	got := mustWhenFilteredRouter(t, false, router, statefulMapStore{})
 	if len(got.Spec.Resources) != 1 {
 		t.Fatalf("resources = %d, want only BGPPeer", len(got.Spec.Resources))
 	}
@@ -318,7 +316,7 @@ func TestFilterRouterByWhenPrunesDNSForwarderForFilteredResolver(t *testing.T) {
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	if hasResource(got, "DNSResolver", "lan") {
 		t.Fatal("DNSResolver/lan remained in backup role")
 	}
@@ -327,7 +325,7 @@ func TestFilterRouterByWhenPrunesDNSForwarderForFilteredResolver(t *testing.T) {
 	}
 
 	store.mapStore[api.NetAPIVersion+"/VirtualAddress/lan-vip"]["role"] = "master"
-	got = FilterRouterByWhen(router, store)
+	got = mustWhenFilteredRouter(t, false, router, store)
 	if !hasResource(got, "DNSResolver", "lan") {
 		t.Fatal("DNSResolver/lan missing in master role")
 	}
@@ -377,7 +375,7 @@ func TestFilterRouterByWhenPrunesDNSResolverListenSourcesForFilteredForwarder(t 
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	res, ok := findResource(got, "DNSResolver", "lan")
 	if !ok {
 		t.Fatal("DNSResolver/lan missing")
@@ -404,10 +402,10 @@ func TestFilterRouterByResolvedWhenOmitsIndeterminateResource(t *testing.T) {
 	store := statefulMapStore{mapStore: mapStore{
 		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4": {"role": "unknown"},
 	}}
-	if !hasResource(FilterRouterByWhen(router, store), "DHCPv6PrefixDelegation", "wan-pd") {
+	if !hasResource(mustWhenFilteredRouter(t, false, router, store), "DHCPv6PrefixDelegation", "wan-pd") {
 		t.Fatal("ordinary reconciliation must retain an indeterminate resource")
 	}
-	if hasResource(FilterRouterByResolvedWhen(router, store), "DHCPv6PrefixDelegation", "wan-pd") {
+	if hasResource(mustWhenFilteredRouter(t, true, router, store), "DHCPv6PrefixDelegation", "wan-pd") {
 		t.Fatal("daemon supervision must not start an indeterminate resource")
 	}
 }
@@ -448,7 +446,7 @@ func TestFilterRouterByWhenClearsDNSZoneRecordSourceForFilteredResource(t *testi
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	res, ok := findResource(got, "DNSZone", "home")
 	if !ok {
 		t.Fatal("DNSZone/home missing")
@@ -505,7 +503,7 @@ func TestFilterRouterByWhenClearsFirewallZoneFilteredInterfaces(t *testing.T) {
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	res, ok := findResource(got, "FirewallZone", "wan")
 	if !ok {
 		t.Fatal("FirewallZone/wan missing")
@@ -544,7 +542,7 @@ func TestFilterRouterByWhenPreservesBareFirewallZoneInterfaceAliases(t *testing.
 		},
 	}}}
 
-	got := FilterRouterByWhen(router, statefulMapStore{})
+	got := mustWhenFilteredRouter(t, false, router, statefulMapStore{})
 	res, ok := findResource(got, "FirewallZone", "wan")
 	if !ok {
 		t.Fatal("FirewallZone/wan missing")
@@ -592,7 +590,7 @@ func TestFilterRouterByWhenPrunesBareFirewallZoneInterfaceAliasForFilteredResour
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
 
-	got := FilterRouterByWhen(router, store)
+	got := mustWhenFilteredRouter(t, false, router, store)
 	res, ok := findResource(got, "FirewallZone", "wan")
 	if !ok {
 		t.Fatal("FirewallZone/wan missing")
@@ -634,4 +632,57 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func (s statefulMapStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
+func TestResourceReferencesUseAuthoritativeKindCatalog(t *testing.T) {
+	for _, kind := range api.ConfigResourceKinds() {
+		if got := APIVersionForKind(kind.Kind); got != kind.APIVersion {
+			t.Fatalf("%s resolved %s instead of %s", kind.Kind, got, kind.APIVersion)
+		}
+	}
+	if got := APIVersionForKind("Inventory"); got != api.RouterAPIVersion {
+		t.Fatalf("runtime Inventory producer uses router API, got %s", got)
+	}
+	if got := APIVersionForKind("NetworkAdoption"); got != api.SystemAPIVersion {
+		t.Fatalf("runtime NetworkAdoption producer uses system API, got %s", got)
+	}
+
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, kind := range []struct{ apiVersion, kind string }{{api.FederationAPIVersion, "EventGroup"}, {api.PluginAPIVersion, "DynamicConfigSource"}, {api.ConfigAPIVersion, "DynamicOverridePolicy"}, {api.ObservabilityAPIVersion, "Telemetry"}, {api.MobilityAPIVersion, "SAMEnrollmentPolicy"}, {api.HybridAPIVersion, "ProviderActionPolicy"}} {
+		if err := store.SaveObjectStatus(kind.apiVersion, kind.kind, "test", map[string]any{"phase": "Ready", "value": "found"}); err != nil {
+			t.Fatal(err)
+		}
+		ref := kind.kind + "/test"
+		if got := Value(store, api.StatusValueSourceSpec{Resource: ref, Field: "value"}); got != "found" {
+			t.Fatalf("actual %s status source lost: %q", ref, got)
+		}
+		if !DependencyReady(store, api.ResourceDependencySpec{Resource: ref, Phase: "Ready"}) {
+			t.Fatalf("actual %s dependency lost", ref)
+		}
+		when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{ref + ".phase": {Equals: "Ready"}}}
+		if ready, err := ResourceWhenMatches(when, store); err != nil || !ready {
+			t.Fatalf("actual %s when source lost: %t %v", ref, ready, err)
+		}
+	}
+}
+
+func TestOperationalPhaseOwnsDefaultReadiness(t *testing.T) {
+	for _, reason := range []string{"WhenFalse", "DependsOnFalse", "ApplyFailed"} {
+		store := mapStore{api.NetAPIVersion + "/DHCPv4Client/wan": {"phase": "Pending", "reason": reason, "observed": map[string]any{"phase": "Bound"}}}
+		if SourceReady(store, "DHCPv4Client/wan") || DependencyReady(store, api.ResourceDependencySpec{Resource: "DHCPv4Client/wan", Phase: "Bound"}) {
+			t.Fatalf("%s was bypassed through raw daemon observation", reason)
+		}
+	}
 }

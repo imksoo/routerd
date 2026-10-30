@@ -5,6 +5,8 @@ package webconsole
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -27,7 +29,10 @@ func (h Handler) dpiStatus(ctx context.Context) *DPIStatus {
 
 func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus {
 	if _, err := os.Stat(socket); err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 	defer cancel()
@@ -51,9 +56,24 @@ func probeDPIService(ctx context.Context, socket, path string) *DPIServiceStatus
 	if resp.StatusCode/100 != 2 {
 		return &DPIServiceStatus{Socket: socket, Error: resp.Status}
 	}
-	var raw map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	return decodeDPIServiceStatus(socket, resp.Body)
+}
+
+func decodeDPIServiceStatus(socket string, body io.Reader) *DPIServiceStatus {
+	const statusLimit = 64 << 10
+	data, err := io.ReadAll(io.LimitReader(body, statusLimit+1))
+	if err != nil {
 		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
+	}
+	if len(data) > statusLimit {
+		return &DPIServiceStatus{Socket: socket, Error: fmt.Sprintf("DPI status exceeded %d-byte limit", statusLimit)}
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return &DPIServiceStatus{Socket: socket, Error: err.Error()}
+	}
+	if raw == nil {
+		return &DPIServiceStatus{Socket: socket, Error: "DPI status is not an object"}
 	}
 	return dpiServiceStatusFromMap(socket, raw)
 }

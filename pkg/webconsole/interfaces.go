@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -41,7 +40,12 @@ func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []Inte
 			zones[kind+"/"+name] = zoneInfo{role: spec.Role, zone: resource.Metadata.Name}
 		}
 	}
-	addresses := interfaceConfiguredAddresses(h.opts.Router, statuses)
+	configured := configuredInterfaceAddresses(h.opts.Router)
+	native, nativeErr := net.Interfaces()
+	byName := make(map[string]net.Interface, len(native))
+	for _, iface := range native {
+		byName[iface.Name] = iface
+	}
 	var out []InterfaceSummary
 	for _, resource := range h.opts.Router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "Interface" {
@@ -63,7 +67,10 @@ func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []Inte
 			item.Role = zone.role
 			item.Zone = zone.zone
 		}
-		if ifi, err := net.InterfaceByName(spec.IfName); err == nil {
+		item.ConfiguredAddresses = configured[resource.Metadata.Name]
+		if nativeErr != nil {
+			item.ObservationError = nativeErr.Error()
+		} else if ifi, present := byName[spec.IfName]; present {
 			item.MTU = ifi.MTU
 			item.Flags = ifi.Flags.String()
 			item.HardwareAddress = ifi.HardwareAddr.String()
@@ -78,10 +85,13 @@ func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []Inte
 				for _, addr := range addrs {
 					item.Addresses = appendUnique(item.Addresses, addr.String())
 				}
+			} else {
+				item.ObservationError = err.Error()
 			}
-		}
-		for _, addr := range addresses[resource.Metadata.Name] {
-			item.Addresses = appendUnique(item.Addresses, addr)
+		} else {
+			// A successful native inventory establishes absence; it is not
+			// a failed read for which old addresses should be retained.
+			item.Phase = "Absent"
 		}
 		out = append(out, item)
 	}
@@ -95,53 +105,23 @@ func (h Handler) interfaceSummaries(resources []routerstate.ObjectStatus) []Inte
 	return out
 }
 
-func interfaceConfiguredAddresses(router *api.Router, statuses map[string]map[string]any) map[string][]string {
+func configuredInterfaceAddresses(router *api.Router) map[string][]string {
 	out := map[string][]string{}
 	for _, resource := range router.Spec.Resources {
-		switch resource.Kind {
-		case "IPv4StaticAddress":
-			spec, err := resource.IPv4StaticAddressSpec()
-			if err != nil {
-				continue
-			}
-			addr := stringutil.FirstNonBlank(stringFromMap(statuses[api.NetAPIVersion+"/IPv4StaticAddress/"+resource.Metadata.Name], "address"), spec.Address)
-			if addr != "" {
-				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
-			}
-		case "IPv6DelegatedAddress":
-			spec, err := resource.IPv6DelegatedAddressSpec()
-			if err != nil {
-				continue
-			}
-			addr := stringFromMap(statuses[api.NetAPIVersion+"/IPv6DelegatedAddress/"+resource.Metadata.Name], "address")
-			if addr != "" {
-				out[spec.Interface] = appendUnique(out[spec.Interface], addr)
-			}
-		case "DHCPv4Client":
-			iface, addr := addressStatusForInterface(resource, statuses)
-			if iface != "" && addr != "" {
-				out[iface] = appendUnique(out[iface], addr)
-			}
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4StaticAddress" {
+			continue
 		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil || spec.Address == "" {
+			continue
+		}
+		iface := spec.Interface
+		if kind, name := splitResourceRef(iface); kind == "Interface" {
+			iface = name
+		}
+		out[iface] = appendUnique(out[iface], spec.Address)
 	}
 	return out
-}
-
-func addressStatusForInterface(resource api.Resource, statuses map[string]map[string]any) (string, string) {
-	status := statuses[resource.APIVersion+"/"+resource.Kind+"/"+resource.Metadata.Name]
-	iface := stringFromMap(status, "interface")
-	addr := stringutil.FirstNonBlank(stringFromMap(status, "address"), stringFromMap(status, "ip"))
-	if iface != "" {
-		return iface, addr
-	}
-	switch resource.Kind {
-	case "DHCPv4Client":
-		spec, err := resource.DHCPv4ClientSpec()
-		if err == nil {
-			return spec.Interface, addr
-		}
-	}
-	return "", addr
 }
 
 func splitResourceRef(ref string) (string, string) {

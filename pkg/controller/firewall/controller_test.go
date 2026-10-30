@@ -4,6 +4,7 @@ package firewall
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
@@ -21,7 +23,7 @@ func TestDeriveHolesIncludesDSLiteAndDHCPv6(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-routerd"}},
 	}}}
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	seen := map[string]bool{}
 	for _, hole := range holes {
 		seen[hole.Name+"|"+hole.FromZone+"|"+hole.ToZone+"|"+hole.Protocol] = true
@@ -42,7 +44,7 @@ func TestWireGuardListenPortOpensUntrustToSelfHole(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "tailnet"}, Spec: api.TailscaleNodeSpec{}},
 	}}}
 
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	var foundWG, foundTailscale bool
 	for _, hole := range holes {
 		if hole.Name == "wg0-wireguard" && hole.FromZone == "wan" && hole.ToZone == "self" && hole.Protocol == "udp" && hole.Port == 51820 {
@@ -109,6 +111,29 @@ func TestFirewallControllerPropagatesBackendApplyErrorToStatusAndBus(t *testing.
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for firewall error event")
+	}
+}
+
+func TestFirewallStatusPreservesIngressControllerObservations(t *testing.T) {
+	store := firewallMapStore{}
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", "api", map[string]any{
+		"phase": "Active", "activeBackend": map[string]any{"name": "selected", "address": "10.0.0.12", "port": 6443},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Store: store, Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "allow"}, Spec: api.FirewallRuleSpec{}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "api"}, Spec: api.IngressServiceSpec{}},
+	}}}}
+	if err := controller.savePolicyStatuses(context.Background(), "nftables", "rules.nft", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.saveErrorStatuses(context.Background(), "nftables", "rules.nft", "ApplyFailed", errors.New("rejected")); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.FirewallAPIVersion, "IngressService", "api")
+	if status["phase"] != "Active" || status["activeBackend"] == nil || status["backend"] != nil {
+		t.Fatalf("firewall overwrote ingress observation: %#v", status)
 	}
 }
 

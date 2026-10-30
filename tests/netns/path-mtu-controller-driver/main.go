@@ -20,6 +20,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: driver enable|disable nft-path owner-path")
 		os.Exit(2)
 	}
+	current, err := os.Readlink("/proc/self/ns/net")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	host, err := os.Readlink("/proc/1/ns/net")
+	if err != nil || current == host {
+		fmt.Fprintln(os.Stderr, "PathMTU test driver requires a separate network namespace")
+		os.Exit(2)
+	}
 	enabled := os.Args[1] == "enable"
 	mtu := 1280
 	if raw := os.Getenv("ROUTERD_NETNS_MTU"); raw != "" {

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"math"
 	"strconv"
 	"time"
 )
@@ -52,11 +51,14 @@ func Sign(secret []byte, timestamp int64, body []byte) string {
 // ErrBadSignature for a mismatch, or nil when the signature is valid and fresh.
 func Verify(secret []byte, timestamp int64, body []byte, signatureHex string, now time.Time, window time.Duration) error {
 	if window > 0 {
-		skew := now.Unix() - timestamp
-		if skew < 0 {
-			skew = -skew
+		seconds := now.Unix()
+		var skew uint64
+		if seconds >= timestamp {
+			skew = uint64(seconds) - uint64(timestamp)
+		} else {
+			skew = uint64(timestamp) - uint64(seconds)
 		}
-		if float64(skew) > math.Floor(window.Seconds()) {
+		if skew > uint64(window/time.Second) {
 			return ErrStaleTimestamp
 		}
 	}

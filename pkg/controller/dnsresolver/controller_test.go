@@ -4,6 +4,7 @@ package dnsresolver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,10 +12,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	resolverruntime "github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 type mapStore map[string]map[string]any
@@ -24,7 +28,7 @@ func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[str
 	return nil
 }
 
-func TestReconcileWritesConfigAndSkipsReloadWhenSocketMissing(t *testing.T) {
+func TestReconcileWritesConfigButRemainsDegradedWhenSocketMissing(t *testing.T) {
 	dir := t.TempDir()
 	store := mapStore{}
 	controller := Controller{
@@ -33,15 +37,15 @@ func TestReconcileWritesConfigAndSkipsReloadWhenSocketMissing(t *testing.T) {
 		RuntimeDir: filepath.Join(dir, "run"),
 		StateDir:   filepath.Join(dir, "state"),
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("missing worker acknowledged as applied")
 	}
 	configPath := filepath.Join(dir, "state", "dns-resolver", "lan-resolver", "config.json")
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("config was not written: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Degraded" {
 		t.Fatalf("status = %#v", status)
 	}
 }
@@ -67,12 +71,13 @@ func TestRuntimeConfigCapturesStickyDNSMasqHosts(t *testing.T) {
 		RuntimeDir: runtimeDir,
 		StateDir:   filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
 	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +104,7 @@ func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
 	var reloads atomic.Int32
 	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reloads.Add(1)
-		w.WriteHeader(http.StatusNoContent)
+		ackResolverReload(t, w, r, true)
 	}))
 	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "172.18.0.1"})
 	router.Spec.Resources[0].Spec = api.DNSZoneSpec{
@@ -112,6 +117,8 @@ func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
 		RuntimeDir: runtimeDir,
 		StateDir:   filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.128", "MacBookProM5Max")
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +140,18 @@ func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
 func TestReconcileReloadsResolverWhenConfigChanges(t *testing.T) {
 	dir := t.TempDir()
 	var reloads atomic.Int32
+	var appliedDigest string
 	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/reload" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		reloads.Add(1)
-		w.WriteHeader(http.StatusNoContent)
+		digest := r.Header.Get(resolverruntime.ConfigDigestHeader)
+		changed := appliedDigest != digest
+		if changed {
+			reloads.Add(1)
+			appliedDigest = digest
+		}
+		ackResolverReload(t, w, r, changed)
 	}))
 
 	store := mapStore{}
@@ -162,6 +175,89 @@ func TestReconcileReloadsResolverWhenConfigChanges(t *testing.T) {
 	}
 }
 
+func ackResolverReload(t *testing.T, w http.ResponseWriter, r *http.Request, changed bool) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(resolverruntime.ReloadResult{Reloaded: changed, ConfigDigest: r.Header.Get(resolverruntime.ConfigDigestHeader)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileRetriesFailedReloadWithoutPublishingSuccess(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	controller := Controller{Router: dnsResolverRouter([]string{"127.0.0.1"}, nil), Store: store, Bus: bus.New(), RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, _ := controller.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.dns.resolver.configured"}}, 8)
+	var attempts int
+	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, "bind failed", http.StatusInternalServerError)
+			return
+		}
+		ackResolverReload(t, w, r, true)
+	}))
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := controller.Reconcile(ctx); (err != nil) != (attempt < 3) {
+			t.Fatalf("attempt %d error = %v", attempt, err)
+		}
+		phase := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")["phase"]
+		if attempt < 3 {
+			if phase != "Degraded" {
+				t.Fatalf("failed attempt %d phase = %v", attempt, phase)
+			}
+			select {
+			case event := <-events:
+				t.Fatalf("failed reload published success: %+v", event)
+			default:
+			}
+		} else if phase != "Applied" {
+			t.Fatalf("successful retry phase = %v", phase)
+		}
+	}
+	if attempts != 3 {
+		t.Fatalf("reload attempts = %d", attempts)
+	}
+	select {
+	case <-events:
+	default:
+		t.Fatal("successful reload did not publish configured event")
+	}
+}
+
+func TestReconcileRejectsWrongWorkerAcknowledgement(t *testing.T) {
+	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(resolverruntime.ReloadResult{Reloaded: true, ConfigDigest: "other"})
+	}))
+	dir := t.TempDir()
+	store := mapStore{}
+	controller := Controller{Router: dnsResolverRouter([]string{"127.0.0.1"}, nil), Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("wrong worker acknowledgement did not return an error")
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver"); status["phase"] != "Degraded" {
+		t.Fatalf("wrong acknowledgement accepted: %+v", status)
+	}
+}
+
+func TestResolverReloadHasBoundedAttemptContext(t *testing.T) {
+	old := newResolverHTTPClient
+	newResolverHTTPClient = func(_ string) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			deadline, ok := req.Context().Deadline()
+			if !ok || time.Until(deadline) > 5*time.Second {
+				t.Fatal("worker reload can block indefinitely")
+			}
+			return nil, context.DeadlineExceeded
+		})}
+	}
+	t.Cleanup(func() { newResolverHTTPClient = old })
+	if _, err := (Controller{}).reloadResolver(context.Background(), "unused", "desired"); err == nil {
+		t.Fatal("worker timeout acknowledged as success")
+	}
+}
+
 func TestReconcileMarksDegradedWhenReloadFails(t *testing.T) {
 	dir := t.TempDir()
 	withResolverHTTPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -175,8 +271,8 @@ func TestReconcileMarksDegradedWhenReloadFails(t *testing.T) {
 		RuntimeDir: filepath.Join(dir, "run"),
 		StateDir:   filepath.Join(dir, "state"),
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("failed worker reload did not return an error")
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
 	if status["phase"] != "Degraded" || !strings.Contains(status["reason"].(string), "ReloadFailed") {
@@ -225,7 +321,7 @@ func TestReconcileResolvesListenAddressStatusRef(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	resolved, _ := status["listenAddresses"].([]string)
@@ -251,7 +347,7 @@ func TestReconcileResolvesListenAddressFromIPv4StaticAddressSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	resolved, _ := status["listenAddresses"].([]string)
@@ -279,7 +375,7 @@ func TestReconcilePendingWhenListenAddressUnresolved(t *testing.T) {
 	}
 }
 
-func TestReconcileDegradedWhenOneListenAddressWaits(t *testing.T) {
+func TestReconcilePlansWhileOneListenAddressWaits(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouter([]string{"127.0.0.1"}, []api.StatusValueSourceSpec{{Resource: "IPv6DelegatedAddress/lan-base", Field: "address"}}),
@@ -290,7 +386,7 @@ func TestReconcileDegradedWhenOneListenAddressWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Degraded" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	resolved, _ := status["listenAddresses"].([]string)
@@ -421,7 +517,7 @@ func TestReconcilePendingWhenUpstreamFromUnresolved(t *testing.T) {
 	}
 }
 
-func TestReconcileDegradedWhenOneSourceWaitsForUpstream(t *testing.T) {
+func TestReconcilePlansWhileOneSourceWaitsForUpstream(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithPartialUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
@@ -432,7 +528,7 @@ func TestReconcileDegradedWhenOneSourceWaitsForUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Degraded" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	waiting, _ := status["waiting"].([]map[string]string)
@@ -473,12 +569,12 @@ func TestReconcileResolvesUpstreamFromStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 }
 
-func TestReconcileConvergesFromDegradedWhenUpstreamResolves(t *testing.T) {
+func TestReconcilePlanConvergesWhenUpstreamResolves(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithPartialUpstreamFrom(api.StatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
@@ -489,7 +585,7 @@ func TestReconcileConvergesFromDegradedWhenUpstreamResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Degraded" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 
@@ -498,7 +594,7 @@ func TestReconcileConvergesFromDegradedWhenUpstreamResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 
@@ -535,7 +631,7 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 
@@ -564,7 +660,7 @@ func TestReconcileResolvesBootstrapFromStatus(t *testing.T) {
 	}
 }
 
-func TestReconcileAppliedWhenBootstrapFromUnresolvedButStaticBootstrapExists(t *testing.T) {
+func TestReconcilePlannedWhenBootstrapFromUnresolvedButStaticBootstrapExists(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithBootstrapFrom(api.RequiredFieldStatusValueSourceSpec{Resource: "DHCPv6Information/wan-info", Field: "dnsServers"}),
@@ -575,7 +671,7 @@ func TestReconcileAppliedWhenBootstrapFromUnresolvedButStaticBootstrapExists(t *
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
-	if status["phase"] != "Applied" {
+	if status["phase"] != "Planned" {
 		t.Fatalf("status = %#v", status)
 	}
 	if status["waiting"] != nil {
@@ -613,7 +709,7 @@ func TestDNSResolverDependsOnExplicitAddressSource(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
+func TestRuntimeConfigResolvesDNSZoneRecordAddressSourcesWithoutPublishing(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/IPv6DelegatedAddress/lan-base": {"address": "2409:10:3d60:1200::1/64"},
 	}
@@ -630,7 +726,7 @@ func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, prepared, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,12 +738,12 @@ func TestRuntimeConfigResolvesDNSZoneRecordAddressSources(t *testing.T) {
 		t.Fatalf("record = %#v", record)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSZone", "lan-zone")
-	if status["phase"] != "Applied" {
-		t.Fatalf("zone status = %#v", status)
+	if len(status) != 0 || len(prepared) != 1 || len(prepared[0].PendingRecords) != 0 {
+		t.Fatalf("preparation published status or lost observation: status=%#v prepared=%+v", status, prepared)
 	}
 }
 
-func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T) {
+func TestRuntimeConfigPreparesDNSZoneRecordPendingWithoutPublishing(t *testing.T) {
 	store := mapStore{}
 	controller := Controller{
 		Router: dnsResolverRouterWithZone(api.DNSZoneRecordSpec{
@@ -662,7 +758,7 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, prepared, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,12 +767,8 @@ func TestRuntimeConfigMarksDNSZoneRecordPendingWhenSourceUnresolved(t *testing.T
 		t.Fatalf("record = %#v", record)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "DNSZone", "lan-zone")
-	if status["phase"] != "Pending" {
-		t.Fatalf("zone status = %#v", status)
-	}
-	pending, _ := status["pendingRecords"].([]map[string]string)
-	if len(pending) != 1 || pending[0]["field"] != "ipv6" {
-		t.Fatalf("pendingRecords = %#v", status["pendingRecords"])
+	if len(status) != 0 || len(prepared) != 1 || len(prepared[0].PendingRecords) != 1 || prepared[0].PendingRecords[0].Field != "ipv6" {
+		t.Fatalf("preparation published status or lost pending record: status=%#v prepared=%+v", status, prepared)
 	}
 }
 
@@ -695,7 +787,7 @@ func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,7 +824,7 @@ func TestRuntimeConfigKeepsExplicitDNSZoneRecordOverHostnameRecord(t *testing.T)
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -758,7 +850,7 @@ func TestRuntimeConfigSkipsExternalDNSHostnameRecords(t *testing.T) {
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, err := controller.runtimeConfig("lan-resolver", resolverSpec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", resolverSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,12 +1005,13 @@ func TestRuntimeConfigUsesExplicitDHCPHostsPath(t *testing.T) {
 		DHCPHostsPath: filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"),
 		StateDir:      filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
 	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	config, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -928,5 +1021,29 @@ func TestRuntimeConfigUsesExplicitDHCPHostsPath(t *testing.T) {
 	record := config.Zones[0].DHCPHostRecords[0]
 	if record.Hostname != "MacBookProM5Max" || record.IP != "172.18.1.127" {
 		t.Fatalf("runtime DHCP host record = %#v", record)
+	}
+}
+
+func prepareHeldAssignment(t *testing.T, controller *Controller, mac, ip, hostname string) {
+	t.Helper()
+	hasServer := false
+	for _, resource := range controller.Router.Spec.Resources {
+		if resource.Kind == "DHCPv4Server" && resource.Metadata.Name == "lan-dhcpv4" {
+			hasServer = true
+		}
+	}
+	if !hasServer {
+		controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{StickyHoldDays: 1, AddressPool: api.DHCPAddressPoolSpec{Start: "172.18.0.0", End: "172.18.255.255"}}})
+	}
+	_, stateDir := controller.dirs()
+	store, err := logstore.OpenDHCPStickyLog(filepath.Join(stateDir, "dhcp-sticky.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordLeaseEvent(t.Context(), "removed", mac, ip, hostname, 1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

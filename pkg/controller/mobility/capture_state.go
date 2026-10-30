@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"strings"
 	"time"
@@ -28,9 +29,7 @@ type bgpCaptureAssignment struct {
 	LeaseUntil     time.Time
 }
 
-// decodeStatusValue is the only object-status codec used for the durable
-// capture records. The storage boundary returns map-shaped JSON; planning gets
-// the concrete value and never carries the map past this point.
+// decodeStatusValue converts presentation-only status rows at the output boundary.
 func decodeStatusValue[T any](raw any) T {
 	var out T
 	if raw == nil {
@@ -58,15 +57,43 @@ func parseBGPTrapLastSeenAt(value string) time.Time {
 	return t.UTC()
 }
 
-func observedSelfStaleCaptureSinceFromStatus(status map[string]any) map[string]time.Time {
-	out := map[string]time.Time{}
-	for address, since := range decodeStatusValue[map[string]time.Time](status["observedSelfStaleCaptures"]) {
-		address = normalizeAddressString(address)
-		if address != "" && !since.IsZero() {
-			out[address] = since.UTC()
-		}
+// decodeContinuationField decodes one persisted continuation field. Missing
+// fields are initial state; an explicit null or malformed value is unknown.
+func decodeContinuationField(status map[string]any, key string, out any) error {
+	raw, present := status[key]
+	if !present {
+		return nil
 	}
-	return out
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+	if string(data) == "null" {
+		return fmt.Errorf("%s must not be null", key)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+	return nil
+}
+
+func validContinuationAddress(address string) bool {
+	prefix, err := netip.ParsePrefix(address)
+	return err == nil && prefix.Addr().Is4() && prefix.Bits() == 32 && prefix.String() == address
+}
+
+func observedSelfStaleCaptureSinceFromStatus(status map[string]any) (map[string]time.Time, error) {
+	out := map[string]time.Time{}
+	if err := decodeContinuationField(status, "observedSelfStaleCaptures", &out); err != nil {
+		return nil, err
+	}
+	for address, since := range out {
+		if !validContinuationAddress(address) || since.IsZero() {
+			return nil, fmt.Errorf("observedSelfStaleCaptures has an invalid address or timestamp for %q", address)
+		}
+		out[address] = since.UTC()
+	}
+	return out, nil
 }
 
 func observedSelfStaleCaptureTimes(decisions []ownershipDecision, selfNode string, previous map[string]time.Time, now time.Time) map[string]time.Time {

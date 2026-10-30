@@ -91,6 +91,12 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords20 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.99", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.61.10", NICRef: "client-nic-2", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.12", NICRef: "client-nic-3", Tags: map[string]string{"cloudedge-mobility": "false"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -100,13 +106,7 @@ func TestDiscoveryControllerEmitsObservedEventsForActiveCloudMember(t *testing.T
 				SubnetRef:         "plugin-subnet",
 				PrivateIPs:        []string{"10.88.60.21"},
 				ForwardingEnabled: boolPtr(false),
-			},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.99", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.61.10", NICRef: "client-nic-2", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.12", NICRef: "client-nic-3", Tags: map[string]string{"cloudedge-mobility": "false"}},
-			},
+			}, ObservedCandidates: inventoryRecords20, LocalIPs: inventoryRecords20,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -147,18 +147,18 @@ func TestDiscoveryControllerReleasesStoppedProviderRecordWhenConfigured(t *testi
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
 	spec.Members[1].OwnershipDiscovery.StoppedInstancePolicy = "release"
+	inventoryRecords19 := []providerinventory.PrivateIPRecord{{
+		Address:       "10.88.60.11",
+		NICRef:        "client-nic",
+		SubnetRef:     "subnet-a",
+		InstanceState: "stopped",
+		Tags:          map[string]string{"cloudedge-mobility": "true"},
+	}}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic-a", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{{
-				Address:       "10.88.60.11",
-				NICRef:        "client-nic",
-				SubnetRef:     "subnet-a",
-				InstanceState: "stopped",
-				Tags:          map[string]string{"cloudedge-mobility": "true"},
-			}},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic-a", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords19, LocalIPs: inventoryRecords19,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -750,15 +750,15 @@ func TestDiscoveryControllerUsesPluginResolvedSelfNICWhenCaptureNICIsImplicit(t 
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
 	spec.Members[1].Capture.NICRef = ""
+	inventoryRecords18 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.21", NICRef: "resolved-router-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "resolved-router-nic", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.21"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.21", NICRef: "resolved-router-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "resolved-router-nic", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.21"}}, ObservedCandidates: inventoryRecords18, LocalIPs: inventoryRecords18,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -787,18 +787,18 @@ func TestDiscoveryControllerExcludesPluginSelfPrivateIPs(t *testing.T) {
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
 	spec.Members[1].Capture.NICRef = ""
+	inventoryRecords17 := []providerinventory.PrivateIPRecord{
+		// Missing NICRef reproduces the provider-inventory shape that used
+		// to turn a trap secondary on the router NIC into an ownership fact.
+		{Address: "10.88.60.10", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.12", NICRef: "different-router-nic-ref", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "resolved-router-nic", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.10", "10.88.60.12/32"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				// Missing NICRef reproduces the provider-inventory shape that used
-				// to turn a trap secondary on the router NIC into an ownership fact.
-				{Address: "10.88.60.10", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.12", NICRef: "different-router-nic-ref", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "resolved-router-nic", SubnetRef: "subnet-a", PrivateIPs: []string{"10.88.60.10", "10.88.60.12/32"}}, ObservedCandidates: inventoryRecords17, LocalIPs: inventoryRecords17,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -819,6 +819,12 @@ func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing
 	now := time.Date(2026, 6, 9, 23, 50, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords16 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.4", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.13", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "client-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.12", NICRef: "foreign-nic", SubnetRef: "foreign-subnet", ProviderRef: "aws-provider", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -827,13 +833,7 @@ func TestDiscoveryControllerScopesProviderInventoryToSelfNICAndSubnet(t *testing
 				NICRef:     "plugin-router-nic",
 				SubnetRef:  "subnet-a",
 				PrivateIPs: []string{"10.88.60.12", "10.88.60.13", "10.88.60.4"},
-			},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.4", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.13", NICRef: "/subscriptions/sub-1/resourceGroups/rg-router/providers/Microsoft.Network/networkInterfaces/router-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "client-nic-a", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.12", NICRef: "foreign-nic", SubnetRef: "foreign-subnet", ProviderRef: "aws-provider", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			}, ObservedCandidates: inventoryRecords16, LocalIPs: inventoryRecords16,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -884,6 +884,11 @@ func TestDiscoveryControllerExcludesSelfResourceSecondaryFromOwnership(t *testin
 	now := time.Date(2026, 6, 10, 13, 15, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords15 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.4", NICRef: "eni-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.12", NICRef: "eni-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -894,12 +899,7 @@ func TestDiscoveryControllerExcludesSelfResourceSecondaryFromOwnership(t *testin
 				ResourceRef:  "i-router-a",
 				ResourceType: "router-nic",
 				PrivateIPs:   []string{"10.88.60.4"},
-			},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.4", NICRef: "eni-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.12", NICRef: "eni-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			}, ObservedCandidates: inventoryRecords15, LocalIPs: inventoryRecords15,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -927,6 +927,11 @@ func TestDiscoveryControllerExcludesRemoteRouterNICFromOwnership(t *testing.T) {
 	now := time.Date(2026, 6, 10, 17, 45, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords14 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.4", NICRef: "eni-router-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.5", NICRef: "eni-router-b", SubnetRef: "subnet-a", ResourceRef: "i-router-b", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
@@ -936,12 +941,7 @@ func TestDiscoveryControllerExcludesRemoteRouterNICFromOwnership(t *testing.T) {
 				SubnetRef:   "subnet-a",
 				PrivateIPs:  []string{"10.88.60.4"},
 				ResourceRef: "i-router-a",
-			},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.4", NICRef: "eni-router-a", SubnetRef: "subnet-a", ResourceRef: "i-router-a", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.5", NICRef: "eni-router-b", SubnetRef: "subnet-a", ResourceRef: "i-router-b", ResourceType: "router-nic", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "eni-client", SubnetRef: "subnet-a", ResourceRef: "i-client", ResourceType: "instance-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			}, ObservedCandidates: inventoryRecords14, LocalIPs: inventoryRecords14,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -966,15 +966,15 @@ func TestDiscoveryControllerDoesNotUseLeaseTableForRemoteExclusion(t *testing.T)
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords13 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "subnet-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "subnet-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords13, LocalIPs: inventoryRecords13,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -996,14 +996,14 @@ func TestDiscoveryControllerAllowsSameSiteLeaseHandoverDiscovery(t *testing.T) {
 	spec := discoveryPoolSpec()
 	spec.Members[1].Placement.Priority = 20
 	spec.Members[2].Placement.Priority = 10
+	inventoryRecords12 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-b-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-b-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords12, LocalIPs: inventoryRecords12,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-b", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1054,15 +1054,15 @@ func TestDiscoveryControllerExcludesCurrentTrapActionTargets(t *testing.T) {
 	if err := store.UpsertDynamicConfigPart(record); err != nil {
 		t.Fatalf("UpsertDynamicConfigPart: %v", err)
 	}
+	inventoryRecords11 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "unknown-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "unknown-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords11, LocalIPs: inventoryRecords11,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1083,14 +1083,14 @@ func TestDiscoveryControllerDoesNotExcludeRemoteProviderTrapActionTargets(t *tes
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
 	seedSucceededBGPCaptureAction(t, store, "oci-provider", "oci-vnic", "oci-router", "10.88.60.12/32", "assign-secondary-ip", 1, now.Add(-time.Second))
+	inventoryRecords10 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords10, LocalIPs: inventoryRecords10,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1110,14 +1110,14 @@ func TestDiscoveryControllerDefaultScopeAllowsProviderPrimaryAddresses(t *testin
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords9 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.7", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.7", NICRef: "client-nic", SubnetRef: "subnet-a", Primary: true, Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords9, LocalIPs: inventoryRecords9,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1139,16 +1139,16 @@ func TestDiscoveryControllerScopeIncludeExcludeAddresses(t *testing.T) {
 	spec := discoveryPoolSpec()
 	spec.Members[1].OwnershipDiscovery.Scope.IncludeAddresses = []string{"10.88.60.10/31"}
 	spec.Members[1].OwnershipDiscovery.Scope.ExcludeAddresses = []string{"10.88.60.10"}
+	inventoryRecords8 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.9", NICRef: "client-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.10", NICRef: "client-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+		{Address: "10.88.60.11", NICRef: "client-c", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.9", NICRef: "client-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.10", NICRef: "client-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
-				{Address: "10.88.60.11", NICRef: "client-c", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a"}, ObservedCandidates: inventoryRecords8, LocalIPs: inventoryRecords8,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1168,14 +1168,14 @@ func TestDiscoveryControllerResolvesSelfNICForStandbyPlacementMember(t *testing.
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords7 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "standby-client-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "standby-client-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}}, ObservedCandidates: inventoryRecords7, LocalIPs: inventoryRecords7,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-b", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1291,14 +1291,14 @@ func TestDiscoveryControllerLivenessSeizedStandbyAdvertisesOwnedAddress(t *testi
 	now := time.Date(2026, 6, 3, 12, 5, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords6 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}}, ObservedCandidates: inventoryRecords6, LocalIPs: inventoryRecords6,
 		},
 	}}
 	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
@@ -1348,14 +1348,14 @@ func TestDiscoveryControllerExpiresPreviousProviderDiscoveryWhenStandby(t *testi
 			providerDiscoveryAddressFactForTest("10.88.60.13/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{NICRef: "standby-router-nic", SubnetRef: "subnet-b"}, now.Add(-time.Minute), 2*time.Minute),
 		},
 	}, now.Add(-time.Minute))
+	inventoryRecords5 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.13", NICRef: "standby-router-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.13"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.13", NICRef: "standby-router-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.13"}}, ObservedCandidates: inventoryRecords5, LocalIPs: inventoryRecords5,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-b", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1480,13 +1480,13 @@ func TestDiscoveryControllerObservedEventFeedsBGPAdvertisement(t *testing.T) {
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords4 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.11", NICRef: "client-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
-			Status: providerinventory.ResultSucceeded,
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.11", NICRef: "client-nic", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Status: providerinventory.ResultSucceeded, ObservedCandidates: inventoryRecords4, LocalIPs: inventoryRecords4,
 		},
 	}}
 	router := discoveryRouter("azure-router-a", spec)
@@ -1552,14 +1552,14 @@ func TestDiscoveryControllerLivenessChangeBypassesScanInterval(t *testing.T) {
 	now := time.Date(2026, 6, 3, 16, 0, 0, 0, time.UTC)
 	store := testStore(t, now)
 	spec := discoveryPoolSpec()
+	inventoryRecords3 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "standby-client-nic", SubnetRef: "subnet-b", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "standby-router-nic", SubnetRef: "subnet-b", PrivateIPs: []string{"10.88.60.22"}}, ObservedCandidates: inventoryRecords3, LocalIPs: inventoryRecords3,
 		},
 	}}
 	saveBGPStatus(t, store, map[string][]string{}, []map[string]any{}, map[string]string{
@@ -1752,14 +1752,14 @@ func TestDiscoveryControllerExpiresProviderDiscoveryAddressExcludedBySelector(t 
 			providerDiscoveryAddressFactForTest("10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{NICRef: "client-nic", SubnetRef: "subnet-a"}, now.Add(-3*time.Minute), 5*time.Minute),
 		},
 	}, now.Add(-3*time.Minute))
+	inventoryRecords2 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "false"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "client-nic", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "false"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)}, ObservedCandidates: inventoryRecords2, LocalIPs: inventoryRecords2,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}
@@ -1784,14 +1784,14 @@ func TestDiscoveryControllerExpiresProviderDiscoveryAddressScopedOutByProvider(t
 			providerDiscoveryAddressFactForTest("10.88.60.12/32", "azure", "azure-provider", providerinventory.PrivateIPRecord{NICRef: "stale-foreign-nic", ProviderRef: "azure-provider", SubnetRef: "subnet-a"}, now.Add(-time.Minute), 5*time.Minute),
 		},
 	}, now.Add(-time.Minute))
+	inventoryRecords1 := []providerinventory.PrivateIPRecord{
+		{Address: "10.88.60.12", NICRef: "foreign-nic", ProviderRef: "aws-provider", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
+	}
 	runner := &fakeInventoryRunner{result: providerinventory.ObservePrivateIPsResult{
 		TypeMeta: providerinventory.TypeMeta{APIVersion: providerinventory.ProtocolAPIVersion, Kind: providerinventory.KindObservePrivateIPsResult},
 		Status: providerinventory.ObservePrivateIPsResultStatus{
 			Status: providerinventory.ResultSucceeded,
-			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)},
-			IPs: []providerinventory.PrivateIPRecord{
-				{Address: "10.88.60.12", NICRef: "foreign-nic", ProviderRef: "aws-provider", SubnetRef: "subnet-a", Tags: map[string]string{"cloudedge-mobility": "true"}},
-			},
+			Self:   &providerinventory.PrivateIPSelf{NICRef: "router-nic", SubnetRef: "subnet-a", ForwardingEnabled: boolPtr(true)}, ObservedCandidates: inventoryRecords1, LocalIPs: inventoryRecords1,
 		},
 	}}
 	controller := DiscoveryController{Router: discoveryRouter("azure-router-a", spec), Store: store, Runner: runner.run, Now: func() time.Time { return now }}

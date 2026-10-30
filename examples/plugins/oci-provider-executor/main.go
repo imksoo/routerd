@@ -85,9 +85,10 @@ const (
 	modeDryRun  = "dry-run"
 	modeExecute = "execute"
 
-	statusSucceeded = "succeeded"
-	statusFailed    = "failed"
-	statusSkipped   = "skipped"
+	statusOutcomeUnknown = "outcomeUnknown"
+	statusSucceeded      = "succeeded"
+	statusFailed         = "failed"
+	statusSkipped        = "skipped"
 
 	actionAssignSecondaryIP       = "assign-secondary-ip"
 	actionUnassignSecondaryIP     = "unassign-secondary-ip"
@@ -302,6 +303,11 @@ func requireRouteTarget(spec executeActionRequestSpec) (rtID, vnic, address, nex
 	if nextHop == "" {
 		return "", "", "", "", fmt.Errorf("target.nextHopIPAddress is required for oci route-table")
 	}
+	host, err := capturedIPv4Address(spec.Target["address"])
+	if err != nil {
+		return "", "", "", "", err
+	}
+	address = host
 	return rtID, vnic, address, nextHop, nil
 }
 
@@ -334,10 +340,12 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 	if derr != nil {
 		return failed("assign-route-table-route execute: next-hop private-ip lookup failed", derr)
 	}
-	rules, derr := getRouteTableRules(ctx, runner, rtID)
+	table, derr := getRouteTableRules(ctx, runner, rtID)
 	if derr != nil {
 		return failed("assign-route-table-route execute: route-table get failed", derr)
 	}
+	res.Status.Observed = map[string]string{"requestedRoute": dest, "routeTableRef": rtID, "requestedNextHopPrivateIP": nextHopOCID, "routeTableETag": table.ETag}
+	rules := table.Rules
 	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
 	newRule := ociRouteRule{
 		Destination:     dest,
@@ -355,16 +363,18 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 		if !allowReassignment {
 			return failed("assign-route-table-route execute: route exists for a different next hop (set allowReassignment to seize)", nil)
 		}
+		res.Status.Observed["priorNextHopPrivateIP"] = rules[idx].NetworkEntityID
 		rules[idx] = newRule
 	} else {
 		rules = append(rules, newRule)
 	}
-	if err := updateRouteTableRules(ctx, runner, rtID, rules); err != nil {
-		return failed("assign-route-table-route execute: route-table update failed", err)
+	if err := updateRouteTableRules(ctx, runner, rtID, table.ETag, rules); err != nil {
+		return mutationFailure(res, "assign-route-table-route execute: route-table update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", dest, nextHopOCID, rtID)
-	res.Status.Observed = map[string]string{"assignedRoute": dest, "routeTableRef": rtID, "nextHopPrivateIP": nextHopOCID}
+	res.Status.Observed["assignedRoute"] = dest
+	res.Status.Observed["nextHopPrivateIP"] = nextHopOCID
 	return res
 }
 
@@ -393,10 +403,11 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 	if derr != nil {
 		return failed("unassign-route-table-route execute: next-hop private-ip lookup failed", derr)
 	}
-	rules, derr := getRouteTableRules(ctx, runner, rtID)
+	table, derr := getRouteTableRules(ctx, runner, rtID)
 	if derr != nil {
 		return failed("unassign-route-table-route execute: route-table get failed", derr)
 	}
+	rules := table.Rules
 	idx := routeRuleIndexForDest(rules, dest)
 	if idx < 0 {
 		res.Status.Status = statusSkipped
@@ -408,9 +419,10 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		res.Status.Message = fmt.Sprintf("route for %s targets a different next hop (foreign holder); not removing", dest)
 		return res
 	}
+	res.Status.Observed = map[string]string{"requestedRoute": dest, "routeTableRef": rtID, "priorNextHopPrivateIP": rules[idx].NetworkEntityID, "routeTableETag": table.ETag}
 	rules = append(rules[:idx], rules[idx+1:]...)
-	if err := updateRouteTableRules(ctx, runner, rtID, rules); err != nil {
-		return failed("unassign-route-table-route execute: route-table update failed", err)
+	if err := updateRouteTableRules(ctx, runner, rtID, table.ETag, rules); err != nil {
+		return mutationFailure(res, "unassign-route-table-route execute: route-table update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("removed %s from %s (was %s)", dest, rtID, nextHopOCID)
@@ -474,7 +486,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 				return res
 			}
 		}
-		return failed("assign-secondary-ip execute: assign failed", err)
+		return mutationFailure(res, "assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	if allowReassignment {
@@ -516,7 +528,7 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 	if _, err := runner(ctx, "network", "vnic", "update",
 		"--vnic-id", vnic,
 		"--skip-source-dest-check", "true"); err != nil {
-		return failed("ensure-forwarding-enabled execute: vnic update failed", err)
+		return mutationFailure(res, "ensure-forwarding-enabled execute: vnic update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("set skipSourceDestCheck=true on %s (prior=%s)", vnic, prior)
@@ -555,12 +567,8 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 	if _, err := runner(ctx, "network", "private-ip", "delete",
 		"--private-ip-id", ocid,
 		"--force"); err != nil {
-		if isNotFoundError(err) {
-			res.Status.Status = statusSkipped
-			res.Status.Message = fmt.Sprintf("private-ip %s for %s is already absent; nothing to unassign", ocid, address)
-			return res
-		}
-		return failed("unassign-secondary-ip execute: private-ip delete failed", err)
+
+		return mutationFailure(res, "unassign-secondary-ip execute: private-ip delete failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("unassigned %s from %s (private-ip %s)", address, vnic, ocid)
@@ -610,7 +618,7 @@ func ensureForwardingDisabled(ctx context.Context, spec executeActionRequestSpec
 	if _, err := runner(ctx, "network", "vnic", "update",
 		"--vnic-id", vnic,
 		"--skip-source-dest-check", "false"); err != nil {
-		return failed("ensure-forwarding-disabled execute: vnic update failed", err)
+		return mutationFailure(res, "ensure-forwarding-disabled execute: vnic update failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("set skipSourceDestCheck=false on %s (restored prior=false)", vnic)
@@ -632,17 +640,6 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
-}
-
-func isNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "notfound") ||
-		strings.Contains(msg, "could not be found") ||
-		strings.Contains(msg, "404")
 }
 
 func isAlreadyAssignedError(err error) bool {

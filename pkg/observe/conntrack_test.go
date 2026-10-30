@@ -34,10 +34,10 @@ func TestParseConntrackEntryWithAccounting(t *testing.T) {
 	if !ok {
 		t.Fatal("parse failed")
 	}
-	if !entry.Original.Accounting || entry.Original.Packets != 12 || entry.Original.Bytes != 3456 {
+	if (entry.Original.Packets == nil || *entry.Original.Packets != 12) || (entry.Original.Bytes == nil || *entry.Original.Bytes != 3456) {
 		t.Fatalf("original counters = %+v", entry.Original)
 	}
-	if !entry.Reply.Accounting || entry.Reply.Packets != 34 || entry.Reply.Bytes != 98765 {
+	if (entry.Reply.Packets == nil || *entry.Reply.Packets != 34) || (entry.Reply.Bytes == nil || *entry.Reply.Bytes != 98765) {
 		t.Fatalf("reply counters = %+v", entry.Reply)
 	}
 	if entry.RawAttributes == nil || entry.RawAttributes["use"] != "1" {
@@ -49,11 +49,18 @@ func TestParseConntrackEntriesLimitAndMarkCount(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1
 `
-	entries := parseConntrackEntries(output, 1)
+	entries, err := parseConntrackEntries(output, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
-	byMark := conntrackEntriesByMark(parseConntrackEntries(output, 0))
+	all, err := parseConntrackEntries(output, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byMark := conntrackEntriesByMark(all)
 	if byMark["0"] != 1 || byMark["257"] != 1 {
 		t.Fatalf("byMark = %+v", byMark)
 	}
@@ -99,7 +106,10 @@ func TestParsePFStateEntriesLimit(t *testing.T) {
 		"   [123 + 64] wscale 7",
 		"all udp 10.0.0.2:53168 -> 1.1.1.1:53       MULTIPLE:SINGLE",
 	}, "\n")
-	entries := parsePFStateEntries(output, 1)
+	entries, err := parsePFStateEntries(output, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(entries))
 	}
@@ -125,7 +135,10 @@ func TestParseConntrackEntriesZeroLimitMeansAllForParser(t *testing.T) {
 	output := `ipv4 2 udp 17 20 src=192.0.2.1 dst=198.51.100.1 sport=12345 dport=53 src=198.51.100.1 dst=192.0.2.1 sport=53 dport=12345 mark=0 use=1
 ipv4 2 tcp 6 30 SYN_SENT src=192.0.2.2 dst=198.51.100.2 sport=23456 dport=443 src=198.51.100.2 dst=192.0.2.2 sport=443 dport=23456 mark=257 use=1
 `
-	entries := parseConntrackEntries(output, 0)
+	entries, err := parseConntrackEntries(output, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(entries))
 	}
@@ -149,9 +162,9 @@ func TestSelectConnectionEntriesPreservesObservedOrder(t *testing.T) {
 
 func TestSelectConnectionEntriesPrioritizesTrafficWithinGroup(t *testing.T) {
 	entries := []ConnectionEntry{
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50000", Bytes: 10}, Reply: ConntrackTuple{Bytes: 20}},
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50001", Bytes: 10}, Reply: ConntrackTuple{Bytes: 900}},
-		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50002", Bytes: 100}, Reply: ConntrackTuple{Bytes: 20}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50000", Bytes: counterFixture(10)}, Reply: ConntrackTuple{Bytes: counterFixture(20)}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50001", Bytes: counterFixture(10)}, Reply: ConntrackTuple{Bytes: counterFixture(900)}},
+		{Family: "ipv4", Protocol: "tcp", Original: ConntrackTuple{SourcePort: "50002", Bytes: counterFixture(100)}, Reply: ConntrackTuple{Bytes: counterFixture(20)}},
 	}
 	selected := selectConnectionEntries(entries, 2)
 	got := []string{selected[0].Original.SourcePort, selected[1].Original.SourcePort}

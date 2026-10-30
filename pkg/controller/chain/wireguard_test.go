@@ -209,7 +209,7 @@ spec:
       metadata: {name: wg-hybrid}
       spec:
         selfNodeRef: leaf-pve
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
 `)
@@ -226,7 +226,7 @@ spec:
 			case "ip link show wg-hybrid":
 				return nil, errors.New("missing")
 			case "wg show wg-hybrid dump":
-				return []byte("priv\tifacepub\t51820\toff\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\n"), nil
 			default:
 				return nil, nil
 			}
@@ -238,6 +238,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +294,7 @@ spec:
       metadata: {name: wg-cloudedge}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
 `)
@@ -301,7 +302,7 @@ spec:
 		{NodeRef: "rr-a", RouteReflector: true, SAMEndpoint: "10.10.0.2", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-a", Endpoint: "203.0.113.10:51820", AllowedIPs: []string{"10.99.0.2/32", "10.10.0.2/32"}}},
 		{NodeRef: "rr-b", RouteReflector: true, SAMEndpoint: "10.10.0.3", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "rrpub-b", Endpoint: "203.0.113.11:51820", AllowedIPs: []string{"10.99.0.3/32", "10.10.0.3/32"}}},
 	})
-	effective, err := resolveWireGuardSAMResources(router)
+	effective, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +335,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/fetched-topology
           - resource: SAMPeerGroup/cloudedge-direct
@@ -385,7 +386,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/fetched-topology
           - resource: SAMPeerGroup/cloudedge-direct
@@ -395,7 +396,7 @@ spec:
 		{NodeRef: "leaf-b", SAMEndpoint: "10.20.0.32", WireGuard: api.SAMNodeWireGuardSpec{PublicKey: "leafpub-b", Endpoint: "198.51.100.32:51820", AllowedIPs: []string{"10.20.0.32/32"}}},
 	})
 	addWireGuardDirectTransportProfile(router, "wg-direct", "SAMPeerGroup/cloudedge-direct")
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +432,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
           - resource: SAMPeerGroup/cloudedge-direct
@@ -458,7 +459,7 @@ spec:
 			case "ip link show wg-direct":
 				return nil, errors.New("missing")
 			case "wg show wg-direct dump":
-				return []byte("priv\tifacepub\t51820\toff\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\n"), nil
 			default:
 				return nil, nil
 			}
@@ -470,6 +471,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +500,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
           - resource: SAMPeerGroup/cloudedge-direct
@@ -553,7 +555,7 @@ spec:
 		t.Fatalf("fingerprint-mismatched direct peer was generated: %#v", resources)
 	}
 
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +576,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/fetched-topology
           - resource: SAMPeerGroup/cloudedge-direct
@@ -634,7 +636,7 @@ spec:
 		t.Fatalf("explicit RR-name peer was not retained by the normal merge: %#v", peer)
 	}
 
-	effective, err := resolveWireGuardSAMResources(router)
+	effective, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +657,7 @@ spec:
       metadata: {name: wg-direct}
       spec:
         selfNodeRef: leaf-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMRRSet/cloudedge-rrs
           - resource: SAMPeerGroup/cloudedge-direct
@@ -674,7 +676,7 @@ spec:
 	router.Spec.Resources = append(router.Spec.Resources, api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 		Metadata: api.ObjectMeta{Name: "cloudedge-direct"},
-		Spec:     map[string]any{"nodes": "not-a-node-list"},
+		Spec:     api.InterfaceSpec{},
 	})
 
 	controller := WireGuardController{Router: router}
@@ -733,7 +735,7 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         listenPort: 51820
         mtu: 1420
     - apiVersion: net.routerd.net/v1alpha1
@@ -750,7 +752,7 @@ spec:
 	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0", map[string]any{
 		"configHash": wireGuardConfigHash(wireguard.InterfaceConfig{
 			Name:       "wg0",
-			PrivateKey: "priv",
+			PrivateKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=",
 			ListenPort: 51820,
 			Peers: []wireguard.PeerConfig{{
 				Name:                "peer-a",
@@ -772,24 +774,25 @@ spec:
 			case call == "ip link show wg0":
 				return nil, errors.New("missing")
 			case call == "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\npeerpub\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
 			default:
 				return nil, nil
 			}
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	iface := store.ObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0")
-	if iface["phase"] != "Up" || iface["publicKey"] != "ifacepub" || iface["peerCount"] != 1 {
+	if iface["phase"] != "Up" || iface["publicKey"] != "L+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=" || iface["peerCount"] != 1 {
 		t.Fatalf("interface status = %+v", iface)
 	}
 	peer := store.ObjectStatus(api.NetAPIVersion, "WireGuardPeer", "peer-a")
 	if peer["phase"] != "Connected" || peer["latestEndpoint"] != "198.51.100.2:51820" {
 		t.Fatalf("peer status = %+v", peer)
 	}
-	for _, want := range []string{"ip link add dev wg0 type wireguard", "wg setconf wg0", "ip link set up dev wg0"} {
+	for _, want := range []string{"ip link add name wg0 alias routerd-wg:", "wg setconf wg0", "ip link set up dev wg0"} {
 		found := false
 		for _, call := range calls {
 			if strings.HasPrefix(call, want) {
@@ -815,7 +818,7 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         listenPort: 51820
         mtu: 1420
 `)
@@ -831,21 +834,20 @@ spec:
 			case "ip link show wg0":
 				return nil, errors.New("missing")
 			case "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\n"), nil
-			case "iptables -C INPUT -p udp --dport 51820 -j ACCEPT":
-				return []byte("iptables: Bad rule (does a matching rule exist in that chain?).\n"), errors.New("exit status 1")
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\n"), nil
 			default:
 				return nil, nil
 			}
 		},
 	}
+	native := withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	gotCommands := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"iptables -C INPUT -p udp --dport 51820 -j ACCEPT",
-		"iptables -I INPUT 1 -p udp --dport 51820 -j ACCEPT",
+		"iptables -C INPUT -p udp --dport 51820 -m comment --comment routerd-wg:" + native.links["wg0"].Token + " -j ACCEPT",
+		"iptables -I INPUT 1 -p udp --dport 51820 -m comment --comment routerd-wg:" + native.links["wg0"].Token + " -j ACCEPT",
 	} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
@@ -892,13 +894,15 @@ spec:
 			return nil, nil
 		},
 	}
+	native := withWireGuardNativeFixture(t, &controller)
+	native.own(t, "wg0", "wg0", 51820)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	gotCommands := strings.Join(calls, "\n")
 	for _, want := range []string{
 		"ip link delete dev wg0",
-		"iptables -D INPUT -p udp --dport 51820 -j ACCEPT",
+		"iptables -D INPUT -p udp --dport 51820 -m comment --comment routerd-wg:" + wgFixtureToken + " -j ACCEPT",
 	} {
 		if !strings.Contains(gotCommands, want) {
 			t.Fatalf("commands missing %q:\n%s", want, gotCommands)
@@ -922,7 +926,7 @@ spec:
       metadata: {name: wg-svnet1}
       spec:
         ifname: wg-transport0
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         listenPort: 51820
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
@@ -944,15 +948,16 @@ spec:
 				return nil, errors.New("missing")
 			}
 			if call == "wg show wg-transport0 dump" {
-				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t\t10.99.0.2/32\t0\t0\t0\t0\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\npeerpub\tpsk\t\t10.99.0.2/32\t0\t0\t0\t0\n"), nil
 			}
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ip link add dev wg-transport0 type wireguard", "wg setconf wg-transport0", "ip link set up dev wg-transport0"} {
+	for _, want := range []string{"ip link add name wg-transport0 alias routerd-wg:", "wg setconf wg-transport0", "ip link set up dev wg-transport0"} {
 		found := false
 		for _, call := range calls {
 			if strings.HasPrefix(call, want) {
@@ -1002,6 +1007,8 @@ spec:
 			return []byte("ok"), nil
 		},
 	}
+	native := withWireGuardNativeFixture(t, &controller)
+	native.own(t, "old", "wg-old")
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1038,6 +1045,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1057,7 +1065,7 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata: {name: pending-peer}
@@ -1073,6 +1081,7 @@ spec:
 			return nil, errors.New("not available in test")
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1113,7 +1122,7 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         listenPort: 51820
         mtu: 1420
     - apiVersion: net.routerd.net/v1alpha1
@@ -1130,7 +1139,7 @@ spec:
 	store.SaveObjectStatus(api.NetAPIVersion, "WireGuardInterface", "wg0", map[string]any{
 		"configHash": wireGuardConfigHash(wireguard.InterfaceConfig{
 			Name:       "wg0",
-			PrivateKey: "priv",
+			PrivateKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=",
 			ListenPort: 51820,
 			Peers: []wireguard.PeerConfig{{
 				Name:                "peer-a",
@@ -1150,7 +1159,7 @@ spec:
 			calls = append(calls, call)
 			switch call {
 			case "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\npeerpub\tpsk\t" + observedEndpoint + "\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\npeerpub\t(none)\t" + observedEndpoint + "\t10.99.0.2/32\t1710000000\t100\t200\t25\n"), nil
 			case "ip -o link show dev wg0":
 				return []byte("7: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n"), nil
 			default:
@@ -1158,6 +1167,8 @@ spec:
 			}
 		},
 	}
+	native := withWireGuardNativeFixture(t, &controller)
+	native.own(t, "wg0", "wg0", 51820)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1189,7 +1200,7 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
     - apiVersion: net.routerd.net/v1alpha1
       kind: WireGuardPeer
       metadata: {name: peer-a}
@@ -1232,6 +1243,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1262,7 +1274,7 @@ spec:
       metadata: {name: wg0}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1293,7 +1305,7 @@ spec:
 			case "ip link show wg0":
 				return nil, errors.New("missing")
 			case "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\npeerpub-b\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t0\t0\t0\t25\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\npeerpub-b\tpsk\t198.51.100.2:51820\t10.99.0.2/32\t0\t0\t0\t25\n"), nil
 			default:
 				return nil, nil
 			}
@@ -1305,6 +1317,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1344,7 +1357,7 @@ spec:
       metadata: {name: wg-hybrid}
       spec:
         selfNodeRef: aws-rr-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         listenPort: 51820
         peersFrom:
           - resource: SAMEnrollmentPolicy/cloudedge-leaves
@@ -1399,7 +1412,7 @@ spec:
 			case "ip link show wg-hybrid":
 				return nil, errors.New("missing")
 			case "wg show wg-hybrid dump":
-				return []byte("priv\tifacepub\t51820\toff\nleafpub-pve\tpsk\t198.51.100.21:51820\t10.255.0.21/32\t0\t0\t0\t25\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\nleafpub-pve\tpsk\t198.51.100.21:51820\t10.255.0.21/32\t0\t0\t0\t25\n"), nil
 			default:
 				return nil, nil
 			}
@@ -1411,6 +1424,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1452,7 +1466,7 @@ func TestPVEWireGuardPeersFromSubmittedEnrollmentClaimState(t *testing.T) {
 		t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
 	}
 	assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 1)
-	resolved, err := resolveWireGuardSAMResources(effective)
+	resolved, err := resolveWireGuardSAMResources(effective, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("resolveWireGuardSAMResources: %v", err)
 	}
@@ -1493,7 +1507,7 @@ func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
 				t.Fatalf("BuildDynamicRouteSAMEffectiveRouter: %v", err)
 			}
 			assertResourceCount(t, effective.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 2)
-			resolved, err := resolveWireGuardSAMResources(effective)
+			resolved, err := resolveWireGuardSAMResources(effective, time.Now().UTC())
 			if err != nil {
 				t.Fatalf("resolveWireGuardSAMResources: %v", err)
 			}
@@ -1593,7 +1607,7 @@ spec:
       metadata: {name: wg0}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1654,7 +1668,7 @@ spec:
       metadata: {name: wg0}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1704,7 +1718,7 @@ spec:
       metadata: {name: wg0}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1736,7 +1750,7 @@ spec:
 			case "ip link show wg0":
 				return nil, errors.New("missing")
 			case "wg show wg0 dump":
-				return []byte("priv\tifacepub\t51820\toff\noverride\tpsk\t203.0.113.2:51820\t10.99.0.200/32\t0\t0\t0\t0\n"), nil
+				return []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=\tL+V9o0fNYkMVKNqsX7spBzD/9oSvxM/C7ZCZX1jLO3Q=\t51820\toff\noverride\tpsk\t203.0.113.2:51820\t10.99.0.200/32\t0\t0\t0\t0\n"), nil
 			default:
 				return nil, nil
 			}
@@ -1748,6 +1762,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1771,7 +1786,7 @@ spec:
       metadata: {name: wg0}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/missing
 `)
@@ -1784,6 +1799,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1812,6 +1828,7 @@ spec:
 `)
 	store := mapStore{}
 	controller := WireGuardController{Router: router, Store: store}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1855,6 +1872,7 @@ spec:
 			return nil, nil
 		},
 	}
+	withWireGuardNativeFixture(t, &controller)
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1884,7 +1902,7 @@ spec:
       metadata: {name: wg-sam}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1904,7 +1922,7 @@ spec:
               endpoint: 198.51.100.2:51820
               allowedIPs: [10.99.70.2/32]
 `)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1959,7 +1977,7 @@ spec:
       metadata: {name: wg-sam}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -1979,7 +1997,7 @@ spec:
         interface: wg-sam
         address: 10.99.70.99/32
 `)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2024,7 +2042,7 @@ spec:
       metadata: {name: wg-sam}
       spec:
         selfNodeRef: router-a
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
         peersFrom:
           - resource: SAMNodeSet/fabric
     - apiVersion: mobility.routerd.net/v1alpha1
@@ -2044,12 +2062,12 @@ spec:
               endpoint: 198.51.100.2:51820
               allowedIPs: [10.99.70.2/32]
 `)
-	first, err := resolveWireGuardSAMResources(router)
+	first, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := wireGuardResourceSnapshot(t, first)
-	second, err := resolveWireGuardSAMResources(first)
+	second, err := resolveWireGuardSAMResources(first, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2081,7 +2099,7 @@ spec:
 }
 
 func TestResolveWireGuardSAMResourcesNilRouter(t *testing.T) {
-	resolved, err := resolveWireGuardSAMResources(nil)
+	resolved, err := resolveWireGuardSAMResources(nil, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2101,10 +2119,10 @@ spec:
       kind: WireGuardInterface
       metadata: {name: wg0}
       spec:
-        privateKey: priv
+        privateKey: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEA=
 `)
 	before := wireGuardResourceSnapshot(t, router)
-	resolved, err := resolveWireGuardSAMResources(router)
+	resolved, err := resolveWireGuardSAMResources(router, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}

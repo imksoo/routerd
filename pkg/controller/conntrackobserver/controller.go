@@ -39,50 +39,21 @@ type Controller struct {
 	Router                 *api.Router
 	Store                  Store
 	Paths                  conntrack.Paths
-	Interval               time.Duration
 	ThresholdRatio         float64
 	Logger                 *slog.Logger
-	Snapshot               func() (conntrack.Snapshot, error)
+	Snapshot               func(context.Context) (conntrack.Snapshot, error)
 	SnapshotSource         string
-	Connections            func(limit int) (*observe.ConnectionTable, error)
+	Connections            func(context.Context, int) (*observe.ConnectionTable, error)
 	ApplicationLayerStatus func(context.Context, string) api.TrafficFlowApplicationLayerStatus
 	lastCount              int
 	aboveThreshold         bool
 	seen                   bool
 	lastFlowBytes          map[string]flowByteTotals
-}
-
-func (c *Controller) Start(ctx context.Context) {
-	if c.Bus == nil || c.Store == nil {
-		return
-	}
-	interval := c.Interval
-	if interval == 0 {
-		interval = 30 * time.Second
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		c.reconcileLogged(ctx)
-		for {
-			select {
-			case <-ticker.C:
-				c.reconcileLogged(ctx)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
-
-func (c *Controller) reconcileLogged(ctx context.Context) {
-	if err := c.Reconcile(ctx); err != nil && c.Logger != nil {
-		c.Logger.Warn("conntrack observer failed", "error", err)
-	}
+	lastFlowProtocols      map[string]int64
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
-	snapshot, err := c.readSnapshot()
+	snapshot, err := c.readSnapshot(ctx)
 	if err != nil {
 		if conntrack.IsUnavailable(err) {
 			return c.recordUnavailable(err)
@@ -133,9 +104,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	return nil
 }
 
-func (c *Controller) readSnapshot() (conntrack.Snapshot, error) {
+func (c *Controller) readSnapshot(ctx context.Context) (conntrack.Snapshot, error) {
 	if c.Snapshot != nil {
-		return c.Snapshot()
+		return c.Snapshot(ctx)
 	}
 	return conntrack.ReadSnapshot(c.Paths)
 }
@@ -170,11 +141,13 @@ func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	if connections == nil {
 		connections = observe.Connections
 	}
-	table, err := connections(10000)
+	// SyncActive retires every absent flow, so only a complete native snapshot
+	// can authorize it. Display limits must never become deletion authority.
+	table, err := connections(ctx, -1)
 	if err != nil {
 		return err
 	}
-	log, err := logstore.OpenTrafficFlowLog(path)
+	log, err := logstore.OpenTrafficFlowLog(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -440,7 +413,6 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 		PeerPort:             peerPort,
 		Protocol:             strings.ToLower(entry.Protocol),
 		NATTranslatedAddress: natAddress,
-		Accounting:           entry.Original.Accounting || entry.Reply.Accounting,
 		BytesOut:             entry.Original.Bytes,
 		BytesIn:              entry.Reply.Bytes,
 		PacketsOut:           entry.Original.Packets,
@@ -458,10 +430,6 @@ func trafficFlowFromConnection(entry observe.ConnectionEntry, now time.Time) log
 }
 
 func (c *Controller) recordTrafficMetrics(ctx context.Context, entries []observe.ConnectionEntry) {
-	if len(entries) == 0 {
-		c.lastFlowBytes = nil
-		return
-	}
 	meter := otel.Meter("routerd.conntrackobserver")
 	flowGauge, _ := meter.Int64Gauge("routerd.connection.flow.protocol")
 	bytesCounter, _ := meter.Int64Counter("routerd.connection.bytes")
@@ -478,18 +446,41 @@ func (c *Controller) recordTrafficMetrics(ctx context.Context, entries []observe
 		}
 		protocol := trafficMetricProtocol(flow)
 		counts[protocol]++
-		current := flowByteTotals{Out: flow.BytesOut, In: flow.BytesIn}
+		// Keep the metric baseline owned by this actor, independently of a
+		// caller which may reuse or replace a native observation buffer.
+		current := flowByteTotals{}
+		if flow.BytesOut != nil {
+			observed := *flow.BytesOut
+			current.Out = &observed
+		}
+		if flow.BytesIn != nil {
+			observed := *flow.BytesIn
+			current.In = &observed
+		}
 		previous := c.lastFlowBytes[flow.FlowKey]
-		outDelta := positiveDelta(current.Out, previous.Out)
-		inDelta := positiveDelta(current.In, previous.In)
+		var outDelta, inDelta int64
+		if current.Out != nil {
+			var baseline int64
+			if previous.Out != nil {
+				baseline = *previous.Out
+			}
+			outDelta = positiveDelta(*current.Out, baseline)
+		}
+		if current.In != nil {
+			var baseline int64
+			if previous.In != nil {
+				baseline = *previous.In
+			}
+			inDelta = positiveDelta(*current.In, baseline)
+		}
 		attrs := []attribute.KeyValue{
 			attribute.String("network.protocol.name", protocol),
 			attribute.String("network.transport", flow.Protocol),
 		}
-		if outDelta > 0 {
+		if current.Out != nil {
 			bytesCounter.Add(ctx, outDelta, metric.WithAttributes(append(attrs, attribute.String("network.direction", "out"))...))
 		}
-		if inDelta > 0 {
+		if current.In != nil {
 			bytesCounter.Add(ctx, inDelta, metric.WithAttributes(append(attrs, attribute.String("network.direction", "in"))...))
 		}
 		totalDelta := outDelta + inDelta
@@ -500,17 +491,29 @@ func (c *Controller) recordTrafficMetrics(ctx context.Context, entries []observe
 				attribute.String("routerd.client.address", flow.ClientAddress),
 			))
 		}
+		if current.Out == nil {
+			current.Out = previous.Out
+		}
+		if current.In == nil {
+			current.In = previous.In
+		}
 		next[flow.FlowKey] = current
+	}
+	for protocol := range c.lastFlowProtocols {
+		if _, present := counts[protocol]; !present {
+			flowGauge.Record(ctx, 0, metric.WithAttributes(attribute.String("network.protocol.name", protocol)))
+		}
 	}
 	for protocol, count := range counts {
 		flowGauge.Record(ctx, count, metric.WithAttributes(attribute.String("network.protocol.name", protocol)))
 	}
 	c.lastFlowBytes = next
+	c.lastFlowProtocols = counts
 }
 
 type flowByteTotals struct {
-	Out int64
-	In  int64
+	Out *int64
+	In  *int64
 }
 
 func positiveDelta(current, previous int64) int64 {

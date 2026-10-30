@@ -74,3 +74,14 @@ func TestVerifyFreshWithinWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyRejectsOverflowingTimestampDistance(t *testing.T) {
+	secret := []byte("shared-key")
+	body := []byte("payload")
+	now := time.Unix(1748600000, 0)
+	for _, ts := range []int64{-9223372036854775808 + now.Unix(), -9223372036854775808, 9223372036854775807} {
+		if err := Verify(secret, ts, body, Sign(secret, ts, body), now, 5*time.Minute); !errors.Is(err, ErrStaleTimestamp) {
+			t.Fatalf("timestamp %d returned %v", ts, err)
+		}
+	}
+}

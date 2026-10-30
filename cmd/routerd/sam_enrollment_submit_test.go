@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestSubmitSAMEnrollmentClaimPersistsValidatedDynamicClaim(t *testing.T) {
 	}
 	defer store.Close()
 
-	result, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	result, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
 	if err != nil {
 		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
 	}
@@ -97,7 +98,7 @@ func TestSubmitSAMEnrollmentClaimRejectsPolicyViolation(t *testing.T) {
 	}
 	defer store.Close()
 
-	_, err = submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	_, err = submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
 	if err == nil || !strings.Contains(err.Error(), "outside SAMEnrollmentPolicy/pve-fou-leaves spec.tunnelAddressPrefixes") {
 		t.Fatalf("submitSAMEnrollmentClaim error = %v, want tunnel policy rejection", err)
 	}
@@ -127,7 +128,7 @@ func TestSubmitSAMEnrollmentClaimRejectsMissingJoinSecret(t *testing.T) {
 	}
 	defer store.Close()
 
-	_, err = submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	_, err = submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
 	if err == nil || !strings.Contains(err.Error(), "missing-join-token") {
 		t.Fatalf("submitSAMEnrollmentClaim error = %v, want missing join secret rejection", err)
 	}
@@ -162,7 +163,7 @@ func TestSubmitSAMEnrollmentClaimRejectsExpiresAtBeyondPolicyTTL(t *testing.T) {
 	}
 	defer store.Close()
 
-	_, err = submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	_, err = submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
 	if err == nil || !strings.Contains(err.Error(), "exceeds SAMEnrollmentPolicy/pve-wg-leaves ttl window") {
 		t.Fatalf("submitSAMEnrollmentClaim error = %v, want policy ttl rejection", err)
 	}
@@ -196,13 +197,13 @@ func TestGetSAMEnrollmentTopologyForAcceptedClaimReturnsRRSet(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityAbsentMessage) {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityAbsentMessage) {
 		t.Fatalf("pre-submit getSAMEnrollmentTopologyForAcceptedClaim error = %v, want accepted claim required", err)
 	}
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
 	}
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), now)
 	if err != nil {
 		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
@@ -290,13 +291,13 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	}
 	defer store.Close()
 	for _, claim := range []api.Resource{requester, peer, emptyPeer, nonDirect} {
-		if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+		if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 			t.Fatalf("submit %s: %v", claim.Metadata.Name, err)
 		}
 	}
 
 	oldRequest := submitTestTopologyRequest(t, requester)
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, oldRequest, now)
 	if err != nil {
 		t.Fatalf("getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
@@ -343,28 +344,24 @@ func TestGetSAMEnrollmentTopologyForAcceptedDirectClaimReturnsPolicyScopedPeerGr
 	// A claim rotation retains the same resource name. An identity-aware
 	// client must be told that its old identity is not accepted, so it can
 	// submit the deliberate rotation rather than treating a same-name claim as
-	// authority for direct topology. A legacy client remains RR-only.
+	// authority for topology. Both identity digests are required.
 	rotated := requesterSpec
 	rotated.JoinNonce = "pve-leaf-a-rotated-0001"
 	rotated.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), rotated)
 	requester.Spec = rotated
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: requester}, now); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: requester}, now); err != nil {
 		t.Fatalf("submit rotated requester: %v", err)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, oldRequest, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, oldRequest, now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
 		t.Fatalf("stale identity topology error = %v, want active identity mismatch", err)
 	}
-	legacyRequest := oldRequest
-	legacyRequest.ClaimDigest = ""
-	legacyRequest.ClaimIdentityDigest = ""
-	legacyResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, legacyRequest, now)
-	if err != nil {
-		t.Fatalf("get legacy claim topology: %v", err)
+	missingIdentityRequest := oldRequest
+	missingIdentityRequest.ClaimDigest = ""
+	missingIdentityRequest.ClaimIdentityDigest = ""
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, missingIdentityRequest, now); err == nil || !strings.Contains(err.Error(), "claimDigest and claimIdentityDigest are required") {
+		t.Fatalf("missing identity topology error=%v", err)
 	}
-	if legacyResult.RRSet.Kind != "SAMRRSet" || legacyResult.PeerGroup != nil || legacyResult.ClaimDigest != samenrollment.ClaimDigest(rotated) {
-		t.Fatalf("legacy claim topology = %#v, want attested RR fallback only", legacyResult)
-	}
-	currentResult, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, requester), now)
+	currentResult, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, requester), now)
 	if err != nil {
 		t.Fatalf("get rotated claim topology: %v", err)
 	}
@@ -395,7 +392,7 @@ func TestSubmitSAMEnrollmentClaimRejectsDirectMeshWithoutPolicyPeerGroup(t *test
 	}
 	defer store.Close()
 
-	_, err = submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
+	_, err = submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now)
 	if err == nil || !strings.Contains(err.Error(), "directMesh.peerGroupRef") {
 		t.Fatalf("submitSAMEnrollmentClaim error = %v, want direct mesh policy rejection", err)
 	}
@@ -423,7 +420,7 @@ func TestGetSAMEnrollmentTopologyPolicyDirectMeshDisableKeepsRRFallback(t *testi
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	defer store.Close()
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submit direct claim: %v", err)
 	}
 
@@ -431,7 +428,7 @@ func TestGetSAMEnrollmentTopologyPolicyDirectMeshDisableKeepsRRFallback(t *testi
 	// direct claims. New direct submissions remain rejected at submit time,
 	// while existing claims receive their RR topology without a peer group.
 	setSubmitTestDirectMeshPeerGroup(t, router, "pve-wg-leaves", "")
-	result, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now)
+	result, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), now)
 	if err != nil {
 		t.Fatalf("get topology after direct disable: %v", err)
 	}
@@ -462,21 +459,21 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submitSAMEnrollmentClaim: %v", err)
 	}
 	revokeAt := now.Add(time.Minute)
-	result, err := revokeSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "rotate"}, revokeAt)
+	result, err := revokeSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "rotate"}, revokeAt)
 	if err != nil {
 		t.Fatalf("revokeSAMEnrollmentClaim: %v", err)
 	}
 	if !result.Revoked || result.ClaimRef != "SAMEnrollmentClaim/pve-leaf-a" || !result.ExpiresAt.Equal(revokeAt) {
 		t.Fatalf("revoke result = %#v", result)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), revokeAt); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
 		t.Fatalf("post-revoke getSAMEnrollmentTopologyForAcceptedClaim error = %v, want explicit revocation", err)
 	}
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(time.Second)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
 		t.Fatalf("replay revoked submit error = %v, want new identity required", err)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
@@ -495,13 +492,13 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	rotatedSpec.JoinTimestamp = revokeAt.Add(2 * time.Minute).Format(time.RFC3339)
 	rotatedSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), rotatedSpec)
 	rotated.Spec = rotatedSpec
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, revokeAt.Add(2*time.Minute)); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, revokeAt.Add(2*time.Minute)); err != nil {
 		t.Fatalf("rotated submitSAMEnrollmentClaim: %v", err)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, rotated), revokeAt.Add(2*time.Minute)); err != nil {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, rotated), revokeAt.Add(2*time.Minute)); err != nil {
 		t.Fatalf("rotated getSAMEnrollmentTopologyForAcceptedClaim: %v", err)
 	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
 		t.Fatalf("revoked identity against rotated active claim error = %v, want explicit revocation", err)
 	}
 	fresh := rotated
@@ -513,7 +510,7 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 	freshSpec.JoinTimestamp = revokeAt.Add(3 * time.Minute).Format(time.RFC3339)
 	freshSpec.JoinHMAC = samenrollment.JoinHMAC([]byte("test-join-token"), freshSpec)
 	fresh.Spec = freshSpec
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, fresh), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, fresh), revokeAt.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a "+controlapi.SAMEnrollmentTopologyIdentityMismatchMessage) {
 		t.Fatalf("fresh replacement identity error = %v, want active identity mismatch before submit", err)
 	}
 	// The new active row replaced the revoked row, but the old client identity
@@ -527,21 +524,22 @@ func TestRevokeSAMEnrollmentClaimExpiresAcceptedClaim(t *testing.T) {
 		t.Fatalf("reopen state before replay check: %v", err)
 	}
 	defer store.Close()
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
 		t.Fatalf("old claim after rotation error = %v, want durable replay rejection", err)
 	}
 	renamed := claim
 	renamed.Metadata.Name = "pve-leaf-a-replay"
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, revokeAt.Add(3*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
 		t.Fatalf("renamed old claim after rotation error = %v, want global identity replay rejection", err)
 	}
-	identityRevoked, err := store.HasSAMEnrollmentRevokedIdentity(samenrollment.ClientIdentityDigest(claimSpec))
+	snapshot, err := store.ReadSAMEnrollmentSnapshot(t.Context())
 	if err != nil {
-		t.Fatalf("HasSAMEnrollmentRevokedIdentity: %v", err)
+		t.Fatal(err)
 	}
-	if !identityRevoked {
+	if !slices.Contains(snapshot.RevokedIdentities, samenrollment.ClientIdentityDigest(claimSpec)) {
 		t.Fatal("missing durable revoked identity after state reopen")
 	}
+
 }
 
 func TestRevokeSAMEnrollmentClaimRejectsNonceLessReplay(t *testing.T) {
@@ -563,13 +561,13 @@ func TestRevokeSAMEnrollmentClaimRejectsNonceLessReplay(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now); err != nil {
 		t.Fatalf("submit nonce-less claim: %v", err)
 	}
-	if _, err := revokeSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "retire"}, now.Add(time.Minute)); err != nil {
+	if _, err := revokeSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimRevokeRequest{Name: "pve-leaf-a", Reason: "retire"}, now.Add(time.Minute)); err != nil {
 		t.Fatalf("revoke nonce-less claim: %v", err)
 	}
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: claim}, now.Add(2*time.Minute)); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
 		t.Fatalf("nonce-less replay error = %v, want revoked identity rejection", err)
 	}
 	records, err := store.GetDynamicConfigPartsBySource("SAMEnrollmentClaim/pve-leaf-a")
@@ -587,12 +585,12 @@ func TestRevokeSAMEnrollmentClaimRejectsNonceLessReplay(t *testing.T) {
 	rotatedSpec.JoinNonce = "pve-leaf-a-reenroll-0001"
 	rotatedSpec.JoinTimestamp = now.Add(3 * time.Minute).Format(time.RFC3339)
 	rotated.Spec = rotatedSpec
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, now.Add(3*time.Minute)); err != nil {
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: rotated}, now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("nonce-added re-enrollment: %v", err)
 	}
 }
 
-func TestSAMEnrollmentLegacyRevocationTombstoneBackfillsIdentity(t *testing.T) {
+func TestSAMEnrollmentRevokedRowWithoutLedgerIsInvalidAndReadOnly(t *testing.T) {
 	now := time.Date(2026, 8, 22, 21, 30, 0, 0, time.UTC)
 	router := loadSubmitTestRouter(t)
 	secretFile := filepath.Join(t.TempDir(), "join-token")
@@ -633,20 +631,19 @@ func TestSAMEnrollmentLegacyRevocationTombstoneBackfillsIdentity(t *testing.T) {
 		t.Fatalf("UpsertDynamicConfigPart legacy tombstone: %v", err)
 	}
 	identity := samenrollment.ClientIdentityDigest(claimSpec)
-	if found, err := store.HasSAMEnrollmentRevokedIdentity(identity); err != nil || found {
-		t.Fatalf("pre-upgrade identity ledger found=%t err=%v, want absent", found, err)
-	}
-	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "accepted SAMEnrollmentClaim/pve-leaf-a is revoked") {
-		t.Fatalf("legacy topology error = %v, want explicit revocation", err)
-	}
-	if found, err := store.HasSAMEnrollmentRevokedIdentity(identity); err != nil || !found {
-		t.Fatalf("legacy identity ledger found=%t err=%v, want durable backfill", found, err)
+	if _, err := getSAMEnrollmentTopologyForAcceptedClaim(t.Context(), router, store, submitTestTopologyRequest(t, claim), now); err == nil || !strings.Contains(err.Error(), "revocation has no identity tombstone") {
+		t.Fatalf("incomplete revocation topology error=%v", err)
 	}
 	renamed := claim
 	renamed.Metadata.Name = "pve-leaf-a-replay"
-	if _, err := submitSAMEnrollmentClaim(router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, now); err == nil || !strings.Contains(err.Error(), "was revoked; use a new client identity") {
-		t.Fatalf("renamed legacy replay error = %v, want global identity rejection", err)
+	if _, err := submitSAMEnrollmentClaim(t.Context(), router, store, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: renamed}, now); err == nil || !strings.Contains(err.Error(), "revocation has no identity tombstone") {
+		t.Fatalf("incomplete revocation replay error=%v", err)
 	}
+	snapshot, err := store.ReadSAMEnrollmentSnapshot(t.Context())
+	if err != nil || slices.Contains(snapshot.RevokedIdentities, identity) || len(snapshot.Parts) != 1 || snapshot.Parts[0].Digest != "sha256:legacy-tombstone" {
+		t.Fatalf("GET/submit repaired invalid state: %+v %v", snapshot, err)
+	}
+
 }
 
 func TestActiveSubmittedSAMEnrollmentClaimRequiresSourceClaimName(t *testing.T) {

@@ -5,6 +5,7 @@ package controlapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,8 +15,9 @@ import (
 )
 
 const (
-	Prefix              = "/api/control.routerd.net/v1alpha1"
-	maxRequestBodyBytes = 1 << 20
+	Prefix = "/api/control.routerd.net/v1alpha1"
+	// MaxRequestBodyBytes is the encoded JSON request limit shared with clients.
+	MaxRequestBodyBytes = 1 << 20
 	maxConnectionRows   = 5000
 )
 
@@ -203,8 +205,14 @@ func (h Handler) handleDHCPLeaseEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DHCPLeaseEventRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -481,8 +489,14 @@ func (h Handler) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req ApplyRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -512,8 +526,14 @@ func (h Handler) handlePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req PlanRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -543,8 +563,14 @@ func (h Handler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DeleteRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -574,8 +600,14 @@ func (h Handler) handleValidate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req ValidateRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -605,8 +637,14 @@ func (h Handler) handleSubmitSAMEnrollmentClaim(w http.ResponseWriter, r *http.R
 	}
 	defer r.Body.Close()
 	var req SAMEnrollmentClaimSubmitRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -645,8 +683,14 @@ func (h Handler) handleRevokeSAMEnrollmentClaim(w http.ResponseWriter, r *http.R
 	var req SAMEnrollmentClaimRevokeRequest
 	if r.Body != nil && r.ContentLength != 0 {
 		defer r.Body.Close()
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 			return
 		}
 	}
@@ -686,6 +730,10 @@ func (h Handler) handleGetSAMEnrollmentTopology(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "SAM enrollment topology name is required")
 		return
 	}
+	if strings.TrimSpace(r.URL.Query().Get("claimDigest")) == "" || strings.TrimSpace(r.URL.Query().Get("claimIdentityDigest")) == "" {
+		writeError(w, http.StatusBadRequest, "claimDigest and claimIdentityDigest are required")
+		return
+	}
 	result, err := h.GetSAMEnrollmentTopology(r, SAMEnrollmentTopologyGetRequest{
 		Name:                name,
 		ClaimRef:            r.URL.Query().Get("claim"),
@@ -710,8 +758,14 @@ func (h Handler) handleSetLogLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req LogLevelRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {
@@ -741,8 +795,14 @@ func (h Handler) handleDHCPv6Event(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var req DHCPv6EventRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request must contain exactly one JSON object")
 		return
 	}
 	if req.APIVersion != "" && req.APIVersion != APIVersion {

@@ -3,12 +3,57 @@
 package render
 
 import (
-	"regexp"
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 )
+
+func TestFreeBSDRCDPreservesArgumentsWithoutExecutingTheirContents(t *testing.T) {
+	for _, serviceType := range []string{"simple", "oneshot"} {
+		t.Run(serviceType, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "must-not-execute")
+			literal := "$ROUTERD_RENDER_LITERAL $(touch " + shellSingleQuote(marker) + ")"
+			args := []string{"/bin/echo", "", literal, "single'quote", `double"quote`, `back\slash`, "first\nsecond"}
+			data, err := FreeBSDRCDScript("quote", api.SystemdUnitSpec{Type: serviceType, ExecStart: args, Environment: []string{"LITERAL=" + literal}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := strings.ReplaceAll(string(data), ". /etc/rc.subr\n", "")
+			body = strings.ReplaceAll(body, "load_rc_config $name\n", "")
+			body = strings.ReplaceAll(body, "run_rc_command \"$1\"\n", "")
+			variable := "command_args"
+			want := append([]string{"LITERAL=" + literal}, args...)
+			if serviceType == "simple" {
+				variable = "daemon_args"
+				want = append([]string{"-P", "/var/run/quote/quote.daemon.pid", "-p", "/var/run/quote/quote.pid", "-t", "quote", "-r", "-f", "--", "env"}, want...)
+			}
+			body += "\neval \"set -- ${" + variable + "}\"\nprintf '%s\\000' \"$@\"\n"
+			command := exec.Command("sh")
+			command.Stdin = strings.NewReader(body)
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("source generated rc.d command: %v: %s", err, output)
+			}
+			parts := bytes.Split(bytes.TrimSuffix(output, []byte{0}), []byte{0})
+			got := make([]string, len(parts))
+			for i, part := range parts {
+				got[i] = string(part)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("native shell changed generated argv:\ngot  %#v\nwant %#v", got, want)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("argument contents executed while sourcing rc.d: %v", err)
+			}
+		})
+	}
+}
 
 func TestFreeBSDRCDScript(t *testing.T) {
 	data, err := FreeBSDRCDScript("routerd-dns-resolver.service", api.SystemdUnitSpec{
@@ -29,17 +74,9 @@ func TestFreeBSDRCDScript(t *testing.T) {
 		`daemon_command="/usr/sbin/daemon"`,
 		`daemon_pidfile="/var/run/${name}/${name}.daemon.pid"`,
 		`child_pidfile="/var/run/${name}/${name}.pid"`,
-		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
+		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -t ${name} -r -f -- '/usr/local/sbin/routerd-dns-resolver' '--config' '/usr/local/etc/routerd/dns-resolver.yaml'"`,
 		`routerd_dns_resolver_start() {`,
 		`eval "${daemon_command} ${daemon_args}"`,
-		`routerd_dns_resolver_pgrep_child() {`,
-		`ps -axo pid,command | awk -v exe='/usr/local/sbin/routerd-dns-resolver' -v pat='/usr/local/sbin/routerd-dns-resolver .*--config .*/usr/local/etc/routerd/dns-resolver\.yaml' '$0 ~ exe && $0 ~ pat { print $1; exit }'`,
-		`routerd_dns_resolver_parent_daemon_pid() {`,
-		`routerd_dns_resolver_managed_child_pid() {`,
-		`ps -o ppid= -p "${_child_pid}"`,
-		`daemon:*|*/daemon*)`,
-		`routerd_dns_resolver_read_pidfile "${daemon_pidfile}" || routerd_dns_resolver_parent_daemon_pid`,
-		`routerd_dns_resolver_read_pidfile "${child_pidfile}" || routerd_dns_resolver_pgrep_child`,
 		`routerd_dns_resolver_stop() {`,
 		`kill -KILL "${_child_pid}"`,
 		`rm -f "${daemon_pidfile}" "${child_pidfile}"`,
@@ -92,20 +129,6 @@ func TestFreeBSDRenderRoutesDHCPv6ClientThroughRouterd(t *testing.T) {
 	}
 	if strings.Contains(script, "controller"+"-chain") {
 		t.Fatalf("routerd rc.d script must not expose legacy controller flags:\n%s", script)
-	}
-}
-
-func TestFreeBSDRCDPgrepPatternIncludesResourceName(t *testing.T) {
-	got := freeBSDRCDPgrepPattern([]string{
-		"/usr/local/sbin/routerd-healthcheck",
-		"daemon",
-		"--resource",
-		"internet-via-dslite-c",
-		"--target",
-		"9.9.9.9",
-	})
-	if !strings.Contains(got, regexp.QuoteMeta("internet-via-dslite-c")) {
-		t.Fatalf("pgrep pattern should include resource name, got %q", got)
 	}
 }
 
@@ -270,7 +293,7 @@ func TestFreeBSDEventdRCDScript(t *testing.T) {
 		`# PROVIDE: routerd_eventd_cloudedge`,
 		`# REQUIRE: NETWORKING`,
 		`daemon_command="/usr/sbin/daemon"`,
-		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -r -f -- '/usr/local/sbin/routerd-eventd' 'daemon' '--config-file' '/var/db/routerd/eventd/cloudedge/config.json'"`,
+		`daemon_args="-P ${daemon_pidfile} -p ${child_pidfile} -t ${name} -r -f -- '/usr/local/sbin/routerd-eventd' 'daemon' '--config-file' '/var/db/routerd/eventd/cloudedge/config.json'"`,
 		`mkdir -p "/var/run/${name}"`,
 		`mkdir -p '/var/run/routerd/eventd'`,
 		`mkdir -p '/var/db/routerd/eventd'`,

@@ -45,7 +45,7 @@ type Nftables struct {
 func (b Nftables) Name() string { return "nftables" }
 
 func (b Nftables) Render(router *api.Router, path string, _ []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	data, err := render.NftablesFirewall(router, holes)
 	if err != nil {
 		return Ruleset{}, err
@@ -71,6 +71,9 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 		return false, err
 	}
 	if changed {
+		if err := nftstate.Invalidate(ruleset.Path); err != nil {
+			return false, err
+		}
 		if err := writeRuleset(ruleset.Path, ruleset.Data); err != nil {
 			return false, err
 		}
@@ -81,33 +84,17 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
 		return false, nil
 	}
-	if !changed && b.rulesetTablesPresent(ctx, ruleset) {
-		_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
-		return false, nil
-	}
 	if err := b.Reload(ctx, ruleset); err != nil {
 		return false, err
 	}
-	_ = nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
-	return changed, nil
-}
-
-func (b Nftables) rulesetTablesPresent(ctx context.Context, ruleset Ruleset) bool {
-	tables := nftRulesetTables(ruleset.Data)
-	if len(tables) == 0 {
-		return false
-	}
-	nft := stringutil.FirstNonEmpty(b.Command, "nft")
-	for _, table := range tables {
-		if _, err := b.run(ctx, nft, "list", "table", table.family, table.name); err != nil {
-			return false
-		}
-	}
-	return true
+	return changed, nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 }
 
 func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {
 	if err := validateRuleset(ruleset); err != nil {
+		return err
+	}
+	if err := nftstate.Invalidate(ruleset.Path); err != nil {
 		return err
 	}
 	nft := stringutil.FirstNonEmpty(b.Command, "nft")
@@ -135,8 +122,8 @@ type PF struct {
 func (b PF) Name() string { return "pf" }
 
 func (b PF) Render(router *api.Router, path string, intents []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
-	holes := render.InternalFirewallHoles(router)
-	data, err := render.PFWithLocalCaptureIntents(router, holes, intents)
+	holes := render.InternalFirewallHoles(router, platform.OSFreeBSD)
+	data, err := render.PFRuntimeFirewall(router, holes, intents)
 	if err != nil {
 		return Ruleset{}, err
 	}
@@ -213,7 +200,10 @@ func ForPlatform(osName platform.OS, command string) Backend {
 func fileChanged(path string, data []byte) (bool, error) {
 	previous, err := os.ReadFile(path)
 	if err != nil {
-		return true, nil
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
 	}
 	return !bytes.Equal(previous, data), nil
 }
@@ -223,30 +213,6 @@ func writeRuleset(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
-}
-
-type nftTableRef struct {
-	family string
-	name   string
-}
-
-func nftRulesetTables(data []byte) []nftTableRef {
-	seen := map[string]bool{}
-	var tables []nftTableRef
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[0] != "table" {
-			continue
-		}
-		table := nftTableRef{family: fields[1], name: fields[2]}
-		key := table.family + "/" + table.name
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		tables = append(tables, table)
-	}
-	return tables
 }
 
 func validateRuleset(ruleset Ruleset) error {

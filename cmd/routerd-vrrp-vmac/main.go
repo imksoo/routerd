@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/ipv6"
 	"golang.org/x/sys/unix"
@@ -110,7 +112,9 @@ func productionRunHooks() runHooks {
 }
 
 func runCommand(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
 func inspectVMACRuntimeState(entry vmac) (vmacRuntimeState, error) {
@@ -120,6 +124,9 @@ func inspectVMACRuntimeState(entry vmac) (vmacRuntimeState, error) {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(message, "no such network interface") {
 			return vmacRuntimeState{}, nil
 		}
+		return vmacRuntimeState{}, err
+	}
+	if err := inspectVMACNativeOwnership(entry); err != nil {
 		return vmacRuntimeState{}, err
 	}
 	state := vmacRuntimeState{
@@ -282,7 +289,7 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 		if ready[index] {
 			commands = steadyStateCommands(entry)
 		}
-		if err := runVMACCommands(opts.action, commands, hooks.command); err != nil {
+		if err := runVMACCommands(opts.action, entry, commands, hooks); err != nil {
 			return err
 		}
 	}
@@ -291,11 +298,15 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			if vmac.withdraw {
 				continue
 			}
+			observedAt := time.Now()
 			output, err := hooks.command("ip", "-6", "route", "show", "default", "dev", vmac.ifname)
 			if err != nil {
 				return fmt.Errorf("read IPv6 default route for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(output)))
 			}
-			addressOutput, _ := hooks.command("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
+			addressOutput, err := hooks.command("ip", "-6", "-o", "addr", "show", "dev", vmac.ifname, "scope", "global")
+			if err != nil {
+				return fmt.Errorf("read IPv6 source address for %s: %w: %s", vmac.ifname, err, strings.TrimSpace(string(addressOutput)))
+			}
 			source := preferredVMACGlobalAddress(string(addressOutput))
 			// A healthy MASTER already has both an eligible SLAAC address and an
 			// RA default route. Re-soliciting on every reconcile needlessly resets
@@ -312,7 +323,11 @@ func runWithHooks(args []string, hooks runHooks) (runErr error) {
 			// the shared VMAC over the standby-specific physical MAC. Promote the
 			// VMAC route after RA is learned; repeated MASTER reconciliation makes
 			// this converge even when RA arrives after the link is raised.
-			if command, ok := preferVMACDefaultCommand(string(output), vmac.ifname, source); ok {
+			command, ok, err := preferVMACDefaultCommand(string(output), vmac.ifname, source, time.Since(observedAt))
+			if err != nil {
+				return err
+			}
+			if ok {
 				if output, err := hooks.command(command[0], command[1:]...); err != nil {
 					return fmt.Errorf("%s: %w: %s", strings.Join(command, " "), err, strings.TrimSpace(string(output)))
 				}
@@ -431,13 +446,23 @@ func notifyRouterdVRRPTransition(command commandRunner) error {
 	return nil
 }
 
-func runVMACCommands(action string, commands [][]string, command commandRunner) error {
+func runVMACCommands(action string, entry vmac, commands [][]string, hooks runHooks) error {
 	for _, args := range commands {
-		output, err := command(args[0], args[1:]...)
+		output, err := hooks.command(args[0], args[1:]...)
 		if err == nil {
 			continue
 		}
 		if len(args) > 2 && args[0] == "ip" && args[1] == "link" && args[2] == "add" && strings.Contains(string(output), "File exists") {
+			if hooks.inspectVMAC == nil {
+				return errors.New("existing VMAC ownership inspection is unavailable")
+			}
+			state, err := hooks.inspectVMAC(entry)
+			if err != nil {
+				return fmt.Errorf("verify existing VMAC %s after create collision: %w", entry.ifname, err)
+			}
+			if !state.exists {
+				return fmt.Errorf("VMAC %s disappeared after create collision", entry.ifname)
+			}
 			continue
 		}
 		if action == "deactivate" && isIPRouteMissingDevice(args, output) {
@@ -540,7 +565,7 @@ func readElectionRole(resource string) (string, error) {
 	}
 	role := strings.TrimSpace(string(data))
 	if role != "master" && role != "backup" {
-		return "", nil
+		return "", fmt.Errorf("invalid persisted VRRP election role %q", role)
 	}
 	return role, nil
 }
@@ -670,37 +695,62 @@ func requestRouterAdvertisement(ifname string) error {
 	return err
 }
 
-func preferVMACDefaultCommand(routes, ifname, source string) ([]string, bool) {
+func preferVMACDefaultCommand(routes, ifname, source string, elapsed time.Duration) ([]string, bool, error) {
 	if strings.TrimSpace(source) == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 5 || fields[0] != "default" {
 			continue
 		}
-		var gateway, device, metric, routeSource string
-		for i := 0; i+1 < len(fields); i++ {
-			switch fields[i] {
+		var gateway, device, metric, routeSource, protocol, expires, preference string
+		for index := 0; index+1 < len(fields); index++ {
+			switch fields[index] {
 			case "via":
-				gateway = fields[i+1]
+				gateway = fields[index+1]
 			case "dev":
-				device = fields[i+1]
+				device = fields[index+1]
 			case "metric":
-				metric = fields[i+1]
+				metric = fields[index+1]
 			case "src":
-				routeSource = fields[i+1]
+				routeSource = fields[index+1]
+			case "proto":
+				protocol = fields[index+1]
+			case "expires":
+				expires = fields[index+1]
+			case "pref":
+				preference = fields[index+1]
 			}
 		}
-		if gateway != "" && device == ifname {
-			if metric == "50" && routeSource == source {
-				return nil, false
-			}
-			command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "metric", "50", "src", source}
-			return command, true
+		if device != ifname || gateway == "" || protocol != "ra" {
+			continue
 		}
+		if metric == "50" && routeSource == source {
+			return nil, false, nil
+		}
+		seconds, err := strconv.ParseUint(strings.TrimSuffix(expires, "sec"), 10, 32)
+		if err != nil {
+			return nil, false, fmt.Errorf("RA default on %s has no interpretable expiry %q", ifname, expires)
+		}
+		remaining := time.Duration(seconds)*time.Second - max(elapsed, 0)
+		if remaining < time.Second {
+			continue
+		}
+		gatewayAddress, err := netip.ParseAddr(gateway)
+		if err != nil || !gatewayAddress.Is6() {
+			return nil, false, fmt.Errorf("RA default on %s has invalid gateway %q", ifname, gateway)
+		}
+		if preference != "" && preference != "low" && preference != "medium" && preference != "high" {
+			return nil, false, fmt.Errorf("RA default on %s has unknown preference %q", ifname, preference)
+		}
+		command := []string{"ip", "-6", "route", "replace", "default", "via", gateway, "dev", ifname, "proto", "ra", "metric", "50", "src", source, "expires", strconv.FormatInt(int64(remaining/time.Second), 10)}
+		if preference != "" {
+			command = append(command, "pref", preference)
+		}
+		return command, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 func hasVMACDefaultRoute(routes, ifname string) bool {
@@ -954,15 +1004,9 @@ func commandsFor(opts options) [][]string {
 			commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".accept_ra=2"})
 		}
 		commands = append(commands, []string{"sysctl", "-w", "net.ipv6.conf." + entry.ifname + ".keep_addr_on_down=1"})
-		if entry.withdraw {
-			// Remove only kernel-learned SLAAC/temporary addresses.  Delegated
-			// addresses installed by routerd are permanent and deliberately stay
-			// staged across the role transition.
-			commands = append(commands,
-				[]string{"ip", "-6", "addr", "flush", "dev", entry.ifname, "scope", "global", "dynamic"},
-				[]string{"ip", "-6", "addr", "flush", "dev", entry.parent, "scope", "global", "dynamic"},
-			)
-		}
+		// Global addresses belong to their configured address owners. A finite
+		// PD or administrator address is also marked dynamic by Linux; that flag
+		// cannot authorize blanket withdrawal during a role transition.
 		commands = append(commands, []string{"ip", "link", "set", "dev", entry.ifname, "up"})
 		if entry.linkLocal != "" {
 			// Reconciliation may run while delegated global addresses are already

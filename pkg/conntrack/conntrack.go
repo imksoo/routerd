@@ -111,7 +111,14 @@ func readInt(path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(strings.TrimSpace(string(data)))
+	value, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, err
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("negative conntrack observation in %s", path)
+	}
+	return value, nil
 }
 
 func RecordMetrics(ctx context.Context, snapshot Snapshot, createdDelta int64) {

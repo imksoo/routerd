@@ -71,7 +71,7 @@ func TestEventIsExpired(t *testing.T) {
 		{name: "zero never expires", expires: time.Time{}, now: base, want: false},
 		{name: "future not expired", expires: base.Add(time.Hour), now: base, want: false},
 		{name: "past expired", expires: base.Add(-time.Hour), now: base, want: true},
-		{name: "exactly now not expired", expires: base, now: base, want: false},
+		{name: "exactly now expired", expires: base, now: base, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

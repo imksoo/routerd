@@ -24,6 +24,7 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonStatus(t *testing.T
 			"consecutivePassed": 12,
 		},
 	}
+	store[api.NetAPIVersion+"/HealthCheck/internet"]["routing"] = healthProbeStatusForTest(t, router, store, "internet", "Healthy", checkedAt, 0)["routing"]
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonStatus(t *testing.T
 	}
 }
 
-func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonEvidenceAfterOldWhenFalse(t *testing.T) {
+func TestSaveWhenFalseStatusesDoesNotPromoteHealthCheckDaemonHistory(t *testing.T) {
 	resource := whenFalseHealthCheck("internet")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
 	checkedAt := time.Now().UTC().Add(-10 * time.Second)
@@ -60,14 +61,11 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonEvidenceAfterOldWhe
 	}
 
 	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if got := status["phase"]; got != healthcheck.PhaseHealthy {
-		t.Fatalf("phase = %v, want %s", got, healthcheck.PhaseHealthy)
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("history promoted to current status: %#v", status)
 	}
-	if got := status["lastResult"]; got != "passed" {
-		t.Fatalf("lastResult = %v, want passed", got)
-	}
-	if got := status["reason"]; got == "WhenFalse" {
-		t.Fatalf("reason = %v, want observed daemon status promoted", got)
+	if status["lastResult"] != nil || status["observed"] == nil {
+		t.Fatalf("history was lost or published as current: %#v", status)
 	}
 }
 
@@ -239,12 +237,15 @@ func TestSaveWhenFalseStatusesRetainsIPv4StaticAddressCleanupMetadata(t *testing
 	}}}
 	store := mapStore{
 		api.NetAPIVersion + "/VirtualAddress/lan-gw-v4":        {"role": "backup"},
-		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32"},
+		api.NetAPIVersion + "/IPv4StaticAddress/master-source": {"phase": "Pending", "reason": "WhenFalse", "interface": "wan", "address": "192.0.2.249/32", "ifname": "ens18", "nativeReceipt": staticAddressReceipt{IfName: "ens18", IfIndex: 10, Scope: "fixture-kernel", Address: "192.0.2.249/32"}},
 	}
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "master-source")
+	if receipt, err := staticReceipt(status); err != nil || receipt == nil {
+		t.Fatalf("lost native receipt: %#v %v", receipt, err)
+	}
 	if got := status["ifname"]; got != "ens18" {
 		t.Fatalf("ifname = %v, want ens18; status=%#v", got, status)
 	}
@@ -444,6 +445,7 @@ func whenFalseHealthCheck(name string) api.Resource {
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec: api.HealthCheckSpec{
+			Target:   "192.0.2.1",
 			Interval: "30s",
 			Timeout:  "3s",
 			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{

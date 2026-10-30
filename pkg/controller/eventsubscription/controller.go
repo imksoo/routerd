@@ -20,7 +20,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -53,7 +55,7 @@ type DataStore interface {
 	SubscriptionRunStatus(subscription, eventID string) (status string, attempts int, found bool, err error)
 	UpsertSubscriptionRunStart(subscription, eventID, eventGroup, plugin string) error
 	MarkSubscriptionRunResult(subscription, eventID, status, dynamicSource string, dynamicGeneration int64, errMsg string) error
-	UpsertDynamicConfigPart(part routerstate.DynamicConfigPartRecord) error
+	CommitSubscriptionResult(ctx context.Context, subscription string, eventIDs []string, part routerstate.DynamicConfigPartRecord) error
 	GetDynamicConfigPartsBySource(source string) ([]routerstate.DynamicConfigPartRecord, error)
 	RecordPluginRun(run routerstate.PluginRunRecord) (int64, error)
 	CompletePluginRun(id int64, completedAt time.Time, exitCode *int, status, stdoutDigest, stderrText, runError string) error
@@ -97,6 +99,108 @@ type Controller struct {
 	mu         sync.Mutex
 	schedules  map[string]*subscriptionSchedule
 	processing map[string]bool
+	ownerCtx   context.Context
+	cancel     context.CancelFunc
+	done       chan struct{}
+	stopOnce   sync.Once
+	stopOwner  func() bool
+	stopped    bool
+	active     sync.WaitGroup
+}
+
+// Start owns the scheduled/plugin operation lifetime for this configuration.
+// Stop acknowledges all admitted work before its generation is replaced.
+func (c *Controller) Start(ctx context.Context) <-chan struct{} {
+	c.mu.Lock()
+	if c.stopped {
+		if c.done == nil {
+			c.done = make(chan struct{})
+			close(c.done)
+		}
+		done := c.done
+		c.mu.Unlock()
+		return done
+	}
+	if c.done != nil {
+		done := c.done
+		c.mu.Unlock()
+		return done
+	}
+	c.ownerCtx, c.cancel = context.WithCancel(ctx)
+	c.done = make(chan struct{})
+	c.stopOwner = context.AfterFunc(c.ownerCtx, c.Stop)
+	done := c.done
+	c.mu.Unlock()
+	return done
+}
+
+func (c *Controller) Stop() {
+	c.stopOnce.Do(func() {
+		c.mu.Lock()
+		c.stopped = true
+		if c.cancel != nil {
+			c.cancel()
+		}
+		if c.stopOwner != nil {
+			c.stopOwner()
+		}
+		for key, schedule := range c.schedules {
+			if schedule.timer != nil {
+				schedule.timer.Stop()
+			}
+			if schedule.stop != nil {
+				schedule.stop()
+			}
+			delete(c.schedules, key)
+		}
+		done := c.done
+		c.mu.Unlock()
+		c.active.Wait()
+		if done != nil {
+			close(done)
+		}
+	})
+}
+
+func (c *Controller) beginProcess(ctx context.Context) (context.Context, func(), error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return nil, nil, context.Canceled
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if c.ownerCtx == nil {
+		// Direct one-shot consumers may use Reconcile without Start. Stop
+		// still owns their admitted operations, without an idle goroutine.
+		c.ownerCtx, c.cancel = context.WithCancel(context.Background())
+	}
+	if err := c.ownerCtx.Err(); err != nil {
+		return nil, nil, err
+	}
+	opCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(c.ownerCtx, cancel)
+	c.active.Add(1)
+	return opCtx, func() { stop(); cancel(); c.active.Done() }, nil
+}
+
+// context.AfterFunc propagates owner cancellation asynchronously. Read the
+// owner's state directly at effect/result boundaries so a completed plugin
+// cannot publish while that cancellation callback is still waiting to run.
+func (c *Controller) operationError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return context.Canceled
+	}
+	if c.ownerCtx != nil {
+		return c.ownerCtx.Err()
+	}
+	return nil
 }
 
 // HandleEvent reconciles in response to a bus event (bridge for FuncController).
@@ -148,22 +252,34 @@ func (c *Controller) newTimer(d time.Duration, fn func()) triggerTimer {
 // that one misconfigured subscription does not stall the rest; per-subscription
 // problems are recorded in object status and event_subscription_runs.
 func (c *Controller) Reconcile(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
+	scheduleCtx := ctx
+	ctx, finish, err := c.beginProcess(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	var reconcileErrors []error
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "EventSubscription" {
 			continue
 		}
-		if err := c.reconcileSubscription(ctx, resource); err != nil {
-			// Record and continue; do not fail the whole reconcile.
-			c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), 0)
+		if err := c.reconcileSubscription(ctx, scheduleCtx, resource); err != nil {
+			reconcileErrors = append(reconcileErrors, err)
+			if ctx.Err() == nil {
+				c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), 0)
+			}
 		}
 	}
-	return nil
+	return errors.Join(errors.Join(reconcileErrors...), c.operationError(ctx))
 }
 
-func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Resource) error {
+func (c *Controller) reconcileSubscription(ctx, scheduleCtx context.Context, resource api.Resource) error {
 	subName := resource.Metadata.Name
 	// subKey is the qualified subscription key used for run rows and the
 	// DynamicConfigPart source so they match the dynamic-source annotation.
@@ -203,13 +319,24 @@ func (c *Controller) reconcileSubscription(ctx context.Context, resource api.Res
 		c.saveStatus(subName, "Idle", "", 0)
 		return nil
 	}
-	if c.deferBatch(ctx, resource, spec, batch, now) {
+	// A trigger window outlives this active reconciliation. Keep the caller's
+	// lifetime rather than the operation context that finish cancels on return.
+	if c.deferBatch(scheduleCtx, resource, spec, batch, now) {
 		return nil
 	}
 	return c.processBatch(ctx, resource, spec, pluginSpec, batch, now)
 }
 
 func (c *Controller) processBatch(ctx context.Context, resource api.Resource, spec api.EventSubscriptionSpec, pluginSpec api.PluginSpec, batch []routerstate.EventRecord, now time.Time) error {
+	ctx, finish, err := c.beginProcess(ctx)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	batch, err = c.currentBatch(spec, batch, c.now())
+	if err != nil {
+		return err
+	}
 	subName := resource.Metadata.Name
 	subKey := "EventSubscription/" + subName
 	pluginName := strings.TrimSpace(spec.Trigger.PluginRef)
@@ -228,20 +355,20 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 		c.saveStatus(subName, "Idle", "", 0)
 		return nil
 	}
-	// Record start (pending/attempts++) for each event in the batch.
+	if c.DryRun {
+		// A standby observation is not an attempted plugin invocation and must
+		// not consume its live retry budget.
+		c.saveStatus(subName, "Pending", fmt.Sprintf("DryRun: %d event(s) matched", len(batch)), len(batch))
+		return nil
+	}
 	for _, ev := range batch {
 		if err := c.Store.UpsertSubscriptionRunStart(subKey, ev.ID, ev.Group, pluginName); err != nil {
 			return fmt.Errorf("record run start for %q/%s: %w", subName, ev.ID, err)
 		}
 	}
 
-	if c.DryRun {
-		// Dry-run: do not invoke the plugin and do not write a part. The pending
-		// rows above record that the batch was observed.
-		c.saveStatus(subName, "Pending", fmt.Sprintf("DryRun: %d event(s) matched", len(batch)), len(batch))
-		return nil
-	}
-
+	// plugin_runs is display history. Durable retry ownership is recorded by
+	// UpsertSubscriptionRunStart and CommitSubscriptionResult independently.
 	runID, _ := c.Store.RecordPluginRun(routerstate.PluginRunRecord{
 		Plugin:       pluginName,
 		TriggerType:  triggerType,
@@ -270,10 +397,10 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 	// redacted. No allowlist -> empty context (default-deny, no config passed).
 	pluginContext, err := routerplugin.BuildPluginContext(pluginSpec.Context.Resources, c.Router.Spec.Resources)
 	if err != nil {
-		c.failBatch(batch, subKey, err.Error())
+		failureErr := c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, routerplugin.RunOutcome{}, "failed", err.Error())
 		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
-		return nil
+		return errors.Join(err, failureErr)
 	}
 
 	runOpts := routerplugin.RunOptions{
@@ -282,46 +409,64 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 		Events:  matched,
 		Context: pluginContext,
 	}
+	if err := c.operationError(ctx); err != nil {
+		failureErr := c.failBatch(batch, subKey, err.Error())
+		c.completeRun(runID, routerplugin.RunOutcome{}, "failed", err.Error())
+		return errors.Join(err, failureErr)
+	}
 
 	result, outcome, runErr := c.runner()(ctx, pluginSpec, pluginName, runOpts)
+	if err := c.operationError(ctx); err != nil {
+		failureErr := c.failBatch(batch, subKey, err.Error())
+		c.completeRun(runID, outcome, "failed", err.Error())
+		return errors.Join(err, runErr, failureErr)
+	}
 	if runErr != nil {
-		c.failBatch(batch, subKey, runErr.Error())
+		failureErr := c.failBatch(batch, subKey, runErr.Error())
 		c.completeRun(runID, outcome, "failed", runErr.Error())
 		c.saveStatus(subName, "Degraded", runErr.Error(), len(batch))
-		return nil
+		return errors.Join(runErr, failureErr)
 	}
+	current, err := c.currentBatch(spec, batch, c.now())
+	if err != nil || !sameBatchFacts(batch, current) {
+		if err == nil {
+			err = fmt.Errorf("matched federation events expired or changed while the plugin ran")
+		}
+		failureErr := c.failBatch(batch, subKey, err.Error())
+		c.completeRun(runID, outcome, "failed", err.Error())
+		return errors.Join(err, failureErr)
+	}
+	now = c.now()
 
 	source := subscriptionSource(subName, batch)
 	part, err := routerplugin.DynamicConfigPartFromResult(source, 1, result, now)
 	if err != nil {
-		c.failBatch(batch, subKey, err.Error())
+		failureErr := c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, outcome, "failed", err.Error())
 		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
-		return nil
+		return errors.Join(err, failureErr)
 	}
 
 	annotateDynamicPart(&part, subName, batch)
 
 	record, err := codec.Encode(part)
 	if err != nil {
-		c.failBatch(batch, subKey, err.Error())
+		failureErr := c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, outcome, "failed", err.Error())
 		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
-		return nil
+		return errors.Join(err, failureErr)
 	}
 	previous, previousErr := c.Store.GetDynamicConfigPartsBySource(source)
-	if err := c.Store.UpsertDynamicConfigPart(record); err != nil {
-		c.failBatch(batch, subKey, err.Error())
+	if err := c.operationError(ctx); err != nil {
+		return err
+	}
+	if err := c.Store.CommitSubscriptionResult(ctx, subKey, batchEventIDs(batch), record); err != nil {
+		failureErr := c.failBatch(batch, subKey, err.Error())
 		c.completeRun(runID, outcome, "failed", err.Error())
 		c.saveStatus(subName, "Degraded", err.Error(), len(batch))
-		return nil
+		return errors.Join(err, failureErr)
 	}
 
-	for _, ev := range batch {
-		if err := c.Store.MarkSubscriptionRunResult(subKey, ev.ID, "succeeded", source, part.Spec.Generation, ""); err != nil {
-			return fmt.Errorf("mark succeeded for %q/%s: %w", subName, ev.ID, err)
-		}
-	}
 	c.completeRun(runID, outcome, "succeeded", "")
 	c.saveStatus(subName, "Applied", "", len(batch))
 
@@ -351,6 +496,42 @@ func (c *Controller) processBatch(ctx context.Context, resource api.Resource, sp
 	return nil
 }
 
+func (c *Controller) currentBatch(spec api.EventSubscriptionSpec, batch []routerstate.EventRecord, now time.Time) ([]routerstate.EventRecord, error) {
+	events, err := c.Store.ListFederationEvents(spec.GroupRef, false, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("reobserve matched federation events: %w", err)
+	}
+	wanted := make(map[string]bool, len(batch))
+	for _, event := range batch {
+		wanted[event.ID] = true
+	}
+	current := make([]routerstate.EventRecord, 0, len(batch))
+	for _, event := range events {
+		if !wanted[event.ID] || event.Group != spec.GroupRef || !matchEvent(spec.Match, event) || (!event.ExpiresAt.IsZero() && !now.Before(event.ExpiresAt)) {
+			continue
+		}
+		current = append(current, event)
+	}
+	return current, nil
+}
+
+func sameBatchFacts(before, after []routerstate.EventRecord) bool {
+	if len(before) != len(after) {
+		return false
+	}
+	byID := make(map[string]routerstate.EventRecord, len(after))
+	for _, event := range after {
+		byID[event.ID] = event
+	}
+	for _, event := range before {
+		current, found := byID[event.ID]
+		if !found || event.Group != current.Group || event.SourceNode != current.SourceNode || event.Type != current.Type || event.Subject != current.Subject || event.DedupeKey != current.DedupeKey || !maps.Equal(event.Payload, current.Payload) {
+			return false
+		}
+	}
+	return true
+}
+
 // dynamicConfigPartChanged ignores observed/updated timestamp renewal so a
 // successful plugin lease refresh does not fan out unnecessary reconciles.
 // A content or effective-lifetime change is a new desired configuration and
@@ -378,6 +559,10 @@ func (c *Controller) deferBatch(ctx context.Context, resource api.Resource, spec
 	subName := resource.Metadata.Name
 	subKey := "EventSubscription/" + subName
 	c.mu.Lock()
+	if c.stopped || ctx.Err() != nil {
+		c.mu.Unlock()
+		return false
+	}
 	if c.schedules == nil {
 		c.schedules = map[string]*subscriptionSchedule{}
 	}
@@ -487,17 +672,22 @@ func (c *Controller) fireScheduled(subKey string) {
 	resource := sched.resource
 	spec := sched.spec
 	c.mu.Unlock()
+	operationCtx, finish, err := c.beginProcess(sched.ctx)
+	if err != nil {
+		c.finishProcessing(subKey)
+		return
+	}
+	defer finish()
+	defer c.finishProcessing(subKey)
 
 	pluginSpec, found := c.findPlugin(strings.TrimSpace(spec.Trigger.PluginRef))
 	if !found {
 		c.saveStatus(resource.Metadata.Name, "Pending", fmt.Sprintf("Plugin %q not found", spec.Trigger.PluginRef), len(batch))
-		c.finishProcessing(subKey)
 		return
 	}
-	if err := c.processBatch(sched.ctx, resource, spec, pluginSpec, batch, c.now()); err != nil {
+	if err := c.processBatch(operationCtx, resource, spec, pluginSpec, batch, c.now()); err != nil && operationCtx.Err() == nil {
 		c.saveStatus(resource.Metadata.Name, "Degraded", err.Error(), len(batch))
 	}
-	c.finishProcessing(subKey)
 }
 
 func (c *Controller) finishProcessing(subKey string) {
@@ -558,10 +748,14 @@ func (c *Controller) eligible(subscription, eventID string) (bool, error) {
 	}
 }
 
-func (c *Controller) failBatch(batch []routerstate.EventRecord, subName, msg string) {
+func (c *Controller) failBatch(batch []routerstate.EventRecord, subName, msg string) error {
+	var errs []error
 	for _, ev := range batch {
-		_ = c.Store.MarkSubscriptionRunResult(subName, ev.ID, "failed", "", 0, msg)
+		if err := c.Store.MarkSubscriptionRunResult(subName, ev.ID, "failed", "", 0, msg); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
 }
 
 func (c *Controller) completeRun(runID int64, outcome routerplugin.RunOutcome, status, runError string) {

@@ -21,8 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
@@ -35,6 +33,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"gopkg.in/yaml.v3"
 )
 
 func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
@@ -70,6 +69,8 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 }
 
 type applyOptions struct {
+	// The selected live owner admits once and consumes the canonical commit before effects.
+	applyRuntime         func(context.Context, func() error) (controllerchain.RuntimeReloadOutcome, error)
 	ConfigPath           string
 	StatusFile           string
 	NetplanPath          string
@@ -92,17 +93,8 @@ type applyOptions struct {
 	ConfigYAMLOverride   string
 	Sandbox              bool
 	MutationGate         *sync.RWMutex
+	nativeOwner          *nativeOperationOwner
 	attemptHooks         *applyAttemptHooks
-}
-
-func effectiveApplyPolicy(router *api.Router) api.ApplyPolicySpec {
-	policy := router.Spec.Apply
-	if policy.Mode == "" {
-		policy.Mode = "strict"
-	}
-	policy.ProtectedInterfaces = compactStringList(policy.ProtectedInterfaces)
-	policy.ProtectedZones = compactStringList(policy.ProtectedZones)
-	return policy
 }
 
 func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
@@ -110,7 +102,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		return nil, nil, errors.New("router is nil")
 	}
 	if !api.ValidIPv6PDClient(opts.OverrideClient) {
-		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation client override %q", opts.OverrideClient)
+		return nil, nil, fmt.Errorf("unsupported DHCPv6PrefixDelegation client override %q; use routerd-dhcpv6-client", opts.OverrideClient)
 	}
 	if !api.ValidIPv6PDProfile(opts.OverrideProfile) {
 		return nil, nil, fmt.Errorf("invalid DHCPv6PrefixDelegation profile override %q", opts.OverrideProfile)
@@ -138,7 +130,7 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 			spec.Client = api.EffectiveIPv6PDClient(osName, profile, spec.Client)
 		}
 		if !api.ValidIPv6PDClient(spec.Client) {
-			return nil, nil, fmt.Errorf("%s spec.client is invalid: %q", res.ID(), spec.Client)
+			return nil, nil, fmt.Errorf("%s spec.client %q is unsupported; use routerd-dhcpv6-client or omit client", res.ID(), spec.Client)
 		}
 		if !api.ValidIPv6PDProfile(spec.Profile) {
 			return nil, nil, fmt.Errorf("%s spec.profile is invalid: %q", res.ID(), spec.Profile)
@@ -153,43 +145,6 @@ func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName
 		return nil, nil, err
 	}
 	return &out, warnings, nil
-}
-
-// routerWithDryRunLeaseFiles prevents a dry-run from creating the normal
-// dnsmasq lease directory. A dry-run renders and validates dnsmasq, but its
-// generated lease path must remain inside the temporary artifact directory.
-func routerWithDryRunLeaseFiles(router *api.Router, artifactDir string) (*api.Router, error) {
-	if router == nil {
-		return nil, errors.New("router is nil")
-	}
-	artifactDir = strings.TrimSpace(artifactDir)
-	if artifactDir == "" {
-		return nil, errors.New("dry-run artifact directory is empty")
-	}
-
-	out := *router
-	out.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
-	leaseFile := filepath.Join(artifactDir, "dnsmasq.leases")
-	for i := range out.Spec.Resources {
-		resource := out.Spec.Resources[i]
-		switch resource.Kind {
-		case "DHCPv4Server":
-			spec, err := resource.DHCPv4ServerSpec()
-			if err != nil {
-				return nil, err
-			}
-			spec.LeaseFile = leaseFile
-			out.Spec.Resources[i].Spec = spec
-		case "DHCPv6Server":
-			spec, err := resource.DHCPv6ServerSpec()
-			if err != nil {
-				return nil, err
-			}
-			spec.LeaseFile = leaseFile
-			out.Spec.Resources[i].Spec = spec
-		}
-	}
-	return &out, nil
 }
 
 func routerConfigYAML(router *api.Router, opts applyOptions) (string, error) {
@@ -247,19 +202,6 @@ func beginConfigGeneration(store *routerstate.SQLiteStore, configYAML string, ef
 	return generation, changed, nil
 }
 
-func commitConfigAfterSuccessfulApply(opts applyOptions, configYAML string, logger *eventlog.Logger) error {
-	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
-		return nil
-	}
-	if err := config.AtomicWriteFile(opts.ConfigPath, []byte(configYAML)); err != nil {
-		return fmt.Errorf("commit canonical config %s: %w", opts.ConfigPath, err)
-	}
-	if logger != nil {
-		logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config", map[string]string{"config": opts.ConfigPath})
-	}
-	return nil
-}
-
 func configCommitPhase(phase string) bool {
 	switch strings.TrimSpace(phase) {
 	case "Healthy", "Applied", "Committed":
@@ -298,12 +240,16 @@ func recordKnownNGCombinationEvents(router *api.Router, store routerstate.Store,
 	}
 }
 
-func recordHostInventoryState(store routerstate.Store) error {
+func recordHostInventoryState(ctx context.Context, store routerstate.Store) error {
 	objectStore, ok := store.(routerstate.ObjectStatusStore)
 	if !ok {
 		return nil
 	}
-	status := inventoryStatusMap(inventory.Collect())
+	observed, err := inventory.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	status := inventoryStatusMap(observed)
 	previous := objectStore.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
 	if err := objectStore.SaveObjectStatus(api.RouterAPIVersion, "Inventory", "host", status); err != nil {
 		return err
@@ -374,28 +320,15 @@ func cleanupUnsupportedLegacyObjectStatusesForOS(router *api.Router, store stale
 	return staleObjectStatusCleanupResult{Removed: removed, SnapshotPath: snapshotPath}, nil
 }
 
-func staleObjectStatuses(router *api.Router, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return staleObjectStatusesForDesired(configuredResourceStatusKeys(router), statuses)
-}
-
-func staleObjectStatusesForDesired(desired map[string]bool, statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	return lifecycle.PlanStatusGC(desired, statuses).StatusDeletes
-}
-
-func syntheticObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.SyntheticObjectStatus(status)
-}
-
-func desiredObjectStatusKeys(router *api.Router, store resourcequery.StateStore, now time.Time) (map[string]bool, error) {
-	return desiredObjectStatusKeysForOS(router, store, now, platform.CurrentOS())
-}
-
 func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateStore, now time.Time, targetOS platform.OS) (map[string]bool, error) {
 	out := map[string]bool{}
 	if router == nil {
 		return out, nil
 	}
-	effective := resourcequery.FilterRouterByWhen(router, store)
+	effective, err := resourcequery.FilterRouterByWhen(router, store)
+	if err != nil {
+		return nil, err
+	}
 	routers, err := controllerchain.BuildDynamicRouteSAMObjectStatusRouters(effective, store, now.UTC(), targetOS)
 	if err != nil {
 		return nil, err
@@ -407,7 +340,11 @@ func desiredObjectStatusKeysForOS(router *api.Router, store resourcequery.StateS
 	}
 	for _, resource := range router.Spec.Resources {
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, store) {
+		matches, err := resourcequery.ResourceWhenMatches(when, store)
+		if err != nil {
+			return nil, err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		if strings.TrimSpace(resource.Kind) == "" || strings.TrimSpace(resource.Metadata.Name) == "" {
@@ -443,23 +380,6 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 		}
 		out[apiVersion+"/"+resource.Kind+"/"+resource.Metadata.Name] = true
 	}
-	return out
-}
-
-func configResourceObjectStatus(status routerstate.ObjectStatus) bool {
-	return lifecycle.ConfigResourceObjectStatus(status)
-}
-
-func unsupportedLegacyObjectStatuses(statuses []routerstate.ObjectStatus) []routerstate.ObjectStatus {
-	var out []routerstate.ObjectStatus
-	for _, status := range statuses {
-		if api.IsRemovedLegacyKind(status.Kind) {
-			out = append(out, status)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return objectStatusID(out[i]) < objectStatusID(out[j])
-	})
 	return out
 }
 
@@ -589,6 +509,14 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 }
 
 func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (outcome applyAttemptOutcome, err error) {
+	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil && opts.applyRuntime == nil {
+		owner, acquireErr := acquireNativeOperationOwner(ctx)
+		if acquireErr != nil {
+			return outcome, acquireErr
+		}
+		opts.nativeOwner = owner
+		defer func() { err = errors.Join(err, owner.finish(true)) }()
+	}
 	outcome = applyAttemptOutcome{Stage: "prepare", Canonical: canonicalNotRequested}
 	defer outcome.wrapError(&err, logger)
 	_, err = runApplyChainOnceAttempt(ctx, router, opts, stdout, logger, &outcome)
@@ -596,7 +524,6 @@ func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts 
 }
 
 func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger, outcome *applyAttemptOutcome) (_ *apply.Result, err error) {
-	candidate := router
 	var optionWarnings []string
 	var configYAML string
 	if !opts.DryRun {
@@ -617,43 +544,37 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	optionWarnings = append(optionWarnings, managementWarnings...)
-	if opts.DryRun && !opts.Sandbox {
-		dryRunDir, err := os.MkdirTemp("", "routerd-apply-dryrun-artifacts-*")
+	if opts.DryRun {
+		outcome.Stage = "plan"
+		result, err := planApply(ctx, router, opts)
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = os.RemoveAll(dryRunDir) }()
-		opts.DnsmasqConfigPath = filepath.Join(dryRunDir, "dnsmasq.conf")
-		opts.NftablesPath = filepath.Join(dryRunDir, "nat44.nft")
-		router, err = routerWithDryRunLeaseFiles(router, dryRunDir)
-		if err != nil {
-			return nil, err
+		outcome.Result = result
+		result.Warnings = append(result.Warnings, optionWarnings...)
+		outcome.Stage = "output"
+		if opts.AnnounceDryRunToCLI {
+			announcement := fmt.Sprintf("dry-run apply plan for %s\n", opts.ConfigPath)
+			if n, err := io.WriteString(stdout, announcement); err != nil {
+				return result, err
+			} else if n != len(announcement) {
+				return result, io.ErrShortWrite
+			}
 		}
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return result, err
+		}
+		outcome.Stage = "complete"
+		return result, nil
 	}
-
 	statePath := defaultString(opts.StatePath, defaultStatePath)
 	outcome.Stage = "open-state"
-	stateStore, cleanup, err := openApplyChainStateStore(statePath, opts.DryRun)
+	stateStore, err := routerstate.OpenSQLite(statePath)
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
-	if opts.DryRun {
-		outcome.Stage = "snapshot"
-		manifest, err := describeApplySnapshot(candidate, stateStore, time.Now().UTC(), platformDefaults.OS)
-		if err != nil {
-			return nil, err
-		}
-		if logger != nil {
-			data, err := json.Marshal(manifest)
-			if err != nil {
-				return nil, err
-			}
-			logger.Emit(eventlog.LevelDebug, "apply", "dry-run evaluation inputs acquired", map[string]string{"manifest": string(data)})
-		}
-	}
+	defer stateStore.Close()
 
-	effectiveRouter := filterRouterByWhen(router, stateStore)
 	var generation int64
 	generationCreated := false
 	if !opts.DryRun {
@@ -665,16 +586,25 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		outcome.Generation, outcome.GenerationCreated = generation, generationCreated
 		defer outcome.finishEarlyFailure(stateStore, opts, &err)
 		outcome.Stage = "inventory"
-		if err := recordHostInventoryState(stateStore); err != nil {
+		if err := recordHostInventoryState(ctx, stateStore); err != nil {
 			return nil, err
 		}
 	}
+	eventBus := bus.NewWithStore(stateStore)
+	eventBus.SetLogger(slog.Default())
 	outcome.Stage = "plan"
-	_, err = recordObservedPrefixDelegationState(router, stateStore)
+	runner := &controllerchain.Runner{Router: router, Bus: eventBus, Store: stateStore}
+	defer func() {
+		if runner.RuntimeMutationError() != nil {
+			opts.nativeOwner.retainUntilProcessExit()
+		}
+	}()
+	view, err := runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
 	if err != nil {
 		return nil, err
 	}
-	result, err := apply.New().PlanEffective(effectiveRouter, router)
+	effectiveRouter := view.RouteRouter
+	result, err := applyEngine(ctx, effectiveRouter, stateStore).PlanEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -684,11 +614,11 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	result.Warnings = append(result.Warnings, optionWarnings...)
 	appendPrefixDelegationStateWarnings(result, router, stateStore)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
 	}
 	decision := ha.Decision{Leader: true}
-	if !opts.DryRun {
+	if !opts.DryRun && opts.applyRuntime == nil {
 		outcome.Stage = "ha-admission"
 		var clusterName string
 		decision, clusterName, err = acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
@@ -715,34 +645,52 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 			outcome.Stage = "complete"
 			return result, nil
 		}
-		recordWarningEvents(router, stateStore, result.Warnings)
-		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	}
 
-	// Dry-run has its own temporary SQLite store. Give transactional status
-	// producers the same journal there without recording into production state.
-	eventBus := bus.NewWithStore(stateStore)
-	eventBus.SetLogger(slog.Default())
-	controllerOpts := applyChainControllerOptions(opts)
-	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
-		opts.attemptHooks.configureControllers(&controllerOpts)
+	if opts.applyRuntime == nil {
+		controllerOpts := applyChainControllerOptions(opts)
+		if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
+			opts.attemptHooks.configureControllers(&controllerOpts)
+		}
+		runner.Opts = controllerOpts
+		runner.HADecision = &decision
 	}
-	runner := &controllerchain.Runner{
-		Router:     router,
-		Bus:        eventBus,
-		Store:      stateStore,
-		Opts:       controllerOpts,
-		HADecision: &decision,
+	if err := outcome.commitAndApplyRuntime(ctx, opts, configYAML, func() error {
+		outcome.Stage = "observe-prefix-delegation"
+		if err := recordObservedPrefixDelegationState(router, stateStore, eventBus); err != nil {
+			return err
+		}
+		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
+		return nil
+	}); err != nil {
+		return result, err
 	}
-	outcome.Stage = "reconcile"
-	if err := runner.ReconcileOnce(ctx); err != nil {
-		return nil, err
+	if outcome.Runtime.Standby {
+		result.Phase = "Standby"
+		result.Warnings = append(result.Warnings, "active HA ownership did not admit candidate apply; canonical configuration was not committed")
+		outcome.Stage = "finish-generation"
+		if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
+			return result, err
+		}
+		outcome.Stage = "output"
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return result, err
+		}
+		outcome.Stage = "complete"
+		return result, nil
 	}
-	if !opts.DryRun {
-		if _, err := applyIPsecConnections(ctx, effectiveRouter); err != nil {
+	if opts.applyRuntime == nil {
+		outcome.Stage = "reconcile"
+		if err := runner.ReconcileOnce(ctx); err != nil {
 			return nil, err
 		}
 	}
+	view, err = runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
+	if err != nil {
+		return nil, err
+	}
+	effectiveRouter = view.RouteRouter
 	if !opts.DryRun {
 		outcome.Stage = "record-applied-path"
 		if err := recordLastAppliedPath(effectiveRouter, stateStore, opts.ConfigPath); err != nil {
@@ -751,7 +699,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
 	outcome.Stage = "observe"
-	result, err = apply.New().ObserveEffective(effectiveRouter, router)
+	result, err = applyEngine(ctx, effectiveRouter, stateStore).ObserveEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -760,27 +708,19 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		result.Generation = generation
 	}
 	result.Warnings = append(result.Warnings, applyWarnings...)
-	if err := appendLedgerOwnedOrphans(result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
+	if err := appendLedgerOwnedOrphans(ctx, result, effectiveRouter, router, opts.LedgerPath, opts.DryRun); err != nil {
 		return nil, err
-	}
-	if !opts.DryRun && configCommitPhase(result.Phase) {
-		if err := outcome.commit(opts, configYAML); err != nil {
-			return result, err
-		}
 	}
 	outcome.Stage = "finish-generation"
 	if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
 		return result, err
 	}
-	outcome.Stage = "output"
-	if opts.DryRun && opts.AnnounceDryRunToCLI {
-		announcement := fmt.Sprintf("dry-run apply plan for %s\n", opts.ConfigPath)
-		if n, err := io.WriteString(stdout, announcement); err != nil {
-			return result, err
-		} else if n != len(announcement) {
-			return result, io.ErrShortWrite
-		}
+	if !configCommitPhase(result.Phase) {
+		outcome.Stage = "observe-result"
+		return result, fmt.Errorf("apply finished with phase %s; desired router state was not confirmed (canonical=%s)", result.Phase, outcome.Canonical)
 	}
+	outcome.Stage = "output"
+
 	if err := writeResult(stdout, opts.StatusFile, result); err != nil {
 		return nil, err
 	}
@@ -815,7 +755,10 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 		BGPStatePath:           opts.BGPStatePath,
 		MutationGate:           opts.MutationGate,
 	}
-	if opts.DryRun {
+	if !opts.DryRun && !opts.Sandbox {
+		controllerOpts.ReconcileIPsec = applyIPsecConnections
+	}
+	if opts.DryRun || opts.Sandbox {
 		applySandboxControllerOptions(&controllerOpts, controllerOpts.DnsmasqConfig, controllerOpts.NftablesPath)
 		if !opts.Sandbox {
 			controllerOpts.FirewallPath = filepath.Join(filepath.Dir(controllerOpts.NftablesPath), "firewall.nft")
@@ -827,91 +770,10 @@ func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	return controllerOpts
 }
 
-func openApplyChainStateStore(path string, dryRun bool) (*routerstate.SQLiteStore, func(), error) {
-	path = defaultString(path, defaultStatePath)
-	if !dryRun {
-		store, err := routerstate.OpenSQLite(path)
-		if err != nil {
-			return nil, nil, err
-		}
-		return store, func() { _ = store.Close() }, nil
-	}
-	dir, err := os.MkdirTemp("", "routerd-apply-dryrun-*")
-	if err != nil {
-		return nil, nil, err
-	}
-	cleanupDir := func() { _ = os.RemoveAll(dir) }
-	store, err := routerstate.OpenSQLite(filepath.Join(dir, "routerd.db"))
-	if err != nil {
-		cleanupDir()
-		return nil, nil, err
-	}
-	cleanup := func() {
-		_ = store.Close()
-		cleanupDir()
-	}
-	if err := copyApplyStateSnapshot(path, store); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	return store, cleanup, nil
-}
-
-func copyApplyStateSnapshot(path string, dst *routerstate.SQLiteStore) error {
-	src, err := routerstate.LoadReadOnlyLive(path)
-	if err != nil {
-		return err
-	}
-	if closer, ok := src.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	if sqlite, ok := src.(*routerstate.SQLiteStore); ok {
-		return sqlite.CopyEvaluationStateTo(dst)
-	}
-	for key, value := range src.Variables() {
-		switch value.Status {
-		case routerstate.StatusSet:
-			dst.Set(key, value.Value, value.Reason)
-		case routerstate.StatusUnset:
-			dst.Unset(key, value.Reason)
-		default:
-			dst.Forget(key, value.Reason)
-		}
-	}
-	lister, ok := src.(routerstate.ObjectStatusLister)
-	if !ok {
-		return nil
-	}
-	statuses, err := lister.ListObjectStatuses()
-	if err != nil {
-		return err
-	}
-	for _, status := range statuses {
-		if err := dst.SaveObjectStatus(status.APIVersion, status.Kind, status.Name, status.Status); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func inventoryStatusMap(status inventory.Status) map[string]any {
 	data, _ := json.Marshal(status)
 	out := map[string]any{}
 	_ = json.Unmarshal(data, &out)
-	return out
-}
-
-func compactStringList(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	sort.Strings(out)
 	return out
 }
 
@@ -964,55 +826,4 @@ func applyClusterResource(router *api.Router) (api.Resource, api.RouterdClusterS
 		return resource, spec, true, err
 	}
 	return api.Resource{}, api.RouterdClusterSpec{}, false, nil
-}
-
-func loadTransientStateStore(path string) (routerstate.Store, error) {
-	store, err := routerstate.LoadReadOnly(path)
-	if err != nil {
-		return nil, err
-	}
-	if closer, ok := store.(interface{ Close() error }); ok {
-		defer func() { _ = closer.Close() }()
-	}
-	snapshot := routerstate.NewJSON()
-	snapshot.Values = store.Variables()
-	return snapshot, nil
-}
-
-func cleanupLegacyFreeBSDStateDir() ([]string, error) {
-	if platformDefaults.OS != platform.OSFreeBSD {
-		return nil, nil
-	}
-	legacy := filepath.Clean(legacyFreeBSDStateDir)
-	current := filepath.Clean(platformDefaults.StateDir)
-	if legacy == "" || current == "" || legacy == current {
-		return nil, nil
-	}
-	info, err := os.Stat(legacy)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("stat legacy FreeBSD state dir %s: %w", legacy, err)
-	}
-	if !info.IsDir() {
-		return nil, nil
-	}
-	if err := os.MkdirAll(current, 0755); err != nil {
-		return nil, fmt.Errorf("create FreeBSD state dir %s: %w", current, err)
-	}
-	destination := filepath.Join(current, "legacy-var-lib-routerd-"+time.Now().UTC().Format("20060102T150405Z"))
-	for suffix := 0; ; suffix++ {
-		candidate := destination
-		if suffix > 0 {
-			candidate = fmt.Sprintf("%s-%d", destination, suffix)
-		}
-		err := os.Rename(legacy, candidate)
-		if err == nil {
-			return []string{legacy + " -> " + candidate}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("move legacy FreeBSD state dir %s to %s: %w", legacy, candidate, err)
-		}
-	}
 }

@@ -6,14 +6,13 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import fcntl
 import importlib.util
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -75,10 +74,17 @@ def load_json(path: Path) -> Any:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    with temporary.open("w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def _matches_type(value: Any, expected: str) -> bool:
@@ -625,214 +631,6 @@ def executable(path: str, label: str) -> Path:
     return value.resolve()
 
 
-def run_lifecycle_command(
-    command: Path,
-    run_id: str,
-    evidence_dir: Path,
-    label: str,
-    timeout_seconds: int,
-) -> int:
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    output = evidence_dir / f"{label}.log"
-    with output.open("a", encoding="utf-8") as stream:
-        process = subprocess.Popen(
-            [
-                str(command),
-                "--run-id",
-                run_id,
-                "--evidence-dir",
-                str(evidence_dir),
-            ],
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        try:
-            return process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            stream.write(
-                f"{label}: timed out after {timeout_seconds}s; terminating process group\n"
-            )
-            stream.flush()
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                return process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-                return 124
-
-
-def cleanup_once(
-    cleanup: Path,
-    inventory: Path,
-    run_id: str,
-    evidence_dir: Path,
-    timeout_seconds: int,
-) -> tuple[int, int]:
-    lock = evidence_dir / "cleanup.lock"
-    try:
-        lock.mkdir(parents=True)
-        owner = True
-    except FileExistsError:
-        owner = False
-    if not owner:
-        for _ in range(180):
-            result_path = evidence_dir / "cleanup-result.json"
-            if result_path.is_file():
-                result = load_json(result_path)
-                return int(result["cleanupExit"]), int(result["inventoryExit"])
-            time.sleep(1)
-        return 124, 124
-    cleanup_exit = run_lifecycle_command(
-        cleanup, run_id, evidence_dir, "cleanup", timeout_seconds
-    )
-    inventory_exit = run_lifecycle_command(
-        inventory,
-        run_id,
-        evidence_dir,
-        "post-cleanup-inventory",
-        timeout_seconds,
-    )
-    write_json(
-        evidence_dir / "cleanup-result.json",
-        {
-            "cleanupExit": cleanup_exit,
-            "inventoryExit": inventory_exit,
-            "finishedAt": rfc3339(utc_now()),
-            "runId": run_id,
-        },
-    )
-    return cleanup_exit, inventory_exit
-
-
-def terminate_qualification(pid_file: Path) -> None:
-    if not pid_file.is_file():
-        return
-    try:
-        pid = int(pid_file.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    time.sleep(2)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
-
-
-def command_watchdog(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="release qualification watchdog")
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--evidence-dir", type=Path, required=True)
-    parser.add_argument("--heartbeat", type=Path, required=True)
-    parser.add_argument("--done", type=Path, required=True)
-    parser.add_argument("--abort", type=Path, required=True)
-    parser.add_argument("--pid-file", type=Path, required=True)
-    parser.add_argument("--cleanup-command", required=True)
-    parser.add_argument("--inventory-command", required=True)
-    parser.add_argument("--ttl-seconds", type=int, required=True)
-    parser.add_argument("--stale-seconds", type=int, required=True)
-    parser.add_argument("--cleanup-timeout-seconds", type=int, required=True)
-    args = parser.parse_args(argv)
-    cleanup = executable(args.cleanup_command, "cleanup command")
-    inventory = executable(args.inventory_command, "inventory command")
-    started = time.time()
-    while args.done.exists() is False:
-        now = time.time()
-        reason = ""
-        if now - started >= args.ttl_seconds:
-            reason = "ttl-expired"
-        else:
-            try:
-                age = now - args.heartbeat.stat().st_mtime
-            except FileNotFoundError:
-                age = now - started
-            if age >= args.stale_seconds:
-                reason = "heartbeat-stale"
-        if reason:
-            write_json(
-                args.abort,
-                {
-                    "reason": reason,
-                    "runId": args.run_id,
-                    "triggeredAt": rfc3339(utc_now()),
-                },
-            )
-            terminate_qualification(args.pid_file)
-            cleanup_exit, inventory_exit = cleanup_once(
-                cleanup,
-                inventory,
-                args.run_id,
-                args.evidence_dir,
-                args.cleanup_timeout_seconds,
-            )
-            return 0 if cleanup_exit == 0 and inventory_exit == 0 else 1
-        time.sleep(min(5, max(1, args.stale_seconds // 4)))
-    return 0
-
-
-def start_watchdog(
-    args: argparse.Namespace,
-    run_id: str,
-    evidence_dir: Path,
-    heartbeat: Path,
-    done: Path,
-    abort: Path,
-    pid_file: Path,
-    ttl_seconds: int,
-    stale_seconds: int,
-    cleanup_timeout_seconds: int,
-) -> int:
-    log_path = args.watchdog_log or evidence_dir / "watchdog.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        "watchdog",
-        "--run-id",
-        run_id,
-        "--evidence-dir",
-        str(evidence_dir),
-        "--heartbeat",
-        str(heartbeat),
-        "--done",
-        str(done),
-        "--abort",
-        str(abort),
-        "--pid-file",
-        str(pid_file),
-        "--cleanup-command",
-        str(args.cleanup_command),
-        "--inventory-command",
-        str(args.inventory_command),
-        "--ttl-seconds",
-        str(ttl_seconds),
-        "--stale-seconds",
-        str(stale_seconds),
-        "--cleanup-timeout-seconds",
-        str(cleanup_timeout_seconds),
-    ]
-    with log_path.open("a", encoding="utf-8") as stream:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=stream,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    return process.pid
-
-
 def qualification_outcome(
     driver_result: dict[str, Any], *, driver_exit: int, cleanup_exit: int,
     inventory_exit: int, aborted: Any,
@@ -879,6 +677,19 @@ def command_qualification(argv: list[str]) -> int:
     parser.add_argument("--watchdog-log", type=Path)
     args = parser.parse_args(argv)
 
+    evidence_dir = args.evidence_dir.resolve()
+    evidence_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_path = evidence_dir / "supervisor-state.json.lock"
+    with lock_path.open("a+") as lock:
+        os.fchmod(lock.fileno(), 0o600)
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ContractError("another qualification supervisor owns this evidence") from exc
+        return qualification_locked(args, evidence_dir, lock.fileno())
+
+
+def qualification_locked(args: argparse.Namespace, evidence_dir: Path, lock_fd: int) -> int:
     started = utc_now()
     try:
         qualification = executable(
@@ -894,10 +705,34 @@ def command_qualification(argv: list[str]) -> int:
         certification = load_json(args.certification)
         validate_document(certification, CERT_SCHEMA)
         providers = certification["providers"]
+        supervisor = REPO_ROOT / "tools/release-qa-labs/lifecycle_supervisor.py"
+        request = {
+            "certification": certification, "release": args.release,
+            "ttlSeconds": ttl_seconds, "staleSeconds": stale_seconds,
+            "cleanupTimeoutSeconds": cleanup_timeout_seconds,
+            "commands": {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in (qualification, cleanup, inventory, supervisor)},
+        }
+        request_sha = hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        state_path = evidence_dir / "supervisor-state.json"
+        admitted_certification = evidence_dir / "qualification-input.json"
+        if state_path.exists():
+            previous = load_json(state_path)
+            if not isinstance(previous, dict) or previous.get("requestSha256") != request_sha:
+                raise ContractError("qualification request differs from its durable owner")
+            if load_json(admitted_certification) != certification:
+                raise ContractError("admitted qualification input was modified")
+        else:
+            if any((evidence_dir / name).exists() for name in (
+                "qualification.pid", "qualification.done", "cleanup.lock", "cleanup-result.json", "qualification-driver-result.json",
+            )):
+                raise ContractError("qualification ownership evidence has no durable owner; preserve it and use a fresh evidence directory")
+            write_json(admitted_certification, certification)
+            admitted_certification.chmod(0o600)
         command_preflight(
             [
                 "--certification",
-                str(args.certification),
+                str(admitted_certification),
                 "--environment",
                 certification["environment"],
                 "--topology",
@@ -939,54 +774,64 @@ def command_qualification(argv: list[str]) -> int:
 
     contract = certification["run"]
     run_id = contract["runId"]
-    evidence_dir = args.evidence_dir.resolve()
-    evidence_dir.mkdir(parents=True, exist_ok=True)
     heartbeat = (args.heartbeat or evidence_dir / "heartbeat").resolve()
-    done = evidence_dir / "qualification.done"
-    abort = evidence_dir / "watchdog-abort.json"
-    pid_file = evidence_dir / "qualification.pid"
-    heartbeat.touch()
-    watchdog_pid = start_watchdog(
-        args,
-        run_id,
-        evidence_dir,
-        heartbeat,
-        done,
-        abort,
-        pid_file,
-        ttl_seconds,
-        stale_seconds,
-        cleanup_timeout_seconds,
-    )
-    if watchdog_pid <= 0:
-        raise ContractError("independent watchdog did not start")
-
+    if not state_path.exists():
+        heartbeat.touch()
     driver_result_path = evidence_dir / "qualification-driver-result.json"
     command = [
-        str(qualification),
-        "--certification",
-        str(args.certification.resolve()),
-        "--release",
-        args.release,
-        "--out",
-        str(driver_result_path),
-        "--heartbeat",
-        str(heartbeat),
+        str(qualification), "--certification", str(admitted_certification),
+        "--release", args.release, "--out", str(driver_result_path),
+        "--heartbeat", str(heartbeat),
     ]
-    driver = subprocess.Popen(command, start_new_session=True)
-    pid_file.write_text(f"{driver.pid}\n", encoding="utf-8")
-    driver_exit = driver.wait()
-    cleanup_exit, inventory_exit = cleanup_once(
-        cleanup, inventory, run_id, evidence_dir, cleanup_timeout_seconds
-    )
-    done.touch()
-
+    # The independent durable supervisor is the sole worker/cleanup owner.
+    # It inherits the already-held admission lock and survives this frontend.
+    owner_command = [
+        sys.executable, str(supervisor), "--run-id", run_id,
+        "--state", str(state_path), "--lock-fd", str(lock_fd),
+        "--request-sha256", request_sha, "--heartbeat", str(heartbeat),
+        "--ttl-seconds", str(ttl_seconds), "--stale-seconds", str(stale_seconds),
+        "--cleanup-timeout-seconds", str(cleanup_timeout_seconds),
+        "--inventory-timeout-seconds", str(cleanup_timeout_seconds),
+        "--max-paid-lifecycle-seconds", "8700",
+        "--precheck-command", "/bin/true", "--mutation-command", command[0],
+        *[f"--mutation-arg={value}" for value in command[1:]],
+        "--cleanup-command", str(cleanup),
+        *[f"--cleanup-arg={value}" for value in ("--run-id", run_id, "--evidence-dir", str(evidence_dir))],
+        "--inventory-command", str(inventory),
+        *[f"--inventory-arg={value}" for value in ("--run-id", run_id, "--evidence-dir", str(evidence_dir))],
+        "--post-zero-command", "/bin/true",
+    ]
+    log_path = args.watchdog_log or evidence_dir / "supervisor.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a") as log:
+        os.fchmod(log.fileno(), 0o600)
+        owner = subprocess.Popen(owner_command, stdin=subprocess.DEVNULL,
+                                 stdout=log, stderr=subprocess.STDOUT,
+                                 start_new_session=True, pass_fds=(lock_fd,))
+    watchdog_pid = owner.pid
+    owner_exit = owner.wait()
+    state = load_json(state_path)
+    driver_exit = state.get("mutationExit")
+    if not isinstance(driver_exit, int):
+        driver_exit = -1
+    cleanup_exit = state.get("cleanupExit", -1)
+    inventory_exit = state.get("inventoryExit", -1)
+    reason = state.get("stopReason")
+    aborted = None if reason == "mutation-complete" else {"reason": reason or "owner-incomplete", "runId": run_id}
+    if aborted is None and (
+        owner_exit not in (0, 1) or state.get("phase") not in {"DONE", "FAILED"}
+        or state.get("tokenRevocationExit") != 0 or state.get("mutationPgid") is not None
+    ):
+        aborted = {"reason": "owner-incomplete", "runId": run_id}
     driver_result: dict[str, Any] = {}
     if driver_result_path.is_file():
         loaded = load_json(driver_result_path)
         if isinstance(loaded, dict):
             driver_result = loaded
-    aborted = load_json(abort) if abort.is_file() else None
+    write_json(evidence_dir / "cleanup-result.json", {
+        "cleanupExit": cleanup_exit, "inventoryExit": inventory_exit,
+        "finishedAt": rfc3339(utc_now()), "runId": run_id,
+    })
     result_status, classification = qualification_outcome(
         driver_result, driver_exit=driver_exit, cleanup_exit=cleanup_exit,
         inventory_exit=inventory_exit, aborted=aborted,
@@ -1027,8 +872,6 @@ def main() -> int:
         return command_preflight(argv)
     if command == "qualification":
         return command_qualification(argv)
-    if command == "watchdog":
-        return command_watchdog(argv)
     raise ContractError(f"unknown command: {command}")
 
 

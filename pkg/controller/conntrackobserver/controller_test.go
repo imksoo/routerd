@@ -76,11 +76,11 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
-				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 3, Bytes: 300, Accounting: true},
-				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: 4, Bytes: 1200, Accounting: true},
+				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: counterFixture(3), Bytes: counterFixture(300)},
+				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: counterFixture(4), Bytes: counterFixture(1200)},
 			}}}, nil
 		},
 	}
@@ -119,7 +119,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	flowLog, err := logstore.OpenTrafficFlowLog(flowPath)
+	flowLog, err := logstore.OpenTrafficFlowLog(t.Context(), flowPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestControllerRecordsTrafficFlowLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 || !flows[0].Accounting || flows[0].BytesOut != 300 || flows[0].BytesIn != 1200 {
+	if len(flows) != 1 || flows[0].PeerAddress != "1.1.1.1" || flows[0].PeerPort != 443 || (flows[0].BytesOut == nil || *flows[0].BytesOut != 300) || (flows[0].BytesIn == nil || *flows[0].BytesIn != 1200) {
 		t.Fatalf("flows = %#v", flows)
 	}
 	if flows[0].AppName != "google" || flows[0].Engine != "ndpi-agent" || flows[0].Source != "ndpi-agent" || flows[0].TLSSNI != "www.google.com" || flows[0].DNSQuery != "www.google.com" {
@@ -171,11 +171,11 @@ func TestControllerReportsApplicationLayerUnavailableWithoutBlockingFlowLog(t *t
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{Entries: []observe.ConnectionEntry{{
 				Protocol: "tcp",
-				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: 1, Bytes: 100, Accounting: true},
-				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: 1, Bytes: 200, Accounting: true},
+				Original: observe.ConntrackTuple{Source: "172.18.0.10", SourcePort: "12345", Destination: "1.1.1.1", DestinationPort: "443", Packets: counterFixture(1), Bytes: counterFixture(100)},
+				Reply:    observe.ConntrackTuple{Source: "1.1.1.1", SourcePort: "443", Destination: "172.18.0.10", DestinationPort: "12345", Packets: counterFixture(1), Bytes: counterFixture(200)},
 			}}}, nil
 		},
 		ApplicationLayerStatus: func(context.Context, string) api.TrafficFlowApplicationLayerStatus {
@@ -235,7 +235,7 @@ func TestControllerMarksApplicationLayerAvailable(t *testing.T) {
 		Bus:   bus.New(),
 		Store: store,
 		Paths: conntrack.Paths{Entries: entriesPath, Count: countPath, Max: maxPath},
-		Connections: func(limit int) (*observe.ConnectionTable, error) {
+		Connections: func(_ context.Context, limit int) (*observe.ConnectionTable, error) {
 			return &observe.ConnectionTable{}, nil
 		},
 		ApplicationLayerStatus: func(context.Context, string) api.TrafficFlowApplicationLayerStatus {
@@ -384,7 +384,7 @@ func TestControllerUsesPFConnectionsForFreeBSDSnapshot(t *testing.T) {
 		Bus:            bus.New(),
 		Store:          store,
 		SnapshotSource: "pf",
-		Snapshot: func() (conntrack.Snapshot, error) {
+		Snapshot: func(context.Context) (conntrack.Snapshot, error) {
 			return conntrack.Snapshot{Count: 7, Max: 100}, nil
 		},
 	}
@@ -402,7 +402,7 @@ func TestControllerRecordsUnavailableWhenFreeBSDPFConnectionsFail(t *testing.T) 
 	controller := &Controller{
 		Bus:   bus.New(),
 		Store: store,
-		Snapshot: func() (conntrack.Snapshot, error) {
+		Snapshot: func(context.Context) (conntrack.Snapshot, error) {
 			err := errors.New("pfctl: device not configured")
 			return conntrack.Snapshot{}, conntrack.UnavailableError{
 				CountPath: "pfctl -ss -v", EntriesPath: "pfctl -sm", CountErr: err, EntriesErr: err,

@@ -5,14 +5,13 @@ package chain
 import (
 	"context"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {
+func TestIPv4RouteControllerRendersBlackholeRouteInDryRun(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4Route"},
@@ -34,8 +33,8 @@ func TestIPv4RouteControllerInstallsBlackholeRouteInDryRun(t *testing.T) {
 	}
 
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "private-10-blackhole")
-	if status["phase"] != "Installed" {
-		t.Fatalf("phase = %v, want Installed", status["phase"])
+	if status["phase"] != "Rendered" || status["routeOwner"] != nil || status["installedAt"] != nil {
+		t.Fatalf("dry-run claimed an installed route: %#v", status)
 	}
 	if status["type"] != "blackhole" {
 		t.Fatalf("type = %v, want blackhole", status["type"])
@@ -125,7 +124,20 @@ func TestIPv4RouteControllerDoesNotRefreshInstalledAtWhenUnchanged(t *testing.T)
 		},
 	}}}
 	store := mapStore{}
-	controller := IPv4RouteController{Router: router, Store: store, DryRun: true}
+	installed := false
+	controller := IPv4RouteController{Router: router, Store: store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
+		Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if len(args) > 4 && args[0] == "-j" {
+				if installed {
+					return []byte(`[{"dst":"192.168.0.0/16","dev":"ens18","metric":20,"protocol":"boot"}]`), nil
+				}
+				return []byte(`[]`), nil
+			}
+			installed = true
+			return nil, nil
+		},
+	}
 
 	if err := controller.reconcile(context.Background()); err != nil {
 		t.Fatalf("first reconcile: %v", err)
@@ -161,20 +173,18 @@ func TestIPv4RouteControllerSkipsUnchangedKernelRoute(t *testing.T) {
 	var commands [][]string
 	installed := false
 	controller := IPv4RouteController{
-		Router: router,
-		Store:  store,
-		DevicePresent: func(context.Context, string) bool {
-			return true
-		},
+		Router:       router,
+		Store:        store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "route", "show", "default"}) {
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-j", "-d", "-4", "route", "show", "default"}) {
 				if installed {
-					return []byte("default dev ens18\n"), nil
+					return []byte(`[{"dst":"default","dev":"ens18","protocol":"boot"}]`), nil
 				}
-				return nil, nil
+				return []byte(`[]`), nil
 			}
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "route", "replace", "0.0.0.0/0", "dev", "ens18"}) {
+			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "route", "add", "0.0.0.0/0", "dev", "ens18", "proto", "boot"}) {
 				installed = true
 			}
 			return nil, nil
@@ -188,11 +198,9 @@ func TestIPv4RouteControllerSkipsUnchangedKernelRoute(t *testing.T) {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	want := [][]string{
-		{"ip", "route", "show", "default"},
-		{"ip", "route", "replace", "0.0.0.0/0", "dev", "ens18"},
-		{"ip", "route", "show", "default"},
+		{"ip", "route", "add", "0.0.0.0/0", "dev", "ens18", "proto", "boot"},
 	}
-	if !reflect.DeepEqual(commands, want) {
+	if !reflect.DeepEqual(ordinaryMutationCommands(commands), want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "default")
@@ -224,24 +232,22 @@ func TestIPv4RouteControllerInstallsPreferredSource(t *testing.T) {
 	var commands [][]string
 	installed := false
 	controller := IPv4RouteController{
-		Router: router,
-		Store:  store,
-		DevicePresent: func(context.Context, string) bool {
-			return true
-		},
+		Router:       router,
+		Store:        store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
 			call := append([]string{name}, args...)
 			if reflect.DeepEqual(call, []string{"ip", "-j", "-4", "addr", "show"}) {
 				return []byte(`[{"addr_info":[{"family":"inet","local":"10.77.60.10"}]}]`), nil
 			}
-			if reflect.DeepEqual(call, []string{"ip", "route", "show", "10.77.60.11/32"}) {
+			if reflect.DeepEqual(call, []string{"ip", "-j", "-d", "-4", "route", "show", "10.77.60.11/32"}) {
 				if installed {
-					return []byte("10.77.60.11/32 dev wg-hybrid src 10.77.60.10 metric 120\n"), nil
+					return []byte(`[{"dst":"10.77.60.11","dev":"wg-hybrid","prefsrc":"10.77.60.10","metric":120,"protocol":"boot"}]`), nil
 				}
-				return nil, nil
+				return []byte(`[]`), nil
 			}
-			if reflect.DeepEqual(call, []string{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120"}) {
+			if reflect.DeepEqual(call, []string{"ip", "route", "add", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120", "proto", "boot"}) {
 				installed = true
 			}
 			return nil, nil
@@ -255,13 +261,9 @@ func TestIPv4RouteControllerInstallsPreferredSource(t *testing.T) {
 		t.Fatalf("second reconcile: %v", err)
 	}
 	want := [][]string{
-		{"ip", "-j", "-4", "addr", "show"},
-		{"ip", "route", "show", "10.77.60.11/32"},
-		{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120"},
-		{"ip", "-j", "-4", "addr", "show"},
-		{"ip", "route", "show", "10.77.60.11/32"},
+		{"ip", "route", "add", "10.77.60.11/32", "dev", "wg-hybrid", "src", "10.77.60.10", "metric", "120", "proto", "boot"},
 	}
-	if !reflect.DeepEqual(commands, want) {
+	if !reflect.DeepEqual(ordinaryMutationCommands(commands), want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "delivery")
@@ -288,15 +290,24 @@ func TestIPv4RouteControllerSkipsNonLocalPreferredSource(t *testing.T) {
 	}}}
 	store := mapStore{}
 	var commands [][]string
+	installed := false
 	controller := IPv4RouteController{
-		Router: router,
-		Store:  store,
-		DevicePresent: func(context.Context, string) bool {
-			return true
-		},
+		Router:       router,
+		Store:        store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
-			return []byte(`[{"addr_info":[{"family":"inet","local":"10.77.60.10"}]}]`), nil
+			if reflect.DeepEqual(args, []string{"-j", "-4", "addr", "show"}) {
+				return []byte(`[{"addr_info":[{"family":"inet","local":"10.77.60.10"}]}]`), nil
+			}
+			if len(args) > 1 && args[0] == "route" && args[1] == "add" {
+				installed = true
+				return nil, nil
+			}
+			if len(args) > 4 && args[0] == "-j" && installed {
+				return []byte(`[{"dst":"10.77.60.11","dev":"wg-hybrid","metric":120,"protocol":"boot"}]`), nil
+			}
+			return []byte(`[]`), nil
 		},
 	}
 
@@ -304,11 +315,9 @@ func TestIPv4RouteControllerSkipsNonLocalPreferredSource(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 	want := [][]string{
-		{"ip", "-j", "-4", "addr", "show"},
-		{"ip", "route", "show", "10.77.60.11/32"},
-		{"ip", "route", "replace", "10.77.60.11/32", "dev", "wg-hybrid", "metric", "120"},
+		{"ip", "route", "add", "10.77.60.11/32", "dev", "wg-hybrid", "metric", "120", "proto", "boot"},
 	}
-	if !reflect.DeepEqual(commands, want) {
+	if !reflect.DeepEqual(ordinaryMutationCommands(commands), want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "IPv4Route", "delivery")
@@ -333,11 +342,9 @@ func TestIPv4RouteControllerWaitsForDeviceBeforeApply(t *testing.T) {
 	store := mapStore{}
 	var called bool
 	controller := IPv4RouteController{
-		Router: router,
-		Store:  store,
-		DevicePresent: func(context.Context, string) bool {
-			return false
-		},
+		Router:       router,
+		Store:        store,
+		DeviceLookup: func(context.Context, string) (int, bool, error) { return 0, false, nil },
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			called = true
 			return nil, nil
@@ -363,21 +370,34 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 			APIVersion: api.NetAPIVersion,
 			Kind:       "IPv4Route",
 			Name:       "dslite-a-healthcheck",
-			Status: map[string]any{
+			Status: ownedRouteStatusForTest(map[string]any{
 				"phase":       "Installed",
 				"type":        "unicast",
 				"destination": "1.1.1.1/32",
 				"device":      "ds-lite-a",
 				"metric":      10,
-			},
+			}),
 		},
 	}}
 	var commands [][]string
+	deleted := false
 	controller := IPv4RouteController{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
-		Store:  store,
+		Router:       &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:        store,
+		NativeScope:  ordinaryFixtureScope,
+		DeviceLookup: ordinaryFixtureDevice,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, append([]string{name}, args...))
+			if len(args) > 1 && args[0] == "route" && args[1] == "del" {
+				deleted = true
+				return nil, nil
+			}
+			if reflect.DeepEqual(args, []string{"-j", "-d", "-4", "route", "show", "1.1.1.1/32"}) {
+				if deleted {
+					return []byte(`[]`), nil
+				}
+				return []byte(`[{"dst":"1.1.1.1","dev":"ds-lite-a","metric":10,"protocol":"boot"}]`), nil
+			}
 			return nil, nil
 		},
 	}
@@ -387,10 +407,9 @@ func TestIPv4RouteControllerDeletesRemovedRoute(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"ip", "route", "show", "1.1.1.1/32"},
-		{"ip", "route", "del", "1.1.1.1/32", "dev", "ds-lite-a", "metric", "10"},
+		{"ip", "route", "del", "1.1.1.1/32", "dev", "ds-lite-a", "metric", "10", "proto", "boot"},
 	}
-	if !reflect.DeepEqual(commands, want) {
+	if !reflect.DeepEqual(ordinaryMutationCommands(commands), want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/dslite-a-healthcheck"] {
@@ -405,24 +424,26 @@ func TestIPv4RouteControllerDoesNotDeleteRemovedRouteWhenKernelRouteIsBGP(t *tes
 			APIVersion: api.NetAPIVersion,
 			Kind:       "IPv4Route",
 			Name:       "stale-sam-delivery",
-			Status: map[string]any{
+			Status: ownedRouteStatusForTest(map[string]any{
 				"phase":       "Installed",
 				"type":        "unicast",
 				"destination": "10.77.70.5/32",
 				"device":      "samt2d56b60b72f",
 				"metric":      200,
-			},
+			}),
 		},
 	}}
 	var commands [][]string
 	controller := IPv4RouteController{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
-		Store:  store,
+		Router:       &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:        store,
+		NativeScope:  ordinaryFixtureScope,
+		DeviceLookup: ordinaryFixtureDevice,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			command := append([]string{name}, args...)
 			commands = append(commands, command)
-			if reflect.DeepEqual(command, []string{"ip", "route", "show", "10.77.70.5/32"}) {
-				return []byte("10.77.70.5 via 10.255.70.112 dev samt2d56b60b72f proto bgp src 10.77.70.50 metric 200\n"), nil
+			if reflect.DeepEqual(command, []string{"ip", "-j", "-d", "-4", "route", "show", "10.77.70.5/32"}) {
+				return []byte(`[{"dst":"10.77.70.5","gateway":"10.255.70.112","dev":"samt2d56b60b72f","protocol":"bgp","prefsrc":"10.77.70.50","metric":200}]`), nil
 			}
 			return nil, nil
 		},
@@ -432,7 +453,7 @@ func TestIPv4RouteControllerDoesNotDeleteRemovedRouteWhenKernelRouteIsBGP(t *tes
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	if len(commands) != 1 || !reflect.DeepEqual(commands[0], []string{"ip", "route", "show", "10.77.70.5/32"}) {
+	if len(commands) != 1 || !reflect.DeepEqual(commands[0], []string{"ip", "-j", "-d", "-4", "route", "show", "10.77.70.5/32"}) {
 		t.Fatalf("commands = %#v, want only route show", commands)
 	}
 	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/stale-sam-delivery"] {
@@ -447,28 +468,34 @@ func TestIPv4RouteControllerDeletesRemovedLinkRouteWhenBGPRouteSharesDestination
 			APIVersion: api.NetAPIVersion,
 			Kind:       "IPv4Route",
 			Name:       "sam-cloudedge-local-10-77-60-12",
-			Status: map[string]any{
+			Status: ownedRouteStatusForTest(map[string]any{
 				"phase":       "Installed",
 				"type":        "unicast",
 				"destination": "10.77.60.12/32",
 				"device":      "ens5",
 				"metric":      1,
-			},
+			}),
 		},
 	}}
 	var commands [][]string
+	deleted := false
 	controller := IPv4RouteController{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: nil}},
-		Store:  store,
+		Router:       &api.Router{Spec: api.RouterSpec{Resources: nil}},
+		Store:        store,
+		NativeScope:  ordinaryFixtureScope,
+		DeviceLookup: ordinaryFixtureDevice,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			command := append([]string{name}, args...)
 			commands = append(commands, command)
-			if reflect.DeepEqual(command, []string{"ip", "route", "show", "10.77.60.12/32"}) {
-				return []byte(strings.Join([]string{
-					"10.77.60.12 dev ens5 scope link metric 1",
-					"10.77.60.12 via 10.255.70.5 dev samt54927d44912 proto bgp metric 200",
-					"",
-				}, "\n")), nil
+			if len(args) > 1 && args[0] == "route" && args[1] == "del" {
+				deleted = true
+				return nil, nil
+			}
+			if reflect.DeepEqual(command, []string{"ip", "-j", "-d", "-4", "route", "show", "10.77.60.12/32"}) {
+				if deleted {
+					return []byte(`[{"dst":"10.77.60.12","gateway":"10.255.70.5","dev":"samt54927d44912","protocol":"bgp","metric":200}]`), nil
+				}
+				return []byte(`[{"dst":"10.77.60.12","dev":"ens5","protocol":"boot","metric":1},{"dst":"10.77.60.12","gateway":"10.255.70.5","dev":"samt54927d44912","protocol":"bgp","metric":200}]`), nil
 			}
 			return nil, nil
 		},
@@ -479,10 +506,9 @@ func TestIPv4RouteControllerDeletesRemovedLinkRouteWhenBGPRouteSharesDestination
 	}
 
 	want := [][]string{
-		{"ip", "route", "show", "10.77.60.12/32"},
-		{"ip", "route", "del", "10.77.60.12/32", "dev", "ens5", "metric", "1"},
+		{"ip", "route", "del", "10.77.60.12/32", "dev", "ens5", "metric", "1", "proto", "boot"},
 	}
-	if !reflect.DeepEqual(commands, want) {
+	if !reflect.DeepEqual(ordinaryMutationCommands(commands), want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
 	}
 	if !store.deleted["net.routerd.net/v1alpha1/IPv4Route/sam-cloudedge-local-10-77-60-12"] {
@@ -527,12 +553,22 @@ type routeCleanupStore struct {
 	deleted  map[string]bool
 }
 
+func ownedRouteStatusForTest(status map[string]any) map[string]any {
+	status["routeOwner"] = ipv4RouteReceipt{Route: ipv4RouteRemovalFromStatus(status), Scope: "linux:fixture:1", IfIndex: 17}
+	status["managedBy"] = "routerd"
+	return status
+}
+
 func (s *routeCleanupStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
 	return nil
 }
 
 func (s *routeCleanupStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
+}
+
+func (s *routeCleanupStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
 }
 
 func (s *routeCleanupStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
@@ -545,4 +581,14 @@ func (s *routeCleanupStore) DeleteObject(apiVersion, kind, name string) error {
 	}
 	s.deleted[apiVersion+"/"+kind+"/"+name] = true
 	return nil
+}
+
+func ordinaryMutationCommands(commands [][]string) [][]string {
+	var writes [][]string
+	for _, command := range commands {
+		if len(command) > 2 && command[1] == "route" && (command[2] == "add" || command[2] == "del") {
+			writes = append(writes, command)
+		}
+	}
+	return writes
 }

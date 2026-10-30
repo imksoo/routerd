@@ -15,6 +15,108 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
+func TestFreeBSDRouterSolicitationKeepsAllManagedInterfaces(t *testing.T) {
+	managedFalse := false
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan-a", api.InterfaceSpec{IfName: "vtnet2"}),
+		netResource("Interface", "wan-b", api.InterfaceSpec{IfName: "vtnet1"}),
+		netResource("Interface", "wan-external", api.InterfaceSpec{IfName: "vtnet9"}),
+		netResource("IPv6RAAddress", "a", api.IPv6RAAddressSpec{Interface: "wan-a"}),
+		netResource("IPv6RAAddress", "b", api.IPv6RAAddressSpec{Interface: "wan-b"}),
+		netResource("IPv6RAAddress", "a-again", api.IPv6RAAddressSpec{Interface: "wan-a"}),
+		netResource("IPv6RAAddress", "external", api.IPv6RAAddressSpec{Interface: "wan-external", Managed: &managedFalse}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "ifconfig_vtnet9_ipv6='operator-owned'\n" + string(got.RCConf) + "\nprintf '%s\\n' \"$rtsold_flags\" \"$ipv6_cpe_wanif\" \"$ifconfig_vtnet1_ipv6\" \"$ifconfig_vtnet2_ipv6\" \"$ifconfig_vtnet9_ipv6\"\n"
+	command := exec.Command("sh", "-eu", "-c", script)
+	out, err := command.CombinedOutput()
+	expected := "vtnet1 vtnet2\nvtnet1\ninet6 -no_radr accept_rtadv\ninet6 -no_radr accept_rtadv\noperator-owned\n"
+	if err != nil || string(out) != expected {
+		t.Fatalf("effective rtsold interfaces = %q (%v), rc.conf:\n%s", out, err, got.RCConf)
+	}
+	if strings.Count(string(got.RCConf), "rtsold_flags=") != 1 || strings.Count(string(got.RCConf), "ifconfig_vtnet2_ipv6=") != 1 || strings.Contains(string(got.RCConf), "vtnet9") {
+		t.Fatalf("RA ownership was duplicated or applied to unmanaged resource:\n%s", got.RCConf)
+	}
+}
+
+func TestFreeBSDUnmanagedRouterSolicitationDoesNotEnableCPE(t *testing.T) {
+	managedFalse := false
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6RAAddress", "external", api.IPv6RAAddressSpec{Interface: "wan", Managed: &managedFalse}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got.RCConf), "ipv6_cpe_wanif=") || strings.Contains(string(got.RCConf), "rtsold_") || strings.Contains(string(got.RCConf), "accept_rtadv") {
+		t.Fatalf("unmanaged RA resource changed native RA policy:\n%s", got.RCConf)
+	}
+}
+
+func TestFreeBSDScopesEveryIPv6LinkLocalGateway(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6StaticRoute", "link-local", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "fe90::1"}),
+		netResource("IPv6StaticRoute", "already-scoped", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:2::/64", Via: "fe80::1%em0"}),
+		netResource("IPv6StaticRoute", "global", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:3::/64", Via: "2001:db8::1"}),
+		netResource("IPv4StaticRoute", "ipv4", api.IPv4StaticRouteSpec{Interface: "wan", Destination: "198.51.100.0/24", Via: "169.254.0.1"}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`ipv6_route_link_local="2001:db8:1::/64 fe90::1%em0"`,
+		`ipv6_route_already_scoped="2001:db8:2::/64 fe80::1%em0"`,
+		`ipv6_route_global="2001:db8:3::/64 2001:db8::1"`,
+		`route_ipv4="-net 198.51.100.0/24 169.254.0.1"`,
+	} {
+		if !strings.Contains(string(got.RCConf), expected) {
+			t.Fatalf("native route missing %q:\n%s", expected, got.RCConf)
+		}
+	}
+}
+
+func TestFreeBSDStaticRoutesPreserveCollidingNativeLabels(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("IPv6StaticRoute", "lab-v6", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:1::/64", Via: "2001:db8::1"}),
+		netResource("IPv6StaticRoute", "lab.v6", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:2::/64", Via: "2001:db8::1"}),
+		netResource("IPv6StaticRoute", "lab-v6-1", api.IPv6StaticRouteSpec{Interface: "wan", Destination: "2001:db8:3::/64", Via: "2001:db8::1"}),
+	}}}
+	got, err := FreeBSD(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(got.RCConf) + `
+for label in $ipv6_static_routes; do
+    eval "value=\${ipv6_route_$label}"
+    printf '%s|%s\n' "$label" "$value"
+done
+`
+	out, err := exec.Command("sh", "-eu", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("source generated rc.conf: %s (%v)", out, err)
+	}
+	labels := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		label, _, ok := strings.Cut(line, "|")
+		if !ok || labels[label] {
+			t.Fatalf("two declared routes share native identity: %s", out)
+		}
+		labels[label] = true
+	}
+	for _, destination := range []string{"2001:db8:1::/64", "2001:db8:2::/64", "2001:db8:3::/64"} {
+		if !strings.Contains(string(out), "|"+destination+" 2001:db8::1\n") {
+			t.Fatalf("route %s lost after sourcing rc.conf: %s", destination, out)
+		}
+	}
+}
+
 func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd", AdminUp: true}},
@@ -25,7 +127,7 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client"}, Metadata: api.ObjectMeta{Name: "mgmt-dhcpv4"}, Spec: api.DHCPv4ClientSpec{Interface: "mgmt", UseRoutes: boolPtr(false), UseDNS: boolPtr(false)}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-dhcpv6"}, Spec: api.DHCPv6AddressSpec{Interface: "wan", Client: "dhcp6c"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcp6c", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "00000001"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd", PrefixLength: 60, IAID: "1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan-pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan", IfName: "ppp0", Username: "user@example.jp", Password: "secret", Managed: true, DefaultRoute: true}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "bridge-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan-bridge", Address: "192.0.2.1/24"}},
@@ -42,16 +144,18 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
+	for _, unowned := range []string{`inet 192.168.10.1/24`, `inet 192.0.2.1/24`} {
+		if strings.Contains(rc, unowned) {
+			t.Fatalf("rc.conf duplicates runtime static-address ownership: %s", rc)
+		}
+	}
 	for _, want := range []string{
 		`ifconfig_vtnet0="up"`,
-		`ifconfig_vtnet1="inet 192.168.10.1/24"`,
 		`ifconfig_vtnet2="up"`,
 		`mpd_enable="YES"`,
 		`mpd_flags="-b"`,
 		`cloned_interfaces="bridge0"`,
-		`routerd_vxlan_home_vxlan_enable="YES"`,
 		`ifconfig_bridge0="addm vtnet1 stp vtnet1 up"`,
-		`ifconfig_bridge0_alias0="inet 192.0.2.1/24"`,
 		`static_routes="lab_v4"`,
 		`route_lab_v4="-net 192.0.2.0/24 192.168.10.254"`,
 		`ipv6_static_routes="lab_v6"`,
@@ -63,14 +167,12 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
 		}
 	}
-	vxlanScript := string(got.RCDScripts["routerd_vxlan_home_vxlan"])
-	for _, want := range []string{`/sbin/ifconfig "${ifname}" create || /sbin/ifconfig vxlan create name "${ifname}" || return 1`, `vxlanid' '100'`, `vxlanremote' '192.0.2.20'`, `vxlandev' 'vtnet0'`, `vxlanlocalport' '4789'`, `vxlanremoteport' '4789'`, `ifconfig 'bridge0' addm "${ifname}"`, `ifconfig 'bridge0' deletem "${ifname}"`, `unable to publish routerd VXLAN ownership marker`, `load_rc_config $name`, `routerd ownership marker`} {
-		if !strings.Contains(vxlanScript, want) {
-			t.Fatalf("VXLAN rc.d output missing %q:\n%s", want, vxlanScript)
-		}
+
+	if _, exists := got.RCDScripts["routerd_vxlan_home_vxlan"]; exists || strings.Contains(rc, "routerd_vxlan_home_vxlan_enable") || strings.Contains(rc, "vxlanid") {
+		t.Fatalf("native Segment actor has a competing boot owner: %s", rc)
 	}
-	if strings.Contains(vxlanScript, "vxlanport") {
-		t.Fatalf("FreeBSD VXLAN rc.d output uses unsupported vxlanport token:\n%s", vxlanScript)
+	if len(got.RCDScripts["routerd"]) == 0 {
+		t.Fatal("native Segment actor has no routerd boot service")
 	}
 	pf := string(got.PF)
 	for _, want := range []string{
@@ -111,10 +213,10 @@ func TestFreeBSDRendersRouter01Basics(t *testing.T) {
 	}
 }
 
-func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
+func TestFreeBSDManagedPrefixDelegationDoesNotRenderLegacyClient(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: "dhcpcd", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", Profile: "ntt-hgw-lan-pd", PrefixLength: 60}},
 	}}}
 	got, err := FreeBSD(router)
 	if err != nil {
@@ -125,85 +227,28 @@ func TestFreeBSDIgnoresPrefixDelegationClientRenderer(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersCARPRCDScript(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip"}, Spec: api.VirtualAddressSpec{Family: "ipv4",
-			Interface: "lan",
-			Address:   "10.240.70.10/32",
-			Mode:      "vrrp",
-			VRRP: api.VirtualAddressVRRPSpec{
-				VirtualRouterID: 50,
-				Priority:        150,
-				AdvertInterval:  "2s",
-				Authentication:  "secret",
-			},
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	rc := string(got.RCConf)
-	if !strings.Contains(rc, `routerd_carp_enable="YES"`) {
-		t.Fatalf("rc.conf did not enable routerd_carp:\n%s", rc)
-	}
-	script := string(got.RCDScripts["routerd_carp"])
-	for _, want := range []string{
-		`kldload carp >/dev/null 2>&1 || true`,
-		`foreign CARP address is already present; refusing mutation`,
-		`foreign CARP VHID is already present; refusing mutation`,
-		`foreign CARP ownership is unknown; refusing mutation`,
-		`${ROUTERD_RUNTIME_DIR:-/var/run/routerd}/carp`,
-		`unable to publish routerd CARP ownership marker`,
-		`grep -Fq 'inet 10.240.70.10 '`,
-		`grep -Eq 'vhid 50([[:space:]]|$)'`,
-		`kldload carp >/dev/null 2>&1 || true`,
-		`preempt_before=$(sysctl -n net.inet.carp.preempt) || { echo "unable to read CARP preempt" >&2; return 1; }`,
-		`unable to configure CARP preempt`,
-		`unable to configure routerd CARP address`,
-		`applied_0=1`,
-		`${applied_0:-0}`,
-		`printf '%s\n%s\n' "${name}" "${preempt_before}"`,
-		`{ read owned; read preempt_before; } < "${marker}"`,
-		`routerd CARP cleanup incomplete; retaining ownership marker`,
-		`if routerd_carp_status; then return 0; fi`,
-		`routerd_carp_stop || return 1`,
-		`if ifconfig 'vtnet1' | grep -Fq 'inet 10.240.70.10 '; then`,
-		`sysctl net.inet.carp.preempt='0'`,
-		`ifconfig 'vtnet1' 'inet' 'vhid' '50' 'advbase' '2' 'advskew' '104' 'pass' 'secret' 'alias' '10.240.70.10/32'`,
-		`ifconfig 'vtnet1' 'inet' '10.240.70.10/32' -alias`,
-		`grep -Eq 'vhid 50([[:space:]]|$)'`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("routerd_carp script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "grep -Fq '10.240.70.10/32'") {
-		t.Fatalf("CARP ownership probes must not grep CIDR-form addresses:\n%s", script)
-	}
-}
-
-func TestFreeBSDCARPRCDScriptStopsIPv6WithInet6(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1", Managed: true, Owner: "routerd"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "api-vip-v6"}, Spec: api.VirtualAddressSpec{
-			Family: "ipv6", Interface: "lan", Address: "fd00:1234::10/128", Mode: "vrrp",
-			VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 51, Priority: 150},
-		}},
-	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	script := string(got.RCDScripts["routerd_carp"])
-	for _, want := range []string{`grep -Fq 'inet6 fd00:1234::10 '`, `ifconfig 'vtnet1' 'inet6' 'fd00:1234::10/128' -alias`} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("routerd_carp IPv6 script missing %q:\n%s", want, script)
-		}
-	}
-	if strings.Contains(script, "grep -Fq 'fd00:1234::10/128'") {
-		t.Fatalf("routerd_carp IPv6 ownership probes must not grep CIDR-form addresses:\n%s", script)
+func TestFreeBSDCARPHasOneRuntimeOwner(t *testing.T) {
+	for _, family := range []string{"ipv4", "ipv6"} {
+		t.Run(family, func(t *testing.T) {
+			address := "192.0.2.10/32"
+			if family == "ipv6" {
+				address = "2001:db8::10/128"
+			}
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				netResource("Interface", "lan", api.InterfaceSpec{IfName: "vtnet1", Managed: true}),
+				netResource("VirtualAddress", "vip", api.VirtualAddressSpec{Family: family, Interface: "lan", Address: address, Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 50, Priority: 150}}),
+			}}}
+			config, err := FreeBSD(router)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := config.RCDScripts["routerd_carp"]; exists || strings.Contains(string(config.RCConf), "routerd_carp_enable") || strings.Contains(string(config.RCConf), address) {
+				t.Fatalf("boot export duplicates the native VIP actor's CARP ownership: %s", config.RCConf)
+			}
+			if !strings.Contains(string(config.RCDScripts["routerd"]), "'/usr/local/sbin/routerd' 'serve'") {
+				t.Fatal("runtime owner no longer starts at boot")
+			}
+		})
 	}
 }
 
@@ -894,7 +939,7 @@ func TestFreeBSDRenderSynthesizesNDPIAgentForAutoClassifier(t *testing.T) {
 	}
 }
 
-func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
+func TestFreeBSDWireGuardUsesRuntimeControllers(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"},
@@ -927,28 +972,18 @@ func TestFreeBSDRendersWireGuardRCDScript(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
-	if strings.Contains(rc, "ifconfig_wg0=\"inet") {
-		t.Fatalf("WireGuard address should be owned by rc.d script, not rc.conf:\n%s", rc)
+	if strings.Contains(rc, "ifconfig_wg0") || strings.Contains(rc, "routerd_wireguard") {
+		t.Fatalf("native boot config duplicates WireGuard runtime effects:\n%s", rc)
 	}
-	script := string(got.RCDScripts["routerd_wireguard_wg0"])
-	for _, want := range []string{
-		`PROVIDE: routerd_wireguard_wg0`,
-		`kldload if_wg`,
-		`ifconfig 'wg0' create`,
-		`wg set 'wg0' listen-port '51824' private-key '/usr/local/etc/routerd/secrets/wg0.key'`,
-		`wg set 'wg0' peer 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' allowed-ips '10.44.4.2/32' endpoint '192.0.2.2:51824' persistent-keepalive '25'`,
-		`ifconfig 'wg0' inet '10.44.4.4/24' alias`,
-		`foreign WireGuard interface is already present; refusing mutation`,
-		`unable to publish routerd WireGuard ownership marker`,
-		`routerd_wireguard_wg0_rollback`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("wireguard rc.d script missing %q:\n%s", want, script)
-		}
+	if _, exists := got.RCDScripts["routerd_wireguard_wg0"]; exists {
+		t.Fatal("native boot script duplicates the WireGuard controller")
+	}
+	if len(got.RCDScripts["routerd"]) == 0 {
+		t.Fatal("runtime owner has no boot service")
 	}
 }
 
-func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
+func TestFreeBSDVXLANMultipleRemotesRejectsPartialIntent(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "lab"}, Spec: api.VXLANSegmentSpec{
@@ -957,27 +992,14 @@ func TestFreeBSDVXLANMultipleRemotesEmitsWarningAndUsesSeed(t *testing.T) {
 			UnderlayInterface: "wan",
 		}},
 	}}}
-	got, err := FreeBSD(router)
-	if err != nil {
-		t.Fatalf("render FreeBSD: %v", err)
-	}
-	if len(got.Warnings) == 0 {
-		t.Fatal("expected at least one warning for multi-remote VXLAN on FreeBSD")
-	}
-	want := "FreeBSD vxlan(4) supports a single unicast remote"
-	if !strings.Contains(got.Warnings[0], want) {
-		t.Fatalf("warning %q does not mention single-remote limitation", got.Warnings[0])
-	}
-	script := string(got.RCDScripts["routerd_vxlan_lab"])
-	if !strings.Contains(script, "vxlanremote' '192.0.2.20'") {
-		t.Fatalf("FreeBSD VXLAN rc.d script must use the first remote as seed:\n%s", script)
-	}
-	if strings.Contains(script, "vxlanremote' '192.0.2.30'") || strings.Contains(script, "vxlanremote' '192.0.2.40'") {
-		t.Fatalf("FreeBSD VXLAN rc.d script must not emit additional remotes:\n%s", script)
+
+	_, err := FreeBSD(router)
+	if err == nil || !strings.Contains(err.Error(), "does not support multiple unicast remotes") {
+		t.Fatalf("partial remote intent reported as successful render: %v", err)
 	}
 }
 
-func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
+func TestFreeBSDDefersAllDSLiteEffectsToNativeActor(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: true, Owner: "routerd"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
@@ -994,14 +1016,9 @@ func TestFreeBSDRendersStaticDSLiteGIF(t *testing.T) {
 		t.Fatalf("render FreeBSD: %v", err)
 	}
 	rc := string(got.RCConf)
-	for _, want := range []string{
-		`cloned_interfaces="gif7"`,
-		`ifconfig_gif7="inet6 tunnel 2001:db8::100 2001:db8::200 inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255 mtu 1454 up"`,
-		`static_routes="ds_lite_default"`,
-		`route_ds_lite_default="default 192.0.0.1"`,
-	} {
-		if !strings.Contains(rc, want) {
-			t.Fatalf("rc.conf output missing %q:\n%s", want, rc)
+	for _, foreignEffect := range []string{`cloned_interfaces="gif7"`, `ifconfig_gif7=`, `route_ds_lite_default=`, `static_routes="ds_lite_default"`} {
+		if strings.Contains(rc, foreignEffect) {
+			t.Fatalf("renderer bypassed native tunnel receipt with %q:\n%s", foreignEffect, rc)
 		}
 	}
 }

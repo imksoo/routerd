@@ -25,7 +25,6 @@ cat <<'JSON'
   "kind": "PluginResult",
   "metadata": { "name": "cloud" },
   "status": {
-    "observedAt": "2026-05-29T12:00:00Z",
     "ttl": "5m",
     "resources": [
       {
@@ -109,7 +108,6 @@ cat <<'JSON'
   "kind": "PluginResult",
   "metadata": { "name": "cloud" },
   "status": {
-    "observedAt": "2026-05-29T12:00:00Z",
     "ttl": "5m"
   }
 }

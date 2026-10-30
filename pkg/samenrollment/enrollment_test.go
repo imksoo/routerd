@@ -106,6 +106,7 @@ func TestJoinCanonicalPayloadSortsClaimsAndKeepsWireGuardOptional(t *testing.T) 
 		"joinTimestamp=2026-06-28T00:00:00Z",
 		"tunnelAddress=10.255.0.31/32",
 		"endpoint=198.51.100.31",
+		"directMesh=false",
 		"mobility.ownedAddresses=10.77.60.30/32,10.77.60.31/32",
 		"bgp.asn=64577",
 		"bgp.routerID=10.255.0.31",

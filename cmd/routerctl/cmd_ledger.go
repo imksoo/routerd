@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/logstore"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -197,7 +198,7 @@ func ledgerPruneEventsCommand(args []string, stdout io.Writer) error {
 	if strings.TrimSpace(*olderThan) == "" {
 		return errors.New("ledger prune-events requires --older-than <duration>")
 	}
-	duration, err := parseHumanDuration(*olderThan)
+	duration, err := logstore.ParseRetention(*olderThan)
 	if err != nil {
 		return fmt.Errorf("invalid --older-than: %w", err)
 	}

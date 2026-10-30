@@ -5,7 +5,7 @@ package api
 type ResourceKindSchema struct {
 	APIVersion string
 	Kind       string
-	Spec       any
+	Spec       ResourceSpec
 }
 
 func ConfigResourceKinds() []ResourceKindSchema {
@@ -25,6 +25,10 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{SystemAPIVersion, "WebConsole", WebConsoleSpec{}},
 		{SystemAPIVersion, "ControlAPI", ControlAPISpec{}},
 		{SystemAPIVersion, "RouterdCluster", RouterdClusterSpec{}},
+		{NetAPIVersion, "Bridge", BridgeSpec{}},
+		{NetAPIVersion, "VXLANSegment", VXLANSegmentSpec{}},
+		{NetAPIVersion, "IPv6StaticRoute", IPv6StaticRouteSpec{}},
+
 		{NetAPIVersion, "Interface", InterfaceSpec{}},
 		{NetAPIVersion, "PPPoESession", PPPoESessionSpec{}},
 		{NetAPIVersion, "WireGuardInterface", WireGuardInterfaceSpec{}},
@@ -97,5 +101,18 @@ func ConfigResourceKinds() []ResourceKindSchema {
 		{FirewallAPIVersion, "FirewallRule", FirewallRuleSpec{}},
 		{FirewallAPIVersion, "FirewallEventLog", FirewallEventLogSpec{}},
 		{NetAPIVersion, "Hostname", HostnameSpec{}},
+	}
+}
+
+// Runtime-only variants are produced internally and are rejected by static
+// configuration validation. They still use the same typed internal contract.
+func runtimeResourceKinds() []ResourceKindSchema {
+	return []ResourceKindSchema{
+		{SystemAPIVersion, "KernelModule", KernelModuleSpec{}},
+		{SystemAPIVersion, "NetworkAdoption", NetworkAdoptionSpec{}},
+		{RouterAPIVersion, "Inventory", InventorySpec{}},
+		{MobilityAPIVersion, "SAMRRSet", SAMRRSetSpec{}},
+		{NetAPIVersion, "IPv4StaticRoute", IPv4StaticRouteSpec{}},
+		{MobilityAPIVersion, "SAMPeerGroup", SAMPeerGroupSpec{}},
 	}
 }

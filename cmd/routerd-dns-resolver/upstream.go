@@ -53,10 +53,16 @@ type upstreamPool struct {
 	mu        sync.Mutex
 	upstreams []*dnsUpstream
 	config    upstreamPoolConfig
-	client    *http.Client
+	owner     context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	retired   bool
+	queries   sync.WaitGroup
 }
 
 type dnsUpstream struct {
+	client      *http.Client
+	requestURL  string
 	Index       int       `json:"index"`
 	URL         string    `json:"url"`
 	Scheme      string    `json:"scheme"`
@@ -92,18 +98,22 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 		if err != nil {
 			return nil, err
 		}
+		if upstream.Scheme == "https" {
+			// Each HTTPS endpoint owns its TLS identity and idle connections.
+			// An IP dial address may intentionally use a DNS certificate name.
+			upstream.client = &http.Client{Transport: &http.Transport{
+				IdleConnTimeout: 30 * time.Second,
+				DialContext:     (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext,
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: upstream.ServerName},
+			}}
+		}
 		upstreams = append(upstreams, upstream)
 	}
 	if len(upstreams) == 0 {
 		return nil, fmt.Errorf("no DNS upstream configured")
 	}
-	return &upstreamPool{
-		upstreams: upstreams,
-		config:    cfg,
-		// Each exchange supplies its own deadline: ordinary queries and health
-		// probes may intentionally have different timeouts.
-		client: &http.Client{Transport: &http.Transport{DialContext: (&net.Dialer{Resolver: resolverForBootstrap(cfg.BootstrapResolver), Control: interfaceControl(cfg.ViaInterface)}).DialContext, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}},
-	}, nil
+	owner, cancel := context.WithCancel(context.Background())
+	return &upstreamPool{upstreams: upstreams, config: cfg, owner: owner, cancel: cancel}, nil
 }
 
 func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
@@ -148,12 +158,61 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 	if override := strings.TrimSpace(parsed.Query().Get("serverName")); override != "" {
 		serverName = override
 	}
-	return &dnsUpstream{Index: index, URL: trimmed, Scheme: scheme, Address: address, ServerName: serverName, Phase: upstreamProbing}, nil
+	// serverName is local TLS configuration, not a DoH HTTP query parameter.
+	query := parsed.Query()
+	query.Del("serverName")
+	parsed.RawQuery = query.Encode()
+	return &dnsUpstream{Index: index, URL: trimmed, requestURL: parsed.String(), Scheme: scheme, Address: address, ServerName: serverName, Phase: upstreamProbing}, nil
 }
 
 func (p *upstreamPool) Start(ctx context.Context, publish func(string, string, string, string, map[string]string)) {
+	p.mu.Lock()
+	if p.done != nil || p.retired {
+		p.mu.Unlock()
+		return
+	}
+	p.cancel()
+	ctx, p.cancel = context.WithCancel(ctx)
+	p.owner = ctx
+	p.done = make(chan struct{})
+	done := p.done
+	upstreams := append([]*dnsUpstream(nil), p.upstreams...)
+	p.mu.Unlock()
+	go func() {
+		defer close(done)
+		var probes sync.WaitGroup
+		for _, upstream := range upstreams {
+			probes.Add(1)
+			go func() {
+				defer probes.Done()
+				p.probeLoop(ctx, upstream, publish)
+			}()
+		}
+		probes.Wait()
+		p.closeIdleConnections()
+	}()
+}
+
+// Stop first closes admission, then cancels and joins both real query and probe
+// work. No retired probe callback or exchange may publish after it returns.
+func (p *upstreamPool) Stop() {
+	p.mu.Lock()
+	p.retired = true
+	cancel, done := p.cancel, p.done
+	p.mu.Unlock()
+	cancel()
+	if done != nil {
+		<-done
+	}
+	p.queries.Wait()
+	p.closeIdleConnections()
+}
+
+func (p *upstreamPool) closeIdleConnections() {
 	for _, upstream := range p.snapshotPointers() {
-		go p.probeLoop(ctx, upstream, publish)
+		if upstream.client != nil {
+			upstream.client.CloseIdleConnections()
+		}
 	}
 }
 
@@ -192,6 +251,25 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 }
 
 func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(string, string, string, string, map[string]string)) ([]byte, error) {
+	p.mu.Lock()
+	if p.retired {
+		p.mu.Unlock()
+		return nil, context.Canceled
+	}
+	p.queries.Add(1)
+	owner := p.owner
+	p.mu.Unlock()
+	defer p.queries.Done()
+	if owner != nil {
+		if err := owner.Err(); err != nil {
+			return nil, err
+		}
+		queryCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(owner, cancel)
+		defer stop()
+		defer cancel()
+		ctx = queryCtx
+	}
 	var errs []string
 	for _, upstream := range p.attemptOrder() {
 		if err := ctx.Err(); err != nil {
@@ -282,13 +360,13 @@ func validateUpstreamResponse(query, response []byte) error {
 }
 
 func (p *upstreamPool) exchangeDoH(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.URL, bytes.NewReader(query))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstream.requestURL, bytes.NewReader(query))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/dns-message")
 	req.Header.Set("Accept", "application/dns-message")
-	resp, err := p.client.Do(req)
+	resp, err := upstream.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +417,11 @@ func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	defer packetConn.Close()
-	conn, err := quic.Dial(ctx, packetConn, udpAddr, &tls.Config{ServerName: upstream.ServerName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
+	serverName := upstream.ServerName
+	if serverName == "" {
+		serverName = host // TLS also verifies certificate IP address identities.
+	}
+	conn, err := quic.Dial(ctx, packetConn, udpAddr, &tls.Config{ServerName: serverName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +431,41 @@ func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	defer stream.Close()
-	return exchangeLengthPrefixed(ctx, stream, query)
+	return exchangeDoQMessage(ctx, stream, query)
+}
+
+// RFC9250 section4.2: the query has ID0 and a sending-direction FIN before
+// waiting for the response. A peer may wait for that FIN before answering.
+func exchangeDoQMessage(ctx context.Context, stream *quic.Stream, query []byte) ([]byte, error) {
+	if len(query) < 12 {
+		return nil, fmt.Errorf("DoQ query has no DNS header")
+	}
+	stop := setExchangeDeadline(ctx, stream)
+	defer stop()
+	wire := append([]byte(nil), query...)
+	wire[0], wire[1] = 0, 0
+	if err := writeDNSMessage(stream, wire); err != nil {
+		return nil, err
+	}
+	if err := stream.Close(); err != nil {
+		return nil, err
+	}
+	response, err := readDNSMessage(stream)
+	if err != nil {
+		return nil, err
+	}
+	if len(response) < 12 || response[0] != 0 || response[1] != 0 {
+		return nil, fmt.Errorf("DoQ response must have DNS message ID0")
+	}
+	var extra [1]byte
+	if n, err := stream.Read(extra[:]); n != 0 || err != io.EOF {
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		return nil, fmt.Errorf("DoQ peer sent more than one DNS response")
+	}
+	response[0], response[1] = query[0], query[1]
+	return response, nil
 }
 
 func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
@@ -364,7 +480,7 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 	if _, err := conn.Write(query); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, 4096)
+	buf := make([]byte, maxDNSMessageSize)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
@@ -432,21 +548,30 @@ type deadlineConn interface {
 func exchangeLengthPrefixed(ctx context.Context, conn deadlineConn, query []byte) ([]byte, error) {
 	stop := setExchangeDeadline(ctx, conn)
 	defer stop()
-	if len(query) > maxDNSMessageSize {
-		return nil, fmt.Errorf("DNS query too large")
-	}
-	if err := binary.Write(conn, binary.BigEndian, uint16(len(query))); err != nil {
+	if err := writeDNSMessage(conn, query); err != nil {
 		return nil, err
 	}
-	if _, err := conn.Write(query); err != nil {
-		return nil, err
+	return readDNSMessage(conn)
+}
+
+func writeDNSMessage(writer io.Writer, message []byte) error {
+	if len(message) > maxDNSMessageSize {
+		return fmt.Errorf("DNS query too large")
 	}
+	frame := make([]byte, 2+len(message))
+	binary.BigEndian.PutUint16(frame, uint16(len(message)))
+	copy(frame[2:], message)
+	_, err := bytes.NewReader(frame).WriteTo(writer)
+	return err
+}
+
+func readDNSMessage(reader io.Reader) ([]byte, error) {
 	var length uint16
-	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+	if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
 		return nil, err
 	}
 	resp := make([]byte, int(length))
-	if _, err := io.ReadFull(conn, resp); err != nil {
+	if _, err := io.ReadFull(reader, resp); err != nil {
 		return nil, err
 	}
 	return resp, nil

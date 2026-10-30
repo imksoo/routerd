@@ -22,7 +22,10 @@ routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外�
 
 ## events 資料表
 
-事件匯流排會將事件持久化至 SQLite。`EventRule` 與 `DerivedEvent` 以此串流作為輸入。
+事件匯流排會將事件持久化至 SQLite。`EventRule` 以這些歷史記錄為輸入；`DerivedEvent` 則評估所參照物件的目前 status，並記錄 asserted/retracted 狀態轉換。
+
+EventRule 的關聯 checkpoint 和每條規則唯一的輸入 cursor 也會持久化。匹配結果、公開 status 和本機輸出事件與 checkpoint 在同一交易中提交；失敗時均不推進。未修改的規則在重啟後繼續處理，新規則或已修改的規則從設定準備時記錄的輸入位置開始。如果保留原則已刪除未讀輸入，則回報歷史缺口，不能推斷事件不存在。每條規則最多保留4096個關聯鍵，序列化後的 checkpoint 上限為8 MiB。超過任一上限時，按最後匹配輸入的時間由舊至新淘汰關聯鍵，直到滿足上限；並在同一交易中增加 `status.warningCount`。
+
 日常運維請使用 `routerctl get events`，而非直接操作 `sqlite3`：
 
 ```sh
@@ -60,7 +63,7 @@ provider capture 生效的時間。兩者共同度量從接受到生效的區間
 意圖的正本是 YAML 設定檔，請以 git 管理。
 重建主機時，比起還原 SQLite，套用設定檔並讓 routerd 進行調和（reconcile）更為可靠。
 
-若出於鑑識目的需要保留操作事件歷史，請定期為 `events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` 建立快照。這些檔案為僅附加模式，不需要像 `routerd.db` 那樣進行特定時間點的備份。
+若出於鑑識目的需要保留操作事件歷史，請將 `routerd.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` 備份至外部儲存或定期建立快照。控制器的事件歷史目前儲存在 `routerd.db` 中；需要時請保全整個資料庫，以便一併保留 EventRule checkpoint 和輸入 cursor。
 
 ## 相關說明
 

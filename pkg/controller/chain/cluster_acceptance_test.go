@@ -128,7 +128,7 @@ func newClusterAcceptanceRunner(identity, leasePath string, ttl time.Duration, l
 			EnabledControllers: []string{"fake-mutator-" + identity},
 		},
 	}
-	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, decision ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
+	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, _ eventedStore, _ bool, decision ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
 		controller := framework.FuncController{
 			ControllerName: "fake-mutator-" + identity,
 			ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
@@ -138,7 +138,7 @@ func newClusterAcceptanceRunner(identity, leasePath string, ttl time.Duration, l
 				return log.run(ctx, identity)
 			},
 		}
-		return []framework.Controller{controller}, DaemonStatusController{}, nil
+		return []framework.Controller{controller}, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 	return runner
 }

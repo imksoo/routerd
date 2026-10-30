@@ -23,6 +23,10 @@ func (s testStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return s[apiVersion+"/"+kind+"/"+name]
 }
 
+func (s testStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestRenderFRRConfigUsesBGPPeerAddresses(t *testing.T) {
 	router := bfdRouter()
 	controller := Controller{Router: router, Store: testStore{}}
@@ -95,7 +99,7 @@ func TestRenderFRRConfigCloudRRMultihopLocalAddress(t *testing.T) {
 	}
 }
 
-func TestSessionsRecoverFromBGPPeerBFDReferenceWithoutBFDResource(t *testing.T) {
+func TestSessionsDoNotRestoreUnselectedBFDFromBGPPeerReference(t *testing.T) {
 	router := cloudRRRouter("10.99.0.4")
 	router.Spec.Resources = router.Spec.Resources[:2]
 	controller := Controller{Router: router, Store: testStore{}}
@@ -103,11 +107,8 @@ func TestSessionsRecoverFromBGPPeerBFDReferenceWithoutBFDResource(t *testing.T) 
 	if err != nil {
 		t.Fatalf("sessions: %v", err)
 	}
-	if len(sessions) != 1 || sessions[0].BFDName != "onprem-rr" || sessions[0].Address != "10.99.0.1" || sessions[0].LocalAddr != "10.99.0.4" {
-		t.Fatalf("sessions = %#v, want synthesized onprem-rr session", sessions)
-	}
-	if len(byBFD["onprem-rr"]) != 1 {
-		t.Fatalf("byBFD = %#v, want synthesized BFD bucket", byBFD)
+	if len(sessions) != 0 || len(byBFD) != 0 {
+		t.Fatalf("unselected BFD restored from remaining reference: sessions=%#v byBFD=%#v", sessions, byBFD)
 	}
 }
 
@@ -151,28 +152,22 @@ func TestSessionsRejectUnknownInterfaceResource(t *testing.T) {
 }
 
 func TestParseFRRBFDPeersJSON(t *testing.T) {
-	got := ParseFRRBFDPeersJSON([]byte(`{
-		"10.99.0.2": {"status": "up"},
-		"peers": [
-			{"peer": "10.99.0.3", "state": "down"},
-			{"peerAddress": "10.99.0.4", "sessionState": "admin_down"}
-		]
-	}`))
-	want := map[string]string{
-		"10.99.0.2": "Up",
-		"10.99.0.3": "Down",
-		"10.99.0.4": "Down",
+	got, err := parseFRRBFDPeers([]byte(`[
+		{"multihop":false,"peer":"10.99.0.2","local":"10.99.0.1","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3},
+		{"multihop":true,"peer":"10.99.0.2","local":"10.99.0.1","vrf":"default","status":"down","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}
+	]`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for address, state := range want {
-		if got[address] != state {
-			t.Fatalf("state[%s] = %q, want %q; all=%#v", address, got[address], state, got)
-		}
+	if len(got) != 2 || got[sessionKey(session{Address: "10.99.0.2", Interface: "wg0"})].Status != "up" || got[sessionKey(session{Address: "10.99.0.2", LocalAddr: "10.99.0.1"})].Status != "down" {
+		t.Fatalf("distinct native tuple states lost: %#v", got)
 	}
 }
 
 func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	store := testStore{}
 	var commands []string
+	reads := 0
 	controller := Controller{
 		Router:     bfdRouter(),
 		Store:      store,
@@ -182,7 +177,11 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
-				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"down"}}`), nil
+				reads++
+				if reads == 1 {
+					return []byte(`[]`), nil
+				}
+				return []byte(`[{"peer":"10.99.0.2","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3},{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"down","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}]`), nil
 			}
 			return nil, nil
 		},
@@ -190,7 +189,7 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 2 || !strings.Contains(commands[0], "-f ") || !strings.Contains(commands[1], "show bfd peers json") {
+	if len(commands) != 3 || !strings.Contains(commands[0], "show bfd peers json") || !strings.Contains(commands[1], "-f ") || !strings.Contains(commands[2], "show bfd peers json") {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
@@ -206,6 +205,7 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	store := testStore{}
 	var commands []string
+	reads := 0
 	controller := Controller{
 		Router:     bfdRouter(),
 		Store:      store,
@@ -214,7 +214,11 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
-				return []byte(`{"10.99.0.2":{"state":"up"},"10.99.0.3":{"state":"up"}}`), nil
+				reads++
+				if reads == 1 {
+					return []byte(`[]`), nil
+				}
+				return []byte(`[{"peer":"10.99.0.2","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3},{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}]`), nil
 			}
 			return nil, nil
 		},
@@ -222,7 +226,7 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 2 || !strings.HasPrefix(commands[0], "/usr/local/bin/vtysh -f ") || commands[1] != "/usr/local/bin/vtysh -c show bfd peers json" {
+	if len(commands) != 3 || !strings.HasPrefix(commands[1], "/usr/local/bin/vtysh -f ") || commands[2] != "/usr/local/bin/vtysh -c show bfd peers json" {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")

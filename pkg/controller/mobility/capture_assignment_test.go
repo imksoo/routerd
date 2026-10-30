@@ -109,22 +109,16 @@ func TestCaptureAssignmentGenerationRetainsConfirmedHolderConvergenceOnly(t *tes
 
 func captureAssignmentSucceededRecord(t *testing.T, plan dynamicconfig.ActionPlan, at time.Time) routerstate.ActionExecutionRecord {
 	t.Helper()
-	target, err := json.Marshal(plan.Target)
-	if err != nil {
-		t.Fatalf("marshal capture assignment target: %v", err)
-	}
-	parameters, err := json.Marshal(plan.Parameters)
-	if err != nil {
-		t.Fatalf("marshal capture assignment parameters: %v", err)
-	}
+	target := plan.Target
+	parameters := plan.Parameters
 	return routerstate.ActionExecutionRecord{
 		ID:             1,
 		IdempotencyKey: plan.IdempotencyKey,
 		Provider:       plan.Provider,
 		ProviderRef:    plan.ProviderRef,
 		Action:         plan.Action,
-		TargetJSON:     string(target),
-		ParametersJSON: string(parameters),
+		Target:         target,
+		Parameters:     parameters,
 		Status:         routerstate.ActionSucceeded,
 		ExecutedAt:     at,
 		UpdatedAt:      at,

@@ -3,12 +3,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 // awsRunner runs one `aws` CLI invocation with the given argv (without the
@@ -31,12 +33,24 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "aws", argv...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("aws %s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(stderr.String()))
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	cmd.Env = append(os.Environ(), "AWS_MAX_ATTEMPTS=1", "AWS_PAGER=")
+	runErr := subprocessio.Run(cmd)
+	if cmd.Process == nil && runErr != nil {
+		return nil, &commandNotStartedError{runErr}
 	}
+	if runCtx.Err() != nil {
+		runErr = runCtx.Err()
+	}
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		runErr = limitErr
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("aws %s: %w: %s", strings.Join(argv, " "), runErr, strings.TrimSpace(stderr.String()))
+	}
+
 	return stdout.Bytes(), nil
 }
 
@@ -77,7 +91,7 @@ func (n networkInterface) secondaryIPsCSV() string {
 type describeNetworkInterfacesOutput struct {
 	NetworkInterfaces []struct {
 		NetworkInterfaceID string `json:"NetworkInterfaceId"`
-		SourceDestCheck    bool   `json:"SourceDestCheck"`
+		SourceDestCheck    *bool  `json:"SourceDestCheck"`
 		PrivateIPAddresses []struct {
 			PrivateIPAddress string `json:"PrivateIpAddress"`
 			Primary          bool   `json:"Primary"`
@@ -99,11 +113,11 @@ func describeInterface(ctx context.Context, runner awsRunner, eni, region string
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return networkInterface{}, fmt.Errorf("parse describe-network-interfaces output: %w", err)
 	}
-	if len(parsed.NetworkInterfaces) == 0 {
+	if len(parsed.NetworkInterfaces) != 1 || parsed.NetworkInterfaces[0].NetworkInterfaceID != eni || parsed.NetworkInterfaces[0].SourceDestCheck == nil {
 		return networkInterface{}, fmt.Errorf("describe-network-interfaces returned no interface for %q", eni)
 	}
 	ni := parsed.NetworkInterfaces[0]
-	iface := networkInterface{SourceDestCheck: ni.SourceDestCheck}
+	iface := networkInterface{SourceDestCheck: *ni.SourceDestCheck}
 	for _, p := range ni.PrivateIPAddresses {
 		if !p.Primary {
 			iface.secondaryPrivateIPs = append(iface.secondaryPrivateIPs, p.PrivateIPAddress)

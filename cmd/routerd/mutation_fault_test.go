@@ -21,8 +21,8 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
-	for _, stage := range []string{"rename", "restore-fallback", "restore-unavailable", "directory-sync", "finish-generation", "sandbox-plan"} {
+func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T) {
+	for _, stage := range []string{"rename", "directory-sync", "finish-generation"} {
 		t.Run(stage, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
 			opts.Sandbox = true
@@ -37,8 +37,7 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			current := old
 			active := controllerchain.RuntimeSnapshot{Router: old, Known: true, Available: true, Epoch: 1}
 			fault := errors.New("injected apply failure with secret payload")
-			restoreFault := errors.New("injected restore failure")
-			beforeRename := stage == "rename" || strings.HasPrefix(stage, "restore-")
+			beforeRename := stage == "rename"
 			opts.attemptHooks.writeCanonical = func(path string, data []byte) (config.AtomicWriteOutcome, error) {
 				if beforeRename {
 					return config.AtomicWriteOutcome{}, fault
@@ -58,28 +57,20 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 				}
 				return store.FinishGeneration(g, p, w)
 			}
-			if stage == "sandbox-plan" {
-				opts.OverrideClient = "invalid-client"
-			}
 			gate := &sync.RWMutex{}
 			opts.MutationGate = gate
 			cache := &resultCache{}
 			cache.Store(&apply.Result{Generation: 99, Phase: "Healthy"})
 			reloads := 0
-			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }, activeRuntime: func() controllerchain.RuntimeSnapshot { return active }}
-			m.reloadWithOutcome = func(_ context.Context, r *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }, activeRuntime: func() controllerchain.RuntimeSnapshot { return active }}
+			m.applyRuntimeWithOutcome = func(_ context.Context, r *api.Router, _ bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
+				if err := commit(); err != nil {
+					return controllerchain.RuntimeReloadOutcome{Active: active}, err
+				}
 				reloads++
 				if gate.TryRLock() {
 					gate.RUnlock()
 					t.Error("reload/restore released exclusive gate")
-				}
-				if reloads == 2 && stage == "restore-fallback" {
-					active.Epoch++
-					return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, Restored: true, OperationID: uint64(reloads)}, restoreFault
-				}
-				if reloads == 2 && stage == "restore-unavailable" {
-					active = controllerchain.RuntimeSnapshot{Known: true, Epoch: active.Epoch}
-					return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, OperationID: uint64(reloads)}, restoreFault
 				}
 				active = controllerchain.RuntimeSnapshot{Router: r, Known: true, Available: true, Epoch: active.Epoch + 1}
 				return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, OperationID: uint64(reloads)}, nil
@@ -88,18 +79,15 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if err == nil || response != nil {
 				t.Fatalf("partial failure response=%+v, err=%v", response, err)
 			}
-			if stage != "sandbox-plan" && !errors.Is(err, fault) {
+			if !errors.Is(err, fault) {
 				t.Errorf("original error lost: %v", err)
-			}
-			if strings.HasPrefix(stage, "restore-") && !errors.Is(err, restoreFault) {
-				t.Errorf("restore error lost: %v", err)
 			}
 			if strings.Contains(err.Error(), "secret payload") {
 				t.Errorf("unsafe API error: %s", err)
 			}
 			wantReloads := 1
-			if beforeRename {
-				wantReloads = 2
+			if beforeRename || stage == "directory-sync" {
+				wantReloads = 0
 			}
 			if reloads != wantReloads {
 				t.Errorf("reload calls=%d,want=%d", reloads, wantReloads)
@@ -128,8 +116,6 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if stage == "finish-generation" {
 				// An unfinished SQLite generation has NULL phase, exposed as "".
 				wantPhase = ""
-			} else if stage == "sandbox-plan" {
-				wantPhase = "Committed"
 			}
 			if rows[0].Phase != wantPhase || rows[0].FinishedAt.IsZero() != (stage == "finish-generation") {
 				t.Errorf("terminal row=%+v, want phase=%s", rows[0], wantPhase)
@@ -148,7 +134,7 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 				t.Errorf("cache=%+v", cached)
 			}
 			// A later scheduled observation can be healthy even though the
-			// configuration transaction still has unresolved persistence/restoration.
+			// configuration transaction still has unresolved persistence/activation.
 			cache.Store(&apply.Result{Phase: "Healthy"})
 			if cached := cache.Load(); cached == nil || cached.Phase != "Error" {
 				t.Errorf("scheduled observation hid failed configuration attempt: %+v", cached)
@@ -156,11 +142,11 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if active.Available && current != active.Router {
 				t.Error("published router differs from confirmed active")
 			}
-			if stage == "rename" && current != old {
-				t.Error("successful restoration did not publish old router")
+			if (stage == "rename" || stage == "directory-sync") && current != old {
+				t.Error("uncommitted candidate replaced the last committed declaration")
 			}
-			if stage != "rename" && current == old {
-				t.Error("last-known/runtime incorrectly reset to old router")
+			if stage != "rename" && stage != "directory-sync" && current == old {
+				t.Error("confirmed replacement/runtime incorrectly reset to old router")
 			}
 			if !gate.TryLock() {
 				t.Fatal("completed mutation retained gate")
@@ -188,7 +174,7 @@ func TestFaultHTTPFailureIncludesSafePartialProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
 	handler := controlapi.Handler{Apply: m.apply}
 	body := `{"candidateYaml":"apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata: {name: new-router}\nspec: {resources: []}\n","replace":true}`
 	request := httptest.NewRequest(http.MethodPost, controlapi.Prefix+"/apply", strings.NewReader(body))
@@ -218,7 +204,7 @@ func TestFaultDeletePostCommitFailureKeepsNewConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	faultGenerationStore(t, opts.StatePath, true)
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
 	response, err := m.delete(nil, controlapi.DeleteRequest{Target: "Hostname/appliance"})
 	if err == nil || response != nil || len(current.Spec.Resources) != 0 {
 		t.Fatalf("delete=%+v,%v,current=%+v", response, err, current)

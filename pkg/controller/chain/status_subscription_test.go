@@ -514,7 +514,7 @@ func subscriptionSetAccepts(subs []bus.Subscription, event daemonapi.DaemonEvent
 	return false
 }
 
-func whenResource(apiVersion, kind, name string, spec any) api.Resource {
+func whenResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind},
 		Metadata: api.ObjectMeta{Name: name},

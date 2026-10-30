@@ -15,7 +15,7 @@ import (
 func TestContractRuntimeShapeKindsHaveLifecycleOrExplicitException(t *testing.T) {
 	want := strings.Fields(`RouterdCluster DHCPv4Client DHCPv4Server DHCPv6Client DHCPv6Server
 		DHCPv6PrefixDelegation PPPoESession HealthCheck DNSResolver DSLiteTunnel EventGroup
-		EventSubscription WebConsole SAMTransportProfile MobilityPool ServiceUnit`)
+		EventSubscription EventRule DerivedEvent Plugin SAMTransportProfile MobilityPool ServiceUnit`)
 	var got []string
 	exceptions := map[string]string{
 		"ServiceUnit":  "derived service units have runtime state, but are not declared config resources",
@@ -50,7 +50,6 @@ func TestContractControllerDisplayKindsHaveLifecycleOrDerivedReason(t *testing.T
 		"KernelModule":    "required modules are derived; the former config kind is rejected",
 		"NetworkAdoption": "adoption is derived from interfaces and service requirements",
 		"IPv4StaticRoute": "route lowerings are generated from declared route resources",
-		"IPv6StaticRoute": "route lowerings are generated from declared route resources",
 	}
 	known := map[string]bool{}
 	for _, kind := range api.ConfigResourceKinds() {

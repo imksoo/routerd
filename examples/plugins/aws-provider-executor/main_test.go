@@ -132,8 +132,8 @@ func TestAssignExecuteIssuesAssign(t *testing.T) {
 func TestAuthorizationFailureIsClassified(t *testing.T) {
 	f := &fakeAWS{err: fmt.Errorf("UnauthorizedOperation: You are not authorized to perform this operation")}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("want failed, got %q", res.Status.Status)
+	if res.Status.Status != statusOutcomeUnknown {
+		t.Fatalf("want unknown, got %q", res.Status.Status)
 	}
 	if res.Status.Observed["failureClass"] != "authorization" {
 		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
@@ -144,7 +144,7 @@ func TestAuthorizationFailureIsClassified(t *testing.T) {
 }
 
 func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
-	f := &fakeAWS{err: fmt.Errorf("fork/exec /usr/local/bin/aws: permission denied")}
+	f := &fakeAWS{err: &commandNotStartedError{fmt.Errorf("fork/exec /usr/local/bin/aws: permission denied")}}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusFailed {
 		t.Fatalf("want failed, got %q", res.Status.Status)
@@ -272,24 +272,21 @@ func TestUnassignExecuteIssuesUnassign(t *testing.T) {
 	}
 }
 
-func TestUnassignExecuteTreatsAlreadyAbsentAsSucceeded(t *testing.T) {
+func TestUnassignDoesNotInferAbsenceFromWriteErrorText(t *testing.T) {
 	f := &fakeAWS{err: fmt.Errorf("aws: [ERROR]: An error occurred (InvalidParameterValue) when calling the UnassignPrivateIpAddresses operation: Some of the specified addresses are not assigned to interface eni-1")}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusSucceeded {
+	if res.Status.Status != statusOutcomeUnknown {
 		t.Fatalf("want succeeded for already-absent address, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if !strings.Contains(res.Status.Message, "already absent") {
-		t.Fatalf("message = %q, want already absent", res.Status.Message)
 	}
 }
 
 func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
-	f := &fakeAWS{}
+	f := &fakeAWS{routeOut: []byte(`{"RouteTables":[{"RouteTableId":"rtb-cloudedge","Routes":[]}]}`)}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	got := strings.Join(f.calls[0], " ")
+	got := strings.Join(f.calls[1], " ")
 	want := "ec2 create-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
@@ -300,12 +297,12 @@ func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
 }
 
 func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
-	f := &fakeAWS{}
+	f := &fakeAWS{routeOut: []byte(`{"RouteTables":[{"RouteTableId":"rtb-cloudedge","Routes":[]}]}`)}
 	res := dispatchWith(routeReqSpec(actionAssignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	got := strings.Join(f.calls[0], " ")
+	got := strings.Join(f.calls[1], " ")
 	want := "ec2 create-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
@@ -313,14 +310,14 @@ func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
 }
 
 func TestAssignRouteTableSeizeReplacesRoute(t *testing.T) {
-	f := &fakeAWS{}
+	f := &fakeAWS{routeOut: cannedDescribeRouteTable("rtb-cloudedge", "10.88.60.9/32", "eni-old")}
 	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	got := strings.Join(f.calls[0], " ")
+	got := strings.Join(f.calls[1], " ")
 	want := "ec2 replace-route --route-table-id rtb-cloudedge --destination-cidr-block 10.88.60.9/32 --network-interface-id eni-1 --region ap-northeast-1"
 	if got != want {
 		t.Fatalf("replace route argv mismatch:\n got: %s\nwant: %s", got, want)

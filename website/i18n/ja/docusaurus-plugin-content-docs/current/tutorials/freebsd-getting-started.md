@@ -162,3 +162,11 @@ sudo tcpdump -n -e -ttt -i pflog0
 - [対応プラットフォーム](../platforms.md)
 - [WAN 側サービス](./wan-side-services.md)
 - [基本ファイアウォール](./basic-firewall.md)
+
+
+## 空設定と PF
+
+実行時の NAT/ingress ルールが空で `/dev/pf` が存在しない場合、NAT コントローラーは
+PF をロードせず、`pfctl` の実行や anchor ファイルの作成もせずに成功します。
+PF が存在する場合は、以前のルールを撤去するため空の anchor を適用します。
+デバイス状態の取得エラーや、必要な適用の失敗は成功として扱いません。

@@ -27,6 +27,7 @@ type Match struct {
 }
 
 type Event struct {
+	TransactionID    string
 	MAC              string
 	Interface        string
 	Hostname         string
@@ -47,6 +48,18 @@ func ParseDnsmasqLine(line string, now time.Time) (Event, bool) {
 		return Event{}, false
 	}
 	event := Event{ObservedAt: now.UTC(), Source: "dnsmasq-log-dhcp"}
+	// dnsmasq log-dhcp prefixes packet and option lines with the DHCP xid.
+	// Keep its process namespace when syslog supplies one.
+	if first, _, ok := strings.Cut(message, " "); ok {
+		if xid, err := strconv.ParseUint(first, 10, 32); err == nil {
+			event.TransactionID = strconv.FormatUint(xid, 10)
+			if start := strings.Index(line, "dnsmasq-dhcp["); start >= 0 {
+				if namespace, _, found := strings.Cut(line[start:], "]:"); found {
+					event.TransactionID = namespace + "]/" + event.TransactionID
+				}
+			}
+		}
+	}
 	if event.ObservedAt.IsZero() {
 		event.ObservedAt = time.Now().UTC()
 	}
@@ -139,7 +152,7 @@ func parseRequestedOptions(value string) []int {
 			token = before
 		}
 		n, err := strconv.Atoi(token)
-		if err != nil || n <= 0 {
+		if err != nil || n <= 0 || n >= 255 {
 			continue
 		}
 		out = append(out, n)

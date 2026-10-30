@@ -3,15 +3,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 // ociRunner runs one `oci` CLI invocation with the given argv (without the
@@ -40,18 +42,29 @@ func execRunner(ctx context.Context, argv ...string) ([]byte, error) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout())
 	defer cancel()
 	full := append([]string(nil), argv...)
-	full = append(full, "--auth", "instance_principal", "--output", "json")
+	full = append(full, "--auth", "instance_principal", "--output", "json", "--no-retry")
 	oci, err := resolveOCICommand()
 	if err != nil {
-		return nil, err
+		return nil, &commandNotStartedError{err}
 	}
 	cmd := exec.CommandContext(runCtx, oci, full...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("oci %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(stderr.String()))
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	runErr := subprocessio.Run(cmd)
+	if cmd.Process == nil && runErr != nil {
+		return nil, &commandNotStartedError{runErr}
 	}
+	if runCtx.Err() != nil {
+		runErr = runCtx.Err()
+	}
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		runErr = limitErr
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("oci %s: %w: %s", strings.Join(full, " "), runErr, strings.TrimSpace(stderr.String()))
+	}
+
 	return stdout.Bytes(), nil
 }
 
@@ -139,7 +152,8 @@ type vnic struct {
 // is wrapped in a top-level "data" object.
 type vnicGetOutput struct {
 	Data struct {
-		SkipSourceDestCheck bool `json:"skip-source-dest-check"`
+		ID                  string `json:"id"`
+		SkipSourceDestCheck *bool  `json:"skip-source-dest-check"`
 	} `json:"data"`
 }
 
@@ -155,7 +169,10 @@ func getVNIC(ctx context.Context, runner ociRunner, vnicID string) (vnic, error)
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return vnic{}, fmt.Errorf("parse network vnic get output: %w", err)
 	}
-	return vnic{SkipSourceDestCheck: parsed.Data.SkipSourceDestCheck}, nil
+	if parsed.Data.ID != vnicID || parsed.Data.SkipSourceDestCheck == nil {
+		return vnic{}, fmt.Errorf("incomplete VNIC observation for %q", vnicID)
+	}
+	return vnic{SkipSourceDestCheck: *parsed.Data.SkipSourceDestCheck}, nil
 }
 
 // privateIPListOutput mirrors the JSON shape of `oci network private-ip list`,
@@ -180,9 +197,15 @@ func findPrivateIPOCID(ctx context.Context, runner ociRunner, vnicID, address st
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return "", fmt.Errorf("parse network private-ip list output: %w", err)
 	}
+	if parsed.Data == nil {
+		return "", fmt.Errorf("private-ip list observation has no data array")
+	}
 	want := hostPart(address)
 	for _, p := range parsed.Data {
 		if hostPart(p.IPAddress) == want {
+			if strings.TrimSpace(p.ID) == "" {
+				return "", fmt.Errorf("matching private-ip observation has no OCID")
+			}
 			return p.ID, nil
 		}
 	}
@@ -209,18 +232,22 @@ type ociRouteRule struct {
 	DestinationType string `json:"destinationType,omitempty"`
 	NetworkEntityID string `json:"networkEntityId,omitempty"`
 	Description     string `json:"description,omitempty"`
+	RouteType       string `json:"routeType,omitempty"`
 }
 
 // routeTableGetOutput mirrors `oci network route-table get`, whose payload wraps
 // the route rules (kebab-case keys) under a top-level "data" object.
 type routeTableGetOutput struct {
+	ETag string `json:"etag"`
 	Data struct {
+		ID         string `json:"id"`
 		RouteRules []struct {
 			Destination     string `json:"destination"`
 			DestinationType string `json:"destination-type"`
 			CidrBlock       string `json:"cidr-block"`
 			NetworkEntityID string `json:"network-entity-id"`
 			Description     string `json:"description"`
+			RouteType       string `json:"route-type"`
 		} `json:"route-rules"`
 	} `json:"data"`
 }
@@ -229,14 +256,22 @@ type routeTableGetOutput struct {
 // the existing rules normalized into the camelCase update shape, preserving every
 // unrelated rule (including service-gateway rules) so a read-modify-write update
 // never drops routes the executor did not author.
-func getRouteTableRules(ctx context.Context, runner ociRunner, rtID string) ([]ociRouteRule, error) {
+type ociRouteTable struct {
+	Rules []ociRouteRule
+	ETag  string
+}
+
+func getRouteTableRules(ctx context.Context, runner ociRunner, rtID string) (ociRouteTable, error) {
 	out, err := runner(ctx, "network", "route-table", "get", "--rt-id", rtID)
 	if err != nil {
-		return nil, err
+		return ociRouteTable{}, err
 	}
 	var parsed routeTableGetOutput
 	if err := json.Unmarshal(out, &parsed); err != nil {
-		return nil, fmt.Errorf("parse network route-table get output: %w", err)
+		return ociRouteTable{}, fmt.Errorf("parse network route-table get output: %w", err)
+	}
+	if parsed.Data.ID != rtID || parsed.ETag == "" || parsed.Data.RouteRules == nil {
+		return ociRouteTable{}, fmt.Errorf("incomplete route-table/etag observation for %q", rtID)
 	}
 	rules := make([]ociRouteRule, 0, len(parsed.Data.RouteRules))
 	for _, r := range parsed.Data.RouteRules {
@@ -253,15 +288,19 @@ func getRouteTableRules(ctx context.Context, runner ociRunner, rtID string) ([]o
 			DestinationType: dtype,
 			NetworkEntityID: strings.TrimSpace(r.NetworkEntityID),
 			Description:     r.Description,
+			RouteType:       r.RouteType,
 		})
 	}
-	return rules, nil
+	return ociRouteTable{Rules: rules, ETag: parsed.ETag}, nil
 }
 
 // updateRouteTableRules writes the full rule set back with `route-table update`.
 // Callers MUST pass the merged set (existing rules plus/minus the one mobility
 // rule) returned from getRouteTableRules, because OCI replaces the entire set.
-func updateRouteTableRules(ctx context.Context, runner ociRunner, rtID string, rules []ociRouteRule) error {
+func updateRouteTableRules(ctx context.Context, runner ociRunner, rtID, etag string, rules []ociRouteRule) error {
+	if etag == "" {
+		return fmt.Errorf("route-table write requires observed etag")
+	}
 	if rules == nil {
 		rules = []ociRouteRule{}
 	}
@@ -271,6 +310,7 @@ func updateRouteTableRules(ctx context.Context, runner ociRunner, rtID string, r
 	}
 	_, err = runner(ctx, "network", "route-table", "update",
 		"--rt-id", rtID,
+		"--if-match", etag,
 		"--route-rules", string(payload),
 		"--force")
 	return err
@@ -279,9 +319,13 @@ func updateRouteTableRules(ctx context.Context, runner ociRunner, rtID string, r
 // routeRuleIndexForDest returns the index of the rule whose destination host
 // matches the captured /32 (compared by host so "10.88.60.9/32" matches), or -1.
 func routeRuleIndexForDest(rules []ociRouteRule, dest string) int {
-	want := hostPart(strings.TrimSpace(dest))
+	wanted, err := netip.ParsePrefix(dest)
+	if err != nil || !wanted.Addr().Is4() || wanted.Bits() != 32 {
+		return -1
+	}
 	for i, r := range rules {
-		if hostPart(strings.TrimSpace(r.Destination)) == want {
+		actual, err := netip.ParsePrefix(r.Destination)
+		if err == nil && r.DestinationType == "CIDR_BLOCK" && actual.Masked() == wanted.Masked() {
 			return i
 		}
 	}

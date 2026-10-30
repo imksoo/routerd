@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,10 +54,7 @@ func executorPlugin(provider string) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
 		Metadata: api.ObjectMeta{Name: provider + "-executor"},
-		Spec: map[string]any{
-			"executable":   "/bin/true",
-			"capabilities": []any{CapabilityExecuteProviderAction},
-		},
+		Spec:     api.PluginSpec{Executable: "/bin/true", Capabilities: []string{CapabilityExecuteProviderAction}},
 	}
 }
 
@@ -237,10 +235,7 @@ func TestImportFencesStaleMobilityPathActions(t *testing.T) {
 	oldPlan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
-	oldRec, err := recordFromPlan("previous", oldPlan)
-	if err != nil {
-		t.Fatalf("recordFromPlan: %v", err)
-	}
+	oldRec := recordFromPlan("previous", oldPlan)
 	if _, err := store.ImportAction(oldRec); err != nil {
 		t.Fatalf("seed stale pending action: %v", err)
 	}
@@ -465,7 +460,7 @@ func TestExecuteWithoutApprovalRejected(t *testing.T) {
 	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
 	id := importOne(t, store, e, "k1")
 	// Pending + requireApproval=true -> reject before launching executor.
-	err := e.Execute(context.Background(), id, ModeExecute, allowPolicy())
+	err := e.Execute(context.Background(), id, allowPolicy())
 	if err == nil {
 		t.Fatal("expected approval rejection")
 	}
@@ -484,7 +479,7 @@ func TestExecuteDryRunOnlyBlocksExecuteMode(t *testing.T) {
 	}
 	pol := allowPolicy()
 	pol.DryRunOnly = boolPtr(true) // only dry-run permitted
-	err := e.Execute(context.Background(), id, ModeExecute, pol)
+	err := e.Execute(context.Background(), id, pol)
 	if err == nil {
 		t.Fatal("expected dryRunOnly rejection for mode=execute")
 	}
@@ -493,7 +488,7 @@ func TestExecuteDryRunOnlyBlocksExecuteMode(t *testing.T) {
 	}
 }
 
-func TestExecuteApprovedDryRunSucceeds(t *testing.T) {
+func TestPreviewPreservesApprovalForLaterExecution(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}
 	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
@@ -501,15 +496,15 @@ func TestExecuteApprovedDryRunSucceeds(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeDryRun, allowPolicy()); err != nil {
+	if _, err := e.DryRunPreview(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute dry-run: %v", err)
 	}
 	if runner.calls != 1 || runner.last.Spec.Mode != ModeDryRun {
 		t.Fatalf("expected 1 dry-run call, got calls=%d mode=%q", runner.calls, runner.last.Spec.Mode)
 	}
 	rec, _, _ := store.GetActionByID(id)
-	if rec.Status != state.ActionSucceeded {
-		t.Fatalf("want succeeded journaled, got %q", rec.Status)
+	if rec.Status != state.ActionApproved {
+		t.Fatalf("preview consumed approval: %q", rec.Status)
 	}
 }
 
@@ -521,7 +516,7 @@ func TestExecuteModeExecuteApprovedSucceeds(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if runner.last.Spec.Mode != ModeExecute {
@@ -541,7 +536,7 @@ func TestExecutePolicyAutoApprove(t *testing.T) {
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false) // policy auto-approve
 	// Pending + auto-approve path -> executes without operator approval.
-	if err := e.Execute(context.Background(), id, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), id, pol); err != nil {
 		t.Fatalf("auto-approve execute: %v", err)
 	}
 	if runner.calls != 1 {
@@ -576,7 +571,7 @@ func TestExecuteSkipsStaleOwnershipEpochAtExecutionBoundary(t *testing.T) {
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
 	pol := allowForwardingPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute stale: %v", err)
 	}
 	if runner.calls != 0 {
@@ -597,10 +592,7 @@ func TestExecuteSkipsLegacyCaptureAssignWithoutAssignmentGeneration(t *testing.T
 	plan.Parameters = map[string]string{
 		pathSigParam: "prefix=10.0.0.5/32;nextHops=10.99.0.1",
 	}
-	recSeed, err := recordFromPlan("sub-a", plan)
-	if err != nil {
-		t.Fatalf("recordFromPlan: %v", err)
-	}
+	recSeed := recordFromPlan("sub-a", plan)
 	if _, err := store.ImportAction(recSeed); err != nil {
 		t.Fatalf("ImportAction: %v", err)
 	}
@@ -612,7 +604,7 @@ func TestExecuteSkipsLegacyCaptureAssignWithoutAssignmentGeneration(t *testing.T
 	}
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute legacy capture assign: %v", err)
 	}
 	if runner.calls != 0 {
@@ -648,7 +640,7 @@ func TestExecuteSkipsStaleAssignmentGenerationAfterDesiredHolderChanges(t *testi
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute stale assignment: %v", err)
 	}
 	if runner.calls != 0 {
@@ -681,7 +673,7 @@ func TestExecuteCurrentAssignmentGenerationRunsExecutor(t *testing.T) {
 	}
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute current assignment: %v", err)
 	}
 	if runner.calls != 1 {
@@ -699,10 +691,7 @@ func TestExecuteCurrentAssignmentGenerationRunsExecutor(t *testing.T) {
 func TestExecuteSkipsExpiredAssignmentLeaseBeforeExecutor(t *testing.T) {
 	store := mustStore(t)
 	expired := sampleAssignmentPlan("expired-assign", "cloudedge/aws-10-0-0-5-32/1", "aws-router-a", "aws-router-b", "eni-a", time.Unix(1700000000, 0).Add(-time.Second))
-	recSeed, err := recordFromPlan("sub-a", expired)
-	if err != nil {
-		t.Fatalf("recordFromPlan: %v", err)
-	}
+	recSeed := recordFromPlan("sub-a", expired)
 	if _, err := store.ImportAction(recSeed); err != nil {
 		t.Fatalf("ImportAction: %v", err)
 	}
@@ -714,7 +703,7 @@ func TestExecuteSkipsExpiredAssignmentLeaseBeforeExecutor(t *testing.T) {
 	}
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute expired assignment: %v", err)
 	}
 	if runner.calls != 0 {
@@ -750,7 +739,7 @@ func TestExecuteSkipsAssignmentWhenTargetRefChanges(t *testing.T) {
 	seedPart(t, store, "sub-a", []dynamicconfig.ActionPlan{current})
 	pol := allowPolicy()
 	pol.RequireApproval = boolPtr(false)
-	if err := e.Execute(context.Background(), rec.ID, ModeExecute, pol); err != nil {
+	if err := e.Execute(context.Background(), rec.ID, pol); err != nil {
 		t.Fatalf("execute target-changed assignment: %v", err)
 	}
 	if runner.calls != 0 {
@@ -780,24 +769,23 @@ func TestExecuteRunningActionIsNotReexecuted(t *testing.T) {
 	if !claimed {
 		t.Fatal("action was not claimed")
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
-		t.Fatalf("execute running: %v", err)
+	if err := e.Execute(context.Background(), id, allowPolicy()); err == nil {
+		t.Fatal("running action was reported as complete")
 	}
 	if runner.calls != 0 {
 		t.Fatalf("running action must not reexecute; calls=%d", runner.calls)
 	}
 }
 
-func TestRecoverStaleRunningActionReexecutesThroughNormalPath(t *testing.T) {
+func TestRecoverInterruptedActionPreservesUnknownOutcome(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}
 	now := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	e, err := NewEngine(Config{
-		Store:               store,
-		Runner:              runner.run,
-		Now:                 func() time.Time { return now },
-		Plugins:             []api.Resource{executorPlugin("aws")},
-		StaleRunningTimeout: 2 * time.Minute,
+		Store:   store,
+		Runner:  runner.run,
+		Now:     func() time.Time { return now },
+		Plugins: []api.Resource{executorPlugin("aws")},
 	})
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -813,25 +801,25 @@ func TestRecoverStaleRunningActionReexecutesThroughNormalPath(t *testing.T) {
 	if !claimed {
 		t.Fatal("action was not claimed")
 	}
-	requeued, err := e.RecoverStaleRunningActions()
+	recovered, err := e.RecoverInterruptedActionOperations(context.Background())
 	if err != nil {
-		t.Fatalf("RecoverStaleRunningActions: %v", err)
+		t.Fatalf("RecoverInterruptedActionOperations: %v", err)
 	}
-	if requeued != 1 {
-		t.Fatalf("requeued = %d, want 1", requeued)
+	if recovered != 1 {
+		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
-		t.Fatalf("execute recovered action: %v", err)
+	if err := e.Execute(context.Background(), id, allowPolicy()); err == nil {
+		t.Fatal("unknown outcome was admitted for another mutation")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, unknown provider outcome was repeated", runner.calls)
 	}
 	rec, _, err := store.GetActionByID(id)
 	if err != nil {
 		t.Fatalf("get action: %v", err)
 	}
-	if rec.Status != state.ActionSucceeded {
-		t.Fatalf("status = %q, want succeeded", rec.Status)
+	if rec.Status != state.ActionOutcomeUnknown {
+		t.Fatalf("status = %q, want outcomeUnknown", rec.Status)
 	}
 }
 
@@ -843,11 +831,11 @@ func TestExecuteDuplicateNotReExecuted(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("first execute: %v", err)
 	}
 	// Second execute on an already-succeeded action: no re-run.
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("second execute should be a no-op, got %v", err)
 	}
 	if runner.calls != 1 {
@@ -878,7 +866,7 @@ func TestExecutePolicyAllowlistDenies(t *testing.T) {
 			}
 			pol := allowPolicy()
 			tc.mutate(&pol)
-			if err := e.Execute(context.Background(), id, ModeExecute, pol); err == nil {
+			if err := e.Execute(context.Background(), id, pol); err == nil {
 				t.Fatalf("expected %s denial", tc.name)
 			}
 			if runner.calls != 0 {
@@ -904,7 +892,7 @@ func TestExecuteForwardingWithTargetAddressPassesAllowedCIDRs(t *testing.T) {
 	if err := e.Approve(rec.ID, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), rec.ID, ModeDryRun, allowForwardingPolicy()); err != nil {
+	if _, err := e.DryRunPreview(context.Background(), rec.ID, allowForwardingPolicy()); err != nil {
 		t.Fatalf("forwarding dry-run should pass allowedCIDRs: %v", err)
 	}
 	if runner.calls != 1 {
@@ -920,8 +908,8 @@ func TestExecuteFailedExecutorJournaledFailed(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
-		t.Fatalf("execute returning failed result should not error the call: %v", err)
+	if err := e.Execute(context.Background(), id, allowPolicy()); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("execute must return the failed provider result: %v", err)
 	}
 	rec, _, _ := store.GetActionByID(id)
 	if rec.Status != state.ActionFailed {
@@ -940,7 +928,7 @@ func TestExecuteSkippedExecutorJournaledSkipped(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	rec, _, _ := store.GetActionByID(id)
@@ -961,7 +949,7 @@ func TestExecuteJournalsObserved(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	rec, _, _ := store.GetActionByID(id)
@@ -983,7 +971,7 @@ func TestRollbackInjectsPriorObserved(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if err := e.Rollback(context.Background(), id, allowPolicy()); err != nil {
@@ -1016,7 +1004,7 @@ func TestRollbackInjectsFullObserved(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if err := e.Rollback(context.Background(), id, allowPolicy()); err != nil {
@@ -1043,7 +1031,7 @@ func TestRollbackBestEffort(t *testing.T) {
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	runner.calls = 0
@@ -1083,16 +1071,18 @@ func TestRollbackRefusedWhenNotSucceeded(t *testing.T) {
 	}
 }
 
-func TestExecuteBadModeRejected(t *testing.T) {
+func TestExecuteUnsupportedWindowRejected(t *testing.T) {
 	store := mustStore(t)
 	runner := &fakeRunner{result: succeededResult()}
 	e := newEngine(t, store, runner.run, []api.Resource{executorPlugin("aws")})
 	id := importOne(t, store, e, "k1")
-	if err := e.Execute(context.Background(), id, "apply", allowPolicy()); err == nil {
-		t.Fatal("expected bad-mode rejection")
+	policy := allowPolicy()
+	policy.ExecutionWindow = "02:00-03:00"
+	if err := e.Execute(context.Background(), id, policy); err == nil {
+		t.Fatal("unsupported execution window admitted a provider mutation")
 	}
 	if runner.calls != 0 {
-		t.Fatalf("executor must NOT launch on bad mode; calls=%d", runner.calls)
+		t.Fatalf("executor launched despite unsupported window; calls=%d", runner.calls)
 	}
 }
 
@@ -1104,18 +1094,14 @@ func TestExecuteEndToEndWithRealExecutor(t *testing.T) {
 	plug := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
 		Metadata: api.ObjectMeta{Name: "aws-executor"},
-		Spec: map[string]any{
-			"executable":   bin,
-			"timeout":      "10s",
-			"capabilities": []any{CapabilityExecuteProviderAction},
-		},
+		Spec:     api.PluginSpec{Executable: bin, Timeout: "10s", Capabilities: []string{CapabilityExecuteProviderAction}},
 	}
 	e := newEngine(t, store, RunExecutor, []api.Resource{plug})
 	id := importOne(t, store, e, "k1")
 	if err := e.Approve(id, "alice"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if err := e.Execute(context.Background(), id, ModeExecute, allowPolicy()); err != nil {
+	if err := e.Execute(context.Background(), id, allowPolicy()); err != nil {
 		t.Fatalf("execute end-to-end: %v", err)
 	}
 	rec, _, _ := store.GetActionByID(id)

@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-func TestLedgerRememberForgetAndSave(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "artifacts.json")
+func TestLedgerMutationsPersistWithoutSeparateSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifacts.db")
 	ledger, err := LoadLedger(path)
 	if err != nil {
 		t.Fatalf("load missing ledger: %v", err)
@@ -24,9 +24,6 @@ func TestLedgerRememberForgetAndSave(t *testing.T) {
 	}
 	if owns, err := ledger.Owns(artifact); err != nil || !owns {
 		t.Fatal("ledger does not own remembered artifact")
-	}
-	if err := ledger.Save(path); err != nil {
-		t.Fatalf("save ledger: %v", err)
 	}
 	loaded, err := LoadLedger(path)
 	if err != nil {

@@ -136,7 +136,10 @@ func TestResolveShardScopeReturnsAssignedPrefixes(t *testing.T) {
 		},
 	}
 
-	prefixes := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	prefixes, err := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prefixes) != 2 {
 		t.Fatalf("expected 2 prefixes for oci-a, got %d: %v", len(prefixes), prefixes)
 	}
@@ -144,12 +147,18 @@ func TestResolveShardScopeReturnsAssignedPrefixes(t *testing.T) {
 		t.Fatalf("unexpected prefixes: %v", prefixes)
 	}
 
-	prefixes = ResolveShardScope(store, "cloudedge", "cloudedge", "aws-a", now)
+	prefixes, err = ResolveShardScope(store, "cloudedge", "cloudedge", "aws-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prefixes) != 1 || prefixes[0] != "10.1.0.0/25" {
 		t.Fatalf("unexpected prefixes for aws-a: %v", prefixes)
 	}
 
-	prefixes = ResolveShardScope(store, "cloudedge", "cloudedge", "unknown-node", now)
+	prefixes, err = ResolveShardScope(store, "cloudedge", "cloudedge", "unknown-node", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prefixes) != 0 {
 		t.Fatalf("expected no prefixes for unknown node, got %v", prefixes)
 	}
@@ -166,7 +175,10 @@ func TestResolveShardScopeIgnoresExpired(t *testing.T) {
 		},
 	}
 
-	prefixes := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	prefixes, err := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prefixes) != 0 {
 		t.Fatalf("expected no prefixes for expired event, got %v", prefixes)
 	}
@@ -183,7 +195,10 @@ func TestResolveShardScopeIgnoresDifferentPool(t *testing.T) {
 		},
 	}
 
-	prefixes := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	prefixes, err := ResolveShardScope(store, "cloudedge", "cloudedge", "oci-a", now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(prefixes) != 0 {
 		t.Fatalf("expected no prefixes for different pool, got %v", prefixes)
 	}

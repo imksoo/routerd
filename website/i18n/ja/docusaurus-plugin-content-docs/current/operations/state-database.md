@@ -22,7 +22,10 @@ routerd は状態とイベントを SQLite に永続化します。各デーモ�
 
 ## events テーブル
 
-イベントバスはイベントを SQLite に永続化します。`EventRule` や `DerivedEvent` は、このストリームを入力にします。
+イベントバスはイベントを SQLite に永続化します。`EventRule` はその履歴を入力にします。`DerivedEvent` は参照先の現在の status を評価し、asserted/retracted への遷移を記録します。
+
+EventRule の相関 checkpoint と、ルールごとに唯一の入力 cursor も永続化します。照合結果、公開 status、ローカル出力イベントは checkpoint と同じ transaction で保存し、失敗時はどれも進めません。変更していないルールは再起動後も処理を再開します。新規または変更済みのルールは、設定準備時に記録した入力位置から開始します。未読の入力が保持期限で失われた場合は、イベントの不在と推測せず、履歴欠落のエラーを返します。相関状態はルールごとに4096キー、シリアライズ後の checkpoint は8 MiBまでです。どちらかを超える場合は、最後に一致した入力の時刻が古いキーから上限に収まるまで削除し、同じ transaction で `status.warningCount` を増やします。
+
 日常の運用では `sqlite3` を直接叩かず、`routerctl get events` を使ってください。
 
 ```sh

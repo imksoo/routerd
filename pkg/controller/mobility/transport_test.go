@@ -451,12 +451,12 @@ func TestSAMTransportProfilePairStableCollisionIsDegraded(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile with collision: %v", err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("pair-stable collision must fail before desired publication")
 	}
-	resources := decodeResources(t, latestPart(t, store, TransportDynamicSource("svnet1", "pve-rt")).ResourcesJSON)
-	if len(resources) != 0 {
-		t.Fatalf("resources = %#v, want none for pair-stable collision", resources)
+	parts, err := store.GetDynamicConfigPartsBySource(TransportDynamicSource("svnet1", "pve-rt"))
+	if err != nil || len(parts) != 0 {
+		t.Fatalf("collision published a desired part: %v %v", parts, err)
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
 	if status["phase"] != "Degraded" {
@@ -859,6 +859,9 @@ func TestSAMTransportProfileDirectMeshKeepsEmptyOwnershipLeafAndRRFallback(t *te
 	if len(empty.ImportPolicy.AllowedPrefixes) != 0 {
 		t.Fatalf("empty direct leaf allowlist = %#v, want no advertised mobility prefix", empty.ImportPolicy.AllowedPrefixes)
 	}
+	if empty.ImportPolicy.AllowedPrefixLengthMin != 0 || empty.ImportPolicy.AllowedPrefixLengthMax != 0 {
+		t.Fatalf("empty direct leaf emitted a prefix length selector without a prefix filter: %#v", empty.ImportPolicy)
+	}
 	if empty.ImportPolicy.LocalPreference != mobilityconfig.DefaultSAMTransportDirectLocalPreference || empty.ImportPolicy.NextHopRewrite != "peer-address" {
 		t.Fatalf("empty direct leaf transport policy = %#v, want direct session policy", empty.ImportPolicy)
 	}
@@ -1233,7 +1236,7 @@ func TestSAMTransportProfileMalformedDirectGroupKeepsRRFallback(t *testing.T) {
 		api.Resource{
 			TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMPeerGroup"},
 			Metadata: api.ObjectMeta{Name: "cloudedge-direct-leaves"},
-			Spec:     map[string]any{"nodes": "not-a-node-list"},
+			Spec:     api.InterfaceSpec{},
 		},
 	)
 
@@ -2285,8 +2288,8 @@ func TestSAMTransportProfileRejectsUnknownAddressingMode(t *testing.T) {
 		Store: store,
 		Now:   func() time.Time { return now },
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("Reconcile unknown mode: %v", err)
+	if err := controller.Reconcile(context.Background()); err == nil {
+		t.Fatal("unsupported addressing mode must fail")
 	}
 	status := store.ObjectStatus(api.MobilityAPIVersion, "SAMTransportProfile", "svnet1")
 	if reason, _ := status["reason"].(string); !strings.Contains(reason, "unsupported addressingMode") {

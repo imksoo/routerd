@@ -24,7 +24,6 @@ spec:
         name: lan
       spec:
         ifname: vtnet1
-        role: trust
         managed: true
     - apiVersion: net.routerd.net/v1alpha1
       kind: IPv4StaticAddress

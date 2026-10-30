@@ -88,10 +88,7 @@ func TestResolutionFailureIsSERVFAILWithSourceAndEvent(t *testing.T) {
 	if w.response == nil || w.response.Rcode != dns.RcodeServerFailure {
 		t.Fatalf("upstream timeout response = %v, want SERVFAIL", w.response)
 	}
-	rows, err := queryLog.List(context.Background(), logstore.DNSQueryFilter{Limit: 10})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("query log rows=%v error=%v", rows, err)
-	}
+	_, rows := awaitQueryHistory(t, d, 1)
 	if rows[0].ResponseCode != "SERVFAIL" || rows[0].Upstream != "primary" || rows[0].CacheHit {
 		t.Fatalf("query failure lost its source or response code: %+v", rows[0])
 	}
@@ -198,5 +195,39 @@ func TestDNSMessageTTLDoesNotCacheErrorResponses(t *testing.T) {
 		if ttl := dnsMessageTTL(msg, cache); ttl != 0 {
 			t.Errorf("rcode %d cached for %v", rcode, ttl)
 		}
+	}
+}
+
+func TestDNSSECForwardKeepsOneOPTAndPreservesClientOptions(t *testing.T) {
+	var valid atomic.Bool
+	upstream := startFailureTestUpstream(t, func(w dns.ResponseWriter, req *dns.Msg) {
+		count := 0
+		for _, rr := range req.Extra {
+			if rr.Header().Rrtype == dns.TypeOPT {
+				count++
+			}
+		}
+		opt := req.IsEdns0()
+		valid.Store(count == 1 && opt != nil && opt.Do() && opt.UDPSize() == 1400 && len(opt.Option) == 1 && opt.Option[0].Option() == 65001)
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.AuthenticatedData = true
+		resp.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: req.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.IPv4(192, 0, 2, 42)}}
+		_ = w.WriteMsg(resp)
+	})
+	config := testForwardConfig("validated", upstream)
+	config.Spec.Sources[0].DNSSECValidate = true
+	d := newTestDaemon(t, "", config, true)
+	request := failureTestRequest()
+	request.SetEdns0(1400, false)
+	request.IsEdns0().Option = []dns.EDNS0{&dns.EDNS0_LOCAL{Code: 65001, Data: []byte("client-option")}}
+	if _, err := d.resolve("127.0.0.1:5053", request); err != nil {
+		t.Fatal(err)
+	}
+	if !valid.Load() {
+		t.Fatal("DNSSEC forwarding duplicated OPT or lost client EDNS options")
+	}
+	if request.IsEdns0().Do() {
+		t.Fatal("forwarding mutated the caller's EDNS flags")
 	}
 }

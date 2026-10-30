@@ -5,14 +5,17 @@
 package main
 
 import (
-	"encoding/binary"
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"syscall"
 	"time"
 	"unsafe"
 
+	"github.com/imksoo/routerd/pkg/dhcpv4client"
 	"golang.org/x/sys/unix"
 )
 
@@ -24,10 +27,7 @@ type bpfPacketConn struct {
 	buf      []byte
 	pending  [][]byte
 	deadline time.Time
-}
-
-func bindSocketToDevice(_ int, _ string) error {
-	return nil
+	write    *net.UDPConn
 }
 
 func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
@@ -44,6 +44,24 @@ func listenDHCPv4(ifname string) (dhcpv4PacketConn, error) {
 		_ = unix.Close(fd)
 		return nil, err
 	}
+	lc := net.ListenConfig{Control: func(_, _ string, raw syscall.RawConn) error {
+		var sockErr error
+		if err := raw.Control(func(fd uintptr) {
+			sockErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEADDR, 1)
+			if sockErr == nil {
+				sockErr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
+			}
+		}); err != nil {
+			return err
+		}
+		return sockErr
+	}}
+	pc, err := lc.ListenPacket(context.Background(), "udp4", ":68")
+	if err != nil {
+		_ = unix.Close(fd)
+		return nil, err
+	}
+	conn.write = pc.(*net.UDPConn)
 	return conn, nil
 }
 
@@ -127,12 +145,32 @@ func (c *bpfPacketConn) ReadFromUDP(dst []byte) (int, *net.UDPAddr, error) {
 	}
 }
 
-func (c *bpfPacketConn) WriteToUDP(packet []byte, _ *net.UDPAddr) (int, error) {
-	frame := ethernetIPv4UDPBroadcast(c.ifi.HardwareAddr, packet)
-	if _, err := unix.Write(c.fd, frame); err != nil {
-		return 0, err
+func (c *bpfPacketConn) Send(ctx context.Context, packet dhcpv4client.Packet) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return len(packet), nil
+	if packet.Destination == netip.MustParseAddr("255.255.255.255") {
+		frame := ethernetBroadcast(c.ifi.HardwareAddr, packet)
+		n, err := unix.Write(c.fd, frame)
+		if err == nil && n != len(frame) {
+			return fmt.Errorf("short DHCPv4 BPF write")
+		}
+		return err
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
+		deadline = end
+	}
+	if err := c.write.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	oob := make([]byte, unix.CmsgSpace(4))
+	header := (*unix.Cmsghdr)(unsafe.Pointer(&oob[0]))
+	header.Level, header.Type = unix.IPPROTO_IP, unix.IP_SENDSRCADDR
+	header.SetLen(unix.CmsgLen(4))
+	copy(oob[unix.CmsgLen(0):], packet.Source.AsSlice())
+	_, _, err := c.write.WriteMsgUDP(packet.Payload, oob, &net.UDPAddr{IP: net.IP(packet.Destination.AsSlice()), Port: 67})
+	return err
 }
 
 func (c *bpfPacketConn) SetReadDeadline(t time.Time) error {
@@ -141,7 +179,7 @@ func (c *bpfPacketConn) SetReadDeadline(t time.Time) error {
 }
 
 func (c *bpfPacketConn) Close() error {
-	return unix.Close(c.fd)
+	return errors.Join(unix.Close(c.fd), c.write.Close())
 }
 
 func (c *bpfPacketConn) collectPackets(data []byte) {
@@ -153,7 +191,7 @@ func (c *bpfPacketConn) collectPackets(data []byte) {
 			return
 		}
 		frame := data[hdrLen : hdrLen+capLen]
-		if payload, ok := dhcpv4PayloadFromEthernet(frame); ok {
+		if payload, _ := dhcpv4client.EthernetReply(frame); len(payload) > 0 {
 			c.pending = append(c.pending, append([]byte(nil), payload...))
 		}
 		next := bpfWordAlign(hdrLen + capLen)
@@ -162,63 +200,6 @@ func (c *bpfPacketConn) collectPackets(data []byte) {
 		}
 		data = data[next:]
 	}
-}
-
-func dhcpv4PayloadFromEthernet(frame []byte) ([]byte, bool) {
-	if len(frame) < 14+20+8 || binary.BigEndian.Uint16(frame[12:14]) != 0x0800 {
-		return nil, false
-	}
-	ip := frame[14:]
-	ihl := int(ip[0]&0x0f) * 4
-	if ihl < 20 || len(ip) < ihl+8 || ip[9] != 17 {
-		return nil, false
-	}
-	udp := ip[ihl:]
-	srcPort := binary.BigEndian.Uint16(udp[0:2])
-	dstPort := binary.BigEndian.Uint16(udp[2:4])
-	if !((srcPort == 67 && dstPort == 68) || (srcPort == 68 && dstPort == 67)) {
-		return nil, false
-	}
-	udpLen := int(binary.BigEndian.Uint16(udp[4:6]))
-	if udpLen < 8 || udpLen > len(udp) {
-		return nil, false
-	}
-	return udp[8:udpLen], true
-}
-
-func ethernetIPv4UDPBroadcast(src net.HardwareAddr, payload []byte) []byte {
-	ipLen := 20 + 8 + len(payload)
-	frame := make([]byte, 14+ipLen)
-	for i := 0; i < 6; i++ {
-		frame[i] = 0xff
-	}
-	copy(frame[6:12], src)
-	binary.BigEndian.PutUint16(frame[12:14], 0x0800)
-	ip := frame[14:]
-	ip[0] = 0x45
-	binary.BigEndian.PutUint16(ip[2:4], uint16(ipLen))
-	ip[8] = 64
-	ip[9] = 17
-	copy(ip[12:16], net.IPv4zero.To4())
-	copy(ip[16:20], net.IPv4bcast.To4())
-	binary.BigEndian.PutUint16(ip[10:12], ipv4Checksum(ip[:20]))
-	udp := ip[20:]
-	binary.BigEndian.PutUint16(udp[0:2], 68)
-	binary.BigEndian.PutUint16(udp[2:4], 67)
-	binary.BigEndian.PutUint16(udp[4:6], uint16(8+len(payload)))
-	copy(udp[8:], payload)
-	return frame
-}
-
-func ipv4Checksum(header []byte) uint16 {
-	var sum uint32
-	for i := 0; i+1 < len(header); i += 2 {
-		sum += uint32(binary.BigEndian.Uint16(header[i : i+2]))
-	}
-	for sum>>16 != 0 {
-		sum = (sum & 0xffff) + (sum >> 16)
-	}
-	return ^uint16(sum)
 }
 
 func bpfWordAlign(n int) int {

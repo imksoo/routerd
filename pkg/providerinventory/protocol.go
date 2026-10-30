@@ -58,9 +58,8 @@ type ObservePrivateIPsResultStatus struct {
 	Message            string            `json:"message,omitempty" yaml:"message,omitempty"`
 	Error              string            `json:"error,omitempty" yaml:"error,omitempty"`
 	Self               *PrivateIPSelf    `json:"self,omitempty" yaml:"self,omitempty"`
-	IPs                []PrivateIPRecord `json:"ips,omitempty" yaml:"ips,omitempty"`
-	ObservedCandidates []PrivateIPRecord `json:"observedCandidates,omitempty" yaml:"observedCandidates,omitempty"`
-	LocalIPs           []PrivateIPRecord `json:"localIPs,omitempty" yaml:"localIPs,omitempty"`
+	ObservedCandidates []PrivateIPRecord `json:"observedCandidates" yaml:"observedCandidates"`
+	LocalIPs           []PrivateIPRecord `json:"localIPs" yaml:"localIPs"`
 	Routes             []RouteRecord     `json:"routes,omitempty" yaml:"routes,omitempty"`
 }
 
@@ -101,23 +100,6 @@ func NewObservePrivateIPsRequest(spec ObservePrivateIPsRequestSpec) ObservePriva
 		TypeMeta: TypeMeta{APIVersion: ProtocolAPIVersion, Kind: KindObservePrivateIPsRequest},
 		Spec:     spec,
 	}
-}
-
-func (s ObservePrivateIPsResultStatus) ObservedCandidateRecords() []PrivateIPRecord {
-	if len(s.ObservedCandidates) > 0 {
-		return append([]PrivateIPRecord(nil), s.ObservedCandidates...)
-	}
-	return append([]PrivateIPRecord(nil), s.IPs...)
-}
-
-func (s ObservePrivateIPsResultStatus) LocalInventoryRecords() []PrivateIPRecord {
-	if len(s.LocalIPs) > 0 {
-		return append([]PrivateIPRecord(nil), s.LocalIPs...)
-	}
-	if len(s.ObservedCandidates) > 0 {
-		return append([]PrivateIPRecord(nil), s.ObservedCandidates...)
-	}
-	return append([]PrivateIPRecord(nil), s.IPs...)
 }
 
 func hasCapability(caps []string, want string) bool {

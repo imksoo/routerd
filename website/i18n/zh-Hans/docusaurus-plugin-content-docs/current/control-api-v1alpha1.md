@@ -113,4 +113,4 @@ client/controller，而不是自行解释这些响应。
 
 routerd 将事件持久化至 SQLite。
 受管理的守护进程另外也会记录至各自的 `events.jsonl`。
-`EventRule` 与 `DerivedEvent` 以此流为输入，发布虚拟事件。
+`EventRule` 以这些历史记录为输入；`DerivedEvent` 则评估所引用对象的当前 status，并记录 asserted/retracted 状态转换。

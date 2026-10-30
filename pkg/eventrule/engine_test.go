@@ -16,314 +16,253 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-type mapStore map[string]map[string]any
+// Use the production transaction and the same journal as the durable bus.
+type ruleTestStore struct{ *routerstate.SQLiteStore }
 
-func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	s[apiVersion+"/"+kind+"/"+name] = status
-	return nil
-}
-
-func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if status := s[apiVersion+"/"+kind+"/"+name]; status != nil {
-		return status
-	}
-	return map[string]any{}
+func (s ruleTestStore) CommitRule(ctx context.Context, old, next routerstate.EventRuleCheckpoint, out *daemonapi.DaemonEvent, tip bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
+	return s.CommitEventRule(ctx, old, next, out, tip, nil, nil)
 }
 
 func TestAllOf(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAllOf, Topics: []string{"routerd.a", "routerd.b"}})
-	mustReconcile(t, controller, testEvent("routerd.a"))
-	if got := b.Recent("routerd.out"); len(got) != 0 {
-		t.Fatalf("events after first = %d", len(got))
-	}
-	mustReconcile(t, controller, testEvent("routerd.b"))
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
-	}
+	assertInputs(t, api.EventRulePatternSpec{Operator: OperatorAllOf, Topics: []string{"routerd.a", "routerd.b"}}, []string{"routerd.a", "routerd.b"}, []int{0, 1})
 }
-
 func TestAnyOf(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAnyOf, Topics: []string{"routerd.a", "routerd.b"}})
-	mustReconcile(t, controller, testEvent("routerd.b"))
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
-	}
+	assertInputs(t, api.EventRulePatternSpec{Operator: OperatorAnyOf, Topics: []string{"routerd.a", "routerd.b"}}, []string{"routerd.b"}, []int{1})
 }
-
-func TestMalformedRuleDoesNotStopOtherRules(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAnyOf, Topic: "routerd.a"})
-	controller.Router.Spec.Resources = append([]api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
-		Metadata: api.ObjectMeta{Name: "malformed"},
-		Spec:     "not-an-event-rule-spec",
-	}}, controller.Router.Spec.Resources...)
-	if err := controller.Reconcile(context.Background(), testEvent("routerd.a")); err != nil {
-		t.Fatalf("Reconcile returned malformed rule error: %v", err)
-	}
-	if got := len(b.Recent("routerd.out")); got != 1 {
-		t.Fatalf("valid rule outputs = %d, want 1", got)
-	}
-}
-
 func TestSequence(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorSequence, Topics: []string{"routerd.a", "routerd.b"}})
-	mustReconcile(t, controller, testEvent("routerd.a"))
-	mustReconcile(t, controller, testEvent("routerd.b"))
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
+	assertInputs(t, api.EventRulePatternSpec{Operator: OperatorSequence, Topics: []string{"routerd.a", "routerd.b"}}, []string{"routerd.a", "routerd.b"}, []int{0, 1})
+}
+func assertInputs(t *testing.T, pattern api.EventRulePatternSpec, topics []string, counts []int) {
+	t.Helper()
+	c, b := testController(t, pattern)
+	for i, topic := range topics {
+		mustReconcile(t, c, testEvent(topic))
+		if got := len(b.Recent("routerd.out")); got != counts[i] {
+			t.Fatalf("after %s outputs=%d want=%d", topic, got, counts[i])
+		}
 	}
 }
-
+func TestMalformedRuleDoesNotStopOtherRules(t *testing.T) {
+	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorAnyOf, Topic: "routerd.a"})
+	resources := append([]api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"}, Metadata: api.ObjectMeta{Name: "malformed"}, Spec: api.InterfaceSpec{}}}, c.Router.Spec.Resources...)
+	candidate := &Controller{Router: &api.Router{Spec: api.RouterSpec{Resources: resources}}, Bus: b, Store: c.Store}
+	if err := candidate.Prepare(t.Context()); err == nil {
+		t.Fatal("malformed candidate admitted")
+	}
+	mustReconcile(t, c, testEvent("routerd.a"))
+	if got := len(b.Recent("routerd.out")); got != 1 {
+		t.Fatalf("selected valid rule outputs=%d", got)
+	}
+}
 func TestWindow(t *testing.T) {
+	rule, cp := preparedTestRule(t, api.EventRulePatternSpec{Operator: OperatorWindow, Topic: "routerd.a", Window: "60s", Threshold: 3})
 	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorWindow, Topic: "routerd.a", Window: "60s", Threshold: 3})
 	for i := 0; i < 3; i++ {
-		mustReconcile(t, controller, testEventAt("routerd.a", now.Add(time.Duration(i)*time.Second)))
+		out, err := evaluate(rule, &cp, testEventAt("routerd.a", now.Add(time.Duration(i)*time.Second)))
+		if err != nil || (out != nil) != (i == 2) {
+			t.Fatalf("window event%d: output=%v err=%v", i, out, err)
+		}
 	}
-	if got := b.Recent("routerd.out"); len(got) != 1 {
-		t.Fatalf("events = %d", len(got))
+	if cp.FireCount != 1 {
+		t.Fatalf("window fires=%d", cp.FireCount)
 	}
 }
-
-func TestAbsence(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorAbsence, Trigger: "routerd.trigger", Expected: "routerd.expected", Duration: "20ms"})
-	mustReconcile(t, controller, testEvent("routerd.trigger"))
-	waitForRecent(t, b, "routerd.out", 1)
-	if got := timerCount(controller, "absence"); got != 0 {
-		t.Fatalf("absence timers = %d", got)
-	}
-	controller.StopTimers()
-}
-
 func TestThrottle(t *testing.T) {
+	rule, cp := preparedTestRule(t, api.EventRulePatternSpec{Operator: OperatorThrottle, Topic: "routerd.a", Interval: "1s"})
 	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorThrottle, Topic: "routerd.a", Interval: "1s"})
-	mustReconcile(t, controller, testEventAt("routerd.a", now))
-	mustReconcile(t, controller, testEventAt("routerd.a", now.Add(100*time.Millisecond)))
-	mustReconcile(t, controller, testEventAt("routerd.a", now.Add(2*time.Second)))
-	if got := b.Recent("routerd.out"); len(got) != 2 {
-		t.Fatalf("events = %d", len(got))
+	for i, delta := range []time.Duration{0, 100 * time.Millisecond, 2 * time.Second} {
+		out, err := evaluate(rule, &cp, testEventAt("routerd.a", now.Add(delta)))
+		if err != nil || (out != nil) != (i != 1) {
+			t.Fatalf("throttle event%d: output=%v err=%v", i, out, err)
+		}
+	}
+	if cp.FireCount != 2 {
+		t.Fatalf("throttle fires=%d", cp.FireCount)
 	}
 }
-
-func TestDebounce(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorDebounce, Topic: "routerd.a", Quiet: "20ms"})
-	mustReconcile(t, controller, testEvent("routerd.a"))
-	mustReconcile(t, controller, testEvent("routerd.a"))
+func TestAbsence(t *testing.T) {
+	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorAbsence, Trigger: "routerd.trigger", Expected: "routerd.expected", Duration: "20ms"})
+	mustReconcile(t, c, testEvent("routerd.trigger"))
 	waitForRecent(t, b, "routerd.out", 1)
-	if got := timerCount(controller, "debounce"); got != 0 {
-		t.Fatalf("debounce timers = %d", got)
-	}
-	controller.StopTimers()
+	assertTimerRetired(t, c)
 }
-
+func TestDebounce(t *testing.T) {
+	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorDebounce, Topic: "routerd.a", Quiet: "20ms"})
+	mustReconcile(t, c, testEvent("routerd.a"))
+	mustReconcile(t, c, testEvent("routerd.a"))
+	waitForRecent(t, b, "routerd.out", 1)
+	assertTimerRetired(t, c)
+}
 func TestCount(t *testing.T) {
-	controller, b := testController(api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 2})
-	mustReconcile(t, controller, testEvent("routerd.a"))
-	mustReconcile(t, controller, testEvent("routerd.a"))
+	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 2})
+	mustReconcile(t, c, testEvent("routerd.a"))
+	mustReconcile(t, c, testEvent("routerd.a"))
 	if got := b.Recent("routerd.out"); len(got) != 1 || got[0].Attributes["count"] != "2" {
-		t.Fatalf("events = %#v", got)
+		t.Fatalf("events=%#v", got)
 	}
 }
-
 func TestCorrelationStateIsBounded(t *testing.T) {
-	controller, _ := testController(api.EventRulePatternSpec{Operator: OperatorThrottle, Topic: "routerd.a", CorrelateBy: "attributes.interface", Interval: "1h"})
+	rule, cp := preparedTestRule(t, api.EventRulePatternSpec{Operator: OperatorThrottle, Topic: "routerd.a", CorrelateBy: "attributes.interface", Interval: "1h"})
 	for i := 0; i < maxRuleCorrelationKeys+1; i++ {
-		event := testEventAt("routerd.a", time.Unix(int64(i), 0).UTC())
+		event := testEventAt("routerd.a", time.Unix(int64(i+1), 0).UTC())
 		event.Attributes["interface"] = "if" + strconv.Itoa(i)
-		mustReconcile(t, controller, event)
-	}
-	controller.mu.Lock()
-	state := controller.state["rule"]
-	gotLastSeen := len(state.lastSeen)
-	gotLastEmit := len(state.lastEmit)
-	controller.mu.Unlock()
-	if gotLastSeen != maxRuleCorrelationKeys || gotLastEmit != maxRuleCorrelationKeys {
-		t.Fatalf("state sizes lastSeen=%d lastEmit=%d", gotLastSeen, gotLastEmit)
-	}
-}
-
-func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *testing.T) {
-	const eventCount = 129
-
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	b := bus.NewWithStore(store)
-	blockedEvents := &blockingEventStore{
-		SQLiteStore: store,
-		entered:     make(chan struct{}),
-		release:     make(chan struct{}),
-		drained:     make(chan struct{}),
-	}
-	controller := &Controller{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
-			Metadata: api.ObjectMeta{Name: "rule"},
-			Spec: api.EventRuleSpec{
-				Pattern: api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: eventCount},
-				Emit:    api.EventRuleEmitSpec{Topic: "routerd.out"},
-			},
-		}}}},
-		Bus:    b,
-		Store:  store,
-		Events: blockedEvents,
-		Poll:   20 * time.Millisecond,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	controller.Start(ctx)
-	select {
-	case <-blockedEvents.entered:
-	case <-time.After(time.Second):
-		t.Fatal("stored event drain did not start")
-	}
-	// The drain is blocked while more events than the 128-entry bus
-	// subscription buffer are published. Wake-ups are therefore dropped, but
-	// every event remains recoverable from the store.
-	for i := 0; i < eventCount; i++ {
-		if err := b.Publish(context.Background(), testEvent("routerd.a")); err != nil {
+		if _, err := evaluate(rule, &cp, event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	inputs, err := store.ListEvents(routerstate.EventQuery{Limit: 1})
-	if err != nil || len(inputs) != 1 {
-		t.Fatalf("input journal tip: rows=%d err=%v", len(inputs), err)
+	if len(cp.Correlations) != maxRuleCorrelationKeys || cp.FireCount != maxRuleCorrelationKeys+1 {
+		t.Fatalf("correlations=%d fires=%d", len(cp.Correlations), cp.FireCount)
 	}
-	blockedEvents.throughID = inputs[0].ID
-	close(blockedEvents.release)
-	waitForDrain(t, blockedEvents.drained)
+	if _, found := cp.Correlations["if0"]; found {
+		t.Fatal("oldest correlation not evicted")
+	}
+	if _, found := cp.Correlations["if"+strconv.Itoa(maxRuleCorrelationKeys)]; !found {
+		t.Fatal("newest correlation evicted")
+	}
+}
+
+type blockedRuleCommitStore struct {
+	ruleTestStore
+	entered, release chan struct{}
+	once             sync.Once
+	onlyOutput       bool
+}
+
+func (s *blockedRuleCommitStore) CommitRule(ctx context.Context, old, next routerstate.EventRuleCheckpoint, out *daemonapi.DaemonEvent, tip bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
+	if !s.onlyOutput && next.Cursor > old.Cursor || out != nil {
+		s.once.Do(func() { close(s.entered); <-s.release })
+	}
+	return s.ruleTestStore.CommitRule(ctx, old, next, out, tip)
+}
+func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *testing.T) {
+	const eventCount = 130
+	c, b := newTestController(t, api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: eventCount})
+	db := c.Store.EventJournal()
+	blocked := &blockedRuleCommitStore{ruleTestStore: ruleTestStore{db}, entered: make(chan struct{}), release: make(chan struct{})}
+	c.Store = blocked
+	var release sync.Once
+	stop := startTestController(t, c)
+	t.Cleanup(func() { release.Do(func() { close(blocked.release) }) })
+	if err := b.PublishDurable(t.Context(), testEvent("routerd.a")); err != nil {
+		t.Fatal(err)
+	}
+	waitForDrain(t, blocked.entered)
+	// Pause before the real transaction while durable inputs overflow the
+	// bounded wake-up queue. Recovery must read every input from SQLite.
+	for i := 1; i < eventCount; i++ {
+		if err := b.PublishDurable(t.Context(), testEvent("routerd.a")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release.Do(func() { close(blocked.release) })
 	waitForRecent(t, b, "routerd.out", 1)
-	cancel()
-	controller.StopTimers()
-
-	tip, err := store.ListEvents(routerstate.EventQuery{Limit: 1})
-	if err != nil || len(tip) != 1 {
-		t.Fatalf("restart journal tip: rows=%d err=%v", len(tip), err)
+	stop()
+	cp, err := db.ReadEventRule(t.Context(), "rule")
+	if err != nil || cp.FireCount != 1 {
+		t.Fatalf("checkpoint before restart: %+v %v", cp, err)
 	}
-	restartEvents := &blockingEventStore{SQLiteStore: store, entered: make(chan struct{}), release: make(chan struct{}), drained: make(chan struct{}), throughID: tip[0].ID}
-	close(restartEvents.release)
-	restarted := &Controller{
-		Router: controller.Router,
-		Bus:    b,
-		Store:  store,
-		Events: restartEvents,
-		Poll:   20 * time.Millisecond,
+	restarted := &Controller{Router: c.Router, Bus: b, Store: ruleTestStore{db}, Poll: time.Millisecond}
+	startTestController(t, restarted)
+	if err := restarted.drainStoredEvents(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	restartCtx, restartCancel := context.WithCancel(context.Background())
-	defer restartCancel()
-	restarted.Start(restartCtx)
-	waitForDrain(t, restartEvents.drained)
 	if got := len(b.Recent("routerd.out")); got != 1 {
-		t.Fatalf("restart replayed processed events: outputs = %d, want 1", got)
+		t.Fatalf("restart duplicated processed inputs: outputs=%d", got)
+	}
+	rows, err := db.ListEvents(routerstate.EventQuery{Topic: "routerd.out", Limit: 10})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("durable outputs=%d err=%v", len(rows), err)
 	}
 }
 
-type blockingEventStore struct {
-	*routerstate.SQLiteStore
-	entered   chan struct{}
-	release   chan struct{}
-	once      sync.Once
-	drained   chan struct{}
-	throughID int64
-	drainOnce sync.Once
-}
-
-func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routerstate.StoredEvent, error) {
-	s.once.Do(func() {
-		close(s.entered)
-		<-s.release
-	})
-	rows, err := s.SQLiteStore.ListEvents(query)
-	if err == nil && len(rows) == 0 && query.SinceID >= s.throughID {
-		s.drainOnce.Do(func() { close(s.drained) })
-	}
-	return rows, err
-}
-
-// Signal only after the actual persisted cursor reaches the captured journal tip.
-func (s *blockingEventStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
-	err := s.SQLiteStore.SaveEventConsumerCursor(consumer, cursor)
-	if err == nil && cursor >= s.throughID {
-		s.drainOnce.Do(func() { close(s.drained) })
-	}
-	return err
-}
-
-func waitForDrain(t *testing.T, drained <-chan struct{}) {
+func newTestController(t *testing.T, pattern api.EventRulePatternSpec) (*Controller, *bus.Bus) {
 	t.Helper()
-	select {
-	case <-drained:
-	case <-time.After(10 * time.Second):
-		t.Fatal("stored event drain did not reach the captured journal tip")
+	db, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
+	b := bus.NewWithStore(db)
+	return &Controller{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{testRuleResource(pattern)}}}, Bus: b, Store: ruleTestStore{db}, Poll: time.Millisecond}, b
 }
-
-func testController(pattern api.EventRulePatternSpec) (*Controller, *bus.Bus) {
-	b := bus.New()
-	controller := &Controller{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"},
-				Metadata: api.ObjectMeta{Name: "rule"},
-				Spec: api.EventRuleSpec{
-					Pattern: pattern,
-					Emit:    api.EventRuleEmitSpec{Topic: "routerd.out", Attributes: map[string]string{"input": "${event.type}"}},
-				},
-			},
-		}}},
-		Bus:   b,
-		Store: mapStore{},
-	}
-	return controller, b
-}
-
-func mustReconcile(t *testing.T, controller *Controller, event daemonapi.DaemonEvent) {
+func testController(t *testing.T, pattern api.EventRulePatternSpec) (*Controller, *bus.Bus) {
 	t.Helper()
-	if err := controller.Reconcile(context.Background(), event); err != nil {
+	c, b := newTestController(t, pattern)
+	startTestController(t, c)
+	return c, b
+}
+func startTestController(t *testing.T, c *Controller) func() {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	done, err := c.Start(ctx)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	var once sync.Once
+	stop := func() { once.Do(func() { cancel(); waitForDrain(t, done) }) }
+	t.Cleanup(stop)
+	return stop
+}
+func testRuleResource(pattern api.EventRulePatternSpec) api.Resource {
+	return api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"}, Metadata: api.ObjectMeta{Name: "rule"}, Spec: api.EventRuleSpec{Pattern: pattern, Emit: api.EventRuleEmitSpec{Topic: "routerd.out", Attributes: map[string]string{"input": "${event.type}"}}}}
+}
+func preparedTestRule(t *testing.T, pattern api.EventRulePatternSpec) (preparedRule, routerstate.EventRuleCheckpoint) {
+	t.Helper()
+	resource := testRuleResource(pattern)
+	spec, err := resource.EventRuleSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := prepareRule(resource, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rule, routerstate.EventRuleCheckpoint{Version: 1, Name: "rule", Definition: rule.definition.Digest, Correlations: map[string]routerstate.EventRuleCorrelation{}}
+}
+func mustReconcile(t *testing.T, c *Controller, event daemonapi.DaemonEvent) {
+	t.Helper()
+	if err := c.Bus.PublishDurable(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.drainStoredEvents(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
-
+func waitForDrain(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("owned EventRule operation did not acknowledge completion")
+	}
+}
 func waitForRecent(t *testing.T, b *bus.Bus, topic string, want int) {
 	t.Helper()
-	// These tests assert eventual timer/store recovery, not sub-second
-	// throughput. SQLite cursor persistence can take several seconds under
-	// concurrent package tests, so keep a bounded but scheduler-tolerant wait.
 	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if got := len(b.Recent(topic)); got == want {
-			return
-		}
+	for len(b.Recent(topic)) != want {
 		if time.Now().After(deadline) {
-			t.Fatalf("events = %d", len(b.Recent(topic)))
+			t.Fatalf("events=%d want=%d", len(b.Recent(topic)), want)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 }
-
-func timerCount(controller *Controller, kind string) int {
-	controller.mu.Lock()
-	defer controller.mu.Unlock()
-	state := controller.state["rule"]
-	if state == nil {
-		return 0
+func assertTimerRetired(t *testing.T, c *Controller) {
+	t.Helper()
+	cp, err := c.Store.EventJournal().ReadEventRule(t.Context(), "rule")
+	if err != nil {
+		t.Fatal(err)
 	}
-	switch kind {
-	case "absence":
-		return len(state.absence)
-	case "debounce":
-		return len(state.debounce)
-	default:
-		return 0
+	if cp.FireCount != 1 {
+		t.Fatalf("timer fires=%d", cp.FireCount)
+	}
+	for key, value := range cp.Correlations {
+		if value.Timer != nil {
+			t.Fatalf("committed timer %s was not retired", key)
+		}
 	}
 }
-
-func testEvent(topic string) daemonapi.DaemonEvent {
-	return testEventAt(topic, time.Now().UTC())
-}
-
+func testEvent(topic string) daemonapi.DaemonEvent { return testEventAt(topic, time.Now().UTC()) }
 func testEventAt(topic string, at time.Time) daemonapi.DaemonEvent {
 	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "test", Kind: "test", Instance: "test"}, topic, daemonapi.SeverityInfo)
 	event.Time = at

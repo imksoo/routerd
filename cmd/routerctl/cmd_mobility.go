@@ -210,6 +210,11 @@ func mobilityEnrollmentSubmitCommand(args []string, stdout io.Writer) error {
 	if strings.TrimSpace(*claimName) == "" {
 		return errors.New("mobility enrollment-submit requires --claim")
 	}
+	switch output {
+	case "", "table", "text", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", output)
+	}
 	router, err := config.Load(*configPath)
 	if err != nil {
 		return err
@@ -273,6 +278,11 @@ func mobilityEnrollmentRevokeCommand(args []string, stdout io.Writer) error {
 	}
 	if strings.TrimSpace(*claimName) == "" {
 		return errors.New("mobility enrollment-revoke requires --claim")
+	}
+	switch output {
+	case "", "table", "text", "json", "yaml":
+	default:
+		return fmt.Errorf("unsupported output %q", output)
 	}
 	if strings.TrimSpace(*rrSocketPath) != "" && strings.TrimSpace(*rrURL) != "" {
 		return errors.New("mobility enrollment-revoke accepts only one of --rr-socket or --rr-url")
@@ -695,7 +705,7 @@ func mobilityGeneratedLeafConfig(opts mobilityLeafConfigOptions) (*api.Router, e
 	return router, nil
 }
 
-func leafResource(apiVersion, kind, name string, spec any) api.Resource {
+func leafResource(apiVersion, kind, name string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{TypeMeta: api.TypeMeta{APIVersion: apiVersion, Kind: kind}, Metadata: api.ObjectMeta{Name: name}, Spec: spec}
 }
 

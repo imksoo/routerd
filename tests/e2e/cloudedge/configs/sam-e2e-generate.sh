@@ -49,7 +49,9 @@ done
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 2; }
 command -v wg >/dev/null || { echo "wg is required to generate WireGuard keys" >&2; exit 2; }
 
+umask 077
 mkdir -p "$out_dir/configs" "$out_dir/secrets"
+chmod 0700 "$out_dir/configs" "$out_dir/secrets"
 harness_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The release supervisor intentionally makes its checkout root-owned. Git's
 # safe.directory exemption must name that worktree root, not this harness
@@ -79,12 +81,17 @@ mapfile -t pve_leaf_nodes < <(jq -r 'to_entries[] | select(.value.role == "leaf"
 [ "${#leaf_nodes[@]}" -gt 0 ] || { echo "no leaf nodes found in $nodes_json" >&2; exit 2; }
 
 for node in "${routers[@]}"; do
+  [[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "router node name is not a safe generated filename" >&2; exit 2; }
+done
+
+for node in "${routers[@]}"; do
   key_file="$out_dir/secrets/${node}.wg.key"
   pub_file="$out_dir/secrets/${node}.wg.pub"
   if [ ! -s "$key_file" ]; then
     umask 077
     wg genkey >"$key_file"
   fi
+  chmod 0600 "$key_file"
   wg pubkey <"$key_file" >"$pub_file"
 done
 
@@ -642,19 +649,33 @@ EOF
   fi
 }
 
+# Replace secret-bearing YAML with a private new inode, including on retries
+# from older output modes. Renderer failure leaves the preceding config intact.
+pending_config=
+cleanup_config() { [ -z "$pending_config" ] || rm -f -- "$pending_config"; }
+trap cleanup_config EXIT
+write_config() {
+  local node="$1"
+  shift
+  pending_config="$(mktemp "$out_dir/configs/.routerd-config.XXXXXXXX")"
+  "$@" >"$pending_config"
+  mv -f -- "$pending_config" "$out_dir/configs/$node.yaml"
+  pending_config=
+}
+
 for node in "${rr_nodes[@]}"; do
-  render_rr "$node" >"$out_dir/configs/$node.yaml"
+  write_config "$node" render_rr "$node"
 done
 
 for node in "${cloud_leaf_nodes[@]}"; do
   site="$(jq_node "$node" ".[\$node].site")"
   provider="$(site_provider "$site")"
   iface="$(site_interface "$site")"
-  render_provider_leaf "$node" "$provider" "${node}-self" "$iface" >"$out_dir/configs/$node.yaml"
+  write_config "$node" render_provider_leaf "$node" "$provider" "${node}-self" "$iface"
 done
 
 for node in "${pve_leaf_nodes[@]}"; do
-  render_pve_leaf "$node" >"$out_dir/configs/$node.yaml"
+  write_config "$node" render_pve_leaf "$node"
 done
 
 {

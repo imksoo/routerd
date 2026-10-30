@@ -60,9 +60,16 @@ func rollbackCommand(args []string, stdout io.Writer) error {
 		NoReconcile:   *noReconcile,
 	})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for rollback; start routerd serve or check --socket: %w", err)
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd rollback failed: %w", apiErr)
+		}
+		return fmt.Errorf("routerd rollback request failed; outcome is unconfirmed: %w", err)
 	}
-	return writeJSON(stdout, result)
+	if err := writeJSON(stdout, result); err != nil {
+		return err
+	}
+	return mutationResultError("rollback", &result.Result)
 }
 
 func listRollbackGenerations(statePath string, limit int, stdout io.Writer) error {
@@ -75,13 +82,13 @@ func listRollbackGenerations(statePath string, limit int, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	current := store.LatestGeneration()
+	latestAttempt := store.LatestGeneration()
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "generation\tstarted_at\tfinished_at\tphase\tconfig\tcurrent")
+	fmt.Fprintln(tw, "generation\tstarted_at\tfinished_at\tphase\tconfig\tattempt")
 	for _, rec := range records {
-		currentMark := ""
-		if rec.Generation == current {
-			currentMark = "(current)"
+		attemptMark := ""
+		if rec.Generation == latestAttempt {
+			attemptMark = "(latest attempt)"
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			rec.Generation,
@@ -89,7 +96,7 @@ func listRollbackGenerations(statePath string, limit int, stdout io.Writer) erro
 			formatGenerationTime(rec.FinishedAt),
 			defaultString(rec.Phase, "-"),
 			yesNo(rec.HasYAML),
-			currentMark,
+			attemptMark,
 		)
 	}
 	return tw.Flush()

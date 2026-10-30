@@ -5,6 +5,7 @@ package webconsole
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/netip"
 	"sort"
@@ -258,14 +259,36 @@ func atoiDefault(raw string, fallback int) int {
 }
 
 func parseConsoleDuration(value string) (time.Duration, error) {
+	var duration time.Duration
 	if strings.HasSuffix(value, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		days, err := strconv.ParseInt(strings.TrimSuffix(value, "d"), 10, 64)
+		if err != nil || days <= 0 || days > math.MaxInt64/int64(24*time.Hour) {
+			return 0, fmt.Errorf("duration must be positive and fit in time.Duration")
+		}
+		duration = time.Duration(days) * 24 * time.Hour
+	} else {
+		var err error
+		duration, err = time.ParseDuration(value)
 		if err != nil {
 			return 0, err
 		}
-		return time.Duration(days) * 24 * time.Hour, nil
 	}
-	return time.ParseDuration(value)
+	if duration <= 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return duration, nil
+}
+
+func consoleDurationQuery(r *http.Request, key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	duration, err := parseConsoleDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return duration, nil
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

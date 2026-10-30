@@ -12,10 +12,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bgpdaemon"
+	bgpcontroller "github.com/imksoo/routerd/pkg/controller/bgp"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/hostdeps"
@@ -51,11 +54,6 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 	command := c.Command
 	if command == nil {
 		command = runOutputCommandContext
-	}
-	lanInterfaceNames := hostdeps.LANDistributionInterfaceNames(c.Router)
-	lanInterfaces := map[string]bool{}
-	for _, ifname := range lanInterfaceNames {
-		lanInterfaces[ifname] = true
 	}
 	desiredResolvedDropins := map[string]bool{}
 	for _, resource := range networkAdoptionControllerResources(c.Router) {
@@ -101,13 +99,9 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 			}
 			return err
 		}
-		if changed && !c.DryRun && firstNonEmpty(spec.State, "present") != "absent" && lanInterfaces[ifname] && spec.SystemdNetworkd.DisableIPv6RA {
-			if err := flushLANIPv6RADefaultRoute(ctx, command, ifname); err != nil {
-				return err
-			}
-		}
+
 		phase := "Applied"
-		if c.DryRun && changed {
+		if c.DryRun || !api.BoolDefault(spec.Reload, true) {
 			phase = "Rendered"
 		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NetworkAdoption", resource.Metadata.Name, map[string]any{
@@ -120,7 +114,7 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		if changed && !c.DryRun && c.Bus != nil {
+		if changed && !c.DryRun && api.BoolDefault(spec.Reload, true) && c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.system.network_adoption.applied", daemonapi.SeverityInfo)
 			event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption", Name: resource.Metadata.Name}
 			event.Attributes = map[string]string{"ifname": ifname, "paths": strings.Join(paths, ",")}
@@ -138,45 +132,41 @@ func (c NetworkAdoptionController) Reconcile(ctx context.Context) error {
 }
 
 func (c NetworkAdoptionController) cleanupStaleResolvedAdoptionDropins(ctx context.Context, desired map[string]bool, command outputCommandFunc) ([]string, bool, error) {
-	entries, err := os.ReadDir(c.ResolvedDropinDir)
+	candidates, err := systemdArtifactPaths(c.ResolvedDropinDir, "*.conf")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
 		return nil, false, err
 	}
 	var paths []string
-	changed := false
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".conf") {
-			continue
-		}
-		path := filepath.Join(c.ResolvedDropinDir, entry.Name())
+	for _, path := range candidates {
 		if desired[filepath.Clean(path)] {
 			continue
 		}
 		data, err := os.ReadFile(path)
-		if err != nil {
-			return paths, changed, err
+		if err != nil && !os.IsNotExist(err) {
+			return paths, len(paths) > 0, err
 		}
-		if !bytes.HasPrefix(data, []byte(networkAdoptionResolvedOwnershipHeader)) {
+		if err == nil && !bytes.HasPrefix(data, []byte(networkAdoptionResolvedOwnershipHeader)) {
 			continue
 		}
-		removed, err := removeFileIfExists(path, c.DryRun)
+		_, pending, _, err := prepareAdoptionArtifact(path, nil, true, c.DryRun)
 		if err != nil {
-			return paths, changed, err
+			return paths, len(paths) > 0, err
 		}
-		if removed {
+		if pending {
 			paths = append(paths, path)
-			changed = true
 		}
 	}
-	if changed && !c.DryRun {
+	if len(paths) > 0 && !c.DryRun {
 		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
-			return paths, changed, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
+			return paths, true, fmt.Errorf("restart systemd-resolved after stale network adoption cleanup: %w", err)
+		}
+		for _, path := range paths {
+			if err := clearArtifactActivation(path); err != nil {
+				return paths, true, err
+			}
 		}
 	}
-	return paths, changed, nil
+	return paths, len(paths) > 0, nil
 }
 
 func flushLANIPv6RADefaultRoute(ctx context.Context, command outputCommandFunc, ifname string) error {
@@ -213,82 +203,122 @@ func networkAdoptionOSName(goos string) string {
 	return id
 }
 
-func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, name, ifname string, spec api.NetworkAdoptionSpec, command outputCommandFunc) ([]string, bool, error) {
-	state := firstNonEmpty(spec.State, "present")
+type adoptionActivation struct {
+	path     string
+	digest   string
+	removing bool
+}
+
+func prepareAdoptionArtifact(path string, data []byte, removing, dryRun bool) (bool, bool, string, error) {
+	if err := validateRouterdArtifactOwnership(path); err != nil {
+		return false, false, "", err
+	}
+	if !removing {
+		return prepareArtifactActivation(path, data, nil, dryRun)
+	}
+	receipt, err := artifactActivationReceipt(path)
+	if err != nil {
+		return false, false, "", err
+	}
+	_, err = os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, false, "", err
+	}
+	present := err == nil
+	if !present && receipt.AppliedDigest == "" && receipt.PendingDigest == "" && !receipt.Removing {
+		return false, false, "", nil
+	}
+	if dryRun {
+		return present, true, "", nil
+	}
+	if err := beginArtifactRemoval(path); err != nil {
+		return false, false, "", err
+	}
+	changed, err := removeFileIfExists(path, false)
+	return changed, true, "", err
+}
+
+func acknowledgeAdoptionArtifacts(artifacts []adoptionActivation) error {
+	for _, artifact := range artifacts {
+		if artifact.removing {
+			if err := clearArtifactActivation(artifact.path); err != nil {
+				return err
+			}
+		} else if err := acknowledgeArtifactActivation(artifact.path, artifact.digest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c NetworkAdoptionController) applyNetworkAdoption(ctx context.Context, _, ifname string, spec api.NetworkAdoptionSpec, command outputCommandFunc) ([]string, bool, error) {
+	absent := firstNonEmpty(spec.State, "present") == "absent"
 	var paths []string
-	var changed bool
-	networkdChanged := false
-	resolvedChanged := false
+	var networkd, resolved []adoptionActivation
+	changed := false
+	prepare := func(path string, data []byte, removing bool, group *[]adoptionActivation) error {
+		paths = append(paths, path)
+		fileChanged, pending, digest, err := prepareAdoptionArtifact(path, data, removing, c.DryRun)
+		changed = changed || fileChanged || pending
+		if pending {
+			*group = append(*group, adoptionActivation{path: path, digest: digest, removing: removing})
+		}
+		return err
+	}
 	if networkdAdoptionConfigured(spec.SystemdNetworkd) {
 		if ifname == "" {
 			return paths, changed, fmt.Errorf("ifname is required for systemdNetworkd adoption")
 		}
 		path := filepath.Join(networkdDropinDir(c.NetworkdDropinBase, ifname), firstNonEmpty(spec.SystemdNetworkd.DropinName, "90-routerd-adoption.conf"))
-		paths = append(paths, path)
-		if state == "absent" {
-			removed, err := removeFileIfExists(path, c.DryRun)
-			if err != nil {
+		if err := prepare(path, networkdAdoptionDropin(spec.SystemdNetworkd), absent, &networkd); err != nil {
+			return paths, changed, err
+		}
+		for _, legacy := range legacyNetworkdAdoptionDropins(c.NetworkdDropinBase, ifname, path) {
+			if err := prepare(legacy, nil, true, &networkd); err != nil {
 				return paths, changed, err
-			}
-			networkdChanged = removed
-		} else {
-			data := networkdAdoptionDropin(spec.SystemdNetworkd)
-			fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
-			if err != nil {
-				return paths, changed, err
-			}
-			networkdChanged = fileChanged
-			for _, legacyPath := range legacyNetworkdAdoptionDropins(c.NetworkdDropinBase, ifname, path) {
-				paths = append(paths, legacyPath)
-				removed, err := removeFileIfExists(legacyPath, c.DryRun)
-				if err != nil {
-					return paths, changed, err
-				}
-				networkdChanged = networkdChanged || removed
 			}
 		}
-		changed = changed || networkdChanged
 	}
 	if resolvedAdoptionConfigured(spec.SystemdResolved) {
 		path := filepath.Join(c.ResolvedDropinDir, firstNonEmpty(spec.SystemdResolved.DropinName, "90-routerd-adoption.conf"))
-		paths = append(paths, path)
-		if state == "absent" {
-			removed, err := removeFileIfExists(path, c.DryRun)
-			if err != nil {
-				return paths, changed, err
-			}
-			resolvedChanged = removed
-		} else {
-			data := resolvedAdoptionDropin(spec.SystemdResolved)
-			fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
-			if err != nil {
-				return paths, changed, err
-			}
-			resolvedChanged = fileChanged
+		if err := prepare(path, resolvedAdoptionDropin(spec.SystemdResolved), absent, &resolved); err != nil {
+			return paths, changed, err
 		}
-		changed = changed || resolvedChanged
 	}
 	if c.DryRun || !api.BoolDefault(spec.Reload, true) {
 		return paths, changed, nil
 	}
-	if networkdChanged {
+	if len(networkd) > 0 {
 		if _, err := command(ctx, "networkctl", "reload"); err != nil {
-			if _, fallbackErr := command(ctx, "systemctl", "restart", "systemd-networkd.service"); fallbackErr != nil {
-				return paths, changed, fmt.Errorf("reload networkd: %w; restart fallback: %v", err, fallbackErr)
+			if _, fallback := command(ctx, "systemctl", "restart", "systemd-networkd.service"); fallback != nil {
+				return paths, changed, fmt.Errorf("reload networkd: %w; restart fallback: %v", err, fallback)
 			}
 		}
-		if ifname != "" {
-			if _, err := command(ctx, "networkctl", "reconfigure", ifname); err != nil {
-				return paths, changed, fmt.Errorf("reconfigure %s: %w", ifname, err)
+		if _, err := command(ctx, "networkctl", "reconfigure", ifname); err != nil {
+			return paths, changed, fmt.Errorf("reconfigure %s: %w", ifname, err)
+		}
+		if !absent && spec.SystemdNetworkd.DisableIPv6RA {
+			for _, lanIfname := range hostdeps.LANDistributionInterfaceNames(c.Router) {
+				if lanIfname == ifname {
+					if err := flushLANIPv6RADefaultRoute(ctx, command, ifname); err != nil {
+						return paths, changed, err
+					}
+					break
+				}
 			}
+		}
+		if err := acknowledgeAdoptionArtifacts(networkd); err != nil {
+			return paths, changed, err
 		}
 	}
-	if resolvedChanged {
+	if len(resolved) > 0 {
 		if _, err := command(ctx, "systemctl", "restart", "systemd-resolved.service"); err != nil {
 			return paths, changed, fmt.Errorf("restart systemd-resolved: %w", err)
 		}
+		if err := acknowledgeAdoptionArtifacts(resolved); err != nil {
+			return paths, changed, err
+		}
 	}
-	_ = name
 	return paths, changed, nil
 }
 
@@ -348,9 +378,10 @@ type SystemdUnitController struct {
 	BGPSocketPath               string
 	BGPControlSocketPath        string
 	BGPStatePath                string
+	BGPController               *bgpcontroller.Controller
 }
 
-func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.SystemdUnitSpec {
+func (c SystemdUnitController) bgpPaths(defaults platform.Defaults) (string, string, string) {
 	socket, control, state := defaults.BGPPaths()
 	if c.BGPSocketPath != "" {
 		socket = c.BGPSocketPath
@@ -362,6 +393,11 @@ func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.Sy
 	if c.BGPStatePath != "" {
 		state = c.BGPStatePath
 	}
+	return socket, control, state
+}
+
+func (c SystemdUnitController) bgpSystemdSpec(defaults platform.Defaults) api.SystemdUnitSpec {
+	socket, control, state := c.bgpPaths(defaults)
 	return render.BGPSystemdSpecWithPaths(socket, control, state)
 }
 
@@ -401,6 +437,27 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 	telemetryEnv, err := render.TelemetryEnvironment(c.Router)
 	if err != nil {
 		return err
+	}
+	bgpStatePath := c.BGPStatePath
+	if bgpStatePath == "" {
+		_, _, bgpStatePath = defaults.BGPPaths()
+	}
+	bgpRemovalPending, err := bgpdaemon.RemovalPending(bgpStatePath)
+	if c.BGPController != nil {
+		bgpRemovalPending, err = c.BGPController.PendingRemoval()
+	}
+	if err != nil {
+		return err
+	}
+	if !routerHasBGP(c.Router) || bgpRemovalPending {
+		if err := c.cleanupBGPDaemon(ctx, defaults, features, command); err != nil {
+			return err
+		}
+		if features.HasRCD && bgpRemovalPending && routerHasBGP(c.Router) && !c.DryRun {
+			if _, err := command(ctx, "service", "routerd_bgp", "onestart"); err != nil {
+				return err
+			}
+		}
 	}
 	if features.HasSystemd {
 		explicitUnits := map[string]bool{}
@@ -450,7 +507,7 @@ func (c SystemdUnitController) Reconcile(ctx context.Context) error {
 			changed := false
 			if !explicitUnits[unitName] {
 				var err error
-				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, command)
+				changed, err = c.applySystemdUnit(ctx, resource.Metadata.Name, path, unitName, unit, nil, command)
 				if err != nil {
 					if saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "TailscaleNode", resource.Metadata.Name, map[string]any{
 						"phase":     "Error",
@@ -682,7 +739,7 @@ func (c SystemdUnitController) reconcileConntrackdSyncUnits(ctx context.Context,
 		unitName := "routerd-conntrackd@" + resource.Metadata.Name + ".service"
 		unit := conntrackdSystemdSpec(resource.Metadata.Name, configPath)
 		unitPath := filepath.Join(c.SystemdSystemDir, unitName)
-		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, command)
+		unitChanged, err := c.applySystemdUnit(ctx, resource.Metadata.Name, unitPath, unitName, unit, data, command)
 		if err != nil {
 			return err
 		}
@@ -1004,7 +1061,7 @@ func eventGroupRunsEventd(spec api.EventGroupSpec) bool {
 
 func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context, apiVersion, kind, resourceName, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
 	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec, command)
+	changed, err := c.applySystemdUnit(ctx, resourceName, path, unitName, spec, nil, command)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1058,7 +1115,7 @@ func (c SystemdUnitController) reconcileSyntheticSystemdUnit(ctx context.Context
 
 func (c SystemdUnitController) reconcileSyntheticSystemdHelperUnit(ctx context.Context, unitName, source string, spec api.SystemdUnitSpec, command outputCommandFunc) error {
 	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec, command)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, spec, nil, command)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1134,13 +1191,77 @@ func (c SystemdUnitController) reconcileLongLivedSystemdHelperUnit(ctx context.C
 	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status)
 }
 
+// cleanupBGPDaemon owns explicit BGP removal across supported supervisors.
+// Process stop is acknowledged before any kernel or daemon restart state is removed.
+func (c SystemdUnitController) cleanupBGPDaemon(ctx context.Context, defaults platform.Defaults, features platform.Features, command outputCommandFunc) error {
+	daemon := bgpcontroller.DefaultDaemonSpec()
+	if c.BGPStatePath != "" {
+		daemon.StatePath = c.BGPStatePath
+	} else {
+		_, _, daemon.StatePath = defaults.BGPPaths()
+	}
+	if c.DryRun {
+		return nil
+	}
+	cleanup := c.BGPController
+	if cleanup == nil {
+		helperPath := filepath.Join(c.SystemdSystemDir, render.BGPUnitName)
+		if features.HasRCD {
+			helperPath = filepath.Join(defaults.RCScriptDir, "routerd_bgp")
+		}
+		store, ok := c.Store.(bgpcontroller.Store)
+		if !ok {
+			return fmt.Errorf("BGP FIB removal journal is unavailable")
+		}
+		cleanup = &bgpcontroller.Controller{Store: store, Daemon: daemon, ManagedHelperPath: helperPath}
+	}
+	if cleanup.DryRun {
+		_, stateErr := os.Stat(daemon.StatePath)
+		_, helperErr := os.Stat(cleanup.ManagedHelperPath)
+		pending, err := cleanup.PendingRemoval()
+		if err != nil {
+			return err
+		}
+		if stateErr != nil && !os.IsNotExist(stateErr) {
+			return stateErr
+		}
+		if helperErr != nil && !os.IsNotExist(helperErr) {
+			return helperErr
+		}
+		if stateErr == nil || helperErr == nil || pending {
+			return fmt.Errorf("BGP dry-run prevents live daemon removal")
+		}
+		return nil
+	}
+	stop := cleanup.StopDaemon
+	if stop == nil {
+		stop = func(ctx context.Context) error { return c.stopBGPDaemon(ctx, features, command) }
+	}
+	return cleanup.Remove(ctx, stop)
+}
+
+func (c SystemdUnitController) stopBGPDaemon(ctx context.Context, features platform.Features, command outputCommandFunc) error {
+	if c.DryRun {
+		return fmt.Errorf("BGP supervisor mutations are disabled")
+	}
+	if features.HasSystemd {
+		_, err := command(ctx, "systemctl", "disable", "--now", render.BGPUnitName)
+		return err
+	}
+	if features.HasRCD {
+		_, err := command(ctx, "service", "routerd_bgp", "onestop")
+		return err
+	}
+	return fmt.Errorf("BGP removal requires a supported process supervisor")
+}
+
 func (c SystemdUnitController) cleanupLongLivedSystemdHelperUnit(ctx context.Context, unitName, source string, command outputCommandFunc) error {
 	if c.SystemdSystemDir == "" {
 		defaults, _ := platform.Current()
 		c.SystemdSystemDir = defaults.SystemdSystemDir
 	}
 	path := filepath.Join(c.SystemdSystemDir, unitName)
-	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, api.SystemdUnitSpec{State: "absent"}, command)
+	changed, err := c.applySystemdUnit(ctx, unitName, path, unitName, api.SystemdUnitSpec{State: "absent"}, nil, command)
 	if err != nil {
 		if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, map[string]any{
 			"phase":     "Error",
@@ -1188,7 +1309,11 @@ func (c SystemdUnitController) cleanupWhenFalseSystemdUnits(ctx context.Context,
 	}
 	for _, resource := range c.DeclaredRouter.Spec.Resources {
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		matches, err := resourcequery.ResourceWhenMatches(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		ref, ok := synthesizedUnitForResource(resource)
@@ -1238,7 +1363,7 @@ func synthesizedUnitForResource(resource api.Resource) (synthesizedUnitRef, bool
 
 func (c SystemdUnitController) cleanupWhenFalseSystemdUnit(ctx context.Context, ref synthesizedUnitRef, command outputCommandFunc) error {
 	path := filepath.Join(c.SystemdSystemDir, ref.UnitName)
-	changed, err := c.applySystemdUnit(ctx, ref.Name, path, ref.UnitName, api.SystemdUnitSpec{State: "absent"}, command)
+	changed, err := c.applySystemdUnit(ctx, ref.Name, path, ref.UnitName, api.SystemdUnitSpec{State: "absent"}, nil, command)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
 		status := map[string]any{
@@ -1483,11 +1608,15 @@ func appendMissingStrings(values []string, additions ...string) []string {
 
 func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, path, unitName, resourceName string, spec api.HealthCheckSpec, telemetryEnv []string, command outputCommandFunc) (bool, bool, error) {
 	socket := filepath.Join("/run/routerd/healthcheck", resourceName+".sock")
-	resolved := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
+	resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, resourceName, spec)
+	if err != nil {
+		return false, false, err
+	}
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:             resourceName,
 		Target:               resolved.Target,
-		Protocol:             resolved.Protocol,
+		Protocol:             resolved.Probe().Protocol,
+		AddressFamily:        resolved.AddressFamily,
 		Via:                  resolved.Via,
 		FwMark:               resolved.FwMark,
 		RequireDSLiteBinding: healthcheck.ReferencesDSLiteTunnel(c.Router, resourceName),
@@ -1503,58 +1632,54 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 		EventFile:            filepath.Join("/var/lib/routerd/healthcheck", resourceName, "events.jsonl"),
 		Environment:          telemetryEnv,
 	})
-	changed, err := writeFileIfChanged(path, data, 0644, c.DryRun)
-	if err != nil {
+	if err := validateRouterdArtifactOwnership(path); err != nil {
+		return false, false, err
+	}
+	enabled := !healthCheckDisabled(spec)
+	changed, pending, digest, err := prepareArtifactActivation(path, data, []byte(fmt.Sprint(enabled)), c.DryRun)
+	if err != nil || c.DryRun {
 		return changed, false, err
 	}
-	if healthCheckDisabled(spec) {
-		if c.DryRun {
-			return changed, false, nil
-		}
-		if changed {
-			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-				return changed, false, err
-			}
-		}
-		if changed || systemdUnitEnabledOrActive(ctx, command, unitName) {
-			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
-			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
-		}
-		return changed, false, nil
-	}
-	if c.DryRun {
-		return changed, false, nil
-	}
-	if changed {
+	if pending {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, false, err
 		}
+	}
+	if !enabled {
+		if pending || systemdUnitEnabledOrActive(ctx, command, unitName) {
+			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+				return changed, false, err
+			}
+			changed = true
+		}
+		if pending {
+			if err := acknowledgeArtifactActivation(path, digest); err != nil {
+				return changed, false, err
+			}
+		}
+		return changed, false, nil
+	}
+	if pending || !systemdUnitEnabled(ctx, command, unitName) {
 		if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
 			return changed, false, err
 		}
 	}
-	active := true
-	if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
-		active = false
-	}
-	if changed || !active {
+	active := systemdUnitActive(ctx, command, unitName)
+	if pending || !active {
 		if systemdUnitActive(ctx, command, render.RouterdUnitName) {
-			// Once routerd is READY, use a blocking restart and verify the helper
-			// became active. A successful systemctl invocation alone does not prove
-			// that ExecStart stayed up.
 			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
 				return changed, false, err
 			}
 			if !systemdUnitActive(ctx, command, unitName) {
 				return changed, false, fmt.Errorf("healthcheck helper %s is not active after restart", unitName)
 			}
+			if err := acknowledgeArtifactActivation(path, digest); err != nil {
+				return true, false, err
+			}
 			return true, false, nil
 		}
-		// HealthCheck units are ordered After=routerd.service. During a
-		// Type=notify bootstrap, waiting for this job would deadlock: systemd
-		// cannot start the helper until routerd emits READY, while routerd would
-		// be waiting here for the helper job to finish. Queue the restart and
-		// report it as Activating; a later reconciliation observes the result.
+		// Ordered After=routerd.service: a blocking job here would prevent READY.
+		// Keep the input unacknowledged until a later blocking restart succeeds.
 		if _, err := command(ctx, "systemctl", "--no-block", "restart", unitName); err != nil {
 			return changed, false, err
 		}
@@ -1580,25 +1705,16 @@ func (c SystemdUnitController) cleanupStaleHealthCheckUnits(ctx context.Context,
 		}
 		desired[healthCheckUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-healthcheck@*.service"))
+	matches, err := systemdArtifactPaths(c.SystemdSystemDir, "routerd-healthcheck@*.service")
 	if err != nil {
 		return err
 	}
-	var removed bool
 	for _, path := range matches {
 		unitName := filepath.Base(path)
 		if desired[unitName] {
 			continue
 		}
-		_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		removed = true
-	}
-	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+		if _, err := c.removeSystemdArtifact(ctx, path, unitName, command); err != nil {
 			return err
 		}
 	}
@@ -1619,11 +1735,10 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 		}
 		desired[dnsResolverUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-dns-resolver@*.service"))
+	matches, err := systemdArtifactPaths(c.SystemdSystemDir, "routerd-dns-resolver@*.service")
 	if err != nil {
 		return err
 	}
-	var removed bool
 	for _, path := range matches {
 		unitName := filepath.Base(path)
 		if desired[unitName] {
@@ -1639,7 +1754,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 			return err
 		}
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if _, err := c.removeSystemdArtifact(ctx, path, unitName, command); err != nil {
 			status["phase"] = "Error"
 			status["error"] = err.Error()
 			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1648,19 +1763,9 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 			}
 			return fmt.Errorf("disable stale DNS resolver unit %s: %w", unitName, err)
 		}
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 		status["phase"] = "Removed"
 		status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-			return err
-		}
-		removed = true
-	}
-	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
@@ -1685,19 +1790,18 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		}
 		desired[eventFederationUnitName(resource.Metadata.Name)] = true
 	}
-	matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, "routerd-eventd@*.service"))
+	matches, err := systemdArtifactPaths(c.SystemdSystemDir, "routerd-eventd@*.service")
 	if err != nil {
 		return err
 	}
 	legacyPath := filepath.Join(c.SystemdSystemDir, "routerd-eventd.service")
-	legacyPresent, err := legacyEventdUnitNeedsCleanup(ctx, command, legacyPath)
+	legacyPresent, err := legacyEventdUnitNeedsCleanup(legacyPath)
 	if err != nil {
 		return err
 	}
 	if legacyPresent {
 		matches = append(matches, legacyPath)
 	}
-	var removed bool
 	for _, path := range matches {
 		unitName := filepath.Base(path)
 		if desired[unitName] {
@@ -1717,7 +1821,7 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 			return err
 		}
-		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		if _, err := c.removeSystemdArtifact(ctx, path, unitName, command); err != nil {
 			status["phase"] = "Error"
 			status["error"] = err.Error()
 			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1726,32 +1830,23 @@ func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Cont
 			}
 			return fmt.Errorf("disable stale event federation unit %s: %w", unitName, err)
 		}
-		_, _ = command(ctx, "systemctl", "reset-failed", unitName)
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 		status["phase"] = "Removed"
 		status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
-			return err
-		}
-		removed = true
-	}
-	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func legacyEventdUnitNeedsCleanup(ctx context.Context, command outputCommandFunc, path string) (bool, error) {
+func legacyEventdUnitNeedsCleanup(path string) (bool, error) {
 	if _, err := os.Stat(path); err == nil {
 		return true, nil
-	} else if err != nil && !os.IsNotExist(err) {
+	} else if !os.IsNotExist(err) {
 		return false, err
 	}
-	return systemdUnitEnabledOrActive(ctx, command, "routerd-eventd.service"), nil
+	receipt, err := artifactActivationReceipt(path)
+	return receipt != (artifactActivation{}), err
 }
 
 func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context, command outputCommandFunc) error {
@@ -1763,9 +1858,8 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 		"routerd-dhcpv6-client@*.service",
 		"routerd-pppoe-client@*.service",
 	}
-	var removed bool
 	for _, pattern := range patterns {
-		matches, err := filepath.Glob(filepath.Join(c.SystemdSystemDir, pattern))
+		matches, err := systemdArtifactPaths(c.SystemdSystemDir, pattern)
 		if err != nil {
 			return err
 		}
@@ -1801,7 +1895,7 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
 				return err
 			}
-			if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			if _, err := c.removeSystemdArtifact(ctx, path, unitName, command); err != nil {
 				status["phase"] = "Error"
 				status["error"] = err.Error()
 				status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1819,10 +1913,6 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 				}
 				return fmt.Errorf("disable stale client daemon unit %s: %w", unitName, err)
 			}
-			_, _ = command(ctx, "systemctl", "reset-failed", unitName)
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
 			status["phase"] = "Removed"
 			status["updatedAt"] = time.Now().UTC().Format(time.RFC3339Nano)
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", unitName, status); err != nil {
@@ -1837,12 +1927,6 @@ func (c SystemdUnitController) cleanupStaleClientDaemonUnits(ctx context.Context
 					return err
 				}
 			}
-			removed = true
-		}
-	}
-	if removed {
-		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -1853,44 +1937,44 @@ func systemdUnitActive(ctx context.Context, command outputCommandFunc, unitName 
 	return err == nil
 }
 
-func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
-	state := firstNonEmpty(spec.State, "present")
-	var changed bool
-	if state == "absent" {
-		removed, err := removeFileIfExists(path, c.DryRun)
-		if err != nil {
-			return changed, err
-		}
-		changed = removed
-		if c.DryRun {
-			return changed, nil
-		}
-		if removed {
-			if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-				return changed, err
-			}
-		}
-		if removed || systemdUnitEnabledOrActive(ctx, command, unitName) {
-			_, _ = command(ctx, "systemctl", "disable", "--now", unitName)
-		}
-		return changed, nil
+func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path, unitName string, spec api.SystemdUnitSpec, input []byte, command outputCommandFunc) (bool, error) {
+	if firstNonEmpty(spec.State, "present") == "absent" {
+		return c.removeSystemdArtifact(ctx, path, unitName, command)
 	}
 	data := render.SystemdUnit(name, spec)
-	fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
-	if err != nil {
+	if err := validateRouterdArtifactOwnership(path); err != nil {
+		return false, err
+	}
+	if unitName == render.RouterdUnitName {
+		receipt, err := artifactActivationReceipt(path)
+		if err != nil {
+			return false, err
+		}
+		unchanged, err := writeFileIfChanged(path, data, 0o644, true)
+		if err != nil {
+			return false, err
+		}
+		// The installed live-boot unit started this very process. It must not
+		// schedule a second self-restart merely to initialize its receipt. Once
+		// managed here, PendingDigest distinguishes every failed later handoff.
+		if !unchanged && receipt == (artifactActivation{}) {
+			if c.DryRun {
+				return false, nil
+			}
+			return false, acknowledgeArtifactActivation(path, artifactActivationDigest(data, input))
+		}
+	}
+	changed, pending, digest, err := prepareArtifactActivation(path, data, input, c.DryRun)
+	if err != nil || c.DryRun {
 		return changed, err
 	}
-	changed = changed || fileChanged
-	if c.DryRun {
-		return changed, nil
-	}
-	if fileChanged {
+	if pending {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Enabled, true) {
-		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
+		if pending || !systemdUnitEnabled(ctx, command, unitName) {
 			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
 				return changed, err
 			}
@@ -1898,97 +1982,150 @@ func (c SystemdUnitController) applySystemdUnit(ctx context.Context, name, path,
 				return changed, err
 			}
 		}
-	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
+	} else if pending || systemdUnitEnabledOrActive(ctx, command, unitName) {
 		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
 			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if unitName == "routerd.service" && fileChanged {
-			if err := scheduleRouterdServiceRestart(ctx, command); err != nil {
-				return changed, err
+		// An accepted deferred restart is the only safe self-restart during notify
+		// bootstrap. Ordinary services use systemd's blocking job acknowledgment.
+		if unitName == render.RouterdUnitName {
+			if pending {
+				if err := scheduleRouterdServiceRestart(ctx, command); err != nil {
+					return changed, err
+				}
+				changed = true
 			}
-			return true, nil
-		}
-		// Reaching this controller proves that routerd.service is already
-		// running. With Type=notify, systemd reports it as "activating" until
-		// bootstrap completes, so `systemctl is-active` would return false and
-		// a direct self-restart here would prevent READY from ever being sent.
-		if unitName == "routerd.service" {
-			return changed, nil
-		}
-		active := true
-		if !fileChanged {
-			if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
-				active = false
-			}
-		}
-		if fileChanged || !active {
+		} else if pending || !systemdUnitActive(ctx, command, unitName) {
 			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
 				return changed, err
 			}
-			return true, nil
+			changed = true
+		}
+	} else if pending || systemdUnitActive(ctx, command, unitName) {
+		if _, err := command(ctx, "systemctl", "stop", unitName); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	if pending {
+		if err := acknowledgeArtifactActivation(path, digest); err != nil {
+			return changed, err
 		}
 	}
 	return changed, nil
 }
 
-func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
-	data := render.SystemdUnit(unitName, spec)
-	fileChanged, err := writeFileIfChanged(path, data, 0644, c.DryRun)
+func (c SystemdUnitController) removeSystemdArtifact(ctx context.Context, path, unitName string, command outputCommandFunc) (bool, error) {
+	if err := validateRouterdArtifactOwnership(path); err != nil {
+		return false, err
+	}
+	receipt, err := artifactActivationReceipt(path)
 	if err != nil {
 		return false, err
 	}
-	if c.DryRun {
-		return fileChanged, nil
+	_, err = os.Stat(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
 	}
-	if fileChanged {
+	present := err == nil
+	knownArtifact := present || receipt.AppliedDigest != "" || receipt.PendingDigest != "" || receipt.Removing
+	if !knownArtifact {
+		return false, nil
+	}
+	if c.DryRun {
+		return true, nil
+	}
+	// Persist the removal intent before either stopping or unlinking. A failed
+	// reload after unlink must still be retried by the next process.
+	if err := beginArtifactRemoval(path); err != nil {
+		return false, err
+	}
+	if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+		return false, err
+	}
+	removed, err := removeFileIfExists(path, false)
+	if err != nil {
+		return false, err
+	}
+	if knownArtifact {
 		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
-			return fileChanged, err
+			return removed, err
+		}
+	}
+	if err := clearArtifactActivation(path); err != nil {
+		return removed, err
+	}
+	return true, nil
+}
+
+func (c SystemdUnitController) applyLongLivedSystemdUnit(ctx context.Context, path, unitName string, spec api.SystemdUnitSpec, command outputCommandFunc) (bool, error) {
+	data := render.SystemdUnit(unitName, spec)
+	if err := validateRouterdArtifactOwnership(path); err != nil {
+		return false, err
+	}
+	changed, pending, digest, err := prepareArtifactActivation(path, data, nil, c.DryRun)
+	if err != nil || c.DryRun {
+		return changed, err
+	}
+	if pending {
+		if _, err := command(ctx, "systemctl", "daemon-reload"); err != nil {
+			return changed, err
 		}
 	}
 	if api.BoolDefault(spec.Enabled, true) {
-		if fileChanged || !systemdUnitEnabled(ctx, command, unitName) {
+		if pending || !systemdUnitEnabled(ctx, command, unitName) {
 			if _, err := command(ctx, "systemctl", "unmask", unitName); err != nil {
-				return true, err
+				return changed, err
 			}
 			if _, err := command(ctx, "systemctl", "enable", unitName); err != nil {
-				return true, err
+				return changed, err
 			}
 		}
-	} else if systemdUnitEnabledOrActive(ctx, command, unitName) {
+	} else if pending || systemdUnitEnabledOrActive(ctx, command, unitName) {
 		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
-			return true, err
+			return changed, err
+		}
+		if err := acknowledgeArtifactActivation(path, digest); err != nil {
+			return changed, err
 		}
 		return true, nil
 	}
 	if api.BoolDefault(spec.Started, true) {
-		if _, err := command(ctx, "systemctl", "is-active", "--quiet", unitName); err != nil {
+		if !systemdUnitActive(ctx, command, unitName) {
 			if _, err := command(ctx, "systemctl", "start", unitName); err != nil {
-				return true, err
+				return changed, err
 			}
-			return true, nil
-		}
-		if !longLivedHelperSocketsPresent(ctx, unitName, command) {
+			changed = true
+		} else if !c.longLivedHelperSocketsPresent(ctx, unitName, command) {
 			if _, err := command(ctx, "systemctl", "restart", unitName); err != nil {
-				return true, err
+				return changed, err
 			}
-			return true, nil
+			changed = true
+		}
+	} else if pending || systemdUnitActive(ctx, command, unitName) {
+		if _, err := command(ctx, "systemctl", "stop", unitName); err != nil {
+			return changed, err
+		}
+		changed = true
+	}
+	if pending {
+		if err := acknowledgeArtifactActivation(path, digest); err != nil {
+			return changed, err
 		}
 	}
-	return fileChanged, nil
+	return changed, nil
 }
 
-func longLivedHelperSocketsPresent(ctx context.Context, unitName string, command outputCommandFunc) bool {
-	var sockets []string
-	switch unitName {
-	case render.BGPUnitName:
-		sockets = []string{"/run/routerd/bgp/gobgp.sock", "/run/routerd/bgp/control.sock"}
-	default:
+func (c SystemdUnitController) longLivedHelperSocketsPresent(ctx context.Context, unitName string, command outputCommandFunc) bool {
+	if unitName != render.BGPUnitName {
 		return true
 	}
-	for _, socket := range sockets {
-		if _, err := command(ctx, "test", "-S", socket); err != nil {
+	defaults, _ := platform.Current()
+	socket, control, _ := c.bgpPaths(defaults)
+	for _, path := range []string{socket, control} {
+		if _, err := command(ctx, "test", "-S", path); err != nil {
 			return false
 		}
 	}
@@ -2097,7 +2234,7 @@ func writeFileIfChanged(path string, data []byte, mode os.FileMode, dryRun bool)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, data, mode); err != nil {
+	if err := writeAtomicArtifact(path, data, mode); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -2130,4 +2267,49 @@ func networkdDropinDir(base, ifname string) string {
 		name = "interface"
 	}
 	return filepath.Join(base, "10-netplan-"+name+".network.d")
+}
+
+func validateRouterdArtifactOwnership(path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	data = bytes.TrimPrefix(data, []byte("# routerd-managed-service: v1\n"))
+	if !bytes.HasPrefix(data, []byte("# Managed by routerd. Do not edit by hand.\n")) {
+		return fmt.Errorf("refuse to replace unowned routerd artifact %s", path)
+	}
+	return nil
+}
+
+func systemdArtifactPaths(dir, pattern string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	all := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), activationReceiptSuffix)
+		match, err := filepath.Match(pattern, name)
+		if err != nil {
+			return nil, err
+		}
+		if match {
+			all[filepath.Join(dir, name)] = true
+		}
+	}
+	paths := make([]string, 0, len(all))
+	for path := range all {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }

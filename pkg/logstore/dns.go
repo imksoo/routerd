@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,6 +25,20 @@ const (
 	dnsQueryWALAutoCheckpointPages = 1000
 	dnsQueryJournalSizeLimitBytes  = 32 * 1024 * 1024
 )
+
+func dnsQueryBusyTimeout(ctx context.Context) int64 {
+	wait := int64(5000)
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline).Milliseconds()
+		if remaining < 1 {
+			remaining = 1
+		}
+		if remaining < wait {
+			wait = remaining
+		}
+	}
+	return wait
+}
 
 type DNSQuery struct {
 	ID            int64         `json:"id,omitempty"`
@@ -87,26 +102,33 @@ type DNSQueryLogStats struct {
 }
 
 func OpenDNSQueryLog(path string) (*DNSQueryLog, error) {
+	return OpenDNSQueryLogContext(context.Background(), path)
+}
+
+func OpenDNSQueryLogContext(ctx context.Context, path string) (*DNSQueryLog, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteFileURI(path))
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`
-PRAGMA busy_timeout = 5000;
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(`
+PRAGMA busy_timeout = %d;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA wal_autocheckpoint = 1000;
 PRAGMA journal_size_limit = 33554432;
-`); err != nil {
+`, dnsQueryBusyTimeout(ctx))); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	log := &DNSQueryLog{db: db, path: path}
-	if err := log.Init(context.Background()); err != nil {
+	if err := log.Init(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -156,18 +178,29 @@ func (l *DNSQueryLog) Record(ctx context.Context, q DNSQuery) error {
 		q.Timestamp = time.Now().UTC()
 	}
 	answers, _ := json.Marshal(q.Answers)
-	_, err := l.db.ExecContext(ctx, `INSERT INTO dns_queries(ts,client_address,question_name,question_type,response_code,answers_json,upstream,cache_hit,duration_us)
+	// SQLite's busy handler can keep running after ExecContext cancellation.
+	// Match its wait to the caller's remaining budget before attempting a write.
+	connection, err := l.db.Conn(ctx)
+	if err != nil {
+		l.recordStats(err, q.Timestamp)
+		return err
+	}
+	defer connection.Close()
+	_, err = connection.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout = %d", dnsQueryBusyTimeout(ctx)))
+	if err == nil {
+		_, err = connection.ExecContext(ctx, `INSERT INTO dns_queries(ts,client_address,question_name,question_type,response_code,answers_json,upstream,cache_hit,duration_us)
 VALUES(?,?,?,?,?,?,?,?,?)`,
-		q.Timestamp.UnixNano(),
-		q.ClientAddress,
-		strings.TrimSuffix(q.QuestionName, "."),
-		q.QuestionType,
-		q.ResponseCode,
-		string(answers),
-		q.Upstream,
-		boolInt(q.CacheHit),
-		q.Duration.Microseconds(),
-	)
+			q.Timestamp.UnixNano(),
+			q.ClientAddress,
+			strings.TrimSuffix(q.QuestionName, "."),
+			q.QuestionType,
+			q.ResponseCode,
+			string(answers),
+			q.Upstream,
+			boolInt(q.CacheHit),
+			q.Duration.Microseconds(),
+		)
+	}
 	l.recordStats(err, q.Timestamp)
 	return err
 }
@@ -281,7 +314,9 @@ FROM dns_queries`+where+` ORDER BY ts DESC, id DESC LIMIT ?`, args...)
 		q.Timestamp = time.Unix(0, ts).UTC()
 		q.CacheHit = cacheHit != 0
 		q.Duration = time.Duration(durationUS) * time.Microsecond
-		_ = json.Unmarshal([]byte(answers), &q.Answers)
+		if err := json.Unmarshal([]byte(answers), &q.Answers); err != nil {
+			return nil, fmt.Errorf("decode DNS query %d answers: %w", q.ID, err)
+		}
 		out = append(out, q)
 	}
 	return out, rows.Err()

@@ -476,39 +476,12 @@ func TestAdoptionCandidates(t *testing.T) {
 	if len(candidates) == 0 {
 		t.Fatal("expected adoption candidates")
 	}
-	var foundRule bool
 	for _, candidate := range candidates {
-		if candidate.Kind == "linux.ipv4.fwmarkRule" && candidate.Name == "priority=10,mark=0x100,table=100" {
-			foundRule = true
+		if candidate.Kind == "linux.ipv4.fwmarkRule" || candidate.Kind == "linux.ipv4.routeTable" {
+			t.Fatalf("native policy effect offered for generic adoption: %+v", candidate)
 		}
 	}
-	if !foundRule {
-		t.Fatalf("missing fwmark adoption candidate: %+v", candidates)
-	}
-	ledger := resource.NewLedger()
-	if err := ledger.Remember([]resource.Artifact{
-		{
-			Kind:  "linux.ipv4.fwmarkRule",
-			Name:  "priority=10,mark=0x100,table=100",
-			Owner: "net.routerd.net/v1alpha1/EgressRoutePolicy/default-v4",
-			Attributes: map[string]string{
-				"priority": "10",
-				"mark":     "0x100",
-				"table":    "100",
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	candidates, err = engine.AdoptionCandidates(router, ledger)
-	if err != nil {
-		t.Fatalf("adoption candidates with ledger: %v", err)
-	}
-	for _, candidate := range candidates {
-		if candidate.Kind == "linux.ipv4.fwmarkRule" && candidate.Name == "priority=10,mark=0x100,table=100" {
-			t.Fatalf("ledger-owned rule still returned as adoption candidate: %+v", candidates)
-		}
-	}
+
 }
 
 func TestAdoptionCandidatesReportAttributeDrift(t *testing.T) {
@@ -591,15 +564,17 @@ func TestLedgerOwnedOrphansOnlyReportsCleanupEligibleArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ledger owned orphans: %v", err)
 	}
-	if len(orphans) != 4 || len(artifacts) != 4 {
-		t.Fatalf("orphans = %+v artifacts = %+v, want four cleanup eligible", orphans, artifacts)
+	if len(orphans) != 3 || len(artifacts) != 3 {
+		t.Fatalf("orphans = %+v artifacts = %+v, want three cleanup eligible; DS-Lite belongs to its native receipt owner", orphans, artifacts)
 	}
 	kinds := map[string]bool{}
 	for _, orphan := range orphans {
 		kinds[orphan.Kind+"/"+orphan.Name] = true
 	}
+	if kinds["linux.ipip6.tunnel/ds-old"] {
+		t.Fatal("generic GC bypassed DS-Lite native receipt")
+	}
 	for _, want := range []string{
-		"linux.ipip6.tunnel/ds-old",
 		"nft.table/ip/routerd_old",
 		"systemd.service/routerd-old.service",
 		"net.ipv6.address/ens19:2001:db8::1/64",

@@ -3,7 +3,11 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,10 +44,17 @@ type RouterSpec struct {
 	Resources []Resource      `yaml:"resources" json:"resources"`
 }
 
+// ResourceSpec is the closed set of router configuration variants. The methods
+// copy mutable configuration fields without serialization.
+// Generation runs from the repository root via make generate-spec.
+type ResourceSpec interface {
+	cloneSpec() ResourceSpec
+}
+
 type Resource struct {
 	TypeMeta `yaml:",inline" json:",inline"`
 	Metadata ObjectMeta     `yaml:"metadata" json:"metadata"`
-	Spec     any            `yaml:"spec" json:"spec"`
+	Spec     ResourceSpec   `yaml:"spec" json:"spec"`
 	Status   map[string]any `yaml:"status,omitempty" json:"status,omitempty"`
 }
 
@@ -64,6 +75,63 @@ const (
 	MobilityAPIVersion      = "mobility.routerd.net/v1alpha1"
 )
 
+func (r *Resource) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		TypeMeta
+		Metadata ObjectMeta      `json:"metadata"`
+		Spec     json.RawMessage `json:"spec"`
+		Status   map[string]any  `json:"status,omitempty"`
+	}
+	if err := decodeJSONResourceField(data, &raw); err != nil {
+		return err
+	}
+	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error { return decodeJSONResourceField(raw.Spec, spec) })
+	if err != nil {
+		return fmt.Errorf("%s spec: %w", raw.Kind, err)
+	}
+	*r = Resource{TypeMeta: raw.TypeMeta, Metadata: raw.Metadata, Spec: spec, Status: raw.Status}
+	return nil
+}
+
+// Resource IPC is a closed external input contract, just like its schema.
+func decodeJSONResourceField(data []byte, destination any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected trailing JSON value")
+	}
+	return nil
+}
+
+// Clone copies operator-owned mutable configuration. Status observations are
+// read-only shared input, not a second mutable configuration representation.
+func (r Resource) Clone() Resource {
+	r.Metadata.OwnerRefs = append([]OwnerRef(nil), r.Metadata.OwnerRefs...)
+	r.Metadata.Annotations = maps.Clone(r.Metadata.Annotations)
+	if r.Spec != nil {
+		r.Spec = r.Spec.cloneSpec()
+	}
+	return r
+}
+
+func (r Router) Clone() Router {
+	r.Metadata.OwnerRefs = append([]OwnerRef(nil), r.Metadata.OwnerRefs...)
+	r.Metadata.Annotations = maps.Clone(r.Metadata.Annotations)
+	r.Spec.Apply = cloneApplyPolicySpec(r.Spec.Apply)
+	r.Spec.Resources = append([]Resource(nil), r.Spec.Resources...)
+	for i := range r.Spec.Resources {
+		r.Spec.Resources[i] = r.Spec.Resources[i].Clone()
+	}
+	return r
+}
+
 func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	type rawResource struct {
 		TypeMeta `yaml:",inline"`
@@ -76,50 +144,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	if err := checkYAMLFields(value, &raw); err != nil {
+		return err
+	}
 	r.TypeMeta = raw.TypeMeta
 	r.Metadata = raw.Metadata
 	r.Status = raw.Status
 
 	switch raw.Kind {
-	case "Plugin":
-		var spec PluginSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DynamicConfigSource":
-		var spec DynamicConfigSourceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DynamicOverridePolicy":
-		var spec DynamicOverridePolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "LogSink":
 		if hasMappingKey(&raw.Spec, "plugin") {
 			return fmt.Errorf("%s spec.plugin is not supported; use type webhook, file, journald, or otlp for log forwarding sinks", r.ID())
 		}
-		var spec LogSinkSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Telemetry":
-		var spec TelemetrySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ObservabilityPipeline":
-		var spec ObservabilityPipelineSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "LogRetention":
 		if hasMappingKey(&raw.Spec, "targets") {
 			return fmt.Errorf("%s spec.targets is not supported; use spec.retention with spec.signals and spec.sinks", r.ID())
@@ -127,159 +163,28 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		if hasMappingKey(&raw.Spec, "incrementalVacuum") {
 			return fmt.Errorf("%s spec.incrementalVacuum is not supported; use spec.vacuum", r.ID())
 		}
-		var spec LogRetentionSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Sysctl":
-		var spec SysctlSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SysctlProfile":
-		var spec SysctlProfileSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Package":
-		var spec PackageSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "NTPClient":
-		var spec NTPClientSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "NTPServer":
-		var spec NTPServerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "WebConsole":
-		var spec WebConsoleSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ControlAPI":
-		var spec ControlAPISpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ManagementAccess":
-		var spec ManagementAccessSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "RouterdCluster":
-		var spec RouterdClusterSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Inventory":
-		var spec InventorySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Interface":
-		var spec InterfaceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Bridge":
-		var spec BridgeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "VXLANSegment":
-		var spec VXLANSegmentSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "WireGuardInterface":
 		for _, field := range []string{"fwmark", "table"} {
 			if hasMappingKey(&raw.Spec, field) {
 				return fmt.Errorf("%s spec.%s is not supported; routerd derives WireGuard fwmark and routing table ownership automatically", r.ID(), field)
 			}
 		}
-		var spec WireGuardInterfaceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "TunnelInterface":
-		var spec TunnelInterfaceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "WireGuardPeer":
-		var spec WireGuardPeerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "TailscaleNode":
 		for _, field := range []string{"operator", "binaryPath"} {
 			if hasMappingKey(&raw.Spec, field) {
 				return fmt.Errorf("%s spec.%s is not supported; routerd derives the tailscale binary path and operator handling from the platform", r.ID(), field)
 			}
 		}
-		var spec TailscaleNodeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "IPsecConnection":
-		if err := normalizeIPsecProposalFields(&raw.Spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
+		for _, field := range []string{"psPhase1Proposals", "psPhase2Proposals"} {
+			if hasMappingKey(&raw.Spec, field) {
+				return fmt.Errorf("%s spec.%s is unsupported; use phase1Proposals and phase2Proposals", r.ID(), field)
+			}
 		}
-		var spec IPsecConnectionSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "VRF":
-		var spec VRFSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "VXLANTunnel":
-		var spec VXLANTunnelSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "PPPoESession":
 		if hasMappingKey(&raw.Spec, "socketSource") {
 			return fmt.Errorf("%s spec.socketSource is not supported; routerd derives daemon sockets automatically", r.ID())
 		}
-		var spec PPPoESessionSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv4StaticAddress":
-		var spec IPv4StaticAddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "VirtualAddress":
 		if vrrp := mappingValueNode(&raw.Spec, "vrrp"); vrrp != nil {
 			for _, field := range []string{"advertInterval", "preemptDelay"} {
@@ -288,11 +193,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 				}
 			}
 		}
-		var spec VirtualAddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "BGPRouter":
 		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
 			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
@@ -301,11 +201,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 				}
 			}
 		}
-		var spec BGPRouterSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "BGPPeer":
 		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
 			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
@@ -319,11 +214,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 				return fmt.Errorf("%s spec.bfd inline BFD settings are not supported; create a BFD/<name> resource and reference it with spec.bfd", r.ID())
 			}
 		}
-		var spec BGPPeerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "BGPDynamicPeer":
 		if timers := mappingValueNode(&raw.Spec, "timers"); timers != nil {
 			for _, field := range []string{"keepalive", "holdTime", "connectRetry"} {
@@ -332,167 +222,20 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 				}
 			}
 		}
-		var spec BGPDynamicPeerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "SAMEnrollmentPolicy":
 		if hasMappingKey(&raw.Spec, "revokeAfterInactive") {
 			return fmt.Errorf("%s spec.revokeAfterInactive is not supported; use spec.ttl for lease expiry or explicitly revoke accepted claims", r.ID())
 		}
-		var spec SAMEnrollmentPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMRRSet":
-		var spec SAMRRSetSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMEnrollmentClaim":
-		var spec SAMEnrollmentClaimSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMEnrollmentClient":
-		var spec SAMEnrollmentClientSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "BFD":
-		var spec BFDSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv4Client":
-		var spec DHCPv4ClientSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv4StaticRoute":
-		var spec IPv4StaticRouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ClusterNetworkRoute":
-		var spec ClusterNetworkRouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv6StaticRoute":
-		var spec IPv6StaticRouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv4Server":
-		var spec DHCPv4ServerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "DHCPv4Scope":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	case "DHCPv4Reservation":
-		var spec DHCPv4ReservationSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv6Address":
-		var spec DHCPv6AddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv6RAAddress":
-		var spec IPv6RAAddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "DHCPv6PrefixDelegation":
 		for _, field := range []string{"iaid", "duidType"} {
 			if hasMappingKey(&raw.Spec, field) {
 				return fmt.Errorf("%s spec.%s is not supported; use spec.profile and let routerd derive DHCPv6 client identity details", r.ID(), field)
 			}
 		}
-		var spec DHCPv6PrefixDelegationSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv6DelegatedAddress":
-		var spec IPv6DelegatedAddressSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv6Information":
-		var spec DHCPv6InformationSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv6RouterAdvertisement":
-		var spec IPv6RouterAdvertisementSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv6Server":
-		var spec DHCPv6ServerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv4ServerLeaseSync":
-		var spec DHCPv4ServerLeaseSyncSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv6ServerLeaseSync":
-		var spec DHCPv6ServerLeaseSyncSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DHCPv6PrefixDelegationLeaseSync":
-		var spec DHCPv6PrefixDelegationLeaseSyncSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "DHCPv6Scope":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	case "DHCPv4Relay":
-		var spec DHCPv4RelaySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DNSZone":
-		var spec DNSZoneSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SelfAddressPolicy":
-		var spec SelfAddressPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "DNSResolver":
 		if hasMappingKey(&raw.Spec, "sources") {
 			return fmt.Errorf("%s spec.sources is not supported; split DNS source intent into DNSForwarder and DNSUpstream resources that reference this DNSResolver", r.ID())
@@ -500,23 +243,6 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		if queryLog := mappingValueNode(&raw.Spec, "queryLog"); queryLog != nil && hasMappingKey(queryLog, "retention") {
 			return fmt.Errorf("%s spec.queryLog.retention is not supported; declare a LogRetention resource for DNS query retention", r.ID())
 		}
-		var spec DNSResolverSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DNSForwarder":
-		var spec DNSForwarderSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DNSUpstream":
-		var spec DNSUpstreamSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "TrafficFlowLog":
 		if hasMappingKey(&raw.Spec, "includeNDPI") {
 			return fmt.Errorf("%s spec.includeNDPI is not supported; use spec.includeApplicationLayer", r.ID())
@@ -524,223 +250,25 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		if hasMappingKey(&raw.Spec, "retention") {
 			return fmt.Errorf("%s spec.retention is not supported; declare a LogRetention resource for traffic flow retention", r.ID())
 		}
-		var spec TrafficFlowLogSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DSLiteTunnel":
-		var spec DSLiteTunnelSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "OverlayPeer":
-		var spec OverlayPeerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "HybridRoute":
-		var spec HybridRouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMPeerGroup":
-		var spec SAMPeerGroupSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMNodeSet":
-		var spec SAMNodeSetSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMTransportProfile":
-		var spec SAMTransportProfileSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "SAMSubnetPolicy":
-		var spec SAMSubnetPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "CloudProviderProfile":
-		var spec CloudProviderProfileSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ProviderActionPolicy":
-		var spec ProviderActionPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPv4Route":
-		var spec IPv4RouteSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "HealthCheck":
 		for _, field := range []string{"daemon", "socketSource", "fwmark", "sourceInterface", "sourceAddress", "sourceAddressFrom", "via"} {
 			if hasMappingKey(&raw.Spec, field) {
 				return fmt.Errorf("%s spec.%s is not supported; routerd derives health-check daemon, source binding, and fwmark from referenced route/interface resources", r.ID(), field)
 			}
 		}
-		var spec HealthCheckSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "EgressRoutePolicy":
-		var spec EgressRoutePolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "EventRule":
-		var spec EventRuleSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "DerivedEvent":
-		var spec DerivedEventSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "EventGroup":
-		var spec EventGroupSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "EventPeer":
-		var spec EventPeerSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "EventSubscription":
-		var spec EventSubscriptionSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "FederationSLO":
-		var spec FederationSLOSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "MobilityPool":
 		if err := rejectMobilityPoolRemovedFields(&raw.Spec); err != nil {
 			return fmt.Errorf("%s spec: %w", r.ID(), err)
 		}
-		var spec MobilityPoolSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
+	case "IPv4StaticRoute":
+		return RemovedLegacyKindError(raw.Kind, r.ID())
+
 	case "IPv4DefaultRoutePolicy":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	case "NAT44Rule":
-		var spec NAT44RuleSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "NAT44FlowDNATPinhole":
-		var spec NAT44FlowDNATPinholeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "NAT44SessionSync":
-		var spec NAT44SessionSyncSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "PortForward":
-		var spec PortForwardSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IngressService":
-		var spec IngressServiceSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "IPAddressSet":
-		var spec IPAddressSetSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "LocalServiceRedirect":
-		var spec LocalServiceRedirectSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "FirewallFlowPinhole":
-		var spec FirewallFlowPinholeSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "IPv4PolicyRoute":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "IPv4PolicyRouteSet":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	case "FirewallZone":
-		var spec FirewallZoneSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "FirewallPolicy":
-		var spec FirewallPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "FirewallEventLog":
-		var spec FirewallEventLogSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "ClientPolicy":
-		var spec ClientPolicySpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "FirewallRule":
-		var spec FirewallRuleSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
-	case "Hostname":
-		var spec HostnameSpec
-		if err := raw.Spec.Decode(&spec); err != nil {
-			return fmt.Errorf("%s spec: %w", r.ID(), err)
-		}
-		r.Spec = spec
 	case "SystemdUnit":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "KernelModule":
@@ -767,9 +295,18 @@ func (r *Resource) UnmarshalYAML(value *yaml.Node) error {
 		return RemovedLegacyKindError(raw.Kind, r.ID())
 	case "PathMTUPolicy":
 		return RemovedLegacyKindError(raw.Kind, r.ID())
-	default:
-		return fmt.Errorf("unsupported resource kind %s in %s", raw.Kind, r.ID())
 	}
+	spec, err := decodeResourceSpec(raw.Kind, func(spec ResourceSpec) error {
+		if err := raw.Spec.Decode(spec); err != nil {
+			return err
+		}
+		return checkYAMLFields(&raw.Spec, spec)
+	})
+	if err != nil {
+		return fmt.Errorf("%s spec: %w", r.ID(), err)
+	}
+	r.Spec = spec
+
 	return nil
 }
 
@@ -836,31 +373,6 @@ func rejectMobilityPoolRemovedFields(spec *yaml.Node) error {
 			}
 			if !allowedMemberFields[field] {
 				return fmt.Errorf("members[%d].%s is not supported; MobilityPool members are local provider/L2 overlays only", i, field)
-			}
-		}
-	}
-	return nil
-}
-
-// normalizeIPsecProposalFields accepts the historical psPhase* spelling while
-// publishing the canonical phase* API names.  Renaming the YAML node before
-// decoding keeps existing Linux and FreeBSD configurations usable without
-// letting both spellings silently choose one value.
-func normalizeIPsecProposalFields(node *yaml.Node) error {
-	for legacy, canonical := range map[string]string{
-		"psPhase1Proposals": "phase1Proposals",
-		"psPhase2Proposals": "phase2Proposals",
-	} {
-		if !hasMappingKey(node, legacy) {
-			continue
-		}
-		if hasMappingKey(node, canonical) {
-			return fmt.Errorf("%s and deprecated %s cannot both be set", canonical, legacy)
-		}
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			if node.Content[i].Value == legacy {
-				node.Content[i].Value = canonical
-				break
 			}
 		}
 	}

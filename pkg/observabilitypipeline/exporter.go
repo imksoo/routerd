@@ -11,6 +11,7 @@ import (
 	"log/syslog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,32 @@ func (c *Controller) Start(ctx context.Context) error {
 	return c.Reconcile(ctx)
 }
 
+// Stop acknowledges that every exporter owned by this controller has exited.
+// A failed stop retains the worker entry so a generation cannot mistake a
+// cancellation request for completed delivery teardown.
+func (c *Controller) Stop(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, current := range c.running {
+		current.cancel()
+	}
+	for name, current := range c.running {
+		select {
+		case <-current.done:
+			delete(c.running, name)
+			continue
+		default:
+		}
+		select {
+		case <-current.done:
+			delete(c.running, name)
+		case <-ctx.Done():
+			return fmt.Errorf("stop pipeline %s: %w", name, ctx.Err())
+		}
+	}
+	return nil
+}
+
 func (c *Controller) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Bus == nil || c.Events == nil {
 		return nil
@@ -60,31 +87,46 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		exporter := c.exporter(resource.Metadata.Name, spec)
+		exporter, err := c.exporter(resource.Metadata.Name, spec)
+		if err != nil {
+			return err
+		}
 		if !exporter.enabled {
 			continue
 		}
 		signature := observabilityPipelineSignature(spec)
 		desired[resource.Metadata.Name] = signature
 		if current, ok := c.running[resource.Metadata.Name]; ok && current.signature == signature {
+			if err := c.saveStatus(resource.Metadata.Name, "Running", exporter); err != nil {
+				return err
+			}
 			continue
 		}
 		if current, ok := c.running[resource.Metadata.Name]; ok {
-			current.cancel()
+			if err := stopExporter(ctx, current); err != nil {
+				return fmt.Errorf("stop pipeline %s before replacement: %w", resource.Metadata.Name, err)
+			}
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		ch, _ := c.Bus.Subscribe(runCtx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)
-		go exporter.run(runCtx, ch, c.Events, c.Poll)
-		c.running[resource.Metadata.Name] = runningExporter{cancel: cancel, signature: signature}
-		c.saveStatus(resource.Metadata.Name, "Running", exporter)
+		done := make(chan struct{})
+		go func() { defer close(done); exporter.run(runCtx, ch, c.Events, c.Poll) }()
+		c.running[resource.Metadata.Name] = runningExporter{cancel: cancel, signature: signature, done: done}
+		if err := c.saveStatus(resource.Metadata.Name, "Running", exporter); err != nil {
+			return err
+		}
 	}
 	for name, current := range c.running {
 		if _, ok := desired[name]; ok {
 			continue
 		}
-		current.cancel()
+		if err := stopExporter(ctx, current); err != nil {
+			return fmt.Errorf("stop pipeline %s: %w", name, err)
+		}
+		if err := c.saveStoppedStatus(name); err != nil {
+			return err
+		}
 		delete(c.running, name)
-		c.saveStoppedStatus(name)
 	}
 	return nil
 }
@@ -92,6 +134,21 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 type runningExporter struct {
 	cancel    context.CancelFunc
 	signature string
+	done      <-chan struct{}
+}
+
+func stopExporter(ctx context.Context, current runningExporter) error {
+	current.cancel()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-current.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("exporter did not stop before deadline")
+	}
 }
 
 func observabilityPipelineSignature(spec api.ObservabilityPipelineSpec) string {
@@ -99,7 +156,7 @@ func observabilityPipelineSignature(spec api.ObservabilityPipelineSpec) string {
 	return string(data)
 }
 
-func (c *Controller) exporter(name string, spec api.ObservabilityPipelineSpec) *Exporter {
+func (c *Controller) exporter(name string, spec api.ObservabilityPipelineSpec) (*Exporter, error) {
 	stdout := c.Stdout
 	if stdout == nil {
 		stdout = os.Stdout
@@ -119,24 +176,32 @@ func (c *Controller) exporter(name string, spec api.ObservabilityPipelineSpec) *
 	if exporter.sampleRate == 0 {
 		exporter.sampleRate = 1
 	}
+	if !exporter.enabled {
+		return exporter, nil
+	}
 	for _, sink := range spec.Logs.Sinks {
-		if !api.BoolDefault(sink.Enabled, true) || sink.Type == "kafka" {
+		if !api.BoolDefault(sink.Enabled, true) {
 			continue
+		}
+		switch sink.Type {
+		case "stdout", "syslog", "loki":
+		default:
+			return nil, fmt.Errorf("pipeline %s: unsupported log sink %q", name, sink.Type)
 		}
 		exporter.sinks = append(exporter.sinks, sink)
 	}
-	return exporter
+	return exporter, nil
 }
 
-func (c *Controller) saveStatus(name, phase string, exporter *Exporter) {
+func (c *Controller) saveStatus(name, phase string, exporter *Exporter) error {
 	if c.Store == nil {
-		return
+		return nil
 	}
 	sinkTypes := []string{}
 	for _, sink := range exporter.sinks {
 		sinkTypes = append(sinkTypes, sink.Type)
 	}
-	_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", name, map[string]any{
+	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", name, map[string]any{
 		"phase":      phase,
 		"backend":    "builtin",
 		"sinks":      sinkTypes,
@@ -145,11 +210,11 @@ func (c *Controller) saveStatus(name, phase string, exporter *Exporter) {
 	})
 }
 
-func (c *Controller) saveStoppedStatus(name string) {
+func (c *Controller) saveStoppedStatus(name string) error {
 	if c.Store == nil {
-		return
+		return nil
 	}
-	_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", name, map[string]any{
+	return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", name, map[string]any{
 		"phase":      "Stopped",
 		"backend":    "builtin",
 		"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -164,7 +229,6 @@ type Exporter struct {
 	stdout     io.Writer
 	attrs      map[string]string
 	sinks      []api.ObservabilityPipelineLogSink
-	seq        uint64
 }
 
 func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store eventconsumer.Store, poll time.Duration) {
@@ -207,10 +271,20 @@ func (e *Exporter) run(ctx context.Context, wakeEvents <-chan bus.Event, store e
 }
 
 func (e *Exporter) processStoredEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
-	if !e.sample() {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	selected, err := e.sample(event.Cursor)
+	if err != nil {
+		return err
+	}
+	if !selected {
 		return nil
 	}
 	for _, sink := range e.sinks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if severityRank(event.Severity) < severityRank(defaultString(sink.MinLevel, "info")) {
 			continue
 		}
@@ -221,15 +295,18 @@ func (e *Exporter) processStoredEvent(ctx context.Context, event daemonapi.Daemo
 	return nil
 }
 
-func (e *Exporter) sample() bool {
+func (e *Exporter) sample(cursor string) (bool, error) {
 	if e.sampleRate >= 1 {
-		return true
+		return true, nil
 	}
 	if e.sampleRate <= 0 {
-		return false
+		return false, nil
 	}
-	e.seq++
-	return float64(e.seq%1000)/1000 < e.sampleRate
+	id, err := strconv.ParseUint(cursor, 10, 64)
+	if err != nil {
+		return false, fmt.Errorf("sampling requires stored event cursor: %w", err)
+	}
+	return float64(id%1000)/1000 < e.sampleRate, nil
 }
 
 func (e *Exporter) export(ctx context.Context, sink api.ObservabilityPipelineLogSink, event daemonapi.DaemonEvent) error {
@@ -237,31 +314,11 @@ func (e *Exporter) export(ctx context.Context, sink api.ObservabilityPipelineLog
 	case "stdout":
 		return json.NewEncoder(e.stdout).Encode(event)
 	case "syslog":
-		return e.exportSyslog(sink, event)
+		return e.exportSyslog(ctx, sink, event)
 	case "loki":
 		return e.exportLoki(ctx, sink, event)
 	default:
-		return nil
-	}
-}
-
-func (e *Exporter) exportSyslog(sink api.ObservabilityPipelineLogSink, event daemonapi.DaemonEvent) error {
-	network := strings.TrimSpace(sink.Syslog.Network)
-	address := strings.TrimSpace(sink.Syslog.Address)
-	priority := syslog.LOG_INFO | syslogFacility(sink.Syslog.Facility)
-	writer, err := syslog.Dial(network, address, priority, defaultString(sink.Syslog.Tag, "routerd"))
-	if err != nil {
-		return err
-	}
-	defer writer.Close()
-	line, _ := json.Marshal(event)
-	switch event.Severity {
-	case daemonapi.SeverityError:
-		return writer.Err(string(line))
-	case daemonapi.SeverityWarning:
-		return writer.Warning(string(line))
-	default:
-		return writer.Info(string(line))
+		return fmt.Errorf("unsupported log sink %q", sink.Type)
 	}
 }
 
@@ -334,6 +391,30 @@ func severityRank(value string) int {
 
 func syslogFacility(value string) syslog.Priority {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "kern":
+		return syslog.LOG_KERN
+	case "user":
+		return syslog.LOG_USER
+	case "mail":
+		return syslog.LOG_MAIL
+	case "daemon":
+		return syslog.LOG_DAEMON
+	case "auth":
+		return syslog.LOG_AUTH
+	case "syslog":
+		return syslog.LOG_SYSLOG
+	case "lpr":
+		return syslog.LOG_LPR
+	case "news":
+		return syslog.LOG_NEWS
+	case "uucp":
+		return syslog.LOG_UUCP
+	case "cron":
+		return syslog.LOG_CRON
+	case "authpriv":
+		return syslog.LOG_AUTHPRIV
+	case "ftp":
+		return syslog.LOG_FTP
 	case "local0":
 		return syslog.LOG_LOCAL0
 	case "local1":

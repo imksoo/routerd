@@ -171,6 +171,9 @@ func TestBoundedJournalEventTruncatesOversizedFields(t *testing.T) {
 	if len(attrs) > maxJournalAttributesBytes || !strings.Contains(attrs, "_routerdTruncated") {
 		t.Fatalf("attributes were not bounded: %d %s", len(attrs), attrs)
 	}
+	if bounded.Attributes["_routerdTruncated"] != "true" || bounded.Attributes["large"] != "" {
+		t.Fatal("returned event differs from bounded durable attributes")
+	}
 }
 
 func TestWriteStorageAlertFilePreservesTimestamp(t *testing.T) {
@@ -182,5 +185,83 @@ func TestWriteStorageAlertFilePreservesTimestamp(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(data), "2026-09-12T17:00:00Z") {
 		t.Fatalf("alert file: %v %s", err, data)
+	}
+}
+
+func TestEventJournalBudgetIncludesOtherLiveDatabaseWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	first, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	for _, store := range []*SQLiteStore{first, second} {
+		store.eventJournalMaxRows = 10
+		store.eventJournalMaxBytes = 1 << 20
+	}
+	for _, store := range []*SQLiteStore{first, second} {
+		for i := 0; i < 7; i++ {
+			if err := store.RecordEvent("v1", "Fixture", "item", "Normal", "Observed", "fixture"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var rows int
+	if err := first.db.QueryRow(`SELECT count(*) FROM events`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows > 10 {
+		t.Fatalf("external writer bypassed journal budget: %d rows", rows)
+	}
+}
+
+func TestConcurrentEventAppendsShareOneDurableBudget(t *testing.T) {
+	for _, busEvent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bus=%t", busEvent), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.db")
+			var stores []*SQLiteStore
+			for i := 0; i < 2; i++ {
+				store, err := OpenSQLite(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { store.Close() })
+				store.eventJournalMaxRows, store.eventJournalMaxBytes = 1, 4096
+				stores = append(stores, store)
+			}
+			for batch := 0; batch < 40; batch++ {
+				start, results := make(chan struct{}), make(chan error, len(stores))
+				for _, store := range stores {
+					go func(store *SQLiteStore) {
+						<-start
+						var err error
+						if busEvent {
+							_, err = store.RecordBusEvent(t.Context(), daemonapi.DaemonEvent{Type: "routerd.fixture", Message: "current"})
+						} else {
+							err = store.RecordEvent("v1", "Fixture", "item", "Normal", "Observed", "current")
+						}
+						results <- err
+					}(store)
+				}
+				close(start)
+				for range stores {
+					if err := <-results; err != nil {
+						t.Fatal(err)
+					}
+				}
+				var rows, payload int64
+				if err := stores[0].db.QueryRow(`SELECT count(*),coalesce(sum(`+eventJournalPayloadSQL+`),0) FROM events`).Scan(&rows, &payload); err != nil {
+					t.Fatal(err)
+				}
+				if rows > 1 || payload > 4096 {
+					t.Fatalf("concurrent commits escaped budget: rows=%d payload=%d", rows, payload)
+				}
+			}
+		})
 	}
 }

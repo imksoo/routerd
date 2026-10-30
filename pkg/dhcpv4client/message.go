@@ -3,11 +3,12 @@
 package dhcpv4client
 
 import (
-	"crypto/rand"
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"net"
 	"net/netip"
+	"sort"
 	"strings"
 	"time"
 )
@@ -44,6 +45,7 @@ const (
 	OptionNTPServer        = 42
 	OptionRequestedIP      = 50
 	OptionLeaseTime        = 51
+	OptionOverload         = 52
 	OptionMessageType      = 53
 	OptionServerID         = 54
 	OptionParameterRequest = 55
@@ -79,6 +81,7 @@ type Lease struct {
 	TFTPServer       string
 	Bootfile         string
 	MTU              int
+	Infinite         bool
 	LeaseTime        time.Duration
 	T1               time.Duration
 	T2               time.Duration
@@ -87,6 +90,9 @@ type Lease struct {
 }
 
 func (l Lease) RenewAt() time.Time {
+	if l.Infinite && l.T1 == 0 {
+		return time.Time{}
+	}
 	t1 := l.T1
 	if t1 == 0 {
 		t1 = l.LeaseTime / 2
@@ -95,6 +101,9 @@ func (l Lease) RenewAt() time.Time {
 }
 
 func (l Lease) RebindAt() time.Time {
+	if l.Infinite && l.T2 == 0 {
+		return time.Time{}
+	}
 	t2 := l.T2
 	if t2 == 0 {
 		t2 = time.Duration(float64(l.LeaseTime) * 0.875)
@@ -103,11 +112,20 @@ func (l Lease) RebindAt() time.Time {
 }
 
 func (l Lease) ExpiresAt() time.Time {
+	if l.Infinite {
+		return time.Time{}
+	}
 	return l.AcquiredAt.Add(l.LeaseTime)
+}
+
+func (l Lease) ValidAt(now time.Time) bool {
+	return usableIPv4(l.Address) && !l.AcquiredAt.IsZero() && !now.Before(l.AcquiredAt) && (l.Infinite || l.LeaseTime > 0 && now.Before(l.ExpiresAt()))
 }
 
 type Message struct {
 	Op      byte
+	HType   byte
+	Seconds uint16
 	XID     uint32
 	Flags   uint16
 	CIAddr  netip.Addr
@@ -118,77 +136,112 @@ type Message struct {
 	Options map[byte][]byte
 }
 
-func NewXID() uint32 {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return uint32(time.Now().UnixNano())
+// Encode serializes the BOOTP header and DHCP options. Repeated option fragments
+// are concatenated by Decode as required by RFC 3396.
+func Encode(msg Message) ([]byte, error) {
+	if len(msg.CHAddr) > 16 {
+		return nil, fmt.Errorf("DHCP hardware address exceeds chaddr field")
 	}
-	return binary.BigEndian.Uint32(b[:])
-}
-
-func EncodeRequest(msgType byte, xid uint32, hw net.HardwareAddr, opts map[byte][]byte) []byte {
 	packet := make([]byte, 240)
-	packet[0] = 1
-	packet[1] = 1
-	packet[2] = byte(len(hw))
-	binary.BigEndian.PutUint32(packet[4:8], xid)
-	binary.BigEndian.PutUint16(packet[10:12], 0x8000)
-	copy(packet[28:44], hw)
-	copy(packet[236:240], []byte{99, 130, 83, 99})
-	options := []byte{OptionMessageType, 1, msgType}
-	options = append(options, OptionParameterRequest, 11,
-		OptionLeaseTime, OptionRouter, OptionDNSServer, OptionHostname, OptionDomainName,
-		OptionMTU, OptionBroadcastAddress, OptionNTPServer, OptionTFTPServer, OptionBootfile, OptionServerID)
-	for code, value := range opts {
-		if len(value) == 0 || code == OptionEnd || code == OptionMessageType {
-			continue
+	packet[0], packet[1], packet[2] = msg.Op, msg.HType, byte(len(msg.CHAddr))
+	binary.BigEndian.PutUint32(packet[4:8], msg.XID)
+	binary.BigEndian.PutUint16(packet[8:10], msg.Seconds)
+	binary.BigEndian.PutUint16(packet[10:12], msg.Flags)
+	for _, field := range []struct {
+		offset  int
+		address netip.Addr
+	}{
+		{12, msg.CIAddr}, {16, msg.YIAddr}, {20, msg.SIAddr}, {24, msg.GIAddr},
+	} {
+		if field.address.IsValid() {
+			if !field.address.Is4() {
+				return nil, fmt.Errorf("non-IPv4 DHCP address")
+			}
+			copy(packet[field.offset:field.offset+4], field.address.AsSlice())
 		}
-		options = append(options, code, byte(len(value)))
-		options = append(options, value...)
 	}
-	options = append(options, OptionEnd)
-	return append(packet, options...)
+	copy(packet[28:44], msg.CHAddr)
+	copy(packet[236:240], []byte{99, 130, 83, 99})
+	codes := make([]int, 0, len(msg.Options))
+	for code := range msg.Options {
+		if code != 0 && code != OptionEnd {
+			codes = append(codes, int(code))
+		}
+	}
+	sort.Ints(codes)
+	for _, code := range codes {
+		value := msg.Options[byte(code)]
+		for len(value) > 0 {
+			n := min(255, len(value))
+			packet = append(packet, byte(code), byte(n))
+			packet = append(packet, value[:n]...)
+			value = value[n:]
+		}
+	}
+	packet = append(packet, OptionEnd)
+	// BOOTP's minimum message length also accommodates older DHCP relays.
+	if len(packet) < 300 {
+		packet = append(packet, make([]byte, 300-len(packet))...)
+	}
+	return packet, nil
 }
 
 func Decode(packet []byte) (Message, error) {
 	if len(packet) < 240 {
 		return Message{}, fmt.Errorf("short DHCPv4 packet")
 	}
-	if string(packet[236:240]) != string([]byte{99, 130, 83, 99}) {
+	if !bytes.Equal(packet[236:240], []byte{99, 130, 83, 99}) {
 		return Message{}, fmt.Errorf("missing DHCP magic cookie")
 	}
-	msg := Message{
-		Op:      packet[0],
-		XID:     binary.BigEndian.Uint32(packet[4:8]),
-		Flags:   binary.BigEndian.Uint16(packet[10:12]),
-		CIAddr:  addr4(packet[12:16]),
-		YIAddr:  addr4(packet[16:20]),
-		SIAddr:  addr4(packet[20:24]),
-		GIAddr:  addr4(packet[24:28]),
-		CHAddr:  append(net.HardwareAddr(nil), packet[28:28+int(packet[2])]...),
-		Options: map[byte][]byte{},
+	if packet[2] > 16 {
+		return Message{}, fmt.Errorf("DHCP hardware address exceeds chaddr field")
 	}
-	for i := 240; i < len(packet); {
-		code := packet[i]
-		i++
+	msg := Message{
+		Op: packet[0], HType: packet[1], XID: binary.BigEndian.Uint32(packet[4:8]),
+		Seconds: binary.BigEndian.Uint16(packet[8:10]), Flags: binary.BigEndian.Uint16(packet[10:12]),
+		CIAddr: addr4(packet[12:16]), YIAddr: addr4(packet[16:20]),
+		SIAddr: addr4(packet[20:24]), GIAddr: addr4(packet[24:28]),
+		CHAddr:  append(net.HardwareAddr(nil), packet[28:28+int(packet[2])]...),
+		Options: make(map[byte][]byte),
+	}
+	if err := decodeOptions(packet[240:], msg.Options); err != nil {
+		return Message{}, err
+	}
+	// RFC 2131 section 4.1 specifies options, then file, then sname order.
+	if overload := msg.Options[OptionOverload]; len(overload) == 1 {
+		if overload[0]&1 != 0 {
+			if err := decodeOptions(packet[108:236], msg.Options); err != nil {
+				return Message{}, err
+			}
+		}
+		if overload[0]&2 != 0 {
+			if err := decodeOptions(packet[44:108], msg.Options); err != nil {
+				return Message{}, err
+			}
+		}
+	}
+	return msg, nil
+}
+
+func decodeOptions(data []byte, options map[byte][]byte) error {
+	for len(data) > 0 {
+		code := data[0]
+		data = data[1:]
 		if code == 0 {
 			continue
 		}
 		if code == OptionEnd {
-			break
+			return nil
 		}
-		if i >= len(packet) {
-			break
+		if len(data) < 1 || int(data[0])+1 > len(data) {
+			return fmt.Errorf("truncated DHCP option %d", code)
 		}
-		n := int(packet[i])
-		i++
-		if i+n > len(packet) {
-			break
-		}
-		msg.Options[code] = append([]byte(nil), packet[i:i+n]...)
-		i += n
+		n := int(data[0])
+		data = data[1:]
+		options[code] = append(options[code], data[:n]...)
+		data = data[n:]
 	}
-	return msg, nil
+	return nil
 }
 
 func (m Message) MessageType() byte {
@@ -198,77 +251,62 @@ func (m Message) MessageType() byte {
 	return 0
 }
 
-func LeaseFromACK(msg Message, now time.Time) Lease {
-	leaseSeconds := optionUint32(msg.Options[OptionLeaseTime])
-	if leaseSeconds == 0 {
-		leaseSeconds = 3600
+// LeaseFromACK requires the address, server and lifetime needed to own a lease.
+// Optional malformed values are ignored independently. An absent mask during
+// renewal can reuse the confirmed mask for the same address.
+func LeaseFromACK(msg Message, previous Lease, sentAt time.Time) (Lease, error) {
+	seconds := optionUint32(msg.Options[OptionLeaseTime])
+	if !usableIPv4(msg.YIAddr) || !usableIPv4(optionAddr(msg.Options[OptionServerID])) || seconds == 0 {
+		return Lease{}, fmt.Errorf("DHCP ACK lacks a usable address, server identifier or lease time")
+	}
+	prefix, maskOK := maskPrefix(msg.Options[OptionSubnetMask])
+	if !maskOK && previous.Address == msg.YIAddr && previous.PrefixLength >= 0 && previous.PrefixLength <= 32 && previous.Address.IsValid() {
+		prefix, maskOK = previous.PrefixLength, true
+	}
+	if !maskOK {
+		return Lease{}, fmt.Errorf("DHCP ACK has no usable subnet mask")
 	}
 	lease := Lease{
-		Address:          msg.YIAddr,
-		PrefixLength:     optionMaskPrefixLength(msg.Options[OptionSubnetMask]),
-		ServerID:         optionAddr(msg.Options[OptionServerID]),
-		DefaultGateway:   firstAddr(msg.Options[OptionRouter]),
-		BroadcastAddress: optionAddr(msg.Options[OptionBroadcastAddress]),
-		DNSServers:       optionAddrs(msg.Options[OptionDNSServer]),
-		NTPServers:       optionAddrs(msg.Options[OptionNTPServer]),
-		Domain:           optionString(msg.Options[OptionDomainName]),
-		TFTPServer:       optionString(msg.Options[OptionTFTPServer]),
-		Bootfile:         optionString(msg.Options[OptionBootfile]),
-		LeaseTime:        time.Duration(leaseSeconds) * time.Second,
-		T1:               time.Duration(optionUint32(msg.Options[OptionT1])) * time.Second,
-		T2:               time.Duration(optionUint32(msg.Options[OptionT2])) * time.Second,
-		AcquiredAt:       now,
-		RenewedAt:        now,
+		Address: msg.YIAddr, PrefixLength: prefix, ServerID: optionAddr(msg.Options[OptionServerID]),
+		DefaultGateway: firstAddr(msg.Options[OptionRouter]), BroadcastAddress: optionAddr(msg.Options[OptionBroadcastAddress]),
+		DNSServers: optionAddrs(msg.Options[OptionDNSServer]), NTPServers: optionAddrs(msg.Options[OptionNTPServer]),
+		Domain: optionString(msg.Options[OptionDomainName]), TFTPServer: optionString(msg.Options[OptionTFTPServer]),
+		Bootfile: optionString(msg.Options[OptionBootfile]), LeaseTime: time.Duration(seconds) * time.Second,
+		Infinite: seconds == 0xffffffff, T1: time.Duration(optionUint32(msg.Options[OptionT1])) * time.Second,
+		T2: time.Duration(optionUint32(msg.Options[OptionT2])) * time.Second, AcquiredAt: sentAt, RenewedAt: sentAt,
 	}
-	if mtu := optionUint16(msg.Options[OptionMTU]); mtu != 0 {
+	if mtu := optionUint16(msg.Options[OptionMTU]); mtu >= 68 {
 		lease.MTU = int(mtu)
 	}
-	if lease.T1 == 0 {
-		lease.T1 = lease.LeaseTime / 2
-	}
-	if lease.T2 == 0 {
-		lease.T2 = time.Duration(float64(lease.LeaseTime) * 0.875)
-	}
-	return lease
-}
-
-func optionMaskPrefixLength(b []byte) int {
-	if len(b) != 4 {
-		return 0
-	}
-	mask := net.IPMask([]byte{b[0], b[1], b[2], b[3]})
-	ones, bits := mask.Size()
-	if bits != 32 || ones < 0 {
-		return 0
-	}
-	return ones
-}
-
-func RequestOptions(cfg Config, offered Message) map[byte][]byte {
-	opts := map[byte][]byte{}
-	if offered.YIAddr.IsValid() {
-		opts[OptionRequestedIP] = offered.YIAddr.AsSlice()
-	}
-	if server := offered.Options[OptionServerID]; len(server) == 4 {
-		opts[OptionServerID] = server
-	}
-	if cfg.Hostname != "" {
-		opts[OptionHostname] = []byte(cfg.Hostname)
-	}
-	if cfg.RequestedAddress != "" {
-		if addr, err := netip.ParseAddr(cfg.RequestedAddress); err == nil && addr.Is4() {
-			opts[OptionRequestedIP] = addr.AsSlice()
+	if lease.Infinite {
+		if lease.T1 >= lease.T2 || lease.T2 >= lease.LeaseTime {
+			lease.T1, lease.T2 = 0, 0
+		}
+	} else {
+		// Invalid optional timers do not invalidate the usable address/lifetime.
+		if lease.T2 <= 0 || lease.T2 >= lease.LeaseTime {
+			lease.T2 = lease.LeaseTime * 7 / 8
+		}
+		if lease.T1 <= 0 || lease.T1 >= lease.T2 {
+			lease.T1 = lease.LeaseTime / 2
+			if lease.T1 >= lease.T2 {
+				lease.T1 = lease.T2 / 2
+			}
 		}
 	}
-	if cfg.ClassID != "" {
-		opts[OptionClassID] = []byte(cfg.ClassID)
+	return lease, nil
+}
+
+func maskPrefix(b []byte) (int, bool) {
+	if len(b) != 4 {
+		return 0, false
 	}
-	if cfg.ClientID != "" {
-		opts[OptionClientID] = []byte(cfg.ClientID)
-	} else {
-		opts[OptionClientID] = append([]byte{1}, cfg.HardwareAddr...)
-	}
-	return opts
+	ones, bits := net.IPMask(b).Size()
+	return ones, bits == 32
+}
+
+func usableIPv4(addr netip.Addr) bool {
+	return addr.Is4() && !addr.IsUnspecified() && !addr.IsMulticast() && addr != netip.MustParseAddr("255.255.255.255")
 }
 
 func addr4(b []byte) netip.Addr {
@@ -294,9 +332,14 @@ func optionAddr(b []byte) netip.Addr {
 }
 
 func optionAddrs(b []byte) []netip.Addr {
+	if len(b)%4 != 0 {
+		return nil
+	}
 	var out []netip.Addr
 	for len(b) >= 4 {
-		out = append(out, addr4(b[:4]))
+		if addr := addr4(b[:4]); usableIPv4(addr) {
+			out = append(out, addr)
+		}
 		b = b[4:]
 	}
 	return out

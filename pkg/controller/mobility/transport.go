@@ -4,6 +4,7 @@ package mobility
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -51,60 +52,44 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	now := controllerNow(c.Now)
 	desiredSources := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.MobilityAPIVersion || res.Kind != "SAMTransportProfile" {
 			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		degrade := func(cause error) error {
+			return errors.Join(cause, c.saveTransportStatus(res.Metadata.Name, map[string]any{
+				"phase": "Degraded", "reason": cause.Error(),
+			}))
+		}
 		spec, err := res.SAMTransportProfileSpec()
 		if err != nil {
-			source := TransportDynamicSource(res.Metadata.Name, "")
-			desiredSources[source] = true
-			digest, _ := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
-			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
-				"phase":         "Degraded",
-				"reason":        err.Error(),
-				"outputDigests": transportOutputDigests(source, digest),
-			})
-			continue
+			return degrade(err)
 		}
 		source := TransportDynamicSource(res.Metadata.Name, spec.SelfNodeRef)
 		desiredSources[source] = true
-		degrade := func(cause error) error {
-			digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", nil, now)
-			if err != nil {
-				return err
-			}
-			_ = c.saveTransportStatus(res.Metadata.Name, map[string]any{
-				"phase":         "Degraded",
-				"reason":        cause.Error(),
-				"outputDigests": transportOutputDigests(source, digest),
-			})
-			return nil
-		}
-		peerGroupPending := ""
-		peerGroupDigest := ""
 		peerGroupSource := ""
 		if spec.PublishPeerGroup {
 			peerGroupSource = TransportPeerGroupDynamicSource(res.Metadata.Name)
 			desiredSources[peerGroupSource] = true
-			pending, digest, err := c.upsertTransportPeerGroupPart(ctx, res, spec, peerGroupSource, now)
-			if err != nil {
-				if err := degrade(err); err != nil {
-					return err
-				}
-				continue
-			}
-			peerGroupPending = pending
-			peerGroupDigest = digest
 		}
 		derived, err := c.deriveTransportResources(ctx, res, spec)
 		if err != nil {
-			if err := degrade(err); err != nil {
-				return err
+			return degrade(err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		now := controllerNow(c.Now)
+		peerGroupPending, peerGroupDigest := "", ""
+		if spec.PublishPeerGroup {
+			peerGroupPending, peerGroupDigest, err = c.upsertTransportPeerGroupPart(ctx, res, spec, peerGroupSource, now)
+			if err != nil {
+				return degrade(err)
 			}
-			continue
 		}
 		digest, err := c.upsertTransportDynamicPart(ctx, res, source, "sam-transport", derived.Resources, now)
 		if err != nil {
@@ -115,15 +100,15 @@ func (c TransportController) Reconcile(ctx context.Context) error {
 		if len(pendingSources) > 0 {
 			phase = "Pending"
 		}
-		status := map[string]any{
-			"phase":          phase,
-			"pendingSources": pendingSources,
-			"peersFrom":      statusRowMaps(derived.PeersFrom),
-			"outputDigests":  transportOutputDigests(source, digest, peerGroupSource, peerGroupDigest),
+		if err := c.saveTransportStatus(res.Metadata.Name, map[string]any{
+			"phase": phase, "reason": "", "pendingSources": pendingSources,
+			"peersFrom":     statusRowMaps(derived.PeersFrom),
+			"outputDigests": transportOutputDigests(source, digest, peerGroupSource, peerGroupDigest),
+		}); err != nil {
+			return err
 		}
-		_ = c.saveTransportStatus(res.Metadata.Name, status)
 	}
-	return c.deprovisionStaleTransportSources(ctx, desiredSources, now)
+	return c.deprovisionStaleTransportSources(ctx, desiredSources, controllerNow(c.Now))
 }
 
 // transportOutputDigests exposes the durable desired-output identities in
@@ -227,7 +212,10 @@ func (c TransportController) deriveTransportResources(ctx context.Context, owner
 			Metadata: api.ObjectMeta{Name: tunnelName, OwnerRefs: ownerRef, Annotations: transportAnnotations(owner.Metadata.Name, self, peerNode)},
 			Spec:     tunnelSpec,
 		})
-		remoteEndpoint, pending := c.remoteEndpoint(peer)
+		remoteEndpoint, pending, err := c.remoteEndpoint(peer)
+		if err != nil {
+			return transportDerivation{}, err
+		}
 		if pending != "" {
 			out.PendingSources = append(out.PendingSources, pending)
 		}
@@ -393,8 +381,15 @@ func transportBGPImportPolicyForPeer(base api.BGPImportPolicySpec, defaultAllowe
 	if len(cleanStrings(base.AllowedPrefixes)) == 0 {
 		base.AllowedPrefixes = cleanStrings(defaultAllowedPrefixes)
 	}
-	base.AllowedPrefixLengthMin = 32
-	base.AllowedPrefixLengthMax = 32
+	if len(base.AllowedPrefixes) > 0 {
+		base.AllowedPrefixLengthMin = 32
+		base.AllowedPrefixLengthMax = 32
+	} else {
+		// A signed leaf with no owned prefix still keeps its transport and
+		// explicit reject-routes marker. There is no prefix filter to bound.
+		base.AllowedPrefixLengthMin = 0
+		base.AllowedPrefixLengthMax = 0
+	}
 	nodeCommunity := bgpstate.MobilityNodeIdentityCommunity(peerNode)
 	base.RequiredCommunities = mergeTransportPolicyStrings(base.RequiredCommunities, []string{nodeCommunity})
 	var forbidden []string
@@ -612,7 +607,7 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 					status.Phase = "Invalid"
 					status.Reason = fmt.Sprintf("%s node %s transport endpoint: %v", ref, nodeRef, err)
 					statuses = append(statuses, status)
-					return nil, nil, statuses, pending, fmt.Errorf("%s", status.Reason)
+					return nil, nil, statuses, pending, fmt.Errorf("%s node %s transport endpoint: %w", ref, nodeRef, err)
 				}
 				if endpointPending != "" {
 					status.Phase = "Pending"
@@ -728,7 +723,8 @@ func (c TransportController) resolveTransportPeers(ctx context.Context, _ api.Re
 				selected[nodeRef] = true
 				endpoint, endpointPending, err := c.samNodeEndpointForTransport(spec, node)
 				if err != nil {
-					if source.Direct {
+					var readFailure *transportStatusReadError
+					if source.Direct && !errors.As(err, &readFailure) {
 						status.Phase = "Incompatible"
 						status.Reason = fmt.Sprintf("%s node %s transport endpoint: %v", ref, nodeRef, err)
 						return false, nil
@@ -919,7 +915,10 @@ func (c TransportController) samNodeEndpointForTransport(profile api.SAMTranspor
 	if strings.TrimSpace(node.SAMEndpointFrom.Resource) == "" {
 		return "", "", nil
 	}
-	value := resourcequery.Value(c.Store, node.SAMEndpointFrom)
+	value, err := resourcequery.ReadValue(c.Store, node.SAMEndpointFrom)
+	if err != nil {
+		return "", "", &transportStatusReadError{err}
+	}
 	if strings.TrimSpace(value) == "" {
 		return "", node.SAMEndpointFrom.Resource + "." + firstNonEmpty(strings.TrimSpace(node.SAMEndpointFrom.Field), "phase"), nil
 	}

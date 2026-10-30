@@ -84,9 +84,10 @@ const (
 	modeDryRun  = "dry-run"
 	modeExecute = "execute"
 
-	statusSucceeded = "succeeded"
-	statusFailed    = "failed"
-	statusSkipped   = "skipped"
+	statusOutcomeUnknown = "outcomeUnknown"
+	statusSucceeded      = "succeeded"
+	statusFailed         = "failed"
+	statusSkipped        = "skipped"
 
 	actionAssignSecondaryIP       = "assign-secondary-ip"
 	actionUnassignSecondaryIP     = "unassign-secondary-ip"
@@ -296,6 +297,11 @@ func requireRouteTarget(spec executeActionRequestSpec) (routeTable, eni, address
 	if address == "" {
 		return "", "", "", "", fmt.Errorf("target.address is required")
 	}
+	host, err := capturedIPv4Address(address)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	address = host + "/32"
 	return routeTable, eni, address, region, nil
 }
 
@@ -316,31 +322,31 @@ func assignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec, m
 		return res
 	}
 
-	allowReassignment := stringBool(spec.Parameters["allowReassignment"])
-	if allowReassignment {
-		if _, err := runner(ctx, "ec2", "replace-route",
-			"--route-table-id", routeTable,
-			"--destination-cidr-block", address,
-			"--network-interface-id", eni,
-			"--region", region); err != nil {
-			if _, cerr := runner(ctx, "ec2", "create-route",
-				"--route-table-id", routeTable,
-				"--destination-cidr-block", address,
-				"--network-interface-id", eni,
-				"--region", region); cerr != nil {
-				return failed("assign-route-table-route execute: replace/create route failed", fmt.Errorf("replace: %v; create: %w", err, cerr))
-			}
-		}
-	} else if _, err := runner(ctx, "ec2", "create-route",
-		"--route-table-id", routeTable,
-		"--destination-cidr-block", address,
-		"--network-interface-id", eni,
-		"--region", region); err != nil {
-		return failed("assign-route-table-route execute: create route failed", err)
+	route, found, err := describeRouteTableRoute(ctx, runner, routeTable, address, region)
+	if err != nil {
+		return failed("assign-route-table-route execute: describe route failed", err)
 	}
+	res.Status.Observed = map[string]string{"requestedRoute": address, "routeTableRef": routeTable, "nextHopNICRef": eni}
+	if found && route.NetworkInterfaceID == eni {
+		res.Status.Observed["assignedRoute"] = address
+		res.Status.Status, res.Status.Message = statusSucceeded, "route already targets the requested NIC"
+		return res
+	}
+	operation := "create-route"
+	if found {
+		if !stringBool(spec.Parameters["allowReassignment"]) {
+			return failed("assign-route-table-route execute: route belongs to another next hop", nil)
+		}
+		operation = "replace-route"
+		res.Status.Observed["priorNextHopNICRef"] = route.NetworkInterfaceID
+	}
+	if _, err := runner(ctx, "ec2", operation, "--route-table-id", routeTable, "--destination-cidr-block", address, "--network-interface-id", eni, "--region", region); err != nil {
+		return mutationFailure(res, "assign-route-table-route execute: route write unconfirmed", err)
+	}
+
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("routed %s to %s in %s", address, eni, routeTable)
-	res.Status.Observed = map[string]string{"assignedRoute": address, "routeTableRef": routeTable, "nextHopNICRef": eni}
+	res.Status.Observed["assignedRoute"] = address
 	return res
 }
 
@@ -379,12 +385,8 @@ func unassignRouteTableRoute(ctx context.Context, spec executeActionRequestSpec,
 		"--route-table-id", routeTable,
 		"--destination-cidr-block", address,
 		"--region", region); err != nil {
-		if isNotFoundError(err) {
-			res.Status.Status = statusSkipped
-			res.Status.Message = fmt.Sprintf("route %s already absent from %s", address, routeTable)
-			return res
-		}
-		return failed("unassign-route-table-route execute: delete route failed", err)
+
+		return mutationFailure(res, "unassign-route-table-route execute: delete route failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("deleted route %s from %s", address, routeTable)
@@ -400,13 +402,11 @@ func describeRouteTableRoute(ctx context.Context, runner awsRunner, routeTable, 
 		"--route-table-ids", routeTable,
 		"--region", region)
 	if err != nil {
-		if isNotFoundError(err) {
-			return routeTableRoute{}, false, nil
-		}
 		return routeTableRoute{}, false, err
 	}
 	var parsed struct {
 		RouteTables []struct {
+			ID     string `json:"RouteTableId"`
 			Routes []struct {
 				DestinationCIDRBlock string `json:"DestinationCidrBlock"`
 				NetworkInterfaceID   string `json:"NetworkInterfaceId"`
@@ -415,6 +415,9 @@ func describeRouteTableRoute(ctx context.Context, runner awsRunner, routeTable, 
 	}
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return routeTableRoute{}, false, fmt.Errorf("parse describe-route-tables output: %w", err)
+	}
+	if len(parsed.RouteTables) != 1 || parsed.RouteTables[0].ID != routeTable || parsed.RouteTables[0].Routes == nil {
+		return routeTableRoute{}, false, fmt.Errorf("incomplete route-table observation for %q", routeTable)
 	}
 	for _, table := range parsed.RouteTables {
 		for _, route := range table.Routes {
@@ -461,7 +464,7 @@ func assignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mode 
 		args = append(args, "--allow-reassignment")
 	}
 	if _, err := runner(ctx, args...); err != nil {
-		return failed("assign-secondary-ip execute: assign failed", err)
+		return mutationFailure(res, "assign-secondary-ip execute: assign failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	if allowReassignment {
@@ -503,7 +506,7 @@ func ensureForwardingEnabled(ctx context.Context, spec executeActionRequestSpec,
 		"--network-interface-id", eni,
 		"--no-source-dest-check",
 		"--region", region); err != nil {
-		return failed("ensure-forwarding-enabled execute: modify failed", err)
+		return mutationFailure(res, "ensure-forwarding-enabled execute: modify failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("disabled SourceDestCheck on %s (prior=%s)", eni, prior)
@@ -532,12 +535,8 @@ func unassignSecondaryIP(ctx context.Context, spec executeActionRequestSpec, mod
 		"--network-interface-id", eni,
 		"--private-ip-addresses", address,
 		"--region", region); err != nil {
-		if isAWSSecondaryIPNotAssignedError(err) {
-			res.Status.Status = statusSucceeded
-			res.Status.Message = fmt.Sprintf("%s was already absent from %s", address, eni)
-			return res
-		}
-		return failed("unassign-secondary-ip execute: unassign failed", err)
+
+		return mutationFailure(res, "unassign-secondary-ip execute: unassign failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("unassigned %s from %s", address, eni)
@@ -584,7 +583,7 @@ func ensureForwardingDisabled(ctx context.Context, spec executeActionRequestSpec
 		"--network-interface-id", eni,
 		"--source-dest-check",
 		"--region", region); err != nil {
-		return failed("ensure-forwarding-disabled execute: modify failed", err)
+		return mutationFailure(res, "ensure-forwarding-disabled execute: modify failed", err)
 	}
 	res.Status.Status = statusSucceeded
 	res.Status.Message = fmt.Sprintf("re-enabled SourceDestCheck on %s (restored prior=true)", eni)
@@ -606,26 +605,6 @@ func stringBool(v string) bool {
 	default:
 		return false
 	}
-}
-
-func isNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "notfound") ||
-		strings.Contains(msg, "could not be found") ||
-		strings.Contains(msg, "invalidroutenotfound")
-}
-
-func isAWSSecondaryIPNotAssignedError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unassignprivateipaddresses") &&
-		strings.Contains(msg, "not assigned to interface")
 }
 
 // commandTimeout is the per-aws-invocation timeout.

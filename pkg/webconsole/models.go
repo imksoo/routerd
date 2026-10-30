@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"slices"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/conntracktuning"
@@ -12,14 +13,34 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+// SnapshotSection identifies a successfully collected observation. An omitted
+// section was skipped or failed; an included section with no rows is empty.
+type SnapshotSection string
+
+const (
+	SectionResources        SnapshotSection = "resources" // includes interfaces, phases and gateway health
+	SectionEvents           SnapshotSection = "events"
+	SectionConnections      SnapshotSection = "connections"
+	SectionDNSQueries       SnapshotSection = "dnsQueries"
+	SectionTrafficFlows     SnapshotSection = "trafficFlows"
+	SectionFirewallLogs     SnapshotSection = "firewallLogs"
+	SectionConntrackTuning  SnapshotSection = "conntrackTuning"
+	SectionDHCPLeases       SnapshotSection = "dhcpLeases" // includes sticky lease observations
+	SectionDHCPFingerprints SnapshotSection = "dhcpFingerprints"
+	SectionNeighbors        SnapshotSection = "neighbors"
+	SectionClients          SnapshotSection = "clients"
+	SectionVPN              SnapshotSection = "vpn"
+)
+
 type Snapshot struct {
 	GeneratedAt      time.Time                     `json:"generatedAt"`
+	Collected        []SnapshotSection             `json:"collected"`
 	ConsoleLinks     []ConsoleLink                 `json:"consoleLinks,omitempty"`
 	Status           controlapi.Status             `json:"status"`
 	Controllers      []controlapi.ControllerStatus `json:"controllers,omitempty"`
 	GatewayHealth    GatewayHealth                 `json:"gatewayHealth"`
 	Phases           map[string]int                `json:"phases,omitempty"`
-	Resources        []routerstate.ObjectStatus    `json:"resources,omitempty"`
+	Resources        []ResourceStatus              `json:"resources,omitempty"`
 	Interfaces       []InterfaceSummary            `json:"interfaces,omitempty"`
 	Events           []routerstate.StoredEvent     `json:"events,omitempty"`
 	Connections      *observe.ConnectionTable      `json:"connections,omitempty"`
@@ -35,6 +56,17 @@ type Snapshot struct {
 	DPI              *DPIStatus                    `json:"dpi,omitempty"`
 	SystemUsage      SystemUsage                   `json:"systemUsage,omitempty"`
 	Errors           []string                      `json:"errors,omitempty"`
+}
+
+// Declared describes this exact row's presence in the current declaration.
+// An undeclared row may still carry a generated effect or pending withdrawal.
+type ResourceStatus struct {
+	routerstate.ObjectStatus
+	Declared *bool `json:"declared,omitempty"`
+}
+
+func (s Snapshot) collected(section SnapshotSection) bool {
+	return slices.Contains(s.Collected, section)
 }
 
 type ConsoleLink struct {
@@ -133,6 +165,7 @@ type DHCPLease struct {
 	IP        string    `json:"ip"`
 	Hostname  string    `json:"hostname,omitempty"`
 	ClientID  string    `json:"clientId,omitempty"`
+	IAID      string    `json:"iaid,omitempty"`
 	Vendor    string    `json:"vendor,omitempty"`
 	Family    string    `json:"family,omitempty"`
 	Source    string    `json:"source,omitempty"`
@@ -161,8 +194,10 @@ type ClientEntry struct {
 	State                 string   `json:"state,omitempty"`
 	Sources               []string `json:"sources,omitempty"`
 	Peers                 []string `json:"peers,omitempty"`
-	BytesOut              int64    `json:"bytesOut,omitempty"`
-	BytesIn               int64    `json:"bytesIn,omitempty"`
+	BytesOut              *int64   `json:"bytesOut,omitempty"`
+	BytesIn               *int64   `json:"bytesIn,omitempty"`
+	BytesOutIncomplete    bool     `json:"bytesOutIncomplete"`
+	BytesInIncomplete     bool     `json:"bytesInIncomplete"`
 	PrimaryActivity       string   `json:"primaryActivity,omitempty"`
 	LastProtocol          string   `json:"lastProtocol,omitempty"`
 	LastProtocolDetail    string   `json:"lastProtocolDetail,omitempty"`
@@ -179,17 +214,19 @@ type ClientEntry struct {
 }
 
 type InterfaceSummary struct {
-	Name            string   `json:"name"`
-	IfName          string   `json:"ifname"`
-	Phase           string   `json:"phase,omitempty"`
-	Role            string   `json:"role,omitempty"`
-	Zone            string   `json:"zone,omitempty"`
-	Managed         bool     `json:"managed,omitempty"`
-	Owner           string   `json:"owner,omitempty"`
-	MTU             int      `json:"mtu,omitempty"`
-	HardwareAddress string   `json:"hardwareAddress,omitempty"`
-	Flags           string   `json:"flags,omitempty"`
-	Addresses       []string `json:"addresses,omitempty"`
+	Name                string   `json:"name"`
+	IfName              string   `json:"ifname"`
+	Phase               string   `json:"phase,omitempty"`
+	Role                string   `json:"role,omitempty"`
+	Zone                string   `json:"zone,omitempty"`
+	Managed             bool     `json:"managed,omitempty"`
+	Owner               string   `json:"owner,omitempty"`
+	MTU                 int      `json:"mtu,omitempty"`
+	HardwareAddress     string   `json:"hardwareAddress,omitempty"`
+	Flags               string   `json:"flags,omitempty"`
+	Addresses           []string `json:"addresses,omitempty"`
+	ConfiguredAddresses []string `json:"configuredAddresses,omitempty"`
+	ObservationError    string   `json:"observationError,omitempty"`
 }
 
 type VPNStatus struct {
@@ -211,8 +248,8 @@ type WireGuardPeerStatus struct {
 	Endpoint               string    `json:"endpoint,omitempty"`
 	AllowedIPs             []string  `json:"allowedIPs,omitempty"`
 	LatestHandshake        time.Time `json:"latestHandshake,omitempty"`
-	TransferRxBytes        int64     `json:"transferRxBytes,omitempty"`
-	TransferTxBytes        int64     `json:"transferTxBytes,omitempty"`
+	TransferRxBytes        int64     `json:"transferRxBytes"`
+	TransferTxBytes        int64     `json:"transferTxBytes"`
 	PersistentKeepaliveSec int       `json:"persistentKeepaliveSec,omitempty"`
 }
 

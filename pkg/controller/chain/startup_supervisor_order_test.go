@@ -29,8 +29,8 @@ func TestStartDefersClientDaemonSupervisionToControllerBootstrap(t *testing.T) {
 			EnabledControllers:     []string{"daemon-supervisor"},
 		},
 	}
-	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, error) {
-		return nil, DaemonStatusController{}, nil
+	runner.generationBuilder = func(context.Context, *slog.Logger, eventedStore, bool, ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
+		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,7 +59,7 @@ func TestControllerBootstrapObservesVRRPBeforeClientDaemonSupervisor(t *testing.
 		},
 	}
 	store := eventedStore{Store: runner.Store, Bus: runner.Bus, Router: router}
-	controllers, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Leader: true})
+	controllers, _, _, err := runner.frameworkControllers(context.Background(), slog.Default(), store, false, ha.Decision{Leader: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +79,15 @@ func TestDaemonSupervisionRouterRequiresObservedMasterRole(t *testing.T) {
 	runner := &Runner{Router: router}
 	evented := eventedStore{Store: store, Router: router}
 
-	if got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented)); len(got) != 0 {
+	if got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented)); len(got) != 0 {
 		t.Fatalf("unknown VRRP role selected client daemons: %#v", got)
 	}
 	store[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"] = map[string]any{"role": "backup"}
-	if got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented)); len(got) != 0 {
+	if got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented)); len(got) != 0 {
 		t.Fatalf("backup VRRP role selected client daemons: %#v", got)
 	}
 	store[api.NetAPIVersion+"/VirtualAddress/lan-gw-v4"] = map[string]any{"role": "master"}
-	got := runner.clientDaemonSpecs(runner.daemonSupervisionRouter(evented))
+	got := runner.clientDaemonSpecs(mustDaemonWhenRouter(t, runner, evented))
 	if len(got) != 1 || got[0].Binary != "routerd-dhcpv6-client" || got[0].ResourceName != "wan-pd" {
 		t.Fatalf("master VRRP role client daemons = %#v", got)
 	}

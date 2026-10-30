@@ -14,15 +14,16 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
 	"github.com/imksoo/routerd/pkg/eventlog"
 )
 
 func TestRuntimeShapeChangedRejectsLifecycleResources(t *testing.T) {
 	current := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: map[string]any{"listen": []any{"127.0.0.1"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}}}}},
 	}}}
 	next := &api.Router{Spec: api.RouterSpec{Resources: append([]api.Resource(nil), current.Spec.Resources...)}}
-	next.Spec.Resources[0].Spec = map[string]any{"listen": []any{"127.0.0.2"}}
+	next.Spec.Resources[0].Spec = api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.2"}}}}
 
 	changed, resources := runtimeShapeChanged(current, next)
 	if !changed || len(resources) != 1 {
@@ -69,11 +70,11 @@ func TestRuntimeShapeChangedReloadsDSLiteSourceChange(t *testing.T) {
 	}
 }
 
-func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
+func TestRuntimeApplyHasFiniteDeadline(t *testing.T) {
 	before := time.Now()
 	wantErr := errors.New("stop after inspecting deadline")
 	mutator := serveConfigMutator{
-		reload: func(ctx context.Context, _ *api.Router) error {
+		applyRuntimeWithOutcome: func(ctx context.Context, _ *api.Router, _ bool, _ func() error) (controllerchain.RuntimeReloadOutcome, error) {
 			deadline, ok := ctx.Deadline()
 			if !ok {
 				t.Fatal("runtime reload context has no deadline")
@@ -82,11 +83,11 @@ func TestRuntimeReloadHasFiniteDeadline(t *testing.T) {
 			if deadline.Before(before.Add(time.Minute)) || deadline.After(after.Add(time.Minute)) {
 				t.Fatalf("deadline %s outside creation interval [%s, %s]", deadline, before.Add(time.Minute), after.Add(time.Minute))
 			}
-			return wantErr
+			return controllerchain.RuntimeReloadOutcome{}, wantErr
 		},
 	}
-	if err := mutator.reloadRuntime(&api.Router{}); !errors.Is(err, wantErr) {
-		t.Fatalf("reloadRuntime error = %v, want %v", err, wantErr)
+	if _, err := mutator.applyRuntimeOutcome(context.Background(), &api.Router{}, true, func() error { return nil }); !errors.Is(err, wantErr) {
+		t.Fatalf("applyRuntime error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -118,7 +119,13 @@ func TestLifecycleLiveApplyReloadsDNSResolverWithoutProcessRestart(t *testing.T)
 		logger:    &eventlog.Logger{},
 		getRouter: func() *api.Router { return current },
 		setRouter: func(next *api.Router) { current = next },
-		reload: func(_ context.Context, next *api.Router) error {
+		applyRuntimeWithOutcome: func(_ context.Context, next *api.Router, reload bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
+			if err := commit(); err != nil {
+				return controllerchain.RuntimeReloadOutcome{Active: controllerchain.RuntimeSnapshot{Router: current, Known: true, Available: true}}, err
+			}
+			if !reload {
+				t.Error("lifecycle change skipped reload")
+			}
 			reloads++
 			if gate.TryRLock() {
 				gate.RUnlock()
@@ -126,12 +133,12 @@ func TestLifecycleLiveApplyReloadsDNSResolverWithoutProcessRestart(t *testing.T)
 			}
 			spec, err := next.Spec.Resources[0].DNSResolverSpec()
 			if err != nil {
-				return err
+				return controllerchain.RuntimeReloadOutcome{}, err
 			}
 			if got := spec.Listen[0].Addresses[0]; got != "127.0.0.2" {
 				t.Errorf("reloaded DNS address = %q, want 127.0.0.2", got)
 			}
-			return nil
+			return controllerchain.RuntimeReloadOutcome{Active: controllerchain.RuntimeSnapshot{Router: next, Known: true, Available: true}, Accepted: true}, nil
 		},
 	}
 	result, err := mutator.apply(nil, controlapi.ApplyRequest{

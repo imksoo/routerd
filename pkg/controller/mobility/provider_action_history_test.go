@@ -3,7 +3,6 @@
 package mobility
 
 import (
-	"encoding/json"
 	"net/netip"
 	"testing"
 	"time"
@@ -16,26 +15,20 @@ import (
 func TestDiscoveryCurrentTrapAddressesUsesCurrentPendingCaptureJournalRecords(t *testing.T) {
 	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	journalRecord := func(id int64, key, address, status string, updatedAt time.Time) routerstate.ActionExecutionRecord {
-		target, err := json.Marshal(map[string]string{
+		target := map[string]string{
 			"address":     address,
 			"nicRef":      "eni-a",
 			"providerRef": "aws-provider",
-		})
-		if err != nil {
-			t.Fatalf("marshal target: %v", err)
 		}
-		parameters, err := json.Marshal(map[string]string{captureParamHolder: "aws-router-a"})
-		if err != nil {
-			t.Fatalf("marshal parameters: %v", err)
-		}
+		parameters := map[string]string{captureParamHolder: "aws-router-a"}
 		return routerstate.ActionExecutionRecord{
 			ID:             id,
 			IdempotencyKey: key,
 			Provider:       "aws",
 			ProviderRef:    "aws-provider",
 			Action:         actionAssignSecondaryIP,
-			TargetJSON:     string(target),
-			ParametersJSON: string(parameters),
+			Target:         target,
+			Parameters:     parameters,
 			Status:         status,
 			UpdatedAt:      updatedAt,
 		}
@@ -88,21 +81,15 @@ func TestProviderActionHistoryReleaseSource(t *testing.T) {
 		},
 	}
 	record := func(id int64, key, action, nicRef, pathSig string, at time.Time) routerstate.ActionExecutionRecord {
-		target, err := json.Marshal(map[string]string{
+		target := map[string]string{
 			"address":         address,
 			"captureStrategy": captureStrategySecondaryIP,
 			"nicRef":          nicRef,
 			"providerRef":     "aws-provider",
-		})
-		if err != nil {
-			t.Fatalf("marshal target: %v", err)
 		}
-		parameters, err := json.Marshal(map[string]string{
+		parameters := map[string]string{
 			bgpPathSigParam:    pathSig,
 			captureParamHolder: self.NodeRef,
-		})
-		if err != nil {
-			t.Fatalf("marshal parameters: %v", err)
 		}
 		return routerstate.ActionExecutionRecord{
 			ID:             id,
@@ -110,8 +97,8 @@ func TestProviderActionHistoryReleaseSource(t *testing.T) {
 			Provider:       "aws",
 			ProviderRef:    "aws-provider",
 			Action:         action,
-			TargetJSON:     string(target),
-			ParametersJSON: string(parameters),
+			Target:         target,
+			Parameters:     parameters,
 			Status:         routerstate.ActionSucceeded,
 			ExecutedAt:     at,
 			UpdatedAt:      at,

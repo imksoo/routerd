@@ -192,22 +192,28 @@ ssh_for_point() {
   esac
 }
 
+capture_owner_command() {
+  local operation=$1 remote_path=$2 pid_path=$3 payload loader
+  # Ship the tracked owner as code, without a mutable remote helper install.
+  payload=$(python3 -c 'import base64,sys; print(base64.b64encode(open(sys.argv[1], "rb").read()).decode())' "$SCRIPT_DIR/cloudedge_capture.py")
+  loader="import base64; exec(compile(base64.b64decode('$payload'), '<capture-owner>', 'exec'))"
+  printf 'sudo python3 -c %q %q %q %q' "$loader" "$operation" "$remote_path" "$pid_path"
+}
+
 start_command() {
-  local iface=$1 remote_dir=$2 remote_path=$3 pid_path=$4 log_path=$5 filter=$6 inner
-  inner="nohup tcpdump -U -i $(printf '%q' "$iface") -w $(printf '%q' "$remote_path") $filter >$(printf '%q' "$log_path") 2>&1 & echo \$! > $(printf '%q' "$pid_path")"
-  printf 'sudo mkdir -p %q && command -v tcpdump >/dev/null 2>&1 && sudo sh -c %q' "$remote_dir" "$inner"
+  local iface=$1 remote_path=$2 pid_path=$3 filter=$4
+  capture_owner_command start "$remote_path" "$pid_path"
+  printf ' --interface %q --filter %q' "$iface" "$filter"
 }
 
 stop_command() {
   local remote_path=$1 pid_path=$2
-  # The remote shell must expand pid after it reads the tcpdump pid file.
-  # shellcheck disable=SC2016
-  printf 'if [ -f %q ]; then pid=$(sudo cat %q 2>/dev/null || cat %q); sudo kill -INT "$pid" 2>/dev/null || kill -INT "$pid" 2>/dev/null || true; sleep 1; fi; sudo test -s %q' "$pid_path" "$pid_path" "$pid_path" "$remote_path"
+  capture_owner_command stop "$remote_path" "$pid_path"
 }
 
 copy_command() {
-  local remote_path=$1
-  printf 'sudo cat %q' "$remote_path"
+  local remote_path=$1 pid_path=$2
+  capture_owner_command copy "$remote_path" "$pid_path"
 }
 
 append_json_line() {
@@ -312,7 +318,7 @@ point_specs() {
 
 run_start() {
   local jsonl=$state_jsonl filter started_at failures=0 reasons=()
-  local role node iface host node_s role_s iface_s filename local_path remote_dir remote_path pid_path log_path command exit_status reason at
+  local role node iface host node_s role_s iface_s filename local_path remote_dir remote_path pid_path command exit_status reason at
   filter=$(build_filter)
   started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   : >"$jsonl"
@@ -326,8 +332,7 @@ run_start() {
     remote_dir="${CE_CAPTURE_REMOTE_DIR:-/tmp/routerd-cloudedge-capture}/$test_id"
     remote_path="$remote_dir/$filename"
     pid_path="$remote_dir/$filename.pid"
-    log_path="$remote_dir/$filename.log"
-    command=$(start_command "$iface" "$remote_dir" "$remote_path" "$pid_path" "$log_path" "$filter")
+    command=$(start_command "$iface" "$remote_path" "$pid_path" "$filter")
     at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     reason=""
     exit_status=0
@@ -429,7 +434,7 @@ PY
       merge_stop_line "$stop_jsonl" "$old" stop "$command" "$exit_status" "$reason" "$at"
 
     old=$(tail -n1 "$stop_jsonl")
-    copy_cmd=$(copy_command "$remote_path")
+    copy_cmd=$(copy_command "$remote_path" "$pid_path")
     copy_exit=0
     reason=""
     if [[ "$exit_status" -ne 0 ]]; then

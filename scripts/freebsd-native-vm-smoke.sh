@@ -50,6 +50,7 @@ export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 # This is the native package gate. Do not narrow it to selected packages: a
 # FreeBSD-only build or runtime dependency failure must be visible in CI.
 go test ./...
+go test -tags routerd_native ./pkg/routeradvertisement -run '^TestSolicitationWildcardReceiverOnActualSocket$' -count=1
 
 work=$(mktemp -d /tmp/routerd-freebsd-native-smoke.XXXXXX)
 root="$work/root"
@@ -119,7 +120,7 @@ spec:
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata: {name: lan}
-    spec: {ifname: vtnet0, managed: false, role: trust}
+    spec: {ifname: vtnet0, managed: false}
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv4StaticAddress
     metadata: {name: lan-v4}
@@ -237,12 +238,14 @@ if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
   dhcpv4_client="$work/routerd-dhcpv4-client"
   dhcpv6_client="$work/routerd-dhcpv6-client"
   dns_resolver="$work/routerd-dns-resolver"
+  lifecycle_helper="$work/freebsd-lifecycle-runtime"
   go build -o "$dhcpv4_client" ./cmd/routerd-dhcpv4-client
   go build -o "$dhcpv6_client" ./cmd/routerd-dhcpv6-client
   go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
+  go build -o "$lifecycle_helper" ./tools/freebsd-lifecycle-runtime
   sh scripts/freebsd-lifecycle-runtime-smoke.sh \
     --dhcpv4-client "$dhcpv4_client" --dhcpv6-client "$dhcpv6_client" --dns-resolver "$dns_resolver" \
-    --routerd "$routerd" \
+    --routerd "$routerd" --lifecycle-helper "$lifecycle_helper" \
     --evidence-dir "$lifecycle_evidence"
   cat "$lifecycle_evidence/summary.log"
   cat "$lifecycle_evidence/result"

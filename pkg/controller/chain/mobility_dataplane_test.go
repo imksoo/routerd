@@ -4,11 +4,13 @@ package chain
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 // mobilityEffectStore is deliberately in-memory. The direct dataplane
@@ -41,10 +43,26 @@ func (s *mobilityEffectStore) ObjectStatus(apiVersion, kind, name string) map[st
 	return s.statuses[apiVersion+"/"+kind+"/"+name]
 }
 
+func (s *mobilityEffectStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
+func (s *mobilityEffectStore) ListObjectStatuses() ([]routerstate.ObjectStatus, error) {
+	var out []routerstate.ObjectStatus
+	for key, status := range s.statuses {
+		parts := strings.Split(key, "/")
+		last := len(parts) - 1
+		out = append(out, routerstate.ObjectStatus{APIVersion: strings.Join(parts[:last-1], "/"), Kind: parts[last-1], Name: parts[last], Status: copyStatusMap(status)})
+	}
+	return out, nil
+}
+
 func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
+	applied := false
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{
 			ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix,
@@ -53,6 +71,15 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 		DevicePresent: func(context.Context, string) bool { return true },
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			if name == "ip" && len(args) > 0 && args[0] == "-j" {
+				if applied {
+					return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"boot","metric":90}]`), nil
+				}
+				return []byte("[]"), nil
+			}
+			if name == "ip" && len(args) > 1 && args[0] == "route" && args[1] == "add" {
+				applied = true
+			}
 			return nil, nil
 		},
 	}
@@ -62,7 +89,7 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 	if len(controller.Router.Spec.Resources) != 0 {
 		t.Fatalf("typed mobility route must not become a generic resource: %#v", controller.Router.Spec.Resources)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route replace 10.77.60.0/24 dev lan0 metric 90") {
+	if !containsMobilityDataplaneCommand(commands, "ip route add 10.77.60.0/24 dev lan0 metric 90 proto boot") {
 		t.Fatalf("commands = %#v", commands)
 	}
 	routes, err := controller.appliedMobilityRoutes()
@@ -78,19 +105,20 @@ func TestIPv4RouteControllerDoesNotDeleteBGPRouteWhenTypedMobilityEffectWithdraw
 	store := &mobilityEffectStore{statuses: map[string]map[string]any{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
 			"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{
-				ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix),
+				ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix), Scope: "linux:fixture:1", IfIndex: 17,
 				Destination: "10.77.60.0/24", Device: "lan0", Metric: 90,
 			}},
 		},
 	}}
 	var commands []string
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip route show 10.77.60.0/24" {
-				return []byte("10.77.60.0/24 dev lan0 proto bgp metric 90\n"), nil
+			if command == "ip -j -d -4 route show 10.77.60.0/24" {
+				return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"bgp","metric":90}]`), nil
 			}
 			return nil, nil
 		},
@@ -112,19 +140,28 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 	store := &mobilityEffectStore{statuses: map[string]map[string]any{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
 			"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{
-				ID: "cloudedge/local-10.77.60.20", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeLocalInventory),
+				ID: "cloudedge/local-10.77.60.20", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeLocalInventory), Scope: "linux:fixture:1", IfIndex: 17,
 				Destination: "10.77.60.20/32", Device: "lan0", PreferredSource: "10.77.60.1", Metric: 90,
 			}},
 		},
 	}}
 	var commands []string
+	deleted := false
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
 			commands = append(commands, command)
-			if command == "ip route show 10.77.60.20/32" {
-				return []byte("10.77.60.20 dev lan0 proto static src 10.77.60.1 metric 90\\n"), nil
+			if command == "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot" {
+				deleted = true
+				return nil, nil
+			}
+			if command == "ip -j -d -4 route show 10.77.60.20/32" {
+				if deleted {
+					return []byte(`[]`), nil
+				}
+				return []byte(`[{"dst":"10.77.60.20","dev":"lan0","protocol":"boot","prefsrc":"10.77.60.1","metric":90}]`), nil
 			}
 			return nil, nil
 		},
@@ -132,7 +169,7 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 	if err := controller.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route del 10.77.60.20/32 dev lan0 metric 90") {
+	if !containsMobilityDataplaneCommand(commands, "ip route del 10.77.60.20/32 dev lan0 metric 90 proto boot") {
 		t.Fatalf("typed mobility ledger route was not withdrawn: commands = %#v", commands)
 	}
 	if routes, err := controller.appliedMobilityRoutes(); err != nil || len(routes) != 0 {
@@ -143,16 +180,24 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
+	present := false
 	controller := IPv4StaticAddressController{
 		Router: &api.Router{}, Store: store,
 		MobilityDataplane: dynamicconfig.MobilityDataplanePlan{StaticAddresses: []dynamicconfig.MobilityIPv4AddressIntent{{
 			ID: "cloudedge/capture-source", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: dynamicconfig.MobilityIPv4AddressPurposeCaptureSource,
 			Interface: "lan0", Address: "10.77.60.1/32",
 		}}},
-		DevicePresent:  func(context.Context, string) bool { return true },
-		AddressPresent: func(context.Context, string, string) bool { return false },
+		DevicePresent: func(context.Context, string) bool { return true },
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			var addresses []netip.Prefix
+			if present {
+				addresses = []netip.Prefix{netip.MustParsePrefix("10.77.60.1/32")}
+			}
+			return staticAddressSnapshot{Index: 7, Scope: "address-fixture", Addresses: addresses}, nil
+		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			present = args[2] == "add"
 			return nil
 		},
 	}
@@ -162,12 +207,12 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 1 {
 		t.Fatalf("applied mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 1 || commands[0] != "ip -4 addr replace 10.77.60.1/32 dev lan0" {
+	if len(commands) != 1 || commands[0] != "ip -4 addr add 10.77.60.1/32 dev lan0" {
 		t.Fatalf("apply commands = %#v", commands)
 	}
 
 	controller.MobilityDataplane = dynamicconfig.MobilityDataplanePlan{}
-	controller.AddressPresent = func(context.Context, string, string) bool { return true }
+
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("withdraw: %v", err)
 	}
@@ -179,12 +224,12 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	}
 }
 
-func TestLinuxIPv4AddressPresentRequiresExactPrefix(t *testing.T) {
-	output := []byte("7: ens19    inet 10.77.60.34/24 brd 10.77.60.255 scope global ens19\\n")
-	if linuxIPv4AddressPresent(output, "10.77.60.34/32") {
+func TestStaticAddressObservationRequiresExactPrefix(t *testing.T) {
+	observed := staticAddressSnapshot{Index: 7, Addresses: []netip.Prefix{netip.MustParsePrefix("10.77.60.34/24")}}
+	if observed.has("10.77.60.34/32") {
 		t.Fatal("a wider external address must not satisfy a managed /32")
 	}
-	if !linuxIPv4AddressPresent(output, "10.77.60.34/24") {
+	if !observed.has("10.77.60.34/24") {
 		t.Fatal("exactly matching address was not detected")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -140,7 +141,7 @@ func OpenFirewallLog(path string) (*FirewallLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteFileURI(path))
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +249,7 @@ CREATE TABLE IF NOT EXISTS dpi_flow (
   packet_count INTEGER
 );
 CREATE INDEX IF NOT EXISTS firewall_logs_ts ON firewall_logs(ts);
+CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_src_ts ON firewall_logs(src_address, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_action_ts ON firewall_logs(action, ts);
 CREATE INDEX IF NOT EXISTS firewall_logs_zone ON firewall_logs(zone_from, zone_to, ts);
@@ -258,7 +260,7 @@ CREATE INDEX IF NOT EXISTS dpi_flow_reverse ON dpi_flow(protocol, dst_address, s
 `); err != nil {
 		return err
 	}
-	return l.ensureDPIColumns(ctx)
+	return nil
 }
 
 func (l *FirewallLog) Close() error {
@@ -412,102 +414,6 @@ ORDER BY bucket_start ASC`,
 		})
 	}
 	return out, nil
-}
-
-func (l *FirewallLog) ensureDPIColumns(ctx context.Context) error {
-	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(firewall_logs)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		typ  string
-	}{
-		{"dpi_app", "TEXT"},
-		{"tcp_flags", "TEXT"},
-		{"dpi_category", "TEXT"},
-		{"dpi_tls_sni", "TEXT"},
-		{"dpi_http_host", "TEXT"},
-		{"dpi_dns_query", "TEXT"},
-		{"dpi_confidence", "INTEGER"},
-		{"correlation", "TEXT"},
-		{"correlation_detail", "TEXT"},
-		{"expired_age_seconds", "INTEGER"},
-		{"expired_bytes", "INTEGER"},
-	} {
-		if existing[column.name] {
-			continue
-		}
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE firewall_logs ADD COLUMN `+column.name+` `+column.typ); err != nil {
-			return err
-		}
-	}
-	_, err = l.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS firewall_logs_dpi_app_ts ON firewall_logs(dpi_app, ts);`)
-	if err != nil {
-		return err
-	}
-	return l.ensureDPIFlowColumns(ctx)
-}
-
-func (l *FirewallLog) ensureDPIFlowColumns(ctx context.Context) error {
-	rows, err := l.db.QueryContext(ctx, `PRAGMA table_info(dpi_flow)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, column := range []struct {
-		name string
-		typ  string
-	}{
-		{"engine", "TEXT"},
-		{"source", "TEXT"},
-		{"detected_protocol", "TEXT"},
-		{"master_protocol", "TEXT"},
-		{"application_protocol", "TEXT"},
-		{"category", "TEXT"},
-		{"risk", "TEXT"},
-		{"confidence", "INTEGER"},
-		{"metadata_json", "TEXT"},
-	} {
-		if existing[column.name] {
-			continue
-		}
-		if _, err := l.db.ExecContext(ctx, `ALTER TABLE dpi_flow ADD COLUMN `+column.name+` `+column.typ); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (l *FirewallLog) RecordExpiredFlow(ctx context.Context, flow ExpiredFlowEntry, ttl time.Duration, limit int) error {
@@ -739,10 +645,6 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 	if l == nil || l.db == nil {
 		return nil, nil
 	}
-	columns, err := tableColumns(ctx, l.db, "dpi_flow")
-	if err != nil {
-		return nil, err
-	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 1000
@@ -761,7 +663,7 @@ func (l *FirewallLog) ListDPIFlows(ctx context.Context, filter DPIFlowFilter) ([
 		where = " WHERE " + strings.Join(clauses, " AND ")
 	}
 	args = append(args, limit)
-	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),`+optionalTextColumn(columns, "detected_protocol")+`,`+optionalTextColumn(columns, "master_protocol")+`,`+optionalTextColumn(columns, "application_protocol")+`,`+optionalTextColumn(columns, "category")+`,`+optionalTextColumn(columns, "risk")+`,`+optionalIntColumn(columns, "confidence")+`,`+optionalTextColumn(columns, "metadata_json")+`,`+optionalTextColumn(columns, "engine")+`,`+optionalTextColumn(columns, "source")+`,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+	rows, err := l.db.QueryContext(ctx, `SELECT flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
@@ -775,8 +677,14 @@ FROM dpi_flow`+where+` ORDER BY ts_last DESC LIMIT ?`, args...)
 		if err := rows.Scan(&flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
 			return nil, err
 		}
-		flow.Risk = jsonStringSlice(riskJSON)
-		flow.Metadata = jsonStringMap(metadataJSON)
+		flow.Risk, err = jsonStringSlice(riskJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode DPI flow %s risk: %w", flow.FlowID, err)
+		}
+		flow.Metadata, err = jsonStringMap(metadataJSON)
+		if err != nil {
+			return nil, fmt.Errorf("decode DPI flow %s metadata: %w", flow.FlowID, err)
+		}
 		flow.FirstSeen = time.Unix(0, first).UTC()
 		flow.LastSeen = time.Unix(0, last).UTC()
 		if classified > 0 {
@@ -894,7 +802,7 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Invalid tuples have no match even when a legacy database has no DPI table.
+	// Invalid tuples have no match.
 	valid := false
 	for _, entry := range entries {
 		if strings.TrimSpace(entry.Protocol) != "" && entry.SrcAddress != "" && entry.DstAddress != "" {
@@ -906,10 +814,6 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		return out, nil
 	}
 
-	columns, err := tableColumns(ctx, l.db, "dpi_flow")
-	if err != nil {
-		return nil, err
-	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -937,7 +841,7 @@ func (l *FirewallLog) FindDPIFlowsForFirewallEntries(ctx context.Context, entrie
 		}
 		args = append(args, now.Add(-ttl).UnixNano())
 		query := `WITH requested(request_index,request_protocol,request_src,request_dst,request_src_port,request_dst_port) AS (VALUES ` + strings.Join(values, ",") + `)
-SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),` + optionalTextColumn(columns, "detected_protocol") + `,` + optionalTextColumn(columns, "master_protocol") + `,` + optionalTextColumn(columns, "application_protocol") + `,` + optionalTextColumn(columns, "category") + `,` + optionalTextColumn(columns, "risk") + `,` + optionalIntColumn(columns, "confidence") + `,` + optionalTextColumn(columns, "metadata_json") + `,` + optionalTextColumn(columns, "engine") + `,` + optionalTextColumn(columns, "source") + `,coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
+SELECT request_index,flow_id,ts_first,ts_last,coalesce(l3_proto,''),protocol,src_address,coalesce(src_port,0),dst_address,coalesce(dst_port,0),coalesce(app_name,''),coalesce(app_category,''),coalesce(app_confidence,0),coalesce(detected_protocol,''),coalesce(master_protocol,''),coalesce(application_protocol,''),coalesce(category,''),coalesce(risk,''),coalesce(confidence,0),coalesce(metadata_json,''),coalesce(engine,''),coalesce(source,''),coalesce(tls_sni,''),coalesce(http_host,''),coalesce(dns_query,''),coalesce(classified_at,0),coalesce(packet_count,0)
 FROM requested JOIN dpi_flow ON flow_id = (
  SELECT candidate.flow_id FROM dpi_flow AS candidate
  WHERE candidate.ts_last >= ? AND candidate.protocol = request_protocol AND (
@@ -967,8 +871,14 @@ func (l *FirewallLog) queryDPIFlowBatch(ctx context.Context, query string, args 
 		if err := rows.Scan(&index, &flow.FlowID, &first, &last, &flow.L3Proto, &flow.Protocol, &flow.SrcAddress, &flow.SrcPort, &flow.DstAddress, &flow.DstPort, &flow.AppName, &flow.AppCategory, &flow.AppConfidence, &flow.DetectedProtocol, &flow.MasterProtocol, &flow.ApplicationProtocol, &flow.Category, &riskJSON, &flow.Confidence, &metadataJSON, &flow.Engine, &flow.Source, &flow.TLSSNI, &flow.HTTPHost, &flow.DNSQuery, &classified, &flow.PacketCount); err != nil {
 			return err
 		}
-		flow.Risk = jsonStringSlice(riskJSON)
-		flow.Metadata = jsonStringMap(metadataJSON)
+		flow.Risk, err = jsonStringSlice(riskJSON)
+		if err != nil {
+			return fmt.Errorf("decode DPI flow %s risk: %w", flow.FlowID, err)
+		}
+		flow.Metadata, err = jsonStringMap(metadataJSON)
+		if err != nil {
+			return fmt.Errorf("decode DPI flow %s metadata: %w", flow.FlowID, err)
+		}
 		flow.FirstSeen = time.Unix(0, first).UTC()
 		flow.LastSeen = time.Unix(0, last).UTC()
 		if classified > 0 {
@@ -1034,59 +944,24 @@ func jsonString(value any) string {
 	return string(data)
 }
 
-func jsonStringSlice(value string) []string {
+func jsonStringSlice(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
-		return nil
+		return nil, nil
 	}
 	var out []string
 	if err := json.Unmarshal([]byte(value), &out); err != nil {
-		return nil
+		return nil, err
 	}
-	return out
+	return out, nil
 }
 
-func jsonStringMap(value string) map[string]string {
+func jsonStringMap(value string) (map[string]string, error) {
 	if strings.TrimSpace(value) == "" {
-		return nil
+		return nil, nil
 	}
 	var out map[string]string
 	if err := json.Unmarshal([]byte(value), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
-	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull int
-		var defaultValue any
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return nil, err
-		}
-		columns[name] = true
-	}
-	return columns, rows.Err()
-}
-
-func optionalTextColumn(columns map[string]bool, name string) string {
-	if columns[name] {
-		return "coalesce(" + name + ",'')"
-	}
-	return "''"
-}
-
-func optionalIntColumn(columns map[string]bool, name string) string {
-	if columns[name] {
-		return "coalesce(" + name + ",0)"
-	}
-	return "0"
+	return out, nil
 }

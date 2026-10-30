@@ -3,6 +3,7 @@
 package webconsole
 
 import (
+	"fmt"
 	"net/netip"
 	"sort"
 	"strconv"
@@ -28,29 +29,36 @@ type localRedirectDisplayRule struct {
 	Protocols         map[string]struct{}
 }
 
-func (h Handler) enrichConnectionsWithLocalRedirect(table *observe.ConnectionTable) {
+func (h Handler) enrichConnectionsWithLocalRedirect(table *observe.ConnectionTable) error {
 	if table == nil || len(table.Entries) == 0 || h.opts.Router == nil {
-		return
+		return nil
 	}
-	sets := h.consoleAddressSets()
 	rules := h.localRedirectDisplayRules()
 	if len(rules) == 0 {
-		return
+		return nil
+	}
+	sets, err := h.consoleAddressSets()
+	if err != nil {
+		return err
 	}
 	for i := range table.Entries {
 		if match := matchConnectionLocalRedirect(table.Entries[i], rules, sets); match != nil {
 			table.Entries[i].LocalRedirect = match
 		}
 	}
+	return nil
 }
 
-func (h Handler) enrichFirewallLogsWithAddressSets(logs []logstore.FirewallLogEntry) {
+func (h Handler) enrichFirewallLogsWithAddressSets(logs []logstore.FirewallLogEntry) error {
 	if len(logs) == 0 || h.opts.Router == nil {
-		return
+		return nil
 	}
-	sets := h.consoleAddressSets()
+	sets, err := h.consoleAddressSets()
+	if err != nil {
+		return err
+	}
 	if len(sets) == 0 {
-		return
+		return nil
 	}
 	ruleRefs := h.firewallRuleDestinationSetRefs()
 	for i := range logs {
@@ -93,6 +101,7 @@ func (h Handler) enrichFirewallLogsWithAddressSets(logs []logstore.FirewallLogEn
 			})
 		}
 	}
+	return nil
 }
 
 func matchConnectionLocalRedirect(entry observe.ConnectionEntry, rules []localRedirectDisplayRule, sets map[string]*consoleAddressSet) *observe.LocalRedirect {
@@ -201,16 +210,25 @@ func (h Handler) firewallRuleDestinationSetRefs() map[string][]string {
 	return out
 }
 
-func (h Handler) consoleAddressSets() map[string]*consoleAddressSet {
+func (h Handler) consoleAddressSets() (map[string]*consoleAddressSet, error) {
 	if h.opts.Router == nil {
-		return nil
+		return nil, nil
 	}
-	statuses := h.objectStatusMap()
-	out := map[string]*consoleAddressSet{}
+	var requested []api.Resource
 	for _, resource := range h.opts.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPAddressSet" {
-			continue
+		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "IPAddressSet" {
+			requested = append(requested, resource)
 		}
+	}
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	statuses, err := h.objectStatusMap()
+	if err != nil {
+		return nil, fmt.Errorf("address set status: %w", err)
+	}
+	out := map[string]*consoleAddressSet{}
+	for _, resource := range requested {
 		spec, err := resource.IPAddressSetSpec()
 		if err != nil {
 			continue
@@ -231,23 +249,23 @@ func (h Handler) consoleAddressSets() map[string]*consoleAddressSet {
 		out[resource.Metadata.Name] = set
 		out["IPAddressSet/"+resource.Metadata.Name] = set
 	}
-	return out
+	return out, nil
 }
 
-func (h Handler) objectStatusMap() map[string]map[string]any {
+func (h Handler) objectStatusMap() (map[string]map[string]any, error) {
 	out := map[string]map[string]any{}
 	lister, ok := h.opts.Store.(routerstate.ObjectStatusLister)
 	if !ok {
-		return out
+		return out, nil
 	}
 	resources, err := lister.ListObjectStatuses()
 	if err != nil {
-		return out
+		return nil, err
 	}
-	for _, resource := range h.filterStaleObjectStatuses(resources) {
+	for _, resource := range resources {
 		out[resource.APIVersion+"/"+resource.Kind+"/"+resource.Name] = resource.Status
 	}
-	return out
+	return out, nil
 }
 
 func (s *consoleAddressSet) addAddress(value string) {

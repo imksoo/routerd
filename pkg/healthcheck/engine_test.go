@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 )
 
 type mapStore map[string]map[string]any
@@ -86,96 +85,71 @@ func TestProbeTCPInvalidSourceAddress(t *testing.T) {
 
 func TestResolveSpecSourceInterfaceResourceNames(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "ds-lite"},
-			Spec:     api.DSLiteTunnelSpec{TunnelName: "ds-routerd"},
-		},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "em0"}, Spec: api.InterfaceSpec{IfName: "em1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg"}, Spec: api.WireGuardInterfaceSpec{IfName: "wg-native"}},
 	}}}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "lan"}).SourceInterface; got != "ens19" {
-		t.Fatalf("Interface sourceInterface resolved to %q", got)
-	}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "ds-lite"}).SourceInterface; got != "ds-routerd" {
-		t.Fatalf("DSLite sourceInterface resolved to %q", got)
-	}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "eth-test"}).SourceInterface; got != "eth-test" {
-		t.Fatalf("raw sourceInterface resolved to %q", got)
+	for _, tc := range []struct {
+		spec api.HealthCheckSpec
+		want string
+	}{
+		{api.HealthCheckSpec{Interface: "wan"}, "em0"},
+		{api.HealthCheckSpec{SourceInterface: "wan"}, "em0"},
+		{api.HealthCheckSpec{Interface: "ds-lite"}, "ds-routerd"},
+		{api.HealthCheckSpec{Interface: "wg"}, "wg-native"},
+		{api.HealthCheckSpec{SourceInterface: "eth-test"}, "eth-test"},
+		{api.HealthCheckSpec{}, ""},
+	} {
+		got, err := ResolveSpecForResource(router, "check", tc.spec)
+		if err != nil || got.SourceInterface != tc.want || got.FwMark != 0 {
+			t.Fatalf("source binding %+v => %+v, %v; want %q", tc.spec, got, err, tc.want)
+		}
 	}
 }
 
 func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "balanced"},
-			Spec: api.EgressRoutePolicySpec{Mode: "hash", Candidates: []api.EgressRoutePolicyCandidate{{
-				Name: "balanced",
-				Targets: []api.EgressRoutePolicyTarget{
-					{Name: "a", Interface: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-a"},
-				},
-			}}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "hgw", Interface: "wan", Mark: 0x116, HealthCheck: "internet-hgw"},
-			}},
-		},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{{Interface: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-a"}}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Mark: 0x116, HealthCheck: "internet-hgw"}}}},
 	}}}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).FwMark; got != 0x110 {
-		t.Fatalf("route set target fwmark = 0x%x, want 0x110", got)
+	for _, tc := range []struct {
+		name, source string
+		mark         int
+	}{
+		{"internet-a", "ds-lite-a", 0x110},
+		{"internet-hgw", "wan", 0x116},
+	} {
+		got, err := ResolveSpecForResource(router, tc.name, api.HealthCheckSpec{})
+		if err != nil || got.FwMark != tc.mark || got.SourceInterface != tc.source {
+			t.Fatalf("%s binding = %+v, %v", tc.name, got, err)
+		}
 	}
-	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).FwMark; got != 0x116 {
-		t.Fatalf("default route candidate fwmark = 0x%x, want 0x116", got)
-	}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).SourceInterface; got != "ds-lite-a" {
-		t.Fatalf("route set target sourceInterface = %q, want ds-lite-a", got)
-	}
-	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).SourceInterface; got != "wan" {
-		t.Fatalf("default route candidate sourceInterface = %q, want wan", got)
-	}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}).FwMark; got != 0x999 {
-		t.Fatalf("explicit fwmark = 0x%x, want 0x999", got)
+	if _, err := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}); err == nil {
+		t.Fatal("configured mark silently overrode actual referenced path")
 	}
 }
 
-func TestControllerProbeUsesResolvedSourceInterface(t *testing.T) {
-	store := mapStore{}
-	seen := make(chan api.HealthCheckSpec, 1)
-	controller := &Controller{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "lan"},
-				Spec:     api.InterfaceSpec{IfName: "ens19"},
-			},
-		}}},
-		Bus:   bus.New(),
-		Store: store,
-		Now:   fixedNow(),
-		Probe: func(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
-			seen <- spec
-			return ProbeResult{OK: true}
-		},
-	}
-	resource := healthResource("internet")
-	resource.Spec = api.HealthCheckSpec{Target: "1.1.1.1", SourceInterface: "lan"}
-	spec, err := resource.HealthCheckSpec()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := controller.ProbeOnce(context.Background(), resource, spec); err != nil {
-		t.Fatal(err)
-	}
-	got := <-seen
-	if got.SourceInterface != "ens19" {
-		t.Fatalf("probe sourceInterface = %q", got.SourceInterface)
+func TestResolveSpecRejectsConflictingReferencedProbePaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		mark         int
+	}{
+		{"different interfaces", "wan-b", 0x110},
+		{"different marks", "wan-a", 0x111},
+		{"marked and unmarked paths", "wan-a", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "paths"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{
+					{Interface: "wan-a", Mark: 0x110, HealthCheck: "check"},
+					{Interface: tc.source, Mark: tc.mark, HealthCheck: "check"},
+				}}},
+			}}}
+			if _, err := ResolveSpecWithStoreForResource(router, nil, "check", api.HealthCheckSpec{}); err == nil {
+				t.Fatal("incompatible paths produced an unbound management probe")
+			}
+		})
 	}
 }
 
@@ -202,82 +176,6 @@ func TestProbeDNSSuccessAndFailure(t *testing.T) {
 	defer cancel()
 	if result := ProbeDNS(ctx, api.HealthCheckSpec{Target: host, Port: port}); result.OK {
 		t.Fatalf("dns failure result = %#v", result)
-	}
-}
-
-func TestThresholdSuppressesFlap(t *testing.T) {
-	store := mapStore{}
-	b := bus.New()
-	controller := &Controller{
-		Bus:   b,
-		Store: store,
-		Now:   fixedNow(),
-	}
-	resource := healthResource("internet")
-	spec := api.HealthCheckSpec{HealthyThreshold: 2, UnhealthyThreshold: 2}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhasePassing {
-		t.Fatalf("phase after one pass = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseHealthy {
-		t.Fatalf("phase after two passes = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseFailing {
-		t.Fatalf("phase after one failure = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseUnhealthy {
-		t.Fatalf("phase after two failures = %#v", status)
-	}
-	if got := b.Recent("routerd.healthcheck.internet.passed"); len(got) != 2 {
-		t.Fatalf("passed events = %d", len(got))
-	}
-	if got := b.Recent("routerd.healthcheck.internet.failed"); len(got) != 2 {
-		t.Fatalf("failed events = %d", len(got))
-	}
-}
-
-func TestStateMachineDefaultThresholds(t *testing.T) {
-	store := mapStore{}
-	controller := &Controller{Bus: bus.New(), Store: store, Now: fixedNow()}
-	resource := healthResource("internet")
-	spec := api.HealthCheckSpec{}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{OK: true}); err != nil {
-		t.Fatal(err)
-	}
-	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseHealthy || status["consecutivePassed"] != 1 {
-		t.Fatalf("healthy status = %#v", status)
-	}
-	for i := 0; i < 2; i++ {
-		if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseFailing {
-		t.Fatalf("phase before default unhealthy threshold = %#v", status)
-	}
-	if err := controller.applyResult(context.Background(), resource, spec, ProbeResult{}); err != nil {
-		t.Fatal(err)
-	}
-	status = store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if status["phase"] != PhaseUnhealthy || status["consecutiveFailed"] != 3 {
-		t.Fatalf("unhealthy status = %#v", status)
 	}
 }
 

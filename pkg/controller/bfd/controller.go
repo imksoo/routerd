@@ -4,10 +4,9 @@ package bfd
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -16,11 +15,12 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/subprocessio"
 )
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 }
 
 type CommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
@@ -37,13 +37,13 @@ type Controller struct {
 }
 
 type session struct {
-	BFDName    string
-	Address    string
-	LocalAddr  string
-	Interface  string
-	MinRxMS    int
-	MinTxMS    int
-	Multiplier int
+	BFDName    string `json:"bfdName"`
+	Address    string `json:"address"`
+	LocalAddr  string `json:"localAddress"`
+	Interface  string `json:"interface"`
+	MinRxMS    int    `json:"minRx"`
+	MinTxMS    int    `json:"minTx"`
+	Multiplier int    `json:"detectMultiplier"`
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
@@ -53,9 +53,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	sessions, byBFD, err := c.sessions()
 	if err != nil {
 		return err
-	}
-	if len(byBFD) == 0 {
-		return nil
 	}
 	if c.OS == "" {
 		c.OS = platform.CurrentOS()
@@ -71,7 +68,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		return nil
 	}
-	config := RenderFRRConfig(sessions)
 	configPath := c.configPath()
 	if c.DryRun {
 		for name, sessions := range byBFD {
@@ -86,25 +82,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		}
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
-		return err
-	}
-	run := c.runner()
-	if _, err := run(ctx, c.vtysh(), "-f", configPath); err != nil {
-		for name, sessions := range byBFD {
-			_ = c.saveStatus(name, "Degraded", sessions, nil, map[string]any{
-				"backend":    "frr-bfdd",
-				"applyWith":  "vtysh",
-				"configPath": configPath,
-				"error":      err.Error(),
-			})
-		}
-		return fmt.Errorf("apply FRR bfdd config: %w", err)
-	}
-	observed, observeErr := observeFRRBFD(ctx, run, c.vtysh())
+	observed, observeErr := c.reconcileNative(ctx, sessions)
 	for name, sessions := range byBFD {
 		phase := phaseForSessions(sessions, observed, observeErr)
 		extra := map[string]any{
@@ -117,10 +95,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			extra["error"] = observeErr.Error()
 		}
 		if err := c.saveStatus(name, phase, sessions, observed, extra); err != nil {
-			return err
+			return errors.Join(observeErr, err)
 		}
 	}
-	return nil
+	return observeErr
 }
 
 func (c Controller) sessions() ([]session, map[string][]session, error) {
@@ -161,7 +139,6 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 	}
 	var out []session
 	byBFD := map[string][]session{}
-	seenBFD := map[string]bool{}
 	addSessions := func(name string, spec api.BFDSpec) error {
 		endpoints, err := bfdPeerEndpoints(spec, bgpPeers, bgpRouters)
 		if err != nil {
@@ -187,33 +164,9 @@ func (c Controller) sessions() ([]session, map[string][]session, error) {
 			out = append(out, s)
 			byBFD[name] = append(byBFD[name], s)
 		}
-		seenBFD[name] = true
 		return nil
 	}
 	for name, spec := range bfdSpecs {
-		if err := addSessions(name, spec); err != nil {
-			return nil, nil, err
-		}
-	}
-	for peerName, peerSpec := range bgpPeers {
-		ref := strings.TrimSpace(peerSpec.BFD)
-		if ref == "" {
-			continue
-		}
-		kind, name, ok := strings.Cut(ref, "/")
-		if !ok || kind != "BFD" {
-			return nil, nil, fmt.Errorf("BGPPeer/%s spec.bfd must reference BFD/<name>, got %q", peerName, peerSpec.BFD)
-		}
-		if seenBFD[name] {
-			continue
-		}
-		spec, ok := bfdSpecs[name]
-		if !ok {
-			spec = api.BFDSpec{Peer: "BGPPeer/" + peerName}
-		}
-		if strings.TrimSpace(spec.Peer) == "" {
-			spec.Peer = "BGPPeer/" + peerName
-		}
 		if err := addSessions(name, spec); err != nil {
 			return nil, nil, err
 		}
@@ -362,30 +315,13 @@ func RenderFRRConfig(sessions []session) string {
 	var b strings.Builder
 	b.WriteString("bfd\n")
 	for _, s := range sessions {
-		b.WriteString(" peer " + s.Address)
-		if s.Interface != "" {
-			b.WriteString(" interface " + interfaceName(s.Interface))
-		} else {
-			b.WriteString(" multihop")
-			if s.LocalAddr != "" {
-				b.WriteString(" local-address " + s.LocalAddr)
-			}
-		}
-		b.WriteString("\n")
+		b.WriteString(" " + peerCommand(s) + "\n")
 		b.WriteString(fmt.Sprintf("  receive-interval %d\n", s.MinRxMS))
 		b.WriteString(fmt.Sprintf("  transmit-interval %d\n", s.MinTxMS))
 		b.WriteString(fmt.Sprintf("  detect-multiplier %d\n", s.Multiplier))
 		b.WriteString(" exit\n")
 	}
 	return b.String()
-}
-
-func interfaceName(ref string) string {
-	ref = strings.TrimSpace(ref)
-	if _, name, ok := strings.Cut(ref, "/"); ok {
-		return strings.TrimSpace(name)
-	}
-	return ref
 }
 
 func (c Controller) saveStatus(name, phase string, sessions []session, observed map[string]string, extra map[string]any) error {
@@ -395,7 +331,7 @@ func (c Controller) saveStatus(name, phase string, sessions []session, observed 
 	for _, s := range sessions {
 		state := "Unknown"
 		if observed != nil {
-			if value := strings.TrimSpace(observed[s.Address]); value != "" {
+			if value := strings.TrimSpace(observed[sessionKey(s)]); value != "" {
 				state = value
 			}
 		}
@@ -431,7 +367,7 @@ func phaseForSessions(sessions []session, observed map[string]string, err error)
 	}
 	up, down := 0, 0
 	for _, s := range sessions {
-		switch strings.ToLower(strings.TrimSpace(observed[s.Address])) {
+		switch strings.ToLower(strings.TrimSpace(observed[sessionKey(s)])) {
 		case "up":
 			up++
 		case "down":
@@ -448,62 +384,6 @@ func phaseForSessions(sessions []session, observed map[string]string, err error)
 	default:
 		return "Pending"
 	}
-}
-
-func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[string]string, error) {
-	out, err := run(ctx, vtysh, "-c", "show bfd peers json")
-	if err != nil {
-		return nil, err
-	}
-	return ParseFRRBFDPeersJSON(out), nil
-}
-
-func ParseFRRBFDPeersJSON(data []byte) map[string]string {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
-		return nil
-	}
-	out := map[string]string{}
-	walkBFDJSON(value, out)
-	return out
-}
-
-func walkBFDJSON(value any, out map[string]string) {
-	switch typed := value.(type) {
-	case map[string]any:
-		address := firstStringField(typed, "peer", "peerAddress", "peerAddr", "remote", "remoteAddress", "dst")
-		state := firstStringField(typed, "state", "status", "sessionState", "localState")
-		if address != "" && state != "" {
-			out[address] = normalizeBFDState(state)
-		}
-		for key, child := range typed {
-			if addr, err := netip.ParseAddr(strings.TrimSpace(key)); err == nil {
-				if childMap, ok := child.(map[string]any); ok {
-					state := firstStringField(childMap, "state", "status", "sessionState", "localState")
-					if state != "" {
-						out[addr.String()] = normalizeBFDState(state)
-					}
-				}
-			}
-			walkBFDJSON(child, out)
-		}
-	case []any:
-		for _, item := range typed {
-			walkBFDJSON(item, out)
-		}
-	}
-}
-
-func firstStringField(values map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(fmt.Sprint(values[key])); value != "" && value != "<nil>" {
-			if addr, err := netip.ParseAddr(value); err == nil {
-				return addr.String()
-			}
-			return value
-		}
-	}
-	return ""
 }
 
 func normalizeBFDState(value string) string {
@@ -554,5 +434,22 @@ func (c Controller) now() time.Time {
 }
 
 func defaultCommandRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	commandCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, name, args...)
+	cmd.WaitDelay = time.Second
+	stdout := subprocessio.NewCapture(subprocessio.StdoutLimit)
+	stderr := subprocessio.NewCapture(subprocessio.StderrLimit)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	if commandCtx.Err() != nil {
+		return nil, commandCtx.Err()
+	}
+	if limitErr := subprocessio.LimitError(stdout, stderr); limitErr != nil {
+		return nil, limitErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
 }

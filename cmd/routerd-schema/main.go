@@ -208,9 +208,21 @@ func controlOpenAPISchema() map[string]any {
 					"operationId": "getSAMEnrollmentTopology",
 					"parameters": []any{
 						pathParam("name", "SAMRRSet metadata.name selected by the enrollment policy."),
-						queryParam("claim", "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.", "string", ""),
-						queryParam("claimDigest", "Digest of the caller's current submitted claim. A mismatched or omitted digest returns only the RR fallback topology.", "string", ""),
-						queryParam("claimIdentityDigest", "Digest of client-authored claim material. A join-token policy authenticates it with JoinHMAC; it distinguishes an exact revoked identity, an empty admission store, and a different active identity before admission.", "string", ""),
+						map[string]any{
+							"name": "claim", "in": "query", "required": true,
+							"description": "Accepted SAMEnrollmentClaim resource reference used to authorize the topology snapshot.",
+							"schema":      map[string]any{"type": "string"},
+						},
+						map[string]any{
+							"name": "claimDigest", "in": "query", "required": true,
+							"description": "Digest of the caller's exact accepted claim. Missing or mismatched digests are rejected.",
+							"schema":      map[string]any{"type": "string"},
+						},
+						map[string]any{
+							"name": "claimIdentityDigest", "in": "query", "required": true,
+							"description": "Digest of client-authored claim material authenticated by JoinHMAC. It distinguishes this identity's revocation from a rotated same-name claim.",
+							"schema":      map[string]any{"type": "string"},
+						},
 					},
 					"responses": map[string]any{
 						"200":     responseRef("SAMEnrollmentTopologyGetResult"),
@@ -434,6 +446,14 @@ func resourceUnionSchema() map[string]any {
 }
 
 func resourceSchema(apiVersion, kind string, spec any) map[string]any {
+	specSchema := reflectedSchema(spec)
+	if kind == "DNSZone" {
+		// The published boundary must reject unavailable local signing too.
+		// The pinned reflector does not emit const tags for bool fields.
+		properties := specSchema["properties"].(map[string]any)
+		dnssec := properties["dnssec"].(map[string]any)["properties"].(map[string]any)
+		dnssec["enabled"].(map[string]any)["const"] = false
+	}
 	return map[string]any{
 		"type": "object",
 		"required": []string{
@@ -447,7 +467,7 @@ func resourceSchema(apiVersion, kind string, spec any) map[string]any {
 			"apiVersion": constString(apiVersion),
 			"kind":       constString(kind),
 			"metadata":   metadataSchema(),
-			"spec":       reflectedSchema(spec),
+			"spec":       specSchema,
 			"status": map[string]any{
 				"type":                 "object",
 				"additionalProperties": true,
@@ -555,14 +575,9 @@ func patchResourceWhenSchemas(value any) {
 }
 
 func metadataSchema() map[string]any {
-	return map[string]any{
-		"type":                 "object",
-		"required":             []string{"name"},
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"name": map[string]any{"type": "string", "minLength": 1},
-		},
-	}
+	schema := reflectedSchema(api.ObjectMeta{})
+	schema["properties"].(map[string]any)["name"].(map[string]any)["minLength"] = 1
+	return schema
 }
 
 func constString(value string) map[string]any {

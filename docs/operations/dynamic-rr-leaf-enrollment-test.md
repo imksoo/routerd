@@ -123,23 +123,16 @@ direct payload, a timeout, revocation, or an unattested response is not this
 state: it remains a normal degraded failure with its real diagnostic and
 configured exponential backoff.
 
-For the short-lived v20260822.2333 status shape that overwrote its original
-diagnostic with `direct-topology-refresh`, routerd makes one equivalent
-GET-only recovery probe. That migration probe never submits or re-admits a
-claim: an absent claim, an invalid response, or a transport failure returns to
-the normal diagnosed exponential-backoff path.
+Each topology GET requires the current claim digest and client-identity
+digest. The RR returns the digest of the exact accepted claim from which it
+projected the snapshot. A missing or different digest rejects the response;
+the client retains its previously valid RR fallback when that lease permits
+it. Deploy matching binaries throughout the enrollment domain at cutover.
 
-Each direct-topology GET carries a digest of the local current claim plus a
-client-identity digest. The RR echoes the digest of the exact accepted claim
-from which it projected the snapshot. A missing or different digest is never a
-direct-path authorization: the leaf discards any direct group and persists the
-RRSet only. An older RR can continue to serve ordinary RR topology but
-deliberately cannot permit automatic direct re-admission: only a current RR
-that understands `claimIdentityDigest` can give the unambiguous recovery
-response. Upgrade every RR in the peer domain before relying on automatic
-recovery after an RR clean boot. Conversely, an older leaf that does not send a
-digest receives an RR-only response from an upgraded RR, rather than losing its
-lease refresh.
+Topology GET is read-only. Admission and revocation atomically update the
+claim and durable nonce ledger, so a failed write cannot publish half a
+revocation or silently admit a replay after restart. An inconsistent stored
+claim and ledger produces an error; GET does not repair or backfill it.
 
 ## Optional Direct Leaf Path, With RR Fallback
 
@@ -382,6 +375,7 @@ joinNonce=<claim joinNonce>
 joinTimestamp=<claim joinTimestamp>
 tunnelAddress=<claim tunnelAddress>
 endpoint=<claim endpoint>
+directMesh=<true|false>
 mobility.ownedAddresses=<sorted comma-separated owned /32s>
 bgp.asn=<claim BGP ASN>
 bgp.routerID=<claim BGP router ID>

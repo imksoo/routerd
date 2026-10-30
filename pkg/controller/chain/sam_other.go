@@ -21,28 +21,32 @@ func defaultSAMGratuitousARPAnnouncer() samGratuitousARPAnnouncer {
 	return unsupportedSAMGratuitousARPAnnouncer{}
 }
 
-func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool, bool) (samProxyARPApplyResult, error) {
-	return samProxyARPApplyResult{}, nil
+func (unsupportedSAMProxyNeighborApplier) SetProxyARP(context.Context, string, bool, bool, func() error) (samProxyARPApplyResult, error) {
+	return samProxyARPApplyResult{}, fmt.Errorf("SAM capture not implemented on this OS")
+}
+
+func (unsupportedSAMProxyNeighborApplier) SetAcceptLocal(context.Context, string, bool, bool, func() error) (samProxyARPApplyResult, error) {
+	return samProxyARPApplyResult{}, fmt.Errorf("SAM capture not implemented on this OS")
 }
 
 func (unsupportedSAMProxyNeighborApplier) SetIPForwarding(context.Context, bool) error {
-	return nil
+	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
-func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string) error {
+func (unsupportedSAMProxyNeighborApplier) EnsureProxyNeighbor(context.Context, string, string, bool, func() error) error {
 	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
 func (unsupportedSAMProxyNeighborApplier) DeleteProxyNeighbor(context.Context, string, string) error {
-	return nil
+	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
-func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) (samOSAddressDeassignResult, error) {
-	return samOSAddressDeassignResult{}, nil
+func (unsupportedSAMProxyNeighborApplier) EnsureOSAddressAbsent(context.Context, string) error {
+	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
-func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction) error {
-	return nil
+func (unsupportedSAMProxyNeighborApplier) ReconcileForwardPaths(context.Context, []sam.CaptureAction, func(context.Context, string, bool) error) error {
+	return fmt.Errorf("SAM capture not implemented on this OS")
 }
 
 type unsupportedSAMGratuitousARPAnnouncer struct{}

@@ -27,45 +27,33 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 func groupResource() api.Resource {
 	r := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventGroup"}}
 	r.Metadata.Name = "edge"
-	r.Spec = mustSpec(api.EventGroupSpec{
+	r.Spec = api.EventGroupSpec{
 		NodeName:     "router06",
 		Listen:       api.EventGroupListen{Address: "10.99.0.6", Port: 8787},
 		ReplayWindow: "10m",
 		Auth:         api.EventGroupAuth{Mode: "hmac", SecretFile: "/var/lib/routerd/eventd/edge/secret"},
 		Retention:    api.EventGroupRetention{MaxEvents: 500, MaxAge: "24h"},
-	})
+	}
 	return r
 }
 
 func peerResource(name, groupRef, node string) api.Resource {
 	r := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FederationAPIVersion, Kind: "EventPeer"}}
 	r.Metadata.Name = name
-	r.Spec = mustSpec(api.EventPeerSpec{
+	r.Spec = api.EventPeerSpec{
 		GroupRef: groupRef,
 		NodeName: node,
 		Endpoint: "http://" + node + ":8787",
 		Types:    []string{"observed"},
-	})
+	}
 	return r
 }
 
 func samNodeSetResource(name string, nodes []api.SAMNodeSpec) api.Resource {
 	r := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.MobilityAPIVersion, Kind: "SAMNodeSet"}}
 	r.Metadata.Name = name
-	r.Spec = mustSpec(api.SAMNodeSetSpec{Nodes: nodes})
+	r.Spec = api.SAMNodeSetSpec{Nodes: nodes}
 	return r
-}
-
-func mustSpec(v any) map[string]any {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		panic(err)
-	}
-	return m
 }
 
 func TestReconcileDerivesPeersFromSAMNodeSet(t *testing.T) {
@@ -78,7 +66,7 @@ func TestReconcileDerivesPeersFromSAMNodeSet(t *testing.T) {
 	}
 	spec.NodeName = "router06"
 	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
-	group.Spec = mustSpec(spec)
+	group.Spec = spec
 	router := &api.Router{}
 	router.Spec.Resources = []api.Resource{
 		group,
@@ -118,7 +106,7 @@ func TestReconcileStaticEventPeerOverridesPeersFrom(t *testing.T) {
 		t.Fatalf("EventGroup spec: %v", err)
 	}
 	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/svnet1-nodes"}}
-	group.Spec = mustSpec(spec)
+	group.Spec = spec
 	override := peerResource("cloud01", "edge", "cloud01")
 	peerSpec, err := override.EventPeerSpec()
 	if err != nil {
@@ -126,7 +114,7 @@ func TestReconcileStaticEventPeerOverridesPeersFrom(t *testing.T) {
 	}
 	peerSpec.Endpoint = "http://override:8787"
 	peerSpec.Types = []string{"override"}
-	override.Spec = mustSpec(peerSpec)
+	override.Spec = peerSpec
 	router := &api.Router{}
 	router.Spec.Resources = []api.Resource{
 		group,
@@ -155,7 +143,7 @@ func TestReconcilePeersFromMissingRequiredIsPending(t *testing.T) {
 		t.Fatalf("EventGroup spec: %v", err)
 	}
 	spec.PeersFrom = []api.EventPeersSourceSpec{{Resource: "SAMNodeSet/missing"}}
-	group.Spec = mustSpec(spec)
+	group.Spec = spec
 	router := &api.Router{}
 	router.Spec.Resources = []api.Resource{group}
 	c := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(dir, "run"), StateDir: filepath.Join(dir, "state")}
@@ -249,7 +237,7 @@ func TestReconcileConfigDigestChangesOnlyWhenPeerConfigChanges(t *testing.T) {
 		t.Fatalf("EventPeer spec: %v", err)
 	}
 	peerSpec.Endpoint = "http://10.99.0.8:8787"
-	peer.Spec = mustSpec(peerSpec)
+	peer.Spec = peerSpec
 	router.Spec.Resources[1] = peer
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatalf("peer change Reconcile: %v", err)

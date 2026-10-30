@@ -338,9 +338,6 @@
               "original": {
                 "additionalProperties": false,
                 "properties": {
-                  "accounting": {
-                    "type": "boolean"
-                  },
                   "bytes": {
                     "type": "integer"
                   },
@@ -386,9 +383,6 @@
               "reply": {
                 "additionalProperties": false,
                 "properties": {
-                  "accounting": {
-                    "type": "boolean"
-                  },
                   "bytes": {
                     "type": "integer"
                   },
@@ -563,9 +557,6 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "accounting": {
-                "type": "boolean"
-              },
               "appCategory": {
                 "type": "string"
               },
@@ -990,6 +981,143 @@
               "name": {
                 "type": "string"
               },
+              "pdLease": {
+                "additionalProperties": false,
+                "properties": {
+                  "client": {
+                    "type": "string"
+                  },
+                  "conditions": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "lastTransitionTime": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "observedGeneration": {
+                          "type": "integer"
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "severity": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "configuredClientDUID": {
+                    "type": "string"
+                  },
+                  "configuredIAID": {
+                    "type": "integer"
+                  },
+                  "currentPrefix": {
+                    "type": "string"
+                  },
+                  "downstreamIfname": {
+                    "type": "string"
+                  },
+                  "duid": {
+                    "type": "string"
+                  },
+                  "duidText": {
+                    "type": "string"
+                  },
+                  "expectedDUID": {
+                    "type": "string"
+                  },
+                  "health": {
+                    "type": "string"
+                  },
+                  "iaid": {
+                    "type": "string"
+                  },
+                  "lastObservedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "lastPrefix": {
+                    "type": "string"
+                  },
+                  "lastReplyAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "leaseUpdatedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "preferredSeconds": {
+                    "type": "integer"
+                  },
+                  "prefixLength": {
+                    "type": "integer"
+                  },
+                  "previousPrefixes": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "expiresAt": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "prefix": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "prefix",
+                        "expiresAt"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "profile": {
+                    "type": "string"
+                  },
+                  "serverDUID": {
+                    "type": "string"
+                  },
+                  "snapshotUpdatedAt": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "t1Seconds": {
+                    "type": "integer"
+                  },
+                  "t2Seconds": {
+                    "type": "integer"
+                  },
+                  "uplinkIfname": {
+                    "type": "string"
+                  },
+                  "validSeconds": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
               "spec": true,
               "status": {
                 "type": "object"
@@ -1355,6 +1483,143 @@
             "name": {
               "type": "string"
             },
+            "pdLease": {
+              "additionalProperties": false,
+              "properties": {
+                "client": {
+                  "type": "string"
+                },
+                "conditions": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "lastTransitionTime": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "observedGeneration": {
+                        "type": "integer"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "configuredClientDUID": {
+                  "type": "string"
+                },
+                "configuredIAID": {
+                  "type": "integer"
+                },
+                "currentPrefix": {
+                  "type": "string"
+                },
+                "downstreamIfname": {
+                  "type": "string"
+                },
+                "duid": {
+                  "type": "string"
+                },
+                "duidText": {
+                  "type": "string"
+                },
+                "expectedDUID": {
+                  "type": "string"
+                },
+                "health": {
+                  "type": "string"
+                },
+                "iaid": {
+                  "type": "string"
+                },
+                "lastObservedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "lastPrefix": {
+                  "type": "string"
+                },
+                "lastReplyAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "leaseUpdatedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "phase": {
+                  "type": "string"
+                },
+                "preferredSeconds": {
+                  "type": "integer"
+                },
+                "prefixLength": {
+                  "type": "integer"
+                },
+                "previousPrefixes": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expiresAt": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "prefix": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "prefix",
+                      "expiresAt"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "profile": {
+                  "type": "string"
+                },
+                "serverDUID": {
+                  "type": "string"
+                },
+                "snapshotUpdatedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "t1Seconds": {
+                  "type": "integer"
+                },
+                "t2Seconds": {
+                  "type": "integer"
+                },
+                "uplinkIfname": {
+                  "type": "string"
+                },
+                "validSeconds": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
             "spec": true,
             "status": {
               "type": "object"
@@ -1386,13 +1651,38 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "bindingInterface": {
+                "type": "string"
+              },
+              "bindingMark": {
+                "type": "integer"
+              },
               "detail": {
+                "type": "string"
+              },
+              "durationMilliseconds": {
+                "type": "integer"
+              },
+              "failureKind": {
+                "type": "string"
+              },
+              "kind": {
                 "type": "string"
               },
               "name": {
                 "type": "string"
               },
+              "observedAt": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "protocol": {
+                "type": "string"
+              },
               "status": {
+                "type": "string"
+              },
+              "target": {
                 "type": "string"
               }
             },
@@ -1960,11 +2250,15 @@
             "resources"
           ],
           "type": "object"
+        },
+        "target": {
+          "type": "string"
         }
       },
       "required": [
         "apiVersion",
-        "kind"
+        "kind",
+        "target"
       ],
       "type": "object"
     },
@@ -2176,7 +2470,9 @@
       },
       "required": [
         "name",
-        "claimRef"
+        "claimRef",
+        "claimDigest",
+        "claimIdentityDigest"
       ],
       "type": "object"
     },
@@ -2438,8 +2734,15 @@
         "apiVersion": {
           "type": "string"
         },
+        "expiresAt": {
+          "format": "date-time",
+          "type": "string"
+        },
         "hostname": {
           "type": "string"
+        },
+        "infinite": {
+          "type": "boolean"
         },
         "interface": {
           "description": "Optional dnsmasq interface observed by the lease hook.",
@@ -2453,6 +2756,15 @@
         },
         "mac": {
           "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [

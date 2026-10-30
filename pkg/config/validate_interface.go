@@ -25,6 +25,10 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if spec.IfName == "" {
 			return true, fmt.Errorf("%s spec.ifname is required", res.ID())
 		}
+		if strings.ContainsAny(spec.IfName, " \t\r\n/\x00") {
+			return true, fmt.Errorf("%s spec.ifname contains invalid whitespace, slash, or NUL", res.ID())
+		}
+
 		if spec.MTU != 0 && (spec.MTU < 576 || spec.MTU > 9216) {
 			return true, fmt.Errorf("%s spec.mtu must be within 576-9216", res.ID())
 		}
@@ -46,6 +50,9 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		spec, err := res.BridgeSpec()
 		if err != nil {
 			return true, err
+		}
+		if targetOS == platform.OSLinux && spec.RSTP != nil && *spec.RSTP {
+			return true, fmt.Errorf("%s spec.rstp is unsupported on Linux; the managed kernel bridge supports STP and has no RSTP daemon owner", res.ID())
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
 		if strings.ContainsAny(ifname, " \t\n/") {
@@ -114,6 +121,19 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		for i, remote := range spec.Remotes {
 			if _, err := netip.ParseAddr(remote); err != nil {
 				return true, fmt.Errorf("%s spec.remotes[%d] must be an IP address", res.ID(), i)
+			}
+		}
+		if targetOS == platform.OSFreeBSD {
+			if spec.VNI == 16777215 {
+				return true, fmt.Errorf("%s VNI 16777215 is reserved as unconfigured by FreeBSD vxlan", res.ID())
+			}
+			remotes := map[netip.Addr]bool{}
+			for _, remote := range spec.Remotes {
+				address, _ := netip.ParseAddr(remote)
+				remotes[address.Unmap()] = true
+			}
+			if len(remotes) > 1 {
+				return true, fmt.Errorf("%s multiple unicast remotes are unsupported by FreeBSD vxlan; use a multicast group or separate VXLAN interfaces", res.ID())
 			}
 		}
 		if spec.MulticastGroup != "" {
@@ -338,12 +358,15 @@ func validateInterfaceResource(res api.Resource, targetOS platform.OS) (bool, er
 		if err != nil {
 			return true, err
 		}
+		if spec.Exclusive {
+			return true, fmt.Errorf("%s spec.exclusive is unsupported; IPv4StaticAddress preserves addresses owned by others", res.ID())
+		}
 		addr := spec.Address
 		if addr == "" {
 			return true, fmt.Errorf("%s spec.address is required", res.ID())
 		}
-		if _, err := netip.ParsePrefix(addr); err != nil {
-			return true, fmt.Errorf("%s spec.address is invalid: %w", res.ID(), err)
+		if prefix, err := netip.ParsePrefix(addr); err != nil || !prefix.Addr().Is4() {
+			return true, fmt.Errorf("%s spec.address must be an IPv4 CIDR", res.ID())
 		}
 		if spec.AllowOverlap && spec.AllowOverlapReason == "" {
 			return true, fmt.Errorf("%s spec.allowOverlapReason is required when allowOverlap is true", res.ID())

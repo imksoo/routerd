@@ -345,17 +345,31 @@ the only one that may provision cloud resources and run the representative
 The durable supervisor persists this state machine:
 
 ```text
-PRECHECK -> MUTATING -> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> DONE|FAILED
+PRECHECK -> STARTING -> MUTATING -> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> DONE|FAILED
 PRECHECK -> STAGING_ARMED -(unit restart)-> STOPPING -> CLEANING -> VERIFYING_ZERO -> REVOKING_TOKEN -> STAGING_DONE|FAILED
 ```
 
 The absolute UTC deadline is written before precheck and is not extended by a
 supervisor restart. Restart, disconnect, stale heartbeat, timeout, SIGINT,
 SIGTERM, or mutation failure all enter STOPPING. The supervisor terminates and
-waits for the entire mutation process group before cleanup. A per-run flock
-allows only one cleanup owner. Only a successful mutation followed by cleanup
+waits for the entire mutation process group before cleanup. A per-run flock is
+acquired before state, authentication or pinned-input changes and is held by the
+actual supervisor. Only a successful mutation followed by cleanup
 and exhaustive zero inventory reaches DONE; all other cleanly recovered paths
 remain FAILED.
+
+`STARTING` is durable before child creation. A private launch pipe admits the
+child's command only after its native process identity is recorded and fsynced.
+Recovery verifies boot identity, process birth and session before signaling with
+pidfds; a bare or reused PID/PGID is not authority. An unknown identity or missing
+stop acknowledgement retains the recovery state and prevents cleanup from racing
+a possible mutator. The standalone release-certification entry point uses this
+same supervisor; it has no second detached watchdog or cleanup owner.
+
+Effects consume the exact digest-checked pinned inputs. Changing the mutable
+source after admission cannot silently switch the contract used for mutation or
+cleanup. Service stop deadlines include the bounded stop, cleanup, inventory and
+revocation phases; a frontend disconnect does not end the recovery owner.
 
 Staging never constructs or executes the mutation subprocess. It deliberately
 exits after persisting `STAGING_ARMED`, so the boot-enabled unit must restart from
@@ -687,6 +701,10 @@ both production and staging runs, including a precheck failure. `DONE`,
 succeeds; a service restart in this phase retries only revocation, never a
 cleanup or paid mutation.
 
+A lost token-deletion reply is resolved by an authoritative token read. Confirmed
+absence completes revocation; read failure remains unknown and cannot become a
+successful terminal result.
+
 A failed mutation must not suppress recovery retries: an incomplete cleanup,
 inventory, or token revocation returns retryable exit 2, even when mutation
 already failed. Once recovery completes, the original failed qualification
@@ -844,6 +862,35 @@ mutation starts, cleanup and authoritative zero-inventory verification continue
 with bounded individual attempts and service-manager backoff for as long as
 necessary; stopping recovery at the admission estimate could leave a much
 larger leak. Review the final bill only after exhaustive zero cleanup.
+
+## Egress proxy lifetime and admission
+
+The run-confined IPv4 CONNECT proxy admits at most 16 active connections. That
+limit includes incomplete headers, DNS, TCP connection setup and established
+tunnels. An excess connection closes immediately; it creates neither a handler
+thread nor a resolver process. A slot becomes available only after its handler
+and any resolver child have exited.
+
+Headers have one 10-second deadline. DNS and all candidate TCP connections share
+a separate 10-second setup budget; tunnel writes have a 10-second bound and
+idle tunnels close after 60 seconds. OS name resolution runs in one owned Python
+child per admitted handler because `getaddrinfo` itself has no cancellation API.
+The resolver returns at most 32 public IPv4 addresses. Timeout or shutdown kills
+and waits for the resolver; it does not leave an uncancellable resolver thread.
+The child inherits the same systemd unit confinement and control group.
+
+Shutdown closes admission, cancels DNS/TCP setup, shuts down both sides of active
+tunnels and joins the non-daemon handlers. Only then does the executable publish
+`stopped`. Repeated stop signals share one shutdown worker. The tracked service's
+10-second stop limit and control-group kill remain the outer supervisor contract.
+Actual systemd confinement and target-host staging still require their existing
+isolated qualification; local socket/process tests do not establish those gates.
+
+Run the focused host-safe regressions with:
+
+```sh
+make check-routerd15-proxy-lifetime
+```
 
 ## Exact pre-paid staging procedure on the selected coordinator
 

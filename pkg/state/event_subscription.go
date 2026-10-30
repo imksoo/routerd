@@ -3,8 +3,10 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // SubscriptionRun is a persisted EventSubscriptionController processing record
@@ -89,20 +91,72 @@ func (s *SQLiteStore) MarkSubscriptionRunResult(subscription, eventID, status, d
 	if s.closed {
 		return errStoreClosed
 	}
+	if status != "succeeded" && status != "failed" {
+		return fmt.Errorf("invalid subscription run result %q", status)
+	}
 	completedAt := formatStateTime(s.now().UTC())
 	var genArg any
 	if dynamicGeneration > 0 {
 		genArg = dynamicGeneration
 	}
-	_, err := s.db.Exec(`
+	result, err := s.db.Exec(`
 		UPDATE event_subscription_runs
 		SET status = ?, completed_at = ?, dynamic_source = ?, dynamic_generation = ?, error = ?
-		WHERE subscription = ? AND event_id = ?
+		WHERE subscription = ? AND event_id = ? AND status = 'pending'
 	`, status, completedAt, nullableString(dynamicSource), genArg, nullableString(errMsg), subscription, eventID)
 	if err != nil {
 		return fmt.Errorf("mark subscription run result: %w", err)
 	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return fmt.Errorf("subscription result %s/%s has no pending invocation", subscription, eventID)
+	}
 	return nil
+}
+
+// CommitSubscriptionResult publishes one plugin desired part and acknowledges
+// its entire triggering batch atomically. A crash cannot expose the part with
+// only some events deduplicated, or deduplicate an event without its part.
+func (s *SQLiteStore) CommitSubscriptionResult(ctx context.Context, subscription string, eventIDs []string, part DynamicConfigPartRecord) error {
+	if strings.TrimSpace(subscription) == "" || len(eventIDs) == 0 || part.Source == "" || part.Generation <= 0 {
+		return fmt.Errorf("subscription result requires subscription, events, and a desired part")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errStoreClosed
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC()
+	if _, err := tx.ExecContext(ctx, upsertDynamicConfigPartSQL, dynamicConfigPartArguments(part, now)...); err != nil {
+		return fmt.Errorf("commit subscription desired part: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, eventID := range eventIDs {
+		if eventID == "" || seen[eventID] {
+			return fmt.Errorf("subscription batch contains an empty or duplicate event ID")
+		}
+		seen[eventID] = true
+		result, err := tx.ExecContext(ctx, `UPDATE event_subscription_runs SET status='succeeded',completed_at=?,dynamic_source=?,dynamic_generation=?,error=NULL WHERE subscription=? AND event_id=? AND status='pending'`, formatStateTime(now), part.Source, part.Generation, subscription, eventID)
+		if err != nil {
+			return fmt.Errorf("commit subscription deduplication: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return fmt.Errorf("subscription result %s/%s has no pending invocation", subscription, eventID)
+		}
+	}
+	return tx.Commit()
 }
 
 // ListSubscriptionRuns returns all run rows for a subscription ordered by id.

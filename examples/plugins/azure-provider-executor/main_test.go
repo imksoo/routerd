@@ -20,10 +20,11 @@ import (
 // fakeAz is a FAKE az command runner: it records every argv and returns canned
 // show/list JSON. It NEVER calls real Azure. Tests assert against recorded calls.
 type fakeAz struct {
-	calls   [][]string
-	showOut []byte
-	listOut []byte
-	err     error
+	calls      [][]string
+	showOut    []byte
+	deleteDone bool
+	listOut    []byte
+	err        error
 }
 
 func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
@@ -38,6 +39,9 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 	}
 	switch verb {
 	case "show":
+		if f.deleteDone {
+			return cannedNICShow(false), nil
+		}
 		if f.showOut != nil {
 			return f.showOut, nil
 		}
@@ -50,6 +54,9 @@ func (f *fakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 			return cannedIPConfigList("ipcfg-mobility", "10.88.60.9"), nil
 		}
 		return cannedNICList("rg1", "nic1", "ipcfg-mobility", "10.88.60.9"), nil
+	}
+	if verb == "delete" {
+		f.deleteDone = true
 	}
 	// Mutating verbs return a benign (ignored) JSON body.
 	return []byte(`{}`), nil
@@ -136,7 +143,7 @@ func (f *routeFakeAz) run(ctx context.Context, argv ...string) ([]byte, error) {
 }
 
 func cannedRouteShow(address, nextHop string) []byte {
-	return []byte(fmt.Sprintf(`{"addressPrefix":%q,"nextHopIpAddress":%q}`, address, nextHop))
+	return []byte(fmt.Sprintf(`{"addressPrefix":%q,"nextHopType":"VirtualAppliance","nextHopIpAddress":%q}`, address, nextHop))
 }
 
 type seizeFakeAz struct {
@@ -314,23 +321,11 @@ func TestAzureLoginEnsuringRunnerLogsInWithManagedIdentityWhenAccountMissing(t *
 	}
 }
 
-func TestAzureLoginEnsuringRunnerRefreshesWhenCommandNeedsLogin(t *testing.T) {
+func TestAzureLoginEnsuringRunnerDoesNotReplayWriteWhenCommandNeedsLogin(t *testing.T) {
 	f := &authFakeAz{commandLoginErr: fmt.Errorf("ERROR: Please run 'az login' to setup account.")}
-	runner := azureLoginEnsuringRunner(f.run)
-
-	if _, err := runner(context.Background(), "network", "nic", "ip-config", "create", "--resource-group", "rg1", "--nic-name", "nic1"); err != nil {
-		t.Fatalf("runner returned error: %v", err)
-	}
-
-	got := joinedCalls(f.calls)
-	want := []string{
-		"account show",
-		"network nic ip-config create --resource-group rg1 --nic-name nic1",
-		"login --identity --allow-no-subscriptions",
-		"network nic ip-config create --resource-group rg1 --nic-name nic1",
-	}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	_, err := azureLoginEnsuringRunner(f.run)(t.Context(), "network", "nic", "ip-config", "create")
+	if err == nil || len(f.calls) != 2 {
+		t.Fatalf("write was refreshed/replayed: calls=%v err=%v", f.calls, err)
 	}
 }
 
@@ -488,7 +483,7 @@ func TestAssignExecuteIssuesIPConfigCreate(t *testing.T) {
 		t.Fatalf("execute assign should issue exactly one call, got %v", f.calls)
 	}
 	got := strings.Join(f.calls[0], " ")
-	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9"
+	want := "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1"
 	if got != want {
 		t.Fatalf("assign argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
@@ -523,8 +518,8 @@ func TestDispatchRecordsAzCallHistoryOnSuccess(t *testing.T) {
 func TestDispatchRecordsAzCallHistoryOnFailureWithoutDebugRateLimit(t *testing.T) {
 	f := &fakeAz{err: fmt.Errorf("exit status 1: stderr first\nstderr last")}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("want failed, got %q", res.Status.Status)
+	if res.Status.Status != statusOutcomeUnknown {
+		t.Fatalf("want unknown, got %q", res.Status.Status)
 	}
 	if res.Status.Observed["azCallCount"] != "1" {
 		t.Fatalf("observed = %+v, want azCallCount=1", res.Status.Observed)
@@ -621,15 +616,15 @@ func TestAssignExecuteFailsAzureAddressConflictWithoutSeizeParameter(t *testing.
 		t.Fatalf("observed = %+v, want stale holder identity", res.Status.Observed)
 	}
 	got := joinedCalls(f.calls)
-	if !containsCallWithoutQuery(got, "network nic list --resource-group rg1") {
+	if !containsCallWithoutQuery(got, "network nic list --resource-group rg1 --subscription s1") {
 		t.Fatalf("calls = %v, want holder rediscovery by NIC list", got)
 	}
-	if containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, normal assign must not delete stale holder", got)
 	}
 	createCount := 0
 	for _, call := range got {
-		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
+		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1" {
 			createCount++
 		}
 	}
@@ -641,8 +636,8 @@ func TestAssignExecuteFailsAzureAddressConflictWithoutSeizeParameter(t *testing.
 func TestAuthorizationFailureIsClassified(t *testing.T) {
 	f := &fakeAz{err: fmt.Errorf("AuthorizationFailed: The client does not have authorization to perform action")}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("want failed, got %q", res.Status.Status)
+	if res.Status.Status != statusOutcomeUnknown {
+		t.Fatalf("want unknown, got %q", res.Status.Status)
 	}
 	if res.Status.Observed["failureClass"] != "authorization" {
 		t.Fatalf("want authorization failure class, got %+v", res.Status.Observed)
@@ -653,7 +648,7 @@ func TestAuthorizationFailureIsClassified(t *testing.T) {
 }
 
 func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
-	f := &fakeAz{err: fmt.Errorf("fork/exec /usr/local/bin/az: permission denied")}
+	f := &fakeAz{err: &commandNotStartedError{fmt.Errorf("fork/exec /usr/local/bin/az: permission denied")}}
 	res := dispatchWith(reqSpec(actionAssignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusFailed {
 		t.Fatalf("want failed, got %q", res.Status.Status)
@@ -664,56 +659,53 @@ func TestToolchainPermissionFailureIsNotAuthorization(t *testing.T) {
 }
 
 func TestAssignRouteTableExecuteCreatesRoute(t *testing.T) {
-	f := &routeFakeAz{}
+	f := &routeFakeAz{showErr: fmt.Errorf("ResourceNotFound")}
 	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
-	if len(got) != 1 || got[0] != want {
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
+	if len(got) != 2 || got[1] != want {
 		t.Fatalf("calls = %v, want create route", got)
 	}
 }
 
-func TestAssignRouteTableCreateRetriesTransientFailure(t *testing.T) {
-	withNoRetrySleep(t)
-	callCount := 0
+func TestAssignRouteTableCreateDoesNotReplayAmbiguousWrite(t *testing.T) {
+	writes := 0
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
 		switch strings.Join(leadingTokens(argv), " ") {
+		case "network route-table route show":
+			return nil, fmt.Errorf("ResourceNotFound")
 		case "network route-table route create":
-			callCount++
-			if callCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: signal: killed")
-			}
-			return []byte(`{}`), nil
+			writes++
+			return nil, fmt.Errorf("request timed out after Azure accepted it")
 		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
+			return nil, fmt.Errorf("unexpected %v", argv)
 		}
 	}
-	res := dispatchWith(routeReqSpec(actionAssignRouteTableRoute, modeExecute), runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if callCount != 3 {
-		t.Fatalf("route create should retry twice before success, got %d calls", callCount)
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+
+	res := dispatchWith(spec, runner)
+	if res.Status.Status != statusOutcomeUnknown || writes != 1 {
+		t.Fatalf("ambiguous write repeated/acknowledged: writes=%d result=%+v", writes, res.Status)
 	}
 }
 
 func TestAssignSecondaryIPRouteTableStrategyCreatesRoute(t *testing.T) {
-	f := &routeFakeAz{}
+	f := &routeFakeAz{showErr: fmt.Errorf("ResourceNotFound")}
 	res := dispatchWith(routeReqSpec(actionAssignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254"
-	if got := strings.Join(f.calls[0], " "); got != want {
+	want := "network route-table route create --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --address-prefix 10.88.60.9/32 --next-hop-type VirtualAppliance --next-hop-ip-address 10.88.60.254 --subscription s1"
+	if got := strings.Join(f.calls[1], " "); got != want {
 		t.Fatalf("create route argv mismatch:\n got: %s\nwant: %s", got, want)
 	}
 }
 
 func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
-	f := &routeFakeAz{}
+	f := &routeFakeAz{showOut: cannedRouteShow("10.88.60.9/32", "10.88.60.253")}
 	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
@@ -721,35 +713,30 @@ func TestAssignRouteTableSeizeUpdatesExistingRoute(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254"
-	if len(got) != 1 || got[0] != want {
+	want := "network route-table route update --resource-group rg1 --route-table-name rt-cloudedge --name cloudedge-10-88-60-9-32 --set addressPrefix=10.88.60.9/32 nextHopType=VirtualAppliance nextHopIpAddress=10.88.60.254 --subscription s1"
+	if len(got) != 2 || got[1] != want {
 		t.Fatalf("calls = %v, want update route for seize", got)
 	}
 }
 
-func TestAssignRouteTableUpdateRetriesTransientFailure(t *testing.T) {
-	withNoRetrySleep(t)
-	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
-	spec.Parameters = map[string]string{"allowReassignment": "true"}
-	callCount := 0
+func TestAssignRouteTableUpdateDoesNotReplayAmbiguousWrite(t *testing.T) {
+	writes := 0
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
 		switch strings.Join(leadingTokens(argv), " ") {
+		case "network route-table route show":
+			return cannedRouteShow("10.88.60.9/32", "10.88.60.253"), nil
 		case "network route-table route update":
-			callCount++
-			if callCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: temporary failure")
-			}
-			return []byte(`{}`), nil
+			writes++
+			return nil, fmt.Errorf("request timed out after Azure accepted it")
 		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
+			return nil, fmt.Errorf("unexpected %v", argv)
 		}
 	}
+	spec := routeReqSpec(actionAssignRouteTableRoute, modeExecute)
+	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if callCount != 3 {
-		t.Fatalf("route update should retry twice before success, got %d calls", callCount)
+	if res.Status.Status != statusOutcomeUnknown || writes != 1 {
+		t.Fatalf("ambiguous write repeated/acknowledged: writes=%d result=%+v", writes, res.Status)
 	}
 }
 
@@ -760,8 +747,8 @@ func TestAssignRouteTableCreateExistingSameNextHopIsIdempotent(t *testing.T) {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route show ") {
-		t.Fatalf("calls = %v, want create then show", got)
+	if len(got) != 1 || !strings.Contains(got[0], " route show ") {
+		t.Fatalf("calls = %v, want authoritative show only", got)
 	}
 }
 
@@ -775,13 +762,13 @@ func TestAssignRouteTableCreateExistingForeignNextHopFails(t *testing.T) {
 		t.Fatalf("want failed, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) != 2 || !strings.Contains(got[0], " route create ") || !strings.Contains(got[1], " route show ") {
-		t.Fatalf("calls = %v, want create then show only", got)
+	if len(got) != 1 || !strings.Contains(got[0], " route show ") {
+		t.Fatalf("calls = %v, want authoritative show only", got)
 	}
 }
 
 func TestUnassignRouteTableMissingRouteSkips(t *testing.T) {
-	f := &routeFakeAz{showErr: fmt.Errorf("route not found")}
+	f := &routeFakeAz{showErr: fmt.Errorf("ResourceNotFound: route not found")}
 	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), f.run)
 	if res.Status.Status != statusSkipped {
 		t.Fatalf("want skipped, got %q err=%q", res.Status.Status, res.Status.Error)
@@ -816,29 +803,24 @@ func TestUnassignRouteTableDeletesOnlyMatchingNextHop(t *testing.T) {
 	}
 }
 
-func TestUnassignRouteTableDeleteRetriesTransientFailure(t *testing.T) {
-	withNoRetrySleep(t)
-	deleteCount := 0
+func TestUnassignRouteTableDeleteDoesNotReplayAmbiguousWrite(t *testing.T) {
+	writes := 0
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
 		switch strings.Join(leadingTokens(argv), " ") {
 		case "network route-table route show":
 			return cannedRouteShow("10.88.60.9/32", "10.88.60.254"), nil
 		case "network route-table route delete":
-			deleteCount++
-			if deleteCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: 429 too many requests")
-			}
-			return []byte(`{}`), nil
+			writes++
+			return nil, fmt.Errorf("request timed out after Azure accepted it")
 		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
+			return nil, fmt.Errorf("unexpected %v", argv)
 		}
 	}
-	res := dispatchWith(routeReqSpec(actionUnassignRouteTableRoute, modeExecute), runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded after retry, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if deleteCount != 3 {
-		t.Fatalf("route delete should retry twice before success, got %d calls", deleteCount)
+	spec := routeReqSpec(actionUnassignRouteTableRoute, modeExecute)
+
+	res := dispatchWith(spec, runner)
+	if res.Status.Status != statusOutcomeUnknown || writes != 1 {
+		t.Fatalf("ambiguous write repeated/acknowledged: writes=%d result=%+v", writes, res.Status)
 	}
 }
 
@@ -875,11 +857,11 @@ func TestAssignExecuteAllowReassignmentDeletesOldThenCreatesSelf(t *testing.T) {
 	gotNoQuery := joinedCallsWithoutQuery(f.calls)
 	want := []string{
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
-		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility",
-		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1",
+		"network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"network nic ip-config list --resource-group rg1 --nic-name nic-old",
+		"network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1",
 	}
 	if fmt.Sprint(gotNoQuery) != fmt.Sprint(want) {
 		t.Fatalf("seize calls mismatch:\n got: %v\nwant: %v", got, want)
@@ -901,10 +883,10 @@ func TestAssignExecuteAllowReassignmentFallsBackToInventoryDiscovery(t *testing.
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
 	got := joinedCalls(f.calls)
-	if len(got) < 3 || got[1] != "network nic list --resource-group rg1" {
+	if len(got) < 3 || got[1] != "network nic list --resource-group rg1 --subscription s1" {
 		t.Fatalf("calls = %v, want inventory discovery via nic list", got)
 	}
-	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, want delete of discovered old holder", got)
 	}
 }
@@ -922,7 +904,7 @@ func TestAssignExecuteAllowReassignmentParsesNestedPrivateIPAddress(t *testing.T
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
 	}
-	if !containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
+	if !containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility --subscription s1") {
 		t.Fatalf("calls = %v, want old holder discovered from nested privateIpAddress", joinedCalls(f.calls))
 	}
 }
@@ -945,50 +927,27 @@ func TestAssignExecuteAllowReassignmentIdempotentWhenSelfAlreadyHolds(t *testing
 	}
 }
 
-func TestAssignExecuteAllowReassignmentRetriesAfterRemoveSucceededAddFailed(t *testing.T) {
-	first := newSeizeFakeAz()
-	first.createErr = fmt.Errorf("injected create failure")
+func TestSeizeAddFailureRetainsDisplacedFactsAsUnknown(t *testing.T) {
+	withNoRetrySleep(t)
+	f := newSeizeFakeAz()
+	f.createErr = fmt.Errorf("injected failure")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
-	res := dispatchWith(spec, first.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("first attempt should fail at create, got %q", res.Status.Status)
-	}
-	if first.oldHolds {
-		t.Fatal("old holder should have been removed before create failure")
-	}
-
-	retry := newSeizeFakeAz()
-	retry.oldHolds = false
-	res = dispatchWith(spec, retry.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("retry should add self after old removal, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if !containsCallWithoutQuery(joinedCalls(retry.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
-		t.Fatalf("retry calls = %v, want create self", joinedCalls(retry.calls))
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusOutcomeUnknown || f.oldHolds || res.Status.Observed["displacedIPConfigDeleted"] != "true" || res.Status.Observed["displacedNIC"] != "nic-old" {
+		t.Fatalf("partial seizure lost recovery facts: result=%+v old=%v", res.Status, f.oldHolds)
 	}
 }
 
-func TestAssignExecuteAllowReassignmentVerifyFailureRetriesToSelfPresent(t *testing.T) {
+func TestSeizeVerificationFailureRetainsDisplacedFactsAsUnknown(t *testing.T) {
 	withNoRetrySleep(t)
-	first := newSeizeFakeAz()
-	first.verifyShowErr = fmt.Errorf("injected verify failure")
+	f := newSeizeFakeAz()
+	f.verifyShowErr = fmt.Errorf("injected failure")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
-	res := dispatchWith(spec, first.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("first attempt should fail at verify, got %q", res.Status.Status)
-	}
-	if !first.selfHolds {
-		t.Fatal("self should hold IP after create even if verify failed")
-	}
-
-	retry := newSeizeFakeAz()
-	retry.oldHolds = false
-	retry.selfHolds = true
-	res = dispatchWith(spec, retry.run)
-	if res.Status.Status != statusSucceeded || res.Status.Observed["seizeAlreadyPresent"] != "true" {
-		t.Fatalf("retry should converge from self-present state, status=%q observed=%+v err=%q", res.Status.Status, res.Status.Observed, res.Status.Error)
+	res := dispatchWith(spec, f.run)
+	if res.Status.Status != statusOutcomeUnknown || f.oldHolds || res.Status.Observed["displacedIPConfigDeleted"] != "true" || res.Status.Observed["displacedNIC"] != "nic-old" {
+		t.Fatalf("partial seizure lost recovery facts: result=%+v old=%v", res.Status, f.oldHolds)
 	}
 }
 
@@ -1011,89 +970,55 @@ func TestAssignExecuteAllowReassignmentWaitsForEventualSelfAndOldVisibility(t *t
 	if countCall(got, showSelf) < 4 {
 		t.Fatalf("calls = %v, want initial show plus repeated self verify", got)
 	}
-	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old"
+	oldList := "network nic ip-config list --resource-group rg1 --nic-name nic-old --subscription s1"
 	if countCallWithoutQuery(got, oldList) < 3 {
 		t.Fatalf("calls = %v, want holder discovery plus repeated old release verify", got)
 	}
 }
 
-func TestAssignExecuteAllowReassignmentDeleteNotFoundIsIdempotent(t *testing.T) {
+func TestSeizeDeleteNotFoundCannotAuthorizeCreate(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.deleteErr = fmt.Errorf("ResourceNotFound: ip configuration could not be found")
+	f.deleteErr = fmt.Errorf("ResourceNotFound: IP config not found")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
-	spec.Target["displacedResourceGroup"] = "rg1"
-	spec.Target["displacedNicName"] = "nic-old"
-	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
 	res := dispatchWith(spec, f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("delete not-found should be idempotent, got %q err=%q", res.Status.Status, res.Status.Error)
+	if res.Status.Status != statusOutcomeUnknown || countCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") != 0 {
+		t.Fatalf("unconfirmed delete followed by create: %+v %v", res.Status, f.calls)
 	}
 }
 
-func TestAssignExecuteAllowReassignmentDeleteFailureIsRetriedLater(t *testing.T) {
+func TestSeizeDeletePermissionFailureCannotAuthorizeCreate(t *testing.T) {
 	f := newSeizeFakeAz()
-	f.deleteErr = fmt.Errorf("AuthorizationFailed: missing write permission on old NIC")
+	f.deleteErr = fmt.Errorf("AuthorizationFailed")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
-	spec.Target["displacedResourceGroup"] = "rg1"
-	spec.Target["displacedNicName"] = "nic-old"
-	spec.Target["displacedIpConfigName"] = "ipcfg-mobility"
 	res := dispatchWith(spec, f.run)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("delete permission failure should fail hard, got %q", res.Status.Status)
-	}
-	if !f.oldHolds {
-		t.Fatal("old holder should remain when delete fails before removal")
-	}
-	if containsCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9") {
-		t.Fatalf("calls = %v, must not create self after old delete failed", joinedCalls(f.calls))
+	if res.Status.Status != statusOutcomeUnknown || countCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") != 0 {
+		t.Fatalf("unconfirmed delete followed by create: %+v %v", res.Status, f.calls)
 	}
 }
 
-func TestAssignExecuteAllowReassignmentCreateAlreadyExistsVerifiesSelf(t *testing.T) {
+func TestSeizeCreateExistingReplyDoesNotTriggerAnotherWrite(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false
-	f.createErr = fmt.Errorf("AlreadyExists: IP configuration already exists")
-	f.alreadyExistsRevealsSelf = true
+	f.createErr = fmt.Errorf("AlreadyExists")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("already-exists self verify should converge, got %q err=%q message=%q", res.Status.Status, res.Status.Error, res.Status.Message)
-	}
-	if res.Status.Observed["seizeAlreadyPresent"] != "true" {
-		t.Fatalf("observed = %+v, want already-present convergence", res.Status.Observed)
+	if res.Status.Status != statusOutcomeUnknown || countCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") != 1 || f.deleteCount != 0 {
+		t.Fatalf("unconfirmed create led to another write: %+v %v", res.Status, f.calls)
 	}
 }
 
-func TestAssignExecuteAllowReassignmentConflictRediscovery(t *testing.T) {
+func TestSeizeCreateConflictReplyDoesNotTriggerAnotherWrite(t *testing.T) {
 	f := newSeizeFakeAz()
 	f.oldHolds = false
-	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: private IP address is in use")
-	f.createErrOnce = true
-	f.conflictRevealsOld = true
+	f.createErr = fmt.Errorf("PrivateIPAddressIsInUse: conflict")
 	spec := reqSpec(actionAssignSecondaryIP, modeExecute)
 	spec.Parameters = map[string]string{"allowReassignment": "true"}
 	res := dispatchWith(spec, f.run)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("conflict rediscovery should delete holder and retry create, got status=%q message=%q err=%q", res.Status.Status, res.Status.Message, res.Status.Error)
-	}
-	got := joinedCalls(f.calls)
-	if !containsCallWithoutQuery(got, "network nic ip-config delete --resource-group rg1 --nic-name nic-old --name ipcfg-mobility") {
-		t.Fatalf("calls = %v, want delete after rediscovery", got)
-	}
-	createCount := 0
-	for _, call := range got {
-		if call == "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9" {
-			createCount++
-		}
-	}
-	if createCount != 2 {
-		t.Fatalf("calls = %v, want create attempted twice around conflict", got)
-	}
-	if !containsCallWithoutQuery(got, "network nic ip-config list --resource-group rg1 --nic-name nic-old") {
-		t.Fatalf("calls = %v, want displaced verify after conflict retry", got)
+	if res.Status.Status != statusOutcomeUnknown || countCallWithoutQuery(joinedCalls(f.calls), "network nic ip-config create --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --private-ip-address 10.88.60.9 --subscription s1") != 1 || f.deleteCount != 0 {
+		t.Fatalf("unconfirmed create led to another write: %+v %v", res.Status, f.calls)
 	}
 }
 
@@ -1189,23 +1114,23 @@ func TestEnsureForwardingDisabledMissingPriorErrors(t *testing.T) {
 }
 
 func TestUnassignExecuteDeletesIPConfig(t *testing.T) {
-	f := &fakeAz{}
+	f := &fakeAz{showOut: cannedNICShowWithConfig(false, "ipcfg-mobility", "10.88.60.9")}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
 	if res.Status.Status != statusSucceeded {
 		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
 	}
-	if len(f.calls) != 2 {
+	if len(f.calls) != 3 {
 		t.Fatalf("execute unassign should delete and verify absence, got %v", f.calls)
 	}
 	gotNoQuery := joinedCallsWithoutQuery(f.calls)
 	want := []string{
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
+		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility --subscription s1",
 		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
 	}
-	if gotNoQuery[0] != want[0] {
+	if gotNoQuery[1] != want[0] {
 		t.Fatalf("unassign argv mismatch:\n got: %s\nwant: %s", gotNoQuery[0], want[0])
 	}
-	if gotNoQuery[1] != want[1] {
+	if gotNoQuery[2] != want[1] {
 		t.Fatalf("unassign verify argv mismatch:\n got: %s\nwant: %s", gotNoQuery[1], want[1])
 	}
 	if strings.Contains(res.Status.Message, "/32") {
@@ -1234,83 +1159,24 @@ func TestUnassignExecuteSucceedsWhenIPConfigAlreadyAbsent(t *testing.T) {
 	if !strings.Contains(res.Status.Message, "already absent") {
 		t.Fatalf("message = %q, want already absent", res.Status.Message)
 	}
-	if callCount != 2 {
-		t.Fatalf("expected delete+show fallback calls, got %d", callCount)
+	if callCount != 1 {
+		t.Fatalf("expected observation only, got %d", callCount)
 	}
 }
 
-func TestUnassignExecuteDeletesWhenDeleteReturnsNotFound(t *testing.T) {
-	callCount := 0
-	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
-		callCount++
-		joined := strings.Join(leadingTokens(argv), " ")
-		switch joined {
-		case "network nic ip-config delete":
-			return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
-		case "network nic show":
-			if callCount > 2 {
-				return cannedNICShow(false), nil
-			}
-			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
-		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
-		}
-	}
-	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if callCount != 4 {
-		t.Fatalf("expected delete+show+delete+verify calls, got %d", callCount)
-	}
-	if !strings.Contains(res.Status.Message, "unassigned") {
-		t.Fatalf("message = %q, want unassigned", res.Status.Message)
+func TestUnassignExecutePreservesSameNameDifferentAddress(t *testing.T) {
+	f := &fakeAz{showOut: cannedNICShowWithConfig(false, "ipcfg-mobility", "198.51.100.9")}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
+	if len(f.calls) != 1 || f.deleteDone {
+		t.Fatalf("foreign IP config mutated: %+v %v", res.Status, f.calls)
 	}
 }
 
-func TestUnassignExecuteFallsBackToDeleteWhenShowContainsAddress(t *testing.T) {
-	withNoRetrySleep(t)
-	callCount := 0
-	var calls []string
-	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
-		callCount++
-		calls = append(calls, strings.Join(argv, " "))
-		joined := strings.Join(leadingTokens(argv), " ")
-		switch joined {
-		case "network nic ip-config delete":
-			if callCount == 1 {
-				return nil, fmt.Errorf("azure CLI failed: ResourceNotFound")
-			}
-			return []byte(`{}`), nil
-		case "network nic show":
-			if callCount > 3 {
-				return cannedNICShow(false), nil
-			}
-			return cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9"), nil
-		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
-		}
-	}
-	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if callCount != 4 {
-		t.Fatalf("expected delete + show + delete by discovered ip-config name + verify, got=%d", callCount)
-	}
-	want := []string{
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
-		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-renamed",
-		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-	}
-	if len(calls) != len(want) {
-		t.Fatalf("calls = %v, want length %d", calls, len(want))
-	}
-	for i := range want {
-		if stripQueryFromCall(calls[i]) != want[i] {
-			t.Fatalf("unassign calls mismatch at %d:\n got=%q\nwant=%q", i, calls[i], want[i])
-		}
+func TestUnassignExecutePreservesDifferentlyNamedAddress(t *testing.T) {
+	f := &fakeAz{showOut: cannedNICShowWithConfig(false, "ipcfg-renamed", "10.88.60.9")}
+	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), f.run)
+	if len(f.calls) != 1 || f.deleteDone {
+		t.Fatalf("foreign IP config mutated: %+v %v", res.Status, f.calls)
 	}
 }
 
@@ -1340,54 +1206,26 @@ func TestUnassignExecuteFailsWhenAddressStillPresentAfterDelete(t *testing.T) {
 		}
 	}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
-	if res.Status.Status != statusFailed {
-		t.Fatalf("want failed while address remains present, got %q", res.Status.Status)
+	if res.Status.Status != statusOutcomeUnknown {
+		t.Fatalf("want unknown while address remains present, got %q", res.Status.Status)
 	}
 	if !strings.Contains(res.Status.Error, "still holds address") {
 		t.Fatalf("error = %q, want still holds address", res.Status.Error)
 	}
 }
 
-func TestUnassignExecuteRetriesDeleteWithRetryableError(t *testing.T) {
-	withNoRetrySleep(t)
-	callCount := 0
-	var calls []string
+func TestUnassignDeleteErrorNeverRetries(t *testing.T) {
+	writes := 0
 	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
-		callCount++
-		calls = append(calls, strings.Join(argv, " "))
-		joined := strings.Join(leadingTokens(argv), " ")
-		switch joined {
-		case "network nic ip-config delete":
-			if callCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: signal: killed")
-			}
-			return []byte(`{}`), nil
-		case "network nic show":
-			return cannedNICShow(false), nil
-		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
+		if strings.Join(leadingTokens(argv), " ") == "network nic show" {
+			return cannedNICShowWithConfig(false, "ipcfg-mobility", "10.88.60.9"), nil
 		}
+		writes++
+		return nil, fmt.Errorf("write timeout")
 	}
 	res := dispatchWith(reqSpec(actionUnassignSecondaryIP, modeExecute), runner)
-	if res.Status.Status != statusSucceeded {
-		t.Fatalf("want succeeded, got %q err=%q", res.Status.Status, res.Status.Error)
-	}
-	if callCount != 4 {
-		t.Fatalf("delete retryable should attempt 3 deletes and one verify, got=%d", callCount)
-	}
-	want := []string{
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
-		"network nic ip-config delete --resource-group rg1 --nic-name nic1 --name ipcfg-mobility",
-		"network nic show --ids /subscriptions/s1/resourceGroups/rg1/providers/Microsoft.Network/networkInterfaces/nic1",
-	}
-	if len(calls) != len(want) {
-		t.Fatalf("calls = %v, want length %d", calls, len(want))
-	}
-	for i := range want {
-		if stripQueryFromCall(calls[i]) != want[i] {
-			t.Fatalf("unassign calls mismatch at %d:\n got=%q\nwant=%q", i, calls[i], want[i])
-		}
+	if res.Status.Status != statusOutcomeUnknown || writes != 1 {
+		t.Fatalf("delete repeated: %+v writes=%d", res.Status, writes)
 	}
 }
 
@@ -1407,7 +1245,7 @@ func TestListIPConfigsUsesQueryAndRetriesTransientFailure(t *testing.T) {
 		}
 		return []byte(`[]`), nil
 	}
-	configs, err := listIPConfigs(context.Background(), runner, "rg1", "nic1")
+	configs, err := listIPConfigs(context.Background(), runner, "rg1", "nic1", "s1")
 	if err != nil {
 		t.Fatalf("listIPConfigs should retry and succeed, got err=%v", err)
 	}
@@ -1422,67 +1260,21 @@ func TestListIPConfigsUsesQueryAndRetriesTransientFailure(t *testing.T) {
 	}
 }
 
-func TestCreateIPConfigRetriesTransientFailure(t *testing.T) {
-	withNoRetrySleep(t)
-	callCount := 0
-	var calls []string
-	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
-		callCount++
-		calls = append(calls, strings.Join(argv, " "))
-		joined := strings.Join(leadingTokens(argv), " ")
-		switch joined {
-		case "network nic ip-config create":
-			if callCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: 429 too many requests")
-			}
-			return []byte(`{}`), nil
-		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
-		}
-	}
-
-	config := nicTarget{
-		resourceGroup: "rg1",
-		nicName:       "nic1",
-		ipConfigName:  "ipcfg-mobility",
-		address:       "10.88.60.9",
-	}
-	err := createIPConfig(context.Background(), runner, config)
-	if err != nil {
-		t.Fatalf("createIPConfig should succeed after retries, got err=%v calls=%v", err, calls)
-	}
-
-	if callCount != 3 {
-		t.Fatalf("ip-config create should retry twice before success, got %d calls (%v)", callCount, calls)
+func TestCreateIPConfigMakesOneWriteAttempt(t *testing.T) {
+	calls := 0
+	runner := func(context.Context, ...string) ([]byte, error) { calls++; return nil, fmt.Errorf("ambiguous write") }
+	err := createIPConfig(t.Context(), runner, nicTarget{subscriptionID: "s1", resourceGroup: "rg1", nicName: "nic1", ipConfigName: "ipcfg", address: "10.0.0.1"})
+	if err == nil || calls != 1 {
+		t.Fatalf("write replayed: calls=%d err=%v", calls, err)
 	}
 }
 
-func TestDeleteIPConfigRetriesTransientFailure(t *testing.T) {
-	withNoRetrySleep(t)
-	callCount := 0
-	var calls []string
-	runner := func(ctx context.Context, argv ...string) ([]byte, error) {
-		callCount++
-		calls = append(calls, strings.Join(argv, " "))
-		joined := strings.Join(leadingTokens(argv), " ")
-		switch joined {
-		case "network nic ip-config delete":
-			if callCount < 3 {
-				return nil, fmt.Errorf("azure CLI failed: temporary failure")
-			}
-			return []byte(`{}`), nil
-		default:
-			return nil, fmt.Errorf("unexpected call: %v", argv)
-		}
-	}
-
-	err := deleteIPConfig(context.Background(), runner, ipConfigHolder{resourceGroup: "rg1", nicName: "nic1", ipConfigName: "ipcfg-mobility"})
-	if err != nil {
-		t.Fatalf("deleteIPConfig should succeed after retries, got err=%v calls=%v", err, calls)
-	}
-
-	if callCount != 3 {
-		t.Fatalf("delete should retry twice before success, got calls=%d (%v)", callCount, calls)
+func TestDeleteIPConfigMakesOneWriteAttempt(t *testing.T) {
+	calls := 0
+	runner := func(context.Context, ...string) ([]byte, error) { calls++; return nil, fmt.Errorf("ambiguous write") }
+	err := deleteIPConfigRaw(t.Context(), runner, ipConfigHolder{subscriptionID: "s1", resourceGroup: "rg1", nicName: "nic1", ipConfigName: "ipcfg"})
+	if err == nil || calls != 1 {
+		t.Fatalf("write replayed: calls=%d err=%v", calls, err)
 	}
 }
 

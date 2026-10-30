@@ -20,18 +20,19 @@ import (
 )
 
 type showResource struct {
-	APIVersion string              `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string              `json:"kind" yaml:"kind"`
-	Name       string              `json:"name" yaml:"name"`
-	Source     string              `json:"source,omitempty" yaml:"source,omitempty"`
-	Stale      bool                `json:"stale,omitempty" yaml:"stale,omitempty"`
-	Spec       any                 `json:"spec,omitempty" yaml:"spec,omitempty"`
-	Observed   map[string]any      `json:"observed,omitempty" yaml:"observed,omitempty"`
-	Ledger     []resource.Artifact `json:"ledger,omitempty" yaml:"ledger,omitempty"`
-	State      map[string]any      `json:"state,omitempty" yaml:"state,omitempty"`
-	Diff       []showDiff          `json:"diff,omitempty" yaml:"diff,omitempty"`
-	Adopt      []any               `json:"adopt,omitempty" yaml:"adopt,omitempty"`
-	Events     []routerstate.Event `json:"events,omitempty" yaml:"events,omitempty"`
+	PDLease    *routerstate.PDLease `json:"pdLease,omitempty" yaml:"pdLease,omitempty"`
+	APIVersion string               `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string               `json:"kind" yaml:"kind"`
+	Name       string               `json:"name" yaml:"name"`
+	Source     string               `json:"source,omitempty" yaml:"source,omitempty"`
+	Stale      bool                 `json:"stale,omitempty" yaml:"stale,omitempty"`
+	Spec       any                  `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Observed   map[string]any       `json:"observed,omitempty" yaml:"observed,omitempty"`
+	Ledger     []resource.Artifact  `json:"ledger,omitempty" yaml:"ledger,omitempty"`
+	State      map[string]any       `json:"state,omitempty" yaml:"state,omitempty"`
+	Diff       []showDiff           `json:"diff,omitempty" yaml:"diff,omitempty"`
+	Adopt      []any                `json:"adopt,omitempty" yaml:"adopt,omitempty"`
+	Events     []routerstate.Event  `json:"events,omitempty" yaml:"events,omitempty"`
 }
 
 type showDiff struct {
@@ -374,13 +375,14 @@ func writeResourceViewsTable(stdout io.Writer, rows []controlapi.ResourceView) e
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "KIND\tNAME\tSPEC\tSTATUS\tEVENTS")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", row.Kind, row.Name, specSummary(row.Spec), stateSummary(row.Status), len(row.Events))
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n", row.Kind, row.Name, specSummary(row.Spec), stateSummary(row.Status, row.PDLease), len(row.Events))
 	}
 	return w.Flush()
 }
 
 func writeResourceViewDescribe(stdout io.Writer, row controlapi.ResourceView) error {
 	show := showResource{
+		PDLease:    row.PDLease,
 		APIVersion: row.APIVersion,
 		Kind:       row.Kind,
 		Name:       row.Name,
@@ -408,10 +410,6 @@ func writeStatusSummaryTable(stdout io.Writer, status controlapi.StatusStatus) e
 	w := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(w, "STATUS\t%s\tgeneration=%d\tresources=%d\n", strings.ToUpper(status.Phase), status.Generation, status.ResourceCount)
 	return w.Flush()
-}
-
-func parseShowTarget(target string) (string, string, error) {
-	return parseResourceTarget("show", target)
 }
 
 func parseResourceTarget(verb, target string) (string, string, error) {
@@ -565,35 +563,6 @@ func canonicalShowKind(kind string) string {
 	return kind
 }
 
-func showAPIVersionForKnownKind(kind string) string {
-	switch kind {
-	case "Inventory":
-		return api.RouterAPIVersion
-	case "LogSink", "ObservabilityPipeline", "RouterdCluster", "LogRetention", "Sysctl", "SysctlProfile", "Package", "NTPClient", "NTPServer", "WebConsole", "ServiceUnit":
-		return api.SystemAPIVersion
-	case "Telemetry":
-		return api.ObservabilityAPIVersion
-	case "FirewallZone", "FirewallPolicy", "FirewallEventLog", "FirewallRule", "FirewallFlowPinhole", "ClientPolicy", "PortForward", "IngressService", "LocalServiceRedirect":
-		return api.FirewallAPIVersion
-	case "TunnelInterface", "OverlayPeer", "HybridRoute", "CloudProviderProfile", "ProviderActionPolicy":
-		return api.HybridAPIVersion
-	case "Interface", "Bridge", "VXLANSegment", "WireGuardInterface", "WireGuardPeer", "TailscaleNode", "IPsecConnection", "VRF", "VXLANTunnel", "PPPoESession", "IPv4StaticAddress", "VirtualAddress", "BGPRouter", "BGPPeer", "BFD", "DHCPv4Client", "IPv4StaticRoute", "IPv6StaticRoute", "ClusterNetworkRoute", "DHCPv4Server", "DHCPv4ServerLeaseSync", "DHCPv4Reservation", "DHCPv6Address", "IPv6RAAddress", "DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DHCPv6Information", "IPv6RouterAdvertisement", "DHCPv6Server", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "DHCPv4Relay", "DNSZone", "DNSResolver", "DNSForwarder", "DNSUpstream", "SelfAddressPolicy", "DSLiteTunnel", "IPv4Route", "HealthCheck", "EgressRoutePolicy", "EventRule", "DerivedEvent", "NAT44Rule", "NAT44FlowDNATPinhole", "NAT44SessionSync", "ManagementAccess", "IPAddressSet", "TrafficFlowLog":
-		return api.NetAPIVersion
-	default:
-		return ""
-	}
-}
-
-func resourceSelectionError(resources []api.Resource, kind, name string) error {
-	if !resourceKindExists(resources, kind) {
-		return fmt.Errorf("unknown resource kind %q", kind)
-	}
-	if name != "" {
-		return fmt.Errorf("%s/%s not found", kind, name)
-	}
-	return fmt.Errorf("no %s resources found", kind)
-}
-
 func selectResources(resources []api.Resource, kind, name string) []api.Resource {
 	var selected []api.Resource
 	for _, res := range resources {
@@ -609,13 +578,4 @@ func selectResources(resources []api.Resource, kind, name string) []api.Resource
 		return selected[i].Metadata.Name < selected[j].Metadata.Name
 	})
 	return selected
-}
-
-func resourceKindExists(resources []api.Resource, kind string) bool {
-	for _, res := range resources {
-		if res.Kind == kind {
-			return true
-		}
-	}
-	return false
 }

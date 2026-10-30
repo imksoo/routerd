@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,16 +18,14 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
+	"github.com/imksoo/routerd/internal/storage"
 	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/resource"
 )
 
 const (
 	stateAPIVersion = "state.routerd.net/v1alpha1"
 	stateKind       = "StateVariable"
 )
-
-var ErrSchemaNotInitialized = errors.New("routerd state database schema is not initialized")
 
 const (
 	stateWALAutoCheckpointPages = 4096
@@ -45,6 +42,7 @@ type SQLiteStore struct {
 	eventJournalMaxRows      int64
 	eventJournalMaxBytes     int64
 	eventJournalLastAgePrune time.Time
+	eventJournalDataVersion  int64
 	storageAlert             *StorageAlert
 	storageAlertHandler      func(StorageAlert)
 	statusWriteCount         uint64
@@ -63,7 +61,6 @@ type objectRef struct {
 	APIVersion string
 	Kind       string
 	Name       string
-	Field      string
 }
 
 type objectStatus map[string]any
@@ -72,7 +69,15 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// Read-modify-write transactions acquire the writer before reading their
+	// premise. A deferred WAL snapshot cannot upgrade after another connection
+	// commits, even with busy_timeout. The driver keeps ReadOnly snapshots
+	// deferred, so topology and checkpoint GETs still require no writer lock.
+	u := url.URL{Scheme: "file", Path: path}
+	q := u.Query()
+	q.Set("_txlock", "immediate")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
@@ -93,11 +98,7 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		eventJournalMaxRows:  defaultEventJournalMaxRows,
 		eventJournalMaxBytes: defaultEventJournalMaxPayloadBytes,
 	}
-	if err := store.init(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := store.migrateLegacyJSON(); err != nil {
+	if err := storage.Initialize(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -133,423 +134,53 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := storage.Check(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &SQLiteStore{path: path, db: db, now: time.Now}, nil
 }
 
-func (s *SQLiteStore) init() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS generations (
-  generation INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  phase TEXT,
-  warnings TEXT,
-  config_hash TEXT,
-  config_yaml TEXT
-);
-CREATE TABLE IF NOT EXISTS objects (
-  api_version TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  uid TEXT,
-  resource_version INTEGER NOT NULL DEFAULT 1,
-  observed_generation INTEGER,
-  last_applied_path TEXT,
-  status TEXT,
-  created_at TEXT NOT NULL,
-  modified_at TEXT NOT NULL,
-  PRIMARY KEY(api_version, kind, name)
-);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  api_version TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  type TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  message TEXT NOT NULL,
-  generation INTEGER,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS events_type ON events(type, id);
-CREATE TABLE IF NOT EXISTS event_consumer_cursors (
-  consumer TEXT PRIMARY KEY,
-  cursor INTEGER NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS access_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ts TEXT,
-  user TEXT,
-  method TEXT,
-  path TEXT,
-  status_code INTEGER,
-  duration_ms INTEGER,
-  generation INTEGER
-);
-CREATE TABLE IF NOT EXISTS dynamic_config_parts (
-  id INTEGER PRIMARY KEY,
-  source TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  observed_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  digest TEXT NOT NULL,
-  resources_json TEXT,
-  directives_json TEXT,
-  actionplans_json TEXT,
-  mobility_dataplane_json TEXT,
-  arp_observer_intents_json TEXT,
-  fib_verdicts_json TEXT,
-  status TEXT NOT NULL,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  UNIQUE(source, generation)
-);
-CREATE TABLE IF NOT EXISTS sam_enrollment_revoked_identities (
-  identity_digest TEXT PRIMARY KEY,
-  claim_source TEXT NOT NULL,
-  revoked_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS plugin_runs (
-  id INTEGER PRIMARY KEY,
-  plugin TEXT NOT NULL,
-  trigger_type TEXT NOT NULL,
-  trigger_topic TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  exit_code INTEGER,
-  status TEXT NOT NULL,
-  stdout_digest TEXT,
-  stderr TEXT,
-  error TEXT
-);
-CREATE TABLE IF NOT EXISTS federation_events (
-  id TEXT PRIMARY KEY,
-  group_name TEXT NOT NULL,
-  source_node TEXT,
-  type TEXT NOT NULL,
-  subject TEXT,
-  dedupe_key TEXT,
-  payload TEXT,
-  observed_at INTEGER,
-  expires_at INTEGER,
-  recorded_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS federation_events_group ON federation_events(group_name, observed_at);
-CREATE TABLE IF NOT EXISTS event_deliveries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_id TEXT NOT NULL,
-  peer TEXT NOT NULL,
-  status TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_attempt_at INTEGER,
-  last_error TEXT,
-  delivered_at INTEGER,
-  UNIQUE(event_id, peer)
-);
-CREATE INDEX IF NOT EXISTS event_deliveries_peer ON event_deliveries(peer, status);
-CREATE TABLE IF NOT EXISTS event_subscription_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  subscription TEXT NOT NULL,
-  event_id TEXT NOT NULL,
-  event_group TEXT NOT NULL,
-  plugin TEXT NOT NULL,
-  status TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  dynamic_source TEXT,
-  dynamic_generation INTEGER,
-  error TEXT,
-  UNIQUE(subscription, event_id)
-);
-CREATE INDEX IF NOT EXISTS event_subscription_runs_sub ON event_subscription_runs(subscription, status);
-CREATE TABLE IF NOT EXISTS action_executions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  source TEXT,
-  provider TEXT NOT NULL,
-  provider_ref TEXT,
-  action TEXT NOT NULL,
-  target_json TEXT,
-  parameters_json TEXT,
-  undo_json TEXT,
-  risk_level TEXT,
-  status TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at TEXT,
-  executed_at TEXT,
-  result_message TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS action_executions_status ON action_executions(status, id);
-`); err != nil {
-		return err
-	}
-	if err := s.migrateLegacyStateTable(); err != nil {
-		return err
-	}
-	if err := s.ensureObjectColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureGenerationColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureDynamicConfigPartColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureArtifactsTable(); err != nil {
-		return err
-	}
-	if err := s.ensureActionExecutionColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureEventDeliveryColumns(); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ensureDynamicConfigPartColumns additively adds columns introduced after the
-// dynamic_config_parts table shipped, so existing databases upgrade in place.
-func (s *SQLiteStore) ensureDynamicConfigPartColumns() error {
-	columns := map[string]string{
-		// actionplans_json persists plugin-proposed, display-only ActionPlans so
-		// EventSubscription-driven runs stay reviewable. routerd never executes
-		// them; missing/empty column simply means no action plans.
-		"actionplans_json": "TEXT",
-		// mobility_dataplane_json is the typed internal desired-state channel
-		// from mobility planning to the local SAM dataplane.
-		"mobility_dataplane_json": "TEXT",
-		// arp_observer_intents_json is the typed internal bootstrap channel from
-		// normalized on-prem mobility discovery to the ARP observer supervisor.
-		"arp_observer_intents_json": "TEXT",
-		"fib_verdicts_json":         "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("dynamic_config_parts", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE dynamic_config_parts ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureGenerationColumns() error {
-	columns := map[string]string{
-		"config_yaml": "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("generations", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE generations ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureEventColumns() error {
-	columns := map[string]string{
-		"topic":                "TEXT",
-		"source_kind":          "TEXT",
-		"source_instance":      "TEXT",
-		"resource_api_version": "TEXT",
-		"resource_kind":        "TEXT",
-		"resource_name":        "TEXT",
-		"severity":             "TEXT",
-		"attributes":           "TEXT",
-	}
-	for column, typ := range columns {
-		hasColumn, err := s.tableHasColumn("events", column)
-		if err != nil {
-			return err
-		}
-		if !hasColumn {
-			if _, err := s.db.Exec(`ALTER TABLE events ADD COLUMN ` + column + ` ` + typ); err != nil {
-				return err
-			}
-		}
-	}
-	_, err := s.db.Exec(`
-CREATE INDEX IF NOT EXISTS events_topic ON events(topic, id);
-CREATE INDEX IF NOT EXISTS events_resource ON events(resource_kind, resource_name, id);
-`)
-	return err
-}
-
-func (s *SQLiteStore) ensureObjectColumns() error {
-	hasLastAppliedPath, err := s.tableHasColumn("objects", "last_applied_path")
-	if err != nil {
-		return err
-	}
-	if !hasLastAppliedPath {
-		if _, err := s.db.Exec(`ALTER TABLE objects ADD COLUMN last_applied_path TEXT`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureArtifactsTable() error {
-	if _, err := s.db.Exec(`
-CREATE TABLE IF NOT EXISTS artifacts (
-  artifact_id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,
-  name TEXT NOT NULL,
-  owner_api_version TEXT,
-  owner_kind TEXT,
-  owner_name TEXT,
-  attributes TEXT,
-  source TEXT,
-  generation INTEGER,
-  observed_at TEXT
-);
-`); err != nil {
-		return err
-	}
-	return resource.MigrateLegacyArtifactsTable(s.db)
-}
-
-func (s *SQLiteStore) migrateLegacyStateTable() error {
-	exists, err := s.tableExists("state")
-	if err != nil || !exists {
-		return err
-	}
-	rows, err := s.db.Query(`SELECT key,coalesce(value,''),status,coalesce(reason,''),since,updated_at FROM state ORDER BY key`)
-	if err != nil {
-		return err
-	}
-	type legacyState struct {
-		key   string
-		value Value
-	}
-	var legacyRows []legacyState
-	for rows.Next() {
-		var key, since, updated string
-		var value Value
-		if err := rows.Scan(&key, &value.Value, &value.Status, &value.Reason, &since, &updated); err != nil {
-			return err
-		}
-		value.Since, _ = time.Parse(time.RFC3339Nano, since)
-		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-		legacyRows = append(legacyRows, legacyState{key: key, value: value})
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, row := range legacyRows {
-		if err := s.put(row.key, row.value); err != nil {
-			return err
-		}
-	}
-	_, err = s.db.Exec(`DROP TABLE state`)
-	return err
-}
-
-func (s *SQLiteStore) tableExists(name string) (bool, error) {
-	var found string
-	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-func (s *SQLiteStore) tableHasColumn(table, column string) (bool, error) {
-	exists, err := s.tableExists(table)
-	if err != nil || !exists {
-		return false, err
-	}
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notnull, pk int
-		var dflt any
-		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return false, err
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
-func (s *SQLiteStore) migrateLegacyJSON() error {
-	legacy := filepath.Join(filepath.Dir(s.path), "state.json")
-	if _, err := os.Stat(legacy); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	var count int
-	if err := s.db.QueryRow(`SELECT count(*) FROM objects`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return nil
-	}
-	jsonStore, err := LoadJSON(legacy)
-	if err != nil {
-		return err
-	}
-	for key, value := range jsonStore.Variables() {
-		if err := s.put(key, value); err != nil {
-			return err
-		}
-	}
-	return os.Rename(legacy, legacy+".migrated")
-}
-
-func (s *SQLiteStore) Save(path string) error { return nil }
-
 func (s *SQLiteStore) Get(name string) Value {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return Value{}
-	}
-	ref := objectRefForKey(name)
-	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
+	value, err := s.ReadVariable(name)
+	if err != nil && !errors.Is(err, sql.ErrConnDone) {
 		now := s.now().UTC()
 		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
 	}
-	if value, ok := valueFromStatus(status, ref.Field); ok {
-		return value
-	}
-	now := s.now().UTC()
-	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	return value
 }
 
-func (s *SQLiteStore) Set(name, value, reason string) Value {
+// ReadVariable distinguishes an absent observation from a failed database read.
+// Side-effect decisions must use this boundary instead of the display getter.
+func (s *SQLiteStore) ReadVariable(name string) (Value, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return Value{}, sql.ErrConnDone
+	}
+	ref := objectRefForKey(name)
+	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		now := s.now().UTC()
+		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
+	}
+	if err != nil {
+		return Value{}, err
+	}
+	if value, ok, err := readStoredVariable(status); err != nil {
+		return Value{}, err
+	} else if ok {
+		return value, nil
+	}
+	now := s.now().UTC()
+	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
+}
+
+func (s *SQLiteStore) Set(name, value, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	if value == "" {
 		return s.setLocked(name, StatusUnset, "", reason)
@@ -557,67 +188,76 @@ func (s *SQLiteStore) Set(name, value, reason string) Value {
 	return s.setLocked(name, StatusSet, value, reason)
 }
 
-func (s *SQLiteStore) Unset(name, reason string) Value {
+func (s *SQLiteStore) Unset(name, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	return s.setLocked(name, StatusUnset, "", reason)
 }
 
-func (s *SQLiteStore) Forget(name, reason string) Value {
+func (s *SQLiteStore) Forget(name, reason string) (Value, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return Value{}
+		return Value{}, sql.ErrConnDone
 	}
 	return s.setLocked(name, StatusUnknown, "", reason)
 }
 
-func (s *SQLiteStore) Delete(name string) {
+func (s *SQLiteStore) Delete(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return
+		return sql.ErrConnDone
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
-	deleteStatusField(status, ref.Field)
+	delete(status, "value")
 	if len(status) == 0 {
-		_, _ = s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, ref.APIVersion, ref.Kind, ref.Name)
-		return
+		_, err := s.db.Exec(`DELETE FROM objects WHERE api_version=? AND kind=? AND name=?`, ref.APIVersion, ref.Kind, ref.Name)
+		return err
 	}
-	_ = s.saveStatus(ref, status)
+	return s.saveStatus(ref, status)
 }
 
-func (s *SQLiteStore) setLocked(name, status, value, reason string) Value {
+func (s *SQLiteStore) setLocked(name, status, value, reason string) (Value, error) {
 	now := s.now().UTC()
-	current := s.getLocked(name)
+	current, err := s.getLocked(name)
+	if err != nil {
+		return Value{}, err
+	}
 	since := current.Since
 	if current.Status != status || current.Value != value || since.IsZero() {
 		since = now
 	}
 	next := Value{Status: status, Value: value, Reason: reason, Since: since, UpdatedAt: now}
-	_ = s.put(name, next)
-	return next
+	if err := s.put(name, next); err != nil {
+		return Value{}, err
+	}
+	return next, nil
 }
 
-func (s *SQLiteStore) getLocked(name string) Value {
+func (s *SQLiteStore) getLocked(name string) (Value, error) {
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
-		now := s.now().UTC()
-		return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Value{}, err
 	}
-	if value, ok := valueFromStatus(status, ref.Field); ok {
-		return value
+	if value, ok, err := readStoredVariable(status); err != nil {
+		return Value{}, err
+	} else if ok {
+		return value, nil
 	}
 	now := s.now().UTC()
-	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}
+	return Value{Status: StatusUnknown, Since: now, UpdatedAt: now}, nil
 }
 
 func (s *SQLiteStore) put(name string, value Value) error {
@@ -629,30 +269,64 @@ func (s *SQLiteStore) put(name string, value Value) error {
 	}
 	ref := objectRefForKey(name)
 	status, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		status = objectStatus{}
+	} else if err != nil {
+		return err
 	}
-	setStatusField(status, ref.Field, value)
+	status["value"] = encodeValueMap(value)
 	return s.saveStatus(ref, status)
 }
 
 func (s *SQLiteStore) loadStatus(apiVersion, kind, name string) (objectStatus, int64, error) {
+	status, generation, _, err := s.loadStatusDocument(apiVersion, kind, name)
+	return status, generation, err
+}
+
+func (s *SQLiteStore) loadStatusDocument(apiVersion, kind, name string) (objectStatus, int64, string, error) {
 	var raw string
 	var generation sql.NullInt64
 	err := s.db.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	status := objectStatus{}
 	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &status)
+		if err := json.Unmarshal([]byte(raw), &status); err != nil {
+			return nil, 0, "", fmt.Errorf("decode %s/%s status: %w", kind, name, err)
+		}
 	}
-	return status, generation.Int64, nil
+	if status == nil {
+		return nil, 0, "", fmt.Errorf("decode %s/%s status: expected an object", kind, name)
+	}
+	return status, generation.Int64, raw, nil
 }
 
 func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
+	if status == nil {
+		status = objectStatus{}
+	}
+	if ref.APIVersion == "net.routerd.net/v1alpha1" && ref.Kind == "DHCPv6PrefixDelegation" {
+		clean := cleanPDStatus(status)
+		previous, _, err := s.loadStatus(ref.APIVersion, ref.Kind, ref.Name)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if observation, ok := previous["observation"]; ok {
+			clean["observation"] = observation
+		}
+		if observed, ok := previous["observed"]; ok {
+			clean["observed"] = observed
+		} else {
+			delete(clean, "observed")
+		}
+		status = clean
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	data, _ := json.Marshal(status)
+	data, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("encode %s/%s status: %w", ref.Kind, ref.Name, err)
+	}
 	if same, err := s.objectStatusUnchanged(ref, data); err != nil {
 		return err
 	} else if same {
@@ -661,7 +335,7 @@ func (s *SQLiteStore) saveStatus(ref objectRef, status objectStatus) error {
 		return nil
 	}
 	uid := ref.APIVersion + "/" + ref.Kind + "/" + ref.Name
-	_, err := s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
+	_, err = s.db.Exec(`INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at)
 VALUES(?,?,?,?,1,?,?,?,?)
 ON CONFLICT(api_version,kind,name) DO UPDATE SET resource_version=resource_version+1,observed_generation=excluded.observed_generation,status=excluded.status,modified_at=excluded.modified_at`,
 		ref.APIVersion, ref.Kind, ref.Name, uid, nullGeneration(s.generation), string(data), now, now)
@@ -726,8 +400,11 @@ func (s *SQLiteStore) objectStatusUnchanged(ref objectRef, next []byte) (bool, e
 	current := objectStatus{}
 	if strings.TrimSpace(raw) != "" {
 		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return false, nil
+			return false, fmt.Errorf("decode %s/%s status: %w", ref.Kind, ref.Name, err)
 		}
+	}
+	if current == nil {
+		return false, fmt.Errorf("decode %s/%s status: expected an object", ref.Kind, ref.Name)
 	}
 	currentData, _ := json.Marshal(current)
 	if string(currentData) != string(next) {
@@ -829,9 +506,17 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
-	now := s.now().UTC()
+	_, err := s.db.Exec(upsertDynamicConfigPartSQL, dynamicConfigPartArguments(part, s.now().UTC())...)
+	return err
+}
+
+const upsertDynamicConfigPartSQL = `INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,mobility_dataplane_json,arp_observer_intents_json,fib_verdicts_json,status,error,created_at,updated_at)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`
+
+func dynamicConfigPartArguments(part DynamicConfigPartRecord, now time.Time) []any {
 	if part.ObservedAt.IsZero() {
 		part.ObservedAt = now
 	}
@@ -841,18 +526,16 @@ func (s *SQLiteStore) UpsertDynamicConfigPart(part DynamicConfigPartRecord) erro
 	if part.UpdatedAt.IsZero() {
 		part.UpdatedAt = now
 	}
-	_, err := s.db.Exec(`INSERT INTO dynamic_config_parts(source,generation,observed_at,expires_at,digest,resources_json,directives_json,actionplans_json,mobility_dataplane_json,arp_observer_intents_json,fib_verdicts_json,status,error,created_at,updated_at)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-	ON CONFLICT(source,generation) DO UPDATE SET observed_at=excluded.observed_at,expires_at=excluded.expires_at,digest=excluded.digest,resources_json=excluded.resources_json,directives_json=excluded.directives_json,actionplans_json=excluded.actionplans_json,mobility_dataplane_json=excluded.mobility_dataplane_json,arp_observer_intents_json=excluded.arp_observer_intents_json,fib_verdicts_json=excluded.fib_verdicts_json,status=excluded.status,error=excluded.error,updated_at=excluded.updated_at`,
-		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt))
-	return err
+	return []any{
+		part.Source, part.Generation, formatStateTime(part.ObservedAt), formatStateTime(part.ExpiresAt), part.Digest, nullableString(part.ResourcesJSON), nullableString(part.DirectivesJSON), nullableString(part.ActionPlansJSON), nullableString(part.MobilityDataplaneJSON), nullableString(part.ARPObserverIntentsJSON), nullableString(part.FIBVerdictsJSON), part.Status, nullableString(part.Error), formatStateTime(part.CreatedAt), formatStateTime(part.UpdatedAt),
+	}
 }
 
 func (s *SQLiteStore) ListDynamicConfigParts() ([]DynamicConfigPartRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []DynamicConfigPartRecord{}, nil
+		return []DynamicConfigPartRecord{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts ORDER BY observed_at DESC,generation DESC,id DESC`)
 	if err != nil {
@@ -866,7 +549,7 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []DynamicConfigPartRecord{}, nil
+		return []DynamicConfigPartRecord{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT id,source,generation,observed_at,expires_at,digest,coalesce(resources_json,''),coalesce(directives_json,''),coalesce(actionplans_json,''),coalesce(mobility_dataplane_json,''),coalesce(arp_observer_intents_json,''),coalesce(fib_verdicts_json,''),status,coalesce(error,''),created_at,updated_at FROM dynamic_config_parts WHERE source = ? ORDER BY generation DESC,observed_at DESC,id DESC`, source)
 	if err != nil {
@@ -874,51 +557,6 @@ func (s *SQLiteStore) GetDynamicConfigPartsBySource(source string) ([]DynamicCon
 	}
 	defer rows.Close()
 	return scanDynamicConfigPartRecords(rows)
-}
-
-// RecordSAMEnrollmentRevokedIdentity permanently records an enrollment
-// identity that an operator revoked. The identity digest is global rather than
-// keyed by the mutable resource name: a captured client-authored claim must not become
-// usable again merely by changing metadata.name.
-func (s *SQLiteStore) RecordSAMEnrollmentRevokedIdentity(claimSource, identityDigest string, revokedAt time.Time) error {
-	claimSource = strings.TrimSpace(claimSource)
-	identityDigest = strings.TrimSpace(identityDigest)
-	if claimSource == "" || identityDigest == "" {
-		return fmt.Errorf("SAM enrollment revoked identity source and digest are required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	if revokedAt.IsZero() {
-		revokedAt = s.now().UTC()
-	}
-	_, err := s.db.Exec(`INSERT INTO sam_enrollment_revoked_identities(identity_digest,claim_source,revoked_at)
-	VALUES(?,?,?) ON CONFLICT(identity_digest) DO NOTHING`, identityDigest, claimSource, formatStateTime(revokedAt.UTC()))
-	return err
-}
-
-// HasSAMEnrollmentRevokedIdentity reports whether an enrollment identity
-// was explicitly revoked. It intentionally ignores resource names so callers
-// cannot bypass a revocation by replaying the same signed spec under a new
-// DynamicConfigPart source.
-func (s *SQLiteStore) HasSAMEnrollmentRevokedIdentity(identityDigest string) (bool, error) {
-	identityDigest = strings.TrimSpace(identityDigest)
-	if identityDigest == "" {
-		return false, nil
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.closed {
-		return false, nil
-	}
-	var found int
-	err := s.db.QueryRow(`SELECT 1 FROM sam_enrollment_revoked_identities WHERE identity_digest = ?`, identityDigest).Scan(&found)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 func scanDynamicConfigPartRecords(rows *sql.Rows) ([]DynamicConfigPartRecord, error) {
@@ -945,7 +583,7 @@ func (s *SQLiteStore) RecordPluginRun(run PluginRunRecord) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	if run.StartedAt.IsZero() {
 		run.StartedAt = s.now().UTC()
@@ -963,7 +601,7 @@ func (s *SQLiteStore) CompletePluginRun(id int64, completedAt time.Time, exitCod
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if completedAt.IsZero() {
 		completedAt = s.now().UTC()
@@ -981,7 +619,7 @@ func (s *SQLiteStore) ListPluginRuns(plugin string) ([]PluginRunRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []PluginRunRecord{}, nil
+		return []PluginRunRecord{}, sql.ErrConnDone
 	}
 	query := `SELECT id,plugin,trigger_type,coalesce(trigger_topic,''),started_at,coalesce(completed_at,''),exit_code,status,coalesce(stdout_digest,''),coalesce(stderr,''),coalesce(error,'') FROM plugin_runs`
 	var args []any
@@ -1053,7 +691,7 @@ func (s *SQLiteStore) BeginGeneration(configHash string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`INSERT INTO generations(started_at,warnings,config_hash) VALUES(?,'[]',?)`, now, configHash)
@@ -1078,7 +716,7 @@ func (s *SQLiteStore) BeginGenerationIfChanged(configHash, configYAML string) (i
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, false, nil
+		return 0, false, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(`
@@ -1131,7 +769,7 @@ func (s *SQLiteStore) RecordGenerationConfig(generation int64, configYAML string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if generation == 0 {
 		generation = s.generation
@@ -1147,7 +785,7 @@ func (s *SQLiteStore) FinishGeneration(generation int64, phase string, warnings 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if generation == 0 {
 		generation = s.generation
@@ -1177,7 +815,7 @@ func (s *SQLiteStore) ListGenerations(limit int) ([]GenerationRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []GenerationRecord{}, nil
+		return []GenerationRecord{}, sql.ErrConnDone
 	}
 	if limit <= 0 {
 		limit = 100
@@ -1211,7 +849,7 @@ func (s *SQLiteStore) GenerationConfig(generation int64) (string, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return "", false, nil
+		return "", false, sql.ErrConnDone
 	}
 	var value sql.NullString
 	err := s.db.QueryRow(`SELECT config_yaml FROM generations WHERE generation = ?`, generation).Scan(&value)
@@ -1245,7 +883,7 @@ func (s *SQLiteStore) SaveObjectStatus(apiVersion, kind, name string, status map
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	return s.saveStatus(objectRef{APIVersion: apiVersion, Kind: kind, Name: name}, objectStatus(status))
 }
@@ -1254,7 +892,7 @@ func (s *SQLiteStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	status, _, err := s.loadStatus(apiVersion, kind, name)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1269,34 +907,45 @@ func (s *SQLiteStore) MergeObjectStatus(apiVersion, kind, name string, updates m
 }
 
 func (s *SQLiteStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
+	status, _ := s.ReadObjectStatus(apiVersion, kind, name)
+	return status
+}
+
+func (s *SQLiteStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return map[string]any{}
+		return nil, sql.ErrConnDone
 	}
-	status, _, err := s.loadStatus(apiVersion, kind, name)
+	status, _, raw, err := s.loadStatusDocument(apiVersion, kind, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
+	}
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "HealthCheck" {
+		if err := projectHealthStatus(status, raw, s.now().UTC()); err != nil {
+			return nil, err
+		}
+	}
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
+		if err := projectPDStatus(status, raw, s.now().UTC()); err != nil {
+			return nil, err
+		}
 	}
 	out := map[string]any{}
 	for key, value := range status {
 		out[key] = value
 	}
-	return out
+	return out, nil
 }
 
 func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []ObjectStatus{}, nil
-	}
-	exists, err := s.tableExists("objects")
-	if err != nil {
-		return nil, fmt.Errorf("inspect routerd state database schema: %w", err)
-	}
-	if !exists {
-		return nil, fmt.Errorf("%w: required objects table is missing", ErrSchemaNotInitialized)
+		return []ObjectStatus{}, sql.ErrConnDone
 	}
 	rows, err := s.db.Query(`SELECT api_version,kind,name,coalesce(status,'{}') FROM objects ORDER BY api_version,kind,name`)
 	if err != nil {
@@ -1311,7 +960,20 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(raw), &item.Status); err != nil {
-			item.Status = map[string]any{"error": err.Error()}
+			return nil, fmt.Errorf("decode %s/%s status: %w", item.Kind, item.Name, err)
+		}
+		if item.Status == nil {
+			return nil, fmt.Errorf("decode %s/%s status: expected an object", item.Kind, item.Name)
+		}
+		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "HealthCheck" {
+			if err := projectHealthStatus(item.Status, raw, s.now().UTC()); err != nil {
+				return nil, err
+			}
+		}
+		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6PrefixDelegation" {
+			if err := projectPDStatus(item.Status, raw, s.now().UTC()); err != nil {
+				return nil, err
+			}
 		}
 		item.Owner = statusvalue.Field(item.Status, "owner")
 		item.ManagedBy = statusvalue.Field(item.Status, "managedBy")
@@ -1328,7 +990,7 @@ func (s *SQLiteStore) DeleteObject(apiVersion, kind, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`DELETE FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name)
 	return err
@@ -1338,7 +1000,7 @@ func (s *SQLiteStore) Backup(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -1352,7 +1014,7 @@ func (s *SQLiteStore) SaveObjectApplySource(apiVersion, kind, name, path string)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	uid := apiVersion + "/" + kind + "/" + name
@@ -1381,7 +1043,7 @@ func (s *SQLiteStore) IntegrityCheck() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return "", nil
+		return "", sql.ErrConnDone
 	}
 	var result string
 	if err := s.db.QueryRow(`PRAGMA integrity_check`).Scan(&result); err != nil {
@@ -1394,7 +1056,7 @@ func (s *SQLiteStore) Vacuum() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`VACUUM`)
 	return err
@@ -1404,7 +1066,7 @@ func (s *SQLiteStore) BackupTo(dest string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("backup destination %s already exists", dest)
@@ -1419,7 +1081,7 @@ func (s *SQLiteStore) CountEventsOlderThan(cutoff time.Time) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	var count int64
 	err := s.db.QueryRow(`SELECT count(*) FROM events WHERE created_at < ?`, cutoff.UTC().Format(time.RFC3339Nano)).Scan(&count)
@@ -1430,7 +1092,7 @@ func (s *SQLiteStore) PruneEventsOlderThan(cutoff time.Time) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	formattedCutoff := cutoff.UTC().Format(time.RFC3339Nano)
 	var deleted int64
@@ -1463,38 +1125,61 @@ func (s *SQLiteStore) RecordEvent(apiVersion, kind, name, eventType, reason, mes
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	message = boundedJournalText(message, maxJournalMessageBytes)
 	payloadBytes := journalPayloadBytes(apiVersion, kind, name, eventType, reason, message)
-	if err := s.ensureEventJournalCapacityLocked(payloadBytes); err != nil {
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
 		return s.noteStorageWriteErrorLocked(err)
 	}
-	_, err := s.db.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+	defer tx.Rollback()
+	usage, err := s.prepareEventJournalBatchLocked(tx, 1, payloadBytes)
+	if err != nil {
+		return s.noteStorageWriteErrorLocked(err)
+	}
+	_, err = tx.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, eventType, reason, message, nullGeneration(s.generation), s.now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return s.noteStorageWriteErrorLocked(err)
 	}
+	if err := tx.Commit(); err != nil {
+		return s.noteStorageWriteErrorLocked(err)
+	}
+	s.applyEventJournalUsageLocked(usage)
 	s.eventJournalRows++
 	s.eventJournalPayloadBytes += payloadBytes
 	return nil
 }
 
-func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEvent) (string, error) {
+func (s *SQLiteStore) RecordBusEvent(ctx context.Context, event daemonapi.DaemonEvent) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return "", nil
+		return "", sql.ErrConnDone
 	}
 	bounded, attrs := boundedJournalEvent(event)
 	payloadBytes := busEventJournalPayloadBytes(bounded, attrs)
-	if err := s.ensureEventJournalCapacityLocked(payloadBytes); err != nil {
-		return "", s.noteStorageWriteErrorLocked(err)
-	}
-	cursor, payloadBytes, err := recordBusEvent(s.db, s.generation, s.now().UTC(), bounded)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", s.noteStorageWriteErrorLocked(err)
 	}
+	defer tx.Rollback()
+	usage, err := s.prepareEventJournalBatchLocked(tx, 1, payloadBytes)
+	if err != nil {
+		return "", s.noteStorageWriteErrorLocked(err)
+	}
+	cursor, payloadBytes, err := recordBusEvent(tx, s.generation, s.now().UTC(), bounded)
+	if err != nil {
+		return "", s.noteStorageWriteErrorLocked(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", s.noteStorageWriteErrorLocked(err)
+	}
+	s.applyEventJournalUsageLocked(usage)
 	s.eventJournalRows++
 	s.eventJournalPayloadBytes += payloadBytes
 	return cursor, nil
@@ -1502,7 +1187,11 @@ func (s *SQLiteStore) RecordBusEvent(_ context.Context, event daemonapi.DaemonEv
 
 func recordBusEvent(executor interface {
 	Exec(string, ...any) (sql.Result, error)
+	QueryRow(string, ...any) *sql.Row
 }, generation int64, now time.Time, event daemonapi.DaemonEvent) (string, int64, error) {
+	if err := projectDHCPLeaseObservation(executor, now, event); err != nil {
+		return "", 0, err
+	}
 	event, attrs := boundedJournalEvent(event)
 	apiVersion := event.APIVersion
 	kind := event.Kind
@@ -1518,7 +1207,7 @@ func recordBusEvent(executor interface {
 		resourceKind = event.Resource.Kind
 		resourceName = event.Resource.Name
 	}
-	payloadBytes := journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
+	payloadBytes := journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 	result, err := executor.Exec(`INSERT INTO events(api_version,kind,name,type,reason,message,generation,created_at,topic,source_kind,source_instance,resource_api_version,resource_kind,resource_name,severity,attributes)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		apiVersion, kind, name, event.Type, event.Reason, event.Message, nullGeneration(generation), now.UTC().Format(time.RFC3339Nano),
@@ -1540,21 +1229,24 @@ func busEventJournalPayloadBytes(event daemonapi.DaemonEvent, attrs string) int6
 		apiVersion, kind, name = event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name
 		resourceAPI, resourceKind, resourceName = event.Resource.APIVersion, event.Resource.Kind, event.Resource.Name
 	}
-	return journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
+	return journalPayloadBytes(apiVersion, kind, name, event.Type, event.Reason, event.Message, event.Type, event.Daemon.Kind, event.Daemon.Instance, resourceAPI, resourceKind, resourceName, event.Severity, attrs)
 }
 
-func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
+func (s *SQLiteStore) ReadEvents(ctx context.Context, apiVersion, kind, name string, limit int) ([]Event, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []Event{}
+		return nil, sql.ErrConnDone
 	}
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := s.db.Query(`SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at FROM events WHERE api_version = ? AND kind = ? AND name = ? ORDER BY id DESC LIMIT ?`, apiVersion, kind, name, limit)
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,api_version,kind,name,type,reason,message,coalesce(generation,0),created_at FROM events WHERE api_version = ? AND kind = ? AND name = ? ORDER BY id DESC LIMIT ?`, apiVersion, kind, name, limit)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	var events []Event
@@ -1562,19 +1254,22 @@ func (s *SQLiteStore) Events(apiVersion, kind, name string, limit int) []Event {
 		var event Event
 		var created string
 		if err := rows.Scan(&event.ID, &event.APIVersion, &event.Kind, &event.Name, &event.Type, &event.Reason, &event.Message, &event.Generation, &created); err != nil {
-			continue
+			return nil, err
 		}
-		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		event.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d creation time: %w", event.ID, err)
+		}
 		events = append(events, event)
 	}
-	return events
+	return events, rows.Err()
 }
 
 func (s *SQLiteStore) ListEvents(query EventQuery) ([]StoredEvent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return []StoredEvent{}, nil
+		return []StoredEvent{}, sql.ErrConnDone
 	}
 	limit := query.Limit
 	if limit <= 0 {
@@ -1633,12 +1328,16 @@ FROM events`+where+` ORDER BY id `+order+` LIMIT ?`, args...)
 		if err := rows.Scan(&event.ID, &event.APIVersion, &event.Kind, &event.Name, &event.Type, &event.Reason, &event.Message, &event.Generation, &created, &event.Topic, &event.SourceKind, &event.SourceInstance, &event.ResourceAPIVersion, &event.ResourceKind, &event.ResourceName, &event.Severity, &attributes); err != nil {
 			return nil, err
 		}
-		event.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		event.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, fmt.Errorf("decode event %d creation time: %w", event.ID, err)
+		}
 		if attributes != "" && attributes != "null" {
 			var decoded map[string]any
-			if err := json.Unmarshal([]byte(attributes), &decoded); err == nil && len(decoded) > 0 {
-				event.Attributes = decoded
+			if err := json.Unmarshal([]byte(attributes), &decoded); err != nil {
+				return nil, fmt.Errorf("decode event %d attributes: %w", event.ID, err)
 			}
+			event.Attributes = decoded
 		}
 		events = append(events, event)
 	}
@@ -1652,7 +1351,7 @@ func (s *SQLiteStore) LoadOrInitializeEventConsumerCursor(consumer string) (int6
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, nil
+		return 0, sql.ErrConnDone
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at)
@@ -1669,7 +1368,7 @@ func (s *SQLiteStore) SaveEventConsumerCursor(consumer string, cursor int64) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil
+		return sql.ErrConnDone
 	}
 	_, err := s.db.Exec(`INSERT INTO event_consumer_cursors(consumer,cursor,updated_at) VALUES(?,?,?)
 ON CONFLICT(consumer) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`,
@@ -1687,116 +1386,8 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
-func JSONValue(value any) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
 func objectRefForKey(key string) objectRef {
-	if rest, ok := strings.CutPrefix(key, "ipv6PrefixDelegation."); ok {
-		name, field, ok := strings.Cut(rest, ".")
-		if ok && name != "" && field != "" {
-			return objectRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: name, Field: field}
-		}
-	}
-	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key, Field: "value"}
-}
-
-func valueFromStatus(status objectStatus, field string) (Value, bool) {
-	if field == "lease" {
-		vars, _ := status["_variables"].(map[string]any)
-		if raw, ok := vars["lease"]; ok {
-			return decodeValue(raw)
-		}
-		lease := objectStatus{}
-		for key, value := range status {
-			if key != "_variables" {
-				lease[key] = value
-			}
-		}
-		if len(lease) == 0 {
-			return Value{}, false
-		}
-		data, _ := json.Marshal(lease)
-		now := time.Now().UTC()
-		return Value{Status: StatusSet, Value: string(data), Since: now, UpdatedAt: now}, true
-	}
-	if field == "value" {
-		return decodeValue(status["value"])
-	}
-	vars, _ := status["_variables"].(map[string]any)
-	return decodeValue(vars[field])
-}
-
-func setStatusField(status objectStatus, field string, value Value) {
-	if field == "lease" {
-		var lease map[string]any
-		if strings.TrimSpace(value.Value) != "" {
-			_ = json.Unmarshal([]byte(value.Value), &lease)
-		}
-		vars := variablesMap(status)
-		vars["lease"] = encodeValueMap(value)
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		for key, item := range lease {
-			status[key] = item
-		}
-		if len(vars) > 0 {
-			status["_variables"] = vars
-		}
-		return
-	}
-	if field == "value" {
-		status["value"] = encodeValueMap(value)
-		return
-	}
-	vars := variablesMap(status)
-	vars[field] = encodeValueMap(value)
-	status["_variables"] = vars
-}
-
-func deleteStatusField(status objectStatus, field string) {
-	if field == "lease" {
-		vars := variablesMap(status)
-		delete(vars, "lease")
-		for key := range status {
-			if key != "_variables" {
-				delete(status, key)
-			}
-		}
-		if len(vars) == 0 {
-			delete(status, "_variables")
-		} else {
-			status["_variables"] = vars
-		}
-		return
-	}
-	if field == "value" {
-		delete(status, "value")
-		return
-	}
-	vars := variablesMap(status)
-	delete(vars, field)
-	if len(vars) == 0 {
-		delete(status, "_variables")
-	} else {
-		status["_variables"] = vars
-	}
-}
-
-func variablesMap(status objectStatus) map[string]any {
-	if vars, ok := status["_variables"].(map[string]any); ok {
-		return vars
-	}
-	vars := map[string]any{}
-	if raw, ok := status["_variables"]; ok {
-		data, _ := json.Marshal(raw)
-		_ = json.Unmarshal(data, &vars)
-	}
-	return vars
+	return objectRef{APIVersion: stateAPIVersion, Kind: stateKind, Name: key}
 }
 
 func encodeValueMap(value Value) map[string]any {
@@ -1809,64 +1400,66 @@ func encodeValueMap(value Value) map[string]any {
 	}
 }
 
-func decodeValue(raw any) (Value, bool) {
-	if raw == nil {
-		return Value{}, false
+// readStoredVariable decodes the closed variable shape at its SQLite boundary.
+// A missing value is unknown; a malformed present value is a read failure.
+func readStoredVariable(status objectStatus) (Value, bool, error) {
+	raw, found := status["value"]
+	if !found {
+		return Value{}, false, nil
 	}
-	data, _ := json.Marshal(raw)
-	var decoded struct {
-		Status    string `json:"status"`
-		Value     string `json:"value"`
-		Reason    string `json:"reason"`
-		Since     string `json:"since"`
-		UpdatedAt string `json:"updatedAt"`
+	fields, ok := raw.(map[string]any)
+	if !ok || fields == nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable: expected an object")
 	}
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded.Status == "" {
-		return Value{}, false
+	var value Value
+	var since, updated string
+	for _, field := range []struct {
+		name     string
+		target   *string
+		required bool
+	}{
+		{"status", &value.Status, true}, {"value", &value.Value, false}, {"reason", &value.Reason, false}, {"since", &since, true}, {"updatedAt", &updated, true},
+	} {
+		raw, exists := fields[field.name]
+		if !exists && !field.required {
+			continue
+		}
+		text, ok := raw.(string)
+		if !ok {
+			return Value{}, false, fmt.Errorf("invalid stored variable %s: expected a string", field.name)
+		}
+		*field.target = text
 	}
-	value := Value{Status: decoded.Status, Value: decoded.Value, Reason: decoded.Reason}
-	value.Since, _ = time.Parse(time.RFC3339Nano, decoded.Since)
-	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
-	return value, true
+	switch value.Status {
+	case StatusSet:
+		if value.Value == "" {
+			return Value{}, false, fmt.Errorf("invalid stored set variable: missing value")
+		}
+	case StatusUnset, StatusUnknown:
+		if value.Value != "" {
+			return Value{}, false, fmt.Errorf("invalid stored %s variable: unexpected value", value.Status)
+		}
+	default:
+		return Value{}, false, fmt.Errorf("invalid stored variable status %q", value.Status)
+	}
+	var err error
+	value.Since, err = time.Parse(time.RFC3339Nano, since)
+	if err != nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable since: %w", err)
+	}
+	value.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+	if err != nil {
+		return Value{}, false, fmt.Errorf("invalid stored variable updatedAt: %w", err)
+	}
+	return value, true, nil
 }
 
 func variablesFromObject(apiVersion, kind, name string, status objectStatus) map[string]Value {
 	out := map[string]Value{}
-	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
-		if value, ok := valueFromStatus(status, "lease"); ok {
-			out["ipv6PrefixDelegation."+name+".lease"] = value
-		}
-		vars := variablesMap(status)
-		for field, raw := range vars {
-			if field == "lease" {
-				continue
-			}
-			if value, ok := decodeValue(raw); ok {
-				out["ipv6PrefixDelegation."+name+"."+field] = value
-			}
-		}
-		return out
-	}
 	if apiVersion == stateAPIVersion && kind == stateKind {
-		if value, ok := valueFromStatus(status, "value"); ok {
+		if value, ok, err := readStoredVariable(status); err == nil && ok {
 			out[name] = value
 		}
 	}
 	return out
-}
-
-func DebugObjects(db *sql.DB) string {
-	rows, err := db.Query(`SELECT api_version,kind,name,status FROM objects ORDER BY api_version,kind,name`)
-	if err != nil {
-		return err.Error()
-	}
-	defer rows.Close()
-	var lines []string
-	for rows.Next() {
-		var apiVersion, kind, name, status string
-		_ = rows.Scan(&apiVersion, &kind, &name, &status)
-		lines = append(lines, fmt.Sprintf("%s %s %s %s", apiVersion, kind, name, status))
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
 }

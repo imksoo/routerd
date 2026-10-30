@@ -5,19 +5,17 @@ package chain
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/egressroute"
@@ -25,25 +23,23 @@ import (
 	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/resource"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 type IPv4PolicyRouteController struct {
-	Router              *api.Router
-	DeclaredRouter      *api.Router
-	Bus                 *bus.Bus
-	Store               Store
-	DryRun              bool
-	NftCommand          string
-	PolicyPath          string
-	DefaultRoutePath    string
-	LedgerPath          string
-	HostPolicyStatePath string
-	CommandOutput       func(context.Context, string, ...string) ([]byte, error)
-	Logger              *slog.Logger
-	OperatingSystem     platform.OS
-	Now                 func() time.Time
+	Router           *api.Router
+	DeclaredRouter   *api.Router
+	Bus              *bus.Bus
+	Store            Store
+	DryRun           bool
+	NftCommand       string
+	PolicyPath       string
+	DefaultRoutePath string
+	CommandOutput    func(context.Context, string, ...string) ([]byte, error)
+	Logger           *slog.Logger
+	OperatingSystem  platform.OS
+	Now              func() time.Time
+	NativeScope      func(context.Context) (string, error)
 }
 
 func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
@@ -57,9 +53,13 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	policyPath := firstNonEmpty(c.PolicyPath, "/run/routerd/policy-route.nft")
 	defaultRoutePath := firstNonEmpty(c.DefaultRoutePath, "/run/routerd/default-route.nft")
 	aliases := c.aliases()
-	activeTargetCandidates := c.activeTargetCandidates()
-
 	if err := c.applyRouteTables(ctx, aliases); err != nil {
+		return err
+	}
+	// Route journal persistence and native acknowledgements can wait while
+	// Health changes. Select the current candidate only after those effects.
+	activeTargetCandidates, err := c.activeTargetCandidates(ctx)
+	if err != nil {
 		return err
 	}
 	if err := c.applyPolicyNft(ctx, nft, policyPath, activeTargetCandidates); err != nil {
@@ -70,8 +70,7 @@ func (c IPv4PolicyRouteController) Reconcile(ctx context.Context) error {
 	}
 	// Host-only IPv6 policy is deliberately last and isolated: an RA address
 	// gap must not roll back the already-complete IPv4 DS-Lite policy path.
-	c.reconcileIPv6HostPolicies(ctx)
-	return nil
+	return c.reconcileIPv6HostPolicies(ctx)
 }
 
 func (c IPv4PolicyRouteController) hasIPRoute2() bool {
@@ -95,73 +94,33 @@ type ipv6HostPolicy struct {
 	RuleFrom  bool   `json:"ruleFrom,omitempty"`
 }
 
-type ipv6HostPolicyState struct {
-	Policies []ipv6HostPolicy `json:"policies"`
-}
+func (p ipv6HostPolicy) isSourceRule() bool { return p.RuleFrom }
 
-// isSourceRule also recognizes the short-lived on-disk form written while
-// this feature was being introduced. That form has no route fields and is
-// therefore unambiguously a source-only rule, even if ruleFrom is absent.
-func (p ipv6HostPolicy) isSourceRule() bool {
-	return p.RuleFrom || (p.Lookup != "" && p.Table == 0 && p.Gateway == "" && p.Interface == "" && p.Source != "")
-}
-
-func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) {
-	path := firstNonEmpty(c.HostPolicyStatePath, "/run/routerd/ipv6-host-policy.json")
-	previous, err := loadIPv6HostPolicyState(path)
+func (c IPv4PolicyRouteController) reconcileIPv6HostPolicies(ctx context.Context) error {
+	policies, unavailable, err := c.desiredIPv6HostPolicies(ctx)
 	if err != nil {
-		c.logHostPolicyError("load IPv6 host policy state", err)
-		return
-	}
-	desired, unavailable, err := c.desiredIPv6HostPolicies(ctx)
-	if err != nil {
-		c.logHostPolicyError("derive IPv6 host policy", err)
-		return
-	}
-	previousByName := make(map[string]ipv6HostPolicy, len(previous.Policies))
-	for _, policy := range previous.Policies {
-		previousByName[policy.Name] = policy
+		return err
 	}
 	for name := range unavailable {
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{
-			"phase": "Pending", "reason": "PreferredSourceUnavailable", "dryRun": c.DryRun,
-		})
-		if old, ok := previousByName[name]; ok {
-			desired = append(desired, old) // retain a known-good rule until RA returns.
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", name, map[string]any{"phase": "Pending", "reason": "PreferredSourceUnavailable", "dryRun": c.DryRun}); err != nil {
+			return err
 		}
 	}
-	if len(unavailable) > 0 && len(desired) == 0 && len(previous.Policies) == 0 {
-		return // first acquisition is intentionally unapplied.
-	}
-	applied, transient, err := c.applyIPv6HostPolicyState(ctx, previous, ipv6HostPolicyState{Policies: desired}, unavailable)
+	effects, err := c.policyIPv6Effects(ctx, policies)
 	if err != nil {
-		c.logHostPolicyError("reconcile IPv6 host policy", err)
-		for _, policy := range desired {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Pending", "reason": "HostPolicyApplyFailed", "dryRun": c.DryRun})
-		}
-		return
+		return err
 	}
-	if !c.DryRun {
-		if err := writeIPv6HostPolicyState(path, applied); err != nil {
-			c.logHostPolicyError("write IPv6 host policy state", err)
-			return
+	if err := c.reconcilePolicyRouteEffects(ctx, 6, effects); err != nil {
+		return err
+	}
+	for _, policy := range policies {
+		if !policy.isSourceRule() && !unavailable[policy.Name] {
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun}); err != nil {
+				return err
+			}
 		}
 	}
-	for _, policy := range desired {
-		if policy.isSourceRule() {
-			continue
-		}
-		if unavailable[policy.Name] || transient[policy.Name] {
-			continue
-		}
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policy.Name, map[string]any{"phase": "Applied", "dryRun": c.DryRun})
-	}
-}
-
-func (c IPv4PolicyRouteController) logHostPolicyError(message string, err error) {
-	if c.Logger != nil {
-		c.Logger.Error(message, "error", err)
-	}
+	return nil
 }
 
 func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) ([]ipv6HostPolicy, map[string]bool, error) {
@@ -186,12 +145,18 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			logical := candidate.EffectiveInterface()
 			ifname := firstNonEmpty(aliases[logical], logical)
 			ready, err := c.ipv6HostPolicyDeviceReady(ctx, ifname)
-			if err != nil || !ready {
+			if err != nil {
+				return nil, nil, err
+			}
+			if !ready {
 				unavailable[res.Metadata.Name] = true
 				continue
 			}
 			source, err := c.ipv6GlobalAddress(ctx, ifname)
 			if err != nil {
+				if !errors.Is(err, errNoPreferredIPv6Source) {
+					return nil, nil, err
+				}
 				unavailable[res.Metadata.Name] = true
 				continue
 			}
@@ -223,7 +188,11 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 			if firstNonEmpty(spec.LocalAddressSource, "interface") != "delegatedAddress" {
 				continue
 			}
-			local := strings.TrimSpace(resourcequery.Value(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"}))
+			value, err := resourcequery.ReadValue(c.Store, api.StatusValueSourceSpec{Resource: "DSLiteTunnel/" + res.Metadata.Name, Field: "localIPv6"})
+			if err != nil {
+				return nil, nil, err
+			}
+			local := strings.TrimSpace(value)
 			if local == "" {
 				continue
 			}
@@ -232,55 +201,6 @@ func (c IPv4PolicyRouteController) desiredIPv6HostPolicies(ctx context.Context) 
 		}
 	}
 	return policies, unavailable, nil
-}
-
-func (c IPv4PolicyRouteController) applyIPv6HostPolicyState(ctx context.Context, previous, desired ipv6HostPolicyState, retained map[string]bool) (ipv6HostPolicyState, map[string]bool, error) {
-	desiredByName := map[string]ipv6HostPolicy{}
-	for _, policy := range desired.Policies {
-		desiredByName[policy.Name] = policy
-	}
-	for _, old := range previous.Policies {
-		if retained[old.Name] {
-			continue
-		}
-		if next, ok := desiredByName[old.Name]; !ok || next != old {
-			if err := c.deleteIPv6HostPolicy(ctx, old); err != nil {
-				return ipv6HostPolicyState{}, nil, err
-			}
-		}
-	}
-	applied := ipv6HostPolicyState{}
-	transient := map[string]bool{}
-	for _, policy := range desired.Policies {
-		if retained[policy.Name] {
-			applied.Policies = append(applied.Policies, policy)
-			continue
-		}
-		if c.DryRun {
-			applied.Policies = append(applied.Policies, policy)
-			continue
-		}
-		if !policy.isSourceRule() {
-			if out, err := c.commandOutput(ctx, "ip", "-6", "route", "replace", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source); err != nil {
-				if transientIPv6HostPolicyError(out, err) {
-					c.logHostPolicyTransient(policy, "route replace", out, err)
-					transient[policy.Name] = true
-					continue
-				}
-				return ipv6HostPolicyState{}, nil, fmt.Errorf("ip -6 route replace: %w: %s", err, strings.TrimSpace(string(out)))
-			}
-		}
-		isTransient, err := c.ensureIPv6HostRule(ctx, policy)
-		if err != nil {
-			return ipv6HostPolicyState{}, nil, err
-		}
-		if isTransient {
-			transient[policy.Name] = true
-			continue
-		}
-		applied.Policies = append(applied.Policies, policy)
-	}
-	return applied, transient, nil
 }
 
 func (c IPv4PolicyRouteController) ipv6HostPolicyDeviceReady(ctx context.Context, ifname string) (bool, error) {
@@ -308,7 +228,7 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 		fields := strings.Fields(line)
 		ineligible := false
 		for _, field := range fields {
-			if field == "tentative" || field == "deprecated" {
+			if field == "tentative" || field == "deprecated" || field == "dadfailed" {
 				ineligible = true
 				break
 			}
@@ -322,131 +242,7 @@ func (c IPv4PolicyRouteController) ipv6GlobalAddress(ctx context.Context, ifname
 			}
 		}
 	}
-	return "", fmt.Errorf("no global IPv6 address on %s", ifname)
-}
-
-func (c IPv4PolicyRouteController) ensureIPv6HostRule(ctx context.Context, policy ipv6HostPolicy) (bool, error) {
-	out, err := c.commandOutput(ctx, "ip", "-6", "rule", "show")
-	if err != nil {
-		return false, err
-	}
-	priority := strconv.Itoa(policy.Priority)
-	table := firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table))
-	for _, line := range strings.Split(string(out), "\n") {
-		selector := "iif lo"
-		if policy.isSourceRule() {
-			// ip rule show renders a host prefix as the bare address, while
-			// ip rule add requires the explicit /128 we persist in state.
-			selector = "from " + policy.Source
-		}
-		if strings.Contains(line, priority+":") && strings.Contains(line, selector) && strings.Contains(line, "lookup "+table) {
-			return false, nil
-		}
-	}
-	args := []string{"-6", "rule", "add", "priority", priority}
-	if policy.isSourceRule() {
-		args = append(args, "from", policy.Source+"/128")
-	} else {
-		args = append(args, "iif", "lo")
-	}
-	args = append(args, "lookup", table)
-	if out, err := c.commandOutput(ctx, "ip", args...); err != nil {
-		if transientIPv6HostPolicyError(out, err) {
-			c.logHostPolicyTransient(policy, "rule add", out, err)
-			return true, nil
-		}
-		return false, fmt.Errorf("ip -6 rule add: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return false, nil
-}
-
-func transientIPv6HostPolicyError(out []byte, err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(string(out) + " " + err.Error())
-	return strings.Contains(message, "nexthop device is not up") || strings.Contains(message, "invalid source address")
-}
-
-func (c IPv4PolicyRouteController) logHostPolicyTransient(policy ipv6HostPolicy, operation string, out []byte, err error) {
-	if c.Logger != nil {
-		c.Logger.Warn("IPv6 host policy operation temporarily unavailable", "policy", policy.Name, "operation", operation, "error", err, "output", strings.TrimSpace(string(out)))
-	}
-}
-
-func (c IPv4PolicyRouteController) deleteIPv6HostPolicy(ctx context.Context, policy ipv6HostPolicy) error {
-	if c.DryRun {
-		return nil
-	}
-	rule := []string{"-6", "rule", "del", "priority", strconv.Itoa(policy.Priority)}
-	if policy.isSourceRule() {
-		rule = append(rule, "from", policy.Source+"/128")
-	} else {
-		rule = append(rule, "iif", "lo")
-	}
-	rule = append(rule, "lookup", firstNonEmpty(policy.Lookup, strconv.Itoa(policy.Table)))
-	commands := [][]string{rule}
-	if !policy.isSourceRule() {
-		commands = append(commands, []string{"-6", "route", "del", "default", "via", policy.Gateway, "dev", policy.Interface, "table", strconv.Itoa(policy.Table), "metric", strconv.Itoa(policy.Metric), "src", policy.Source})
-	}
-	for _, args := range commands {
-		out, err := c.commandOutput(ctx, "ip", args...)
-		if err != nil && !missingIPv6HostPolicy(out, err) {
-			return fmt.Errorf("ip %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
-	}
-	return nil
-}
-
-func missingIPv6HostPolicy(out []byte, err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(string(out) + " " + err.Error())
-	return strings.Contains(message, "no such process") || strings.Contains(message, "no such file or directory") || strings.Contains(message, "not in table") || strings.Contains(message, "cannot find")
-}
-
-func loadIPv6HostPolicyState(path string) (ipv6HostPolicyState, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return ipv6HostPolicyState{}, nil
-	}
-	if err != nil {
-		return ipv6HostPolicyState{}, err
-	}
-	var state ipv6HostPolicyState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return ipv6HostPolicyState{}, err
-	}
-	return state, nil
-}
-
-func writeIPv6HostPolicyState(path string, state ipv6HostPolicyState) error {
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".ipv6-host-policy-*")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	defer os.Remove(name)
-	if err := temporary.Chmod(0600); err != nil {
-		temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return "", fmt.Errorf("%w on %s", errNoPreferredIPv6Source, ifname)
 }
 
 func (c IPv4PolicyRouteController) aliases() map[string]string {
@@ -473,7 +269,7 @@ func (c IPv4PolicyRouteController) aliases() map[string]string {
 	return aliases
 }
 
-func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
+func (c IPv4PolicyRouteController) activeTargetCandidates(ctx context.Context) (map[string]bool, error) {
 	active := map[string]bool{}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -486,42 +282,74 @@ func (c IPv4PolicyRouteController) activeTargetCandidates() map[string]bool {
 		if unsupportedPrioritySelection(spec) {
 			continue
 		}
-		healthy := c.availableDefaultRouteCandidates(spec)
+		healthy, err := c.availableDefaultRouteCandidates(ctx, spec)
+		if err != nil {
+			return nil, err
+		}
 		candidate, ok := selectDefaultRouteCandidate(healthy)
 		if ok && len(candidate.Targets) > 0 {
 			active[egressCandidateKey(res.Metadata.Name, candidate)] = true
 		}
 	}
-	return active
+	return active, nil
 }
 
-func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases map[string]string) error {
-	var failures []string
-	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) {
-		if !c.egressTargetAvailable(ctx, aliases, target) {
-			return
-		}
-		if !c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark) {
-			return
-		}
-		gateway := firstNonEmpty(resourcequery.Value(c.Store, target.GatewayFrom), strings.TrimSpace(target.Gateway))
-		c.applyRouteTarget(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing, &failures)
+func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, _ map[string]string) error {
+	desired, err := c.desiredPolicyIPv4Effects(ctx)
+	if err != nil {
+		return err
 	}
-	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) {
+	return c.reconcilePolicyRouteEffects(ctx, 4, desired)
+}
+
+func (c IPv4PolicyRouteController) desiredPolicyIPv4Effects(ctx context.Context) ([]policyRouteEffect, error) {
+	aliases := c.aliases()
+	var effects []policyRouteEffect
+	applyTarget := func(owner string, target api.EgressRoutePolicyTarget, skipMissing bool) error {
+		available, err := c.egressTargetAvailable(ctx, aliases, target)
+		if err != nil || !available {
+			return err
+		}
+		install, err := c.shouldInstallPolicyRouteForHealthCheck(target.HealthCheck, target.Mark)
+		if err != nil || !install {
+			return err
+		}
+		value, err := resourcequery.ReadValue(c.Store, target.GatewayFrom)
+		if err != nil {
+			return err
+		}
+		gateway := firstNonEmpty(value, strings.TrimSpace(target.Gateway))
+		next, err := c.policyIPv4Target(ctx, aliases, owner, target.Name, target.EffectiveInterface(), target.EffectiveTable(), target.Priority, target.Mark, target.EffectiveMetric(), firstNonEmpty(target.GatewaySource, "none"), gateway, skipMissing)
+		effects = append(effects, next...)
+		return err
+	}
+	applyCandidate := func(owner string, candidate api.EgressRoutePolicyCandidate) error {
 		if egressRoutePolicyCandidateDisabled(candidate) {
-			return
+			return nil
 		}
 		// A candidate can become eligible as soon as its when condition flips,
 		// before the referenced DS-Lite tunnel has been recreated.  Do not turn
 		// that normal HA transition into a controller-wide hard error, and do not
 		// install a bootstrap rule from a stale health-check result.
-		if !c.egressCandidateAvailable(candidate) {
-			return
+		available, err := c.egressCandidateAvailable(candidate)
+		if err != nil || !available {
+			return err
 		}
-		if !c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark) {
-			return
+		install, err := c.shouldInstallPolicyRouteForHealthCheck(candidate.HealthCheck, candidate.Mark)
+		if err != nil || !install {
+			return err
 		}
-		c.applyRouteTarget(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), c.candidateDevice(candidate), candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), c.candidateGateway(candidate), c.candidateReferencesDSLite(candidate), &failures)
+		device, err := c.candidateDevice(candidate)
+		if err != nil {
+			return err
+		}
+		gateway, err := c.candidateGateway(candidate)
+		if err != nil {
+			return err
+		}
+		next, err := c.policyIPv4Target(ctx, aliases, owner, firstNonEmpty(candidate.Name, candidate.EffectiveInterface()), device, candidate.EffectiveTable(), candidate.Priority, candidate.Mark, candidate.EffectiveMetric(), firstNonEmpty(candidate.GatewaySource, "none"), gateway, c.candidateReferencesDSLite(candidate))
+		effects = append(effects, next...)
+		return err
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
@@ -529,8 +357,7 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 		}
 		spec, err := res.EgressRoutePolicySpec()
 		if err != nil {
-			failures = append(failures, err.Error())
-			continue
+			return nil, err
 		}
 		if spec.HostTraffic {
 			continue
@@ -553,124 +380,29 @@ func (c IPv4PolicyRouteController) applyRouteTables(ctx context.Context, aliases
 					if target.Name == "" {
 						target.Name = fmt.Sprintf("%s-%d", firstNonEmpty(candidate.Name, res.Metadata.Name), i)
 					}
-					applyTarget(res.ID(), target, true)
+					if err := applyTarget(res.ID(), target, true); err != nil {
+						return nil, err
+					}
 				}
 				continue
 			}
 			if candidate.Mark == 0 {
 				continue
 			}
-			applyCandidate(res.ID(), candidate)
+			if err := applyCandidate(res.ID(), candidate); err != nil {
+				return nil, err
+			}
 		}
 	}
-	if len(failures) > 0 {
-		return fmt.Errorf("%s", strings.Join(failures, "; "))
-	}
-	if err := c.cleanupLedgerOwnedPolicyRoutes(ctx, aliases); err != nil {
-		return err
-	}
-	return nil
+	return sortedPolicyRouteEffects(effects)
 }
 
-func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) bool {
-	if c.targetHealthy(name) {
-		return true
+func (c IPv4PolicyRouteController) shouldInstallPolicyRouteForHealthCheck(name string, mark int) (bool, error) {
+	healthy, err := c.targetHealthy(name)
+	if err != nil || healthy {
+		return healthy, err
 	}
-	return c.healthCheckUsesFwMark(name, mark)
-}
-
-func (c IPv4PolicyRouteController) cleanupLedgerOwnedPolicyRoutes(ctx context.Context, aliases map[string]string) error {
-	if c.DryRun || c.LedgerPath == "" || c.Router == nil {
-		return nil
-	}
-	ledger, err := resource.LoadLedger(c.LedgerPath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = ledger.Close() }()
-	desired := map[string]resource.Artifact{}
-	desiredTables := map[int]bool{}
-	for _, artifact := range apply.DesiredOwnedArtifacts(c.Router, aliases) {
-		if artifact.Kind != "linux.ipv4.fwmarkRule" && artifact.Kind != "linux.ipv4.routeTable" {
-			continue
-		}
-		desired[artifact.Identity()] = artifact
-		if table, ok := artifactIPv4Table(artifact); ok {
-			desiredTables[table] = true
-		}
-	}
-	actual, err := c.currentPolicyRouteArtifacts(ctx)
-	if err != nil {
-		return err
-	}
-	var stale []resource.Artifact
-	ownedArtifacts, err := ledger.All()
-	if err != nil {
-		return err
-	}
-	for _, owned := range ownedArtifacts {
-		switch owned.Kind {
-		case "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable":
-		default:
-			continue
-		}
-		if _, ok := desired[owned.Identity()]; ok {
-			continue
-		}
-		if observed, ok := actual[owned.Identity()]; ok {
-			stale = append(stale, observed)
-		} else {
-			stale = append(stale, owned)
-		}
-	}
-	sort.SliceStable(stale, func(i, j int) bool {
-		return policyRouteArtifactCleanupOrder(stale[i]) < policyRouteArtifactCleanupOrder(stale[j])
-	})
-	var forgotten []resource.Artifact
-	for _, artifact := range stale {
-		switch artifact.Kind {
-		case "linux.ipv4.fwmarkRule":
-			rule, ok := ipv4FwmarkRuleFromPolicyArtifact(artifact)
-			if !ok {
-				continue
-			}
-			if actual[artifact.Identity()].Kind != "" {
-				if err := c.deleteIPv4FwmarkRule(ctx, rule); err != nil {
-					return err
-				}
-			}
-			forgotten = append(forgotten, artifact)
-		case "linux.ipv4.routeTable":
-			table, ok := artifactIPv4Table(artifact)
-			if !ok {
-				continue
-			}
-			if actual[artifact.Identity()].Kind != "" && !desiredTables[table] {
-				if err := c.flushIPv4RouteTable(ctx, table); err != nil {
-					return err
-				}
-			}
-			forgotten = append(forgotten, artifact)
-		}
-	}
-	if len(forgotten) == 0 {
-		return nil
-	}
-	if err := ledger.Forget(forgotten); err != nil {
-		return err
-	}
-	return ledger.Save(c.LedgerPath)
-}
-
-func policyRouteArtifactCleanupOrder(artifact resource.Artifact) int {
-	switch artifact.Kind {
-	case "linux.ipv4.fwmarkRule":
-		return 0
-	case "linux.ipv4.routeTable":
-		return 10
-	default:
-		return 100
-	}
+	return c.healthCheckUsesFwMark(name, mark), nil
 }
 
 func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) bool {
@@ -685,60 +417,43 @@ func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) 
 		if err != nil || healthCheckDisabled(spec) {
 			return false
 		}
-		return healthcheck.ResolveSpecForResource(c.Router, name, spec).FwMark == mark
+		resolved, err := healthcheck.ResolveSpecForResource(c.Router, name, spec)
+		return err == nil && resolved.FwMark == mark
 	}
 	return false
 }
 
-func (c IPv4PolicyRouteController) applyRouteTarget(ctx context.Context, aliases map[string]string, owner, name, outboundInterface string, table, priority, mark, routeMetric int, gatewaySource, gateway string, skipMissing bool, failures *[]string) {
-	ifname := aliases[outboundInterface]
-	if ifname == "" && outboundInterface != "" {
-		ifname = outboundInterface
-	}
+func (c IPv4PolicyRouteController) policyIPv4Target(ctx context.Context, aliases map[string]string, owner, name, outboundInterface string, table, priority, mark, metric int, gatewaySource, gateway string, skipMissing bool) ([]policyRouteEffect, error) {
+	ifname := firstNonEmpty(aliases[outboundInterface], outboundInterface)
 	if ifname == "" {
-		*failures = append(*failures, fmt.Sprintf("%s references missing outbound interface %q", owner, outboundInterface))
-		return
+		return nil, fmt.Errorf("%s target %s has no outbound interface", owner, name)
 	}
-	if !c.linkExists(ctx, ifname) {
-		if skipMissing {
-			return
-		}
-		*failures = append(*failures, fmt.Sprintf("%s outbound interface %s does not exist", owner, ifname))
-		return
-	}
-	metric := routeMetric
 	if metric == 0 {
 		metric = 50
 	}
+	index := 1
 	if !c.DryRun {
-		resolvedGateway, err := c.routeGateway(ctx, ifname, gatewaySource, gateway)
+		var present bool
+		var err error
+		index, present, err = c.policyRouteIndex(ctx, ifname)
 		if err != nil {
-			*failures = append(*failures, fmt.Sprintf("%s route gateway: %v", owner, err))
-			return
+			return nil, err
 		}
-		gateway = resolvedGateway
-		if !c.defaultRouteMatches(ctx, ifname, table, metric, gatewaySource, gateway) {
-			args := []string{"-4", "route", "replace", "default"}
-			switch gatewaySource {
-			case "", "none":
-				args = append(args, "dev", ifname)
-			case "static", "dhcpv4":
-				args = append(args, "via", gateway, "dev", ifname)
-			default:
-				*failures = append(*failures, fmt.Sprintf("%s unsupported gatewaySource %q", owner, gatewaySource))
-				return
+		if !present {
+			if skipMissing {
+				return nil, nil
 			}
-			args = append(args, "table", fmt.Sprintf("%d", table), "metric", fmt.Sprintf("%d", metric))
-			if out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput(); err != nil {
-				*failures = append(*failures, fmt.Sprintf("%s route table %d: %v: %s", owner, table, err, strings.TrimSpace(string(out))))
-				return
-			}
-		}
-		if err := c.ensureFwmarkRule(ctx, priority, mark, table); err != nil {
-			*failures = append(*failures, fmt.Sprintf("%s fwmark rule: %v", owner, err))
-			return
+			return nil, fmt.Errorf("%s target %s interface %s is absent", owner, name, ifname)
 		}
 	}
+	gateway, err := c.routeGateway(ctx, ifname, gatewaySource, gateway)
+	if err != nil {
+		return nil, fmt.Errorf("%s target %s gateway: %w", owner, name, err)
+	}
+	return []policyRouteEffect{
+		{Family: 4, Kind: "route", Table: table, Metric: metric, Interface: ifname, Gateway: gateway, IfIndex: index},
+		{Family: 4, Kind: "rule", Table: table, Priority: priority, Mark: mark},
+	}, nil
 }
 
 func (c IPv4PolicyRouteController) routeGateway(ctx context.Context, ifname, gatewaySource, gateway string) (string, error) {
@@ -754,14 +469,14 @@ func (c IPv4PolicyRouteController) routeGateway(ctx context.Context, ifname, gat
 		if strings.TrimSpace(gateway) != "" {
 			return gateway, nil
 		}
-		return currentIPv4DefaultGatewayForInterface(ctx, ifname)
+		return c.currentIPv4DefaultGatewayForInterface(ctx, ifname)
 	default:
 		return "", fmt.Errorf("unsupported gatewaySource %q", gatewaySource)
 	}
 }
 
-func currentIPv4DefaultGatewayForInterface(ctx context.Context, ifname string) (string, error) {
-	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "dev", ifname).CombinedOutput()
+func (c IPv4PolicyRouteController) currentIPv4DefaultGatewayForInterface(ctx context.Context, ifname string) (string, error) {
+	out, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "default", "dev", ifname)
 	if err != nil {
 		return "", err
 	}
@@ -772,43 +487,6 @@ func currentIPv4DefaultGatewayForInterface(ctx context.Context, ifname string) (
 		}
 	}
 	return "", fmt.Errorf("no gateway found for %s", ifname)
-}
-
-func (c IPv4PolicyRouteController) defaultRouteMatches(ctx context.Context, ifname string, table, metric int, gatewaySource, gateway string) bool {
-	out, err := exec.CommandContext(ctx, "ip", "-4", "route", "show", "default", "table", fmt.Sprintf("%d", table)).CombinedOutput()
-	if err != nil {
-		return false
-	}
-	line := strings.TrimSpace(string(out))
-	if line == "" {
-		return false
-	}
-	for _, candidate := range strings.Split(line, "\n") {
-		fields := strings.Fields(candidate)
-		if len(fields) == 0 || fields[0] != "default" {
-			continue
-		}
-		if !fieldValueMatches(fields, "dev", ifname) {
-			continue
-		}
-		if !fieldValueMatches(fields, "metric", fmt.Sprintf("%d", metric)) {
-			continue
-		}
-		switch gatewaySource {
-		case "", "none":
-			if hasField(fields, "via") {
-				continue
-			}
-		case "static", "dhcpv4":
-			if !fieldValueMatches(fields, "via", gateway) {
-				continue
-			}
-		default:
-			return false
-		}
-		return true
-	}
-	return false
 }
 
 func fieldValueMatches(fields []string, key, value string) bool {
@@ -830,7 +508,11 @@ func hasField(fields []string, key string) bool {
 }
 
 func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path string, activeTargetCandidates map[string]bool) error {
-	data, err := render.NftablesIPv4PolicyRoutes(c.effectivePolicyRouteRouter(activeTargetCandidates))
+	router, err := c.effectivePolicyRouteRouter(ctx, activeTargetCandidates)
+	if err != nil {
+		return err
+	}
+	data, err := render.NftablesIPv4PolicyRoutes(router)
 	if err != nil {
 		return err
 	}
@@ -839,6 +521,14 @@ func (c IPv4PolicyRouteController) applyPolicyNft(ctx context.Context, nft, path
 
 func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context, nft, path string) error {
 	var chunks [][]byte
+	type policyStatus struct {
+		name      string
+		status    map[string]any
+		candidate *api.EgressRoutePolicyCandidate
+		previous  map[string]any
+		role      egressRoleObservation
+	}
+	var results []policyStatus
 	for _, res := range c.Router.Spec.Resources {
 		if res.Kind != "EgressRoutePolicy" {
 			continue
@@ -851,18 +541,21 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			continue
 		}
 		if unsupportedPrioritySelection(spec) {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{
+			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{
 				"phase":   "Pending",
 				"reason":  egressroute.ReasonUnsupported,
 				"message": fmt.Sprintf("selection %q is reserved but not implemented", firstNonEmpty(spec.Selection, egressroute.SelectionHighestWeightReady)),
 				"dryRun":  c.DryRun,
-			})
+			}})
 			continue
 		}
-		healthy := c.availableDefaultRouteCandidates(spec)
+		healthy, err := c.availableDefaultRouteCandidates(ctx, spec)
+		if err != nil {
+			return err
+		}
 		active, ok := selectDefaultRouteCandidate(healthy)
 		if !ok {
-			_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun})
+			results = append(results, policyStatus{name: res.Metadata.Name, status: map[string]any{"phase": "Pending", "reason": "NoReadyCandidates", "dryRun": c.DryRun}})
 			continue
 		}
 		data, err := render.NftablesEgressRoutePolicyDefaultMarks(res.ID(), spec, active, healthy)
@@ -870,8 +563,6 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			return err
 		}
 		chunks = append(chunks, data)
-		now := c.now()
-		previous := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
 		status := map[string]any{
 			"phase":             "Applied",
 			"family":            firstNonEmpty(spec.Family, "ipv4"),
@@ -881,20 +572,51 @@ func (c IPv4PolicyRouteController) applyDefaultRoutePolicies(ctx context.Context
 			"selectedSource":    active.Source,
 			"selectedWeight":    active.Weight,
 			"dryRun":            c.DryRun,
-			"updatedAt":         now.Format(time.RFC3339Nano),
 			"candidates":        priorityStatusCandidates(spec.Candidates, healthy),
 		}
 		if len(active.Targets) == 0 {
-			status["selectedDevice"] = c.candidateDevice(active)
-			status["selectedGateway"] = c.candidateGateway(active)
+			device, err := c.candidateDevice(active)
+			if err != nil {
+				return err
+			}
+			gateway, err := c.candidateGateway(active)
+			if err != nil {
+				return err
+			}
+			status["selectedDevice"] = device
+			status["selectedGateway"] = gateway
 			status["selectedGatewaySource"] = firstNonEmpty(active.GatewaySource, "none")
 			status["selectedRouteTable"] = active.EffectiveTable()
 			status["selectedMetric"] = active.EffectiveMetric()
 		}
-		c.addHADatapathStatus(res.Metadata.Name, active, previous, status, now)
-		_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name, status)
+		previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		role, err := c.readHADatapathRole(res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		results = append(results, policyStatus{name: res.Metadata.Name, status: status, candidate: &active, previous: previous, role: role})
 	}
-	return c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+	applyErr := c.applyNftTable(ctx, nft, path, "ip", "routerd_default_route", bytes.Join(chunks, []byte("\n")))
+	var statusErr error
+	for _, result := range results {
+		if applyErr != nil {
+			result.status["phase"] = "Error"
+			result.status["reason"] = "ApplyFailed"
+			result.status["error"] = applyErr.Error()
+		}
+		if applyErr == nil && result.candidate != nil {
+			now := c.now()
+			result.status["updatedAt"] = now.Format(time.RFC3339Nano)
+			c.addHADatapathStatus(result.name, *result.candidate, result.previous, result.status, now, result.role)
+		}
+		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", result.name, result.status); err != nil {
+			statusErr = errors.Join(statusErr, fmt.Errorf("save policy %s result: %w", result.name, err))
+		}
+	}
+	return errors.Join(applyErr, statusErr)
 }
 
 func (c IPv4PolicyRouteController) now() time.Time {
@@ -913,7 +635,28 @@ func (g egressVRRPMasterGate) reference() string {
 	return g.Kind + "/" + g.Name
 }
 
-func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time) {
+type egressRoleObservation struct {
+	role         string
+	transitionAt string
+}
+
+func (c IPv4PolicyRouteController) readHADatapathRole(policyName string) (egressRoleObservation, error) {
+	spec, ok := c.declaredEgressRoutePolicySpec(policyName)
+	if !ok {
+		return egressRoleObservation{}, nil
+	}
+	gate, ok := egressPolicyVRRPMasterGate(spec)
+	if !ok {
+		return egressRoleObservation{}, nil
+	}
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, gate.Kind, gate.Name)
+	if err != nil {
+		return egressRoleObservation{}, err
+	}
+	return egressRoleObservation{role: cleanStatusString(status["role"]), transitionAt: cleanStatusString(status["lastRoleTransitionAt"])}, nil
+}
+
+func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active api.EgressRoutePolicyCandidate, previous, status map[string]any, now time.Time, observation egressRoleObservation) {
 	spec, ok := c.declaredEgressRoutePolicySpec(policyName)
 	if !ok {
 		return
@@ -922,9 +665,7 @@ func (c IPv4PolicyRouteController) addHADatapathStatus(policyName string, active
 	if !ok {
 		return
 	}
-	roleStatus := c.Store.ObjectStatus(api.NetAPIVersion, gate.Kind, gate.Name)
-	role := strings.TrimSpace(fmt.Sprint(roleStatus["role"]))
-	transitionAt := strings.TrimSpace(fmt.Sprint(roleStatus["lastRoleTransitionAt"]))
+	role, transitionAt := observation.role, observation.transitionAt
 	status["datapathRoleResource"] = gate.reference()
 	status["datapathRole"] = role
 	status["datapathRoleTransitionAt"] = transitionAt
@@ -1039,70 +780,93 @@ func whenStateReferenceField(reference string) string {
 	return reference[index+1:]
 }
 
-func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(spec api.EgressRoutePolicySpec) []api.EgressRoutePolicyCandidate {
+func (c IPv4PolicyRouteController) availableDefaultRouteCandidates(ctx context.Context, spec api.EgressRoutePolicySpec) ([]api.EgressRoutePolicyCandidate, error) {
 	var out []api.EgressRoutePolicyCandidate
 	aliases := c.aliases()
 	for _, candidate := range spec.Candidates {
 		if egressRoutePolicyCandidateDisabled(candidate) {
 			continue
 		}
-		if !c.targetHealthy(candidate.HealthCheck) {
+		healthy, err := c.targetHealthy(candidate.HealthCheck)
+		if err != nil {
+			return nil, err
+		}
+		if !healthy {
 			continue
 		}
 		if len(candidate.Targets) > 0 {
 			for _, target := range candidate.Targets {
-				if !c.targetHealthy(target.HealthCheck) {
+				healthy, err := c.targetHealthy(target.HealthCheck)
+				if err != nil {
+					return nil, err
+				}
+				if !healthy {
 					continue
 				}
-				if !c.egressTargetAvailable(context.Background(), aliases, target) {
+				available, err := c.egressTargetAvailable(ctx, aliases, target)
+				if err != nil {
+					return nil, err
+				}
+				if !available {
 					continue
 				}
-				if ifname := aliases[target.EffectiveInterface()]; ifname != "" && c.linkExists(context.Background(), ifname) {
+				if ifname := aliases[target.EffectiveInterface()]; ifname != "" && c.linkExists(ctx, ifname) {
 					out = append(out, candidate)
 					break
 				}
 			}
 			continue
 		}
-		device := c.candidateDevice(candidate)
-		if !c.egressCandidateAvailable(candidate) {
+		device, err := c.candidateDevice(candidate)
+		if err != nil {
+			return nil, err
+		}
+		available, err := c.egressCandidateAvailable(candidate)
+		if err != nil {
+			return nil, err
+		}
+		if !available {
 			continue
 		}
-		if ifname := firstNonEmpty(aliases[device], device); ifname != "" && c.linkExists(context.Background(), ifname) {
+		if ifname := firstNonEmpty(aliases[device], device); ifname != "" && c.linkExists(ctx, ifname) {
 			out = append(out, candidate)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // egressTargetAvailable rejects a stale health-check result until its DS-Lite
 // tunnel has been reconciled for the current master.  A link name alone is not
 // sufficient: a previous master can leave a stale status briefly while its
 // tunnel no longer exists on this host.
-func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, aliases map[string]string, target api.EgressRoutePolicyTarget) bool {
+func (c IPv4PolicyRouteController) egressTargetAvailable(ctx context.Context, aliases map[string]string, target api.EgressRoutePolicyTarget) (bool, error) {
 	logical := target.EffectiveInterface()
 	ifname := firstNonEmpty(aliases[logical], logical)
 	if ifname == "" || !c.linkExists(ctx, ifname) {
-		return false
+		return false, nil
 	}
 	return c.dsliteResourceReady(logical)
 }
 
-func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) bool {
-	if !resourcequery.DependenciesReady(c.Store, candidate.DependsOn) {
-		return false
+func (c IPv4PolicyRouteController) egressCandidateAvailable(candidate api.EgressRoutePolicyCandidate) (bool, error) {
+	ready, err := resourcequery.ReadDependenciesReady(c.Store, candidate.DependsOn)
+	if err != nil || !ready {
+		return false, err
 	}
 	for _, reference := range []string{candidate.Source, candidate.DeviceFrom.Resource} {
-		if c.dsliteResourceReference(reference) && !c.dsliteResourceReady(reference) {
-			return false
+		if c.dsliteResourceReference(reference) {
+			ready, err := c.dsliteResourceReady(reference)
+			if err != nil || !ready {
+				return false, err
+			}
 		}
 	}
-	return true
+	return true, nil
 }
 
-func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
+func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) (bool, error) {
 	if c.Router == nil || reference == "" || !c.dsliteResourceReference(reference) {
-		return true
+		return true, nil
 	}
 	kind, name, qualified := resourcequery.SplitResource(reference)
 	for _, res := range c.Router.Spec.Resources {
@@ -1116,9 +880,13 @@ func (c IPv4PolicyRouteController) dsliteResourceReady(reference string) bool {
 		// observed substatus should override the controller phase.  In
 		// particular, phase=Disabled/reason=WhenFalse must win over a retained
 		// observed.phase=Up from the previous MASTER generation.
-		return strings.TrimSpace(fmt.Sprint(c.Store.ObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)["phase"])) == "Up"
+		status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "DSLiteTunnel", res.Metadata.Name)
+		if err != nil {
+			return false, err
+		}
+		return strings.TrimSpace(fmt.Sprint(status["phase"])) == "Up", nil
 	}
-	return false
+	return false, nil
 }
 
 func (c IPv4PolicyRouteController) dsliteResourceReference(reference string) bool {
@@ -1144,21 +912,26 @@ func (c IPv4PolicyRouteController) candidateReferencesDSLite(candidate api.Egres
 	return c.dsliteResourceReference(candidate.Source) || c.dsliteResourceReference(candidate.DeviceFrom.Resource)
 }
 
-func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) string {
-	if device := resourcequery.Value(c.Store, candidate.DeviceFrom); device != "" {
-		return device
+func (c IPv4PolicyRouteController) candidateDevice(candidate api.EgressRoutePolicyCandidate) (string, error) {
+	device, err := resourcequery.ReadValue(c.Store, candidate.DeviceFrom)
+	if err != nil {
+		return "", err
+	}
+	if device != "" {
+		return device, nil
 	}
 	logical := candidate.EffectiveInterface()
-	return firstNonEmpty(c.aliases()[logical], logical)
+	return firstNonEmpty(c.aliases()[logical], logical), nil
 }
 
-func (c IPv4PolicyRouteController) candidateGateway(candidate api.EgressRoutePolicyCandidate) string {
-	return firstNonEmpty(resourcequery.Value(c.Store, candidate.GatewayFrom), candidate.Gateway)
+func (c IPv4PolicyRouteController) candidateGateway(candidate api.EgressRoutePolicyCandidate) (string, error) {
+	value, err := resourcequery.ReadValue(c.Store, candidate.GatewayFrom)
+	return firstNonEmpty(value, candidate.Gateway), err
 }
 
-func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandidates map[string]bool) *api.Router {
+func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(ctx context.Context, activeTargetCandidates map[string]bool) (*api.Router, error) {
 	if c.Router == nil {
-		return nil
+		return nil, nil
 	}
 	out := *c.Router
 	out.Spec.Resources = make([]api.Resource, 0, len(c.Router.Spec.Resources))
@@ -1183,7 +956,10 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 				if egressRoutePolicyCandidateDisabled(candidate) || len(candidate.Targets) == 0 || !activeTargetCandidates[egressCandidateKey(res.Metadata.Name, candidate)] {
 					continue
 				}
-				targets, ready := c.targetsWithRuntimeReadiness(context.Background(), aliases, candidate.Targets)
+				targets, ready, err := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				if err != nil {
+					return nil, err
+				}
 				if !ready {
 					continue
 				}
@@ -1203,14 +979,25 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 			if egressRoutePolicyCandidateDisabled(candidate) {
 				continue
 			}
-			if !c.targetHealthy(candidate.HealthCheck) {
+			healthy, err := c.targetHealthy(candidate.HealthCheck)
+			if err != nil {
+				return nil, err
+			}
+			if !healthy {
 				continue
 			}
-			if !c.egressCandidateAvailable(candidate) {
+			available, err := c.egressCandidateAvailable(candidate)
+			if err != nil {
+				return nil, err
+			}
+			if !available {
 				continue
 			}
 			if len(candidate.Targets) > 0 {
-				targets, ready := c.targetsWithRuntimeReadiness(context.Background(), aliases, candidate.Targets)
+				targets, ready, err := c.targetsWithRuntimeReadiness(ctx, aliases, candidate.Targets)
+				if err != nil {
+					return nil, err
+				}
 				if !ready {
 					continue
 				}
@@ -1225,98 +1012,58 @@ func (c IPv4PolicyRouteController) effectivePolicyRouteRouter(activeTargetCandid
 		res.Spec = spec
 		out.Spec.Resources = append(out.Spec.Resources, res)
 	}
-	return &out
+	return &out, nil
 }
 
-func (c IPv4PolicyRouteController) targetsWithRuntimeReadiness(ctx context.Context, aliases map[string]string, declared []api.EgressRoutePolicyTarget) ([]api.EgressRoutePolicyTarget, bool) {
+func (c IPv4PolicyRouteController) targetsWithRuntimeReadiness(ctx context.Context, aliases map[string]string, declared []api.EgressRoutePolicyTarget) ([]api.EgressRoutePolicyTarget, bool, error) {
 	targets := append([]api.EgressRoutePolicyTarget(nil), declared...)
 	readyCount := 0
 	for i := range targets {
-		ready := c.targetHealthy(targets[i].HealthCheck) && (!c.dsliteResourceReference(targets[i].EffectiveInterface()) || c.egressTargetAvailable(ctx, aliases, targets[i]))
+		ready, err := c.targetHealthy(targets[i].HealthCheck)
+		if err != nil {
+			return nil, false, err
+		}
+		if ready && c.dsliteResourceReference(targets[i].EffectiveInterface()) {
+			ready, err = c.egressTargetAvailable(ctx, aliases, targets[i])
+			if err != nil {
+				return nil, false, err
+			}
+		}
 		targets[i].RuntimeReady = new(bool)
 		*targets[i].RuntimeReady = ready
 		if ready {
 			readyCount++
 		}
 	}
-	return targets, readyCount > 0
+	return targets, readyCount > 0, nil
 }
 
-func (c IPv4PolicyRouteController) targetHealthy(name string) bool {
+func (c IPv4PolicyRouteController) targetHealthy(name string) (bool, error) {
 	if name == "" {
-		return true
+		return true, nil
 	}
-	status := healthCheckEffectiveStatus(c.Store.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
-	switch fmt.Sprint(status["phase"]) {
-	case "Healthy":
-	case "Failing":
-		failed, ok := statusInt(status["consecutiveFailed"])
-		if !ok || failed <= 0 || failed >= c.healthCheckUnhealthyThreshold(name) {
-			return false
-		}
-	case PhaseDisabled, PhaseStandby, PhaseNotApplicable:
-		return false
-	default:
-		return false
-	}
-	checkedAt, ok := parseStatusTimestamp(status["lastCheckedAt"])
-	if !ok {
-		return false
-	}
-	maxAge := c.healthCheckFreshness(name)
-	return time.Since(checkedAt) <= maxAge
-}
-
-func healthCheckEffectiveStatus(status map[string]any) map[string]any {
-	observed, ok := status["observed"].(map[string]any)
-	if !ok || len(observed) == 0 {
-		return status
-	}
-	return observed
-}
-
-func (c IPv4PolicyRouteController) healthCheckFreshness(name string) time.Duration {
-	freshness := 2 * time.Minute
 	if c.Router == nil {
-		return freshness
+		return false, nil
 	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
 			continue
 		}
-		spec, err := res.HealthCheckSpec()
+		spec, err := resource.HealthCheckSpec()
 		if err != nil {
-			return freshness
+			return false, err
 		}
-		interval := parseDurationDefault(spec.Interval, 30*time.Second)
-		timeout := parseDurationDefault(spec.Timeout, 3*time.Second)
-		candidate := interval*3 + timeout
-		if candidate > freshness {
-			return candidate
-		}
-		return freshness
-	}
-	return freshness
-}
-
-func (c IPv4PolicyRouteController) healthCheckUnhealthyThreshold(name string) int {
-	if c.Router == nil {
-		return 3
-	}
-	for _, res := range c.Router.Spec.Resources {
-		if res.Kind != "HealthCheck" || res.Metadata.Name != name {
-			continue
-		}
-		spec, err := res.HealthCheckSpec()
+		resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, name, spec)
 		if err != nil {
-			return 3
+			return false, err
 		}
-		if spec.UnhealthyThreshold > 0 {
-			return spec.UnhealthyThreshold
+		observation, err := c.Store.HealthObservation(name)
+		if err != nil {
+			return false, err
 		}
-		return 3
+		return observation.Usable(c.now(), resolved), nil
 	}
-	return 3
+	return false, nil
 }
 
 func statusInt(value any) (int, bool) {
@@ -1424,112 +1171,55 @@ func egressCandidateName(candidate api.EgressRoutePolicyCandidate) string {
 }
 
 func (c IPv4PolicyRouteController) applyNftTable(ctx context.Context, nft, path, family, table string, data []byte) error {
-	if len(data) == 0 {
-		if c.DryRun {
-			return nil
-		}
-		exists := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() == nil
-		if !exists && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-			return nil
-		}
-		if exists {
-			_ = exec.CommandContext(ctx, nft, "delete", "table", family, table).Run()
-		}
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return nil
-	}
 	if c.DryRun {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
+	current, readErr := os.ReadFile(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if readErr != nil || !bytes.Equal(current, data) {
+		if err := nftstate.Invalidate(path); err != nil {
+			return err
+		}
+	}
 	changed, err := writeFileIfChanged(path, data, 0644, false)
 	if err != nil {
 		return err
 	}
-	missing := exec.CommandContext(ctx, nft, "list", "table", family, table).Run() != nil
+	_, listErr := c.commandOutput(ctx, nft, "list", "table", family, table)
+	missing := listErr != nil
 	if !changed && !missing && nftstate.RecentlyVerified(path, time.Now().UTC()) {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
 		return nil
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput(); err != nil {
+	if err := nftstate.Invalidate(path); err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		// A failed inventory read is not proof of absence. Only a successful
+		// deletion or the kernel's explicit missing-table result acknowledges it.
+		out, err := c.commandOutput(ctx, nft, "delete", "table", family, table)
+		if err != nil && !strings.Contains(string(out), "No such file or directory") {
+			return fmt.Errorf("%s delete table %s %s: %w: %s", nft, family, table, err, strings.TrimSpace(string(out)))
+		}
+		return nftstate.MarkVerified(path, time.Now().UTC())
+	}
+	if out, err := c.commandOutput(ctx, nft, "-c", "-f", path); err != nil {
 		return fmt.Errorf("%s -c -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	if out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput(); err != nil {
+	if out, err := c.commandOutput(ctx, nft, "-f", path); err != nil {
 		return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
+	if err := nftstate.MarkVerified(path, time.Now().UTC()); err != nil {
+		return err
+	}
 	if (changed || missing) && c.Bus != nil {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.ipv4.policy_route.applied", daemonapi.SeverityInfo)
 		event.Attributes = map[string]string{"table": table, "path": path}
 		_ = c.Bus.Publish(ctx, event)
-	}
-	return nil
-}
-
-func (c IPv4PolicyRouteController) ensureFwmarkRule(ctx context.Context, priority, mark, table int) error {
-	priorityText := fmt.Sprintf("%d", priority)
-	markText := fmt.Sprintf("0x%x", mark)
-	tableText := fmt.Sprintf("%d", table)
-	if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput(); err == nil {
-		line := string(out)
-		if strings.Contains(line, "fwmark "+markText) && strings.Contains(line, "lookup "+tableText) {
-			return nil
-		}
-	}
-	for {
-		out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "show", "priority", priorityText).CombinedOutput()
-		if err != nil || strings.TrimSpace(string(out)) == "" {
-			break
-		}
-		if err := exec.CommandContext(ctx, "ip", "-4", "rule", "del", "priority", priorityText).Run(); err != nil {
-			break
-		}
-	}
-	if out, err := exec.CommandContext(ctx, "ip", "-4", "rule", "add", "priority", priorityText, "fwmark", markText, "table", tableText).CombinedOutput(); err != nil {
-		return fmt.Errorf("ip -4 rule add priority %s fwmark %s table %s: %w: %s", priorityText, markText, tableText, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-type ipv4PolicyFwmarkRule struct {
-	Priority int
-	Mark     int
-	Table    int
-}
-
-func (c IPv4PolicyRouteController) currentPolicyRouteArtifacts(ctx context.Context) (map[string]resource.Artifact, error) {
-	out := map[string]resource.Artifact{}
-	rules, err := c.commandOutput(ctx, "ip", "-4", "rule", "show")
-	if err != nil {
-		return nil, err
-	}
-	for _, artifact := range parseIPv4PolicyFwmarkRuleArtifacts(string(rules)) {
-		out[artifact.Identity()] = artifact
-	}
-	tables, err := c.commandOutput(ctx, "ip", "-4", "route", "show", "table", "all")
-	if err != nil {
-		return nil, err
-	}
-	for _, artifact := range parseIPv4PolicyRouteTableArtifacts(string(tables)) {
-		out[artifact.Identity()] = artifact
-	}
-	return out, nil
-}
-
-func (c IPv4PolicyRouteController) deleteIPv4FwmarkRule(ctx context.Context, rule ipv4PolicyFwmarkRule) error {
-	out, err := c.commandOutput(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprintf("%d", rule.Priority), "fwmark", fmt.Sprintf("0x%x", rule.Mark), "table", fmt.Sprintf("%d", rule.Table))
-	if err != nil {
-		return fmt.Errorf("ip -4 rule del priority %d fwmark 0x%x table %d: %w: %s", rule.Priority, rule.Mark, rule.Table, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func (c IPv4PolicyRouteController) flushIPv4RouteTable(ctx context.Context, table int) error {
-	out, err := c.commandOutput(ctx, "ip", "-4", "route", "flush", "table", fmt.Sprintf("%d", table))
-	if err != nil {
-		return fmt.Errorf("ip -4 route flush table %d: %w: %s", table, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -1541,120 +1231,7 @@ func (c IPv4PolicyRouteController) commandOutput(ctx context.Context, name strin
 	return exec.CommandContext(ctx, name, args...).CombinedOutput()
 }
 
-func parseIPv4PolicyFwmarkRuleArtifacts(output string) []resource.Artifact {
-	var artifacts []resource.Artifact
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		rule := ipv4PolicyFwmarkRule{}
-		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
-		if err != nil {
-			continue
-		}
-		rule.Priority = priority
-		for i, field := range fields {
-			switch field {
-			case "fwmark":
-				if i+1 >= len(fields) {
-					continue
-				}
-				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
-				if err != nil {
-					continue
-				}
-				rule.Mark = int(mark)
-			case "lookup":
-				if i+1 >= len(fields) {
-					continue
-				}
-				table, err := strconv.Atoi(fields[i+1])
-				if err != nil {
-					continue
-				}
-				rule.Table = table
-			}
-		}
-		if rule.Mark != 0 && rule.Table != 0 {
-			artifacts = append(artifacts, ipv4PolicyFwmarkRuleArtifact(rule))
-		}
-	}
-	return artifacts
-}
-
-func parseIPv4PolicyRouteTableArtifacts(output string) []resource.Artifact {
-	seen := map[int]bool{}
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		for i, field := range fields {
-			if field != "table" || i+1 >= len(fields) {
-				continue
-			}
-			table, err := strconv.Atoi(fields[i+1])
-			if err == nil && table != 0 {
-				seen[table] = true
-			}
-		}
-	}
-	var tables []int
-	for table := range seen {
-		tables = append(tables, table)
-	}
-	sort.Ints(tables)
-	artifacts := make([]resource.Artifact, 0, len(tables))
-	for _, table := range tables {
-		artifacts = append(artifacts, ipv4PolicyRouteTableArtifact(table))
-	}
-	return artifacts
-}
-
-func ipv4PolicyFwmarkRuleArtifact(rule ipv4PolicyFwmarkRule) resource.Artifact {
-	return resource.Artifact{
-		Kind: "linux.ipv4.fwmarkRule",
-		Name: fmt.Sprintf("priority=%d,mark=0x%x,table=%d", rule.Priority, rule.Mark, rule.Table),
-		Attributes: map[string]string{
-			"priority": fmt.Sprintf("%d", rule.Priority),
-			"mark":     fmt.Sprintf("0x%x", rule.Mark),
-			"table":    fmt.Sprintf("%d", rule.Table),
-		},
-	}
-}
-
-func ipv4PolicyRouteTableArtifact(table int) resource.Artifact {
-	return resource.Artifact{
-		Kind: "linux.ipv4.routeTable",
-		Name: fmt.Sprintf("table=%d", table),
-		Attributes: map[string]string{
-			"table": fmt.Sprintf("%d", table),
-		},
-	}
-}
-
-func ipv4FwmarkRuleFromPolicyArtifact(artifact resource.Artifact) (ipv4PolicyFwmarkRule, bool) {
-	priority, err := strconv.Atoi(artifact.Attributes["priority"])
-	if err != nil {
-		return ipv4PolicyFwmarkRule{}, false
-	}
-	mark, err := strconv.ParseInt(artifact.Attributes["mark"], 0, 64)
-	if err != nil {
-		return ipv4PolicyFwmarkRule{}, false
-	}
-	table, err := strconv.Atoi(artifact.Attributes["table"])
-	if err != nil {
-		return ipv4PolicyFwmarkRule{}, false
-	}
-	return ipv4PolicyFwmarkRule{Priority: priority, Mark: int(mark), Table: table}, true
-}
-
-func artifactIPv4Table(artifact resource.Artifact) (int, bool) {
-	if artifact.Attributes == nil {
-		return 0, false
-	}
-	table, err := strconv.Atoi(artifact.Attributes["table"])
-	return table, err == nil
-}
-
 func (c IPv4PolicyRouteController) linkExists(ctx context.Context, ifname string) bool {
-	return exec.CommandContext(ctx, "ip", "link", "show", "dev", ifname).Run() == nil
+	_, err := c.commandOutput(ctx, "ip", "link", "show", "dev", ifname)
+	return err == nil
 }

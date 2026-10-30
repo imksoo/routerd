@@ -33,12 +33,11 @@ import (
 	"github.com/imksoo/routerd/pkg/eventlog"
 	"github.com/imksoo/routerd/pkg/pdclient"
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/render"
 	"github.com/imksoo/routerd/pkg/resource"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestServeConfigMutatorPlanSanitizesUninitializedStateSchema(t *testing.T) {
+func TestServeConfigMutatorPlanExplainsUnsupportedStateSchema(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "uninitialized.db")
 	db, err := sql.Open("sqlite", statePath)
@@ -68,7 +67,7 @@ func TestServeConfigMutatorPlanSanitizesUninitializedStateSchema(t *testing.T) {
 	if err == nil {
 		t.Fatal("planRouter succeeded with uninitialized state schema")
 	}
-	if !strings.Contains(err.Error(), "state database is not initialized") {
+	if !strings.Contains(err.Error(), "unsupported routerd state database format") || !strings.Contains(err.Error(), "fresh routerd 1.5") {
 		t.Fatalf("planRouter error is not actionable: %v", err)
 	}
 	if strings.Contains(err.Error(), "SQL logic error") || strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "objects") {
@@ -76,326 +75,28 @@ func TestServeConfigMutatorPlanSanitizesUninitializedStateSchema(t *testing.T) {
 	}
 }
 
-func TestApplyFilesReportsCreatedAndChanged(t *testing.T) {
-	dir := t.TempDir()
-	netdevPath := filepath.Join(dir, "10-routerd-vxlan100.netdev")
-	dropinPath := filepath.Join(dir, "ens18.network.d", "90-routerd.conf")
-	netdevData := []byte("[NetDev]\nName=vxlan100\nKind=vxlan\n")
-	dropinData := []byte("[Network]\nDHCP=yes\n")
-
-	if err := os.MkdirAll(filepath.Dir(dropinPath), 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
-		t.Fatalf("seed dropin: %v", err)
-	}
-	if err := os.Chmod(dropinPath, 0644); err != nil {
-		t.Fatalf("chmod dropin: %v", err)
-	}
-
-	changed, created, err := applyFiles([]render.File{
-		{Path: netdevPath, Data: netdevData},
-		{Path: dropinPath, Data: dropinData},
-	})
-	if err != nil {
-		t.Fatalf("applyFiles: %v", err)
-	}
-	if len(changed) != 1 || changed[0] != netdevPath {
-		t.Fatalf("changed = %v, want [%s]", changed, netdevPath)
-	}
-	if len(created) != 1 || created[0] != netdevPath {
-		t.Fatalf("created = %v, want [%s]", created, netdevPath)
-	}
-
-	changed, created, err = applyFiles([]render.File{
-		{Path: netdevPath, Data: append(netdevData, '\n')},
-	})
-	if err != nil {
-		t.Fatalf("applyFiles second call: %v", err)
-	}
-	if len(changed) != 1 || changed[0] != netdevPath {
-		t.Fatalf("second call changed = %v", changed)
-	}
-	if len(created) != 0 {
-		t.Fatalf("second call created = %v, want none", created)
-	}
-}
-
-func TestApplyIPsecConnectionsSynchronizesWholeOwnedDirectory(t *testing.T) {
-	dir := t.TempDir()
-	stale := filepath.Join(dir, "routerd-stale.conf")
-	if err := os.WriteFile(stale, []byte("stale\n"), 0600); err != nil {
-		t.Fatalf("write stale configuration: %v", err)
-	}
-	router := &api.Router{
-		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
-		Metadata: api.ObjectMeta{Name: "ipsec-test"},
-		Spec: api.RouterSpec{Resources: []api.Resource{{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-			Metadata: api.ObjectMeta{Name: "site-a"},
-			Spec: api.IPsecConnectionSpec{
-				LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-				LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/24",
-			},
-		}}},
-	}
-	loads := 0
-	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("apply IPsec connections: %v", err)
-	}
-	if loads != 1 {
-		t.Fatalf("load count = %d, want 1", loads)
-	}
-	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("stale configuration stat = %v, want not exist", err)
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "routerd-site-a.conf"))
-	if err != nil || !strings.Contains(string(data), "secrets {") {
-		t.Fatalf("managed configuration = %q, err=%v", data, err)
-	}
-	aggregate, err := os.ReadFile(filepath.Join(dir, "routerd.conf"))
-	if err != nil || !strings.Contains(string(aggregate), "include "+filepath.Join(dir, "routerd-site-a.conf")) {
-		t.Fatalf("aggregate configuration = %q, err=%v", aggregate, err)
-	}
-	for _, name := range ipsecSwanctlCredentialDirectories {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil || !info.IsDir() {
-			t.Fatalf("swanctl credential directory %s: info=%v err=%v", name, info, err)
-		}
-	}
-	if len(changed) != 3 {
-		t.Fatalf("changed = %v, want managed write, aggregate, and stale removal", changed)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending marker stat = %v, want removed after successful load", err)
-	}
-
-	changed, err = applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil || len(changed) != 0 || loads != 2 {
-		t.Fatalf("unchanged reload changed=%v loads=%d err=%v", changed, loads, err)
-	}
-
-	changed, err = applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("remove managed IPsec connection: %v", err)
-	}
-	if loads != 3 || len(changed) != 2 || !strings.HasPrefix(changed[0], "removed:") {
-		t.Fatalf("removal changed=%v loads=%d", changed, loads)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "routerd.conf")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("empty aggregate stat = %v, want removed", err)
-	}
-}
-
-func TestApplyIPsecConnectionsRetriesPendingLoad(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	loadErr := errors.New("charon unavailable")
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load:      func(context.Context) error { return loadErr },
-	})
-	if !errors.Is(err, loadErr) {
-		t.Fatalf("first load error = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); err != nil {
-		t.Fatalf("pending marker after failed load: %v", err)
-	}
-	loads := 0
-	changed, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	})
-	if err != nil || loads != 1 || len(changed) != 0 {
-		t.Fatalf("retry changed=%v loads=%d err=%v", changed, loads, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pending marker after retry = %v, want removed", err)
-	}
-}
-
-func TestApplyIPsecConnectionsMigratesOnlyRouterdLegacyConfigs(t *testing.T) {
-	dir := t.TempDir()
-	legacy := t.TempDir()
-	for name, data := range map[string]string{
-		"routerd-site-a.conf":        "legacy connection\n",
-		"routerd.conf":               "legacy aggregate\n",
-		ipsecPendingLoadMarker:       "pending\n",
-		"operator-managed-site.conf": "operator config\n",
-	} {
-		if err := os.WriteFile(filepath.Join(legacy, name), []byte(data), 0600); err != nil {
-			t.Fatalf("write legacy %s: %v", name, err)
-		}
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-b"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	loads := 0
-	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir:       dir,
-		LegacyConfigDir: legacy,
-		Load: func(context.Context) error {
-			loads++
-			return nil
-		},
-	}); err != nil {
-		t.Fatalf("migrate legacy configurations: %v", err)
-	}
-	if loads != 1 {
-		t.Fatalf("load count = %d, want 1", loads)
-	}
-	for _, name := range []string{"routerd-site-a.conf", "routerd.conf", ipsecPendingLoadMarker} {
-		if _, err := os.Lstat(filepath.Join(legacy, name)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("legacy %s stat = %v, want removed", name, err)
-		}
-	}
-	if data, err := os.ReadFile(filepath.Join(legacy, "operator-managed-site.conf")); err != nil || string(data) != "operator config\n" {
-		t.Fatalf("operator config = %q, err=%v", data, err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "routerd-site-b.conf")); err != nil {
-		t.Fatalf("new runtime configuration missing: %v", err)
-	}
-}
-
-func TestApplyIPsecConnectionsRefusesLegacyRouterdSymlink(t *testing.T) {
-	dir := t.TempDir()
-	legacy := t.TempDir()
-	link := filepath.Join(legacy, "routerd.conf")
-	if err := os.Symlink(filepath.Join(legacy, "operator.conf"), link); err != nil {
-		t.Fatalf("create legacy symlink: %v", err)
-	}
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir:       dir,
-		LegacyConfigDir: legacy,
-		Load:            func(context.Context) error { return nil },
-	})
-	if err == nil || !strings.Contains(err.Error(), "non-regular") {
-		t.Fatalf("legacy symlink error = %v", err)
-	}
-	if info, statErr := os.Lstat(link); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("legacy symlink changed: info=%v err=%v", info, statErr)
-	}
-}
-
-func TestApplyIPsecConnectionsKeepsPendingMarkerWhenEmptyAggregateRemovalFails(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	if _, err := applyIPsecConnectionsWithOptions(context.Background(), router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load:      func(context.Context) error { return nil },
-	}); err != nil {
-		t.Fatalf("seed managed IPsec configuration: %v", err)
-	}
-	aggregate := filepath.Join(dir, "routerd.conf")
-	_, err := applyIPsecConnectionsWithOptions(context.Background(), &api.Router{}, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(context.Context) error {
-			if err := os.Remove(aggregate); err != nil {
-				return err
-			}
-			if err := os.Mkdir(aggregate, 0700); err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(aggregate, "keep"), []byte("x"), 0600)
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "remove empty IPsec swanctl aggregate") {
-		t.Fatalf("empty aggregate teardown error = %v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(dir, ipsecPendingLoadMarker)); statErr != nil {
-		t.Fatalf("pending marker after aggregate removal failure: %v", statErr)
-	}
-}
-
-func TestApplyIPsecConnectionsPassesCallerContextToLoad(t *testing.T) {
-	type contextKey string
-	ctx := context.WithValue(context.Background(), contextKey("request"), "apply-ctx")
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
-		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPsecConnection"},
-		Metadata: api.ObjectMeta{Name: "site-a"},
-		Spec: api.IPsecConnectionSpec{
-			LocalAddress: "198.51.100.10", RemoteAddress: "203.0.113.20", PreSharedKey: "secret",
-			LeftSubnet: "10.0.0.0/24", RightSubnet: "10.10.0.0/16",
-		},
-	}}}}
-	_, err := applyIPsecConnectionsWithOptions(ctx, router, ipsecRuntimeApplyOptions{
-		ConfigDir: dir,
-		Load: func(got context.Context) error {
-			if got.Value(contextKey("request")) != "apply-ctx" {
-				t.Fatalf("load context value = %v", got.Value(contextKey("request")))
-			}
-			return nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("apply IPsec connections: %v", err)
-	}
-}
-
 func TestIPsecRuntimePathsArePlatformSpecific(t *testing.T) {
 	oldDefaults := platformDefaults
 	t.Cleanup(func() { platformDefaults = oldDefaults })
 	platformDefaults.OS = platform.OSLinux
+	platformDefaults.SysconfDir = "/etc/routerd"
 	if got := ipsecConfigDir(); got != "/etc/routerd/swanctl" {
 		t.Fatalf("Linux config dir = %q", got)
-	}
-	if got := ipsecLegacyConfigDir(); got != "/etc/swanctl/conf.d" {
-		t.Fatalf("Linux legacy config dir = %q", got)
 	}
 	if got := ipsecSwanctlPath(); got != "swanctl" {
 		t.Fatalf("Linux swanctl path = %q", got)
 	}
 	platformDefaults.OS = platform.OSFreeBSD
+	platformDefaults.SysconfDir = "/usr/local/etc/routerd"
 	if got := ipsecConfigDir(); got != "/usr/local/etc/routerd/swanctl" {
 		t.Fatalf("FreeBSD config dir = %q", got)
 	}
-	if got := ipsecLegacyConfigDir(); got != "/usr/local/etc/swanctl/conf.d" {
-		t.Fatalf("FreeBSD legacy config dir = %q", got)
-	}
 	if got := ipsecSwanctlPath(); got != "/usr/local/sbin/swanctl" {
 		t.Fatalf("FreeBSD swanctl path = %q", got)
+	}
+	platformDefaults.SysconfDir = filepath.Join(t.TempDir(), "routerd")
+	if got := ipsecConfigDir(); got != filepath.Join(platformDefaults.SysconfDir, "swanctl") {
+		t.Fatalf("private config dir escaped configured root: %q", got)
 	}
 }
 
@@ -469,48 +170,6 @@ func TestApplyChainControllerOptionsSkipLegacyClientUnits(t *testing.T) {
 	}
 }
 
-func TestRouterWithDryRunLeaseFilesKeepsDHCPLeaseStateInArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{LeaseFile: "/var/lib/routerd/dnsmasq/dnsmasq.leases"}},
-	}}}
-
-	got, err := routerWithDryRunLeaseFiles(router, dir)
-	if err != nil {
-		t.Fatalf("sandbox DHCP lease paths: %v", err)
-	}
-	want := filepath.Join(dir, "dnsmasq.leases")
-	for _, resource := range got.Spec.Resources {
-		switch resource.Kind {
-		case "DHCPv4Server":
-			spec, err := resource.DHCPv4ServerSpec()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if spec.LeaseFile != want {
-				t.Fatalf("DHCPv4 dry-run lease file = %q, want %q", spec.LeaseFile, want)
-			}
-		case "DHCPv6Server":
-			spec, err := resource.DHCPv6ServerSpec()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if spec.LeaseFile != want {
-				t.Fatalf("DHCPv6 dry-run lease file = %q, want %q", spec.LeaseFile, want)
-			}
-		}
-	}
-
-	original, err := router.Spec.Resources[0].DHCPv4ServerSpec()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if original.LeaseFile != "/var/lib/routerd/dnsmasq/dnsmasq.leases" {
-		t.Fatalf("dry-run mutated input lease file = %q", original.LeaseFile)
-	}
-}
-
 func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, "state")
@@ -525,11 +184,12 @@ func TestRunApplyChainOnceDryRunDoesNotCreateStateDB(t *testing.T) {
 		},
 	}
 	result, err := runApplyChainOnce(context.Background(), router, applyOptions{
-		DryRun:     true,
-		StatePath:  statePath,
-		LedgerPath: ledgerPath,
-		StatusFile: statusPath,
-		ConfigPath: filepath.Join(dir, "router.yaml"),
+		attemptHooks: &applyAttemptHooks{configureControllers: func(*controllerchain.Options) { t.Fatal("plan entered controller execution") }},
+		DryRun:       true,
+		StatePath:    statePath,
+		LedgerPath:   ledgerPath,
+		StatusFile:   statusPath,
+		ConfigPath:   filepath.Join(dir, "router.yaml"),
 	}, io.Discard, &eventlog.Logger{})
 	if err != nil {
 		t.Fatalf("dry-run apply: %v", err)
@@ -694,12 +354,12 @@ func TestCleanupLedgerOwnedArtifactIPv6AddressLinux(t *testing.T) {
 	platformFeatures = platform.Features{HasIproute2: true}
 	var gotName string
 	var gotArgs []string
-	runCleanupCommand = func(name string, args ...string) error {
+	runCleanupCommand = func(_ context.Context, name string, args ...string) error {
 		gotName = name
 		gotArgs = append([]string(nil), args...)
 		return nil
 	}
-	label, err := cleanupLedgerOwnedArtifact(resource.Artifact{
+	label, err := cleanupLedgerOwnedArtifact(t.Context(), resource.Artifact{
 		Kind:  "net.ipv6.address",
 		Name:  "ens19:2001:db8::1/64",
 		Owner: api.NetAPIVersion + "/VirtualAddress/old-v6",
@@ -721,12 +381,12 @@ func TestCleanupServeLedgerOwnedOrphansUsesConfiguredLedger(t *testing.T) {
 	router := &api.Router{Metadata: api.ObjectMeta{Name: "test-router"}}
 	var gotRouter *api.Router
 	var gotLedgerPath string
-	cleanupLedgerOwnedOrphansForServe = func(r *api.Router, ledgerPath string) ([]string, error) {
+	cleanupLedgerOwnedOrphansForServe = func(_ context.Context, r *api.Router, ledgerPath string) ([]string, error) {
 		gotRouter = r
 		gotLedgerPath = ledgerPath
 		return []string{"systemd.service/routerd-old.service"}, nil
 	}
-	removed, err := cleanupServeLedgerOwnedOrphans(router, "/var/lib/routerd/ledger.db", nil)
+	removed, err := cleanupServeLedgerOwnedOrphans(t.Context(), router, "/var/lib/routerd/ledger.db", nil)
 	if err != nil {
 		t.Fatalf("cleanup serve ledger owned orphans: %v", err)
 	}
@@ -742,10 +402,10 @@ func TestCleanupServeLedgerOwnedOrphansReturnsErrorWithoutFailingCaller(t *testi
 	oldCleanup := cleanupLedgerOwnedOrphansForServe
 	t.Cleanup(func() { cleanupLedgerOwnedOrphansForServe = oldCleanup })
 	wantErr := errors.New("ledger locked")
-	cleanupLedgerOwnedOrphansForServe = func(*api.Router, string) ([]string, error) {
+	cleanupLedgerOwnedOrphansForServe = func(context.Context, *api.Router, string) ([]string, error) {
 		return nil, wantErr
 	}
-	removed, err := cleanupServeLedgerOwnedOrphans(&api.Router{}, "/var/lib/routerd/ledger.db", nil)
+	removed, err := cleanupServeLedgerOwnedOrphans(t.Context(), &api.Router{}, "/var/lib/routerd/ledger.db", nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
@@ -835,76 +495,6 @@ func TestRunApplyChainOnceDryRunDoesNotMutateExistingStateDB(t *testing.T) {
 	}
 }
 
-func TestLoadTransientStateStoreOpensExistingSQLiteReadOnly(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "routerd.db")
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	store.Set("manual.mode", "keep", "seed")
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = os.Chmod(dir, 0755)
-		_ = os.Chmod(statePath, 0644)
-	})
-	if err := os.Chmod(statePath, 0444); err != nil {
-		t.Fatalf("chmod state: %v", err)
-	}
-	if err := os.Chmod(dir, 0555); err != nil {
-		t.Fatalf("chmod state dir: %v", err)
-	}
-
-	transient, err := loadTransientStateStore(statePath)
-	if err != nil {
-		t.Fatalf("load transient read-only sqlite: %v", err)
-	}
-	if _, ok := transient.(*routerstate.JSONStore); !ok {
-		t.Fatalf("transient store type = %T, want JSON snapshot", transient)
-	}
-	if got := transient.Get("manual.mode"); got.Status != routerstate.StatusSet || got.Value != "keep" {
-		t.Fatalf("snapshot manual.mode = %+v, want keep", got)
-	}
-}
-
-func TestConfigCommandPlanObserveAcceptJSONState(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	statePath := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(configPath, []byte(testRouterYAML("json-state-router")), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	store := routerstate.New()
-	store.Set("manual.mode", "keep", "seed")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save json state: %v", err)
-	}
-
-	for _, name := range []string{"plan", "observe"} {
-		t.Run(name, func(t *testing.T) {
-			var stdout strings.Builder
-			statusPath := filepath.Join(dir, name+"-status.json")
-			err := configCommand([]string{
-				"--config", configPath,
-				"--state-file", statePath,
-				"--status-file", statusPath,
-			}, &stdout, name)
-			if err != nil {
-				t.Fatalf("%s with json state: %v", name, err)
-			}
-			if stdout.String() == "" {
-				t.Fatalf("%s produced empty output", name)
-			}
-			if _, err := os.Stat(statusPath); err != nil {
-				t.Fatalf("%s status file: %v", name, err)
-			}
-		})
-	}
-}
-
 func TestRunApplyChainOnceCommitsCanonicalConfigAndGenerationYAML(t *testing.T) {
 	dir := t.TempDir()
 	setMissingSAMForwardChainIPTables(t)
@@ -937,6 +527,9 @@ spec:
 		StatusFile:         statusPath,
 		LedgerPath:         ledgerPath,
 		SkipServiceManager: true,
+		Sandbox:            true,
+		DnsmasqConfigPath:  filepath.Join(dir, "dnsmasq.conf"),
+		NftablesPath:       filepath.Join(dir, "nat44.nft"),
 	}, io.Discard, &eventlog.Logger{})
 	if err != nil {
 		t.Fatalf("apply once: %v", err)
@@ -1073,11 +666,15 @@ func TestServeConfigMutatorApplyReplaceCommitsCanonicalAndGeneration(t *testing.
 			StatusFile:         statusPath,
 			LedgerPath:         ledgerPath,
 			SkipServiceManager: true,
+			Sandbox:            true,
+			DnsmasqConfigPath:  filepath.Join(dir, "dnsmasq.conf"),
+			NftablesPath:       filepath.Join(dir, "nat44.nft"),
 		},
-		cache:     &resultCache{},
-		logger:    &eventlog.Logger{},
-		getRouter: func() *api.Router { return router },
-		setRouter: func(next *api.Router) { router = next },
+		cache:                   &resultCache{},
+		logger:                  &eventlog.Logger{},
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return router }),
+		getRouter:               func() *api.Router { return router },
+		setRouter:               func(next *api.Router) { router = next },
 	}
 	candidate := `# replacement comment
 apiVersion: routerd.net/v1alpha1
@@ -1091,7 +688,7 @@ spec:
 	if err != nil {
 		t.Fatalf("mutating apply: %v", err)
 	}
-	if result.Result.Phase != "Healthy" || result.Result.Generation == 0 {
+	if result.Result.Phase != "Committed" || result.Result.Generation == 0 {
 		t.Fatalf("result = %+v", result.Result)
 	}
 	data, err := os.ReadFile(configPath)
@@ -1248,10 +845,11 @@ func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) 
 			SkipServiceManager: true,
 			Sandbox:            true,
 		},
-		cache:     &resultCache{},
-		logger:    &eventlog.Logger{},
-		getRouter: func() *api.Router { return router },
-		setRouter: func(next *api.Router) { router = next },
+		cache:                   &resultCache{},
+		logger:                  &eventlog.Logger{},
+		applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return router }),
+		getRouter:               func() *api.Router { return router },
+		setRouter:               func(next *api.Router) { router = next },
 	}
 	result, err := mutator.apply(nil, controlapi.ApplyRequest{
 		CandidateYAML: testRouterYAML("sandbox-router"),
@@ -1260,7 +858,7 @@ func TestServeConfigMutatorSandboxApplyCommitsCanonicalAndDryRuns(t *testing.T) 
 	if err != nil {
 		t.Fatalf("sandbox apply: %v", err)
 	}
-	if result.Result.Generation == 0 || result.Result.Phase != "Healthy" {
+	if result.Result.Generation == 0 || result.Result.Phase != "Committed" {
 		t.Fatalf("sandbox apply result = %+v", result.Result)
 	}
 	data, err := os.ReadFile(configPath)
@@ -1285,6 +883,9 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
 
 	dir := t.TempDir()
+	previousRuntimeDir := platformDefaults.RuntimeDir
+	platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
+	t.Cleanup(func() { platformDefaults.RuntimeDir = previousRuntimeDir })
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -1419,50 +1020,6 @@ func TestServeMutationAdmissionRejectsStop(t *testing.T) {
 	}
 }
 
-func TestRunGracefulStopWhenIdleSkipsActiveMutation(t *testing.T) {
-	var mu sync.Mutex
-	mu.Lock()
-	called := false
-	type result struct {
-		ran bool
-		err error
-	}
-	resultCh := make(chan result, 1)
-	go func() {
-		ran, err := runGracefulStopWhenIdle(&mu, func() error {
-			called = true
-			return nil
-		})
-		resultCh <- result{ran: ran, err: err}
-	}()
-	select {
-	case got := <-resultCh:
-		if got.err != nil {
-			t.Fatalf("runGracefulStopWhenIdle while active = %v", got.err)
-		}
-		if got.ran {
-			t.Fatal("runGracefulStopWhenIdle ran while a mutation held the lock")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("runGracefulStopWhenIdle waited for an active mutation")
-	}
-	if called {
-		t.Fatal("runGracefulStopWhenIdle called handoff while a mutation held the lock")
-	}
-	mu.Unlock()
-
-	ran, err := runGracefulStopWhenIdle(&mu, func() error {
-		called = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("runGracefulStopWhenIdle when idle = %v", err)
-	}
-	if !ran || !called {
-		t.Fatalf("runGracefulStopWhenIdle when idle = (ran=%t, called=%t), want both true", ran, called)
-	}
-}
-
 func TestRunGracefulStopWhenIdleBoundedReturnsAtDeadline(t *testing.T) {
 	var mu sync.Mutex
 	entered := make(chan struct{})
@@ -1553,6 +1110,9 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
 
 	dir := t.TempDir()
+	previousRuntimeDir := platformDefaults.RuntimeDir
+	platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
+	t.Cleanup(func() { platformDefaults.RuntimeDir = previousRuntimeDir })
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -1698,7 +1258,7 @@ func TestControlAPIHTTPConfigAcceptsNarrowCIDR(t *testing.T) {
 }
 
 func TestControlAPIHTTPConfigRejectsWideOpenCIDRs(t *testing.T) {
-	for _, cidr := range []string{"0.0.0.0/0", "::/0"} {
+	for _, cidr := range []string{"0.0.0.0/0", "::/0", "203.0.113.1/0", "2001:db8::1/0"} {
 		if _, err := parseControlAPIAllowCIDRs([]string{cidr}); err == nil {
 			t.Fatalf("parseControlAPIAllowCIDRs(%q) succeeded, want error", cidr)
 		}
@@ -1856,7 +1416,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	gen1 := seedGeneration(t, store, "hash-1", testRouterYAML("rollback-one"), true, "Applied")
-	gen2 := seedGeneration(t, store, "hash-2", testRouterYAML("rollback-two"), true, "Applied")
+	gen2 := seedGeneration(t, store, "hash-2", testRouterYAML("rollback-two"), true, "Errored")
 	if err := store.Close(); err != nil {
 		t.Fatalf("close sqlite: %v", err)
 	}
@@ -1867,7 +1427,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 	}
 
 	rows := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(rows) != 3 || !reflect.DeepEqual(strings.Fields(rows[0]), []string{"generation", "started_at", "finished_at", "phase", "config", "current"}) {
+	if len(rows) != 3 || !reflect.DeepEqual(strings.Fields(rows[0]), []string{"generation", "started_at", "finished_at", "phase", "config", "attempt"}) {
 		t.Fatalf("typed generation table: %q", stdout.String())
 	}
 	type row struct {
@@ -1895,7 +1455,7 @@ func TestRollbackListShowsStoredGenerations(t *testing.T) {
 		}
 		got = append(got, row{generation, fields[3], fields[4], current})
 	}
-	want := []row{{gen2, "Applied", "yes", "(current)"}, {gen1, "Applied", "yes", ""}}
+	want := []row{{gen2, "Errored", "yes", "(latest)"}, {gen1, "Applied", "yes", ""}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("newest-first generation rows = %#v, want %#v", got, want)
 	}
@@ -1958,7 +1518,7 @@ func TestRollbackToGenerationDryRunUsesStoredConfig(t *testing.T) {
 	for _, resource := range result.Resources {
 		identities = append(identities, resource.ID)
 	}
-	want := []string{api.NetAPIVersion + "/Interface/selected-interface"}
+	want := []string{api.NetAPIVersion + "/Interface/selected-interface", api.RouterAPIVersion + "/Router/rollback-selected/derived-host-runtime"}
 	if !reflect.DeepEqual(identities, want) {
 		t.Fatalf("selected generation resource identities = %#v, want %#v", identities, want)
 	}
@@ -2057,31 +1617,38 @@ func TestOverallStatusPhaseUsesResourceStatuses(t *testing.T) {
 		t.Fatalf("open state: %v", err)
 	}
 	defer func() { _ = store.Close() }()
+	phase := func() string {
+		statuses, err := store.ListObjectStatuses()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return overallStatusPhase("Healthy", statuses)
+	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Reservation", "client", map[string]any{"phase": "Pending", "reason": "WhenFalse"}); err != nil {
 		t.Fatalf("save when false status: %v", err)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DNSForwarder", "default", map[string]any{"matches": 1}); err != nil {
 		t.Fatalf("save status without phase: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Healthy" {
+	if got := phase(); got != "Healthy" {
 		t.Fatalf("phase = %q, want Healthy for WhenFalse pending and phase-less status", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Pending"}); err != nil {
 		t.Fatalf("save pending status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+	if got := phase(); got != "Pending" {
 		t.Fatalf("phase = %q, want Pending", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPRouter", "lan", map[string]any{"phase": "Reconverging", "reason": "GoBGPReconverging"}); err != nil {
 		t.Fatalf("save reconverging status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Pending" {
+	if got := phase(); got != "Pending" {
 		t.Fatalf("phase = %q, want Pending for reconverging", got)
 	}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "BGPPeer", "worker", map[string]any{"phase": "Error"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}
-	if got := overallStatusPhase("Healthy", store); got != "Error" {
+	if got := phase(); got != "Error" {
 		t.Fatalf("phase = %q, want Error", got)
 	}
 }
@@ -2107,7 +1674,11 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "NAT44SessionSync", "sessions", map[string]any{"phase": "Error", "reason": "SyncFailed", "message": "ssh failed"}); err != nil {
 		t.Fatalf("save error status: %v", err)
 	}
-	issues := resourcePhaseIssues(store)
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues := resourcePhaseIssues(statuses)
 	if len(issues) != 2 {
 		t.Fatalf("issues = %+v, want 2 entries", issues)
 	}
@@ -2164,132 +1735,6 @@ func TestControllerResourceKindsUseCanonicalNames(t *testing.T) {
 	}
 	if !reflect.DeepEqual(kinds, []string{"DHCPv6Server", "IPv6RouterAdvertisement"}) {
 		t.Fatalf("dhcpv6 resource kinds = %v", kinds)
-	}
-}
-
-func TestHasNewNetdevFiles(t *testing.T) {
-	if !hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.netdev"}) {
-		t.Fatal("expected new .netdev to be detected")
-	}
-	if hasNewNetdevFiles([]string{"/etc/systemd/network/10-vxlan.network"}) {
-		t.Fatal("plain .network should not trigger new-netdev path")
-	}
-	if hasNewNetdevFiles(nil) {
-		t.Fatal("nil should not trigger")
-	}
-}
-
-func TestApplyNetworkConfigSkipsUnchangedFiles(t *testing.T) {
-	dir := t.TempDir()
-	netplanPath := filepath.Join(dir, "netplan", "90-routerd.yaml")
-	dropinPath := filepath.Join(dir, "systemd", "10-netplan-ens18.network.d", "90-routerd-dhcpv6-pd.conf")
-	netplanData := []byte("network:\n  version: 2\n")
-	dropinData := []byte("[Network]\nDHCP=yes\n")
-
-	if err := os.MkdirAll(filepath.Dir(netplanPath), 0755); err != nil {
-		t.Fatalf("create netplan dir: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(dropinPath), 0755); err != nil {
-		t.Fatalf("create dropin dir: %v", err)
-	}
-	if err := os.WriteFile(netplanPath, netplanData, 0600); err != nil {
-		t.Fatalf("write netplan fixture: %v", err)
-	}
-	if err := os.WriteFile(dropinPath, dropinData, 0644); err != nil {
-		t.Fatalf("write dropin fixture: %v", err)
-	}
-	if err := os.Chmod(dropinPath, 0644); err != nil {
-		t.Fatalf("chmod dropin fixture: %v", err)
-	}
-
-	changed, err := applyNetworkConfig(netplanPath, netplanData, []render.File{
-		{Path: dropinPath, Data: dropinData},
-	})
-	if err != nil {
-		t.Fatalf("apply network config: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed files = %v, want none", changed)
-	}
-}
-
-func TestDeleteCommandRemovesStateAndLedgerForResource(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "state.json")
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8::/60"}), "test")
-	if err := store.Save(statePath); err != nil {
-		t.Fatalf("save state: %v", err)
-	}
-	ledger := resource.NewLedger()
-	if err := ledger.Remember([]resource.Artifact{{
-		Kind:  "file",
-		Name:  "/tmp/routerd-test",
-		Owner: "net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ledger.Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
-	}
-
-	var out strings.Builder
-	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "pd/wan-pd"}, &out); err != nil {
-		t.Fatalf("delete command: %v", err)
-	}
-	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/DHCPv6PrefixDelegation/wan-pd") {
-		t.Fatalf("delete output = %s", out.String())
-	}
-	loadedState, err := routerstate.Load(statePath)
-	if err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-	if got := loadedState.Get("ipv6PrefixDelegation.wan-pd.lease"); got.Status != routerstate.StatusUnknown {
-		t.Fatalf("state after delete = %+v, want unknown", got)
-	}
-	loadedLedger, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatalf("load ledger: %v", err)
-	}
-	defer func() { _ = loadedLedger.Close() }()
-	if artifacts, err := loadedLedger.All(); err != nil || len(artifacts) != 0 {
-		t.Fatalf("ledger after delete = %+v, err = %v, want empty", artifacts, err)
-	}
-}
-
-func TestDeleteCommandForceRemovesStaleUnsupportedKindState(t *testing.T) {
-	dir := t.TempDir()
-	statePath := filepath.Join(dir, "routerd.db")
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	store, err := routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("open sqlite state: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan", map[string]any{"phase": "Applied"}); err != nil {
-		t.Fatalf("save stale object status: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close sqlite state: %v", err)
-	}
-	if err := resource.NewLedger().Save(ledgerPath); err != nil {
-		t.Fatalf("save ledger: %v", err)
-	}
-
-	var out strings.Builder
-	if err := deleteCommand([]string{"--state-file", statePath, "--ledger-file", ledgerPath, "--force", "PPPoEInterface/wan"}, &out); err != nil {
-		t.Fatalf("delete command: %v", err)
-	}
-	if !strings.Contains(out.String(), "delete net.routerd.net/v1alpha1/PPPoEInterface/wan") {
-		t.Fatalf("delete output = %s", out.String())
-	}
-	store, err = routerstate.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatalf("reopen sqlite state: %v", err)
-	}
-	defer store.Close()
-	if status := store.ObjectStatus(api.NetAPIVersion, "PPPoEInterface", "wan"); len(status) != 0 {
-		t.Fatalf("stale status after delete = %+v, want none", status)
 	}
 }
 
@@ -2362,27 +1807,12 @@ func TestCleanupUnsupportedLegacyObjectStatusesRemovesLegacyAndDeletedResourceRo
 	if status := store.ObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default"); status["phase"] != "Error" {
 		t.Fatalf("synthetic controller status after cleanup = %+v, want preserved", status)
 	}
-	events := store.Events(api.RouterAPIVersion, "Router", "test-router", 10)
+	events, err := store.ReadEvents(t.Context(), api.RouterAPIVersion, "Router", "test-router", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) == 0 || events[0].Reason != "StaleStateCleanup" {
 		t.Fatalf("events = %+v, want StaleStateCleanup", events)
-	}
-}
-
-func TestStaleObjectStatusesKeepsConfiguredAndSyntheticKinds(t *testing.T) {
-	statuses := []routerstate.ObjectStatus{
-		{APIVersion: api.NetAPIVersion, Kind: "PPPoEInterface", Name: "wan"},
-		{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "wan"},
-		{APIVersion: api.NetAPIVersion, Kind: "BGPRouter", Name: "lan"},
-		{APIVersion: api.RouterAPIVersion, Kind: "Inventory", Name: "host"},
-		{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"},
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "lan"}},
-	}}}
-	got := staleObjectStatuses(router, statuses)
-	if len(got) != 1 || got[0].Kind != "PPPoEInterface" {
-		t.Fatalf("stale statuses = %+v, want only PPPoEInterface", got)
 	}
 }
 
@@ -2621,33 +2051,6 @@ func TestCleanupUnsupportedLegacyObjectStatusesSkipsWhenSnapshotFails(t *testing
 	}
 }
 
-func TestDeleteCommandFileTargetsRouterResources(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "router.yaml")
-	if err := os.WriteFile(configPath, []byte(`apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: test
-spec:
-  resources:
-    - apiVersion: net.routerd.net/v1alpha1
-      kind: Interface
-      metadata:
-        name: wan
-      spec:
-        ifName: ens18
-`), 0644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	targets, err := deleteTargets(nil, configPath, "", false, "")
-	if err != nil {
-		t.Fatalf("delete targets: %v", err)
-	}
-	if len(targets) != 1 || targets[0].Kind != "Interface" || targets[0].Name != "wan" {
-		t.Fatalf("targets = %+v", targets)
-	}
-}
-
 type fakeStaleCleanupStore struct {
 	statuses []routerstate.ObjectStatus
 	deleted  []string
@@ -2676,19 +2079,6 @@ func (s *fakeStaleCleanupStore) RecordEvent(apiVersion, kind, name, eventType, r
 		Message:    message,
 	})
 	return nil
-}
-
-func (s *fakeStaleCleanupStore) Events(apiVersion, kind, name string, limit int) []routerstate.Event {
-	var out []routerstate.Event
-	for _, event := range s.events {
-		if event.APIVersion == apiVersion && event.Kind == kind && event.Name == name {
-			out = append(out, event)
-		}
-	}
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
-	return out
 }
 
 func (s *fakeStaleCleanupStore) Get(name string) routerstate.Value {
@@ -2770,39 +2160,16 @@ func TestRouterWithIPv6PDClientOptionsResolvesFlavorDefaults(t *testing.T) {
 
 }
 
-func TestRouterWithIPv6PDClientOptionsOverridesAndWarns(t *testing.T) {
-	router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{
-		Interface: "wan",
-		Client:    api.IPv6PDClientDHCPv6C,
-		Profile:   api.IPv6PDProfileNTTHGWLANPD,
-	})
-
-	got, warnings, err := routerWithIPv6PDClientOptions(router, applyOptions{
-		OverrideClient: api.IPv6PDClientDHCPCD,
-	}, "freebsd")
-	if err != nil {
-		t.Fatalf("resolve overridden PD options: %v", err)
-	}
-	if len(warnings) != 1 {
-		t.Fatalf("warnings = %v, want one known-ng warning", warnings)
-	}
-	if !strings.Contains(warnings[0], "Known") && !strings.Contains(warnings[0], "known problematic") {
-		t.Fatalf("warning does not describe known problem: %q", warnings[0])
-	}
-	spec, err := got.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
-	if err != nil {
-		t.Fatalf("read spec: %v", err)
-	}
-	if spec.Client != api.IPv6PDClientDHCPCD {
-		t.Fatalf("client = %q, want override dhcpcd", spec.Client)
-	}
-
-	original, err := router.Spec.Resources[1].DHCPv6PrefixDelegationSpec()
-	if err != nil {
-		t.Fatalf("read original spec: %v", err)
-	}
-	if original.Client != api.IPv6PDClientDHCPv6C {
-		t.Fatalf("original router mutated: client = %q", original.Client)
+func TestRouterWithIPv6PDClientOptionsRejectsUnsupportedExternalClients(t *testing.T) {
+	for _, client := range []string{api.IPv6PDClientNetworkd, api.IPv6PDClientDHCPv6C, api.IPv6PDClientDHCPCD} {
+		router := testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{Interface: "wan", Client: client})
+		if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{}, "linux"); err == nil {
+			t.Fatalf("unsupported configured client accepted: %s", client)
+		}
+		router = testRouterWithPrefixDelegation(api.DHCPv6PrefixDelegationSpec{Interface: "wan"})
+		if _, _, err := routerWithIPv6PDClientOptions(router, applyOptions{OverrideClient: client}, "freebsd"); err == nil {
+			t.Fatalf("unsupported override accepted: %s", client)
+		}
 	}
 }
 
@@ -2835,557 +2202,6 @@ func testRouterWithPrefixDelegation(spec api.DHCPv6PrefixDelegationSpec) *api.Ro
 	}
 }
 
-func TestParseFreeBSDRCConf(t *testing.T) {
-	got, err := parseFreeBSDRCConf([]byte(`# Generated
-gateway_enable="YES"
-ifconfig_vtnet2="DHCP"
-ifconfig_vtnet0_ipv6="inet6 accept_rtadv"
-`))
-	if err != nil {
-		t.Fatalf("parse rc.conf: %v", err)
-	}
-	for key, want := range map[string]string{
-		"gateway_enable":       "YES",
-		"ifconfig_vtnet2":      "DHCP",
-		"ifconfig_vtnet0_ipv6": "inet6 accept_rtadv",
-	} {
-		if got[key] != want {
-			t.Fatalf("%s = %q, want %q", key, got[key], want)
-		}
-	}
-	if ifname := freeBSDIfconfigKeyInterface("ifconfig_vtnet0_ipv6"); ifname != "vtnet0" {
-		t.Fatalf("ifconfig key interface = %q, want vtnet0", ifname)
-	}
-	ifnames := freeBSDDHCPClientIfnames([]byte("interface \"vtnet2\" {\n  ignore routers;\n};\n"))
-	if len(ifnames) != 1 || ifnames[0] != "vtnet2" {
-		t.Fatalf("dhclient ifnames = %v, want [vtnet2]", ifnames)
-	}
-}
-
-func TestParseFreeBSDSysrcValue(t *testing.T) {
-	tests := []struct {
-		name string
-		key  string
-		out  string
-		want string
-	}{
-		{name: "dash value", key: "dhcp6c_flags", out: "dhcp6c_flags: -n\n", want: "-n"},
-		{name: "quoted style not emitted", key: "ifconfig_vtnet0", out: "ifconfig_vtnet0: DHCP\n", want: "DHCP"},
-		{name: "fallback raw", key: "missing", out: "NO\n", want: "NO"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := parseFreeBSDSysrcValue(tt.key, []byte(tt.out)); got != tt.want {
-				t.Fatalf("parseFreeBSDSysrcValue() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestApplyFreeBSDConfigDoesNotReclaimStaleSysrcKeys(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	stateLog := filepath.Join(dir, "sysrc-calls.log")
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-case "$1" in
-  -x) exit 0 ;;
-  *) echo "$1: NO"; exit 0 ;;
-esac
-`, stateLog))
-	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
-if [ "$1" = "dhcp6c" ] && [ "$2" = "status" ]; then exit 0; fi
-exit 0
-`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"}},
-	}}}
-
-	store := routerstate.New()
-	store.Set(freebsdSysrcStateKey, "ifconfig_vxlan102,ifconfig_vxlan103,gateway_enable", "test seed")
-
-	_, _, err := applyFreeBSDConfigWithOptions(router, store, "", "", "", "", freeBSDConfigApplyOptions{ManageServices: true})
-	if err != nil {
-		t.Fatalf("apply FreeBSD config: %v", err)
-	}
-
-	got, err := os.ReadFile(stateLog)
-	if err != nil {
-		t.Fatalf("read sysrc log: %v", err)
-	}
-	if strings.Contains(string(got), "-x ") {
-		t.Fatalf("FreeBSD apply must not remove sysrc keys implicitly:\n%s", got)
-	}
-}
-
-func TestApplyFreeBSDConfigAppliesPFAndRCDScripts(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	sysrcLog := filepath.Join(dir, "sysrc.log")
-	serviceLog := filepath.Join(dir, "service.log")
-	pfctlLog := filepath.Join(dir, "pfctl.log")
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-case "$1" in
-  -x) exit 0 ;;
-  *) echo "$1: NO"; exit 0 ;;
-esac
-`, sysrcLog))
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "-l" ]; then
-  printf 'pf\npflog\nrouterd_healthcheck_internet\n'
-  exit 0
-fi
-if [ "$2" = "status" ]; then
-  exit 1
-fi
-exit 0
-`, serviceLog))
-	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$*" >> %q
-if [ "$1" = "-s" ]; then
-  echo "Status: Disabled"
-fi
-exit 0
-`, pfctlLog))
-	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
-exit 1
-`)
-	writeExecutable(t, filepath.Join(binDir, "kldload"), `#!/bin/sh
-exit 0
-`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: false, Owner: "external"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
-		},
-	}}}
-
-	pfPath := filepath.Join(dir, "etc", "pf.conf")
-	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", pfPath, rcDir, freeBSDConfigApplyOptions{
-		ManageServices: true,
-		PFEnabled:      func() bool { return false },
-	})
-	if err != nil {
-		t.Fatalf("apply FreeBSD config: %v", err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v, want none", warnings)
-	}
-	for _, path := range []string{pfPath, filepath.Join(rcDir, "routerd_healthcheck_internet")} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("expected %s to be written: %v", path, err)
-		}
-	}
-	pfctlCalls, err := os.ReadFile(pfctlLog)
-	if err != nil {
-		t.Fatalf("read pfctl log: %v", err)
-	}
-	for _, want := range []string{"-nf " + pfPath, "-f " + pfPath} {
-		if !strings.Contains(string(pfctlCalls), want) {
-			t.Fatalf("pfctl calls missing %q:\n%s", want, pfctlCalls)
-		}
-	}
-	if !strings.Contains(string(pfctlCalls), "-e") {
-		t.Fatalf("pfctl calls missing enable:\n%s", pfctlCalls)
-	}
-	serviceCalls, err := os.ReadFile(serviceLog)
-	if err != nil {
-		t.Fatalf("read service log: %v", err)
-	}
-	for _, want := range []string{"pf onestart", "pflog onestart", "routerd_healthcheck_internet onestart"} {
-		if !strings.Contains(string(serviceCalls), want) {
-			t.Fatalf("service calls missing %q:\n%s", want, serviceCalls)
-		}
-	}
-	gotChanged := strings.Join(changed, "\n")
-	for _, want := range []string{pfPath, filepath.Join(rcDir, "routerd_healthcheck_internet"), "service:pf", "service:pflog", "service:routerd_healthcheck_internet"} {
-		if !strings.Contains(gotChanged, want) {
-			t.Fatalf("changed missing %q:\n%v", want, changed)
-		}
-	}
-}
-
-func TestApplyFreeBSDPFConfigSkipServiceManagerDoesNotStartServices(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	serviceLog := filepath.Join(dir, "service.log")
-	pfctlLog := filepath.Join(dir, "pfctl.log")
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 1
-`, serviceLog))
-	writeExecutable(t, filepath.Join(binDir, "pfctl"), fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$*" >> %q
-if [ "$1" = "-s" ]; then
-  echo "Status: Disabled"
-fi
-exit 0
-`, pfctlLog))
-	writeExecutable(t, filepath.Join(binDir, "kldstat"), `#!/bin/sh
-exit 1
-`)
-	writeExecutable(t, filepath.Join(binDir, "kldload"), `#!/bin/sh
-exit 0
-`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	pfPath := filepath.Join(dir, "etc", "pf.conf")
-	changed, err := applyFreeBSDPFConfigWithOptions([]byte("pass\n"), pfPath, freeBSDPFApplyOptions{
-		ManageServices: false,
-		PFEnabled:      func() bool { return false },
-	})
-	if err != nil {
-		t.Fatalf("apply FreeBSD pf config: %v", err)
-	}
-	pfctlCalls, err := os.ReadFile(pfctlLog)
-	if err != nil {
-		t.Fatalf("read pfctl log: %v", err)
-	}
-	for _, want := range []string{"-nf " + pfPath, "-f " + pfPath, "-e"} {
-		if !strings.Contains(string(pfctlCalls), want) {
-			t.Fatalf("pfctl calls missing %q:\n%s", want, pfctlCalls)
-		}
-	}
-	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
-		t.Fatalf("service must not be called when service management is skipped:\n%s", serviceCalls)
-	}
-	gotChanged := strings.Join(changed, "\n")
-	for _, want := range []string{pfPath, "pfctl:-e"} {
-		if !strings.Contains(gotChanged, want) {
-			t.Fatalf("changed missing %q:\n%v", want, changed)
-		}
-	}
-	if strings.Contains(gotChanged, "service:") {
-		t.Fatalf("changed contains service operation despite skipped service manager:\n%v", changed)
-	}
-}
-
-func TestApplyFreeBSDConfigContinuesAfterNTPStartFailure(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults.SysconfDir = filepath.Join(dir, "usr", "local", "etc", "routerd")
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	serviceLog := filepath.Join(dir, "service.log")
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
-case "$1" in
-  -x) exit 0 ;;
-  *) echo "$1: NO"; exit 0 ;;
-esac
-`)
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "-l" ]; then
-  printf 'ntpd\nrouterd_healthcheck_internet\n'
-  exit 0
-fi
-if [ "$1" = "ntpd" ] && [ "$2" = "start" ]; then
-  echo "ntpd failed to start" >&2
-  exit 1
-fi
-if [ "$2" = "status" ]; then
-  exit 1
-fi
-exit 0
-`, serviceLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
-			Metadata: api.ObjectMeta{Name: "time"},
-			Spec: api.NTPClientSpec{
-				Provider: "ntpd",
-				Managed:  true,
-				Source:   "static",
-				Servers:  []string{"ntp.example.net"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
-		},
-	}}}
-
-	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: true})
-	if err != nil {
-		t.Fatalf("apply FreeBSD config should continue after ntpd failure: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); err != nil {
-		t.Fatalf("expected rc.d script to be written after ntpd warning: %v", err)
-	}
-	if !stringSliceContainsPrefix(warnings, "service ntpd start:") {
-		t.Fatalf("warnings = %v, want ntpd warning", warnings)
-	}
-	if !stringSliceContains(changed, filepath.Join(rcDir, "routerd_healthcheck_internet")) {
-		t.Fatalf("changed = %v, want rc.d script path", changed)
-	}
-}
-
-func TestApplyFreeBSDConfigSkipServiceManagerDoesNotStartServices(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults.SysconfDir = filepath.Join(dir, "usr", "local", "etc", "routerd")
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	serviceLog := filepath.Join(dir, "service.log")
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
-case "$1" in
-  -x) exit 0 ;;
-  *) echo "$1: NO"; exit 0 ;;
-esac
-`)
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "-l" ]; then
-  printf 'ntpd\nrouterd_healthcheck_internet\n'
-  exit 0
-fi
-exit 1
-`, serviceLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"},
-			Metadata: api.ObjectMeta{Name: "time"},
-			Spec: api.NTPClientSpec{
-				Provider: "ntpd",
-				Managed:  true,
-				Source:   "static",
-				Servers:  []string{"ntp.example.net"},
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
-		},
-	}}}
-
-	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: false})
-	if err != nil {
-		t.Fatalf("apply FreeBSD config: %v", err)
-	}
-	if len(warnings) != 0 {
-		t.Fatalf("warnings = %v, want none", warnings)
-	}
-	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rc.d script should not be written when service management is skipped: %v", err)
-	}
-	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
-		t.Fatalf("service must not be called when service management is skipped:\n%s", serviceCalls)
-	}
-	if !stringSliceContainsPrefix(changed, "sysrc:ntpd_") {
-		t.Fatalf("changed = %v, want ntpd sysrc keys to remain persisted", changed)
-	}
-}
-
-func TestApplyFreeBSDRCDScriptsDoesNotRestartRouterdFromApply(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	serviceLog := filepath.Join(dir, "service.log")
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$2" = "status" ]; then
-  exit 0
-fi
-exit 0
-`, serviceLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	changed, err := applyFreeBSDRCDScripts(map[string][]byte{
-		"routerd": []byte("#!/bin/sh\n# PROVIDE: routerd\n"),
-	}, filepath.Join(dir, "rc.d"))
-	if err != nil {
-		t.Fatalf("apply rc.d scripts: %v", err)
-	}
-	if !stringSliceContains(changed, "service:routerd:restart-required") {
-		t.Fatalf("changed = %v, want restart-required marker", changed)
-	}
-	serviceCalls, err := os.ReadFile(serviceLog)
-	if err == nil && strings.Contains(string(serviceCalls), "routerd") {
-		t.Fatalf("routerd service must not be controlled from routerd apply:\n%s", serviceCalls)
-	}
-}
-
-func TestApplySystemdUnitResourcesNoopsWithoutConfigResource(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	commandLog := filepath.Join(dir, "commands.log")
-	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf(`#!/bin/sh
-echo "systemctl $@" >> %q
-exit 0
-`, commandLog))
-	writeExecutable(t, filepath.Join(binDir, "systemd-run"), fmt.Sprintf(`#!/bin/sh
-echo "systemd-run $@" >> %q
-exit 0
-`, commandLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	oldDefaults := platformDefaults
-	oldFeatures := platformFeatures
-	platformDefaults = platform.Defaults{
-		OS:               platform.OSLinux,
-		SystemdSystemDir: filepath.Join(dir, "systemd"),
-	}
-	platformFeatures = platform.Features{HasSystemd: true}
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		platformFeatures = oldFeatures
-	})
-
-	router := &api.Router{Spec: api.RouterSpec{}}
-	changed, err := applySystemdUnitResources(router)
-	if err != nil {
-		t.Fatalf("apply systemd unit resources: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed = %v, want no direct apply-time service manager changes", changed)
-	}
-	if _, err := os.Stat(commandLog); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("apply --once path must not call service manager, command log err=%v", err)
-	}
-}
-
-func TestApplyFreeBSDConfigContinuesAfterPackageFailure(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "pkg"), `#!/bin/sh
-exit 3
-`)
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), `#!/bin/sh
-if [ "$#" -eq 1 ]; then
-  echo "$1: NO"
-  exit 0
-fi
-exit 0
-`)
-	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
-if [ "$2" = "status" ]; then
-  exit 1
-fi
-exit 0
-`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
-			Metadata: api.ObjectMeta{Name: "deps"},
-			Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{{
-				OS:      "freebsd",
-				Manager: "pkg",
-				Names:   []string{"dnsmasq"},
-			}}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
-			Metadata: api.ObjectMeta{Name: "internet"},
-			Spec:     api.HealthCheckSpec{Daemon: "routerd-healthcheck", Target: "1.1.1.1", Protocol: "icmp"},
-		},
-	}}}
-
-	rcDir := filepath.Join(dir, "rc.d")
-	changed, warnings, err := applyFreeBSDConfigWithOptions(router, routerstate.New(), "", "", "", rcDir, freeBSDConfigApplyOptions{ManageServices: true})
-	if err != nil {
-		t.Fatalf("apply FreeBSD config should continue after package failure: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(rcDir, "routerd_healthcheck_internet")); err != nil {
-		t.Fatalf("expected rc.d script to be written after package warning: %v", err)
-	}
-	if !stringSliceContainsPrefix(warnings, "pkg install:") {
-		t.Fatalf("warnings = %v, want package warning", warnings)
-	}
-	if !stringSliceContains(changed, filepath.Join(rcDir, "routerd_healthcheck_internet")) {
-		t.Fatalf("changed = %v, want rc.d script path", changed)
-	}
-}
-
-func TestLinuxPackageOSNameFromRecognizesDebianLike(t *testing.T) {
-	got := linuxPackageOSNameFrom("NAME=\"Pop!_OS\"\nID=pop\nID_LIKE=debian\n")
-	if got != "ubuntu" {
-		t.Fatalf("linuxPackageOSNameFrom = %q, want ubuntu", got)
-	}
-	if got := defaultLinuxPackageManager(got); got != "apt" {
-		t.Fatalf("defaultLinuxPackageManager = %q, want apt", got)
-	}
-}
-
-func TestApplyFreeBSDRCDScriptsDisablesExecutableBackups(t *testing.T) {
-	dir := t.TempDir()
-	rcDir := filepath.Join(dir, "rc.d")
-	if err := os.MkdirAll(rcDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	backup := filepath.Join(rcDir, "routerd.recovery.20260510T235157Z")
-	if err := os.WriteFile(backup, []byte("#!/bin/sh\n# PROVIDE: routerd\n"), 0555); err != nil {
-		t.Fatal(err)
-	}
-	changed, err := applyFreeBSDRCDScripts(map[string][]byte{
-		"routerd": []byte("#!/bin/sh\n# PROVIDE: routerd\n"),
-	}, rcDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !stringSliceContainsPrefix(changed, "rc.d:disable-stale:") {
-		t.Fatalf("changed = %v, want stale rc.d backup disable marker", changed)
-	}
-	info, err := os.Stat(backup)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode()&0111 != 0 {
-		t.Fatalf("backup remained executable: %v", info.Mode())
-	}
-}
-
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -3404,743 +2220,10 @@ func stringSliceContainsPrefix(values []string, prefix string) bool {
 	return false
 }
 
-func TestRunFreeBSDServiceTreatsAlreadyRunningAsIdempotentStart(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "service"), `#!/bin/sh
-echo "daemon: process already running, pid: 10220" >&2
-exit 1
-`)
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	if err := runFreeBSDService("routerd_dhcpv6_client_wan_pd", "onestart"); err != nil {
-		t.Fatalf("onestart already running should be idempotent: %v", err)
-	}
-	if err := runFreeBSDService("routerd_dhcpv6_client_wan_pd", "onerestart"); err == nil {
-		t.Fatal("onerestart failure should not be hidden")
-	}
-}
-
-func TestApplyFreeBSDDnsmasqConfigValidatesAndUsesPersistentLeaseDirectory(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults = platform.Defaults{
-		OS:         platform.OSFreeBSD,
-		RuntimeDir: filepath.Join(dir, "var", "run", "routerd"),
-		StateDir:   filepath.Join(dir, "var", "db", "routerd"),
-	}
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	dnsmasqLog := filepath.Join(dir, "dnsmasq.log")
-	serviceLog := filepath.Join(dir, "service.log")
-	sysrcLog := filepath.Join(dir, "sysrc.log")
-	writeExecutable(t, filepath.Join(binDir, "dnsmasq"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 0
-`, dnsmasqLog))
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 0
-`, sysrcLog))
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "-l" ]; then
-  printf 'routerd_dnsmasq\n'
-  exit 0
-fi
-if [ "$2" = "status" ]; then
-  exit 1
-fi
-exit 0
-`, serviceLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "usr", "local", "etc", "rc.d", "routerd_dnsmasq")
-	changed, err := applyFreeBSDDnsmasqConfig(configPath, servicePath, []byte("port=0\ndhcp-leasefile="+dnsmasqLeaseFileForPlatform()+"\n"), filepath.Join(binDir, "dnsmasq"))
-	if err != nil {
-		t.Fatalf("apply FreeBSD dnsmasq: %v", err)
-	}
-	for _, path := range []string{
-		configPath,
-		servicePath,
-		filepath.Join(platformDefaults.StateDir, "dnsmasq"),
-		platformDefaults.RuntimeDir,
-	} {
-		if _, err := os.Stat(path); err != nil {
-			t.Fatalf("expected %s to exist: %v", path, err)
-		}
-	}
-	if !containsString(changed, configPath) || !containsString(changed, servicePath) {
-		t.Fatalf("changed = %v", changed)
-	}
-	dnsmasqCalls, err := os.ReadFile(dnsmasqLog)
-	if err != nil {
-		t.Fatalf("read dnsmasq log: %v", err)
-	}
-	if !strings.Contains(string(dnsmasqCalls), "--test --conf-file="+configPath) {
-		t.Fatalf("dnsmasq --test not called:\n%s", dnsmasqCalls)
-	}
-	serviceData, err := os.ReadFile(servicePath)
-	if err != nil {
-		t.Fatalf("read rc.d script: %v", err)
-	}
-	for _, want := range []string{
-		`mkdir -p "` + platformDefaults.RuntimeDir + `"`,
-		`mkdir -p "` + filepath.Join(platformDefaults.StateDir, "dnsmasq") + `"`,
-	} {
-		if !strings.Contains(string(serviceData), want) {
-			t.Fatalf("rc.d script missing %q:\n%s", want, serviceData)
-		}
-	}
-}
-
-func TestApplyFreeBSDDnsmasqConfigWithoutServicePathDoesNotManageService(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults = platform.Defaults{
-		OS:         platform.OSFreeBSD,
-		RuntimeDir: filepath.Join(dir, "var", "run", "routerd"),
-		StateDir:   filepath.Join(dir, "var", "db", "routerd"),
-	}
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	dnsmasqLog := filepath.Join(dir, "dnsmasq.log")
-	serviceLog := filepath.Join(dir, "service.log")
-	writeExecutable(t, filepath.Join(binDir, "dnsmasq"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 0
-`, dnsmasqLog))
-	writeExecutable(t, filepath.Join(binDir, "service"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 1
-`, serviceLog))
-	writeExecutable(t, filepath.Join(binDir, "sysrc"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-exit 1
-`, serviceLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
-	changed, err := applyFreeBSDDnsmasqConfig(configPath, "", []byte("port=0\ndhcp-leasefile="+dnsmasqLeaseFileForPlatform()+"\n"), filepath.Join(binDir, "dnsmasq"))
-	if err != nil {
-		t.Fatalf("apply FreeBSD dnsmasq: %v", err)
-	}
-	if !containsString(changed, configPath) {
-		t.Fatalf("changed = %v, want config path", changed)
-	}
-	if _, err := os.Stat(platformDefaults.RuntimeDir); err != nil {
-		t.Fatalf("expected runtime dir to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(platformDefaults.StateDir, "dnsmasq")); err != nil {
-		t.Fatalf("expected lease dir to exist: %v", err)
-	}
-	if serviceCalls, err := os.ReadFile(serviceLog); err == nil && len(serviceCalls) > 0 {
-		t.Fatalf("service/sysrc must not be called without a service path:\n%s", serviceCalls)
-	}
-}
-
-func TestApplyDnsmasqConfigRemovesOwnedLinuxArtifactsWhenDesiredIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults, oldFeatures := platformDefaults, platformFeatures
-	platformDefaults = platform.Defaults{OS: platform.OSLinux}
-	platformFeatures = platform.Features{HasSystemd: true}
-	t.Cleanup(func() {
-		platformDefaults, platformFeatures = oldDefaults, oldFeatures
-	})
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(dir, "systemctl.log")
-	writeExecutable(t, filepath.Join(binDir, "systemctl"), fmt.Sprintf("#!/bin/sh\necho \"$@\" >> %q\n", logPath))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	configPath := filepath.Join(dir, "etc", "routerd", "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "etc", "systemd", "routerd-dnsmasq.service")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(servicePath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(servicePath, render.DnsmasqServiceUnit(configPath, "/usr/sbin/dnsmasq"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
-	if err != nil {
-		t.Fatalf("remove managed dnsmasq: %v", err)
-	}
-	if !containsString(changed, configPath) || !containsString(changed, servicePath) {
-		t.Fatalf("changed = %v", changed)
-	}
-	for _, path := range []string{configPath, servicePath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("%s remains after desired removal: %v", path, err)
-		}
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil || !strings.Contains(string(data), "disable --now "+routerdDnsmasqService) {
-		t.Fatalf("systemctl calls = %q, want owned disable/stop", data)
-	}
-}
-
-func TestApplyDnsmasqConfigRemovesOwnedFreeBSDArtifactsWhenDesiredIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults, oldFeatures := platformDefaults, platformFeatures
-	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
-	platformFeatures = platform.Features{}
-	t.Cleanup(func() {
-		platformDefaults, platformFeatures = oldDefaults, oldFeatures
-	})
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(dir, "rc.log")
-	for _, name := range []string{"service", "sysrc"} {
-		writeExecutable(t, filepath.Join(binDir, name), fmt.Sprintf("#!/bin/sh\necho %s:\"$@\" >> %q\n", name, logPath))
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	configPath := filepath.Join(dir, "usr", "local", "etc", "routerd", "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "usr", "local", "etc", "rc.d", "routerd_dnsmasq")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(servicePath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(servicePath, render.DnsmasqRCScript(configPath, filepath.Join(dir, "run"), filepath.Join(dir, "lease"), "/usr/local/sbin/dnsmasq"), 0555); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := applyDnsmasqConfig(configPath, servicePath, nil); err != nil {
-		t.Fatalf("remove managed dnsmasq: %v", err)
-	}
-	for _, path := range []string{configPath, servicePath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("%s remains after desired removal: %v", path, err)
-		}
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil || !strings.Contains(string(data), "service:routerd_dnsmasq onestop") || !strings.Contains(string(data), "sysrc:routerd_dnsmasq_enable=NO") {
-		t.Fatalf("FreeBSD lifecycle calls = %q", data)
-	}
-}
-
-func TestApplyDnsmasqConfigPreservesForeignArtifactsWhenDesiredIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults, oldFeatures := platformDefaults, platformFeatures
-	platformDefaults = platform.Defaults{OS: platform.OSLinux}
-	platformFeatures = platform.Features{HasSystemd: true}
-	t.Cleanup(func() {
-		platformDefaults, platformFeatures = oldDefaults, oldFeatures
-	})
-	configPath := filepath.Join(dir, "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
-	if err := os.WriteFile(configPath, []byte("# administrator owned\nport=0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(servicePath, []byte("# administrator owned\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	originals := map[string][]byte{}
-	for _, path := range []string{configPath, servicePath} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		originals[path] = data
-	}
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	calls := filepath.Join(dir, "service-calls")
-	for _, command := range []string{"systemctl", "service", "sysrc"} {
-		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
-		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
-	if err != nil {
-		t.Fatalf("preserve foreign dnsmasq: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed = %v, want no foreign mutation", changed)
-	}
-
-	for path, original := range originals {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("foreign artifact %s: %v", path, err)
-		}
-		if string(data) != string(original) {
-			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
-		}
-	}
-	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
-	}
-}
-
-func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignLinuxServiceWhenDesiredIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults, oldFeatures := platformDefaults, platformFeatures
-	platformDefaults = platform.Defaults{OS: platform.OSLinux}
-	platformFeatures = platform.Features{HasSystemd: true}
-	t.Cleanup(func() {
-		platformDefaults, platformFeatures = oldDefaults, oldFeatures
-	})
-	configPath := filepath.Join(dir, "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "routerd-dnsmasq.service")
-	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(servicePath, []byte("[Unit]\nDescription=administrator managed dnsmasq\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	originals := map[string][]byte{}
-	for _, path := range []string{configPath, servicePath} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		originals[path] = data
-	}
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	calls := filepath.Join(dir, "service-calls")
-	for _, command := range []string{"systemctl", "service", "sysrc"} {
-		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
-		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
-	if err != nil {
-		t.Fatalf("preserve ownership collision: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed = %v, want no collision mutation", changed)
-	}
-
-	for path, original := range originals {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("foreign artifact %s: %v", path, err)
-		}
-		if string(data) != string(original) {
-			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
-		}
-	}
-	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
-	}
-}
-
-func TestApplyDnsmasqConfigPreservesOwnedConfigWithForeignFreeBSDServiceWhenDesiredIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults, oldFeatures := platformDefaults, platformFeatures
-	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
-	platformFeatures = platform.Features{}
-	t.Cleanup(func() {
-		platformDefaults, platformFeatures = oldDefaults, oldFeatures
-	})
-	configPath := filepath.Join(dir, "dnsmasq.conf")
-	servicePath := filepath.Join(dir, "routerd_dnsmasq")
-	if err := os.WriteFile(configPath, []byte(routerdGeneratedConfigMarker+"port=0\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(servicePath, []byte("#!/bin/sh\n# administrator-owned rc.d service\n"), 0555); err != nil {
-		t.Fatal(err)
-	}
-	originals := map[string][]byte{}
-	for _, path := range []string{configPath, servicePath} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		originals[path] = data
-	}
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	calls := filepath.Join(dir, "service-calls")
-	for _, command := range []string{"systemctl", "service", "sysrc"} {
-		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' 'unexpected service control' >> %q\nexit 99\n", calls)
-		if err := os.WriteFile(filepath.Join(binDir, command), []byte(body), 0755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	changed, err := applyDnsmasqConfig(configPath, servicePath, nil)
-	if err != nil {
-		t.Fatalf("preserve ownership collision: %v", err)
-	}
-	if len(changed) != 0 {
-		t.Fatalf("changed = %v, want no collision mutation", changed)
-	}
-
-	for path, original := range originals {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("foreign artifact %s: %v", path, err)
-		}
-		if string(data) != string(original) {
-			t.Fatalf("foreign bytes changed for %s: before=%q after=%q", path, original, data)
-		}
-	}
-	if data, err := os.ReadFile(calls); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("foreign preservation invoked service control: %q (%v)", data, err)
-	}
-}
-
-func TestApplyFreeBSDDSLiteSupportsDynamicDelegatedAddress(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	platformDefaults = platform.Defaults{OS: platform.OSFreeBSD}
-	t.Cleanup(func() { platformDefaults = oldDefaults })
-
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		t.Fatalf("create fake bin dir: %v", err)
-	}
-	ifconfigLog := filepath.Join(dir, "ifconfig.log")
-	routeLog := filepath.Join(dir, "route.log")
-	writeExecutable(t, filepath.Join(binDir, "ifconfig"), fmt.Sprintf(`#!/bin/sh
-echo "$@" >> %q
-if [ "$1" = "vtnet1" ] && [ "$#" -eq 1 ]; then
-  cat <<'OUT'
-vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> metric 0 mtu 1500
-	inet6 fe80::1%%vtnet1 prefixlen 64 scopeid 0x2
-	inet6 2001:db8:1234:5678::abcd prefixlen 64
-OUT
-  exit 0
-fi
-if [ "$#" -eq 1 ]; then
-  exit 1
-fi
-exit 0
-`, ifconfigLog))
-	writeExecutable(t, filepath.Join(binDir, "route"), fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$*" >> %q
-if [ "$1" = "-n" ] && [ "$2" = "get" ]; then
-  printf 'gateway: 192.0.2.1\ninterface: vtnet0\n'
-  exit 0
-fi
-exit 0
-`, routeLog))
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "vtnet0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "vtnet1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{
-			Interface:             "wan",
-			TunnelName:            "ds-lite",
-			LocalAddressSource:    "delegatedAddress",
-			LocalDelegatedAddress: "lan-ipv6",
-			LocalAddressSuffix:    "::11",
-			AFTRIPv6:              "2001:db8::feed",
-			MTU:                   1454,
-			DefaultRoute:          true,
-		}},
-	}}}
-
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:1234:5678::/64"}), "test")
-	changed, err := applyDSLiteTunnelsWithState(router, store)
-	if err != nil {
-		t.Fatalf("apply DS-Lite tunnels: %v", err)
-	}
-	if !containsString(changed, "ds-lite") {
-		t.Fatalf("changed = %v, want ds-lite", changed)
-	}
-	gif := freeBSDDSLiteRuntimeIfName("ds-lite")
-	ifconfigCalls, err := os.ReadFile(ifconfigLog)
-	if err != nil {
-		t.Fatalf("read ifconfig log: %v", err)
-	}
-	for _, want := range []string{
-		"vtnet1 inet6 2001:db8:1234:5678::11 prefixlen 64 alias",
-		gif + " create",
-		gif + " inet6 tunnel 2001:db8:1234:5678::11 2001:db8::feed",
-		gif + " inet 192.0.0.2 192.0.0.1 netmask 255.255.255.255",
-		gif + " mtu 1454",
-		gif + " up",
-	} {
-		if !strings.Contains(string(ifconfigCalls), want) {
-			t.Fatalf("ifconfig calls missing %q:\n%s", want, ifconfigCalls)
-		}
-	}
-	routeCalls, err := os.ReadFile(routeLog)
-	if err != nil {
-		t.Fatalf("read route log: %v", err)
-	}
-	if !strings.Contains(string(routeCalls), "-n change default 192.0.0.1") {
-		t.Fatalf("route change not called for %s:\n%s", gif, routeCalls)
-	}
-}
-
-func TestCleanupLegacyFreeBSDStateDirMovesVarLibRouterd(t *testing.T) {
-	dir := t.TempDir()
-	oldDefaults := platformDefaults
-	oldLegacy := legacyFreeBSDStateDir
-	platformDefaults = platform.Defaults{
-		OS:       platform.OSFreeBSD,
-		StateDir: filepath.Join(dir, "var", "db", "routerd"),
-	}
-	legacyFreeBSDStateDir = filepath.Join(dir, "var", "lib", "routerd")
-	t.Cleanup(func() {
-		platformDefaults = oldDefaults
-		legacyFreeBSDStateDir = oldLegacy
-	})
-
-	staleLease := filepath.Join(legacyFreeBSDStateDir, "dhcpv6-client", "wan-pd", "lease.json")
-	if err := os.MkdirAll(filepath.Dir(staleLease), 0755); err != nil {
-		t.Fatalf("create legacy state: %v", err)
-	}
-	if err := os.WriteFile(staleLease, []byte(`{"currentPrefix":"2001:db8::/60"}`), 0644); err != nil {
-		t.Fatalf("write stale lease: %v", err)
-	}
-
-	moved, err := cleanupLegacyFreeBSDStateDir()
-	if err != nil {
-		t.Fatalf("cleanup legacy state: %v", err)
-	}
-	if len(moved) != 1 || !strings.Contains(moved[0], "legacy-var-lib-routerd-") {
-		t.Fatalf("moved = %v", moved)
-	}
-	if _, err := os.Stat(legacyFreeBSDStateDir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("legacy state dir still exists or unexpected stat error: %v", err)
-	}
-	matches, err := filepath.Glob(filepath.Join(platformDefaults.StateDir, "legacy-var-lib-routerd-*", "dhcpv6-client", "wan-pd", "lease.json"))
-	if err != nil {
-		t.Fatalf("glob moved lease: %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("moved stale lease matches = %v", matches)
-	}
-}
-
 func writeExecutable(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
 		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
-func TestEnsureIPv6LocalAddressReplacesBroaderPrefixWithHostRoute(t *testing.T) {
-	if platformDefaults.OS != platform.OSLinux {
-		t.Skip("Linux address prefix behavior")
-	}
-	binDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "ip.log")
-	writeExecutable(t, filepath.Join(binDir, "ip"), "#!/bin/sh\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-brief -6 addr show dev wan-vmac\" ]; then\n  echo \"wan-vmac UP 2001:db8:1221::21/64\"\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\n")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	changed, err := ensureIPv6LocalAddress("wan-vmac", "2001:db8:1221::21")
-	if err != nil {
-		t.Fatalf("ensure host address: %v", err)
-	}
-	if !changed {
-		t.Fatal("changed = false, want replacement")
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read ip log: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"-6 addr del 2001:db8:1221::21/64 dev wan-vmac",
-		"-6 addr add 2001:db8:1221::21/128 dev wan-vmac",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("ip commands missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestEnsureDeprecatedIPv6LocalAddressForeverRepairsPreferredSource(t *testing.T) {
-	if platformDefaults.OS != platform.OSLinux {
-		t.Skip("Linux address lifetime behavior")
-	}
-	binDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "ip.log")
-	writeExecutable(t, filepath.Join(binDir, "ip"), "#!/bin/sh\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-brief -6 addr show dev wan-vmac\" ]; then\n  echo \"wan-vmac UP 2001:db8:1221::23/128\"\n  exit 0\nfi\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-6 -o addr show dev wan-vmac\" ]; then\n  echo \"7: wan-vmac inet6 2001:db8:1221::23/128 scope global valid_lft forever preferred_lft forever\"\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\n")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	changed, err := ensureDeprecatedIPv6LocalAddressForever("wan-vmac", "2001:db8:1221::23")
-	if err != nil {
-		t.Fatalf("ensure deprecated tunnel source: %v", err)
-	}
-	if !changed {
-		t.Fatal("changed = false, want lifetime repair")
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read ip log: %v", err)
-	}
-	want := "-6 addr replace 2001:db8:1221::23/128 dev wan-vmac preferred_lft 0 valid_lft forever"
-	if !strings.Contains(string(data), want) {
-		t.Fatalf("ip commands missing %q:\n%s", want, data)
-	}
-}
-
-func TestDSLiteDelegatedAddressSources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::23", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6DelegatedAddressSpec{AddressSuffix: "::1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source", LocalAddressSuffix: "::23"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "public-example"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-v6", LocalAddressSuffix: "::100"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ra"}, Spec: api.DSLiteTunnelSpec{LocalAddressSource: "interface", LocalDelegatedAddress: "ordinary"}},
-	}}}
-	got := dsliteDelegatedAddressSources(router)
-	if !got["ds-source"] || got["ordinary"] || got["lan-v6"] {
-		t.Fatalf("DS-Lite delegated sources = %#v", got)
-	}
-}
-
-func TestFreeBSDProtectedIfnames(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{
-		Apply: api.ApplyPolicySpec{ProtectedInterfaces: []string{"mgmt"}},
-		Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "wan"},
-				Spec:     api.InterfaceSpec{IfName: "vtnet0", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-				Metadata: api.ObjectMeta{Name: "mgmt"},
-				Spec:     api.InterfaceSpec{IfName: "vtnet2", Managed: true},
-			},
-		},
-	}}
-	got := freeBSDProtectedIfnames(router)
-	if !got["vtnet2"] {
-		t.Fatalf("protected ifnames = %v, want vtnet2", got)
-	}
-	if got["vtnet0"] {
-		t.Fatalf("protected ifnames = %v, did not want vtnet0", got)
-	}
-}
-
-func TestReplaceManagedPPPoEBlocks(t *testing.T) {
-	current := "# existing\nold * value *\n# BEGIN routerd pppoe old\n\"u\" * \"old\" *\n# END routerd pppoe old\n"
-	got := replaceManagedPPPoEBlocks(current, []render.PPPoESecretEntry{
-		{Name: "wan", Username: "user@example.jp", Password: "secret"},
-	})
-	for _, want := range []string{
-		"# existing\nold * value *\n",
-		"# BEGIN routerd pppoe wan\n",
-		"\"user@example.jp\" * \"secret\" *\n",
-		"# END routerd pppoe wan\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("managed secrets missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "\"u\" * \"old\"") {
-		t.Fatalf("old managed block was not removed:\n%s", got)
-	}
-}
-
-func TestRenderEgressRoutePolicyDefaultMarks(t *testing.T) {
-	data, err := renderEgressRoutePolicyDefaultMarks(
-		"test/default",
-		api.EgressRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.10.0/24"},
-			DestinationCIDRs: []string{"0.0.0.0/0"},
-		},
-		api.EgressRoutePolicyCandidate{Name: "pppoe", Mark: 273},
-		[]api.EgressRoutePolicyCandidate{
-			{Name: "dslite", Mark: 272},
-			{Name: "pppoe", Mark: 273},
-		},
-	)
-	if err != nil {
-		t.Fatalf("render default route policy marks: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"add table ip routerd_default_route",
-		"flush table ip routerd_default_route",
-		"table ip routerd_default_route",
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x110, 0x111 } meta mark set ct mark",
-		"ct mark != 0x0 ct mark != { 0x110, 0x111 } meta mark set 0x111 ct mark set meta mark",
-		"ct mark 0x0 meta mark set 0x111 ct mark set meta mark",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestRenderEgressRoutePolicyDefaultMarksTargetCandidateActive(t *testing.T) {
-	data, err := renderEgressRoutePolicyDefaultMarks(
-		"test/default",
-		api.EgressRoutePolicySpec{
-			SourceCIDRs:      []string{"192.168.10.0/24"},
-			DestinationCIDRs: []string{"0.0.0.0/0"},
-		},
-		api.EgressRoutePolicyCandidate{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
-			{Name: "transix-a", Mark: 256},
-			{Name: "transix-b", Mark: 257},
-			{Name: "transix-c", Mark: 258},
-		}},
-		[]api.EgressRoutePolicyCandidate{
-			{Name: "dslite", Targets: []api.EgressRoutePolicyTarget{
-				{Name: "transix-a", Mark: 256},
-				{Name: "transix-b", Mark: 257},
-				{Name: "transix-c", Mark: 258},
-			}},
-		},
-	)
-	if err != nil {
-		t.Fatalf("render default route policy marks: %v", err)
-	}
-	got := string(data)
-	for _, want := range []string{
-		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark { 0x100, 0x101, 0x102 } meta mark set ct mark",
-		"ct mark != 0x0 ct mark != { 0x100, 0x101, 0x102 } meta mark set 0x0 ct mark set meta mark",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("nftables output missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "ct mark 0x0 meta mark set 0x") {
-		t.Fatalf("target candidate should leave new flows unmarked for EgressRoutePolicy hashing:\n%s", got)
 	}
 }
 
@@ -4173,585 +2256,6 @@ func TestPublishVRRPTransitionSignalsWakesControllerBus(t *testing.T) {
 	}
 }
 
-func TestSelectIPv4DefaultRouteCandidateTreatsMissingHealthCheckAsUp(t *testing.T) {
-	candidate, ok := selectIPv4DefaultRouteCandidate([]api.EgressRoutePolicyCandidate{
-		{Name: "preferred", Priority: 10, HealthCheck: "preferred-check"},
-		{Name: "fallback", Priority: 20},
-	}, map[string]bool{"preferred-check": false})
-	if !ok {
-		t.Fatal("candidate not selected")
-	}
-	if candidate.Name != "fallback" {
-		t.Fatalf("candidate = %s, want fallback", candidate.Name)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesSkipsMissingTargetDevices(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
-			{Interface: "ds-lite-a"},
-			{Interface: "ds-lite-b"},
-		}},
-		{Name: "wan", Priority: 20, Interface: "wan", HealthCheck: "wan-check"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"ds-lite-a": "ds-lite-a",
-		"ds-lite-b": "ds-lite-b",
-	}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     &api.Router{},
-		Aliases:    aliases,
-		Health:     map[string]bool{"wan-check": true},
-		LinkExists: func(ifname string) bool { return ifname == "ens18" },
-	}, candidates)
-	if len(available) != 1 || available[0].Name != "wan" {
-		t.Fatalf("available candidates = %+v, want wan only", available)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesKeepsTargetWithAnyDevice(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{
-			{Interface: "ds-lite-a"},
-			{Interface: "ds-lite-b"},
-		}},
-		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"ds-lite-a": "ds-lite-a",
-		"ds-lite-b": "ds-lite-b",
-	}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     &api.Router{},
-		Aliases:    aliases,
-		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-b" },
-	}, candidates)
-	if len(available) != 2 || available[0].Name != "dslite" {
-		t.Fatalf("available candidates = %+v, want dslite first", available)
-	}
-}
-
-func TestAvailableIPv4DefaultRouteCandidatesSkipsDSLiteWithoutLocalAddress(t *testing.T) {
-	candidates := []api.EgressRoutePolicyCandidate{
-		{Name: "dslite", Priority: 10, Targets: []api.EgressRoutePolicyTarget{{Interface: "ds-lite-a"}}},
-		{Name: "wan", Priority: 20, Interface: "wan"},
-	}
-	aliases := map[string]string{
-		"wan":       "ens18",
-		"lan":       "ens19",
-		"ds-lite-a": "ds-lite-a",
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "ds-lite-a"},
-			Spec: api.DSLiteTunnelSpec{
-				Interface:             "wan",
-				LocalAddressSource:    "delegatedAddress",
-				LocalDelegatedAddress: "lan-ipv6",
-				LocalAddressSuffix:    "::3",
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
-			Spec: api.IPv6DelegatedAddressSpec{
-				PrefixDelegation: "wan-pd",
-				Interface:        "lan",
-				AddressSuffix:    "::3",
-			},
-		},
-	}}}
-	available := availableIPv4DefaultRouteCandidates(effectiveRouterAvailability{
-		Router:     router,
-		Aliases:    aliases,
-		LinkExists: func(ifname string) bool { return ifname == "ens18" || ifname == "ds-lite-a" },
-	}, candidates)
-	if len(available) != 1 || available[0].Name != "wan" {
-		t.Fatalf("available candidates = %+v, want wan only", available)
-	}
-}
-
-func TestApplyDSLiteSkipsAFTRResolutionWithoutDelegatedPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "wan"},
-			Spec:     api.InterfaceSpec{IfName: "ens18"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"},
-			Metadata: api.ObjectMeta{Name: "lan-ipv6"},
-			Spec: api.IPv6DelegatedAddressSpec{
-				PrefixDelegation: "wan-pd",
-				Interface:        "lan",
-				AddressSuffix:    "::3",
-			},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "transix-a"},
-			Spec: api.DSLiteTunnelSpec{
-				Interface:             "wan",
-				TunnelName:            "ds-transix-a",
-				AFTRFQDN:              "invalid.invalid",
-				AFTRDNSServers:        []string{"2001:db8::53"},
-				AFTRAddressOrdinal:    1,
-				LocalAddressSource:    "delegatedAddress",
-				LocalDelegatedAddress: "lan-ipv6",
-				LocalAddressSuffix:    "::100",
-			},
-		},
-	}}}
-	applied, err := applyDSLiteTunnelsWithState(router, routerstate.New())
-	if err != nil {
-		t.Fatalf("apply DS-Lite without delegated prefix: %v", err)
-	}
-	if len(applied) != 1 || applied[0] != "removed-unusable:ds-transix-a" {
-		t.Fatalf("applied = %v, want removed-unusable tunnel", applied)
-	}
-}
-
-func TestDSLiteAFTRDNSServersIncludeAFTRSourceStatus(t *testing.T) {
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "routerd.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", "wan-info", map[string]any{
-		"phase":      "Ready",
-		"dnsServers": []string{"2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"},
-	}); err != nil {
-		t.Fatalf("save status: %v", err)
-	}
-	got := dsliteAFTRDNSServersWithState(api.DSLiteTunnelSpec{
-		AFTRDNSServers: []string{"2001:db8::53"},
-		AFTRFrom: api.StatusValueSourceSpec{
-			Resource: "DHCPv6Information/wan-info",
-			Field:    "aftrName",
-		},
-	}, store)
-	want := []string{"2001:db8::53", "2404:1a8:7f01:a::3", "2404:1a8:7f01:b::3"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("dns servers = %#v, want %#v", got, want)
-	}
-}
-
-func TestDNSServerAddressAddsDefaultPort(t *testing.T) {
-	tests := map[string]string{
-		"127.0.0.1":         "127.0.0.1:53",
-		"127.0.0.1:1053":    "127.0.0.1:1053",
-		"2001:db8::53":      "[2001:db8::53]:53",
-		"[2001:db8::53]:53": "[2001:db8::53]:53",
-	}
-	for input, want := range tests {
-		if got := dnsServerAddress(input); got != want {
-			t.Fatalf("dnsServerAddress(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
-func TestResolveHealthCheckTargetDSLiteRemoteAddress(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-				Metadata: api.ObjectMeta{Name: "transix"},
-				Spec: api.DSLiteTunnelSpec{
-					Interface:     "wan",
-					TunnelName:    "ds-transix",
-					RemoteAddress: "2404:8e00::feed:100",
-				},
-			},
-		}},
-	}
-	target, family, err := resolveHealthCheckTarget(router, api.HealthCheckSpec{
-		Interface:    "transix",
-		TargetSource: "dsliteRemote",
-	}, map[string]string{"transix": "ds-transix"})
-	if err != nil {
-		t.Fatalf("resolve target: %v", err)
-	}
-	if target != "2404:8e00::feed:100" || family != "ipv6" {
-		t.Fatalf("target/family = %s/%s, want 2404:8e00::feed:100/ipv6", target, family)
-	}
-}
-
-func TestHealthCheckPingSourceUsesDSLiteLocalAddress(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-				Metadata: api.ObjectMeta{Name: "transix"},
-				Spec: api.DSLiteTunnelSpec{
-					Interface:          "wan",
-					TunnelName:         "ds-transix",
-					LocalAddressSource: "static",
-					LocalAddress:       "2001:db8::3",
-					RemoteAddress:      "2001:db8::100",
-				},
-			},
-		}},
-	}
-	source := healthCheckPingSource(router, api.HealthCheckSpec{
-		Interface:    "transix",
-		TargetSource: "dsliteRemote",
-	}, map[string]string{"wan": "ens18", "transix": "ds-transix"})
-	if source != "2001:db8::3" {
-		t.Fatalf("ping source = %q, want 2001:db8::3", source)
-	}
-}
-
-func TestChangedNetworkdInterfaces(t *testing.T) {
-	got := changedNetworkdInterfaces([]string{
-		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-dhcpv6-pd.conf",
-		"/etc/systemd/network/10-netplan-ens19.network.d/90-routerd-extra.conf",
-		"/etc/systemd/network/10-netplan-ens18.network.d/90-routerd-dhcpv6-pd.conf",
-	})
-	want := []string{"ens19", "ens18"}
-	if len(got) != len(want) {
-		t.Fatalf("interfaces = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("interfaces = %v, want %v", got, want)
-		}
-	}
-}
-
-func TestManagedHostnames(t *testing.T) {
-	router := &api.Router{
-		Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
-				Metadata: api.ObjectMeta{Name: "system-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "router03.example.internal", Managed: true},
-			},
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Hostname"},
-				Metadata: api.ObjectMeta{Name: "observed-hostname"},
-				Spec:     api.HostnameSpec{Hostname: "ignored.example", Managed: false},
-			},
-		}},
-	}
-	got, err := managedHostnames(router)
-	if err != nil {
-		t.Fatalf("managed hostnames: %v", err)
-	}
-	if len(got) != 1 || got[0] != "router03.example.internal" {
-		t.Fatalf("managed hostnames = %v, want router03.example.internal", got)
-	}
-}
-
-func TestDriftedAdoptionCandidates(t *testing.T) {
-	candidates := []apply.AdoptionCandidate{
-		{
-			Kind:     "host.hostname",
-			Name:     "system",
-			Desired:  map[string]string{"hostname": "router03.example.internal"},
-			Observed: map[string]string{"hostname": "router03"},
-		},
-		{
-			Kind:     "linux.ipv4.routeTable",
-			Name:     "table=111",
-			Desired:  map[string]string{"table": "111", "ifname": "ppp0"},
-			Observed: map[string]string{"table": "111", "ifname": "ppp0"},
-		},
-	}
-	got := driftedAdoptionCandidates(candidates)
-	if len(got) != 1 || got[0].Kind != "host.hostname" {
-		t.Fatalf("drifted candidates = %+v, want hostname only", got)
-	}
-}
-
-func TestAdoptedArtifactsForResultDeduplicates(t *testing.T) {
-	artifacts := []resource.Artifact{
-		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
-		{Kind: "nft.table", Name: "routerd_nat", Owner: "one"},
-		{Kind: "host.hostname", Name: "system", Owner: "host"},
-	}
-	got := adoptedArtifactsForResult(artifacts)
-	if len(got) != 2 {
-		t.Fatalf("adopted artifacts = %+v, want two", got)
-	}
-}
-
-func TestDeriveIPv6Address(t *testing.T) {
-	got, err := deriveIPv6Address([]string{"2001:db8:3d60:1220::/64"}, "::100")
-	if err != nil {
-		t.Fatalf("derive IPv6 address: %v", err)
-	}
-	if got != "2001:db8:3d60:1220::100" {
-		t.Fatalf("address = %s, want 2001:db8:3d60:1220::100", got)
-	}
-}
-
-func TestDeriveIPv6AddressFromGlobalAddress(t *testing.T) {
-	got, err := deriveIPv6AddressFromGlobalAddress([]string{
-		"fe80::3",
-		"2001:db8:3d60:1220::3",
-	}, "::100")
-	if err != nil {
-		t.Fatalf("derive IPv6 address from global address: %v", err)
-	}
-	if got != "2001:db8:3d60:1220::100" {
-		t.Fatalf("address = %s, want 2001:db8:3d60:1220::100", got)
-	}
-}
-
-func TestDeriveIPv6AddressFromDelegatedPrefix(t *testing.T) {
-	tests := []struct {
-		name     string
-		prefix   string
-		subnetID string
-		suffix   string
-		want     string
-	}{
-		{
-			name:     "documentation /60 first subnet",
-			prefix:   "2001:db8:3d60:1220::/60",
-			subnetID: "0",
-			suffix:   "::1",
-			want:     "2001:db8:3d60:1220::1",
-		},
-		{
-			name:     "documentation /60 hex subnet",
-			prefix:   "2001:db8:3d60:1220::/60",
-			subnetID: "a",
-			suffix:   "::3",
-			want:     "2001:db8:3d60:122a::3",
-		},
-		{
-			name:     "documentation /56 decimal subnet",
-			prefix:   "2001:db8:3d60:1200::/56",
-			subnetID: "16",
-			suffix:   "::100",
-			want:     "2001:db8:3d60:1210::100",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := deriveIPv6AddressFromDelegatedPrefix(tt.prefix, tt.subnetID, tt.suffix)
-			if err != nil {
-				t.Fatalf("derive IPv6 delegated address: %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("address = %s, want %s", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestDelegatedPrefixFromObservedUsesKernelPrefix(t *testing.T) {
-	got, ok := delegatedPrefixFromObserved([]string{
-		"fe80::/64",
-		"2001:db8:3d60:1240::/64",
-	}, nil, 60)
-	if !ok {
-		t.Fatal("delegated prefix not found")
-	}
-	if got != "2001:db8:3d60:1240::/60" {
-		t.Fatalf("prefix = %s, want 2001:db8:3d60:1240::/60", got)
-	}
-}
-
-func TestDelegatedPrefixFromObservedIgnoresStandaloneAddress(t *testing.T) {
-	if got, ok := delegatedPrefixFromObserved(nil, []string{
-		"fe80::3",
-		"2001:db8:3d60:1240::2",
-	}, 60); ok {
-		t.Fatalf("prefix = %s, want no prefix from standalone address", got)
-	}
-}
-
-func TestDelegatedPrefixFromObservedIgnoresHostRoute(t *testing.T) {
-	if got, ok := delegatedPrefixFromObserved([]string{
-		"2001:db8:3d60:1240::2/128",
-	}, nil, 60); ok {
-		t.Fatalf("prefix = %s, want no prefix from host route", got)
-	}
-}
-
-func TestDelegatedPrefixFromAddressEntriesIgnoresManagedSuffixWhenFreshClientAddressExists(t *testing.T) {
-	got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
-		{Address: "fe80::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220:be24:11ff:fea3:c1f4", PrefixLen: 64},
-	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::1")): true})
-	if !ok {
-		t.Fatal("delegated prefix not found")
-	}
-	if got != "2001:db8:3d60:1220::/60" {
-		t.Fatalf("prefix = %s, want 2001:db8:3d60:1220::/60", got)
-	}
-}
-
-func TestDelegatedPrefixFromAddressEntriesFallsBackWhenOnlyManagedSuffixExists(t *testing.T) {
-	if got, ok := delegatedPrefixFromAddressEntries([]ipv6AddressEntry{
-		{Address: "2001:db8:3d60:1230::3", PrefixLen: 64},
-	}, 60, map[uint64]bool{ipv6HostSuffix64(netip.MustParseAddr("::3")): true}); ok {
-		t.Fatalf("prefix = %s, want no prefix from filtered managed suffix", got)
-	}
-}
-
-func TestConflictingManagedIPv6Addresses(t *testing.T) {
-	got := conflictingManagedIPv6Addresses([]ipv6AddressEntry{
-		{Address: "fe80::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::100", PrefixLen: 128},
-	}, map[string]bool{"2001:db8:3d60:1220::1": true}, ipv6HostSuffix64(netip.MustParseAddr("::1")))
-	if len(got) != 1 || got[0].Address != "2001:db8:3d60:1240::1" {
-		t.Fatalf("conflicts = %#v, want stale ::1 only", got)
-	}
-}
-
-func TestConflictingManagedIPv6AddressesPreservesAllDesiredPrefixes(t *testing.T) {
-	got := conflictingManagedIPv6Addresses([]ipv6AddressEntry{
-		{Address: "2001:db8:3d60:1240::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1230::1", PrefixLen: 64},
-		{Address: "2001:db8:3d60:1220::1", PrefixLen: 64},
-	}, map[string]bool{
-		"2001:db8:3d60:1240::1": true,
-		"2001:db8:3d60:1220::1": true,
-	}, ipv6HostSuffix64(netip.MustParseAddr("::1")))
-	if len(got) != 1 || got[0].Address != "2001:db8:3d60:1230::1" {
-		t.Fatalf("conflicts = %#v, want expired 1230 only", got)
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsIncludeDelegatedAddressAndDSLiteSources(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", SubnetID: "0", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "lan-ipv6", LocalAddressSuffix: "::100"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{CurrentPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	for _, want := range []string{"2001:db8:3d60:1220::3", "2001:db8:3d60:1220::100"} {
-		if !targets.DesiredByInterface["ens19"][want] {
-			t.Fatalf("desired targets = %#v, missing %s", targets.DesiredByInterface, want)
-		}
-	}
-	for _, suffix := range []string{"::3", "::100"} {
-		addr := netip.MustParseAddr(suffix)
-		if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(addr)] {
-			t.Fatalf("suffix targets = %#v, missing %s", targets.SuffixesByInterface, suffix)
-		}
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsRestorePreviousLANPrefixButNotDSLiteSource(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "wan-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::21", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "wan-source", LocalAddressSuffix: "::23"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		CurrentPrefix: "2001:db8:3d60:1220::/60",
-		PreviousPrefixes: []routerstate.PDPreviousPrefix{
-			{Prefix: "2001:db8:3d60:1240::/60", ExpiresAt: time.Now().UTC().Add(time.Hour)},
-		},
-	}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !targets.DesiredByInterface["ens19"]["2001:db8:3d60:1240::3"] {
-		t.Fatalf("previous LAN target missing: %#v", targets.DesiredByInterface)
-	}
-	for _, forbidden := range []string{"2001:db8:3d60:1240::21", "2001:db8:3d60:1240::23"} {
-		if targets.DesiredByInterface["ens19"][forbidden] {
-			t.Fatalf("previous WAN/DS-Lite /128 target retained: %s in %#v", forbidden, targets.DesiredByInterface)
-		}
-	}
-}
-
-func TestApplyIPv6DelegatedAddressesRestoresDeprecatedPreviousLANPrefixFromState(t *testing.T) {
-	if platformDefaults.OS != platform.OSLinux {
-		t.Skip("Linux command fixture")
-	}
-	binDir := t.TempDir()
-	logPath := filepath.Join(t.TempDir(), "ip.log")
-	writeExecutable(t, filepath.Join(binDir, "ip"), "#!/bin/sh\nif [ \"$1 $2 $3 $4 $5 $6\" = \"-brief -6 addr show dev ens19\" ]; then\n  echo \"ens19 UP 2001:db8:3d60:1220::3/128\"\n  exit 0\nfi\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\n")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		CurrentPrefix: "2001:db8:3d60:1220::/60",
-		PreviousPrefixes: []routerstate.PDPreviousPrefix{
-			{Prefix: "2001:db8:3d60:1240::/60", ExpiresAt: time.Now().UTC().Add(5 * time.Minute)},
-		},
-	}), "test")
-
-	if _, err := applyIPv6DelegatedAddressesWithState(router, store); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	commands := string(data)
-	if strings.Contains(commands, "addr del 2001:db8:3d60:1240::3") {
-		t.Fatalf("previous prefix was deleted during restart restore:\n%s", commands)
-	}
-	if !strings.Contains(commands, "-6 addr replace 2001:db8:3d60:1240::3/64 dev ens19 preferred_lft 0 valid_lft") {
-		t.Fatalf("previous prefix was not restored deprecated:\n%s", commands)
-	}
-}
-
-func TestDeprecatedIPv6LocalAddressCommand(t *testing.T) {
-	name, args := deprecatedIPv6LocalAddressCommand(platform.OSLinux, "ens19", "2001:db8::1", 299)
-	if got, want := strings.Join(append([]string{name}, args...), " "), "ip -6 addr replace 2001:db8::1/64 dev ens19 preferred_lft 0 valid_lft 299"; got != want {
-		t.Fatalf("Linux command = %q, want %q", got, want)
-	}
-	name, args = deprecatedIPv6LocalAddressCommand(platform.OSFreeBSD, "vtnet1", "2001:db8::1", 299)
-	if got, want := strings.Join(append([]string{name}, args...), " "), "ifconfig vtnet1 inet6 2001:db8::1 prefixlen 64 pltime 0 vltime 299 alias"; got != want {
-		t.Fatalf("FreeBSD command = %q, want %q", got, want)
-	}
-}
-
-func TestManagedDelegatedIPv6TargetsTrackSuffixWithoutCurrentPrefix(t *testing.T) {
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv6"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "lan", AddressSuffix: "::3"}},
-	}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{LastPrefix: "2001:db8:3d60:1220::/60"}), "test")
-
-	targets, err := managedDelegatedIPv6Targets(router, store)
-	if err != nil {
-		t.Fatalf("managed targets: %v", err)
-	}
-	if len(targets.DesiredByInterface["ens19"]) != 0 {
-		t.Fatalf("desired targets = %#v, want none without current prefix", targets.DesiredByInterface)
-	}
-	if !targets.SuffixesByInterface["ens19"][ipv6HostSuffix64(netip.MustParseAddr("::3"))] {
-		t.Fatalf("suffix targets = %#v, want ::3 tracked for stale cleanup", targets.SuffixesByInterface)
-	}
-}
-
 func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	prefixes, addrs := parseFreeBSDIfconfigIPv6(`vtnet1: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
 	inet 192.0.2.1 netmask 0xffffff00 broadcast 192.0.2.255
@@ -4773,55 +2277,16 @@ func TestParseFreeBSDIfconfigIPv6(t *testing.T) {
 	}
 }
 
-func TestParseDHCPCDDumpLeasePD(t *testing.T) {
-	out := []byte(`reason=BOUND6
-interface=ens18
-protocol=dhcp6
-dhcp6_client_id=00030001020000000103
-dhcp6_server_id=00030001020000000001
-dhcp6_ia_pd1_iaid=00000001
-dhcp6_ia_pd1_t1=7200
-dhcp6_ia_pd1_t2=12600
-dhcp6_ia_pd1_prefix1_pltime=14400
-dhcp6_ia_pd1_prefix1_vltime=14400
-dhcp6_ia_pd1_prefix1_length=60
-dhcp6_ia_pd1_prefix1=2001:db8:3d60:1220::
-`)
-	prefix, lease, ok := parseDHCPCDDumpLeasePD(out, 60)
-	if !ok {
-		t.Fatal("parseDHCPCDDumpLeasePD ok = false, want true")
-	}
-	if prefix != "2001:db8:3d60:1220::/60" {
-		t.Fatalf("prefix = %q, want documentation /60", prefix)
-	}
-	if lease.T1 != "7200" || lease.T2 != "12600" || lease.PLTime != "14400" || lease.VLTime != "14400" {
-		t.Fatalf("lease = %#v", lease)
-	}
-}
-
-func TestObserveFreeBSDDHCPv6CIdentityPayload(t *testing.T) {
-	payload := freeBSDDHCPv6CDUIDPayload([]byte{
-		0x0e, 0x00,
-		0x00, 0x01, 0x00, 0x01, 0x31, 0x82, 0x0f, 0x6f, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01,
-	})
-	if got := colonHex(payload); got != "00:01:00:01:31:82:0f:6f:02:00:00:00:01:01" {
-		t.Fatalf("DUID payload = %s", got)
-	}
-	if got := configuredOrDefaultDHCPv6CIAID("00000001"); got != "1" {
-		t.Fatalf("IAID = %s, want decimal conversion", got)
-	}
-}
-
 func TestAppendPrefixDelegationStateWarnings(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 		Metadata: api.ObjectMeta{Name: "wan-pd"},
 		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
-	store := routerstate.New()
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
+	store := routerstate.NewMemory()
+	store.SavePDLease("wan-pd", routerstate.PDLease{
 		LastPrefix: "2001:db8:3d60:1240::/60",
-	}), "test")
+	})
 	result := &apply.Result{}
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "2001:db8:3d60:1240::/60") {
@@ -4836,7 +2301,6 @@ func TestAppendPrefixDelegationStateWarningsWithoutLastPrefix(t *testing.T) {
 		Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 	}}}}
 	store := routerstate.New()
-	store.Unset("ipv6PrefixDelegation.wan-pd.currentPrefix", "test")
 	result := &apply.Result{}
 	appendPrefixDelegationStateWarnings(result, router, store)
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "no delegated prefix has been recorded") {
@@ -4868,8 +2332,9 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
   "preferredSeconds": 14400,
   "validSeconds": 14400,
   "acquiredAt": %q,
-  "updatedAt": %q
-}`, acquiredAt, updatedAt))
+  "updatedAt": %q,
+  "prefixes": [{"prefix":"2001:db8:1230::/60","preferredSeconds":14400,"validSeconds":14400,"acquiredAt":%q}]
+}`, acquiredAt, updatedAt, acquiredAt))
 	if err := os.WriteFile(filepath.Join(leaseDir, "lease.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -4885,8 +2350,12 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000103", IAID: "1"},
 		},
 	}}}
-	store := routerstate.New()
-	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := recordObservedPrefixDelegationState(router, store, nil); err != nil {
 		t.Fatalf("record PD state: %v", err)
 	}
 	result := &apply.Result{}
@@ -4894,53 +2363,50 @@ func TestRecordPrefixDelegationStateUsesManagedDaemonLease(t *testing.T) {
 	if len(result.Warnings) != 0 {
 		t.Fatalf("warnings = %#v", result.Warnings)
 	}
-	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	lease, ok, readErr := store.ReadPDLease("wan-pd")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if !ok {
 		t.Fatal("lease missing")
 	}
-	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.VLTime != "14400" || lease.LastReplyAt != acquiredAt {
+	if lease.CurrentPrefix != "2001:db8:1230::/60" || lease.ValidSeconds != 14400 || lease.LastReplyAt.Format(time.RFC3339) != acquiredAt {
 		t.Fatalf("lease = %+v", lease)
 	}
 }
 
 func TestManagedPDClientSnapshotMatchesDefaultProfileImplicitDUID(t *testing.T) {
-	mac := strings.TrimSpace(readFirstString("/sys/class/net/lo/address"))
-	duid := linkLayerDUIDFromMAC(mac)
+	duid, err := interfacePDClientDUID("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if duid == "" {
 		t.Skip("loopback MAC is unavailable")
 	}
 	now := time.Now().UTC()
-	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute)}
-	if !managedPDClientSnapshotMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, now) {
+	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "lo", State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200::/60", ClientDUID: duid, IAID: 1, Valid: 60, AcquiredAt: now, ExpiresAt: now.Add(time.Minute), Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1200::/60", Preferred: 60, Valid: 60, AcquiredAt: now}}}
+	if !managedPDClientSnapshotIdentityMatches(snapshot, "wan-pd", "lo", api.DHCPv6PrefixDelegationSpec{Interface: "wan"}, duid) {
 		t.Fatal("default profile implicit link-layer DUID must match daemon rule")
 	}
 }
 
-func TestMergePDLeaseSnapshotPersistsMultiplePreviousPrefixes(t *testing.T) {
+func TestManagedPDObservationDoesNotResurrectRevokedPreviousPrefixes(t *testing.T) {
 	now := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
-	merged := mergePDLeaseSnapshot(routerstate.PDLease{
-		LastPrefix:  "2001:db8:1200:1240::/60",
-		LastReplyAt: now.Add(-time.Minute).Format(time.RFC3339Nano),
-		VLTime:      "7200",
-	}, pdclient.Snapshot{
-		CurrentPrefix: "2001:db8:1200:1220::/60",
-		PreviousPrefixes: []pdclient.PreviousPrefixSnapshot{
-			{Prefix: "2001:db8:1200:1230::/60", ExpiresAt: now.Add(time.Hour)},
-		},
-		AcquiredAt: now,
-		Valid:      14400,
-		UpdatedAt:  now,
-	})
-	if got := merged.ValidPreviousPrefixes(now); len(got) != 2 || got[0].Prefix != "2001:db8:1200:1230::/60" || got[1].Prefix != "2001:db8:1200:1240::/60" {
-		t.Fatalf("merged previous prefixes = %#v", got)
+	previous := routerstate.PDLease{LastPrefix: "2001:db8:1200:1240::/60", LastReplyAt: now.Add(-time.Minute), ValidSeconds: 7200, PreviousPrefixes: []routerstate.PDPreviousPrefix{{Prefix: "2001:db8:1200:1240::/60", ExpiresAt: now.Add(time.Hour)}}}
+	snapshot := pdclient.Snapshot{State: pdclient.StateBound, CurrentPrefix: "2001:db8:1200:1220::/60", UpdatedAt: now, Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1200:1220::/60", AcquiredAt: now, Preferred: 14400, Valid: 14400}, {Prefix: "2001:db8:1200:1230::/60", AcquiredAt: now, Preferred: 1800, Valid: 3600}}}
+	merged := routerstate.ObservePDLease(previous, snapshot, snapshot.UpdatedAt)
+	if got := merged.ValidPreviousPrefixes(now); len(got) != 1 || got[0].Prefix != "2001:db8:1200:1230::/60" {
+		t.Fatalf("daemon revocation was replaced by old history: %+v", got)
 	}
-	merged = mergePDLeaseSnapshot(merged, pdclient.Snapshot{CurrentPrefix: "2001:db8:1200:1220::/60", AcquiredAt: now, Valid: 14400, UpdatedAt: now.Add(time.Minute)})
-	if got := merged.ValidPreviousPrefixes(now.Add(time.Minute)); len(got) != 2 {
-		t.Fatalf("seeded previous prefixes were not preserved = %#v", got)
+	snapshot.Prefixes = snapshot.Prefixes[:1]
+	snapshot.UpdatedAt = now.Add(time.Minute)
+	merged = routerstate.ObservePDLease(merged, snapshot, snapshot.UpdatedAt)
+	if got := merged.ValidPreviousPrefixes(now.Add(time.Minute)); len(got) != 0 {
+		t.Fatalf("omitted daemon ownership was reintroduced: %+v", got)
 	}
 }
 
-func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T) {
+func TestRecordPrefixDelegationStateClearsIdentityWhenConfiguredDUIDChanges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
 	store, err := routerstate.OpenSQLite(path)
 	if err != nil {
@@ -4950,13 +2416,17 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 	if _, err := store.BeginGeneration("test"); err != nil {
 		t.Fatalf("begin generation: %v", err)
 	}
-	store.Set("ipv6PrefixDelegation.wan-pd.client", "networkd", "old client")
-	store.Set("ipv6PrefixDelegation.wan-pd.lease", routerstate.EncodePDLease(routerstate.PDLease{
-		LastPrefix: "2001:db8:3d60:1240::/60",
-		DUID:       "00030001020000000001",
-		DUIDText:   "00:03:00:01:02:00:00:00:00:01",
-		IAID:       "3394439514",
-	}), "old lease")
+	lease, _, err := store.ConfigurePDLease("wan-pd", routerstate.PDLeaseConfig{Client: api.IPv6PDClientRouterd, Profile: api.IPv6PDProfileDefault, UplinkIfname: "ens18", ClientDUID: "00030001020000000001", IAID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.LastPrefix = "2001:db8:3d60:1240::/60"
+	lease.DUID = "00030001020000000001"
+	lease.DUIDText = "00:03:00:01:02:00:00:00:00:01"
+	lease.IAID = "3394439514"
+	if err := store.SavePDLease("wan-pd", lease); err != nil {
+		t.Fatal(err)
+	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
@@ -4967,16 +2437,20 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"},
 			Metadata: api.ObjectMeta{Name: "wan-pd"},
 			Spec: api.DHCPv6PrefixDelegationSpec{
-				Interface: "wan",
-				Client:    "dhcpcd",
-				Profile:   "ntt-hgw-lan-pd",
+				Interface:  "wan",
+				Client:     api.IPv6PDClientRouterd,
+				Profile:    api.IPv6PDProfileDefault,
+				ClientDUID: "00030001020000000002",
 			},
 		},
 	}}}
-	if _, err := recordObservedPrefixDelegationState(router, store); err != nil {
+	if err := recordObservedPrefixDelegationState(router, store, bus.NewWithStore(store)); err != nil {
 		t.Fatalf("record PD state: %v", err)
 	}
-	lease, ok := routerstate.PDLeaseFromStore(store, "ipv6PrefixDelegation.wan-pd")
+	lease, ok, readErr := store.ReadPDLease("wan-pd")
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
 	if !ok {
 		t.Fatal("lease missing")
 	}
@@ -4986,18 +2460,12 @@ func TestRecordPrefixDelegationStateClearsIdentityWhenClientChanges(t *testing.T
 	if lease.LastPrefix != "2001:db8:3d60:1240::/60" {
 		t.Fatalf("last prefix = %q, want preserved", lease.LastPrefix)
 	}
-	if got := store.Get("ipv6PrefixDelegation.wan-pd.client").Value; got != "dhcpcd" {
-		t.Fatalf("client = %q, want dhcpcd", got)
+	if got := lease.Client; got != api.IPv6PDClientRouterd {
+		t.Fatalf("client = %q, want routerd-dhcpv6-client", got)
 	}
-	events := store.Events(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd", 10)
-	found := false
-	for _, event := range events {
-		if event.Reason == "PDClientChanged" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("PDClientChanged event missing: %+v", events)
+	events, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed"})
+	if err != nil || len(events) != 1 || events[0].ResourceName != "wan-pd" {
+		t.Fatalf("atomic PD source transition missing: %+v %v", events, err)
 	}
 }
 
@@ -5010,160 +2478,33 @@ func TestRecordHostInventoryState(t *testing.T) {
 	if _, err := store.BeginGeneration("test"); err != nil {
 		t.Fatalf("begin generation: %v", err)
 	}
-	if err := recordHostInventoryState(store); err != nil {
+	if err := recordHostInventoryState(context.Background(), store); err != nil {
 		t.Fatalf("record inventory: %v", err)
 	}
 	status := store.ObjectStatus(api.RouterAPIVersion, "Inventory", "host")
 	if status == nil || status["os"] == nil || status["commands"] == nil {
 		t.Fatalf("inventory status = %#v", status)
 	}
-	events := store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	events, err := store.ReadEvents(t.Context(), api.RouterAPIVersion, "Inventory", "host", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 || events[0].Reason != "InventoryObserved" {
 		t.Fatalf("events = %#v", events)
 	}
-	if err := recordHostInventoryState(store); err != nil {
+	if err := recordHostInventoryState(context.Background(), store); err != nil {
 		t.Fatalf("record inventory again: %v", err)
 	}
-	events = store.Events(api.RouterAPIVersion, "Inventory", "host", 10)
+	events, err = store.ReadEvents(t.Context(), api.RouterAPIVersion, "Inventory", "host", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(events) != 1 {
 		t.Fatalf("unchanged inventory should not add event: %#v", events)
 	}
 }
 
-func TestParseRFC4361ClientID(t *testing.T) {
-	identity := parseRFC4361ClientID("ff000000010003000102005e102030")
-	if identity.IAID != "00000001" {
-		t.Fatalf("IAID = %q, want 00000001", identity.IAID)
-	}
-	if identity.DUID != "0003000102005e102030" {
-		t.Fatalf("DUID = %q, want link-layer DUID", identity.DUID)
-	}
-}
-
-func TestLinkLayerDUIDFromMAC(t *testing.T) {
-	got := linkLayerDUIDFromMAC("02:00:5e:10:20:30")
-	if got != "0003000102005e102030" {
-		t.Fatalf("DUID = %q, want 0003000102005e102030", got)
-	}
-}
-
-func TestStateWhenRequiresSetAndEqual(t *testing.T) {
-	store := routerstate.New()
-	when := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
-		"wan.ipv6.mode": {Equals: "pd-ready"},
-	}}
-	if resourceWhenMatches(when, store) {
-		t.Fatal("unknown state matched equals")
-	}
-	store.Unset("wan.ipv6.mode", "observed absent")
-	if resourceWhenMatches(when, store) {
-		t.Fatal("unset state matched equals")
-	}
-	store.Set("wan.ipv6.mode", "address-only", "observed fallback")
-	if resourceWhenMatches(when, store) {
-		t.Fatal("different set value matched equals")
-	}
-	store.Set("wan.ipv6.mode", "pd-ready", "observed pd")
-	if !resourceWhenMatches(when, store) {
-		t.Fatal("matching set value did not match equals")
-	}
-}
-
-func TestStateWhenAllAnyAndNested(t *testing.T) {
-	store := routerstate.New()
-	store.Set("wan.a", "up", "test")
-	store.Set("wan.b", "down", "test")
-	store.Set("wan.c", "ready", "test")
-
-	all := api.ResourceWhenSpec{All: []api.ResourceWhenSpec{
-		{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
-		{State: map[string]api.StateMatchSpec{"wan.c": {Equals: "ready"}}},
-	}}
-	if !resourceWhenMatches(all, store) {
-		t.Fatal("all predicate did not match")
-	}
-
-	any := api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
-		{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "down"}}},
-		{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "down"}}},
-	}}
-	if !resourceWhenMatches(any, store) {
-		t.Fatal("any predicate did not match")
-	}
-
-	nested := api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{
-		{All: []api.ResourceWhenSpec{
-			{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
-			{State: map[string]api.StateMatchSpec{"wan.b": {Equals: "up"}}},
-		}},
-		{All: []api.ResourceWhenSpec{
-			{State: map[string]api.StateMatchSpec{"wan.a": {Equals: "up"}}},
-			{State: map[string]api.StateMatchSpec{"wan.c": {Equals: "ready"}}},
-		}},
-	}}
-	if !resourceWhenMatches(nested, store) {
-		t.Fatal("nested any/all predicate did not match")
-	}
-}
-
-func TestStateWhenSinglePredicateEqualsAllSugar(t *testing.T) {
-	store := routerstate.New()
-	store.Set("wan.ipv6.mode", "pd-ready", "test")
-	leaf := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "pd-ready"}}}
-	all := api.ResourceWhenSpec{All: []api.ResourceWhenSpec{leaf}}
-	if resourceWhenMatches(leaf, store) != resourceWhenMatches(all, store) {
-		t.Fatal("single predicate and one-element all are not equivalent")
-	}
-}
-
-func TestResourceWhenCoversResourceLevelWhenSpecs(t *testing.T) {
-	want := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ready": {Equals: "true"}}}
-	for _, tc := range []api.Resource{
-		testResourceWithSpecWhen("ObservabilityPipeline", api.ObservabilityPipelineSpec{When: want}),
-		testResourceWithSpecWhen("RouterdCluster", api.RouterdClusterSpec{When: want}),
-		testResourceWithSpecWhen("VirtualAddress", api.VirtualAddressSpec{Family: "ipv4", When: want}),
-		testResourceWithSpecWhen("BGPRouter", api.BGPRouterSpec{When: want}),
-		testResourceWithSpecWhen("BGPPeer", api.BGPPeerSpec{When: want}),
-		testResourceWithSpecWhen("BFD", api.BFDSpec{When: want}),
-		testResourceWithSpecWhen("TailscaleNode", api.TailscaleNodeSpec{When: want}),
-		testResourceWithSpecWhen("NTPClient", api.NTPClientSpec{When: want}),
-		testResourceWithSpecWhen("NTPServer", api.NTPServerSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv4Client", api.DHCPv4ClientSpec{When: want}),
-		testResourceWithSpecWhen("ClusterNetworkRoute", api.ClusterNetworkRouteSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv4Server", api.DHCPv4ServerSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv4Reservation", api.DHCPv4ReservationSpec{When: want}),
-		testResourceWithSpecWhen("IPv6DelegatedAddress", api.IPv6DelegatedAddressSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6Server", api.DHCPv6ServerSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv4ServerLeaseSync", api.DHCPv4ServerLeaseSyncSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6ServerLeaseSync", api.DHCPv6ServerLeaseSyncSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6PrefixDelegationLeaseSync", api.DHCPv6PrefixDelegationLeaseSyncSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6PrefixDelegation", api.DHCPv6PrefixDelegationSpec{When: want}),
-		testResourceWithSpecWhen("DHCPv6Information", api.DHCPv6InformationSpec{When: want}),
-		testResourceWithSpecWhen("IPv6RouterAdvertisement", api.IPv6RouterAdvertisementSpec{When: want}),
-		testResourceWithSpecWhen("DSLiteTunnel", api.DSLiteTunnelSpec{When: want}),
-		testResourceWithSpecWhen("DNSForwarder", api.DNSForwarderSpec{When: want}),
-		testResourceWithSpecWhen("DNSResolver", api.DNSResolverSpec{When: want}),
-		testResourceWithSpecWhen("DNSUpstream", api.DNSUpstreamSpec{When: want}),
-		testResourceWithSpecWhen("EventGroup", api.EventGroupSpec{When: want}),
-		testResourceWithSpecWhen("HealthCheck", api.HealthCheckSpec{When: want}),
-		testResourceWithSpecWhen("NAT44Rule", api.NAT44RuleSpec{When: want}),
-		testResourceWithSpecWhen("NAT44SessionSync", api.NAT44SessionSyncSpec{When: want}),
-		testResourceWithSpecWhen("PortForward", api.PortForwardSpec{When: want}),
-		testResourceWithSpecWhen("IngressService", api.IngressServiceSpec{When: want}),
-		testResourceWithSpecWhen("IPAddressSet", api.IPAddressSetSpec{When: want}),
-		testResourceWithSpecWhen("LocalServiceRedirect", api.LocalServiceRedirectSpec{When: want}),
-		testResourceWithSpecWhen("FirewallFlowPinhole", api.FirewallFlowPinholeSpec{When: want}),
-		testResourceWithSpecWhen("EgressRoutePolicy", api.EgressRoutePolicySpec{When: want}),
-	} {
-		t.Run(tc.Kind, func(t *testing.T) {
-			if got := resourceWhen(tc); !reflect.DeepEqual(got, want) {
-				t.Fatalf("resourceWhen(%s) = %#v, want %#v", tc.Kind, got, want)
-			}
-		})
-	}
-}
-
-func testResourceWithSpecWhen(kind string, spec any) api.Resource {
+func testResourceWithSpecWhen(kind string, spec api.ResourceSpec) api.Resource {
 	return api.Resource{
 		TypeMeta: api.TypeMeta{Kind: kind},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -5198,7 +2539,7 @@ func TestFilterRouterByWhenFiltersDHCPv6Information(t *testing.T) {
 		},
 	}}}
 
-	filtered := filterRouterByWhen(router, routerstate.New())
+	filtered := mustWhenFilteredRouter(t, false, router, routerstate.New())
 	if len(filtered.Spec.Resources) != 0 {
 		t.Fatalf("resources = %+v, want none", filtered.Spec.Resources)
 	}
@@ -5216,7 +2557,7 @@ func TestFilterEgressRoutePolicyCandidatesByWhen(t *testing.T) {
 			{Name: "pppoe", Interface: "wan-pppoe", Priority: 20, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"wan.ipv6.mode": {Equals: "ipv4-only"}}}},
 		}}},
 	}}}
-	filtered := filterRouterByWhen(router, store)
+	filtered := mustWhenFilteredRouter(t, false, router, store)
 	spec, err := filtered.Spec.Resources[0].EgressRoutePolicySpec()
 	if err != nil {
 		t.Fatal(err)
@@ -5240,7 +2581,7 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 		},
 	}}}
 
-	filtered := filterRouterByWhen(router, routerstate.New())
+	filtered := mustWhenFilteredRouter(t, false, router, routerstate.New())
 	if len(filtered.Spec.Resources) != 1 {
 		t.Fatalf("resources = %d, want only BGPPeer", len(filtered.Spec.Resources))
 	}
@@ -5250,35 +2591,6 @@ func TestFilterRouterByWhenPreservesImplicitBFDRef(t *testing.T) {
 	}
 	if spec.BFD != "BFD/implicit" {
 		t.Fatalf("BGPPeer BFD ref = %q, want implicit ref preserved", spec.BFD)
-	}
-}
-
-func TestSelectAAAAByOrdinal(t *testing.T) {
-	values := []string{
-		"2404:8e00::feed:100",
-		"2404:8e00::feed:101",
-		"2404:8e00::feed:102",
-	}
-	got, err := selectAAAA(values, 2, "ordinal")
-	if err != nil {
-		t.Fatalf("select AAAA: %v", err)
-	}
-	if got != "2404:8e00::feed:101" {
-		t.Fatalf("AAAA = %s, want 2404:8e00::feed:101", got)
-	}
-}
-
-func TestSelectAAAAModulo(t *testing.T) {
-	values := []string{
-		"2404:8e00::feed:100",
-		"2404:8e00::feed:101",
-	}
-	got, err := selectAAAA(values, 3, "ordinalModulo")
-	if err != nil {
-		t.Fatalf("select AAAA: %v", err)
-	}
-	if got != "2404:8e00::feed:100" {
-		t.Fatalf("AAAA = %s, want 2404:8e00::feed:100", got)
 	}
 }
 
@@ -5334,46 +2646,6 @@ func TestConfiguredDHCPLeasePathsPreferControllerDnsmasqConfig(t *testing.T) {
 	}
 }
 
-func TestStartCommandWithFileOutputReleasesLongLivedSupervisor(t *testing.T) {
-	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	started := time.Now()
-	outputPath, err := startCommandWithFileOutput("sh", "-c", `sleep 5 & printf '%s\n' "$!" > "$1"; printf 'parent exited\n'`, "sh", pidPath)
-	if err != nil {
-		t.Fatalf("start command: %v", err)
-	}
-	defer os.Remove(outputPath)
-	if elapsed := time.Since(started); elapsed >= time.Second {
-		t.Fatalf("start/release waited %s for long-lived child", elapsed)
-	}
-	if err := waitForFile(pidPath, time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitForFileText(outputPath, "parent exited", time.Second); err != nil {
-		t.Fatal(err)
-	}
-	out, err := os.ReadFile(outputPath)
-	if err != nil || !strings.Contains(string(out), "parent exited") {
-		t.Fatalf("output = %q, err=%v, want parent output", out, err)
-	}
-	pidText, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatalf("read child PID: %v", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidText)))
-	if err != nil {
-		t.Fatalf("parse child PID %q: %v", pidText, err)
-	}
-	child, err := os.FindProcess(pid)
-	if err != nil {
-		t.Fatalf("find child process: %v", err)
-	}
-	if err := child.Signal(syscall.Signal(0)); err != nil {
-		t.Fatalf("child process is not live after Start/Release: %v", err)
-	}
-	_ = child.Kill()
-	_, _ = child.Wait()
-}
-
 func waitForFile(path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -5409,4 +2681,38 @@ func setMissingSAMForwardChainIPTables(t *testing.T) {
 		t.Fatalf("write iptables fake: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestPDObservationPropagatesPersistenceFailure(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "routerd15-closed-write-fixture"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", ClientDUID: "00030001020000000001"}},
+	}}}
+	err = recordObservedPrefixDelegationState(router, store, nil)
+	if !errors.Is(err, sql.ErrConnDone) {
+		t.Fatalf("failed PD observation was acknowledged: %v", err)
+	}
+}
+
+func (s *fakeStaleCleanupStore) ReadVariable(name string) (routerstate.Value, error) {
+	return s.Get(name), nil
+}
+
+func (s *fakeStaleCleanupStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	statuses, err := s.ListObjectStatuses()
+	if err != nil {
+		return nil, err
+	}
+	for _, status := range statuses {
+		if status.APIVersion == apiVersion && status.Kind == kind && status.Name == name {
+			return status.Status, nil
+		}
+	}
+	return nil, nil
 }

@@ -3,7 +3,6 @@
 package egressroute
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,6 +26,10 @@ func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
 	return map[string]any{}
 }
 
+func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error) {
+	return s.ObjectStatus(apiVersion, kind, name), nil
+}
+
 func TestControllerSelectsHighestWeightReady(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
@@ -46,7 +49,7 @@ func TestControllerSelectsHighestWeightReady(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -75,7 +78,7 @@ func TestControllerSkipsPolicyRouteModes(t *testing.T) {
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up", "interface": "ds-routerd-test"},
 	}
 	b := bus.New()
-	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
+	ch, cancel := b.Subscribe(t.Context(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
 	defer cancel()
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -92,7 +95,7 @@ func TestControllerSkipsPolicyRouteModes(t *testing.T) {
 		Store: store,
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); len(status) != 0 {
@@ -123,7 +126,7 @@ func TestControllerReportsSelectedGateway(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -153,7 +156,7 @@ func TestControllerKeepsReadyCurrentDuringHysteresis(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -191,7 +194,7 @@ func TestControllerRequiresResolvedOutputWithReadyDependency(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -200,7 +203,7 @@ func TestControllerRequiresResolvedOutputWithReadyDependency(t *testing.T) {
 	}
 
 	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["interface"] = "ds-routerd-test"
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -220,7 +223,7 @@ func TestControllerReportsUnsupportedSelection(t *testing.T) {
 		Store: store,
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -233,7 +236,6 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
-		api.NetAPIVersion + "/HealthCheck/internet-tcp443": {"phase": "Unhealthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
 	}
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -247,16 +249,19 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+
+	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-tcp443", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Unhealthy", now, 0)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
 	if status["phase"] != PhasePending || status["reason"] != ReasonNoReadyCandidates {
 		t.Fatalf("status = %#v", status)
 	}
-	store[api.NetAPIVersion+"/HealthCheck/internet-tcp443"]["phase"] = "Healthy"
-	store[api.NetAPIVersion+"/HealthCheck/internet-tcp443"]["lastCheckedAt"] = now.Format(time.RFC3339Nano)
-	if err := controller.Reconcile(context.Background()); err != nil {
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Healthy", now, 0)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -265,19 +270,64 @@ func TestControllerRequiresHealthyHealthCheck(t *testing.T) {
 	}
 }
 
+func TestControllerRejectsHealthSampleFromPreviousTarget(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	store := mapStore{}
+	controller := Controller{
+		Router: routerWithResources(
+			healthCheckResource("internet", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}),
+			api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+				Metadata: api.ObjectMeta{Name: "ipv4-default"},
+				Spec: api.EgressRoutePolicySpec{Selection: SelectionHighestWeightReady, Candidates: []api.EgressRoutePolicyCandidate{
+					{Name: "wan", Device: "wan0", Weight: 80, HealthCheck: "internet"},
+				}},
+			},
+		),
+		Bus: bus.New(), Store: store, Now: func() time.Time { return now },
+	}
+	storeHealthObservation(t, controller.Router, store, "internet", "Healthy", now, 0)
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); status["phase"] != PhaseApplied || status["selectedCandidate"] != "wan" {
+		t.Fatalf("original target did not authorize selection: %#v", status)
+	}
+
+	spec, err := controller.Router.Spec.Resources[0].HealthCheckSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Target = "192.0.2.2"
+	controller.Router.Spec.Resources[0].Spec = spec
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); status["phase"] != PhasePending || status["reason"] != ReasonNoReadyCandidates {
+		t.Fatalf("sample from the previous target authorized selection: %#v", status)
+	}
+
+	storeHealthObservation(t, controller.Router, store, "internet", "Healthy", now, 0)
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); status["phase"] != PhaseApplied || status["selectedCandidate"] != "wan" {
+		t.Fatalf("replacement target sample did not restore selection: %#v", status)
+	}
+}
+
 func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
 		api.NetAPIVersion + "/Link/fallback":               {"phase": "Up", "ifname": "wan0"},
-		api.NetAPIVersion + "/HealthCheck/internet-tcp443": {"phase": "Failing", "consecutiveFailed": 1, "lastCheckedAt": now.Format(time.RFC3339Nano)},
 	}
 	controller := Controller{
 		Router: routerWithResources(
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 				Metadata: api.ObjectMeta{Name: "internet-tcp443"},
-				Spec:     api.HealthCheckSpec{UnhealthyThreshold: 3},
+				Spec:     api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp", UnhealthyThreshold: 3},
 			},
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
@@ -296,7 +346,9 @@ func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Failing", now, 1)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -304,8 +356,8 @@ func TestControllerKeepsCandidateReadyDuringHealthCheckGraceFailures(t *testing.
 		t.Fatalf("status = %#v", status)
 	}
 
-	store[api.NetAPIVersion+"/HealthCheck/internet-tcp443"]["consecutiveFailed"] = 3
-	if err := controller.Reconcile(context.Background()); err != nil {
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Failing", now, 3)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -318,14 +370,13 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":        {"phase": "Up", "interface": "ds-routerd-test"},
-		api.NetAPIVersion + "/HealthCheck/internet-tcp443": {"phase": "Healthy", "lastCheckedAt": now.Add(-10 * time.Minute).Format(time.RFC3339Nano)},
 	}
 	controller := Controller{
 		Router: routerWithResources(
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 				Metadata: api.ObjectMeta{Name: "internet-tcp443"},
-				Spec:     api.HealthCheckSpec{Interval: "30s", Timeout: "3s"},
+				Spec:     api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp", Interval: "30s", Timeout: "3s"},
 			},
 			api.Resource{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
@@ -343,7 +394,9 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Healthy", now.Add(-10 * time.Minute), 0)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -351,8 +404,8 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 		t.Fatalf("status = %#v", status)
 	}
 
-	store[api.NetAPIVersion+"/HealthCheck/internet-tcp443"]["lastCheckedAt"] = now.Format(time.RFC3339Nano)
-	if err := controller.Reconcile(context.Background()); err != nil {
+	storeHealthObservation(t, controller.Router, store, "internet-tcp443", "Healthy", now, 0)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status = store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -364,7 +417,6 @@ func TestControllerRejectsStaleHealthCheckStatus(t *testing.T) {
 func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
 	}
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -384,7 +436,11 @@ func TestControllerUsesHealthyOutputWhenSourceHasNoStatus(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+
+	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
+	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -400,7 +456,6 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
 	}
 	controller := Controller{
@@ -416,7 +471,11 @@ func TestControllerSkipsDisabledCandidate(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+
+	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
+	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -429,7 +488,6 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 	enabled := false
 	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
 	store := mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet-via-pppoe": {"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)},
 		api.NetAPIVersion + "/DSLiteTunnel/ds-lite":           {"phase": "Up", "device": "ds-lite"},
 	}
 	controller := Controller{
@@ -456,7 +514,11 @@ func TestControllerSkipsDisabledPPPoESource(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+
+	controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource("internet-via-pppoe", api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
+	storeHealthObservation(t, controller.Router, store, "internet-via-pppoe", "Healthy", now, 0)
+
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -477,7 +539,7 @@ func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 		},
 	}
 	b := bus.New()
-	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
+	ch, cancel := b.Subscribe(t.Context(), bus.Subscription{Topics: []string{EventRouteChanged}}, 1)
 	defer cancel()
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -491,7 +553,7 @@ func TestControllerRepublishesWhenSelectedOutputChanges(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")
@@ -520,7 +582,7 @@ func TestControllerDoesNotRepublishWhenSelectionUnchanged(t *testing.T) {
 		api.NetAPIVersion + "/Link/ix2215": {"phase": "Up", "ifname": "ens19"},
 	}
 	b := bus.New()
-	ch, cancel := b.Subscribe(context.Background(), bus.Subscription{Topics: []string{EventRouteChanged}}, 2)
+	ch, cancel := b.Subscribe(t.Context(), bus.Subscription{Topics: []string{EventRouteChanged}}, 2)
 	defer cancel()
 	controller := Controller{
 		Router: routerWithPolicy(api.EgressRoutePolicySpec{
@@ -543,7 +605,7 @@ func TestControllerDoesNotRepublishWhenSelectionUnchanged(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -562,7 +624,7 @@ func TestControllerDoesNotRepublishWhenSelectionUnchanged(t *testing.T) {
 	}
 
 	now = now.Add(30 * time.Second)
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default")

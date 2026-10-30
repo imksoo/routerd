@@ -78,7 +78,7 @@ func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
 	}
 }
 
-func TestPathMTUControllerKeepsImplicitL2ArtifactBesideConfiguredPath(t *testing.T) {
+func TestPathMTUControllerKeepsImplicitArtifactsBesideConfiguredPath(t *testing.T) {
 	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500, Managed: true}},
@@ -87,12 +87,15 @@ func TestPathMTUControllerKeepsImplicitL2ArtifactBesideConfiguredPath(t *testing
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "vx"}, Spec: api.VXLANTunnelSpec{IfName: "vx0", VNI: 42, LocalAddress: "198.18.0.1", UnderlayInterface: "underlay", MTU: 1280, Bridge: "br", TCPMSSClamp: true}},
 	}}}
 	path := filepath.Join(dir, "artifacts", "mss.nft")
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, DryRun: true, Path: path, ForceFragmentPath: filepath.Join(dir, "artifacts", "forcefrag.nft")}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: mapStore{}, DryRun: true, Path: path}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "artifacts", "l2-mss.nft")); err != nil {
 		t.Fatalf("implicit L2 artifact beside configured path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "artifacts", "forcefrag.nft")); err != nil {
+		t.Fatalf("implicit force-fragment artifact beside configured path: %v", err)
 	}
 }
 
@@ -149,7 +152,9 @@ func TestPathMTUControllerRendersForceFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{`table ip routerd_forcefrag`, `type filter hook prerouting priority mangle; policy accept;`, `iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1340 ip frag-off 0x4000 ip frag-off set 0`} {
+	// WireGuard installs its configured payload MTU verbatim; its outer
+	// encapsulation must not be deducted again from this forwarding ceiling.
+	for _, want := range []string{`table ip routerd_forcefrag`, `type filter hook prerouting priority mangle; policy accept;`, `iifname "ens3" fib daddr oifname "wg-hybrid" ip length > 1420 ip frag-off 0x4000 ip frag-off set 0`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("forcefrag rules missing %q:\n%s", want, got)
 		}
@@ -617,7 +622,8 @@ func TestPathMTUControllerRendersLocalCaptureMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1300 tcp option maxseg size set 1300`
+	// Native WG payload 1420 minus the IPv4/TCP headers (40).
+	want := `iifname "ens3" oifname "wg-hybrid" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1380 tcp option maxseg size set 1380`
 	if !strings.Contains(got, want) {
 		t.Fatalf("BGP mobility MSS clamp missing %q:\n%s", want, got)
 	}
@@ -666,7 +672,8 @@ func TestPathMTUControllerRendersSAMTransportMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
-	want := `iifname "ens5" oifname "samt-aws-onprem" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`
+	// Native IPIP payload is 1420 - 20 = 1400; IPv4/TCP MSS is 1360.
+	want := `iifname "ens5" oifname "samt-aws-onprem" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
 	if !strings.Contains(got, want) {
 		t.Fatalf("SAM transport MSS clamp missing %q:\n%s", want, got)
 	}
@@ -726,15 +733,44 @@ func TestPathMTUControllerRendersSAMTransportHubRelayMSSClamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
+	for _, tunnel := range []string{"samt-aws", "samt-oci"} {
+		want := `iifname "ens20" oifname "` + tunnel + `" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`
+		if !strings.Contains(got, want) {
+			t.Fatalf("native IPIP payload clamp missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `iifname "samt-`) {
+		t.Fatalf("equal native payload MTUs need no additional relay clamp:\n%s", got)
+	}
+	// Keep a real relay bottleneck in this fixture: the OCI leg explicitly
+	// installs 1380 while the AWS leg derives 1400 from WG1420 minus IPIP20.
+	for i := range router.Spec.Resources {
+		res := &router.Spec.Resources[i]
+		if res.Metadata.Name == "samt-oci" {
+			spec := res.Spec.(api.TunnelInterfaceSpec)
+			spec.MTU = 1380
+			res.Spec = spec
+		}
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(controller.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(data)
 	for _, want := range []string{
-		`iifname "ens20" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "ens20" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "samt-aws" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
-		`iifname "samt-oci" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1280 tcp option maxseg size set 1280`,
+		`iifname "ens20" oifname "samt-aws" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1360 tcp option maxseg size set 1360`,
+		`iifname "ens20" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1340 tcp option maxseg size set 1340`,
+		`iifname "samt-aws" oifname "samt-oci" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1340 tcp option maxseg size set 1340`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("SAM transport hub relay MSS clamp missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, `iifname "samt-oci" oifname "samt-aws"`) {
+		t.Fatalf("relay toward the larger MTU must not narrow MSS:\n%s", got)
 	}
 }
 

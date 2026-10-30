@@ -9,13 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/imksoo/routerd/internal/hostcmd"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/apply"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/ingressdrain"
@@ -53,6 +52,10 @@ func validateCommand(args []string, stdout io.Writer, stdin io.Reader) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Validate(ctx, controlapi.ValidateRequest{CandidateYAML: candidate, Replace: *replace})
 	if err != nil {
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return commandExitError{Code: 2, Err: fmt.Errorf("routerd validate failed: %w", apiErr)}
+		}
 		return commandExitError{Code: 2, Err: fmt.Errorf("routerd serve is not reachable for validate; start routerd serve or check --socket: %w", err)}
 	}
 	if err := writeJSON(stdout, result); err != nil {
@@ -134,18 +137,31 @@ func applyCommand(args []string, stdout io.Writer) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Apply(ctx, controlapi.ApplyRequest{CandidateYAML: candidate, Replace: *replace, NoReconcile: *noReconcile})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for apply; start routerd serve or check --socket: %w", err)
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd apply failed: %w", apiErr)
+		}
+		return fmt.Errorf("routerd apply request failed; outcome is unconfirmed: %w", err)
 	}
 	if err := writeJSON(stdout, result); err != nil {
 		return err
 	}
-	if strings.EqualFold(strings.TrimSpace(result.Result.Phase), "Drifted") {
-		return commandExitError{
-			Code: 1,
-			Err:  errors.New("apply finished with phase Drifted; canonical config was not committed"),
-		}
+	return mutationResultError("apply", &result.Result)
+}
+
+func mutationResultError(operation string, result *apply.Result) error {
+	if result == nil {
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s returned no mutation result", operation)}
 	}
-	return nil
+	phase := strings.TrimSpace(result.Phase)
+	switch phase {
+	case "Healthy", "Applied", "Committed", "Standby":
+		return nil
+	case "Blocked", "Drifted":
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s finished with phase %s; canonical config was not committed", operation, phase)}
+	default:
+		return commandExitError{Code: 1, Err: fmt.Errorf("%s finished with phase %q; requested mutation was not confirmed", operation, phase)}
+	}
 }
 
 func deleteCommand(args []string, stdout io.Writer) error {
@@ -178,9 +194,19 @@ func deleteCommand(args []string, stdout io.Writer) error {
 	defer cancel()
 	result, err := controlapi.NewUnixClient(*socketPath).Delete(ctx, controlapi.DeleteRequest{Target: fs.Arg(0), TargetAPIVersion: *apiVersion, DryRun: *dryRun, Force: *force, NoReconcile: *noReconcile})
 	if err != nil {
-		return fmt.Errorf("routerd serve is not reachable for delete; start routerd serve or check --socket: %w", err)
+		var apiErr *controlapi.APIError
+		if errors.As(err, &apiErr) {
+			return fmt.Errorf("routerd delete failed: %w", apiErr)
+		}
+		return fmt.Errorf("routerd delete request failed; outcome is unconfirmed: %w", err)
 	}
-	return writeJSON(stdout, result)
+	if err := writeJSON(stdout, result); err != nil {
+		return err
+	}
+	if *dryRun {
+		return nil
+	}
+	return mutationResultError("delete", result.Result)
 }
 
 func readCandidateYAML(path string, stdin io.Reader) (string, error) {
@@ -188,18 +214,26 @@ func readCandidateYAML(path string, stdin io.Reader) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	var data []byte
-	var err error
+	var input io.Reader
 	if path == "-" {
 		if stdin == nil {
 			stdin = os.Stdin
 		}
-		data, err = io.ReadAll(stdin)
+		input = stdin
 	} else {
-		data, err = os.ReadFile(path)
+		file, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		input = file
 	}
+	data, err := io.ReadAll(io.LimitReader(input, int64(controlapi.MaxRequestBodyBytes)+1))
 	if err != nil {
 		return "", err
+	}
+	if len(data) > controlapi.MaxRequestBodyBytes {
+		return "", fmt.Errorf("candidate YAML exceeds the %d-byte API request body limit", controlapi.MaxRequestBodyBytes)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return "", fmt.Errorf("candidate %s is empty", path)
@@ -321,9 +355,9 @@ func restartDNSResolverCommand(args []string, stdout io.Writer) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, hostcmd.Resolve(command.Name), command.Args...).CombinedOutput()
+	_, stderr, err := runHostCommand(ctx, command.Name, command.Args...)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%s %s: %w: %s", command.Name, strings.Join(command.Args, " "), err, strings.TrimSpace(string(stderr)))
 	}
 	fmt.Fprintf(stdout, "restarted DNSResolver/%s via %s\n", name, manager.Name())
 	return nil
@@ -472,16 +506,12 @@ func ingressDrainCommand(args []string, stdout io.Writer, drain bool) error {
 		if err != nil {
 			return err
 		}
-		if err := store.Save(statePath); err != nil {
-			return err
-		}
+
 		return writeJSON(stdout, state)
 	}
 	if err := ingressdrain.Undrain(store, service, backend); err != nil {
 		return err
 	}
-	if err := store.Save(statePath); err != nil {
-		return err
-	}
+
 	return writeJSON(stdout, map[string]any{"service": service, "backend": backend, "drained": false})
 }

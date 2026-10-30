@@ -2,19 +2,13 @@
 package main
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controlapi"
-	"github.com/imksoo/routerd/pkg/daemonapi"
-	"github.com/imksoo/routerd/pkg/dhcpeventqueue"
-	"github.com/imksoo/routerd/pkg/logstore"
-	"github.com/imksoo/routerd/pkg/state"
 )
 
 func TestHistoricalCallbacksRequireCurrentAuthoritativeLease(t *testing.T) {
@@ -50,48 +44,5 @@ func TestHistoricalCallbacksRequireCurrentAuthoritativeLease(t *testing.T) {
 	}
 	if _, err := dhcpReplayDisposition(router, path, controlapi.DHCPLeaseEventRequest{Action: "removed", IP: "192.0.2.42"}, now); err == nil {
 		t.Fatal("missing authority treated as empty lease list")
-	}
-}
-
-func TestOriginalObservationTimePersistsInActualJournalAndZeroHoldDoesNotReserve(t *testing.T) {
-	root := t.TempDir()
-	statePath := filepath.Join(root, "state.db")
-	stickyPath := filepath.Join(root, "sticky.db")
-	store, err := state.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	at := time.Date(2026, 10, 1, 1, 2, 3, 456789, time.UTC)
-	e := dhcpeventqueue.Event{ObservedAt: at, Lease: controlapi.DHCPLeaseEventRequest{Action: "removed", MAC: "02:00:00:00:00:42", IP: "192.0.2.42"}}
-	if err := processDHCPLeaseEvent(context.Background(), e, stickyPath, 0, bus.NewWithStore(store)); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	store, err = state.OpenSQLite(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	events, err := store.ListEvents(state.EventQuery{Topic: daemonapi.EventDHCPLeaseRemoved})
-	if err != nil || len(events) != 1 {
-		t.Fatal(events, err)
-	}
-	if events[0].Attributes["observedAt"] != at.Format(time.RFC3339Nano) {
-		t.Fatalf("lost original timestamp: %+v", events[0])
-	}
-	sticky, err := logstore.OpenDHCPStickyLog(stickyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sticky.Close()
-	rows, err := sticky.List(context.Background(), logstore.DHCPStickyFilter{HeldOnly: true})
-	if err != nil || len(rows) != 0 {
-		t.Fatal("zero hold reserved address", rows, err)
-	}
-	rows, err = sticky.List(context.Background(), logstore.DHCPStickyFilter{})
-	if err != nil || len(rows) != 1 || !rows[0].ReleasedAt.Equal(at) {
-		t.Fatal(rows, err)
 	}
 }

@@ -11,11 +11,11 @@ import (
 )
 
 type LogSinkSpec struct {
-	Type     string              `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=otlp,enum=webhook,enum=file,enum=journald"`
+	Type     string              `yaml:"type" json:"type" jsonschema:"enum=syslog,enum=webhook,enum=file,enum=journald"`
 	Enabled  *bool               `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	MinLevel string              `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
 	Syslog   LogSinkSyslogSpec   `yaml:"syslog,omitempty" json:"syslog,omitempty"`
-	OTLP     LogSinkOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty"`
+	OTLP     LogSinkOTLPSpec     `yaml:"otlp,omitempty" json:"otlp,omitempty" jsonschema:"-"`
 	Webhook  LogSinkWebhookSpec  `yaml:"webhook,omitempty" json:"webhook,omitempty"`
 	File     LogSinkFileSpec     `yaml:"file,omitempty" json:"file,omitempty"`
 	Journald LogSinkJournaldSpec `yaml:"journald,omitempty" json:"journald,omitempty"`
@@ -68,13 +68,13 @@ type ObservabilityPipelineLogsSpec struct {
 
 type ObservabilityPipelineLogSink struct {
 	Name     string                     `yaml:"name,omitempty" json:"name,omitempty"`
-	Type     string                     `yaml:"type" json:"type" jsonschema:"enum=stdout,enum=syslog,enum=loki,enum=kafka"`
+	Type     string                     `yaml:"type" json:"type" jsonschema:"enum=stdout,enum=syslog,enum=loki"`
 	Enabled  *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	MinLevel string                     `yaml:"minLevel,omitempty" json:"minLevel,omitempty" jsonschema:"enum=debug,enum=info,enum=warning,enum=error"`
 	Labels   map[string]string          `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Loki     ObservabilityLokiSinkSpec  `yaml:"loki,omitempty" json:"loki,omitempty"`
 	Syslog   LogSinkSyslogSpec          `yaml:"syslog,omitempty" json:"syslog,omitempty"`
-	Kafka    ObservabilityKafkaSinkSpec `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+	Kafka    ObservabilityKafkaSinkSpec `yaml:"kafka,omitempty" json:"kafka,omitempty" jsonschema:"-"`
 }
 
 type ObservabilityLokiSinkSpec struct {
@@ -549,7 +549,7 @@ type IPv4StaticAddressSpec struct {
 	Interface string           `yaml:"interface" json:"interface"`
 	Address   string           `yaml:"address" json:"address"`
 	When      ResourceWhenSpec `yaml:"when,omitempty" json:"when,omitempty"`
-	// Exclusive removes other IPv4 addresses from the target interface before adding this address.
+	// Exclusive is reserved; exclusive takeover is not implemented.
 	Exclusive bool `yaml:"exclusive,omitempty" json:"exclusive,omitempty"`
 	// AllowOverlap permits an address prefix that overlaps another configured IPv4 prefix.
 	AllowOverlap       bool   `yaml:"allowOverlap,omitempty" json:"allowOverlap,omitempty"`
@@ -1197,7 +1197,7 @@ type IPv6RAAddressSpec struct {
 
 type DHCPv6PrefixDelegationSpec struct {
 	Interface string `yaml:"interface" json:"interface"`
-	Client    string `yaml:"client,omitempty" json:"client,omitempty"`
+	Client    string `yaml:"client,omitempty" json:"client,omitempty" jsonschema:"enum=routerd-dhcpv6-client"`
 	// Profile applies provider-specific defaults; NTT profiles default prefixLength to 60 and DUID type to link-layer.
 	Profile      string           `yaml:"profile,omitempty" json:"profile,omitempty" jsonschema:"enum=default,enum=ntt-ngn-direct-hikari-denwa,enum=ntt-hgw-lan-pd"`
 	PrefixLength int              `yaml:"prefixLength,omitempty" json:"prefixLength,omitempty" jsonschema:"minimum=1,maximum=128"`
@@ -1348,12 +1348,14 @@ type DNSZoneReverseSpec struct {
 }
 
 type DNSResolverSpec struct {
-	Listen   []DNSResolverListenSpec `yaml:"listen" json:"listen"`
-	Sources  []DNSResolverSourceSpec `yaml:"-" json:"sources,omitempty" jsonschema:"-"`
-	Cache    DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
-	Metrics  DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
-	QueryLog DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
-	When     ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	// RequestTimeout bounds the complete lookup, independently of each upstream attempt.
+	RequestTimeout string                  `yaml:"requestTimeout,omitempty" json:"requestTimeout,omitempty"`
+	Listen         []DNSResolverListenSpec `yaml:"listen" json:"listen"`
+	Sources        []DNSResolverSourceSpec `yaml:"-" json:"sources,omitempty" jsonschema:"-"`
+	Cache          DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
+	Metrics        DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
+	QueryLog       DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
+	When           ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSResolverListenSpec struct {
@@ -1476,25 +1478,29 @@ type ReadyWhenPredicateSpec struct {
 }
 
 type IPv6RouterAdvertisementSpec struct {
-	Interface         string                   `yaml:"interface" json:"interface"`
-	Prefix            string                   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
-	PrefixFrom        StatusValueSourceSpec    `yaml:"prefixFrom,omitempty" json:"prefixFrom,omitempty"`
-	PrefixSource      string                   `yaml:"prefixSource,omitempty" json:"-"`
-	RDNSS             []string                 `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
-	RDNSSFrom         []StatusValueSourceSpec  `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
-	DNSSL             []string                 `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
-	DNSSLFrom         []StatusValueSourceSpec  `yaml:"dnsslFrom,omitempty" json:"dnsslFrom,omitempty"`
-	MFlag             bool                     `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
-	OFlag             bool                     `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
-	MTU               int                      `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
-	PRFPreference     string                   `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
-	PreferredLifetime string                   `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
-	ValidLifetime     string                   `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
-	ConfigPath        string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
-	PIDFile           string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
-	When              ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
-	DependsOn         []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
-	ReadyWhen         []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
+	Interface     string                  `yaml:"interface" json:"interface"`
+	Prefix        string                  `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	PrefixFrom    StatusValueSourceSpec   `yaml:"prefixFrom,omitempty" json:"prefixFrom,omitempty"`
+	PrefixSource  string                  `yaml:"prefixSource,omitempty" json:"-"`
+	RDNSS         []string                `yaml:"rdnss,omitempty" json:"rdnss,omitempty"`
+	RDNSSFrom     []StatusValueSourceSpec `yaml:"rdnssFrom,omitempty" json:"rdnssFrom,omitempty"`
+	DNSSL         []string                `yaml:"dnssl,omitempty" json:"dnssl,omitempty"`
+	DNSSLFrom     []StatusValueSourceSpec `yaml:"dnsslFrom,omitempty" json:"dnsslFrom,omitempty"`
+	MFlag         bool                    `yaml:"mFlag,omitempty" json:"mFlag,omitempty"`
+	OFlag         bool                    `yaml:"oFlag,omitempty" json:"oFlag,omitempty"`
+	MTU           int                     `yaml:"mtu,omitempty" json:"mtu,omitempty" jsonschema:"minimum=1280,maximum=65535"`
+	PRFPreference string                  `yaml:"prfPreference,omitempty" json:"prfPreference,omitempty" jsonschema:"enum=,enum=low,enum=medium,enum=high"`
+	// PreferredLifetime and ValidLifetime are PIO seconds or infinite; delegated prefixes remain capped by their absolute upstream deadlines.
+	PreferredLifetime string `yaml:"preferredLifetime,omitempty" json:"preferredLifetime,omitempty"`
+	ValidLifetime     string `yaml:"validLifetime,omitempty" json:"validLifetime,omitempty"`
+	// RouterLifetime is default-route seconds, independent of PIO lifetimes. Default is 1800; 0 withdraws, otherwise 4-9000.
+	RouterLifetime string `yaml:"routerLifetime,omitempty" json:"routerLifetime,omitempty"`
+	// ConfigPath and PIDFile are unsupported by the serve-owned RA loop.
+	ConfigPath string                   `yaml:"configPath,omitempty" json:"configPath,omitempty"`
+	PIDFile    string                   `yaml:"pidFile,omitempty" json:"pidFile,omitempty"`
+	When       ResourceWhenSpec         `yaml:"when,omitempty" json:"when,omitempty"`
+	DependsOn  []ResourceDependencySpec `yaml:"dependsOn,omitempty" json:"dependsOn,omitempty"`
+	ReadyWhen  []ReadyWhenSpec          `yaml:"ready_when,omitempty" json:"-"`
 }
 
 type DHCPv6ServerSpec struct {
@@ -1686,8 +1692,10 @@ type DSLiteTunnelSpec struct {
 }
 
 type IPv4RouteSpec struct {
-	Destination string                `yaml:"destination" json:"destination"`
-	Type        string                `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
+	Destination string `yaml:"destination" json:"destination"`
+	Type        string `yaml:"type,omitempty" json:"type,omitempty" jsonschema:"enum=unicast,enum=blackhole"`
+	// Device is a kernel interface name. Use deviceFrom with Interface.ifname
+	// to resolve a declared logical interface from current observations.
 	Device      string                `yaml:"device,omitempty" json:"device,omitempty"`
 	DeviceFrom  StatusValueSourceSpec `yaml:"deviceFrom,omitempty" json:"deviceFrom,omitempty"`
 	Gateway     string                `yaml:"gateway,omitempty" json:"gateway,omitempty"`
@@ -2001,6 +2009,9 @@ type ResolvedMobilityPoolMember struct {
 }
 
 type MobilityStaticHandover struct {
+	// ID identifies one transfer attempt. Use a new ID after rollback so a
+	// previous release cannot authorize a later transfer of the same address.
+	ID          string `yaml:"id" json:"id" jsonschema:"required,minLength=1"`
 	Address     string `yaml:"address" json:"address"`
 	FromNodeRef string `yaml:"fromNodeRef" json:"fromNodeRef"`
 	ToNodeRef   string `yaml:"toNodeRef" json:"toNodeRef"`
@@ -2186,9 +2197,8 @@ type ProviderActionPolicySpec struct {
 	MaxActionsPerRun int `yaml:"maxActionsPerRun,omitempty" json:"maxActionsPerRun,omitempty"`
 	// AllowUndo permits best-effort rollback. The zero value (false) disables it.
 	AllowUndo bool `yaml:"allowUndo,omitempty" json:"allowUndo,omitempty"`
-	// ExecutionWindow optionally restricts execution to a time window. It is
-	// validated leniently (free-form, cron-ish); empty = no window restriction.
-	ExecutionWindow string `yaml:"executionWindow,omitempty" json:"executionWindow,omitempty"`
+	// ExecutionWindow must be empty: provider action scheduling is unsupported.
+	ExecutionWindow string `yaml:"executionWindow,omitempty" json:"executionWindow,omitempty" jsonschema:"maxLength=0"`
 }
 
 type HealthCheckSpec struct {
@@ -2343,7 +2353,7 @@ type EventRulePatternSpec struct {
 	Window                  string   `yaml:"window,omitempty" json:"window,omitempty"`
 	Quiet                   string   `yaml:"quiet,omitempty" json:"quiet,omitempty"`
 	Interval                string   `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Rate                    int      `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0"`
+	Rate                    int      `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0,maximum=0"`
 	Threshold               int      `yaml:"threshold,omitempty" json:"threshold,omitempty" jsonschema:"minimum=0"`
 	CorrelateBy             string   `yaml:"correlate_by,omitempty" json:"correlate_by,omitempty"`
 	AllowMissingCorrelation bool     `yaml:"allow_missing_correlation,omitempty" json:"allow_missing_correlation,omitempty"`
@@ -3069,25 +3079,14 @@ func (r Resource) DynamicOverridePolicySpec() (DynamicOverridePolicySpec, error)
 }
 
 func specAs[T any](r Resource) (T, error) {
-	spec, ok := r.Spec.(T)
-	if !ok {
-		if ptr, ok := r.Spec.(*T); ok && ptr != nil {
-			return *ptr, nil
-		}
-		var zero T
-		if r.Spec == nil {
-			return zero, fmt.Errorf("%s has unexpected spec type <nil>", r.ID())
-		}
-		data, err := json.Marshal(r.Spec)
-		if err != nil {
-			return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
-		}
-		if err := json.Unmarshal(data, &zero); err != nil {
-			return zero, fmt.Errorf("%s has unexpected spec type %T: %w", r.ID(), r.Spec, err)
-		}
-		return zero, nil
+	if spec, ok := r.Spec.(T); ok {
+		return spec, nil
 	}
-	return spec, nil
+	if spec, ok := any(r.Spec).(*T); ok && spec != nil {
+		return *spec, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("%s has unexpected spec type %T", r.ID(), r.Spec)
 }
 
 func BoolDefault(value *bool, fallback bool) bool {

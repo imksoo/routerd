@@ -68,8 +68,11 @@ declare global {
   }
 }
 
+type SnapshotSection = "resources" | "events" | "connections" | "dnsQueries" | "trafficFlows" | "firewallLogs" | "conntrackTuning" | "dhcpLeases" | "dhcpFingerprints" | "neighbors" | "clients" | "vpn";
+
 type Summary = {
   generatedAt?: string;
+  collected: SnapshotSection[];
   consoleLinks?: ConsoleLink[];
   status?: { status?: Record<string, unknown> };
   controllers?: ControllerStatus[];
@@ -149,6 +152,7 @@ type DPIServiceStatus = {
 };
 
 type ResourceStatus = {
+  declared?: boolean;
   apiVersion?: string;
   kind?: string;
   name?: string;
@@ -282,7 +286,6 @@ type ConnTuple = {
   destinationService?: string;
   packets?: number;
   bytes?: number;
-  accounting?: boolean;
 };
 
 type ConnectionEntry = {
@@ -319,6 +322,7 @@ type DNSQuery = {
 };
 
 type TrafficFlow = {
+  flowKey?: string;
   clientAddress?: string;
   peerAddress?: string;
   peerPort?: number;
@@ -339,7 +343,6 @@ type TrafficFlow = {
   source?: string;
   httpHost?: string;
   dnsQuery?: string;
-  accounting?: boolean;
   bytesOut?: number;
   bytesIn?: number;
 };
@@ -420,6 +423,7 @@ type DHCPLease = {
   ip?: string;
   hostname?: string;
   clientId?: string;
+  iaid?: string;
   vendor?: string;
   family?: string;
   source?: string;
@@ -458,6 +462,8 @@ type ClientEntry = {
   peers?: string[];
   bytesOut?: number;
   bytesIn?: number;
+  bytesOutIncomplete?: boolean;
+  bytesInIncomplete?: boolean;
   primaryActivity?: string;
   lastProtocol?: string;
   lastProtocolDetail?: string;
@@ -491,6 +497,8 @@ type InterfaceSummary = {
   hardwareAddress?: string;
   flags?: string;
   addresses?: string[];
+  configuredAddresses?: string[];
+  observationError?: string;
 };
 
 type VPNStatus = {
@@ -580,8 +588,6 @@ type SAMPoolEntry = {
   placementActive?: boolean;
   placementActiveNode?: string;
   addresses?: SAMPoolAddressEntry[];
-  heldAddresses?: string[];
-  stoppedInstancePolicy?: string;
 };
 
 type SAMPoolAddressEntry = {
@@ -668,9 +674,10 @@ type ClientRow = {
   vendor: string;
   state?: string;
   sources: Set<string>;
-  expiresAt: string;
   bytesOut?: number;
   bytesIn?: number;
+  bytesOutIncomplete?: boolean;
+  bytesInIncomplete?: boolean;
   peers: Set<string>;
   primaryActivity: string;
   lastProtocol: string;
@@ -712,7 +719,7 @@ const navItems: { key: ViewKey; label: string; description: string; icon: React.
   { key: "firewall", label: "Firewall", description: "Deny ranking and timeline", icon: <ShieldRegular /> },
   { key: "controllers", label: "Controllers", description: "Live and dry-run controller modes", icon: <ServerRegular /> },
   { key: "config", label: "Config", description: "Read-only YAML tree", icon: <DocumentTextRegular /> },
-  { key: "generations", label: "Generations", description: "Applied YAML history and diffs", icon: <DocumentTextRegular /> },
+  { key: "generations", label: "Generations", description: "Stored configuration attempts and diffs", icon: <DocumentTextRegular /> },
 ];
 const viewKeys = new Set<string>(navItems.map(item => item.key));
 
@@ -2519,7 +2526,7 @@ function App() {
   const [routesStatus, setRoutesStatus] = useState<RoutesStatus | null>(null);
   const [samStatus, setSAMStatus] = useState<SAMStatusResponse | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[]>([]);
-  const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[]>([]);
+  const [firewallDenyTimeline, setFirewallDenyTimeline] = useState<FirewallDenyTimelineBucket[] | undefined>();
   const [generationDiff, setGenerationDiff] = useState<string>("");
   const [configPlanDiff, setConfigPlanDiff] = useState<string>("");
   const [generationConfig, setGenerationConfig] = useState<{ generation: number; text: string } | null>(null);
@@ -2592,12 +2599,13 @@ function App() {
   const refreshInFlight = useRef(false);
   const queuedRefresh = useRef(false);
   const refreshTimer = useRef<number | null>(null);
-  const configRef = useRef<ConfigSnapshot | null>(null);
+  const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const generationRequest = useRef<AbortController | null>(null);
+  const planDiffRequest = useRef<AbortController | null>(null);
   const pendingScrollSnapshot = useRef<ScrollSnapshot | null>(null);
   const connectionOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const connectionGroupOrderRef = useRef<{ signature: string; keys: string[] }>({ signature: "", keys: [] });
   const detailRefreshMounted = useRef(false);
-  const overviewDetailsLoaded = useRef(false);
 
   async function refresh() {
     if (refreshInFlight.current) {
@@ -2607,7 +2615,7 @@ function App() {
     refreshInFlight.current = true;
     const scrollSnapshot = captureScrollSnapshot();
     const eventLimit = selected === "events" ? 200 : 50;
-    const connectionLimit = selected === "connections" ? 600 : -1;
+    const connectionLimit = selected === "connections" ? 600 : selected === "overview" ? 200 : -1;
     const firewallLogLimit = selected === "firewall" ? 200 : -1;
     const generationLimit = selected === "generations" ? 200 : 50;
     const shouldFetchConfig = selected === "config";
@@ -2618,15 +2626,15 @@ function App() {
     const includeTuning = selected === "firewall";
     const includeVPN = selected === "vpn";
     const includeDPI = selected === "connections" || selected === "clients" || selected === "firewall";
-    const trafficFlowLimit = selected === "clients" ? 200 : selected === "connections" ? 600 : -1;
-    const includeResources = selected === "resources" || selected === "gateway-health" || selected === "vrrp" || selected === "connections";
-    const includeEvents = selected === "events";
+    const trafficFlowLimit = selected === "clients" || selected === "overview" ? 200 : selected === "connections" ? 600 : -1;
+    const includeResources = selected === "overview" || selected === "resources" || selected === "gateway-health" || selected === "vrrp" || selected === "connections";
+    const includeEvents = selected === "events" || selected === "overview";
     const includeDHCPLeases = selected === "clients" || selected === "connections";
     const summaryQuery = new URLSearchParams({
       events: includeEvents ? String(eventLimit) : "-1",
       connections: String(connectionLimit),
       firewallLogs: String(firewallLogLimit),
-      dnsQueries: includeClients ? "200" : "-1",
+      dnsQueries: includeClients || selected === "overview" ? "200" : "-1",
       trafficFlows: String(trafficFlowLimit),
       fingerprintQueries: includeClients ? "1000" : "50",
       dhcpFingerprints: includeClients ? "1000" : "200",
@@ -2640,7 +2648,7 @@ function App() {
     try {
       const [summaryResponse, configResponse, generationResponse, denyTimelineResponse, routesResponse, samResponse] = await Promise.all([
         fetchJSON<Summary>(`api/v1/summary?${summaryQuery.toString()}`),
-        shouldFetchConfig ? (configRef.current ? Promise.resolve(configRef.current) : fetchJSON<ConfigSnapshot>("api/v1/config")) : Promise.resolve(null),
+        shouldFetchConfig ? fetchJSON<ConfigSnapshot>("api/v1/config") : Promise.resolve(null),
         shouldFetchGenerations ? fetchJSON<GenerationRecord[]>(`api/v1/generations?limit=${generationLimit}`) : Promise.resolve(null),
         selected === "firewall" ? fetchJSON<FirewallDenyTimelineBucket[]>("api/v1/firewall/deny-timeline?range=24h&bucket=5min") : Promise.resolve(null),
         shouldFetchRoutes ? fetchJSON<RoutesStatus>("api/v1/routes") : Promise.resolve(null),
@@ -2649,19 +2657,19 @@ function App() {
       pendingScrollSnapshot.current = scrollSnapshot;
       if (samResponse) setSAMStatus(samResponse);
       setSummary(current => reconcileSummary(current, summaryResponse));
-      if (selected === "overview" && !overviewDetailsLoaded.current) {
-        overviewDetailsLoaded.current = true;
-        window.setTimeout(loadOverviewDetails, 250);
-      }
       if (Array.isArray(denyTimelineResponse)) {
         setFirewallDenyTimeline(denyTimelineResponse);
       }
-      if (summaryResponse.resources !== undefined) {
+      if (summaryResponse.collected.includes("resources")) {
         setMetricSamples(current => appendMetricSample(current, summaryResponse));
       }
-      if (configResponse && !configRef.current) {
-        configRef.current = configResponse as ConfigSnapshot;
-        setConfig(configResponse as ConfigSnapshot);
+      if (configResponse) {
+        if (config?.text !== configResponse.text || generations.find(row => row.hasYaml)?.generation !== generationResponse?.find(row => row.hasYaml)?.generation) {
+          planDiffRequest.current?.abort();
+          planDiffRequest.current = null;
+          setConfigPlanDiff("");
+        }
+        setConfig(configResponse);
       }
       if (Array.isArray(generationResponse)) {
         setGenerations(current => reconcileRecords(current, generationResponse, row => String(row.generation)));
@@ -2682,32 +2690,8 @@ function App() {
     }
   }
 
-  async function loadOverviewDetails() {
-    const query = new URLSearchParams({
-      events: "50",
-      connections: "200",
-      firewallLogs: "-1",
-      dnsQueries: "200",
-      trafficFlows: "200",
-      clients: "0",
-      dpi: "0",
-      tuning: "0",
-      vpn: "0",
-      resources: "1",
-      dhcpLeases: "0",
-    });
-    try {
-      const response = await fetchJSON<Summary>(`api/v1/summary?${query.toString()}`);
-      setSummary(current => reconcileSummary(current, response));
-      if (response.resources !== undefined) {
-        setMetricSamples(current => appendMetricSample(current, response));
-      }
-      setError("");
-    } catch (err) {
-      overviewDetailsLoaded.current = false;
-      setError(String(err));
-    }
-  }
+  // Polling and stream callbacks live across renders; always use the active view.
+  refreshRef.current = refresh;
 
   function scheduleRefresh(delay = 350) {
     if (refreshTimer.current !== null) {
@@ -2715,7 +2699,7 @@ function App() {
     }
     refreshTimer.current = window.setTimeout(() => {
       refreshTimer.current = null;
-      refresh();
+      void refreshRef.current();
     }, delay);
   }
 
@@ -2732,8 +2716,8 @@ function App() {
   useEffect(() => installHorizontalScrollTouchCoordinator(), []);
 
   useEffect(() => {
-    refresh();
-    const pollID = window.setInterval(refresh, 30000);
+    void refreshRef.current();
+    const pollID = window.setInterval(() => { void refreshRef.current(); }, 30000);
     let source: EventSource | null = null;
     if ("EventSource" in window) {
       source = new EventSource(basePath + "api/v1/events/stream");
@@ -2760,6 +2744,8 @@ function App() {
       window.clearInterval(pollID);
       if (refreshTimer.current !== null) window.clearTimeout(refreshTimer.current);
       source?.close();
+      generationRequest.current?.abort();
+      planDiffRequest.current?.abort();
     };
   }, []);
 
@@ -2824,7 +2810,7 @@ function App() {
   }, [filteredConnections, connectionSortSignature]);
   const connectionFacets = useMemo(() => connectionFilterFacets(connections), [connections]);
   const navSubItems = useMemo(() => navigationSubItems(selected, connectionGroupsList, summary), [selected, connectionGroupsList, summary]);
-  const resources = useMemo(() => importantResources(summary?.resources ?? []), [summary?.resources]);
+  const resources = summary?.resources ?? [];
   const controllers = summary?.controllers ?? (summary?.status?.status?.controllers as ControllerStatus[] | undefined) ?? [];
   const events = summary?.events ?? [];
   const filteredEvents = useMemo(() => filterEvents(events, eventFilters), [events, eventFilters]);
@@ -2940,14 +2926,20 @@ function App() {
   }
 
   async function loadGenerationConfig(generation: number) {
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${generation}/config`);
+      const text = await fetchText(`api/v1/generations/${generation}/config`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationConfig({ generation, text });
       setGenerationDiff("");
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
@@ -2955,20 +2947,30 @@ function App() {
     const from = Number(generationFrom);
     const to = Number(generationTo);
     if (!from || !to) return;
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationDiff(text);
       setGenerationConfig(null);
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
   async function loadAdjacentGenerationDiff(from: number, to: number) {
+    generationRequest.current?.abort();
+    const request = new AbortController();
+    generationRequest.current = request;
     try {
-      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`);
+      const text = await fetchText(`api/v1/generations/${from}/diff/${to}`, request.signal);
+      if (request.signal.aborted) return;
       setGenerationFrom(String(from));
       setGenerationTo(String(to));
       setGenerationDiff(text);
@@ -2976,19 +2978,27 @@ function App() {
       setError("");
       scrollToGenerationResult();
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (generationRequest.current === request) generationRequest.current = null;
     }
   }
 
   async function loadConfigPlanDiff() {
     const latest = generations.find(row => row.hasYaml);
     if (!latest || !config?.text) return;
+    planDiffRequest.current?.abort();
+    const request = new AbortController();
+    planDiffRequest.current = request;
     try {
-      const previous = await fetchText(`api/v1/generations/${latest.generation}/config`);
-      setConfigPlanDiff(unifiedLineDiff(`generation-${latest.generation}.yaml`, "current-file.yaml", previous, config.text));
+      const diff = await fetchText(`api/v1/generations/${latest.generation}/diff/current`, request.signal);
+      if (request.signal.aborted) return;
+      setConfigPlanDiff(diff);
       setError("");
     } catch (err) {
-      setError(String(err));
+      if (!request.signal.aborted) setError(String(err));
+    } finally {
+      if (planDiffRequest.current === request) planDiffRequest.current = null;
     }
   }
 
@@ -3096,7 +3106,7 @@ function App() {
               <Badge appearance="outline" color={streamState === "live" ? "success" : streamState === "polling" ? "warning" : "subtle"} className={styles.streamBadge}>
                 {streamState === "live" ? "Live updates" : streamState === "polling" ? "Polling fallback" : "Connecting"}
               </Badge>
-              <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>Updated <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
+              <Text size={200} className={styles.muted}>{summary?.generatedAt ? <>{summary.errors?.length ? "Partial update" : "Updated"} <RelativeTime value={summary.generatedAt} /></> : ""}</Text>
               {lastStreamEvent?.type ? <Text size={200} className={styles.muted}>{lastStreamEvent.type}</Text> : null}
               <Button appearance="primary" icon={<ArrowClockwiseRegular />} onClick={refresh}>Refresh</Button>
             </div>
@@ -3118,6 +3128,7 @@ function App() {
           ) : null}
           <main className={styles.main}>
             {error ? <Card><Text role="alert">Web console error: {error}</Text></Card> : null}
+            {summary?.errors?.length ? <Card><Text role="alert">Some observations could not be refreshed; previous values are retained. {summary.errors.join("; ")}</Text></Card> : null}
             {selected === "overview" ? (
               <>
                 <GatewayHealthSummaryCard health={summary?.gatewayHealth} navigateTo={navigateTo} />
@@ -3145,7 +3156,7 @@ function App() {
                   <CardHeader header={<Text weight="semibold">Interfaces</Text>} description={<Text className={styles.muted}>Role, link state, MTU, and assigned addresses</Text>} />
                   <InterfaceOverview interfaces={summary?.interfaces ?? []} />
                 </Card>
-                <OverviewActivity resources={summary?.resources ?? []} events={events} navigateTo={navigateTo} />
+                <OverviewActivity resources={summary?.resources} events={summary?.events} navigateTo={navigateTo} />
               </>
             ) : null}
             {selected === "resources" ? (
@@ -3155,13 +3166,13 @@ function App() {
                   description={<Text className={styles.muted}>Resource phase, controller mode, and status detail</Text>}
                 />
                 <div className={styles.grid}>
-                  <Metric label="total" value={String(resources.length)} />
-                  <Metric label="healthy" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "healthy").length)} />
-                  <Metric label="warning" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "warning").length)} />
-                  <Metric label="danger" value={String(resources.filter(r => resourceStatusClassification(r).disposition === "danger").length)} />
+                  <Metric label="total" value={summary?.resources ? String(resources.length) : "-"} />
+                  <Metric label="healthy" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "healthy").length) : "-"} />
+                  <Metric label="warning" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "warning").length) : "-"} />
+                  <Metric label="danger" value={summary?.resources ? String(resources.filter(r => resourceStatusClassification(r).disposition === "danger").length) : "-"} />
                   <Metric label="dry-run kinds" value={String(controllers.filter(c => c.mode === "dry-run").length)} />
                 </div>
-                <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} />
+                {summary?.resources ? <ResourceTable resources={resources} controllers={controllers} navigateTo={navigateTo} /> : <Text className={styles.muted}>Resource observation unavailable</Text>}
               </Card>
             ) : null}
             {selected === "routes" ? (
@@ -3201,19 +3212,19 @@ function App() {
                         </Select>
                       </div>
                     </div>
-                    <ClientInventory clients={filteredClients} onShowConnections={showClientConnections} />
+                    <ClientInventory clients={summary?.clients ? filteredClients : undefined} onShowConnections={showClientConnections} />
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-traffic" ? (
                   <Card id="clients-traffic" className={styles.connectionAnchor}>
                     <CardHeader header={<Text weight="semibold">Client traffic</Text>} description={<Text className={styles.muted}>Traffic grouped by client address</Text>} />
-                    <ClientTraffic flows={summary?.trafficFlows ?? []} onShowConnectionsForAddress={showAddressConnections} />
+                    {summary?.trafficFlows ? <ClientTraffic flows={summary.trafficFlows} onShowConnectionsForAddress={showAddressConnections} /> : <Text className={styles.muted}>Traffic observation unavailable</Text>}
                   </Card>
                 ) : null}
                 {activeClientTargetID === "clients-leases" ? (
                   <Card id="clients-leases" className={styles.connectionAnchor}>
                     <CardHeader header={<Text weight="semibold">DHCP leases</Text>} description={<Text className={styles.muted}>dnsmasq lease file entries</Text>} />
-                    <DHCPLeaseTable leases={summary?.dhcpLeases ?? []} />
+                    <DHCPLeaseTable leases={summary?.dhcpLeases} />
                   </Card>
                 ) : null}
               </div>
@@ -3225,10 +3236,10 @@ function App() {
               description={<Text className={styles.muted}>conntrack flows grouped by family and protocol</Text>}
             />
             <div className={styles.grid}>
-              <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4"))} />
-              <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6"))} />
+              <Metric label="IPv4" value={String(connectionFamilyCount(summary?.connections, "ipv4") ?? "-")} />
+              <Metric label="IPv6" value={String(connectionFamilyCount(summary?.connections, "ipv6") ?? "-")} />
               <Metric label="Showing" value={connectionShowingValue(summary?.connections, filteredConnections.length)} />
-              <Metric label="Groups" value={String(connectionGroupsList.length)} />
+              <Metric label="Groups" value={summary?.connections ? String(connectionGroupsList.length) : "-"} />
             </div>
             <DSLiteNATSummary table={summary?.connections} resources={summary?.resources ?? []} />
             <div className={styles.connectionJumpBar}>
@@ -3255,7 +3266,7 @@ function App() {
                 </Select>
               ) : null}
             </div>
-            <ConnectionClassificationSummary entries={filteredConnections} />
+            <ConnectionClassificationSummary entries={summary?.connections ? filteredConnections : undefined} />
             {connectionFilters.client ? (
               <div className={styles.activeFilterBanner}>
                 <div className={styles.connectionFlow}>
@@ -3388,10 +3399,10 @@ function App() {
                 <Card id="events-list" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Events</Text>} description={<Text className={styles.muted}>Bus events from routerd controllers and daemons</Text>} />
                   <div className={styles.grid}>
-                    <Metric label="total" value={String(events.length)} />
-                    <Metric label="filter matched" value={String(filteredEvents.length)} />
-                    <Metric label="severities" value={String(eventFacets.severities.length)} />
-                    <Metric label="kinds" value={String(eventFacets.kinds.length)} />
+                    <Metric label="total" value={summary?.events ? String(events.length) : "-"} />
+                    <Metric label="filter matched" value={summary?.events ? String(filteredEvents.length) : "-"} />
+                    <Metric label="severities" value={summary?.events ? String(eventFacets.severities.length) : "-"} />
+                    <Metric label="kinds" value={summary?.events ? String(eventFacets.kinds.length) : "-"} />
                   </div>
                   <div className={styles.eventFilters}>
                     <SearchControl label="Search" value={eventFilters.query} placeholder="topic, reason, message, resource" onChange={value => setEventFilters(current => ({ ...current, query: value }))} />
@@ -3438,12 +3449,12 @@ function App() {
                     description={<Text className={styles.muted}>Drop/reject rate over the last 24 hours. Filters below narrow the ranking and timeline.</Text>}
                   />
                   <div className={styles.grid}>
-                    <Metric label="total denies (24h)" value={String(denyTimelineTotal(firewallDenyTimeline))} />
-                    <Metric label="peak / bucket" value={String(denyTimelinePeak(firewallDenyTimeline))} />
-                    <Metric label="unique sources" value={String(new Set(firewallLogs.map(l => l.srcAddress).filter(Boolean)).size)} />
-                    <Metric label="DPI identified" value={`${firewallLogs.filter(l => l.dpiApp).length} / ${firewallLogs.length}`} />
-                    <Metric label="orphan returns" value={String(firewallLogs.filter(l => l.correlation === "orphan_return").length)} />
-                    <Metric label="filter matched" value={`${filteredFirewallLogs.length} / ${firewallLogs.length}`} />
+                    <Metric label="total denies (24h)" value={firewallDenyTimeline ? String(denyTimelineTotal(firewallDenyTimeline)) : "-"} />
+                    <Metric label="peak / bucket" value={firewallDenyTimeline ? String(denyTimelinePeak(firewallDenyTimeline)) : "-"} />
+                    <Metric label="unique sources" value={summary?.firewallLogs ? String(new Set(firewallLogs.map(l => l.srcAddress).filter(Boolean)).size) : "-"} />
+                    <Metric label="DPI identified" value={summary?.firewallLogs ? `${firewallLogs.filter(l => l.dpiApp).length} / ${firewallLogs.length}` : "-"} />
+                    <Metric label="orphan returns" value={summary?.firewallLogs ? String(firewallLogs.filter(l => l.correlation === "orphan_return").length) : "-"} />
+                    <Metric label="filter matched" value={summary?.firewallLogs ? `${filteredFirewallLogs.length} / ${firewallLogs.length}` : "-"} />
                   </div>
                   <DenyRateChart timeline={firewallDenyTimeline} />
                   <div className={styles.firewallFilters}>
@@ -3472,7 +3483,7 @@ function App() {
                 </Card>
                 <Card>
                   <CardHeader header={<Text weight="semibold">Source IP top-N</Text>} description={<Text className={styles.muted}>Top denied sources in the filtered view</Text>} />
-                  <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} />
+                  {summary?.firewallLogs ? <FirewallSourceTopN logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} onSourceClick={ip => setFirewallFilters(current => ({ ...current, source: ip }))} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
                 <Card id="firewall-tuning" className={styles.connectionAnchor}>
                   <CardHeader
@@ -3483,11 +3494,11 @@ function App() {
                 </Card>
                 <Card id="firewall-ranking" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny ranking</Text>} description={<Text className={styles.muted}>Grouped by source, destination, and protocol</Text>} />
-                  <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                  {summary?.firewallLogs ? <RecentDeny logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
                 <Card id="firewall-timeline" className={styles.connectionAnchor}>
                   <CardHeader header={<Text weight="semibold">Deny timeline</Text>} description={<Text className={styles.muted}>Newest firewall log rows</Text>} />
-                  <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} />
+                  {summary?.firewallLogs ? <FirewallTimeline logs={filteredFirewallLogs} dnsLabels={dnsLabels} leases={leaseMap} /> : <Text className={styles.muted}>Firewall log observation unavailable</Text>}
                 </Card>
               </div>
             ) : null}
@@ -3559,7 +3570,7 @@ function ConfigView({
   return (
     <>
       <div className={styles.configToolbar}>
-        <Text className={styles.muted}>Read-only view of the active routerd YAML. Edit the source file and run routerd apply from the CLI.</Text>
+        <Text className={styles.muted}>Read-only view of the configured routerd YAML file. Apply changes with routerctl apply -f from the CLI.</Text>
         <div className={styles.configModeButtons}>
           <Button size="small" appearance="secondary" disabled={!latestGeneration || !config?.text} onClick={loadPlanDiff}>
             Diff before apply
@@ -3596,7 +3607,7 @@ function ConfigView({
       </div>
       {planDiff ? (
         <div style={{ marginTop: "12px" }}>
-          <Text weight="semibold">Current file vs latest applied generation</Text>
+          <Text weight="semibold">Current file vs latest stored generation</Text>
           <Text className={styles.muted}>Review only. The Web Console does not edit or apply YAML.</Text>
           <DiffView diff={planDiff} />
         </div>
@@ -3641,7 +3652,7 @@ function GenerationsView({
       <Card id="generations-table" className={styles.connectionAnchor}>
         <CardHeader
           header={<Text weight="semibold">Generations</Text>}
-          description={<Text className={styles.muted}>Applied router YAML snapshots. Older rows without YAML cannot be diffed.</Text>}
+          description={<Text className={styles.muted}>Stored YAML from configuration attempts. Rows without YAML cannot be diffed.</Text>}
         />
         <div className={styles.grid}>
           <Metric label="total" value={String(totalGenerations)} />
@@ -3881,6 +3892,7 @@ function GatewayHealthSummaryCard({ health, navigateTo }: { health?: GatewayHeal
         <Badge appearance="tint" color="warning">warn {counts.warn}</Badge>
         <Badge appearance="tint" color="danger">fail {counts.fail}</Badge>
         <Badge appearance="outline" color="subtle">skip {counts.skip}</Badge>
+        <Badge appearance="outline" color="subtle">unknown {counts.unknown}</Badge>
       </div>
       <div className={styles.gatewaySummaryFooter}>
         {worst.length && (overall === "degraded" || overall === "down") ? (
@@ -4009,6 +4021,7 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
   const connectionRows = connections?.entries ?? [];
   const flowEmpty = flows === undefined ? "Loading observed flow data" : "No observed flow data";
   const connectionEmpty = connections === undefined ? "Loading connection data" : "No active connection classes";
+  const volumeEmpty = flowRows.length ? "No measured byte volume in these flows" : flowEmpty;
   const protocols = topTrafficProtocols(flowRows);
   const sources = topTrafficSources(flowRows);
   const talkers = topTalkers(clientRows, flowRows);
@@ -4019,7 +4032,7 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
     <div id="overview-dpi" className={`${styles.dpiInsightGrid} ${styles.connectionAnchor}`}>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Classification</Text>} description={<Text className={styles.muted}>Active flow identification ratio from DPI and port fallback</Text>} />
-        <ConnectionClassificationMeter stats={classification} />
+        {connections ? <ConnectionClassificationMeter stats={classification} /> : <Text className={styles.muted}>Connection observation unavailable</Text>}
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">DPI engine</Text>} description={<Text className={styles.muted}>Classifier and nDPI agent service status</Text>} />
@@ -4027,19 +4040,19 @@ function OverviewDPIInsights({ flows, clients, connections, dpi }: { flows?: Tra
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top protocols</Text>} description={<Text className={styles.muted}>DPI protocols and weak port guesses from recent observed flows</Text>} />
-        <RankList rows={protocols} empty={flowEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
+        <RankList rows={protocols} empty={volumeEmpty} formatLabel={formatProtocolRankLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">DPI sources</Text>} description={<Text className={styles.muted}>Observed flow volume by classifier source</Text>} />
-        <RankList rows={sources} empty={flowEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
+        <RankList rows={sources} empty={volumeEmpty} formatLabel={formatTrafficSourceLabel} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top talkers</Text>} description={<Text className={styles.muted}>Clients with DPI-classified traffic volume</Text>} />
-        <RankList rows={talkers} empty={flowEmpty} formatValue={formatBytes} />
+        <RankList rows={talkers} empty={volumeEmpty} formatValue={formatBytes} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Top SNI / domains</Text>} description={<Text className={styles.muted}>Recent TLS SNI, HTTP host, DNS, or reverse DNS labels</Text>} />
-        <RankList rows={domains} empty={flowEmpty} formatValue={formatBytes} />
+        <RankList rows={domains} empty={flowEmpty} formatValue={value => `${value} flow${value === 1 ? "" : "s"}`} />
       </Card>
       <Card className={styles.chartCard}>
         <CardHeader header={<Text weight="semibold">Traffic classes</Text>} description={<Text className={styles.muted}>Active connection visibility from conntrack and DPI enrichment</Text>} />
@@ -4077,7 +4090,7 @@ function RankList({
   formatLabel = value => value,
   formatValue = value => String(value),
 }: {
-  rows: { label: string; value: number }[];
+  rows: { label: string; value: number; incomplete?: boolean }[];
   empty: string;
   formatLabel?: (value: string) => string;
   formatValue?: (value: number) => string;
@@ -4092,10 +4105,10 @@ function RankList({
         <div className={styles.rankRow} key={row.label}>
           <div className={styles.rankLine}>
             <Text><code className={styles.wrapCode}>{formatLabel(row.label)}</code></Text>
-            <Text size={200} className={styles.muted}>{formatValue(row.value)}</Text>
+            <Text size={200} className={styles.muted}>{row.incomplete ? "≥ " : ""}{formatValue(row.value)}</Text>
           </div>
           <div className={styles.barTrack} aria-hidden="true">
-            <div className={styles.barFill} style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} />
+            <div className={styles.barFill} style={{ width: `${Math.max(0, (row.value / max) * 100)}%` }} />
           </div>
         </div>
       ))}
@@ -4140,31 +4153,9 @@ function StackBars({ samples, colors }: { samples: number[][]; colors: string[] 
   );
 }
 
-function ConnectionSummaryCharts({ groups }: { groups: { key: string; rows: ConnectionEntry[] }[] }) {
+function ConnectionClassificationSummary({ entries }: { entries?: ConnectionEntry[] }) {
   const styles = useStyles();
-  const max = Math.max(1, ...groups.map(group => group.rows.length));
-  if (groups.length === 0) return <Text className={styles.muted}>No active connections reported</Text>;
-  return (
-    <div className={styles.connectionSummaryGrid}>
-      {groups.map(group => {
-        const label = connectionGroupLabel(group.key);
-        return (
-          <div className={styles.connectionSummaryCard} key={group.key}>
-            <div className={styles.interfaceHeader}>
-              <Text weight="semibold">{label.family}/{label.protocol.toUpperCase()}</Text>
-              <Badge appearance="tint" color={label.family === "IPv6" ? "brand" : "success"}>{group.rows.length}</Badge>
-            </div>
-            <div className={styles.firewallBar} style={{ width: `${Math.max(3, (group.rows.length / max) * 100)}%` }} />
-            <Text size={200} className={styles.muted}>{connectionStateSummary(group.rows).map(row => `${row.label} ${row.count}`).join(" / ") || "stateless"}</Text>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ConnectionClassificationSummary({ entries }: { entries: ConnectionEntry[] }) {
-  const styles = useStyles();
+  if (!entries) return <Text className={styles.muted}>Connection observation unavailable</Text>;
   const stats = connectionClassificationStats(entries);
   return (
     <div className={styles.connectionSummaryGrid}>
@@ -4216,7 +4207,19 @@ function parseConfig(text?: string): { value?: unknown; errors: string[] } {
   try {
     const document = parseDocument(text);
     const errors = [...document.errors, ...document.warnings].map(error => error.message || String(error));
-    return { value: document.toJS(), errors };
+    const value: unknown = document.toJS();
+    const parents = new WeakSet<object>();
+    const visited = new WeakSet<object>();
+    const visit = (item: unknown) => {
+      if (!item || typeof item !== "object" || visited.has(item)) return;
+      if (parents.has(item)) throw new Error("Recursive YAML aliases cannot be shown as a tree; raw YAML is available below");
+      parents.add(item);
+      Object.values(item).forEach(visit);
+      parents.delete(item);
+      visited.add(item);
+    };
+    visit(value);
+    return { value, errors };
   } catch (error) {
     return { value: undefined, errors: [String(error)] };
   }
@@ -4319,7 +4322,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function ResourceTable({ resources, controllers, navigateTo }: { resources: ResourceStatus[]; controllers: ControllerStatus[]; navigateTo?: (view: ViewKey, targetID?: string) => void }) {
   const styles = useStyles();
-  const dryRunByKind = useMemo(() => dryRunControllerByKind(controllers), [controllers]);
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState("all");
   const [kind, setKind] = useState("all");
@@ -4382,13 +4384,13 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
           <TableBody>
             {filtered.slice(0, 120).map(resource => {
               const status = resource.status ?? {};
-              const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
+              const controllerMode = resourceControllerMode(resource, controllers);
               return (
                 <TableRow key={`${resource.apiVersion}/${resource.kind}/${resource.name}`} className={styles.stableTableRow}>
                   <TableCell><Highlighted text={resource.kind ?? ""} query={query} /></TableCell>
                   <TableCell><code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code></TableCell>
                   <TableCell><Badge appearance="tint" color={resourcePhaseColor(resource)}><Highlighted text={String(status.phase ?? "Unknown")} query={query} /></Badge></TableCell>
-                  <TableCell>{dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}</TableCell>
+                  <TableCell><ModeBadge mode={controllerMode} /></TableCell>
                   <TableCell>
                     <div className={styles.connectionFlow}>
                       <OwnershipLine resource={resource} />
@@ -4406,7 +4408,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
       <div className={styles.resourceMobileList}>
         {filtered.slice(0, 120).map(resource => {
           const status = resource.status ?? {};
-          const dryRunController = dryRunByKind.get(String(resource.kind ?? ""));
+          const controllerMode = resourceControllerMode(resource, controllers);
           return (
             <div className={styles.resourceMobileCard} key={`m-${resource.apiVersion}/${resource.kind}/${resource.name}`}>
               <div className={styles.resourceMobileHeader}>
@@ -4415,7 +4417,7 @@ function ResourceTable({ resources, controllers, navigateTo }: { resources: Reso
               </div>
               <code className={styles.code}><Highlighted text={resource.name ?? ""} query={query} /></code>
               <div className={styles.resourceMobileMeta}>
-                {dryRunController ? <ModeBadge mode="dry-run" /> : <Text size={200} className={styles.muted}>live</Text>}
+                <ModeBadge mode={controllerMode} />
                 <OwnershipLine resource={resource} />
                 <code className={styles.wrapCode}><Highlighted text={resourceDetail(status)} query={query} /></code>
                 <ResourceStatusExtra resource={resource} />
@@ -4617,7 +4619,7 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
           description={<Text className={styles.muted}>SAM node mesh: Spine (RR) and Leaf nodes</Text>}
         />
         {nodes.length === 0 ? (
-          <Text className={styles.muted} style={{ padding: "1rem" }}>No SAMNodeSet configured</Text>
+          <Text className={styles.muted} style={{ padding: "1rem" }}>No SAM node status returned</Text>
         ) : (
           <>
             {spineNodes.length > 0 && (
@@ -4678,11 +4680,10 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
           />
           <div className={styles.grid}>
             <Metric label="phase" value={pool.phase || "-"} />
-            <Metric label="BGP paths" value={String(pool.generatedBGPPaths ?? 0)} />
-            <Metric label="members" value={String(pool.resolvedMemberCount ?? 0)} />
+            <Metric label="BGP paths" value={String(pool.generatedBGPPaths ?? "-")} />
+            <Metric label="members" value={String(pool.resolvedMemberCount ?? "-")} />
             <Metric label="discovery" value={pool.discoveryPhase || "-"} />
             {pool.placementActiveNode ? <Metric label="active node" value={pool.placementActiveNode} /> : null}
-            {pool.stoppedInstancePolicy ? <Metric label="stopped policy" value={pool.stoppedInstancePolicy} /> : null}
           </div>
           {(pool.addresses ?? []).length > 0 && (
             <>
@@ -4706,11 +4707,6 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
                 </TableBody>
               </Table>
             </>
-          )}
-          {(pool.heldAddresses ?? []).length > 0 && (
-            <div style={{ padding: "0.5rem 1rem" }}>
-              <Text size={200} className={styles.muted}>Held (stopped VM): {pool.heldAddresses!.join(", ")}</Text>
-            </div>
           )}
         </Card>
       ))}
@@ -4754,7 +4750,7 @@ function SAMView({ status }: { status: SAMStatusResponse | null }) {
             <TableHeader><TableRow>
               <TableHeaderCell>Group</TableHeaderCell>
               <TableHeaderCell>Phase</TableHeaderCell>
-              <TableHeaderCell>Peers</TableHeaderCell>
+              <TableHeaderCell>Peer status rows</TableHeaderCell>
               <TableHeaderCell>Listen</TableHeaderCell>
               <TableHeaderCell>Reason</TableHeaderCell>
             </TableRow></TableHeader>
@@ -4825,7 +4821,7 @@ function RoutesView({ status }: { status: RoutesStatus | null }) {
         description={<Text className={styles.muted}>Kernel, configured, DHCP, and BGP routes with next-hop and observation state</Text>}
       />
       <div className={styles.grid}>
-        <Metric label="total routes" value={String(routes.length)} />
+        <Metric label="route rows" value={status ? String(routes.length) : "-"} />
         <Metric label="BGP" value={String(routes.filter(route => routeProtocolBucket(route) === "bgp").length)} />
         <Metric label="static" value={String(routes.filter(route => routeProtocolBucket(route) === "static").length)} />
         <Metric label="connected" value={String(routes.filter(route => routeProtocolBucket(route) === "connected").length)} />
@@ -5024,6 +5020,7 @@ function OwnershipLine({ resource }: { resource: ResourceStatus }) {
   const managedBy = String(resource.managedBy ?? status.managedBy ?? "").trim();
   const management = String(resource.management ?? status.management ?? "").trim();
   const parts = [
+    resource.declared === false ? "retained status; not declared in current config" : "",
     owner ? `owner ${owner}` : "",
     managedBy ? `managed-by ${managedBy}` : "",
     management ? management : "",
@@ -5180,7 +5177,7 @@ function EventTable({ events, selectedKey, onSelect, query }: { events: RouterEv
           </TableRow>
         </TableHeader>
         <TableBody>
-          {events.slice(0, 100).map(event => {
+          {events.map(event => {
             const key = eventKey(event);
             return (
               <TableRow key={key} className={`${styles.stableTableRow} ${key === selectedKey ? styles.eventRowSelected : ""}`} onClick={() => onSelect(event)}>
@@ -5314,8 +5311,8 @@ function ConnectionCard({
   const proto = (entry.protocol || "?").toUpperCase();
   const family = entry.family || "";
   const orig = entry.original ?? {};
-  const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (orig.source ? `${orig.source}${orig.sourcePort ? ":" + orig.sourcePort : ""}` : "-");
-  const destLabel = orig.destinationHostname || (orig.destination ? `${orig.destination}${orig.destinationPort ? ":" + orig.destinationPort : ""}` : "-");
+  const sourceLabel = orig.sourceHostname || clientIdentities.get(normalizeAddressKey(orig.source))?.label || (hostPort(orig.source, orig.sourcePort) || "-");
+  const destLabel = orig.destinationHostname || (hostPort(orig.destination, orig.destinationPort) || "-");
   const destService = orig.destinationService || "";
   const destServiceApp = connectionServiceApp(destService);
   const traffic = connectionTrafficBytes(entry);
@@ -5331,13 +5328,13 @@ function ConnectionCard({
           </div>
           <div className={styles.connectionCardMeta}>
             <Badge appearance="outline" color={family === "ipv6" ? "brand" : "informative"}>{family.toUpperCase() || "L3"}/{proto}</Badge>
-            <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "stateless"}</Badge>
+            <Badge appearance="tint" color={stateColor(entry.state)}>{entry.state || "unknown"}</Badge>
             {entry.localRedirect ? <Badge appearance="tint" color="warning" title={localRedirectTitle(entry.localRedirect)}>Local redirect</Badge> : null}
             {classification.app ? <Badge appearance={classification.source === "port-fallback" ? "outline" : "tint"} color={connectionAppColor(classification.app)} title={classification.source === "port-fallback" ? "Port-based guess" : classification.cacheHit ? "DPI cache hit" : "DPI"}>{formatConnectionApp(classification.app)}</Badge> : null}
             {provider ? <Badge appearance="outline" color="subtle" title="Destination provider">{formatProviderLabel(provider)}</Badge> : null}
             {destServiceApp && destServiceApp !== classification.app ? <ServiceBadge service={destService} app={destServiceApp} /> : null}
             <Text size={200} className={styles.muted}>
-              {hasConnectionAccounting(entry) ? `${formatBytes(traffic)}, ${entry.timeout ?? 0}s` : `${entry.timeout ?? 0}s`}
+              {hasObservedConnectionBytes(entry) ? `${formatObservedBytes(traffic, connectionTrafficIncomplete(entry))}, ${entry.timeout ?? 0}s` : `${entry.timeout ?? 0}s`}
             </Text>
           </div>
         </div>
@@ -5346,7 +5343,7 @@ function ConnectionCard({
         <div className={styles.connectionCardDetail}>
           <div className={styles.detailList}>
             <Text className={styles.detailKey}>state</Text>
-            <Text>{entry.state || "stateless"}{entry.assured ? " (assured)" : ""} · class {connectionClass(entry)}</Text>
+            <Text>{entry.state || "unknown"}{entry.assured ? " (assured)" : ""} · class {connectionClass(entry)}</Text>
             <Text className={styles.detailKey}>source</Text>
             <div className={styles.connectionFlow}>
               <code className={styles.wrapCode}>{endpoint(entry.original)}</code>
@@ -5374,9 +5371,9 @@ function ConnectionCard({
             <ConnectionDPI entry={entry} dnsLabels={dnsLabels} />
             <Text className={styles.detailKey}>traffic</Text>
             <Text size={200} className={styles.muted}>
-              {hasConnectionAccounting(entry)
-                ? `${formatBytes(entry.original?.bytes)} out / ${formatBytes(entry.reply?.bytes)} in / ${formatBytes(traffic)} total`
-                : "not accounted"}
+              {hasObservedConnectionBytes(entry)
+                ? `${formatBytes(entry.original?.bytes)} out / ${formatBytes(entry.reply?.bytes)} in / ${formatObservedBytes(traffic, connectionTrafficIncomplete(entry))} total`
+                : "not collected"}
             </Text>
             <Text className={styles.detailKey}>flow</Text>
             <Text size={200} className={styles.muted}>protocol {family.toUpperCase() || "?"}/{proto} · timeout {entry.timeout ?? 0}s{entry.mark ? ` · mark ${entry.mark}` : ""}</Text>
@@ -5502,7 +5499,7 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
   return (
     <div className={styles.interfaceGrid}>
       {interfaces.map(item => (
-        <div className={styles.interfaceCard} key={`${item.name}-${item.ifname}`}>
+        <div className={styles.interfaceCard} key={`${item.name}-${item.ifname}`} role="group" aria-label={`Interface ${item.ifname || item.name}`}>
           <div className={styles.interfaceHeader}>
             <div className={styles.interfaceName}>
               <Text weight="semibold">{item.name || item.ifname || "-"}</Text>
@@ -5516,11 +5513,19 @@ function InterfaceOverview({ interfaces }: { interfaces: InterfaceSummary[] }) {
             {item.mtu ? <Text size={200} className={styles.muted}>MTU {item.mtu}</Text> : null}
           </div>
           <div className={styles.addressList}>
+            <Text size={200} className={styles.muted}>{item.observationError ? "Previously observed addresses; current read failed" : "Observed addresses"}</Text>
             {(item.addresses ?? []).map(address => (
               <code className={styles.wrapCode} key={address}>{address}</code>
             ))}
-            {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>No address observed</Text> : null}
+            {(item.addresses ?? []).length === 0 ? <Text size={200} className={styles.muted}>{item.observationError ? "Current addresses unknown" : "No address observed"}</Text> : null}
+            {item.observationError ? <Text size={200} role="status" className={styles.muted}>{item.observationError}</Text> : null}
           </div>
+          {item.configuredAddresses?.length ? (
+            <div className={styles.addressList}>
+              <Text size={200} className={styles.muted}>Configured addresses</Text>
+              {item.configuredAddresses.map(address => <code className={styles.wrapCode} key={address}>{address}</code>)}
+            </div>
+          ) : null}
           <div className={styles.interfaceLine}>
             {item.hardwareAddress ? <Text size={200} className={styles.muted}>{item.hardwareAddress}</Text> : null}
             {item.owner ? <Text size={200} className={styles.muted}>owner {item.owner}</Text> : null}
@@ -5537,15 +5542,15 @@ function OverviewActivity({
   events,
   navigateTo,
 }: {
-  resources: ResourceStatus[];
-  events: RouterEvent[];
+  resources?: ResourceStatus[];
+  events?: RouterEvent[];
   navigateTo: (view: ViewKey, targetID?: string) => void;
 }) {
   const styles = useStyles();
-  const alerts = resources
+  const alerts = (resources ?? [])
     .filter(resource => ["danger", "warning"].includes(resourceStatusClassification(resource).disposition))
     .slice(0, 8);
-  const recent = events.slice(0, 8);
+  const recent = (events ?? []).slice(0, 8);
   return (
     <div id="overview-activity" className={`${styles.sectionGrid} ${styles.connectionAnchor}`}>
       <Card>
@@ -5555,7 +5560,7 @@ function OverviewActivity({
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("resources")}>Resources</Button>}
         />
         {alerts.length === 0 ? (
-          <Text className={styles.muted}>No active resource alerts</Text>
+          <Text className={styles.muted}>{resources ? "No active resource alerts" : "Resource observation unavailable"}</Text>
         ) : (
           <div className={styles.alertList}>
             {alerts.map(resource => (
@@ -5577,7 +5582,7 @@ function OverviewActivity({
           action={<Button size="small" appearance="secondary" onClick={() => navigateTo("events")}>Events</Button>}
         />
         {recent.length === 0 ? (
-          <Text className={styles.muted}>No recent events</Text>
+          <Text className={styles.muted}>{events ? "No recent events" : "Event observation unavailable"}</Text>
         ) : (
           <div className={styles.alertList}>
             {recent.map(event => (
@@ -5740,10 +5745,10 @@ function WireGuardPanel({ interfaces, errors }: { interfaces: WireGuardInterface
   );
 }
 
-function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[]; onShowConnections: (row: ClientRow) => void }) {
+function ClientInventory({ clients, onShowConnections }: { clients?: ClientEntry[]; onShowConnections: (row: ClientRow) => void }) {
   const styles = useStyles();
-  const rows = clients.map(clientEntryToRow);
-  const online = rows.filter(row => clientOnline(row)).length;
+  const rows = (clients ?? []).map(clientEntryToRow);
+  const reachable = rows.filter(row => clientReachable(row)).length;
   const addressCount = rows.reduce((sum, row) => sum + row.addresses.size, 0);
   const activeActivities = new Set(rows.map(row => row.primaryActivity).filter(Boolean));
   const sections = clientSections(rows);
@@ -5754,17 +5759,18 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
   }, [collapsedSections]);
   const toggleExpanded = (key: string) => setExpanded(current => ({ ...current, [key]: !current[key] }));
   const toggleSection = (key: string) => setCollapsedSections(current => ({ ...current, [key]: !current[key] }));
+  if (!clients) return <Text className={styles.muted}>Client observation unavailable</Text>;
   return (
     <>
       <div className={styles.vpnSummaryGrid}>
         <Metric label="devices" value={String(rows.length)} />
-        <Metric label="online" value={`${online}/${rows.length}`} />
+        <Metric label="neighbor reachable" value={`${reachable}/${rows.length}`} />
         <Metric label="addresses" value={String(addressCount)} />
         <Metric label="activity types" value={String(activeActivities.size)} />
       </div>
       <div className={styles.clientSections}>
         {sections.map(section => {
-          const sectionOnline = section.rows.filter(row => clientOnline(row)).length;
+          const sectionReachable = section.rows.filter(row => clientReachable(row)).length;
           const isSectionCollapsed = !!collapsedSections[section.key];
           return (
             <section className={styles.clientSection} key={section.key}>
@@ -5779,13 +5785,13 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                     {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
                     <ClientSectionIcon family={section.label} />
                     <span>{section.label}</span>
-                    <span className={styles.muted}>({section.rows.length} devices, {sectionOnline} online)</span>
+                    <span className={styles.muted}>({section.rows.length} devices, {sectionReachable} reachable)</span>
                   </span>
                   <span className={`${styles.clientSectionTitle} ${styles.clientDesktopOnly}`}>
                     {isSectionCollapsed ? <ChevronRightRegular /> : <ChevronDownRegular />}
                     <ClientSectionIcon family={section.label} />
                     <Text weight="semibold">{section.label}</Text>
-                    <Text size={200} className={styles.muted}>{section.rows.length} devices · {sectionOnline} online</Text>
+                    <Text size={200} className={styles.muted}>{section.rows.length} devices · {sectionReachable} reachable</Text>
                   </span>
                 </button>
                 <Text size={200} className={styles.muted}>{section.addressCount} addresses</Text>
@@ -5797,7 +5803,7 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                   const isExpanded = !!expanded[key];
                   const primaryAddress = primaryClientAddress(row) || "-";
                   return (
-                    <div className={`${styles.clientDeviceRow} ${clientOnline(row) ? "" : styles.clientDeviceRowOffline}`} data-client-row="true" key={key}>
+                    <div className={`${styles.clientDeviceRow} ${clientReachable(row) ? "" : styles.clientDeviceRowOffline}`} data-client-row="true" data-reachability={clientReachabilityLabel(row)} key={key}>
                       <Button
                         className={styles.clientDesktopOnly}
                         appearance="subtle"
@@ -5817,8 +5823,8 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                           <span className={styles.clientMobileIcon}><ClientDeviceIcon row={row} /></span>
                           <Text weight="semibold" className={styles.clientMobileName}>{row.hostname || row.vendor || row.mac || "unknown client"}</Text>
                           <span className={styles.clientMobileStatus}>
-                            <span className={clientOnline(row) ? styles.clientOnlineDot : styles.clientOfflineDot} />
-                            <Text size={200}>{clientLastSeen(row)}</Text>
+                            <span className={clientReachable(row) ? styles.clientOnlineDot : styles.clientOfflineDot} />
+                            <Text size={200}>{clientReachabilityLabel(row)}</Text>
                           </span>
                         </span>
                         <span className={styles.clientMobileSubLine}>
@@ -5834,7 +5840,7 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                         <Text weight="semibold">{row.hostname || "unknown client"}</Text>
                         <Text size={200} className={styles.muted}>{row.vendor || row.mac || "-"}</Text>
                         <div className={styles.badges}>
-                          <Badge appearance="tint" color={clientOnline(row) ? "success" : "subtle"}>{clientOnline(row) ? "online" : "offline"}</Badge>
+                          <Badge appearance="tint" color={clientReachable(row) ? "success" : "subtle"}>{clientReachabilityLabel(row)}</Badge>
                           {row.state ? <Badge appearance="outline">{row.state}</Badge> : null}
                           {row.clientPolicy ? <Badge appearance="tint" color={row.clientPolicyMode === "trusted" ? "success" : "warning"}>{formatClientPolicyMode(row.clientPolicyMode)}</Badge> : null}
                         </div>
@@ -5856,15 +5862,14 @@ function ClientInventory({ clients, onShowConnections }: { clients: ClientEntry[
                         <div className={styles.clientDeviceDetails}>
                           <div className={styles.clientDetailStack}>
                             <ClientAddressGroup label="IPv4" addresses={groups.ipv4} />
-                            <ClientAddressGroup label="IPv6 stable" addresses={groups.ipv6Stable} />
-                            <ClientAddressGroup label="IPv6 privacy" addresses={groups.ipv6Privacy} />
+                            <ClientAddressGroup label="IPv6" addresses={groups.ipv6} />
                             <div className={styles.clientMetaLine}>
                               <code className={styles.wrapCode}>{row.mac || "-"}</code>
-                              <Text size={200} className={styles.muted}>last seen {clientLastSeen(row)}</Text>
+                              <Text size={200} className={styles.muted}>reachability {clientReachabilityLabel(row)}</Text>
                               {row.primaryActivity ? <Text size={200} className={styles.muted}>activity {formatClientActivity(row.primaryActivity)}</Text> : null}
                               {row.lastProtocol ? <Text size={200} className={styles.muted}>last protocol {formatConnectionApp(row.lastProtocol)}{row.lastProtocolDetail ? ` ${row.lastProtocolDetail}` : ""}</Text> : null}
                               {row.protocolMix.size > 0 ? <Text size={200} className={styles.muted}>protocol mix {Array.from(row.protocolMix).map(formatConnectionApp).join(", ")}</Text> : null}
-                              <Text size={200} className={styles.muted}>out {formatBytes(row.bytesOut)} / in {formatBytes(row.bytesIn)}</Text>
+                              <Text size={200} className={styles.muted}>out {formatObservedBytes(row.bytesOut, row.bytesOutIncomplete)} / in {formatObservedBytes(row.bytesIn, row.bytesInIncomplete)}</Text>
                               {row.stickyUntil ? <Text size={200} className={styles.muted}>sticky until <RelativeTime value={row.stickyUntil} /></Text> : null}
                               {row.clientPolicy ? <Text size={200} className={styles.muted}>policy {row.clientPolicy}: {Array.from(row.isolationPolicy).join(", ")}</Text> : null}
                               {row.sources.size > 0 ? <Text size={200} className={styles.muted}>sources {Array.from(row.sources).join(", ")}</Text> : null}
@@ -6059,8 +6064,8 @@ function ClientTraffic({ flows, onShowConnectionsForAddress }: { flows: TrafficF
                   <Button size="small" appearance="subtle" icon={<PlugConnectedRegular />} onClick={() => onShowConnectionsForAddress(row.client)}>Connections</Button>
                 </div>
               </TableCell>
-              <TableCell>{formatBytes(row.bytesOut)}</TableCell>
-              <TableCell>{formatBytes(row.bytesIn)}</TableCell>
+              <TableCell>{formatObservedBytes(row.bytesOut, row.bytesOutIncomplete)}</TableCell>
+              <TableCell>{formatObservedBytes(row.bytesIn, row.bytesInIncomplete)}</TableCell>
               <TableCell>
                 <div className={styles.badges}>
                   {Array.from(row.protocols).slice(0, 3).map(protocol => (
@@ -6079,8 +6084,9 @@ function ClientTraffic({ flows, onShowConnectionsForAddress }: { flows: TrafficF
   );
 }
 
-function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
+function DHCPLeaseTable({ leases }: { leases?: DHCPLease[] }) {
   const styles = useStyles();
+  if (!leases) return <Text className={styles.muted}>DHCP lease observation unavailable</Text>;
   const rows = [...leases].sort((a, b) => stringSort(a.ip ?? "", b.ip ?? ""));
   return (
     <div className={styles.tableWrap} data-routerd-scroll-key="dhcp-leases">
@@ -6099,7 +6105,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
             <TableHeaderCell>Family</TableHeaderCell>
             <TableHeaderCell>IP</TableHeaderCell>
             <TableHeaderCell>Hostname</TableHeaderCell>
-            <TableHeaderCell>MAC</TableHeaderCell>
+            <TableHeaderCell>MAC / IAID</TableHeaderCell>
             <TableHeaderCell>Vendor</TableHeaderCell>
             <TableHeaderCell>Expires</TableHeaderCell>
             <TableHeaderCell>Sticky</TableHeaderCell>
@@ -6111,7 +6117,7 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
               <TableCell><Badge appearance="tint" color={lease.family === "ipv6" ? "brand" : "success"}>{lease.family || "-"}</Badge></TableCell>
               <TableCell><code className={styles.wrapCode}>{lease.ip || "-"}</code></TableCell>
               <TableCell>{lease.hostname || "-"}</TableCell>
-              <TableCell><code className={styles.wrapCode}>{lease.mac || "-"}</code></TableCell>
+              <TableCell><code className={styles.wrapCode}>{lease.mac || (lease.iaid ? `IAID ${lease.iaid}` : "-")}</code></TableCell>
               <TableCell>{lease.vendor || "-"}</TableCell>
               <TableCell><RelativeTime value={lease.expiresAt} /></TableCell>
               <TableCell>{lease.stickyUntil && !isZeroTime(lease.stickyUntil) ? <Text size={200} className={styles.muted}>until <RelativeTime value={lease.stickyUntil} /></Text> : "-"}</TableCell>
@@ -6125,7 +6131,8 @@ function DHCPLeaseTable({ leases }: { leases: DHCPLease[] }) {
 
 function ConntrackTuningView({ tuning }: { tuning?: ConntrackTuningSummary }) {
   const styles = useStyles();
-  const suggestions = tuning?.suggestions ?? [];
+  if (!tuning) return <Text className={styles.muted}>Conntrack tuning observation unavailable</Text>;
+  const suggestions = tuning.suggestions ?? [];
   if (suggestions.length === 0) {
     return <Text className={styles.muted}>No tuning suggestions from the current observation window</Text>;
   }
@@ -6209,8 +6216,9 @@ function RecentDeny({
   );
 }
 
-function DenyRateChart({ timeline }: { timeline: FirewallDenyTimelineBucket[] }) {
+function DenyRateChart({ timeline }: { timeline?: FirewallDenyTimelineBucket[] }) {
   const styles = useStyles();
+  if (!timeline) return <Text className={styles.muted}>Firewall deny observation unavailable</Text>;
   const samples = denyTimelineSamples(timeline);
   const peak = denyTimelinePeak(timeline);
   const total = denyTimelineTotal(timeline);
@@ -6329,7 +6337,7 @@ function FirewallTimeline({
         <span>DPI</span>
         <span>Rule</span>
       </div>
-      {logs.slice(0, 50).map((log, index) => (
+      {logs.map((log, index) => (
         <div className={styles.firewallTimelineRow} role="row" key={log.id ?? `${log.ts}-${log.srcAddress}-${log.dstAddress}-${index}`}>
           <FirewallCell label="Time"><RelativeTime value={log.ts} /></FirewallCell>
           <FirewallCell label="Action"><Badge appearance="tint" color={firewallActionColor(log.action)}>{log.action || "-"}</Badge></FirewallCell>
@@ -6390,7 +6398,7 @@ function firewallDestinationSetTitle(match: AddressSetMatch) {
 }
 
 function FirewallCorrelationBadge({ correlation }: { correlation?: string }) {
-  const value = correlation || "true_suspicious";
+  const value = correlation || "unknown";
   if (value === "orphan_return") return <Badge appearance="tint" color="warning">orphan return</Badge>;
   if (value === "true_suspicious") return <Badge appearance="tint" color="danger">true suspicious</Badge>;
   return <Badge appearance="outline">{value}</Badge>;
@@ -6465,55 +6473,43 @@ async function fetchJSON<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function fetchText(path: string): Promise<string> {
-  const response = await fetch(basePath + path, { cache: "no-store" });
+async function fetchText(path: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(basePath + path, { cache: "no-store", signal });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
   return response.text();
 }
 
-function mergeGatewayHealth(
-  current: GatewayHealth | undefined,
-  next: GatewayHealth | undefined,
-): GatewayHealth | undefined {
-  if (next == null) return current;
-  // Plain `??` only falls back when `next` is null/undefined, so a thin
-  // payload like `{ overall: "unknown", components: [] }` would still
-  // overwrite the populated `current` and the Gateway Health page would
-  // flash "No gateway component status observed" until the next refresh
-  // landed. Keep `current` whenever the incoming snapshot has no
-  // components but the previous one did — server-side observations on
-  // homert02 (v20260526.2152) confirmed `/api/v1/summary` consistently
-  // returns 26 components, so a transient empty snapshot is almost
-  // always a partial/light refresh rather than a real "no gateways"
-  // state.
-  const nextComponents = next.components ?? [];
-  const currentComponents = current?.components ?? [];
-  if (nextComponents.length === 0 && currentComponents.length > 0) {
-    return current;
-  }
-  return next;
-}
-
 function reconcileSummary(current: Summary | null, next: Summary): Summary {
-  if (!current) return next;
+  const collected = new Set(next.collected);
   return {
     ...next,
-    controllers: reconcileRecords(current.controllers, next.controllers, row => row.name ?? ""),
-    gatewayHealth: mergeGatewayHealth(current.gatewayHealth, next.gatewayHealth),
-    resources: next.resources === undefined ? current.resources : reconcileRecords(current.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`),
-    interfaces: next.interfaces === undefined ? current.interfaces : reconcileRecords(current.interfaces, next.interfaces, row => row.ifname ?? row.name ?? ""),
-    events: next.events === undefined ? current.events : reconcileRecords(current.events, next.events, row => eventKey(row)),
-    connections: next.connections === undefined ? current.connections : reconcileConnectionTable(current.connections, next.connections),
-    dnsQueries: next.dnsQueries === undefined ? current.dnsQueries : reconcileRecords(current.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`),
-    trafficFlows: next.trafficFlows === undefined ? current.trafficFlows : reconcileRecords(current.trafficFlows, next.trafficFlows, row => `${row.clientAddress ?? ""}/${row.peerAddress ?? ""}/${row.resolvedHostname ?? ""}/${row.tlsSNI ?? ""}`),
-    firewallLogs: next.firewallLogs === undefined ? current.firewallLogs : reconcileRecords(current.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)),
-    conntrackTuning: next.conntrackTuning ?? current.conntrackTuning,
-    dhcpLeases: next.dhcpLeases === undefined ? current.dhcpLeases : reconcileRecords(current.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`),
-    dhcpFingerprints: next.dhcpFingerprints === undefined ? current.dhcpFingerprints : reconcileRecords(current.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`),
-    neighbors: next.neighbors === undefined ? current.neighbors : reconcileRecords(current.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`),
-    clients: next.clients === undefined ? current.clients : reconcileRecords(current.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")),
-    vpn: next.vpn === undefined ? current.vpn : reconcileVPNStatus(current.vpn, next.vpn),
+    controllers: reconcileRecords(current?.controllers, next.controllers, row => row.name ?? ""),
+    gatewayHealth: collected.has("resources") ? next.gatewayHealth : current?.gatewayHealth,
+    phases: collected.has("resources") ? next.phases ?? {} : current?.phases,
+    resources: collected.has("resources") ? reconcileRecords(current?.resources, next.resources, row => `${row.apiVersion ?? ""}/${row.kind ?? ""}/${row.name ?? ""}`) : current?.resources,
+    interfaces: collected.has("resources") ? reconcileInterfaces(current?.interfaces, next.interfaces) : current?.interfaces,
+    events: collected.has("events") ? reconcileRecords(current?.events, next.events, row => eventKey(row)) : current?.events,
+    connections: collected.has("connections") ? reconcileConnectionTable(current?.connections, next.connections) : current?.connections,
+    dnsQueries: collected.has("dnsQueries") ? reconcileRecords(current?.dnsQueries, next.dnsQueries, row => `${row.questionName ?? ""}/${(row.answers ?? []).join(",")}`) : current?.dnsQueries,
+    trafficFlows: collected.has("trafficFlows") ? reconcileRecords(current?.trafficFlows, next.trafficFlows, row => row.flowKey ?? "") : current?.trafficFlows,
+    firewallLogs: collected.has("firewallLogs") ? reconcileRecords(current?.firewallLogs, next.firewallLogs, row => String(row.id ?? `${row.ts ?? ""}/${row.srcAddress ?? ""}/${row.dstAddress ?? ""}/${row.protocol ?? ""}`)) : current?.firewallLogs,
+    conntrackTuning: collected.has("conntrackTuning") ? next.conntrackTuning : current?.conntrackTuning,
+    dhcpLeases: collected.has("dhcpLeases") ? reconcileRecords(current?.dhcpLeases, next.dhcpLeases, row => `${row.family ?? ""}/${row.ip ?? ""}/${row.mac ?? ""}`) : current?.dhcpLeases,
+    dhcpFingerprints: collected.has("dhcpFingerprints") ? reconcileRecords(current?.dhcpFingerprints, next.dhcpFingerprints, row => `${row.mac ?? ""}/${row.observedAt ?? ""}`) : current?.dhcpFingerprints,
+    neighbors: collected.has("neighbors") ? reconcileRecords(current?.neighbors, next.neighbors, row => `${row.ip ?? ""}/${row.mac ?? ""}/${row.ifname ?? ""}`) : current?.neighbors,
+    clients: collected.has("clients") ? reconcileRecords(current?.clients, next.clients, row => row.id ?? row.mac ?? row.hostname ?? (row.addresses ?? []).join(",")) : current?.clients,
+    vpn: collected.has("vpn") ? reconcileVPNStatus(current?.vpn, next.vpn) : current?.vpn,
   };
+}
+
+function reconcileInterfaces(current?: InterfaceSummary[], next?: InterfaceSummary[]): InterfaceSummary[] {
+  const previous = new Map((current ?? []).filter(row => row.ifname).map(row => [row.ifname!, row]));
+  const incoming = (next ?? []).map(row => {
+    const old = row.ifname ? previous.get(row.ifname) : undefined;
+    if (!row.observationError || !old) return row;
+    return { ...row, addresses: old.addresses, mtu: old.mtu, flags: old.flags, hardwareAddress: old.hardwareAddress };
+  });
+  return reconcileRecords(current, incoming, row => row.ifname ?? row.name ?? "");
 }
 
 function reconcileConnectionTable(current?: ConnectionTable, next?: ConnectionTable): ConnectionTable | undefined {
@@ -6541,13 +6537,8 @@ function reconcileVPNStatus(current?: VPNStatus, next?: VPNStatus): VPNStatus | 
 function reconcileRecords<T>(current: T[] | undefined, next: T[] | undefined, keyFn: (row: T) => string): T[] {
   if (!next) return [];
   if (!current || current.length === 0) return next;
-  const previous = new Map<string, T>();
   const incoming = new Map<string, T>();
   const used = new Set<string>();
-  for (const row of current) {
-    const key = keyFn(row);
-    if (key) previous.set(key, row);
-  }
   for (const row of next) {
     const key = keyFn(row);
     if (key) incoming.set(key, row);
@@ -6585,10 +6576,11 @@ function normalizeBasePath(value: string) {
 
 function phaseColor(phase: unknown): StatusBadgeColor {
   const text = String(phase ?? "");
-  if (/Disabled|Standby|NotApplicable/.test(text)) return "subtle";
-  if (/Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed/.test(text)) return "success";
-  if (/Pending|Drifted|Unknown/.test(text)) return "warning";
-  if (/Error|Failed|Down|Unhealthy/.test(text)) return "danger";
+  if (/^(Disabled|Standby|NotApplicable)$/.test(text)) return "subtle";
+  if (text === "NotObserved") return "warning";
+  if (/^(Healthy|Applied|Active|Bound|Installed|Ready|Running|Up|Observed)$/.test(text)) return "success";
+  if (/^(Pending|Drifted|Unknown)$/.test(text)) return "warning";
+  if (/^(Error|Failed|Down|Unhealthy)$/.test(text)) return "danger";
   return "informative";
 }
 
@@ -6598,6 +6590,7 @@ function resourcePhaseColor(resource: ResourceStatus): StatusBadgeColor {
 
 function resourceStatusClassification(resource: ResourceStatus): { disposition: ResourceDisposition; color: StatusBadgeColor } {
   const status = resource.status ?? {};
+  if (resource.declared === false) return { disposition: "neutral", color: "subtle" };
   const phase = String(status.phase ?? "");
   const reason = String(status.reason ?? "");
   if (resourcePhaseSuppressedByReason(phase, reason)) return { disposition: "neutral", color: "subtle" };
@@ -6663,12 +6656,12 @@ function gatewaySummaryStatusLabel(status: string) {
     case "skip":
       return "skip";
     default:
-      return "skip";
+      return "unknown";
   }
 }
 
 function gatewayHealthCounts(components: GatewayHealthComponent[]) {
-  const counts = { pass: 0, warn: 0, fail: 0, skip: 0 };
+  const counts = { pass: 0, warn: 0, fail: 0, skip: 0, unknown: 0 };
   for (const component of components) {
     switch (normalizeGatewayStatus(component.status)) {
       case "ok":
@@ -6682,6 +6675,9 @@ function gatewayHealthCounts(components: GatewayHealthComponent[]) {
         break;
       case "skip":
         counts.skip += 1;
+        break;
+      default:
+        counts.unknown += 1;
         break;
     }
   }
@@ -6735,7 +6731,7 @@ function formatGatewayWaiting(waiting: Record<string, string>) {
 }
 
 function neutralPhase(phase: unknown) {
-  return /Disabled|Standby|NotApplicable/.test(String(phase ?? ""));
+  return /^(Disabled|Standby|NotApplicable)$/.test(String(phase ?? ""));
 }
 
 function stateColor(state: unknown): "success" | "warning" | "informative" | "subtle" {
@@ -6762,18 +6758,14 @@ function roleColor(role: unknown): "success" | "warning" | "danger" | "informati
   return "informative";
 }
 
-function importantResources(resources: ResourceStatus[]) {
-  return resources.filter(resource => /EgressRoutePolicy|HealthCheck|DNSResolver|DHCP|DSLiteTunnel|NAT44Rule|IPv4Route|Firewall|VirtualAddress|WireGuard|VXLAN/.test(resource.kind ?? ""));
-}
-
 function conntrackLabel(table?: ConnectionTable) {
   if (!table) return "-";
-  if (table.max) return `${table.count ?? 0}/${table.max}`;
+  if (table.max) return `${table.count ?? "-"}/${table.max}`;
   return String(table.count ?? "-");
 }
 
-function connectionFamilyCount(table: ConnectionTable | undefined, family: string): number {
-  if (!table) return 0;
+function connectionFamilyCount(table: ConnectionTable | undefined, family: string): number | undefined {
+  if (!table) return undefined;
   const want = family.toLowerCase();
   if (table.byFamily && Object.keys(table.byFamily).length > 0) {
     let total = 0;
@@ -6782,12 +6774,15 @@ function connectionFamilyCount(table: ConnectionTable | undefined, family: strin
     }
     return total;
   }
+  if (table.count === 0) return 0;
+  if (table.entries?.length !== table.count) return undefined;
   return (table.entries ?? []).filter(entry => String(entry.family ?? "").toLowerCase() === want).length;
 }
 
 function connectionFamilyCounts(table?: ConnectionTable) {
   if (!table) return "-";
   const counts = { ipv4: 0, ipv6: 0, other: 0 };
+  if (!table.byFamily && table.count !== 0 && table.entries?.length !== table.count) return "not collected";
   if (table?.byFamily && Object.keys(table.byFamily).length > 0) {
     for (const [family, value] of Object.entries(table.byFamily)) {
       const key = family.toLowerCase();
@@ -6807,7 +6802,7 @@ function connectionFamilyCounts(table?: ConnectionTable) {
 }
 
 function connectionShowingValue(table: ConnectionTable | undefined, filtered: number) {
-  if (!table) return "0 / 0";
+  if (!table) return "not collected";
   const loaded = table.entries?.length ?? 0;
   const observedTotal = Math.max(Number(table.count ?? 0), loaded);
   if (observedTotal > loaded) {
@@ -7018,7 +7013,7 @@ function connectionFilterFacets(entries: ConnectionEntry[]) {
     protocols.add(normalizeFacet(entry.protocol, "other"));
     apps.add(connectionApp(entry));
     sources.add(connectionAppSource(entry));
-    states.add(normalizeFacet(entry.state, "stateless"));
+    states.add(normalizeFacet(entry.state, "unknown"));
   }
   return {
     families: Array.from(families).sort(facetSort),
@@ -7052,7 +7047,7 @@ function filterConnections(entries: ConnectionEntry[], dnsLabels: Record<string,
     if (filters.protocol !== "all" && normalizeFacet(entry.protocol, "other") !== filters.protocol) return false;
     if (filters.app !== "all" && connectionApp(entry) !== filters.app) return false;
     if (filters.source !== "all" && connectionAppSource(entry) !== filters.source) return false;
-    if (filters.state !== "all" && normalizeFacet(entry.state, "stateless") !== filters.state) return false;
+    if (filters.state !== "all" && normalizeFacet(entry.state, "unknown") !== filters.state) return false;
     if (!query) return true;
     return connectionSearchText(entry, dnsLabels, clientIdentities).includes(query);
   });
@@ -7170,7 +7165,7 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
   return [
     entry.family,
     entry.protocol,
-    entry.state || "stateless",
+    entry.state || "unknown",
     entry.assured ? "assured" : "",
     entry.timeout,
     entry.mark,
@@ -7205,12 +7200,12 @@ function connectionSearchText(entry: ConnectionEntry, dnsLabels: Record<string, 
 function compareConnectionSortValue(a: ConnectionEntry, b: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
   if (sort === "stable") return compareConnectionStable(a, b);
   if (sort === "timeout") return Number(a.timeout ?? 0) - Number(b.timeout ?? 0);
-  if (sort === "traffic") return connectionTrafficBytes(a) - connectionTrafficBytes(b);
+  if (sort === "traffic") return (connectionTrafficBytes(a) ?? -1) - (connectionTrafficBytes(b) ?? -1);
   return stringSort(connectionSortValue(a, sort, dnsLabels), connectionSortValue(b, sort, dnsLabels));
 }
 
 function connectionSortValue(entry: ConnectionEntry, sort: string, dnsLabels: Record<string, string>) {
-  if (sort === "state") return `${normalizeFacet(entry.state, "stateless")} ${entry.assured ? "assured" : ""}`;
+  if (sort === "state") return `${normalizeFacet(entry.state, "unknown")} ${entry.assured ? "assured" : ""}`;
   if (sort === "source") return hostPort(entry.original?.source, entry.original?.sourcePort);
   if (sort === "destination") return hostPort(entry.original?.destination, entry.original?.destinationPort);
   if (sort === "label") return dnsLabels[entry.original?.destination ?? ""] ?? entry.original?.destination ?? "";
@@ -7223,11 +7218,15 @@ function compareConnectionStable(a: ConnectionEntry, b: ConnectionEntry) {
 }
 
 function connectionTrafficBytes(entry: ConnectionEntry) {
-  return Math.max(0, Number(entry.original?.bytes ?? 0)) + Math.max(0, Number(entry.reply?.bytes ?? 0));
+  return addOptionalBytes(entry.original?.bytes, entry.reply?.bytes);
 }
 
-function hasConnectionAccounting(entry: ConnectionEntry) {
-  return Boolean(entry.original?.accounting || entry.reply?.accounting || entry.original?.bytes || entry.reply?.bytes);
+function hasObservedConnectionBytes(entry: ConnectionEntry) {
+  return isObservedCounter(entry.original?.bytes) || isObservedCounter(entry.reply?.bytes);
+}
+
+function connectionTrafficIncomplete(entry: ConnectionEntry) {
+  return !isObservedCounter(entry.original?.bytes) || !isObservedCounter(entry.reply?.bytes);
 }
 
 function normalizeFacet(value: unknown, fallback: string) {
@@ -7361,7 +7360,7 @@ function connectionClass(entry: ConnectionEntry) {
   const source = connectionAppSource(entry);
   if (connectionApp(entry) !== "unidentified") return source === "port-fallback" ? "port guess" : "dpi identified";
   if (source === "identifying") return "identifying";
-  const state = normalizeFacet(entry.state, "stateless");
+  const state = normalizeFacet(entry.state, "unknown");
   if (entry.assured || state.includes("established")) return "established";
   if (state.includes("syn") || state.includes("unreplied")) return "probe";
   return "unidentified";
@@ -7737,22 +7736,25 @@ function connectionClassificationStats(entries: ConnectionEntry[]): ConnectionCl
   return stats;
 }
 
-function topTrafficProtocols(flows: TrafficFlow[]) {
-  const totals = new Map<string, number>();
+function observedTrafficRanks(flows: TrafficFlow[], labelFor: (flow: TrafficFlow) => string) {
+  const totals = new Map<string, { label: string; value?: number; incomplete: boolean }>();
   for (const flow of flows) {
-    const classification = trafficFlowClassification(flow);
-    totals.set(classification.rankLabel, (totals.get(classification.rankLabel) ?? 0) + trafficFlowBytes(flow));
+    const label = labelFor(flow);
+    const row = totals.get(label) ?? { label, incomplete: false };
+    row.value = addOptionalBytes(row.value, trafficFlowBytes(flow));
+    row.incomplete ||= !isObservedCounter(flow.bytesOut) || !isObservedCounter(flow.bytesIn);
+    totals.set(label, row);
   }
-  return topRows(totals, 5);
+  return Array.from(totals.values()).filter((row): row is { label: string; value: number; incomplete: boolean } => row.value !== undefined)
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)).slice(0, 5);
+}
+
+function topTrafficProtocols(flows: TrafficFlow[]) {
+  return observedTrafficRanks(flows, flow => trafficFlowClassification(flow).rankLabel);
 }
 
 function topTrafficSources(flows: TrafficFlow[]) {
-  const totals = new Map<string, number>();
-  for (const flow of flows) {
-    const classification = trafficFlowClassification(flow);
-    totals.set(classification.source, (totals.get(classification.source) ?? 0) + trafficFlowBytes(flow));
-  }
-  return topRows(totals, 5);
+  return observedTrafficRanks(flows, flow => trafficFlowClassification(flow).source);
 }
 
 function topTalkers(clients: ClientEntry[], flows: TrafficFlow[]) {
@@ -7764,14 +7766,7 @@ function topTalkers(clients: ClientEntry[], flows: TrafficFlow[]) {
     }
     if (client.id && label) labels.set(client.id, label);
   }
-  const totals = new Map<string, number>();
-  for (const flow of flows) {
-    const bytes = trafficFlowBytes(flow);
-    if (bytes <= 0) continue;
-    const key = labels.get(flow.clientAddress ?? "") || flow.clientAddress || "-";
-    totals.set(key, (totals.get(key) ?? 0) + bytes);
-  }
-  return topRows(totals, 5);
+  return observedTrafficRanks(flows, flow => labels.get(flow.clientAddress ?? "") || flow.clientAddress || "-");
 }
 
 function topDomains(flows: TrafficFlow[]) {
@@ -7779,7 +7774,7 @@ function topDomains(flows: TrafficFlow[]) {
   for (const flow of flows) {
     const label = trafficFlowDomain(flow);
     if (!label) continue;
-    totals.set(label, (totals.get(label) ?? 0) + Math.max(1, trafficFlowBytes(flow)));
+    totals.set(label, (totals.get(label) ?? 0) + 1);
   }
   return topRows(totals, 5);
 }
@@ -7847,7 +7842,7 @@ function trafficFlowDomain(flow: TrafficFlow) {
 }
 
 function trafficFlowBytes(flow: TrafficFlow) {
-  return Math.max(0, Number(flow.bytesOut ?? 0)) + Math.max(0, Number(flow.bytesIn ?? 0));
+  return addOptionalBytes(flow.bytesOut, flow.bytesIn);
 }
 
 function topRows(values: Map<string, number>, limit: number) {
@@ -7923,7 +7918,7 @@ function normalizeConnectionGroupProtocol(protocol: string | undefined) {
 function connectionStateSummary(entries: ConnectionEntry[]) {
   const counts = new Map<string, number>();
   for (const entry of entries) {
-    const state = normalizeFacet(entry.state, "stateless");
+    const state = normalizeFacet(entry.state, "unknown");
     counts.set(state, (counts.get(state) ?? 0) + 1);
   }
   return Array.from(counts.entries())
@@ -8075,7 +8070,7 @@ function navigationSubItems(selected: ViewKey, groups: { key: string; rows: Conn
     ];
   }
   if (selected === "resources") {
-    const resources = importantResources(summary?.resources ?? []);
+    const resources = summary?.resources ?? [];
     return [
       { key: "resources", label: "Resources", count: resources.length, view: "resources", targetID: "resources-table" },
     ];
@@ -8376,11 +8371,12 @@ function endpoint(tuple?: ConnTuple) {
 }
 
 function hostPort(host?: string, port?: string) {
-  return host ? `${host}${port ? `:${port}` : ""}` : "";
+  if (!host) return "";
+  return port ? `${host.includes(":") ? `[${host}]` : host}:${port}` : host;
 }
 
 function firewallEndpoint(host?: string, port?: number) {
-  return host ? `${host}${port ? `:${port}` : ""}` : "-";
+  return hostPort(host, port ? String(port) : undefined) || "-";
 }
 
 function flowKey(entry: ConnectionEntry) {
@@ -8397,21 +8393,17 @@ function eventKey(event?: RouterEvent) {
 }
 
 function resourceDetail(status: Record<string, unknown>) {
-  return ["selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "backendState", "tailnetName", "tailscaleIPs", "peerCount", "changedFields"]
-    .map(key => status[key] ? `${key}=${status[key]}` : "")
+  return ["reason", "message", "selectedCandidate", "selectedDevice", "activeEgressInterface", "target", "address", "currentPrefix", "backendState", "tailnetName", "tailscaleIPs", "peerCount", "changedFields"]
+    .map(key => status[key] !== undefined && status[key] !== null && status[key] !== "" ? `${key}=${status[key]}` : "")
     .filter(Boolean)
     .join(" ");
 }
 
-function dryRunControllerByKind(controllers: ControllerStatus[]) {
-  const byKind = new Map<string, ControllerStatus>();
-  for (const controller of controllers) {
-    if (controller.mode !== "dry-run") continue;
-    for (const kind of controller.resourceKinds ?? []) {
-      byKind.set(kind, controller);
-    }
-  }
-  return byKind;
+function resourceControllerMode(resource: ResourceStatus, controllers: ControllerStatus[]) {
+  const owner = controllers.find(controller => controller.name === resource.owner);
+  if (owner) return owner.mode;
+  const modes = new Set(controllers.filter(controller => controller.resourceKinds?.includes(resource.kind ?? "")).map(controller => controller.mode || "unknown"));
+  return modes.size === 1 ? [...modes][0] : undefined;
 }
 
 function resourceName(event: RouterEvent) {
@@ -8438,42 +8430,15 @@ function formatDetailValue(value: unknown) {
   }
 }
 
-function unifiedLineDiff(fromName: string, toName: string, fromText: string, toText: string) {
-  if (fromText === toText) return `--- ${fromName}\n+++ ${toName}\n# no changes\n`;
-  const from = fromText.replace(/\n$/, "").split(/\n/);
-  const to = toText.replace(/\n$/, "").split(/\n/);
-  const table = Array.from({ length: from.length + 1 }, () => Array<number>(to.length + 1).fill(0));
-  for (let i = from.length - 1; i >= 0; i--) {
-    for (let j = to.length - 1; j >= 0; j--) {
-      table[i][j] = from[i] === to[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
-    }
-  }
-  const lines = [`--- ${fromName}`, `+++ ${toName}`];
-  let i = 0;
-  let j = 0;
-  while (i < from.length || j < to.length) {
-    if (i < from.length && j < to.length && from[i] === to[j]) {
-      lines.push(` ${from[i]}`);
-      i++;
-      j++;
-    } else if (j < to.length && (i === from.length || table[i][j + 1] >= table[i + 1][j])) {
-      lines.push(`+${to[j]}`);
-      j++;
-    } else if (i < from.length) {
-      lines.push(`-${from[i]}`);
-      i++;
-    }
-  }
-  return `${lines.join("\n")}\n`;
-}
-
 function clientTrafficRows(flows: TrafficFlow[]) {
-  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; peers: Set<string>; protocols: Set<string> }>();
+  const totals = new Map<string, { client: string; bytesOut?: number; bytesIn?: number; bytesOutIncomplete?: boolean; bytesInIncomplete?: boolean; peers: Set<string>; protocols: Set<string> }>();
   for (const flow of flows) {
     const key = flow.clientAddress || "-";
     const row = totals.get(key) ?? { client: key, peers: new Set<string>(), protocols: new Set<string>() };
-    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut, flow.accounting);
-    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn, flow.accounting);
+    row.bytesOut = addOptionalBytes(row.bytesOut, flow.bytesOut);
+    row.bytesOutIncomplete ||= !isObservedCounter(flow.bytesOut);
+    row.bytesIn = addOptionalBytes(row.bytesIn, flow.bytesIn);
+    row.bytesInIncomplete ||= !isObservedCounter(flow.bytesIn);
     const peer = flow.resolvedHostname || flow.tlsSNI || flow.peerAddress;
     if (peer) row.peers.add(peer);
     const protocol = normalizeFacet(flow.appName || flow.protocol, "unidentified");
@@ -8493,9 +8458,10 @@ function clientEntryToRow(entry: ClientEntry): ClientRow {
     vendor: entry.vendor ?? "",
     state: entry.state ?? "",
     sources: new Set(entry.sources ?? []),
-    expiresAt: "",
     bytesOut: entry.bytesOut,
+    bytesOutIncomplete: entry.bytesOutIncomplete,
     bytesIn: entry.bytesIn,
+    bytesInIncomplete: entry.bytesInIncomplete,
     peers: new Set(entry.peers ?? []),
     primaryActivity: entry.primaryActivity ?? "",
     lastProtocol: entry.lastProtocol ?? "",
@@ -8558,10 +8524,17 @@ function normalizeMAC(mac?: string) {
   return String(mac ?? "").trim().toLowerCase();
 }
 
-function addOptionalBytes(current: number | undefined, next: number | undefined, accounting?: boolean) {
-  if (!accounting) return current;
-  const value = typeof next === "number" && Number.isFinite(next) ? next : 0;
-  return (current ?? 0) + value;
+function isObservedCounter(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function addOptionalBytes(current: number | undefined, next: number | undefined) {
+  if (!isObservedCounter(current)) return isObservedCounter(next) ? next : undefined;
+  return isObservedCounter(next) ? current + next : current;
+}
+
+function formatObservedBytes(value?: number, incomplete?: boolean) {
+  return `${isObservedCounter(value) && incomplete ? "≥ " : ""}${formatBytes(value)}`;
 }
 
 function clientActivityFacets(clients: ClientEntry[]) {
@@ -8739,16 +8712,14 @@ function generationSearchText(row: GenerationRecord) {
   ].filter(value => value !== undefined && value !== "").join(" ").toLowerCase();
 }
 
-function clientOnline(row: ClientRow) {
-  const state = String(row.state ?? "").toLowerCase();
-  if (/failed|stale|expired|offline/.test(state)) return false;
-  return row.addresses.size > 0 || !!row.bytesIn || !!row.bytesOut || row.peers.size > 0;
+function clientReachable(row: ClientRow) {
+  // Cached leases and traffic history identify inventory, not present reachability.
+  return String(row.state ?? "").toUpperCase().split(",").some(state => ["REACHABLE", "R"].includes(state.trim()));
 }
 
 function primaryClientAddress(row: ClientRow) {
   const addresses = Array.from(row.addresses);
-  return addresses.find(address => address.includes("."))
-    ?? addresses.find(address => isStableIPv6(address))
+  return addresses.find(address => !address.includes(":"))
     ?? addresses[0]
     ?? row.ip
     ?? "";
@@ -8777,18 +8748,12 @@ function formatPrimaryClientAddress(address: string) {
 }
 
 function groupedClientAddresses(addresses: string[]) {
-  const groups = { ipv4: [] as string[], ipv6Stable: [] as string[], ipv6Privacy: [] as string[] };
+  const groups = { ipv4: [] as string[], ipv6: [] as string[] };
   for (const address of addresses) {
-    if (address.includes(".")) groups.ipv4.push(address);
-    else if (isStableIPv6(address)) groups.ipv6Stable.push(address);
-    else groups.ipv6Privacy.push(address);
+    if (address.includes(":")) groups.ipv6.push(address);
+    else groups.ipv4.push(address);
   }
   return groups;
-}
-
-function isStableIPv6(address: string) {
-  const text = address.split("/")[0].toLowerCase();
-  return text.includes(":ff:fe") || /(^|:)0*1[123]$/.test(text) || text.endsWith("::1");
 }
 
 function clientOSFamily(row: ClientRow) {
@@ -8835,10 +8800,8 @@ function clientOSBadgeColor(family: string) {
   }
 }
 
-function clientLastSeen(row: ClientRow) {
-  if (clientOnline(row)) return "now";
-  if (row.expiresAt) return relativeTimeText(row.expiresAt) || absoluteTime(row.expiresAt);
-  return "-";
+function clientReachabilityLabel(row: ClientRow) {
+  return clientReachable(row) ? "reachable" : "unknown";
 }
 
 function formatBytes(value?: number) {
@@ -8887,13 +8850,13 @@ function systemCPULabel(usage?: SystemUsage) {
 }
 
 function systemMemoryLabel(usage?: SystemUsage) {
-  if (!usage?.memoryUsedPercent) return "-";
+  if (typeof usage?.memoryUsedPercent !== "number" || !Number.isFinite(usage.memoryUsedPercent)) return "-";
   return `${formatPercent(usage.memoryUsedPercent)} / ${formatBytes(usage.memoryTotalBytes)}`;
 }
 
 function systemDiskLabel(usage?: SystemUsage) {
   const disk = usage?.disks?.[0];
-  if (!disk?.usedPercent) return "-";
+  if (typeof disk?.usedPercent !== "number" || !Number.isFinite(disk.usedPercent)) return "-";
   return `${formatPercent(disk.usedPercent)} / ${formatBytes(disk.totalBytes)}`;
 }
 
@@ -8947,7 +8910,7 @@ function firewallLogKey(log: FirewallLog) {
 }
 
 function firewallCorrelation(log: FirewallLog) {
-  return log.correlation || "true_suspicious";
+  return log.correlation || "unknown";
 }
 
 function firewallTCPFlags(log: FirewallLog) {
@@ -8957,14 +8920,14 @@ function firewallTCPFlags(log: FirewallLog) {
 function firewallTrafficClass(log: FirewallLog) {
   if (firewallDPIText(log)) return "DPI label";
   const protocol = normalizeFacet(log.protocol || log.l3Proto, "");
-  if (protocol === "udp" || protocol === "icmp" || protocol === "icmpv6") return "stateless probe";
+  if (protocol === "udp" || protocol === "icmp" || protocol === "icmpv6") return `${protocol.toUpperCase()} packet`;
   if (protocol === "tcp") {
     const flags = new Set(firewallTCPFlags(log).split(/[, ]+/).map(flag => flag.trim().toUpperCase()).filter(Boolean));
-    if (flags.size === 1 && flags.has("SYN")) return "new-connection attempt / scan";
+    if (flags.size === 1 && flags.has("SYN")) return "SYN packet";
     if (flags.size === 1 && flags.has("ACK")) {
-      return firewallCorrelation(log) === "orphan_return" ? "orphan return" : "established follow";
+      return firewallCorrelation(log) === "orphan_return" ? "orphan return" : "ACK packet";
     }
-    if (flags.has("RST") || flags.has("FIN")) return "termination";
+    if (flags.has("RST") || flags.has("FIN")) return "termination flags";
   }
   if (firewallCorrelation(log) === "orphan_return") return "orphan return";
   return "unclassified";
@@ -8972,11 +8935,11 @@ function firewallTrafficClass(log: FirewallLog) {
 
 function firewallTrafficClassColor(value: string): "brand" | "danger" | "informative" | "severe" | "subtle" | "success" | "warning" {
   const normalized = value.toLowerCase();
-  if (normalized.includes("scan")) return "danger";
+  if (normalized.includes("syn")) return "warning";
   if (normalized.includes("orphan")) return "warning";
-  if (normalized.includes("established")) return "informative";
+  if (normalized.includes("ack")) return "informative";
   if (normalized.includes("termination")) return "subtle";
-  if (normalized.includes("stateless")) return "warning";
+
   if (normalized.includes("dpi")) return "brand";
   return "subtle";
 }

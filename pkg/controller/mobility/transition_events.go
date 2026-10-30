@@ -357,12 +357,28 @@ func holderTransitionStartKind(previous, current bgpCaptureAssignment, previousP
 	return "holder-renew"
 }
 
-func decodeBGPCaptureTransitionState(status map[string]any) bgpCaptureTransitionState {
-	completed := decodeStatusValue[map[string]map[string]string](status[bgpCaptureTransitionCompletedKey])
+func decodeBGPCaptureTransitionState(status map[string]any) (bgpCaptureTransitionState, error) {
+	completed := map[string]map[string]string{}
+	if err := decodeContinuationField(status, bgpCaptureTransitionCompletedKey, &completed); err != nil {
+		return bgpCaptureTransitionState{}, err
+	}
+	for field, markers := range completed {
+		if field != bgpCaptureTransitionCompletedField && field != bgpCaptureConfirmedField {
+			return bgpCaptureTransitionState{}, fmt.Errorf("%s has an unknown marker set %q", bgpCaptureTransitionCompletedKey, field)
+		}
+		if markers == nil {
+			return bgpCaptureTransitionState{}, fmt.Errorf("%s.%s must not be null", bgpCaptureTransitionCompletedKey, field)
+		}
+		for address, generation := range markers {
+			if !validContinuationAddress(address) || strings.TrimSpace(generation) == "" {
+				return bgpCaptureTransitionState{}, fmt.Errorf("%s.%s has an invalid marker for %q", bgpCaptureTransitionCompletedKey, field, address)
+			}
+		}
+	}
 	return bgpCaptureTransitionState{
 		SeizeComplete:    normalizedBGPCaptureTransitionMarkers(completed[bgpCaptureTransitionCompletedField]),
 		CaptureConfirmed: normalizedBGPCaptureTransitionMarkers(completed[bgpCaptureConfirmedField]),
-	}
+	}, nil
 }
 
 func normalizedBGPCaptureTransitionMarkers(in map[string]string) map[string]string {

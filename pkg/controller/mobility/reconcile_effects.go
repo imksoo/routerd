@@ -17,12 +17,59 @@ func (c Controller) applyPoolPlan(ctx context.Context, state poolReconcileState,
 	if err := validatePoolPlanEffects(state.Runtime.Pool.Name, plan); err != nil {
 		return fmt.Errorf("validate MobilityPool/%s typed plan before BGP apply: %w", state.Runtime.Pool.Name, err)
 	}
+	if err := validateHandoverReleaseEffects(state.Runtime.Pool, plan); err != nil {
+		return fmt.Errorf("validate MobilityPool/%s handover before BGP apply: %w", state.Runtime.Pool.Name, err)
+	}
 	actionPlans := plan.ProviderActions
 	if err := c.applyBGPPaths(ctx, state.Runtime.Pool.Source, plan.BGPPaths); err != nil {
 		return err
 	}
 	if err := c.upsertBGPPlan(ctx, state.Runtime.Pool.Name, state.Runtime.Pool.SelfNode, actionPlans, plan.LocalDataplane, plan.FIBVerdicts, state.Runtime.Now); err != nil {
 		return err
+	}
+	publicationNow := controllerNow(c.Now)
+	confirmed, err := c.confirmedNativeWithdrawals(state.Runtime.Pool, plan.LocalDataplane.Withdrawals, publicationNow)
+	if err != nil {
+		return err
+	}
+	var nativePending []string
+	for _, handover := range plan.HandoverReleases {
+		waiting := false
+		hasNativeRequest := false
+		for _, request := range plan.LocalDataplane.Withdrawals {
+			if request.ID == handover.ID {
+				hasNativeRequest = true
+				waiting = !confirmed[request]
+				break
+			}
+		}
+		if !hasNativeRequest {
+			// Recheck finite proof after BGP/IPC and desired-plan persistence.
+			events, err := c.Store.ListFederationEvents(state.Runtime.Pool.Spec.GroupRef, false, publicationNow.Unix())
+			if err != nil {
+				return err
+			}
+			live := false
+			for _, event := range events {
+				if staticHandoverReleaseMatches(state.Runtime.Pool, handover, event, publicationNow) {
+					live = true
+					break
+				}
+			}
+			conflict, err := c.staticAddressConflictsWithHandover(dynamicconfig.MobilityWithdrawalRequest{Address: handover.Address})
+			if err != nil {
+				return err
+			}
+			waiting = !live || conflict
+		}
+		if waiting {
+			nativePending = append(nativePending, handover.ID)
+			continue
+		}
+		event := staticHandoverReleaseEvent(state.Runtime.Pool, handover, publicationNow)
+		if err := c.Store.RecordFederationEvent(event); err != nil {
+			return fmt.Errorf("record confirmed handover release %q: %w", handover.ID, err)
+		}
 	}
 	previousAssignments := captureAssignmentsFromActionPlans(state.Runtime.Provider.ActionHistory.previousCaptureAssigns)
 	currentAssignments := captureAssignmentsFromActionPlans(actionPlans)
@@ -44,7 +91,13 @@ func (c Controller) applyPoolPlan(ctx context.Context, state poolReconcileState,
 		OnPremPendingReason: onPremReason,
 		Transitions:         transitions,
 	})
-	return c.savePlannerStatus(state.Runtime.Pool.Name, status.Serialize())
+	serialized := status.Serialize()
+	serialized["handoverNativePending"] = nativePending
+	if len(nativePending) != 0 {
+		serialized["phase"] = "Pending"
+		serialized["reason"] = "NativeWithdrawalPending"
+	}
+	return c.savePlannerStatus(state.Runtime.Pool.Name, serialized)
 }
 
 // validatePoolPlanEffects validates every persisted plan boundary before BGP

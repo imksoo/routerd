@@ -33,7 +33,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -42,7 +42,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan
@@ -85,7 +84,7 @@ table inet routerd_filter {
     ct state invalid counter drop
     ct state { established, related } counter accept
     iifname "lo" counter accept
-    meta l4proto ipv6-icmp counter accept
+    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept
     iifname @if_lan jump lan_to_self
     iifname @if_wan jump wan_to_self
     counter log prefix "routerd firewall input deny " drop
@@ -94,7 +93,6 @@ table inet routerd_filter {
     type filter hook forward priority filter; policy drop;
     ct state invalid counter drop
     ct state { established, related } counter accept
-    meta l4proto ipv6-icmp counter accept
     iifname @if_lan oifname @if_lan jump lan_to_lan
     iifname @if_lan oifname @if_wan jump lan_to_wan
     iifname @if_wan oifname @if_lan jump wan_to_lan
@@ -128,8 +126,8 @@ table inet routerd_mss {
   comment "routerd.owner=routerd routerd.generation=1"
   chain forward {
     type filter hook forward priority mangle; policy accept;
-    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1414 tcp option maxseg size set 1414
-    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1394 tcp option maxseg size set 1394
+    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1420 tcp option maxseg size set 1420
+    iifname "ens19" oifname { "ds-lite-a", "ds-lite-b" } meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1400 tcp option maxseg size set 1400
     iifname "ens19" oifname "ens18" ip protocol tcp tcp flags syn / syn,rst tcp option maxseg size > 1460 tcp option maxseg size set 1460
     iifname "ens19" oifname "ens18" meta nfproto ipv6 tcp flags syn / syn,rst tcp option maxseg size > 1440 tcp option maxseg size set 1440
   }

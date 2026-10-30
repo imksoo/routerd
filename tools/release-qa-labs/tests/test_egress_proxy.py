@@ -4,10 +4,14 @@ import os
 from pathlib import Path
 import pwd
 import shutil
+import signal
 import socket
+import socketserver
 import subprocess
 import tempfile
 import threading
+import time
+import sys
 import unittest
 from unittest import mock
 
@@ -29,7 +33,7 @@ class EgressProxyTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443)),
         ]
         with mock.patch.object(socket, "getaddrinfo", return_value=answers) as lookup:
-            self.assertEqual(proxy.resolve_public_ipv4("api.example"), ["8.8.8.8"])
+            self.assertEqual(proxy.lookup_public_ipv4("api.example"), ["8.8.8.8"])
         lookup.assert_called_once_with("api.example", 443, socket.AF_INET, socket.SOCK_STREAM)
         for rejected in ("0.0.0.0", "10.0.0.1", "127.0.0.1", "169.254.1.1",
                          "224.0.0.1", "239.1.1.1", "240.0.0.1", "255.255.255.255"):
@@ -76,6 +80,288 @@ class EgressProxyTests(unittest.TestCase):
                     self.assertIn(b"502 Bad Gateway", client.recv(1024))
                 worker.join(timeout=2)
                 self.assertFalse(worker.is_alive())
+
+    def test_connect_preserves_bytes_received_with_the_header(self):
+        upstream_for_proxy, upstream_for_test = socket.socketpair()
+        upstream_for_test.settimeout(1)
+        with upstream_for_test, mock.patch.object(proxy, "connect_ipv4", return_value=upstream_for_proxy):
+            with proxy.IPv4ThreadingServer(("127.0.0.1", 0), proxy.ConnectHandler) as server:
+                worker = threading.Thread(target=server.handle_request)
+                worker.start()
+                with socket.create_connection(server.server_address) as client:
+                    client.settimeout(1)
+                    client.sendall(b"CONNECT api.example:443 HTTP/1.1\r\n\r\npipelined-tls")
+                    self.assertIn(b"200 Connection Established", client.recv(1024))
+                    self.assertEqual(upstream_for_test.recv(1024), b"pipelined-tls")
+                worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+
+    def test_slow_header_has_one_deadline(self):
+        with mock.patch.object(proxy, "CONNECT_TIMEOUT", 0.08):
+            with proxy.IPv4ThreadingServer(("127.0.0.1", 0), proxy.ConnectHandler) as server:
+                worker = threading.Thread(target=server.handle_request)
+                worker.start()
+                with socket.create_connection(server.server_address) as client:
+                    client.settimeout(0.5)
+                    stopped = threading.Event()
+
+                    def drip():
+                        while not stopped.wait(0.01):
+                            try:
+                                client.sendall(b"C")
+                            except OSError:
+                                return
+
+                    writer = threading.Thread(target=drip)
+                    writer.start()
+                    try:
+                        self.assertEqual(client.recv(1024), b"")
+                    finally:
+                        stopped.set()
+                        writer.join(timeout=1)
+                worker.join(timeout=1)
+                self.assertFalse(worker.is_alive())
+
+    def test_relay_stops_when_destination_does_not_read(self):
+        left, client = socket.socketpair()
+        right, upstream = socket.socketpair()
+        errors = []
+        right.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+
+        def transfer():
+            try:
+                proxy.relay(left, right)
+            except OSError as exc:
+                errors.append(exc)
+
+        with left, client, right, upstream, mock.patch.object(proxy, "CONNECT_TIMEOUT", 0.08):
+            worker = threading.Thread(target=transfer)
+            worker.start()
+            try:
+                client.settimeout(1)
+                client.sendall(b"x" * (64 * 1024))
+                worker.join(timeout=1)
+                self.assertFalse(worker.is_alive(), "relay blocked on an unread destination")
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], TimeoutError)
+            finally:
+                client.close()
+                upstream.close()
+                worker.join(timeout=1)
+
+    def test_tunnel_failure_does_not_inject_an_http_error_after_success(self):
+        upstream_for_proxy, upstream_for_test = socket.socketpair()
+        with upstream_for_test, mock.patch.object(proxy, "connect_ipv4", return_value=upstream_for_proxy), \
+                mock.patch.object(proxy, "relay", side_effect=TimeoutError("stalled write")):
+            with proxy.IPv4ThreadingServer(("127.0.0.1", 0), proxy.ConnectHandler) as server:
+                worker = threading.Thread(target=server.handle_request)
+                worker.start()
+                with socket.create_connection(server.server_address) as client:
+                    client.settimeout(1)
+                    client.sendall(b"CONNECT api.example:443 HTTP/1.1\r\n\r\n")
+                    response = bytearray()
+                    while chunk := client.recv(1024):
+                        response.extend(chunk)
+                    self.assertIn(b"200 Connection Established", response)
+                    self.assertNotIn(b"502 Bad Gateway", response)
+                worker.join(timeout=1)
+                self.assertFalse(worker.is_alive())
+
+    def test_resolver_process_returns_filtered_numeric_address(self):
+        self.assertEqual(proxy.resolve_public_ipv4("8.8.8.8"), ["8.8.8.8"])
+        self.assertEqual(proxy.resolve_public_ipv4("127.0.0.1"), [])
+
+    def test_blocked_resolver_is_killed_and_reaped_at_deadline(self):
+        real_popen = subprocess.Popen
+        children = []
+
+        def blocked_resolver(*_args, **kwargs):
+            child = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            children.append(child)
+            return child
+
+        try:
+            with mock.patch.object(proxy, "CONNECT_TIMEOUT", 0.08), \
+                    mock.patch.object(proxy.subprocess, "Popen", side_effect=blocked_resolver):
+                started = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    proxy.resolve_public_ipv4("api.example")
+                self.assertLess(time.monotonic() - started, 1)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].returncode, "deadline released an unreaped resolver")
+            self.assertIsNotNone(children[0].poll())
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+
+    def test_shutdown_cancels_dns_and_joins_handler_and_resolver(self):
+        real_popen = subprocess.Popen
+        children = []
+        launched = threading.Event()
+
+        def blocked_resolver(*_args, **kwargs):
+            child = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+            children.append(child)
+            launched.set()
+            return child
+
+        with mock.patch.object(proxy, "CONNECT_TIMEOUT", 30), \
+                mock.patch.object(proxy.subprocess, "Popen", side_effect=blocked_resolver):
+            with proxy.IPv4ThreadingServer(("127.0.0.1", 0), proxy.ConnectHandler) as server:
+                worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+                worker.start()
+                try:
+                    with socket.create_connection(server.server_address) as client:
+                        client.settimeout(1)
+                        client.sendall(b"CONNECT api.example:443 HTTP/1.1\r\n\r\n")
+                        self.assertTrue(launched.wait(1), "resolver child was never started")
+                        started = time.monotonic()
+                        server.shutdown()
+                        server.server_close()
+                        self.assertLess(time.monotonic() - started, 1)
+                        self.assertEqual(client.recv(1024), b"")
+                    self.assertIsNotNone(children[0].returncode)
+                    self.assertFalse(server._sockets, "shutdown left an admitted socket")
+                finally:
+                    server.shutdown()
+                    worker.join(timeout=1)
+                    for child in children:
+                        if child.poll() is None:
+                            child.kill()
+                        child.wait()
+                self.assertFalse(worker.is_alive())
+
+    def test_handler_admission_is_bounded_and_slot_is_reused(self):
+        active = 0
+        maximum = 0
+        changed = threading.Condition()
+
+        class CountingHandler(socketserver.BaseRequestHandler):
+            def handle(self):
+                nonlocal active, maximum
+                with changed:
+                    active += 1
+                    maximum = max(maximum, active)
+                    changed.notify_all()
+                try:
+                    self.request.recv(1)
+                finally:
+                    with changed:
+                        active -= 1
+                        changed.notify_all()
+
+        with proxy.IPv4ThreadingServer(("127.0.0.1", 0), CountingHandler) as server:
+            worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+            worker.start()
+            clients = []
+            try:
+                for count in range(proxy.MAX_HANDLERS):
+                    clients.append(socket.create_connection(server.server_address, timeout=2))
+                    with changed:
+                        self.assertTrue(changed.wait_for(lambda: active == count + 1, timeout=2))
+                with changed:
+                    self.assertTrue(changed.wait_for(lambda: active == proxy.MAX_HANDLERS, timeout=1))
+                with socket.create_connection(server.server_address, timeout=1) as rejected:
+                    rejected.settimeout(1)
+                    self.assertEqual(rejected.recv(1), b"", "overload created another blocked handler")
+                clients.pop().close()
+                with changed:
+                    self.assertTrue(changed.wait_for(lambda: active == proxy.MAX_HANDLERS - 1, timeout=1))
+                # Join the finished handler so its admission release is observed.
+                deadline = time.monotonic() + 1
+                while len(server._sockets) != proxy.MAX_HANDLERS - 1 and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                clients.append(socket.create_connection(server.server_address, timeout=1))
+                with changed:
+                    self.assertTrue(changed.wait_for(lambda: active == proxy.MAX_HANDLERS, timeout=1))
+                self.assertEqual(maximum, proxy.MAX_HANDLERS)
+            finally:
+                for client in clients:
+                    client.close()
+                server.shutdown()
+                worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+        self.assertEqual(active, 0)
+
+    def test_shutdown_interrupts_established_backpressured_tunnel(self):
+        upstream_for_proxy, upstream_for_test = socket.socketpair()
+        upstream_for_proxy.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+        with upstream_for_test, mock.patch.object(proxy, "connect_ipv4", return_value=upstream_for_proxy):
+            with proxy.IPv4ThreadingServer(("127.0.0.1", 0), proxy.ConnectHandler) as server:
+                worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+                worker.start()
+                try:
+                    with socket.create_connection(server.server_address) as client:
+                        client.settimeout(1)
+                        client.sendall(b"CONNECT api.example:443 HTTP/1.1\r\n\r\n")
+                        self.assertIn(b"200 Connection Established", client.recv(1024))
+                        client.sendall(b"x" * (64 * 1024))
+                        started = time.monotonic()
+                        server.shutdown()
+                        server.server_close()
+                        self.assertLess(time.monotonic() - started, 1)
+                    self.assertFalse(server._sockets)
+                finally:
+                    server.shutdown()
+                    worker.join(timeout=1)
+                self.assertFalse(worker.is_alive())
+
+    def test_executable_sigterm_reaps_resolver_before_stopped_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "runs"
+            run_root = runs / "proxy-lifetime"
+            marker = root / "resolver.pid"
+            script = root / "egress_proxy.py"
+            source = (ROOT / "egress_proxy.py").read_text()
+            source = source.replace('Path("/var/lib/routerd-release-qa")', f"Path({str(runs)!r})")
+            # Keep the actual child/entry/signal code. Block only its OS lookup
+            # boundary so this test requires neither external DNS nor a provider.
+            source = source.replace(
+                'def lookup_public_ipv4(host: str) -> list[str]:\n',
+                'def lookup_public_ipv4(host: str) -> list[str]:\n'
+                '    if host == "blocked.example":\n'
+                f'        Path({str(marker)!r}).write_text(str(os.getpid()))\n'
+                '        time.sleep(30)\n',
+            )
+            script.write_text(source)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+            process = subprocess.Popen(
+                [sys.executable, str(script), "--run-root", str(run_root), "--port", str(port)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            try:
+                status_path = run_root / "runtime/evidence/egress-proxy/status.json"
+                deadline = time.monotonic() + 2
+                while not status_path.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(status_path.exists(), "proxy did not publish readiness")
+                with socket.create_connection(("127.0.0.1", port), timeout=1) as client:
+                    client.sendall(b"CONNECT blocked.example:443 HTTP/1.1\r\n\r\n")
+                    deadline = time.monotonic() + 2
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(marker.exists(), "resolver never reached the blocked boundary")
+                    resolver_pid = int(marker.read_text())
+                    self.assertNotEqual(resolver_pid, process.pid)
+                    process.send_signal(signal.SIGTERM)
+                    stdout, stderr = process.communicate(timeout=2)
+                    self.assertEqual(process.returncode, 0, (stdout, stderr))
+                    self.assertEqual(json.loads(status_path.read_text())["status"], "stopped")
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(resolver_pid, 0)
+            finally:
+                # The fixture owns a private process group, including a resolver
+                # if a regression prevents the parent from acknowledging stop.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate(timeout=2)
 
     def test_tracked_units_bound_proxy_outside_main_lifecycle(self):
         proxy_unit = (ROOT / "supervisor/routerd-release-qa-egress-proxy@.service").read_text()

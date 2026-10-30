@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -145,19 +146,25 @@ func daemonCommand(args []string) error {
 	receiver.SetMetrics(metrics)
 	pruner := eventd.NewPruner(store, cfg.Group, cfg.Retention, cfg.PruneInterval, time.Now)
 	pruner.SetMetrics(metrics)
-	go pruner.Run(ctx, func(err error) {
-		log.Printf("routerd-eventd: prune error: %v", err)
-	})
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		pruner.Run(ctx, func(err error) { log.Printf("routerd-eventd: prune error: %v", err) })
+	}()
 
 	// Drive the outbox: push locally-originated events to peers. A node with no
 	// peers (or a push-only node) runs this as a harmless no-op / push-only.
-	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry, &http.Client{Timeout: 30 * time.Second}, time.Now, time.Sleep)
+	pusher := eventd.NewPusher(store, secret, cfg.Peers, cfg.PushRetry, &http.Client{Timeout: 30 * time.Second}, time.Now, nil)
 	pusher.SetMetrics(metrics)
 	outbox := eventd.NewOutbox(store, store, pusher, cfg.Group, cfg.NodeName, cfg.PushInterval, time.Now)
 	outbox.SetMetrics(metrics)
-	go outbox.Run(ctx, func(err error) {
-		log.Printf("routerd-eventd: outbox error: %v", err)
-	})
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		outbox.Run(ctx, func(err error) { log.Printf("routerd-eventd: outbox error: %v", err) })
+	}()
 
 	return serve(ctx, cfg, receiver)
 }
@@ -178,19 +185,33 @@ func serve(ctx context.Context, cfg eventd.Config, receiver *eventd.Receiver) er
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
-	server := &http.Server{Handler: receiver.Handler()}
-	go func() {
-		<-ctx.Done()
+	log.Printf("routerd-eventd: listening on %s group=%s node=%s", addr, cfg.Group, cfg.NodeName)
+	return serveReceiver(ctx, listener, receiver.Handler())
+}
+
+func serveReceiver(ctx context.Context, listener net.Listener, handler http.Handler) error {
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	defer server.Close()
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	select {
+	case err := <-done:
+		if err == http.ErrServerClosed {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-	log.Printf("routerd-eventd: listening on %s group=%s node=%s", addr, cfg.Group, cfg.NodeName)
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
+		// Wait for active state writes before the caller closes the shared store.
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		if err := <-done; err != http.ErrServerClosed {
+			return err
+		}
 		return nil
 	}
-	return err
 }
 
 func usage(w io.Writer) {

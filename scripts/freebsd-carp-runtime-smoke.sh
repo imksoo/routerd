@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-3-Clause
 #
-# Exercise routerd's generated CARP lifecycle on two isolated VNET jails over
+# Exercise routerd's CARP actor on two isolated VNET jails over
 # a disposable bridge.  This proves MASTER/BACKUP election, failover, restart,
 # owned cleanup, and refusal to adopt an unmarked foreign CARP address.
 set -eu
@@ -18,6 +18,8 @@ done
 [ -x "$routerd" ]
 [ -n "$evidence_dir" ]
 [ "$(uname -s)" = FreeBSD ]
+command -v sqlite3 >/dev/null
+command -v jq >/dev/null
 
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-carp-runtime.XXXXXX)
@@ -33,8 +35,37 @@ b_jail_created=0
 a_started=0
 b_started=0
 
-run_a() { jexec "$jail_a" env ROUTERD_RUNTIME_DIR="$work/a-runtime" routerd_carp_enable=YES sh "$work/routerd-carp-a" "$@"; }
-run_b() { jexec "$jail_b" env ROUTERD_RUNTIME_DIR="$work/b-runtime" routerd_carp_enable=YES sh "$work/routerd-carp-b" "$@"; }
+empty_config="$work/empty.yaml"
+cat >"$empty_config" <<'EOF'
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata: {name: lifecycle-carp-empty}
+spec: {resources: []}
+EOF
+
+apply_actor() {
+  side=$1 label=$2 config=$3 jail_name=$4
+  jexec "$jail_name" "$routerd" serve --once --controllers vrrp \
+    --config "$config" --state-file "$work/$side-state.db" --ledger-file "$work/$side-ledger.db" \
+    --status-file "$work/$side-status-$label.json" --socket "$work/$side-api-$label.sock" \
+    --status-socket "$work/$side-status-$label.sock"
+}
+run_a() { apply_actor a "$1" "$2" "$jail_a"; }
+run_b() { apply_actor b "$1" "$2" "$jail_b"; }
+
+observe_actor() {
+  side=$1 label=$2 ifname=$3
+  sqlite3 "$work/$side-state.db" "SELECT status FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND kind='VirtualAddress' AND name='lifecycle-carp-vip';" >"$evidence_dir/carp-$side-$label.json"
+  jq -e --arg ifname "$ifname" '.phase == "Applied" and .backend == "carp" and .ifname == $ifname and .address == "198.18.232.100/32"' "$evidence_dir/carp-$side-$label.json" >/dev/null
+  sqlite3 "$work/$side-state.db" "SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='vrrp-native';" >"$evidence_dir/carp-$side-native-$label.json"
+  jq -e --arg ifname "$ifname" '(.pending | length) == 0 and (.applied | length) == 1 and .applied[0].backend == "carp" and .applied[0].name == "lifecycle-carp-vip" and .applied[0].ifname == $ifname and .applied[0].address == "198.18.232.100/32" and .applied[0].vhid == 232' "$evidence_dir/carp-$side-native-$label.json" >/dev/null
+}
+
+observe_withdrawal() {
+  side=$1 label=$2
+  sqlite3 "$work/$side-state.db" "SELECT status FROM objects WHERE api_version='routerd.net/v1alpha1' AND kind='Router' AND name='vrrp-native';" >"$evidence_dir/carp-$side-native-$label.json"
+  jq -e '(.pending | length) == 0 and (.applied | length) == 0' "$evidence_dir/carp-$side-native-$label.json" >/dev/null
+}
 
 cleanup() {
   rc=$?
@@ -46,8 +77,8 @@ cleanup() {
       cat "$log" >&2 || true
     done
   fi
-  if [ "$a_started" -eq 1 ]; then run_a onestop >>"$evidence_dir/carp-a-cleanup.log" 2>&1 || rc=1; fi
-  if [ "$b_started" -eq 1 ]; then run_b onestop >>"$evidence_dir/carp-b-cleanup.log" 2>&1 || rc=1; fi
+  if [ "$a_started" -eq 1 ]; then run_a cleanup "$empty_config" >>"$evidence_dir/carp-a-cleanup.log" 2>&1 || rc=1; fi
+  if [ "$b_started" -eq 1 ]; then run_b cleanup "$empty_config" >>"$evidence_dir/carp-b-cleanup.log" 2>&1 || rc=1; fi
   if [ "$a_jail_created" -eq 1 ]; then jail -r "$jail_a" >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
   if [ "$b_jail_created" -eq 1 ]; then jail -r "$jail_b" >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
   if [ -n "$bridge" ] && ifconfig "$bridge" >/dev/null 2>&1; then ifconfig "$bridge" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
@@ -112,16 +143,18 @@ write_router "$work/a.yaml" "$a_if" 150
 write_router "$work/b.yaml" "$b_if" 100
 "$routerd" render freebsd --config "$work/a.yaml" --out-dir "$work/a-rendered" >"$evidence_dir/render-a.log"
 "$routerd" render freebsd --config "$work/b.yaml" --out-dir "$work/b-rendered" >"$evidence_dir/render-b.log"
-cp "$work/a-rendered/rc.d-routerd_carp" "$work/routerd-carp-a"
-cp "$work/b-rendered/rc.d-routerd_carp" "$work/routerd-carp-b"
-chmod 0555 "$work/routerd-carp-a" "$work/routerd-carp-b"
-grep -F 'foreign CARP state is already present; refusing mutation' "$work/routerd-carp-a" >"$evidence_dir/render-carp.log"
-grep -F 'vhid' "$work/routerd-carp-a" >>"$evidence_dir/render-carp.log"
+test ! -e "$work/a-rendered/rc.d-routerd_carp"
+test ! -e "$work/b-rendered/rc.d-routerd_carp"
+if grep -q 'routerd_carp_enable' "$work/a-rendered/rc.conf.d-routerd"; then
+  echo "rendered boot configuration duplicates the CARP actor" >&2; exit 1
+fi
 
-run_a start >"$evidence_dir/carp-a-start.log" 2>&1
 a_started=1
-run_b start >"$evidence_dir/carp-b-start.log" 2>&1
+run_a boot "$work/a.yaml" >"$evidence_dir/carp-a-boot.log" 2>&1
+observe_actor a boot "$a_if"
 b_started=1
+run_b boot "$work/b.yaml" >"$evidence_dir/carp-b-boot.log" 2>&1
+observe_actor b boot "$b_if"
 
 wait_role() {
   jail_name=$1 ifname=$2 role=$3 logfile=$4
@@ -137,20 +170,38 @@ wait_role "$jail_a" "$a_if" MASTER "$evidence_dir/carp-a-master.log"
 wait_role "$jail_b" "$b_if" BACKUP "$evidence_dir/carp-b-backup.log"
 jexec "$jail_b" ping -S 198.18.232.2 -c 3 198.18.232.100 >"$evidence_dir/carp-initial-vip-ping.log"
 
-run_a onestop >"$evidence_dir/carp-a-stop-failover.log" 2>&1
+# New actor processes must retain the exact applied receipt on restart and
+# refresh the owned native parameters when the declared priority changes.
+run_a restart "$work/a.yaml" >"$evidence_dir/carp-a-restart.log" 2>&1
+observe_actor a restart "$a_if"
+jq -e '.changed == false' "$evidence_dir/carp-a-restart.json" >/dev/null
+cmp "$evidence_dir/carp-a-native-boot.json" "$evidence_dir/carp-a-native-restart.json"
+write_router "$work/a.yaml" "$a_if" 160
+run_a change "$work/a.yaml" >"$evidence_dir/carp-a-change.log" 2>&1
+observe_actor a change "$a_if"
+jq -e '.priority == 160 and .changed == true' "$evidence_dir/carp-a-change.json" >/dev/null
+jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-a-changed-interface.log"
+grep -E 'vhid 232 .*advskew 94([[:space:]]|$)' "$evidence_dir/carp-a-changed-interface.log"
+cmp "$evidence_dir/carp-a-native-boot.json" "$evidence_dir/carp-a-native-change.json"
+
+run_a failover "$empty_config" >"$evidence_dir/carp-a-stop-failover.log" 2>&1
 a_started=0
+observe_withdrawal a failover
 wait_role "$jail_b" "$b_if" MASTER "$evidence_dir/carp-b-master-after-failover.log"
 jexec "$jail_a" ping -S 198.18.232.1 -c 3 198.18.232.100 >"$evidence_dir/carp-failover-vip-ping.log"
 
-run_a start >"$evidence_dir/carp-a-restart.log" 2>&1
 a_started=1
-run_a onestatus >"$evidence_dir/carp-a-status-restart.log" 2>&1
-run_b onestatus >"$evidence_dir/carp-b-status-restart.log" 2>&1
+run_a reacquire "$work/a.yaml" >"$evidence_dir/carp-a-reacquire.log" 2>&1
+observe_actor a reacquire "$a_if"
+run_b refresh "$work/b.yaml" >"$evidence_dir/carp-b-refresh.log" 2>&1
+observe_actor b refresh "$b_if"
 
-run_a onestop >"$evidence_dir/carp-a-stop.log" 2>&1
+run_a withdraw "$empty_config" >"$evidence_dir/carp-a-stop.log" 2>&1
 a_started=0
-run_b onestop >"$evidence_dir/carp-b-stop.log" 2>&1
+observe_withdrawal a withdraw
+run_b withdraw "$empty_config" >"$evidence_dir/carp-b-stop.log" 2>&1
 b_started=0
+observe_withdrawal b withdraw
 if jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-a-after-stop.log" 2>&1 && grep -F 'vhid 232' "$evidence_dir/carp-a-after-stop.log" >/dev/null; then
   echo "routerd-owned CARP state survived stop" >&2; exit 1
 fi
@@ -158,23 +209,23 @@ fi
 # Exercise both foreign collision predicates independently: desired address
 # under another VHID, then the desired VHID with another address.
 jexec "$jail_a" ifconfig "$a_if" inet vhid 233 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.100/32
-if run_a start >"$evidence_dir/carp-foreign-address-refusal.log" 2>&1; then
-  echo "generated CARP service adopted a foreign desired address" >&2; exit 1
+if run_a foreign-address "$work/a.yaml" >"$evidence_dir/carp-foreign-address-refusal.log" 2>&1; then
+  echo "CARP actor adopted a foreign desired address" >&2; exit 1
 fi
 jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-address-preserved.log"
 grep -F 'vhid 233' "$evidence_dir/carp-foreign-address-preserved.log"
 jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.100/32 -alias
 jexec "$jail_a" ifconfig "$a_if" inet vhid 232 advbase 1 advskew 100 pass lifecycle-carp-secret alias 198.18.232.101/32
-if run_a start >"$evidence_dir/carp-foreign-vhid-refusal.log" 2>&1; then
-  echo "generated CARP service adopted a foreign matching VHID" >&2; exit 1
+if run_a foreign-vhid "$work/a.yaml" >"$evidence_dir/carp-foreign-vhid-refusal.log" 2>&1; then
+  echo "CARP actor adopted a foreign matching VHID" >&2; exit 1
 fi
 jexec "$jail_a" ifconfig "$a_if" >"$evidence_dir/carp-foreign-vhid-preserved.log"
 grep -F 'vhid 232' "$evidence_dir/carp-foreign-vhid-preserved.log"
 jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.101/32 -alias
 
 printf '%s\n' \
-  'carp-generated-vnet-master-backup-failover-restart-stop=ok' \
+  'carp-actor-vnet-boot-master-backup-change-failover-restart-withdraw=ok' \
   'carp-vip-ping-before-after-failover=ok' \
-  'carp-foreign-address-and-vhid=generated-refusal-preserved' \
+  'carp-foreign-address-and-vhid=actor-refusal-preserved' \
   'carp-owned-cleanup=ok' >"$evidence_dir/summary.log"
 printf 'freebsd-carp-runtime=ok\n' >"$evidence_dir/result"

@@ -3,8 +3,6 @@
 package resource
 
 import (
-	"database/sql"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -43,61 +41,29 @@ func TestSQLiteLedgerPersistsArtifacts(t *testing.T) {
 	}
 }
 
-func TestSQLiteLedgerMigratesTwoTableSQLiteArtifacts(t *testing.T) {
+func TestReadOnlyLedgerObservesWALAndRejectsMutation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd.db")
-	db, err := sql.Open("sqlite", path)
+	writer, err := OpenSQLiteLedger(path)
 	if err != nil {
-		t.Fatalf("open fixture db: %v", err)
+		t.Fatal(err)
 	}
-	_, err = db.Exec(`CREATE TABLE artifacts(id TEXT PRIMARY KEY, kind TEXT, name TEXT, owner TEXT, attributes TEXT, source TEXT, generation INTEGER, observed_at TEXT);
-INSERT INTO artifacts(id,kind,name,owner,attributes,source,generation,observed_at) VALUES('nft.table/routerd_nat','nft.table','routerd_nat','net.routerd.net/v1alpha1/NAT44Rule/lan','{"family":"ip","name":"routerd_nat"}','routerd',1,'2026-04-28T00:00:00Z');`)
+	defer writer.Close()
+	artifact := Artifact{Kind: "ip.route", Name: "test", Owner: "routerd/test"}
+	if err := writer.Remember([]Artifact{artifact}); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenSQLiteLedgerReadOnly(path)
 	if err != nil {
-		t.Fatalf("seed fixture db: %v", err)
+		t.Fatal(err)
 	}
-	_ = db.Close()
-
-	ledger, err := OpenSQLiteLedger(path)
-	if err != nil {
-		t.Fatalf("open sqlite ledger: %v", err)
+	defer reader.Close()
+	if owns, err := reader.Owns(artifact); err != nil || !owns {
+		t.Fatalf("committed ownership missing: %t %v", owns, err)
 	}
-	defer func() { _ = ledger.Close() }()
-	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
-	if owns, err := ledger.Owns(artifact); err != nil || !owns {
-		t.Fatal("migrated ledger does not own artifact")
+	if err := reader.Forget([]Artifact{artifact}); err == nil {
+		t.Fatal("read-only ledger accepted deletion")
 	}
-}
-
-func TestSQLiteLedgerMigratesLegacyJSONAndRenames(t *testing.T) {
-	dir := t.TempDir()
-	legacy := filepath.Join(dir, "artifacts.json")
-	if err := os.WriteFile(legacy, []byte(`{
-  "version": 1,
-  "artifacts": [
-    {
-      "kind": "nft.table",
-      "name": "routerd_nat",
-      "owner": "net.routerd.net/v1alpha1/NAT44Rule/lan",
-      "attributes": {"family": "ip", "name": "routerd_nat"}
-    }
-  ]
-}
-`), 0644); err != nil {
-		t.Fatalf("write legacy ledger: %v", err)
-	}
-
-	ledger, err := OpenSQLiteLedger(filepath.Join(dir, "routerd.db"))
-	if err != nil {
-		t.Fatalf("open sqlite ledger: %v", err)
-	}
-	defer func() { _ = ledger.Close() }()
-	artifact := Artifact{Kind: "nft.table", Name: "routerd_nat", Owner: "net.routerd.net/v1alpha1/NAT44Rule/lan"}
-	if owns, err := ledger.Owns(artifact); err != nil || !owns {
-		t.Fatal("migrated ledger does not own artifact")
-	}
-	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
-		t.Fatalf("legacy ledger still present: %v", err)
-	}
-	if _, err := os.Stat(legacy + ".migrated"); err != nil {
-		t.Fatalf("migrated ledger missing: %v", err)
+	if owns, err := writer.Owns(artifact); err != nil || !owns {
+		t.Fatalf("plan changed ownership: %t %v", owns, err)
 	}
 }

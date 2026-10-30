@@ -16,6 +16,7 @@ type HealthCheckSystemdOptions struct {
 	Resource             string
 	Target               string
 	Protocol             string
+	AddressFamily        string
 	Via                  string
 	FwMark               int
 	RequireDSLiteBinding bool
@@ -36,28 +37,32 @@ type HealthCheckDaemonUnitOptions struct {
 	Resource    string
 	Spec        api.HealthCheckSpec
 	Router      *api.Router
-	Aliases     map[string]string
 	Environment []string
 	RuntimeRoot string
 	StateRoot   string
 	LogRoot     string
 }
 
-func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.SystemdUnitSpec {
+func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) (api.SystemdUnitSpec, error) {
 	resource := options.Resource
-	spec := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
+	spec, err := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
+	if err != nil {
+		return api.SystemdUnitSpec{}, err
+	}
 	runtimeRoot := defaultString(options.RuntimeRoot, "/run")
 	stateRoot := defaultString(options.StateRoot, "/var/lib")
 	logRoot := defaultString(options.LogRoot, "/var/log")
 	sourceInterface := strings.TrimSpace(spec.SourceInterface)
-	if options.Aliases != nil && options.Aliases[sourceInterface] != "" {
-		sourceInterface = options.Aliases[sourceInterface]
-	}
 	sourceAddress := strings.TrimSpace(spec.SourceAddress)
 	if sourceAddress == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
-		if value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom); err == nil {
-			sourceAddress = value
+		value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom)
+		if err != nil {
+			return api.SystemdUnitSpec{}, fmt.Errorf("HealthCheck/%s sourceAddressFrom: %w", resource, err)
 		}
+		if value == "" && !spec.SourceAddressFrom.Optional {
+			return api.SystemdUnitSpec{}, fmt.Errorf("HealthCheck/%s sourceAddressFrom is unavailable in static render", resource)
+		}
+		sourceAddress = value
 	}
 	socket := runtimeRoot + "/routerd/healthcheck/" + resource + ".sock"
 	execStart := []string{"/usr/local/sbin/routerd-healthcheck", "daemon", "--resource", resource}
@@ -67,7 +72,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		}
 	}
 	appendFlag("--target", spec.Target)
-	appendFlag("--protocol", spec.Protocol)
+	appendFlag("--protocol", spec.Probe().Protocol)
 	appendFlag("--address-family", spec.AddressFamily)
 	appendFlag("--via", spec.Via)
 	if spec.FwMark != 0 {
@@ -110,7 +115,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) api.Syst
 		CapabilityBoundingSet:    capabilities,
 		AmbientCapabilities:      capabilities,
 		NoNewPrivileges:          &noNewPrivileges,
-	}
+	}, nil
 }
 
 func boolValuePtr(value bool) *bool {
@@ -139,6 +144,9 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 	if options.Protocol != "" {
 		args += " --protocol " + strconv.Quote(options.Protocol)
+	}
+	if options.AddressFamily != "" {
+		args += " --address-family " + strconv.Quote(options.AddressFamily)
 	}
 	if options.Via != "" {
 		args += " --via " + strconv.Quote(options.Via)
@@ -181,7 +189,8 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 
 	capabilities := strings.Join(healthCheckCapabilities(options.FwMark), " ")
-	return []byte(fmt.Sprintf(`[Unit]
+	return []byte(fmt.Sprintf(`# Managed by routerd. Do not edit by hand.
+[Unit]
 Description=routerd healthcheck %s
 BindsTo=routerd.service
 After=routerd.service network-online.target
@@ -213,7 +222,7 @@ func systemdEnvironmentLines(values []string) string {
 	var b strings.Builder
 	for _, value := range values {
 		b.WriteString("Environment=")
-		b.WriteString(strconv.Quote(value))
+		b.WriteString(strconv.Quote(strings.ReplaceAll(value, "%", "%%")))
 		b.WriteString("\n")
 	}
 	return b.String()

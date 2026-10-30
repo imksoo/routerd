@@ -6,7 +6,10 @@ import "testing"
 
 func TestSetEmptyNormalizesToUnset(t *testing.T) {
 	store := New()
-	got := store.Set("wan.ipv6.pd", "", "no prefix")
+	got, err := store.Set("wan.ipv6.pd", "", "no prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.Status != StatusUnset {
 		t.Fatalf("status = %s, want %s", got.Status, StatusUnset)
 	}
@@ -21,7 +24,10 @@ func TestUnknownIsDefaultAndForget(t *testing.T) {
 		t.Fatalf("missing status = %s, want %s", got.Status, StatusUnknown)
 	}
 	store.Set("wan.ipv6.mode", "pd-ready", "test")
-	got := store.Forget("wan.ipv6.mode", "reset")
+	got, err := store.Forget("wan.ipv6.mode", "reset")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.Status != StatusUnknown {
 		t.Fatalf("forgotten status = %s, want %s", got.Status, StatusUnknown)
 	}

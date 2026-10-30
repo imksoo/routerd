@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
@@ -130,7 +132,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(firewallPolicies, func(i, j int) bool { return firewallPolicies[i].Metadata.Name < firewallPolicies[j].Metadata.Name })
 	sort.Slice(firewallLogs, func(i, j int) bool { return firewallLogs[i].Metadata.Name < firewallLogs[j].Metadata.Name })
-	sort.Slice(firewallRules, func(i, j int) bool { return firewallRules[i].Metadata.Name < firewallRules[j].Metadata.Name })
+	sortFirewallRules(firewallRules)
 	sort.Slice(firewallFlowPinholes, func(i, j int) bool {
 		return firewallFlowPinholes[i].Metadata.Name < firewallFlowPinholes[j].Metadata.Name
 	})
@@ -142,7 +144,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
 	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 || len(firewallFlowPinholes) > 0 || len(clientPolicies) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, firewallFlowPinholes, clientPolicies, InternalFirewallHoles(router), ingressRules, addressSets, routerWantsTrafficFlowDPIObservation(router), dnsmasqIPv6OnlyFirewallInterfaces(router, aliases)); err != nil {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, firewallFlowPinholes, clientPolicies, InternalFirewallHoles(router, platform.OSLinux), ingressRules, addressSets, routerWantsTrafficFlowDPIObservation(router), dnsmasqIPv6OnlyFirewallInterfaces(router, aliases)); err != nil {
 			return nil, err
 		}
 	}
@@ -623,7 +625,7 @@ func NftablesNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
 	return NftablesNAT44RulesForRouter(nil, rules)
 }
 
-func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([]byte, error) {
+func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule, states ...IngressServiceState) ([]byte, error) {
 	var ingressRules []ingressNATRule
 	var flowDNATPinholes []api.Resource
 	var redirectRules []localServiceRedirectRule
@@ -654,7 +656,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 			referencedNAT44IPAddressSets(rules, sets),
 			referencedNAT44FlowDNATPinholeIPAddressSets(flowDNATPinholes, sets),
 		)
-		ingressRules, err = ingressNATRules(router, aliases)
+		ingressRules, err = ingressNATRules(router, aliases, states...)
 		if err != nil {
 			return nil, err
 		}
@@ -671,6 +673,7 @@ func NftablesNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule) ([
 		writeNftTablePreamble(&buf, "ip", "routerd_nat")
 		buf.WriteString("table ip routerd_nat {\n")
 		writeNftTableOwnerMarker(&buf)
+		writeIngressUnavailableRules(&buf, ingressRules)
 		writeIPv4AddressSets(&buf, addressSets)
 		writeNAT44FlowDNATPinholeMaps(&buf, flowDNATPinholes)
 		if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
@@ -729,6 +732,10 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 }
 
 func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]string, error) {
+	return outboundAliasesForOS(router, platform.OSLinux, intents)
+}
+
+func outboundAliasesForOS(router *api.Router, targetOS platform.OS, intents []dynamicconfig.LocalCaptureIntent) (map[string]string, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -752,7 +759,7 @@ func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dyn
 			if !api.BoolDefault(spec.Enabled, true) {
 				continue
 			}
-			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
+			aliases[res.Metadata.Name] = api.DSLiteRuntimeIfName(stringutil.FirstNonEmpty(spec.TunnelName, spec.Interface, res.Metadata.Name), string(targetOS))
 		case "Bridge":
 			spec, err := res.BridgeSpec()
 			if err != nil {
@@ -892,7 +899,7 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Metadata.Name < zones[j].Metadata.Name })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Metadata.Name < policies[j].Metadata.Name })
 	sort.Slice(logs, func(i, j int) bool { return logs[i].Metadata.Name < logs[j].Metadata.Name })
-	sort.Slice(rules, func(i, j int) bool { return rules[i].Metadata.Name < rules[j].Metadata.Name })
+	sortFirewallRules(rules)
 	sort.Slice(flowPinholes, func(i, j int) bool { return flowPinholes[i].Metadata.Name < flowPinholes[j].Metadata.Name })
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 	var buf bytes.Buffer
@@ -960,7 +967,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	buf.WriteString("    ct state invalid counter drop\n")
 	buf.WriteString("    ct state { established, related } counter accept\n")
 	buf.WriteString("    iifname \"lo\" counter accept\n")
-	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
+	buf.WriteString("    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept\n")
 	writeClientPolicyInputRules(buf, clientPolicies)
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) == 0 {
@@ -981,7 +988,6 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 		buf.WriteString("    ct state { new, established } " + nftSampledLogExpr("routerd firewall forward accept ", logging.AcceptSampleRate, logging) + "\n")
 	}
 	buf.WriteString("    ct state { established, related } counter accept\n")
-	buf.WriteString("    meta l4proto ipv6-icmp counter accept\n")
 	writeIngressForwardAcceptRules(buf, ingressRules)
 	writeClientPolicyForwardRules(buf, clientPolicies, logging)
 	for _, from := range sortedZones {
@@ -1632,22 +1638,22 @@ func nftFirewallRuleExprs(name string, spec api.FirewallRuleSpec, logging firewa
 	if limit := nftFirewallRateLimitExpr(spec.RateLimit); limit != "" {
 		suffix = append(suffix, limit)
 		if spec.RateLimit.Log {
-			suffix = append(suffix, nftLogExpr("routerd firewall "+name+" rate-limit ", logging))
+			suffix = append(suffix, nftLogExpr("routerd firewall "+name+" rate-limit "+spec.Action+" ", logging))
 		}
 	}
 	if spec.Log {
-		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" ", logging))
+		suffix = append(suffix, nftLogExpr("routerd firewall "+name+" "+spec.Action+" ", logging))
 	}
 	suffix = append(suffix, "counter", spec.Action)
 	connSuffix := append([]string{}, common...)
 	if spec.Log {
-		connSuffix = append(connSuffix, nftLogExpr("routerd firewall "+name+" ", logging))
+		connSuffix = append(connSuffix, nftLogExpr("routerd firewall "+name+" "+spec.Action+" ", logging))
 	}
 	connSuffix = append(connSuffix, "counter", spec.Action)
 	var out []string
 	for _, match := range matches {
 		if spec.ConnLimit.MaxPerSource > 0 {
-			for _, connLimit := range nftFirewallConnLimitExprs(name, spec.ConnLimit, match.Family, logging) {
+			for _, connLimit := range nftFirewallConnLimitExprs(name, spec.Action, spec.ConnLimit, match.Family, logging) {
 				out = append(out, strings.Join(strings.Fields(strings.Join([]string{match.Expr, connLimit, strings.Join(connSuffix, " ")}, " ")), " "))
 			}
 		}
@@ -1886,14 +1892,14 @@ func nftFirewallRateLimitExpr(limit api.FirewallRateLimitSpec) string {
 	return expr
 }
 
-func nftFirewallConnLimitExprs(name string, limit api.FirewallConnLimitSpec, family string, logging firewallLogging) []string {
+func nftFirewallConnLimitExprs(name, action string, limit api.FirewallConnLimitSpec, family string, logging firewallLogging) []string {
 	if limit.MaxPerSource <= 0 {
 		return []string{""}
 	}
 	safeName := nftSetName("routerd_conn_" + name)
 	logExpr := ""
 	if limit.Log {
-		logExpr = nftLogExpr("routerd firewall "+name+" conn-limit ", logging)
+		logExpr = nftLogExpr("routerd firewall "+name+" conn-limit "+action+" ", logging)
 	}
 	if family == "ip" {
 		return []string{strings.TrimSpace("meter " + safeName + "_v4 { ip saddr ct count over " + strconv.Itoa(limit.MaxPerSource) + " } " + logExpr)}
@@ -1990,13 +1996,22 @@ func nftFirewallMatchAlternatives(resourceID string, spec api.FirewallRuleSpec, 
 					continue
 				}
 			}
-			parts := []string{source.Expr, destination.Expr}
-			for _, exclude := range excludes {
-				if exclude.Family == "" || family == "" || exclude.Family == family {
-					parts = append(parts, exclude.Expr)
-				}
+			families := []string{family}
+			if family == "" && len(excludes) > 0 {
+				families = []string{"ip", "ip6"}
 			}
-			out = append(out, nftFirewallMatch{Family: family, Expr: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
+			for _, matchFamily := range families {
+				parts := []string{source.Expr, destination.Expr}
+				if family == "" && matchFamily != "" {
+					parts = append(parts, "meta nfproto "+map[string]string{"ip": "ipv4", "ip6": "ipv6"}[matchFamily])
+				}
+				for _, exclude := range excludes {
+					if exclude.Family == "" || exclude.Family == matchFamily {
+						parts = append(parts, exclude.Expr)
+					}
+				}
+				out = append(out, nftFirewallMatch{Family: matchFamily, Expr: strings.Join(strings.Fields(strings.Join(parts, " ")), " ")})
+			}
 		}
 	}
 	if len(out) == 0 {
@@ -2147,6 +2162,7 @@ func writeNAT44Table(buf *bytes.Buffer, router *api.Router, aliases map[string]s
 	writeNftTablePreamble(buf, "ip", "routerd_nat")
 	buf.WriteString("table ip routerd_nat {\n")
 	writeNftTableOwnerMarker(buf)
+	writeIngressUnavailableRules(buf, ingressRules)
 	writeIPv4AddressSets(buf, addressSets)
 	writeNAT44FlowDNATPinholeMaps(buf, flowDNATPinholes)
 	if len(flowDNATPinholes) > 0 || len(ingressRules) > 0 || hasIPv4LocalServiceRedirectRules(redirectRules) {
@@ -2378,7 +2394,44 @@ func writeIngressDNATChains(buf *bytes.Buffer, rules []ingressNATRule) {
 	}
 }
 
+func writeIngressUnavailableRules(buf *bytes.Buffer, rules []ingressNATRule) {
+	var unavailable []ingressNATRule
+	for _, rule := range rules {
+		if rule.UnavailableAction != "" {
+			unavailable = append(unavailable, rule)
+		}
+	}
+	if len(unavailable) == 0 {
+		return
+	}
+	for _, hook := range []string{"input", "forward"} {
+		buf.WriteString("  chain ingress_unavailable_" + hook + " {\n")
+		buf.WriteString("    type filter hook " + hook + " priority filter - 1; policy accept;\n")
+		for _, rule := range unavailable {
+			ifnames := append([]string{rule.ListenInterface}, rule.HairpinInterfaces...)
+			parts := []string{nftIfNameMatch("iifname", ifnames), "meta l4proto " + rule.Protocol, "ct direction original"}
+			if rule.ListenAddress != "" {
+				parts = append(parts, "ct original ip daddr "+rule.ListenAddress)
+			}
+			parts = append(parts, "ct original proto-dst "+strconv.Itoa(rule.ListenPort), "counter")
+			action := "drop"
+			if rule.UnavailableAction == "reject" {
+				action = "reject with icmp type port-unreachable"
+				if rule.Protocol == "tcp" {
+					action = "reject with tcp reset"
+				}
+			}
+			parts = append(parts, action, "comment "+nftQuote("routerd "+rule.ResourceKind+" "+rule.Name+" no healthy backends"))
+			buf.WriteString("    " + strings.Join(parts, " ") + "\n")
+		}
+		buf.WriteString("  }\n")
+	}
+}
+
 func writeIngressDNATRule(buf *bytes.Buffer, rule ingressNATRule, ifname string, commentSuffix string) {
+	if rule.UnavailableAction != "" {
+		return
+	}
 	var parts []string
 	parts = append(parts, "iifname "+nftQuote(ifname))
 	if rule.ListenAddress != "" {
@@ -2463,6 +2516,9 @@ func sanitizeNftIdentifier(value string) string {
 }
 
 func ingressRuleTargets(rule ingressNATRule) []ingressNATTarget {
+	if rule.UnavailableAction != "" {
+		return nil
+	}
 	if len(rule.Targets) > 0 {
 		return rule.Targets
 	}

@@ -26,10 +26,12 @@ import (
 
 type Store interface {
 	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
+	ReadObjectStatus(apiVersion, kind, name string) (map[string]any, error)
 	ObjectStatus(apiVersion, kind, name string) map[string]any
 }
 
 type Controller struct {
+	OS           platform.OS
 	Router       *api.Router
 	Bus          *bus.Bus
 	Store        Store
@@ -37,6 +39,7 @@ type Controller struct {
 	IngressLive  bool
 	NftablesPath string
 	NftCommand   string
+	PFDevicePath string
 	Interval     time.Duration
 	Logger       *slog.Logger
 }
@@ -81,8 +84,12 @@ func (c Controller) reconcileLogged(ctx context.Context) error {
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
 	var rules []render.NAT44RenderRule
-	aliases := interfaceAliases(c.Router)
+	aliases := interfaceAliases(c.Router, targetOS)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NAT44Rule" {
 			continue
@@ -91,7 +98,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ifname, reason := c.resolveEgressInterface(spec, aliases)
+		ifname, reason, err := c.resolveEgressInterface(spec, aliases)
+		if err != nil {
+			return err
+		}
 		if ifname == "" {
 			status := map[string]any{
 				"phase":      "Pending",
@@ -104,7 +114,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		snatAddress, snatReason := c.resolveSNATAddress(spec)
+		snatAddress, snatReason, err := c.resolveSNATAddress(spec)
+		if err != nil {
+			return err
+		}
 		if spec.Type == "snat" && snatAddress == "" {
 			status := map[string]any{
 				"phase":      "Pending",
@@ -129,7 +142,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			SNATAddress:               snatAddress,
 		})
 	}
-	renderRouter := c.effectiveIngressRouter()
+	renderRouter := c.Router
 	applyLive := !c.DryRun || c.IngressLive
 	applyRouter := renderRouter
 	renderRules := rules
@@ -139,21 +152,16 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			renderRules = nil
 		}
 	}
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		if len(rules) == 0 {
-			if !applyLive {
-				return nil
-			}
-			return c.clearPF(ctx)
-		}
-		return c.reconcilePF(ctx, rules)
+	if targetOS == platform.OSFreeBSD {
+		return c.reconcilePF(ctx, applyRouter, renderRules, rules)
 	}
-	data, err := render.NftablesNAT44RulesForRouter(applyRouter, renderRules)
+	states, err := c.ingressServiceStates()
 	if err != nil {
 		return err
 	}
-	if len(data) == 0 {
-		return nil
+	data, err := render.NftablesNAT44RulesForRouter(applyRouter, renderRules, states...)
+	if err != nil {
+		return err
 	}
 	path := stringutil.FirstNonEmpty(c.NftablesPath, "/run/routerd/nat44.nft")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -166,6 +174,9 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if changed {
+		if err := nftstate.Invalidate(path); err != nil {
+			return err
+		}
 		if err := os.WriteFile(path, data, 0644); err != nil {
 			return err
 		}
@@ -177,31 +188,67 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	if !changed && nftstate.RecentlyVerified(path, time.Now().UTC()) {
 		return c.saveRuleStatuses(ctx, rules, path, false, false)
 	}
-	missing := (strings.Contains(string(data), "table ip routerd_nat") && !nftTableExists(ctx, nft, "ip", "routerd_nat")) ||
-		(strings.Contains(string(data), "table ip6 routerd_nat") && !nftTableExists(ctx, nft, "ip6", "routerd_nat"))
-	if !changed && !missing {
-		_ = nftstate.MarkVerified(path, time.Now().UTC())
-		return c.saveRuleStatuses(ctx, rules, path, false, false)
-	}
-	if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+	if err := nftstate.Invalidate(path); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, nft, "-f", path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nft -f %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	if len(data) > 0 {
+		if err := checkNftablesRuleset(ctx, nft, path); err != nil {
+			return err
+		}
 	}
-	_ = nftstate.MarkVerified(path, time.Now().UTC())
-	return c.saveRuleStatuses(ctx, rules, path, changed, missing)
+	for _, family := range []string{"ip", "ip6"} {
+		if strings.Contains(string(data), "table "+family+" routerd_nat") {
+			continue
+		}
+		if err := clearNftablesTable(ctx, nft, family); err != nil {
+			return err
+		}
+	}
+	if len(data) > 0 {
+		out, err := exec.CommandContext(ctx, nft, "-f", path).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s -f %s: %w: %s", nft, path, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if err := nftstate.MarkVerified(path, time.Now().UTC()); err != nil {
+		return err
+	}
+	return c.saveRuleStatuses(ctx, rules, path, changed, true)
 }
 
-func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderRule) error {
-	data, err := render.PFNAT44Rules(rules)
+func clearNftablesTable(ctx context.Context, nft, family string) error {
+	out, err := exec.CommandContext(ctx, nft, "delete", "table", family, "routerd_nat").CombinedOutput()
+	if err != nil && !strings.Contains(string(out), "No such file or directory") {
+		return fmt.Errorf("%s delete table %s routerd_nat: %w: %s", nft, family, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (c Controller) reconcilePF(ctx context.Context, router *api.Router, rules, statusRules []render.NAT44RenderRule) error {
+	states, err := c.ingressServiceStates()
 	if err != nil {
 		return err
 	}
+	data, err := render.PFNAT44RulesForRouter(router, rules, states...)
+	if err != nil {
+		return err
+	}
+	// With no desired anchor and no PF device there is nothing to withdraw.
+	// A present device still needs an empty load to remove old rules, including
+	// rules left by an earlier daemon. Unknown device state is never absence.
+	if len(data) == 0 && (!c.DryRun || c.IngressLive) {
+		device := stringutil.FirstNonEmpty(c.PFDevicePath, "/dev/pf")
+		if _, err := os.Stat(device); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("observe PF device: %w", err)
+		}
+	}
 	defaults, _ := platform.Current()
-	path := filepath.Join(defaults.RuntimeDir, "nat44.pf")
+	path := stringutil.FirstNonEmpty(c.NftablesPath, filepath.Join(defaults.RuntimeDir, "nat44.pf"))
+	if strings.HasSuffix(path, ".nft") {
+		path = strings.TrimSuffix(path, ".nft") + ".pf"
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -216,8 +263,8 @@ func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderR
 			return err
 		}
 	}
-	if c.DryRun {
-		return c.saveRuleStatuses(ctx, rules, path, changed, false)
+	if c.DryRun && !c.IngressLive {
+		return c.saveRuleStatuses(ctx, statusRules, path, changed, false)
 	}
 	pfctl := stringutil.FirstNonEmpty(c.NftCommand, "pfctl")
 	if c.NftCommand == "" || c.NftCommand == "nft" {
@@ -229,23 +276,7 @@ func (c Controller) reconcilePF(ctx context.Context, rules []render.NAT44RenderR
 	if out, err := exec.CommandContext(ctx, pfctl, "-a", "routerd_nat", "-f", path).CombinedOutput(); err != nil {
 		return fmt.Errorf("%s -a routerd_nat -f %s: %w: %s", pfctl, path, err, strings.TrimSpace(string(out)))
 	}
-	return c.saveRuleStatuses(ctx, rules, path, changed, false)
-}
-
-func (c Controller) clearPF(ctx context.Context) error {
-	pfctl := stringutil.FirstNonEmpty(c.NftCommand, "pfctl")
-	if c.NftCommand == "" || c.NftCommand == "nft" {
-		pfctl = "pfctl"
-	}
-	out, err := exec.CommandContext(ctx, pfctl, "-a", "routerd_nat", "-F", "rules").CombinedOutput()
-	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if strings.Contains(text, "/dev/pf") || strings.Contains(text, "No such file or directory") {
-			return nil
-		}
-		return fmt.Errorf("%s -a routerd_nat -F rules: %w: %s", pfctl, err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return c.saveRuleStatuses(ctx, statusRules, path, changed, false)
 }
 
 func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44RenderRule, path string, changed, missing bool) error {
@@ -276,14 +307,6 @@ func (c Controller) saveRuleStatuses(ctx context.Context, rules []render.NAT44Re
 	return nil
 }
 
-func nat44TableExists(ctx context.Context, nft string) bool {
-	return nftTableExists(ctx, nft, "ip", "routerd_nat")
-}
-
-func nftTableExists(ctx context.Context, nft, family, name string) bool {
-	return exec.CommandContext(ctx, nft, "list", "table", family, name).Run() == nil
-}
-
 func checkNftablesRuleset(ctx context.Context, nft, path string) error {
 	out, err := exec.CommandContext(ctx, nft, "-c", "-f", path).CombinedOutput()
 	if err != nil {
@@ -292,12 +315,12 @@ func checkNftablesRuleset(ctx context.Context, nft, path string) error {
 	return nil
 }
 
-func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[string]string) (string, string) {
+func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[string]string) (string, string, error) {
 	if spec.EgressInterface != "" {
 		if ifname := aliases[spec.EgressInterface]; ifname != "" {
-			return ifname, ""
+			return ifname, "", nil
 		}
-		return spec.EgressInterface, ""
+		return spec.EgressInterface, "", nil
 	}
 	policyName := spec.EgressPolicyRef
 	if policyName == "" {
@@ -307,68 +330,68 @@ func (c Controller) resolveEgressInterface(spec api.NAT44RuleSpec, aliases map[s
 		}
 	}
 	if policyName == "" {
-		return "", "EgressPolicyMissing"
+		return "", "EgressPolicyMissing", nil
 	}
-	status := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policyName)
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", policyName)
+	if err != nil {
+		return "", "", err
+	}
 	if fmt.Sprint(status["phase"]) != "Applied" {
-		return "", "EgressPolicyNotApplied"
+		return "", "EgressPolicyNotApplied", nil
 	}
 	if selected, _ := status["selectedDevice"].(string); selected != "" {
-		return selected, ""
+		return selected, "", nil
 	}
-	return "", "SelectedDeviceMissing"
+	return "", "SelectedDeviceMissing", nil
 }
 
-func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string) {
+func (c Controller) resolveSNATAddress(spec api.NAT44RuleSpec) (string, string, error) {
 	if spec.Type != "snat" {
-		return "", ""
+		return "", "", nil
 	}
 	if strings.TrimSpace(spec.SNATAddress) != "" {
-		return strings.TrimSpace(spec.SNATAddress), ""
+		return strings.TrimSpace(spec.SNATAddress), "", nil
 	}
 	if strings.TrimSpace(spec.SNATAddressFrom.Resource) == "" {
-		return "", "SNATAddressMissing"
+		return "", "SNATAddressMissing", nil
 	}
-	value := statusvalue.Address(resourcequery.Value(c.Store, spec.SNATAddressFrom))
+	resolved, err := resourcequery.ReadValue(c.Store, spec.SNATAddressFrom)
+	if err != nil {
+		return "", "", err
+	}
+	value := statusvalue.Address(resolved)
 	if value == "" {
 		value = statusvalue.Address(addressFromRouterResource(c.Router, spec.SNATAddressFrom))
 	}
 	if value == "" {
-		return "", "SNATAddressSourcePending"
+		return "", "SNATAddressSourcePending", nil
 	}
-	return value, ""
+	return value, "", nil
 }
 
-func (c Controller) effectiveIngressRouter() *api.Router {
+func (c Controller) ingressServiceStates() ([]render.IngressServiceState, error) {
 	if c.Router == nil || c.Store == nil {
-		return c.Router
+		return nil, nil
 	}
-	next := *c.Router
-	next.Spec.Resources = append([]api.Resource(nil), c.Router.Spec.Resources...)
-	for i, resource := range next.Spec.Resources {
+	var states []render.IngressServiceState
+	for _, resource := range c.Router.Spec.Resources {
 		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "IngressService" {
 			continue
 		}
-		spec, err := resource.IngressServiceSpec()
+		state := render.IngressServiceState{Name: resource.Metadata.Name}
+		status, err := c.Store.ReadObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		status := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
 		if backends, selection := activeBackends(status); len(backends) > 0 {
-			spec.Backends = backends
-			spec.Policy.Selection = selection
-			next.Spec.Resources[i].Spec = spec
-			continue
+			state.Backends, state.Selection = backends, selection
+		} else if name, address, port := activeBackend(status["activeBackend"]); address != "" && port != 0 {
+			state.Backends = []api.IngressBackendSpec{{Name: name, Address: address, Port: port}}
+			state.Selection = "failover"
 		}
-		name, address, port := activeBackend(status["activeBackend"])
-		if address == "" || port == 0 {
-			continue
-		}
-		spec.Backends = []api.IngressBackendSpec{{Name: name, Address: address, Port: port}}
-		spec.Policy.Selection = "failover"
-		next.Spec.Resources[i].Spec = spec
+		states = append(states, state)
 	}
-	return &next
+	return states, nil
 }
 
 func (c Controller) applyRouter(router *api.Router) *api.Router {
@@ -484,7 +507,7 @@ func addressFromRouterResource(router *api.Router, source api.StatusValueSourceS
 	return ""
 }
 
-func interfaceAliases(router *api.Router) map[string]string {
+func interfaceAliases(router *api.Router, targetOS platform.OS) map[string]string {
 	aliases := map[string]string{}
 	if router == nil {
 		return aliases
@@ -499,7 +522,7 @@ func interfaceAliases(router *api.Router) map[string]string {
 		case "DSLiteTunnel":
 			spec, err := resource.DSLiteTunnelSpec()
 			if err == nil {
-				aliases[resource.Metadata.Name] = stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+				aliases[resource.Metadata.Name] = api.DSLiteRuntimeIfName(stringutil.FirstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name), string(targetOS))
 			}
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()

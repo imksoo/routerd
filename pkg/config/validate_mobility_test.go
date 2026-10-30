@@ -1767,6 +1767,7 @@ func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
 			{NodeRef: "azure-router", Site: "azure", Role: "cloud"},
 		},
 		StaticHandovers: []api.MobilityStaticHandover{{
+			ID:          "move-client-10-once",
 			Address:     "10.88.60.10/32",
 			FromNodeRef: "onprem-router",
 			ToNodeRef:   "azure-router",
@@ -1774,6 +1775,15 @@ func TestValidateMobilityPoolStaticOwnedAndHandover(t *testing.T) {
 	}
 	if err := Validate(mobilityPoolRouter(spec)); err != nil {
 		t.Fatalf("Validate static mobility pool: %v", err)
+	}
+	spec.StaticHandovers[0].ID = ""
+	if err := Validate(mobilityPoolRouter(spec)); err == nil || !strings.Contains(err.Error(), ".id is required") {
+		t.Fatalf("missing transfer identity accepted: %v", err)
+	}
+	spec.StaticHandovers[0].ID = "move-client-10-once"
+	spec.StaticHandovers = append(spec.StaticHandovers, api.MobilityStaticHandover{ID: spec.StaticHandovers[0].ID, Address: "10.88.60.11/32", FromNodeRef: "onprem-router", ToNodeRef: "azure-router"})
+	if err := Validate(mobilityPoolRouter(spec)); err == nil || !strings.Contains(err.Error(), "duplicates another handover") {
+		t.Fatalf("duplicate transfer identity accepted: %v", err)
 	}
 }
 

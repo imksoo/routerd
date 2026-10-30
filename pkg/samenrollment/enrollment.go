@@ -65,6 +65,7 @@ func JoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
 		"joinTimestamp=" + strings.TrimSpace(claim.JoinTimestamp),
 		"tunnelAddress=" + strings.TrimSpace(claim.TunnelAddress),
 		"endpoint=" + strings.TrimSpace(claim.Endpoint),
+		"directMesh=" + strconv.FormatBool(claim.DirectMesh),
 		"mobility.ownedAddresses=" + strings.Join(owned, ","),
 		"bgp.asn=" + strconv.FormatUint(uint64(claim.BGP.ASN), 10),
 		"bgp.routerID=" + strings.TrimSpace(claim.BGP.RouterID),
@@ -72,16 +73,6 @@ func JoinCanonicalPayload(claim api.SAMEnrollmentClaimSpec) string {
 		"wireGuard.endpoint=" + strings.TrimSpace(claim.WireGuard.Endpoint),
 		"wireGuard.allowedIPs=" + strings.Join(wgAllowed, ","),
 		"wireGuard.persistentKeepalive=" + strconv.Itoa(claim.WireGuard.PersistentKeepalive),
-	}
-	// Keep ordinary (non-direct) claims byte-for-byte compatible with the
-	// canonical payload used before direct mesh existed. Direct opt-in changes
-	// authorization semantics, so only the affirmative form is signed as an
-	// additional field.
-	if claim.DirectMesh {
-		directFields := make([]string, 0, len(fields)+1)
-		directFields = append(directFields, fields[:8]...)
-		directFields = append(directFields, "directMesh=true")
-		fields = append(directFields, fields[8:]...)
 	}
 	return strings.Join(fields, "\n")
 }

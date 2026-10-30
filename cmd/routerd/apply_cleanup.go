@@ -3,14 +3,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
-	"regexp"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
@@ -22,31 +20,31 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-var runCleanupCommand = runLogged
+var runCleanupCommand = func(ctx context.Context, name string, args ...string) error {
+	_, err := apply.New(ctx).Command(name, args...)
+	return err
+}
 
-func filterRouterByWhen(router *api.Router, store routerstate.Store) *api.Router {
+func filterRouterByWhen(router *api.Router, store resourcequery.StateStore) (*api.Router, error) {
 	return resourcequery.FilterRouterByWhen(router, store)
 }
 
-func resourceWhen(res api.Resource) api.ResourceWhenSpec {
-	return resourcequery.ResourceWhen(res)
-}
-
-func resourceWhenMatches(when api.ResourceWhenSpec, store routerstate.Store) bool {
-	return resourcequery.ResourceWhenMatches(when, store)
-}
-
-func stateMatch(store routerstate.Store, name string, match api.StateMatchSpec) bool {
-	return resourcequery.StateMatch(store, name, match)
-}
-
-func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store routerstate.Store) {
+func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Router, store resourcequery.StateStore) {
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "DHCPv6PrefixDelegation" {
 			continue
 		}
-		base := "ipv6PrefixDelegation." + res.Metadata.Name
-		lease, _ := routerstate.PDLeaseFromStore(store, base)
+		reader, ok := store.(routerstate.PDLeaseReader)
+		if !ok {
+			result.Warnings = append(result.Warnings, res.ID()+": PD observation store unavailable")
+			continue
+		}
+		lease, _, err := reader.ReadPDLease(res.Metadata.Name)
+		if err != nil {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: read PD observation: %v", res.ID(), err))
+			continue
+		}
+		lease = lease.Live(store.Now())
 		if lease.CurrentPrefix != "" {
 			continue
 		}
@@ -56,15 +54,15 @@ func appendPrefixDelegationStateWarnings(result *apply.Result, router *api.Route
 		} else {
 			msg += "; no delegated prefix has been recorded locally yet"
 		}
-		if lease.LastObservedAt != "" {
-			msg += " observed at " + lease.LastObservedAt
+		if !lease.LastObservedAt.IsZero() {
+			msg += " observed at " + lease.LastObservedAt.Format(time.RFC3339)
 		}
 		msg += ". The OS DHCPv6 client must renew or reacquire PD before the upstream lease expires."
 		result.Warnings = append(result.Warnings, msg)
 	}
 }
 
-func appendLedgerOwnedOrphans(result *apply.Result, effective, declared *api.Router, ledgerPath string, transient bool) error {
+func appendLedgerOwnedOrphans(ctx context.Context, result *apply.Result, effective, declared *api.Router, ledgerPath string, transient bool) error {
 	if ledgerPath == "" {
 		return nil
 	}
@@ -73,7 +71,7 @@ func appendLedgerOwnedOrphans(result *apply.Result, effective, declared *api.Rou
 		return err
 	}
 	defer func() { _ = ledger.Close() }()
-	engine := apply.New()
+	engine := apply.New(ctx)
 	orphans, _, err := engine.LedgerOwnedOrphansEffective(effective, declared, ledger)
 	if err != nil {
 		return err
@@ -102,7 +100,7 @@ func loadPlanLedger(path string, transient bool) (resource.Ledger, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	return resource.LoadLedger(path)
+	return resource.OpenSQLiteLedgerReadOnly(path)
 }
 
 func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.OrphanedArtifact {
@@ -124,11 +122,11 @@ func appendUniqueOrphans(existing, additions []apply.OrphanedArtifact) []apply.O
 	return existing
 }
 
-func cleanupLedgerOwnedOrphans(router *api.Router, ledgerPath string) ([]string, error) {
-	return cleanupLedgerOwnedOrphansMatching(router, ledgerPath, func(resource.Artifact) bool { return true })
+func cleanupLedgerOwnedOrphans(ctx context.Context, router *api.Router, ledgerPath string) ([]string, error) {
+	return cleanupLedgerOwnedOrphansMatching(ctx, router, ledgerPath, func(resource.Artifact) bool { return true })
 }
 
-func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
+func cleanupLedgerOwnedOrphansMatching(ctx context.Context, router *api.Router, ledgerPath string, match func(resource.Artifact) bool) ([]string, error) {
 	if ledgerPath == "" {
 		return nil, nil
 	}
@@ -137,7 +135,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		return nil, err
 	}
 	defer func() { _ = ledger.Close() }()
-	engine := apply.New()
+	engine := apply.New(ctx)
 	plan, err := engine.LedgerOwnedOrphanPlan(router, ledger)
 	if err != nil {
 		return nil, err
@@ -152,7 +150,7 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		if match != nil && !match(artifact) {
 			continue
 		}
-		label, err := cleanupLedgerOwnedArtifact(artifact)
+		label, err := cleanupLedgerOwnedArtifact(ctx, artifact)
 		if err != nil {
 			return removed, err
 		}
@@ -166,254 +164,46 @@ func cleanupLedgerOwnedOrphansMatching(router *api.Router, ledgerPath string, ma
 		if err := ledger.Forget(removedArtifacts); err != nil {
 			return removed, err
 		}
-		if err := ledger.Save(ledgerPath); err != nil {
-			return removed, err
-		}
+
 	}
 	return removed, nil
 }
 
-func cleanupLedgerOwnedArtifact(artifact resource.Artifact) (string, error) {
-	return lifecycle.CleanupArtifact(routerdArtifactTeardownExecutor{}, artifact)
+func cleanupLedgerOwnedArtifact(ctx context.Context, artifact resource.Artifact) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return lifecycle.CleanupArtifact(routerdArtifactTeardownExecutor{ctx: ctx}, artifact)
 }
 
-type routerdArtifactTeardownExecutor struct{}
+type routerdArtifactTeardownExecutor struct{ ctx context.Context }
 
 func (routerdArtifactTeardownExecutor) Features() platform.Features {
 	return platformFeatures
 }
 
-func (routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
-	return runCleanupCommand(name, args...)
+func (e routerdArtifactTeardownExecutor) Run(name string, args ...string) error {
+	return runCleanupCommand(e.ctx, name, args...)
 }
 
-func (routerdArtifactTeardownExecutor) Remove(path string) error {
+func (e routerdArtifactTeardownExecutor) Remove(path string) error {
+	if err := e.ctx.Err(); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
 }
 
-func (routerdArtifactTeardownExecutor) RemoveAll(path string) error {
+func (e routerdArtifactTeardownExecutor) RemoveAll(path string) error {
+	if err := e.ctx.Err(); err != nil {
+		return err
+	}
 	return os.RemoveAll(path)
 }
 
-func (routerdArtifactTeardownExecutor) DeleteIPv4FwmarkRule(priority, mark, table int) error {
-	return deleteIPv4FwmarkRule(ipv4FwmarkRule{Priority: priority, Mark: mark, Table: table})
-}
-
-func (routerdArtifactTeardownExecutor) FlushIPv4RouteTable(table int) error {
-	return flushIPv4RouteTable(table)
-}
-
-func desiredDSLiteTunnelIfNames(router *api.Router) map[string]bool {
-	desired := map[string]bool{}
-	if router == nil {
-		return desired
-	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind != "DSLiteTunnel" {
-			continue
-		}
-		spec, err := res.DSLiteTunnelSpec()
-		if err != nil {
-			continue
-		}
-		name := strings.TrimSpace(spec.TunnelName)
-		if name == "" {
-			name = res.Metadata.Name
-		}
-		if name != "" {
-			desired[name] = true
-		}
-	}
-	return desired
-}
-
-func cleanupStaleFreeBSDDSLiteTunnels(desired map[string]bool) ([]string, error) {
-	out, err := exec.Command("ifconfig").CombinedOutput()
-	if err != nil {
-		return nil, nil
-	}
-	var removed []string
-	for name, block := range parseIfconfigBlocks(string(out)) {
-		if desired[name] || !looksFreeBSDDSLiteTunnel(name, block) {
-			continue
-		}
-		if err := runLogged("ifconfig", name, "destroy"); err != nil {
-			return removed, err
-		}
-		removed = append(removed, "freebsd.gif.tunnel/"+name)
-	}
-	return removed, nil
-}
-
-func cleanupStaleFreeBSDDSLiteIPv4Aliases(desired map[string]bool) ([]string, error) {
-	out, err := exec.Command("ifconfig").CombinedOutput()
-	if err != nil {
-		return nil, nil
-	}
-	var removed []string
-	seen := map[string]bool{}
-	for _, artifact := range parseIfconfigIPv4AddressArtifacts(string(out)) {
-		ifname, address, ok := strings.Cut(artifact.Name, ":")
-		if !ok || !desired[ifname] || !staleDSLiteIPv4Address(address) {
-			continue
-		}
-		id := ifname + ":" + address
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		addr := strings.SplitN(address, "/", 2)[0]
-		if err := runLogged("ifconfig", ifname, "inet", addr, "-alias"); err != nil {
-			return removed, err
-		}
-		removed = append(removed, "net.ipv4.address/"+id)
-	}
-	return removed, nil
-}
-
-func staleDSLiteIPv4Address(address string) bool {
-	host := strings.SplitN(address, "/", 2)[0]
-	switch host {
-	case "192.168.160.249", "192.168.160.250", "192.168.160.251", "192.168.160.252",
-		"172.18.255.249", "172.18.255.250", "172.18.255.251", "172.18.255.252":
-		return true
-	default:
-		return false
-	}
-}
-
-func parseIfconfigIPv4AddressArtifacts(output string) []resource.Artifact {
-	var artifacts []resource.Artifact
-	var ifname string
-	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if !strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, " ") {
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				ifname = ""
-				continue
-			}
-			ifname = strings.TrimSuffix(fields[0], ":")
-			continue
-		}
-		if ifname == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "inet" {
-			continue
-		}
-		address := fields[1]
-		for i, field := range fields {
-			if field == "netmask" && i+1 < len(fields) {
-				if prefix := freeBSDIPv4MaskPrefixForCleanup(fields[i+1]); prefix != "" {
-					address += "/" + prefix
-				}
-				break
-			}
-		}
-		artifacts = append(artifacts, resource.Artifact{
-			Kind: "net.ipv4.address",
-			Name: ifname + ":" + address,
-		})
-	}
-	return artifacts
-}
-
-func freeBSDIPv4MaskPrefixForCleanup(mask string) string {
-	mask = strings.TrimSpace(strings.ToLower(mask))
-	if strings.HasPrefix(mask, "0x") {
-		value, err := strconv.ParseUint(strings.TrimPrefix(mask, "0x"), 16, 32)
-		if err != nil {
-			return ""
-		}
-		bits := 0
-		for i := 31; i >= 0; i-- {
-			if value&(1<<uint(i)) == 0 {
-				break
-			}
-			bits++
-		}
-		return strconv.Itoa(bits)
-	}
-	ip := net.ParseIP(mask).To4()
-	if ip == nil {
-		return ""
-	}
-	bits, _ := net.IPMask(ip).Size()
-	if bits < 0 {
-		return ""
-	}
-	return strconv.Itoa(bits)
-}
-
-func parseIfconfigBlocks(output string) map[string]string {
-	blocks := map[string]string{}
-	current := ""
-	var lines []string
-	flush := func() {
-		if current != "" {
-			blocks[current] = strings.Join(lines, "\n")
-		}
-	}
-	header := regexp.MustCompile(`^([A-Za-z0-9_.:-]+):\s+flags=`)
-	for _, line := range strings.Split(output, "\n") {
-		if match := header.FindStringSubmatch(line); match != nil {
-			flush()
-			current = match[1]
-			lines = []string{line}
-			continue
-		}
-		if current != "" {
-			lines = append(lines, line)
-		}
-	}
-	flush()
-	return blocks
-}
-
-func looksFreeBSDDSLiteTunnel(name, block string) bool {
-	if !strings.HasPrefix(name, "gif") {
-		return false
-	}
-	return strings.Contains(block, "tunnel inet6 ") &&
-		strings.Contains(block, " --> ") &&
-		strings.Contains(block, "inet ") &&
-		strings.Contains(block, "--> 192.0.0.1")
-}
-
-func rememberAppliedArtifacts(router *api.Router, ledgerPath string, generation int64) (int, error) {
-	if ledgerPath == "" {
-		return 0, nil
-	}
-	engine := apply.New()
-	artifacts, err := engine.AppliedOwnedArtifacts(router)
-	if err != nil {
-		return 0, err
-	}
-	ledger, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = ledger.Close() }()
-	if sqliteLedger, ok := ledger.(interface{ SetGeneration(int64) }); ok {
-		sqliteLedger.SetGeneration(generation)
-	}
-	if err := ledger.Remember(artifacts); err != nil {
-		return 0, err
-	}
-	if err := ledger.Save(ledgerPath); err != nil {
-		return 0, err
-	}
-	return len(adoptedArtifactsForResult(artifacts)), nil
-}
-
-func recordLastAppliedPath(router *api.Router, store routerstate.Store, path string) error {
+func recordLastAppliedPath(router *api.Router, store resourcequery.StateStore, path string) error {
 	if path == "" {
 		return nil
 	}
@@ -440,6 +230,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 		"dslite",
 		"firewall",
 		"ingress",
+		"ipsec",
 		"kernel-module",
 		"nat",
 		"network-adoption",

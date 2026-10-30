@@ -3,22 +3,27 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"os"
 
 	"golang.org/x/sys/unix"
 )
 
 type packetSocket struct {
-	fd int
+	file *os.File
 }
 
-func openPacketSocket(ifname string) (*packetSocket, error) {
+func openPacketSocket(ctx context.Context, ifname string) (*packetSocket, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return nil, err
 	}
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(unix.ETH_P_IPV6)))
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, int(htons(unix.ETH_P_IPV6)))
 	if err != nil {
 		return nil, err
 	}
@@ -26,15 +31,15 @@ func openPacketSocket(ifname string) (*packetSocket, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("bind %s: %w", ifname, err)
 	}
-	return &packetSocket{fd: fd}, nil
+	return &packetSocket{file: os.NewFile(uintptr(fd), "ra-observer-"+ifname)}, nil
 }
 
 func (s *packetSocket) read(frame []byte) (int, error) {
-	return unix.Read(s.fd, frame)
+	return s.file.Read(frame)
 }
 
 func (s *packetSocket) close() error {
-	return unix.Close(s.fd)
+	return s.file.Close()
 }
 
 func htons(value uint16) uint16 {

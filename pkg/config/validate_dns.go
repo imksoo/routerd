@@ -25,6 +25,9 @@ func validateDNSResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if spec.Zone == "" {
 			return true, fmt.Errorf("%s spec.zone is required", res.ID())
 		}
+		if spec.DNSSEC.Enabled {
+			return true, fmt.Errorf("%s local DNSZone DNSSEC signing and validation are not implemented; dnssec.enabled must be false", res.ID())
+		}
 		for i, record := range spec.Records {
 			if record.Hostname == "" {
 				return true, fmt.Errorf("%s spec.records[%d].hostname is required", res.ID(), i)

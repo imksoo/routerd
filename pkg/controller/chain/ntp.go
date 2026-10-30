@@ -87,7 +87,10 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		servers, source := c.resolveServers(spec)
+		servers, source, err := resolveNTPServers(c.Store, spec.Source, spec.Servers, spec.ServerFrom, spec.FallbackServers)
+		if err != nil {
+			return err
+		}
 		if len(servers) == 0 {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
 				"phase":    "Pending",
@@ -178,7 +181,11 @@ func (c NTPClientController) cleanupWhenFalseNTPClients(ctx context.Context, com
 			return err
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) || resourcequery.ResourceWhenIndeterminate(when, stateStore) || !spec.Managed {
+		eligible, err := resourcequery.ResourceWhenEligible(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || eligible || !spec.Managed {
 			continue
 		}
 		provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
@@ -352,36 +359,20 @@ func (c NTPClientController) saveNTPCommandError(name, provider string, servers 
 	return err
 }
 
-func (c NTPClientController) resolveServers(spec api.NTPClientSpec) ([]string, string) {
-	source := firstNonEmpty(spec.Source, "static")
-	switch source {
-	case "static":
-		return compactNTPList(spec.Servers), "static"
-	case "dhcp", "dhcpv6", "auto":
-		dynamic := ntpServersFromSources(c.Store, spec.ServerFrom)
-		if len(dynamic) > 0 {
-			return dynamic, source
-		}
-		if fallback := compactNTPList(spec.FallbackServers); len(fallback) > 0 {
-			return fallback, "fallback"
-		}
-		if static := compactNTPList(spec.Servers); len(static) > 0 {
-			return static, "static"
-		}
-	}
-	return nil, source
-}
-
-func ntpServersFromSources(store Store, sources []api.StatusValueSourceSpec) []string {
+func ntpServersFromSources(store Store, sources []api.StatusValueSourceSpec) ([]string, error) {
 	var out []string
 	for _, source := range sources {
-		for _, value := range resourcequery.Values(store, source) {
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, err
+		}
+		for _, value := range values {
 			for _, server := range splitNTPServerValue(value) {
 				out = append(out, server)
 			}
 		}
 	}
-	return compactNTPList(out)
+	return compactNTPList(out), nil
 }
 
 func splitNTPServerValue(value string) []string {
@@ -528,8 +519,15 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		servers, source := resolveNTPServers(c.Store, spec.Source, spec.Servers, spec.ServerFrom, spec.FallbackServers)
-		listenAddresses := compactNTPList(append(append([]string(nil), spec.ListenAddresses...), ntpServersFromSources(c.Store, spec.ListenAddressFrom)...))
+		servers, source, err := resolveNTPServers(c.Store, spec.Source, spec.Servers, spec.ServerFrom, spec.FallbackServers)
+		if err != nil {
+			return err
+		}
+		dynamicListen, err := ntpServersFromSources(c.Store, spec.ListenAddressFrom)
+		if err != nil {
+			return err
+		}
+		listenAddresses := compactNTPList(append(append([]string(nil), spec.ListenAddresses...), dynamicListen...))
 		if len(spec.ListenAddresses) > 0 || len(spec.ListenAddressFrom) > 0 {
 			if len(listenAddresses) == 0 {
 				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
@@ -545,7 +543,10 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			}
 		}
 		configPath := c.serverConfigPath(provider)
-		allowCIDRs, allowPendingReason, allowPendingError := resolveNTPAllowCIDRs(c.Store, spec.AllowCIDRs, spec.AllowCIDRFrom)
+		allowCIDRs, allowPendingReason, allowPendingError, err := resolveNTPAllowCIDRs(c.Store, spec.AllowCIDRs, spec.AllowCIDRFrom)
+		if err != nil {
+			return err
+		}
 		if allowPendingReason != "" {
 			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
 				"phase":      "Pending",
@@ -626,7 +627,11 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 			continue
 		}
 		when := resourcequery.ResourceWhen(resource)
-		if !resourcequery.ResourceWhenPresent(when) || resourcequery.ResourceWhenMatches(when, stateStore) {
+		matches, err := resourcequery.ResourceWhenMatches(when, stateStore)
+		if err != nil {
+			return err
+		}
+		if !resourcequery.ResourceWhenPresent(when) || matches {
 			continue
 		}
 		spec, err := resource.NTPServerSpec()
@@ -762,47 +767,53 @@ func (c NTPServerController) applyNTPServer(ctx context.Context, resourceName, p
 	return false, nil
 }
 
-func resolveNTPServers(store Store, source string, servers []string, serverFrom []api.StatusValueSourceSpec, fallback []string) ([]string, string) {
+func resolveNTPServers(store Store, source string, servers []string, serverFrom []api.StatusValueSourceSpec, fallback []string) ([]string, string, error) {
 	source = firstNonEmpty(source, "static")
 	switch source {
 	case "static":
-		return compactNTPList(servers), "static"
+		return compactNTPList(servers), "static", nil
 	case "dhcp", "dhcpv6", "auto":
-		dynamic := ntpServersFromSources(store, serverFrom)
+		dynamic, err := ntpServersFromSources(store, serverFrom)
+		if err != nil {
+			return nil, "", err
+		}
 		if len(dynamic) > 0 {
-			return dynamic, source
+			return dynamic, source, nil
 		}
 		if fallback := compactNTPList(fallback); len(fallback) > 0 {
-			return fallback, "fallback"
+			return fallback, "fallback", nil
 		}
 		if static := compactNTPList(servers); len(static) > 0 {
-			return static, "static"
+			return static, "static", nil
 		}
 	}
-	return nil, source
+	return nil, source, nil
 }
 
-func resolveNTPAllowCIDRs(store Store, static []string, sources []api.StatusValueSourceSpec) ([]string, string, string) {
+func resolveNTPAllowCIDRs(store Store, static []string, sources []api.StatusValueSourceSpec) ([]string, string, string, error) {
 	out := compactNTPList(static)
 	for _, source := range sources {
-		values := resourcequery.Values(store, source)
+		values, err := resourcequery.ReadValues(store, source)
+		if err != nil {
+			return nil, "", "", err
+		}
 		if len(values) == 0 {
 			if source.Optional {
 				continue
 			}
-			return out, "AllowCIDRFromPending", fmt.Sprintf("%s.%s is unresolved", source.Resource, firstNonEmpty(source.Field, "phase"))
+			return out, "AllowCIDRFromPending", fmt.Sprintf("%s.%s is unresolved", source.Resource, firstNonEmpty(source.Field, "phase")), nil
 		}
 		for _, value := range values {
 			for _, field := range splitNTPServerValue(value) {
 				cidr, err := normalizeNTPAllowCIDR(field)
 				if err != nil {
-					return out, "AllowCIDRFromInvalid", fmt.Sprintf("%s.%s produced %q: %v", source.Resource, firstNonEmpty(source.Field, "phase"), field, err)
+					return out, "AllowCIDRFromInvalid", fmt.Sprintf("%s.%s produced %q: %v", source.Resource, firstNonEmpty(source.Field, "phase"), field, err), nil
 				}
 				out = append(out, cidr)
 			}
 		}
 	}
-	return compactNTPList(out), "", ""
+	return compactNTPList(out), "", "", nil
 }
 
 func normalizeNTPAllowCIDR(value string) (string, error) {
