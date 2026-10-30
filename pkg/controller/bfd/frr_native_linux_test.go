@@ -190,6 +190,7 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	}
 	waitState("actual peer reception", "Up")
 	t.Logf("actual local BFD peer JSON: %s", run("vtysh", vtyArgs(localDir, "-c", "show bfd peers json")...))
+	t.Logf("actual local BFD peer text: %s", run("vtysh", vtyArgs(localDir, "-c", "show bfd peers")...))
 	t.Logf("actual independent BFD peer JSON: %s", peerRun("vtysh", vtyArgs(peerDir, "-c", "show bfd peers json")...))
 	stopPeer()
 	waitState("peer process stopped", "Down")

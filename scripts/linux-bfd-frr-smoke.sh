@@ -7,10 +7,12 @@ set -eu
 [ "$(uname -s)" = Linux ] || { echo "BFD FRR smoke requires Linux" >&2; exit 1; }
 go_bin=${GO:-go}
 bfdd=${ROUTERD_FRR_BFDD:-/usr/lib/frr/bfdd}
+bgpd=${ROUTERD_FRR_BGPD:-/usr/lib/frr/bgpd}
 for tool in "$go_bin" ip ping unshare nsenter mount timeout readlink stat vtysh; do
     command -v "$tool" >/dev/null || { echo "required command is unavailable: $tool" >&2; exit 1; }
 done
 [ -x "$bfdd" ] || { echo "independent FRR bfdd is unavailable: $bfdd" >&2; exit 1; }
+[ -x "$bgpd" ] || { echo "independent FRR bgpd is unavailable: $bgpd" >&2; exit 1; }
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 evidence=$(mktemp -d "${TMPDIR:-/tmp}/routerd15-bfd-frr.XXXXXX")
@@ -19,6 +21,7 @@ printf 'BFD evidence: %s\n' "$evidence"
 git rev-parse HEAD > "$evidence/revision"
 "$go_bin" version > "$evidence/go-version"
 "$bfdd" --version > "$evidence/frr-version"
+"$bgpd" --version > "$evidence/bgpd-version"
 sha256sum pkg/controller/bfd/controller.go pkg/controller/bfd/native.go \
     pkg/controller/bfd/controller_test.go pkg/controller/bfd/native_recovery_test.go \
     pkg/controller/bfd/native_observation_test.go pkg/controller/bfd/frr_native_linux_test.go \
@@ -39,12 +42,15 @@ host_netns=$(readlink /proc/self/ns/net)
 host_run_device=$(stat -c %d /run)
 set +e
 ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$host_netns" ROUTERD_FRR_BFDD="$bfdd" \
+ROUTERD_FRR_BGPD="$bgpd" \
 ROUTERD_HOST_RUN_DEVICE="$host_run_device" ROUTERD_BGP_BIN="$evidence/routerd-bgp" \
 ROUTERD_NATIVE_EVIDENCE="$evidence" timeout 150s unshare -Urnm sh -c '
     set -eu
     mount --make-rprivate /
     mount -t sysfs sysfs /sys
     mount -t tmpfs -o mode=0755 tmpfs /run
+    mount -t tmpfs -o mode=1777 tmpfs /var/tmp
+    mkdir /var/tmp/frr
     # bfdd has no skip_runas option. Keep its real privilege initialization,
     # resolving its VTY group to the only mapped GID in this private mount view.
     printf "root:x:0:\nfrrvty:x:0:root\n" > "$1/group"

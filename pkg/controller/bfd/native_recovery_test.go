@@ -22,10 +22,22 @@ const foreignPeer = `{"peer":"10.99.0.2","vrf":"default","interface":"operator0"
 const nativePeersText = `BFD Peers:
  peer 10.99.0.2 vrf default interface wg0
   Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
  peer 10.99.0.3 vrf default interface wg0
   Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
  peer 10.99.0.2 vrf default interface operator0
   Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
 `
 
 type receiptFaultStore struct {

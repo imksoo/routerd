@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -124,26 +125,48 @@ func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[st
 		}
 		headers[header] = key
 	}
-	key := ""
+	textPeers := make(map[string]frrPeer, len(peers))
+	key, localTimers := "", false
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "peer ") {
 			key = headers[line]
+			localTimers = false
 		}
-		if key == "" || !strings.HasPrefix(line, "Peer Type:") {
+		if key == "" {
 			continue
 		}
-		peer := peers[key]
-		if peer.Type != "" {
-			return nil, fmt.Errorf("duplicate FRR BFD peer type for %s", peer.Address)
+		peer := textPeers[key]
+		if strings.HasPrefix(line, "Peer Type:") {
+			if peer.Type != "" {
+				return nil, fmt.Errorf("duplicate FRR BFD peer type")
+			}
+			peer.Type = strings.TrimSpace(strings.TrimPrefix(line, "Peer Type:"))
 		}
-		peer.Type = strings.TrimSpace(strings.TrimPrefix(line, "Peer Type:"))
-		peers[key] = peer
+		if line == "Local timers:" || line == "Remote timers:" {
+			localTimers = line == "Local timers:"
+		}
+		if localTimers {
+			label, value, _ := strings.Cut(line, ":")
+			number, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimSpace(value), "ms"))
+			switch label {
+			case "Detect-multiplier":
+				peer.Multiplier = number
+			case "Receive interval":
+				peer.MinRxMS = number
+			case "Transmission interval":
+				peer.MinTxMS = number
+			}
+		}
+		textPeers[key] = peer
 	}
-	for _, peer := range peers {
-		if peer.Type != "configured" && peer.Type != "dynamic" {
-			return nil, fmt.Errorf("incomplete FRR BFD peer type for %s", peer.Address)
+	for key, peer := range peers {
+		text := textPeers[key]
+		if (text.Type != "configured" && text.Type != "dynamic") || text.MinRxMS != peer.MinRxMS || text.MinTxMS != peer.MinTxMS || text.Multiplier != peer.Multiplier {
+			return nil, fmt.Errorf("FRR BFD text observation is incomplete or changed for %s", peer.Address)
 		}
+		peer.Type = text.Type
+		peers[key] = peer
 	}
 	return peers, nil
 }
