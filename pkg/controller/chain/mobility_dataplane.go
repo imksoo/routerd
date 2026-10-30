@@ -84,7 +84,7 @@ func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error 
 		}
 	}
 	if err := c.publishMobilityRouteWithdrawals(); err != nil {
-		return err
+		failures = append(failures, err)
 	}
 	if len(failures) != 0 {
 		return fmt.Errorf("reconcile mobility IPv4 routes: %w", errors.Join(failures...))
@@ -131,7 +131,7 @@ func (c IPv4RouteController) cleanupRemovedMobilityRoutes(ctx context.Context) e
 		}
 	}
 	if err := c.publishMobilityRouteWithdrawals(); err != nil {
-		return err
+		failures = append(failures, err)
 	}
 	if len(failures) != 0 {
 		return fmt.Errorf("withdraw mobility IPv4 routes: %w", errors.Join(failures...))
@@ -167,6 +167,10 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 			if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(old)); err != nil {
 				return mobilityAppliedIPv4Route{}, err
 			}
+			fresh, err := c.currentMobilityRoutePremise(ctx, route)
+			if err != nil || fresh != premise {
+				return mobilityAppliedIPv4Route{}, errors.Join(err, errors.New("mobility route authority changed during native observation"), c.removeMobilityRoute(ctx, old))
+			}
 			return applied, nil
 		}
 		if err := c.removeMobilityRoute(ctx, old); err != nil {
@@ -185,11 +189,11 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 	if err := c.stageMobilityRoute(pending); err != nil {
 		return mobilityAppliedIPv4Route{}, err
 	}
-	fresh, err := c.currentMobilityRoutePremise(ctx, route)
+	_, collision, err = c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, err
 	}
-	_, collision, err = c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
+	fresh, err := c.currentMobilityRoutePremise(ctx, route)
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, err
 	}
@@ -201,7 +205,7 @@ func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynam
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	matching, _, err := c.observeOrdinaryRoute(ctx, premise.Route)
+	matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
 	if err != nil || !matching {
 		return mobilityAppliedIPv4Route{}, errors.Join(err, errors.New("mobility route add did not read back the exact native tuple"))
 	}
@@ -247,9 +251,6 @@ func (c IPv4RouteController) currentMobilityRoutePremise(ctx context.Context, in
 	}
 	if !found {
 		return ordinaryRoutePremise{}, errors.New("mobility route intent changed")
-	}
-	if platform.CurrentOS() == platform.OSFreeBSD && intent.Metric != 0 {
-		return ordinaryRoutePremise{}, errors.New("FreeBSD Mobility routes do not support a Linux metric")
 	}
 	return c.ordinaryRoutePremise(ctx, api.IPv4RouteSpec{Type: "unicast", Destination: intent.Destination, Device: intent.Device, PreferredSource: intent.PreferredSource, Metric: intent.Metric})
 }
@@ -301,6 +302,16 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 	if err := c.stageMobilityRoute(pending); err != nil {
 		return err
 	}
+	matching, _, err = c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
+	if err != nil {
+		return err
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+		return err
+	}
+	if !matching {
+		return c.finishMobilityRoute(pending, false, true)
+	}
 	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
 		return err
 	}
@@ -316,12 +327,37 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 		if err != nil {
 			return err
 		}
-		if premise.Active && premise.Route == mobilityRouteRemoval(route) {
+		if premise.Active && premise.Route.Device == route.Device && premise.Route.Destination == route.Destination && premise.Route.PreferredSource == route.PreferredSource {
 			return errors.Join(errors.New("mobility route intent became active; no delete issued"), c.finishMobilityRoute(pending, true, false))
 		}
 	}
-	if err := c.removeOrdinaryRoute(ctx, mobilityRouteRemoval(route)); err != nil {
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
 		return err
+	}
+	removal := mobilityRouteRemoval(route)
+	name, args := "ip", ipv4RouteRemovalDeleteArgs(removal)
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		name, args = freeBSDIPv4RouteRemovalDeleteCommand(removal)
+		args = append(args, "-interface", removal.Device, "-ifp", removal.Device)
+	} else {
+		if removal.Metric == "0" {
+			args = append(args, "metric", "0")
+		}
+		args = append(args, "proto", "boot")
+	}
+	out, err := c.run(ctx, name, args...)
+	if err != nil && !missingIPv4RouteDelete(err, out) {
+		return fmt.Errorf("withdraw Mobility route: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	matching, _, err = c.observeOrdinaryRoute(ctx, removal)
+	if err != nil {
+		return err
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+		return err
+	}
+	if matching {
+		return errors.New("Mobility route remains after delete")
 	}
 	return c.finishMobilityRoute(pending, false, true)
 }

@@ -81,6 +81,9 @@ func (c IPv4RouteController) beginMobilityRoutes(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("observe pending mobility route %s: %w", route.ID, err)
 		}
+		if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+			return err
+		}
 		if matching {
 			return fmt.Errorf("pending mobility route %s is present without acknowledged ownership; inspect and remove it before retrying", route.ID)
 		}

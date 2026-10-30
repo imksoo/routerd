@@ -47,7 +47,7 @@ func storeMobilityOwnerPlan(t *testing.T, c *IPv4RouteController, store *nativeJ
 	}
 }
 
-func TestMobilityNativeRoutePendingCannotBeClearedByAnOldAppliedReceipt(t *testing.T) {
+func TestMobilityNativeRouteReacquisitionAckFailureRetainsPending(t *testing.T) {
 	c, store, native := mobilityRouteOwnerFixture(t)
 	if err := c.reconcileMobilityRoutes(t.Context()); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestMobilityNativeRoutePendingCannotBeClearedByAnOldAppliedReceipt(t *testi
 }
 
 func TestMobilityNativeRouteRechecksIndexAndIntentAfterPendingPersistence(t *testing.T) {
-	for _, mode := range []string{"index", "intent", "foreign"} {
+	for _, mode := range []string{"index", "intent", "foreign", "expiry"} {
 		t.Run(mode, func(t *testing.T) {
 			c, store, native := mobilityRouteOwnerFixture(t)
 			index := 17
@@ -98,6 +98,15 @@ func TestMobilityNativeRouteRechecksIndexAndIntentAfterPendingPersistence(t *tes
 				case "intent":
 					c.MobilityDataplane.Routes = nil
 					storeMobilityOwnerPlan(t, c, store)
+				case "expiry":
+					records, err := store.ListDynamicConfigParts()
+					if err != nil || len(records) != 1 {
+						t.Fatalf("read actual source: %+v %v", records, err)
+					}
+					records[0].ExpiresAt = time.Now().UTC()
+					if err := store.UpsertDynamicConfigPart(records[0]); err != nil {
+						t.Fatal(err)
+					}
 				case "foreign":
 					native.route = &ordinaryIPv4RouteObservation{Type: "unicast", Destination: "10.88.60.10/32", Device: "lan0", Protocol: "boot"}
 				}
@@ -199,5 +208,96 @@ func TestMobilityNativeRouteRestoredIntentCancelsPendingWithdrawal(t *testing.T)
 	pending, err := pendingMobilityRoutes(nativeStatus(t, store.SQLiteStore))
 	if err != nil || len(pending) != 0 || native.route == nil || native.writes != writes {
 		t.Fatalf("restored effect changed: %+v %v writes=%d", pending, err, native.writes)
+	}
+}
+
+func TestMobilityNativeRouteUnchangedPathRechecksSourceBeforeSuccess(t *testing.T) {
+	c, store, native := mobilityRouteOwnerFixture(t)
+	if err := c.reconcileMobilityRoutes(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := native.command(ctx, name, args...)
+		if !changed && len(args) > 0 && args[0] == "-j" {
+			changed = true
+			c.MobilityDataplane.Routes = nil
+			storeMobilityOwnerPlan(t, c, store)
+		}
+		return out, err
+	}
+	if err := c.reconcileMobilityRoutes(t.Context()); err == nil || !changed {
+		t.Fatalf("stale unchanged route reported success: %v", err)
+	}
+	routes, err := c.appliedMobilityRoutes()
+	if err != nil || len(routes) != 0 || native.route != nil {
+		t.Fatalf("revoked unchanged route survived: %+v %v", routes, err)
+	}
+}
+
+func TestMobilityNativeReviewWithdrawalRechecksAfterFinalNativeRead(t *testing.T) {
+	for _, mode := range []string{"index", "intent"} {
+		t.Run(mode, func(t *testing.T) {
+			c, store, native := mobilityRouteOwnerFixture(t)
+			index := 17
+			c.DeviceLookup = func(context.Context, string) (int, bool, error) { return index, true, nil }
+			if err := c.reconcileMobilityRoutes(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			wanted := c.MobilityDataplane.Routes
+			c.MobilityDataplane.Routes = nil
+			storeMobilityOwnerPlan(t, c, store)
+			reads := 0
+			c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				out, err := native.command(ctx, name, args...)
+				if len(args) > 0 && args[0] == "-j" {
+					reads++
+					if reads == 2 {
+						if mode == "index" {
+							index = 18
+						} else {
+							c.MobilityDataplane.Routes = wanted
+							storeMobilityOwnerPlan(t, c, store)
+						}
+					}
+				}
+				return out, err
+			}
+			writes := native.writes
+			err := c.reconcileMobilityRoutes(t.Context())
+			if native.writes != writes || native.route == nil {
+				t.Fatalf("final native read invalidated %s but issued delete: writes %d->%d route=%+v err=%v reads=%d", mode, writes, native.writes, native.route, err, reads)
+			}
+		})
+	}
+}
+
+func TestMobilityNativeReviewAcquisitionRechecksAfterFinalCollisionRead(t *testing.T) {
+	for _, mode := range []string{"index", "intent"} {
+		t.Run(mode, func(t *testing.T) {
+			c, store, native := mobilityRouteOwnerFixture(t)
+			index := 17
+			c.DeviceLookup = func(context.Context, string) (int, bool, error) { return index, true, nil }
+			reads := 0
+			c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				out, err := native.command(ctx, name, args...)
+				if len(args) > 0 && args[0] == "-j" {
+					reads++
+					if reads == 2 {
+						if mode == "index" {
+							index = 18
+						} else {
+							c.MobilityDataplane.Routes = nil
+							storeMobilityOwnerPlan(t, c, store)
+						}
+					}
+				}
+				return out, err
+			}
+			err := c.reconcileMobilityRoutes(t.Context())
+			if native.writes != 0 {
+				t.Fatalf("final collision read invalidated %s but issued stale mutation(s): writes=%d route=%+v err=%v reads=%d", mode, native.writes, native.route, err, reads)
+			}
+		})
 	}
 }

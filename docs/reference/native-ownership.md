@@ -143,11 +143,13 @@ receipt is retained without deleting its route. If intent changes during the
 acquisition acknowledgement, the owner attempts to withdraw that acknowledged
 effect. Required read failures remain errors and cannot fabricate withdrawal ACKs.
 
-SQLite/process-boundary regressions exercise the source changes, native ignored
+SQLite/native-command boundary regressions exercise the source changes, native ignored
 add, lost acknowledgement, new kernel world and restored deletion intent. Native
 Linux/FreeBSD forwarding remains unqualified. FreeBSD does not report Linux route
-metrics or preferred source through its exact withdrawal observation, so nonzero
-Mobility route metrics are rejected and preferred source is not ownership proof.
+metrics or preferred source through its exact withdrawal observation, so logical
+Mobility metrics are not native ordering/ownership proof there; the receipt uses
+the observable prefix/interface/gateway tuple, and preferred source is not
+ownership proof.
 Mobility IPv4 addresses retain a separate implementation/qualification boundary.
 ## Shared native VXLAN owner
 
