@@ -128,7 +128,7 @@ func validateNativeFIBRoute(r NativeFIBRoute, scope string, table int) error {
 		return fmt.Errorf("invalid FreeBSD BGP FIB receipt selectors")
 	}
 	p, err := netip.ParsePrefix(r.Prefix)
-	if err != nil || p.Masked().String() != r.Prefix || strings.HasPrefix(scope, "linux:") && !p.Addr().Is4() {
+	if err != nil || p.Masked().String() != r.Prefix {
 		return fmt.Errorf("invalid BGP FIB receipt prefix %q", r.Prefix)
 	}
 	if len(r.NextHops) == 0 {

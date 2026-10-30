@@ -76,13 +76,11 @@ func (b netlinkFIBBackend) Snapshot(ctx context.Context) (fibSnapshot, error) {
 		}
 		out.Routes = append(out.Routes, observed)
 	}
-	addresses, err := localIPv4Addresses(ctx, handle)
+	addresses, err := localFIBAddresses(ctx, handle)
 	if err != nil {
 		return fibSnapshot{}, err
 	}
-	for _, a := range addresses {
-		out.Addresses = append(out.Addresses, fibLocalAddress{Address: a.Address, Prefix: a.Prefix})
-	}
+	out.Addresses = addresses
 	return out, ctx.Err()
 }
 
@@ -91,8 +89,8 @@ func (netlinkFIBBackend) Prepare(ctx context.Context, r FIBRoute, _ fibSnapshot)
 		return nil, "", err
 	}
 	p, err := netip.ParsePrefix(r.Prefix)
-	if err != nil || !p.Addr().Is4() {
-		return nil, unsupportedFIBReason(r.Prefix), nil
+	if err != nil {
+		return nil, "GoBGPFIBRouteUnsupported", nil
 	}
 	handle, err := bgpNetlinkHandle(ctx)
 	if err != nil {
@@ -102,8 +100,13 @@ func (netlinkFIBBackend) Prepare(ctx context.Context, r FIBRoute, _ fibSnapshot)
 	out := bgpstate.NativeFIBRoute{Prefix: p.Masked().String(), PreferredSource: r.PreferredSource, Table: unix.RT_TABLE_MAIN, Protocol: bgpRouteProtocol, Metric: 200}
 	for _, value := range r.NextHops {
 		gateway, err := netip.ParseAddr(value)
-		if err != nil || !gateway.Is4() || gateway.IsUnspecified() {
+		if err != nil || gateway.Zone() != "" || gateway.Is4() != p.Addr().Is4() || gateway.IsUnspecified() {
 			return nil, "", fmt.Errorf("unusable BGP FIB next hop %q", value)
+		}
+		if gateway.Is6() && gateway.IsLinkLocalUnicast() {
+			// FIBRoute carries no interface for a scoped link-local next hop.
+			// A route lookup cannot authorize choosing an arbitrary interface.
+			return nil, "GoBGPIPv6LinkLocalNextHopUnsupported", nil
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, "", err
@@ -157,6 +160,9 @@ func (netlinkFIBBackend) Delete(ctx context.Context, r bgpstate.NativeFIBRoute) 
 func nativeNetlinkRoute(r bgpstate.NativeFIBRoute) *netlink.Route {
 	_, dst, _ := net.ParseCIDR(r.Prefix)
 	out := &netlink.Route{Dst: dst, Table: r.Table, Protocol: netlink.RouteProtocol(r.Protocol), Priority: r.Metric, Type: unix.RTN_UNICAST, Family: unix.AF_INET, Scope: netlink.SCOPE_UNIVERSE}
+	if dst != nil && dst.IP.To4() == nil {
+		out.Family = unix.AF_INET6
+	}
 	if r.PreferredSource != "" {
 		out.Src = net.ParseIP(r.PreferredSource)
 	}
@@ -216,13 +222,8 @@ func observedNetlinkFIBRoute(r netlink.Route) (fibObservedRoute, error) {
 	return fibObservedRoute{Route: out, Exact: exact}, nil
 }
 
-type localIPv4Address struct {
-	Address netip.Addr
-	Prefix  netip.Prefix
-}
-
-func localIPv4Addresses(ctx context.Context, handle *netlink.Handle) ([]localIPv4Address, error) {
-	var out []localIPv4Address
+func localFIBAddresses(ctx context.Context, handle *netlink.Handle) ([]fibLocalAddress, error) {
+	var out []fibLocalAddress
 	links, err := handle.LinkList()
 	if err != nil {
 		return nil, err
@@ -231,33 +232,30 @@ func localIPv4Addresses(ctx context.Context, handle *netlink.Handle) ([]localIPv
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		addrs, err := handle.AddrList(link, netlink.FAMILY_V4)
+		addrs, err := handle.AddrList(link, netlink.FAMILY_ALL)
 		if err != nil {
 			return nil, fmt.Errorf("read addresses on %s: %w", link.Attrs().Name, err)
 		}
 		for _, local := range addrs {
-			if local.IP == nil {
-				return nil, fmt.Errorf("native local IPv4 address is missing")
+			observed, err := observedNetlinkFIBAddress(local)
+			if err != nil {
+				return nil, err
 			}
-			addr, ok := netip.AddrFromSlice(local.IP.To4())
-			if !ok || !addr.Is4() || local.IPNet == nil {
-				return nil, fmt.Errorf("native local IPv4 address is unusable")
-			}
-			bits, size := local.IPNet.Mask.Size()
-			if size != 32 || bits < 0 || bits > 32 {
-				return nil, fmt.Errorf("native local IPv4 mask is unusable")
-			}
-			prefix := netip.PrefixFrom(addr, bits).Masked()
-			out = append(out, localIPv4Address{Address: addr, Prefix: prefix})
+			out = append(out, observed)
 		}
 	}
 	return out, nil
 }
 
-func unsupportedFIBReason(prefix string) string {
-	parsed, err := netip.ParsePrefix(prefix)
-	if err == nil && parsed.Addr().Is6() {
-		return "GoBGPIPv6FIBUnsupported"
+func observedNetlinkFIBAddress(local netlink.Addr) (fibLocalAddress, error) {
+	addr, ok := netip.AddrFromSlice(local.IP)
+	if !ok || local.IPNet == nil {
+		return fibLocalAddress{}, fmt.Errorf("native local address is unusable")
 	}
-	return "GoBGPFIBRouteUnsupported"
+	addr = addr.Unmap()
+	bits, size := local.IPNet.Mask.Size()
+	if size != addr.BitLen() || bits < 0 || bits > size {
+		return fibLocalAddress{}, fmt.Errorf("native local address mask is unusable")
+	}
+	return fibLocalAddress{Address: addr, Prefix: netip.PrefixFrom(addr, bits).Masked(), Tentative: local.Flags&unix.IFA_F_TENTATIVE != 0, DADFailed: local.Flags&unix.IFA_F_DADFAILED != 0}, nil
 }
