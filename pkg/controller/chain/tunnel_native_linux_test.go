@@ -6,6 +6,7 @@ package chain
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 	run("link", "add", "name", "tnl-underlay", "type", "dummy")
 	run("address", "add", "198.18.0.1/30", "dev", "tnl-underlay")
 	run("link", "set", "dev", "tnl-underlay", "up")
-	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired", "source-expired-noop"} {
+	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired", "source-expired-noop", "owned-gre-reconfigure"} {
 		t.Run(scenario, func(t *testing.T) {
 			run := func(args ...string) []byte {
 				out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
@@ -60,6 +61,65 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tnl-owned"}, Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "198.18.0.1", Remote: "198.18.0.2", Address: "192.0.2.1/32", MTU: 1400, TrustedUnderlay: true}},
 			}}}
 			parent := TunnelInterfaceController{Router: router, Store: eventedStore{Store: store, Router: router}}
+			if scenario == "owned-gre-reconfigure" {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Mode, spec.Key = "gre", 42
+				router.Spec.Resources[0].Spec = spec
+				if err := parent.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				before, err := parent.tunnelNativeReceipts()
+				if err != nil || len(before) != 1 {
+					t.Fatalf("initial GRE receipt unavailable: %+v %v", before, err)
+				}
+				router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "child"}, Spec: api.IPv4StaticAddressSpec{Interface: "tnl-owned", Address: "192.0.2.99/32"}})
+				child := IPv4StaticAddressController{Router: router, Store: store}
+				if err := child.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				spec.Key, spec.TTL, spec.MTU = 0, 32, 1380
+				spec.Remote, spec.Address = "198.18.0.3", "192.0.2.2/32"
+				router.Spec.Resources[0].Spec = spec
+				if err := parent.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				var links []struct {
+					Index int    `json:"ifindex"`
+					MTU   int    `json:"mtu"`
+					Alias string `json:"ifalias"`
+					Info  struct {
+						Data struct {
+							Remote string `json:"remote"`
+							TTL    int    `json:"ttl"`
+							IKey   string `json:"ikey"`
+							OKey   string `json:"okey"`
+						} `json:"info_data"`
+					} `json:"linkinfo"`
+				}
+				if err := json.Unmarshal(run("-j", "-d", "link", "show", "dev", "tnl-owned"), &links); err != nil || len(links) != 1 {
+					t.Fatalf("updated GRE native readback unavailable: %+v %v", links, err)
+				}
+				link := links[0]
+				if link.Index != before[0].Index || link.Alias != "routerd-tunnel:"+before[0].Token || link.MTU != 1380 || link.Info.Data.Remote != spec.Remote || link.Info.Data.TTL != 32 || link.Info.Data.IKey != "" && link.Info.Data.IKey != "0.0.0.0" || link.Info.Data.OKey != "" && link.Info.Data.OKey != "0.0.0.0" {
+					t.Fatalf("owned GRE was replaced or retained old native parameters: %+v", link)
+				}
+				var interfaces []struct {
+					Addresses []struct {
+						Local string `json:"local"`
+					} `json:"addr_info"`
+				}
+				if err := json.Unmarshal(run("-j", "-4", "address", "show", "dev", "tnl-owned"), &interfaces); err != nil || len(interfaces) != 1 {
+					t.Fatalf("updated GRE address readback unavailable: %+v %v", interfaces, err)
+				}
+				addresses := map[string]bool{}
+				for _, address := range interfaces[0].Addresses {
+					addresses[address.Local] = true
+				}
+				if addresses["192.0.2.1"] || !addresses["192.0.2.2"] || !addresses["192.0.2.99"] {
+					t.Fatalf("GRE parent address update did not preserve its child: %+v", addresses)
+				}
+				return
+			}
 			if scenario == "source-expired" || scenario == "source-expired-noop" {
 				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
 				spec.Local = ""
