@@ -55,7 +55,7 @@ func TestLANRequiresActualSegmentParentBeforeAcquisition(t *testing.T) {
 			present := false
 			writes := 0
 			c.ObserveAddress = func(context.Context, string, string, bool) (delegatedAddressObservation, error) {
-				return delegatedAddressObservation{ifIndex: native.link.Index, scope: native.scope, present: present, usable: present}, nil
+				return delegatedAddressObservation{ifIndex: native.link.Index, scope: native.scope, present: present, usable: present, lifetimeKnown: present, preferredSeconds: 90, validSeconds: 120}, nil
 			}
 			c.Command = func(context.Context, string, ...string) error { writes++; present = true; return nil }
 			err := c.Reconcile(t.Context())

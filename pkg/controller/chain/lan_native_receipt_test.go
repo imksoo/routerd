@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/pdclient"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	state "github.com/imksoo/routerd/pkg/state"
 )
@@ -54,7 +55,6 @@ func TestLANNativeReceiptAcquisitionAndRemovedRecovery(t *testing.T) {
 	present := false
 	failDelete := false
 	writes := 0
-	c.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { return present }, nil, nil)
 	c.Command = func(_ context.Context, _ string, args ...string) error {
 		status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
 		if err != nil {
@@ -65,7 +65,8 @@ func TestLANNativeReceiptAcquisitionAndRemovedRecovery(t *testing.T) {
 			t.Fatalf("native effect before durable pending ownership: %+v %v", status, err)
 		}
 		writes++
-		if args[2] == "del" {
+		line := strings.Join(args, " ")
+		if strings.Contains(line, "del") || strings.Contains(line, "-alias") {
 			if failDelete {
 				return errors.New("native withdrawal failed")
 			}
@@ -75,6 +76,7 @@ func TestLANNativeReceiptAcquisitionAndRemovedRecovery(t *testing.T) {
 		}
 		return nil
 	}
+	addresses := installLANIOFixture(&c)
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +112,7 @@ func TestLANNativeReceiptAcquisitionAndRemovedRecovery(t *testing.T) {
 		t.Fatalf("pending present recovery was not fenced: %v", err)
 	}
 	present = false // operator confirms removal of the ambiguous native tuple.
+	delete(addresses, "2001:db8:1200:1::1/64")
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +188,11 @@ func TestPDCanonicalOlderValidAssociationDrivesLANReadinessAndAtomicStatus(t *te
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(commands) != 1 || !strings.Contains(commands[0], "1100:1::1/64") || !strings.Contains(commands[0], "preferred_lft 0 valid_lft 89") {
+	want := "ip -6 addr replace 2001:db8:1100:1::1/64 dev lan0 preferred_lft 0 valid_lft 89"
+	if c.currentOS() == platform.OSFreeBSD {
+		want = "ifconfig lan0 inet6 2001:db8:1100:1::1 prefixlen 64 pltime 0 vltime 89 alias"
+	}
+	if len(commands) != 1 || commands[0] != want {
 		t.Fatalf("valid older canonical prefix was lost/extended: %+v", commands)
 	}
 	ready, err := resourcequery.ReadSourceReady(store, "DHCPv6PrefixDelegation/wan-pd")
@@ -266,16 +273,17 @@ func TestLANUnknownSourceAfterNativeWriteRetainsReceiptWithoutWithdrawal(t *test
 	c.Store = fault
 	present := false
 	writes := 0
-	c.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { return present }, nil, nil)
 	c.Command = func(_ context.Context, _ string, args ...string) error {
 		writes++
-		if args[2] == "del" {
+		line := strings.Join(args, " ")
+		if strings.Contains(line, "del") || strings.Contains(line, "-alias") {
 			t.Fatal("unknown observation became native withdrawal")
 		}
 		present = true
 		fault.failed = true
 		return nil
 	}
+	installLANIOFixture(&c)
 	if err := c.Reconcile(t.Context()); !errors.Is(err, fault.failure) {
 		t.Fatalf("unknown source read lost: %v", err)
 	}
@@ -351,15 +359,21 @@ func TestLANNewPendingPresentAfterLostConfirmationIsFenced(t *testing.T) {
 	c.Store = fault
 	present := false
 	writes := 0
-	c.ObserveAddress = lanProbeFixture(func(context.Context, string, string) bool { return present }, nil, nil)
-	c.Command = func(_ context.Context, _ string, args ...string) error {
+	c.Command = func(_ context.Context, name string, args ...string) error {
 		writes++
-		if args[2] != "add" {
+		wantName := "ip"
+		want := "-6 addr add 2001:db8:1200:1::1/64 dev lan0 preferred_lft 90 valid_lft 120"
+		if c.currentOS() == platform.OSFreeBSD {
+			wantName = "ifconfig"
+			want = "lan0 inet6 2001:db8:1200:1::1 prefixlen 64 pltime 90 vltime 120 alias"
+		}
+		if name != wantName || strings.Join(args, " ") != want {
 			t.Fatalf("new tuple acquired through overwrite: %+v", args)
 		}
 		present = true
 		return nil
 	}
+	addresses := installLANIOFixture(&c)
 	if err := c.Reconcile(t.Context()); !errors.Is(err, failure) {
 		t.Fatalf("lost held confirmation hidden: %v", err)
 	}
@@ -379,6 +393,7 @@ func TestLANNewPendingPresentAfterLostConfirmationIsFenced(t *testing.T) {
 		t.Fatal("recovery mutated ambiguous native tuple")
 	}
 	present = false // explicit native absence fences out the possible foreign tuple.
+	delete(addresses, "2001:db8:1200:1::1/64")
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
