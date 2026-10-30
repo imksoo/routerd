@@ -3094,17 +3094,27 @@ func TestGeneratedPrefixlessImportPolicyWithDirectPreferenceIsAcceptedByGoBGP(t 
 // the same normal-peer/global-RIB path used by routerd.  A peer-local import
 // assignment is deliberately not involved: GoBGP only evaluates that form for
 // route-server clients, whereas routerd's BGP and RR peers use the global RIB.
-// All sockets stay inside 127/8; this test does not alter host networking.
+// Use the configured IPv4/IPv6 loopbacks; FreeBSD cannot bind arbitrary 127/8
+// addresses. The same two connections then test a prefixless rejecting leaf.
+// This test does not alter host networking.
 func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	ctx := context.Background()
 	const (
 		asn       = 64512
 		centralIP = "127.0.0.1"
-		directIP  = "127.0.0.2"
-		rrIP      = "127.0.0.3"
-		emptyIP   = "127.0.0.4"
+		directIP  = "127.0.0.1"
+		rrIP      = "::1"
 		prefix    = "192.0.2.10/32"
 	)
+	for _, address := range []string{directIP, rrIP} {
+		listener, err := net.Listen("tcp", net.JoinHostPort(address, "0"))
+		if err != nil {
+			t.Fatalf("bind configured loopback %s: %v", address, err)
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	port := loopbackTCPPort(t)
 
 	central := &testGoBGPServer{BgpServer: gobgpserver.NewBgpServer()}
@@ -3114,7 +3124,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 		Asn:              asn,
 		RouterId:         "10.255.0.1",
 		ListenPort:       int32(port),
-		ListenAddresses:  []string{centralIP},
+		ListenAddresses:  []string{centralIP, rrIP},
 		Families:         []uint32{0},
 		UseMultiplePaths: true,
 	}}); err != nil {
@@ -3143,21 +3153,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 			LocalPreference: 100,
 		},
 	}
-	// A signed direct leaf can be connected before it owns a mobility /32.
-	// Its session must come up, but even an erroneous route from that neighbor
-	// must not be admitted through a prefixless direct policy.
-	empty := desiredPeer{
-		Address:         emptyIP,
-		ASN:             asn,
-		LocalASN:        asn,
-		PassiveMode:     true,
-		RejectImportAll: true,
-		ImportPolicy: api.BGPImportPolicySpec{
-			NextHopRewrite:  "peer-address",
-			LocalPreference: 200,
-		},
-	}
-	desired := map[string]desiredPeer{directIP: direct, rrIP: rr, emptyIP: empty}
+	desired := map[string]desiredPeer{directIP: direct, rrIP: rr}
 	plan := buildPolicyPlanForTest("mesh", desired, nil)
 	if err := central.SetPolicies(ctx, plan.SetPolicies); err != nil {
 		t.Fatalf("set global import policies: %v", err)
@@ -3168,7 +3164,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	if err := central.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: plan.GlobalImportAssignment}); err != nil {
 		t.Fatalf("set global import assignment: %v", err)
 	}
-	for _, peer := range []desiredPeer{direct, rr, empty} {
+	for _, peer := range []desiredPeer{direct, rr} {
 		if err := central.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: goBGPPeer(peer)}); err != nil {
 			t.Fatalf("add central peer %s: %v", peer.Address, err)
 		}
@@ -3176,6 +3172,10 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 
 	startRemote := func(routerID, localAddress string) *testGoBGPServer {
 		t.Helper()
+		remoteCentralIP := centralIP
+		if netip.MustParseAddr(localAddress).Is6() {
+			remoteCentralIP = rrIP
+		}
 		remote := &testGoBGPServer{BgpServer: gobgpserver.NewBgpServer()}
 		go remote.Serve()
 		t.Cleanup(remote.Stop)
@@ -3189,7 +3189,7 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 		}
 		if err := remote.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: &gobgpapi.Peer{
 			Conf: &gobgpapi.PeerConf{
-				NeighborAddress: centralIP,
+				NeighborAddress: remoteCentralIP,
 				PeerAsn:         asn,
 				Type:            gobgpapi.PeerType_PEER_TYPE_INTERNAL,
 			},
@@ -3209,7 +3209,6 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	}
 	directRemote := startRemote("10.255.0.2", directIP)
 	rrRemote := startRemote("10.255.0.3", rrIP)
-	emptyRemote := startRemote("10.255.0.4", emptyIP)
 
 	established := func(address string) bool {
 		ready := false
@@ -3218,17 +3217,20 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 		})
 		return err == nil && ready
 	}
-	waitForCondition(t, 5*time.Second, func() bool { return established(directIP) && established(rrIP) && established(emptyIP) })
+	waitForCondition(t, 5*time.Second, func() bool { return established(directIP) && established(rrIP) })
 
-	advertise := func(server *testGoBGPServer, nextHop string) {
+	advertise := func(server *testGoBGPServer, med uint32) []byte {
 		t.Helper()
-		if _, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: testAppliedPath(prefix, bgpdaemon.AppliedPathAttrs{NextHop: nextHop})}); err != nil {
-			t.Fatalf("advertise %s through %s: %v", prefix, nextHop, err)
+		// Keep the IPv4 NLRI's advertised next hop IPv4. Import policy rewrites
+		// it to each actual transport peer, including the non-best IPv6 RR.
+		response, err := server.AddPath(ctx, &gobgpapi.AddPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: testAppliedPath(prefix, bgpdaemon.AppliedPathAttrs{NextHop: "192.0.2.254", MED: med})})
+		if err != nil {
+			t.Fatalf("advertise %s: %v", prefix, err)
 		}
+		return response.GetUuid()
 	}
-	advertise(directRemote, directIP)
-	advertise(rrRemote, rrIP)
-	advertise(emptyRemote, emptyIP)
+	advertise(directRemote, 0)
+	rrUUID := advertise(rrRemote, 0)
 
 	var got *gobgpapi.Destination
 	readDestination := func() *gobgpapi.Destination {
@@ -3258,8 +3260,6 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 			directPath = path
 		case rrIP:
 			rrPath = path
-		case emptyIP:
-			t.Fatalf("empty-ownership direct peer route was imported: %#v", path)
 		}
 	}
 	if directPath == nil || rrPath == nil {
@@ -3275,6 +3275,68 @@ func TestGlobalImportPolicyPrefersDirectPeerInRealGoBGP(t *testing.T) {
 	wantRoutes := []FIBRoute{{Prefix: prefix, NextHops: []string{directIP}}}
 	if !reflect.DeepEqual(routes, wantRoutes) {
 		t.Fatalf("FIB routes = %#v, want %#v", routes, wantRoutes)
+	}
+	// Reuse the live RR transport for a leaf whose current ownership is empty.
+	// This preserves two-neighbor isolation without requiring a third address.
+	empty := rr
+	empty.RejectImportAll = true
+	empty.ImportPolicy = api.BGPImportPolicySpec{NextHopRewrite: "peer-address", LocalPreference: 200}
+	desired[rrIP] = empty
+	if err := central.ReconcilePolicy(ctx, policyIntent("mesh", desired, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if err := rrRemote.DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: ipv4Family(), Uuid: rrUUID}); err != nil {
+		t.Fatal(err)
+	}
+	waitForCondition(t, 5*time.Second, func() bool {
+		candidate := readDestination()
+		return candidate != nil && len(candidate.Paths) == 1 && pathNextHop(candidate.Paths[0]) == directIP
+	})
+	receivedUpdates := func(address string) uint64 {
+		t.Helper()
+		var updates uint64
+		found := false
+		if err := central.BgpServer.ListPeer(ctx, &gobgpapi.ListPeerRequest{Address: address}, func(peer *gobgpapi.Peer) {
+			found = true
+			updates = peer.GetState().GetMessages().GetReceived().GetUpdate()
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatalf("actual BGP peer %s is unavailable", address)
+		}
+		return updates
+	}
+	directBefore, rrBefore := receivedUpdates(directIP), receivedUpdates(rrIP)
+	advertise(rrRemote, 1)
+	advertise(directRemote, 1)
+	waitForCondition(t, 5*time.Second, func() bool { return receivedUpdates(directIP) > directBefore && receivedUpdates(rrIP) > rrBefore })
+	waitForCondition(t, 5*time.Second, func() bool {
+		received := false
+		if err := central.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_ADJ_IN, Name: rrIP, Family: ipv4Family()}, func(candidate *gobgpapi.Destination) {
+			if normalizeRoutePrefix(candidate.GetPrefix()) != prefix {
+				return
+			}
+			for _, path := range candidate.Paths {
+				if pathRank(path).MED == 1 {
+					received = true
+				}
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return received
+	})
+	waitForCondition(t, 5*time.Second, func() bool {
+		got = readDestination()
+		return got != nil && len(got.Paths) == 1 && pathNextHop(got.Paths[0]) == directIP && got.Paths[0].Best && pathRank(got.Paths[0]).LocalPref == 200 && pathRank(got.Paths[0]).MED == 1
+	})
+	if !established(directIP) || !established(rrIP) {
+		t.Fatal("per-peer rejection lost its established BGP transports")
+	}
+	routes = fibRoutesFromDestination(got, importAllowedPrefixesFromPolicy(direct.ImportPolicy), peerAddressFIBRewritePeers(desired), nil)
+	if !reflect.DeepEqual(routes, wantRoutes) {
+		t.Fatalf("prefixless rejecting peer changed allowed IPv4 FIB selection: %#v", routes)
 	}
 }
 
