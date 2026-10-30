@@ -22,7 +22,7 @@ func TestPFInputDenyPrecedesImplicitTrustedAccept(t *testing.T) {
 	got := string(data)
 	deny := `block drop in quick on $lan_if inet proto icmp to any icmp-type echoreq label "routerd:deny-echo"`
 	accept := `pass in quick on $lan_if to any keep state`
-	anchor := `anchor "routerd_input_lan" in on $lan_if to { self, 255.255.255.255, 224.0.0.0/24, ff02::/16 } {`
+	anchor := `anchor "routerd_input_lan" in on $lan_if to { (self), 255.255.255.255, 224.0.0.0/24, ff02::/16 } {`
 	if !strings.Contains(got, anchor) {
 		t.Fatalf("input selectors can match forwarded traffic:\n%s", data)
 	}
@@ -32,9 +32,9 @@ func TestPFInputDenyPrecedesImplicitTrustedAccept(t *testing.T) {
 	}
 }
 
-func TestPFRejectsUnenforcedForwardZoneSelectors(t *testing.T) {
+func TestPFRejectsMissingForwardZone(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallRule"}, Metadata: api.ObjectMeta{Name: "only-wan"}, Spec: api.FirewallRuleSpec{FromZone: "lan", ToZone: "wan", Action: "accept"}}}}}
-	if _, err := PF(router, nil); err == nil || !strings.Contains(err.Error(), "forwarding/output zone selectors") {
+	if _, err := PF(router, nil); err == nil || !strings.Contains(err.Error(), "missing PF source zone") {
 		t.Fatalf("forward selector was silently discarded: %v", err)
 	}
 }

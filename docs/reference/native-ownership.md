@@ -53,11 +53,29 @@ have been replaced by another writer; it is not automatically reclaimed. Recover
 does not extend prefix validity. Interface replacement and reboot invalidate the
 old native identity rather than authorizing mutation of its replacement.
 
-Child address and route receipts on either VXLAN kind also retain the parent's
-native token. Removing the parent declaration does not remove the proof needed
+Child address, route and RA receipts on either VXLAN kind or DS-Lite also retain
+the parent's native token. Removing the parent declaration does not remove the proof needed
 for cleanup: the recorded parent must still match its cookie, scope and interface
 index. An unrecorded or foreign replacement retains an uncertain child receipt
 and cannot authorize a delete.
+
+DS-Lite child admission reads the actual `Router/dslite-native` receipt, current
+configuration/source inputs, native kind/cookie, kernel scope and interface index.
+Interface-reference resolution uses the same tunnel-name fallback and FreeBSD gif
+unit mapping as the actual native owner.
+Pending parent operations, failed reads, unapplied intent and foreign same-name
+links cannot authorize a child effect. The child stores a `dslite:`-qualified
+cookie to select the concrete owner for later cleanup, including after removing
+the parent declaration. Address, route and RA owners recheck that proof after
+their pending writes. Runtime route/address selection retains the current
+unselected parent graph, so a false condition cannot erase a virtual parent and
+admit its same-name device as a physical link. Native link identity is read again
+after the parent's
+inner-address and journal observation waits. Linux and FreeBSD command/SQLite
+regressions exercise these boundaries; actual kernel/peer forwarding remains
+unqualified. These userspace checks do not establish atomic compare-and-change
+against unrelated native writers. Bridge, WireGuard, VRF and TunnelInterface
+child ownership remain separate open work.
 
 This contract describes these concrete owners. Mobility, BGP kernel FIB, tunnel
 cookies and policy-routing effects have separate recovery boundaries; their
