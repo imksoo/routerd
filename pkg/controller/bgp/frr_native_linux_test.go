@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -177,6 +178,13 @@ func TestBGPIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	if err := os.Mkdir(vty, 0700); err != nil {
 		t.Fatal(err)
 	}
+	peerVTY := func(commands ...string) []byte {
+		args := []string{"--config_dir", base, "--vty_socket", vty, "--histfile", filepath.Join(base, "vtysh.history"), "-d", "bgpd"}
+		for _, command := range commands {
+			args = append(args, "-c", command)
+		}
+		return peerRun("vtysh", args...)
+	}
 	config := `frr defaults traditional
 hostname routerd-independent-peer
 log stdout
@@ -209,13 +217,13 @@ router bgp 64513
 		return peerCommand(frr, "-Z", "-n", "-S", "-f", frrConfig, "-i", filepath.Join(base, "bgpd.pid"), "--vty_socket", vty, "-P", "0", "--log", "stdout")
 	}
 	stopFRR := start("frr-initial", frrCommand())
-	_ = stopFRR
 	spec := manageddaemon.Spec{Name: "routerd-bgp", Binary: binary, SocketPath: filepath.Join(base, "gobgp.sock"), ControlSocketPath: filepath.Join(base, "control.sock"), StatePath: filepath.Join(base, "applied.json")}
 	productCommand := func() *exec.Cmd {
 		return exec.CommandContext(ctx, binary, "daemon", "--socket", spec.SocketPath, "--control-socket", spec.ControlSocketPath, "--state-file", spec.StatePath)
 	}
 	stopProduct := start("routerd-bgp-initial", productCommand())
-	store, err := routerstate.OpenSQLite(filepath.Join(base, "state.db"))
+	database := filepath.Join(base, "state.db")
+	store, err := routerstate.OpenSQLite(database)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +257,21 @@ router bgp 64513
 			if time.Now().After(deadline) || ctx.Err() != nil {
 				status, _ := store.ReadObjectStatus(api.NetAPIVersion, "BGPRouter", "edge")
 				raw, _ := json.Marshal(status)
-				t.Logf("independent FRR summary: %s", peerRun("vtysh", "--config_dir", base, "--vty_socket", vty, "-d", "bgpd", "-c", "show bgp summary json"))
+				t.Logf("actual IPv4 routes: %s", run("ip", "-4", "-d", "route", "show", "table", "main", "proto", "186"))
+				t.Logf("actual IPv6 routes: %s", run("ip", "-6", "-d", "route", "show", "table", "main", "proto", "186"))
+				if handle, err := bgpNetlinkHandle(ctx); err == nil {
+					routes, readErr := handle.RouteList(nil, syscall.AF_UNSPEC)
+					for _, route := range routes {
+						if int(route.Protocol) == bgpRouteProtocol {
+							t.Logf("actual BGP netlink route: %#v", route)
+						}
+					}
+					if readErr != nil {
+						t.Logf("native diagnostic read: %v", readErr)
+					}
+					handle.Delete()
+				}
+				t.Logf("independent FRR summary: %s", peerVTY("show bgp summary json"))
 				t.Fatalf("%s did not become ready: reconcile=%v status=%s", label, reconcileErr, raw)
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -263,7 +285,7 @@ router bgp 64513
 		controller.mu.Lock()
 		defer controller.mu.Unlock()
 		if controller.Server == nil {
-			return false
+			t.Fatal("actual BGP source observation is unavailable")
 		}
 		found := false
 		err = controller.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: familyForPrefix(wanted)}, func(destination *gobgpapi.Destination) {
@@ -276,12 +298,15 @@ router bgp 64513
 				}
 			}
 		})
-		return err == nil && found
+		if err != nil {
+			t.Fatalf("actual BGP source observation failed: %v", err)
+		}
+		return found
 	}
 	nativeHas := func(prefix string) bool {
 		snapshot, err := (netlinkFIBBackend{}).Snapshot(ctx)
 		if err != nil {
-			return false
+			t.Fatalf("actual native route observation failed: %v", err)
 		}
 		for _, route := range snapshot.Routes {
 			if route.Route.Prefix == prefix && route.Route.Protocol == bgpRouteProtocol && route.Exact {
@@ -324,4 +349,133 @@ router bgp 64513
 	waitFor("mixed global policy with both acknowledged families", func() bool {
 		return ribHas("198.19.40.1/32") && ribHas("2001:db8:40::1/128") && nativeHas("198.19.40.1/32") && nativeHas("2001:db8:40::1/128")
 	})
+	checkOwned := func() {
+		t.Helper()
+		snapshot, err := (netlinkFIBBackend{}).Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal, found, err := store.ReadBGPFIB(ctx, snapshot.KernelScope)
+		if err != nil || !found || journal.Pending != nil || len(journal.Applied) != 2 {
+			t.Fatalf("native BGP ownership was not fully acknowledged: %+v found=%t err=%v", journal, found, err)
+		}
+		for _, receipt := range journal.Applied {
+			if !snapshot.exact(receipt) || receipt.Table != 254 || receipt.Protocol != bgpRouteProtocol || receipt.Metric != 200 || len(receipt.NextHops) != 1 {
+				t.Fatalf("BGP journal differs from actual kernel identity: %+v", receipt)
+			}
+		}
+	}
+	checkBoth := func(label string) {
+		t.Helper()
+		waitFor(label, func() bool {
+			return ribHas("198.19.40.1/32") && ribHas("2001:db8:40::1/128") && nativeHas("198.19.40.1/32") && nativeHas("2001:db8:40::1/128")
+		})
+		checkOwned()
+		t.Logf("%s IPv4: %s", label, strings.TrimSpace(string(run("ping", "-n", "-c", "1", "-W", "2", "198.19.40.1"))))
+		t.Logf("%s IPv6: %s", label, strings.TrimSpace(string(run("ping", "-6", "-n", "-c", "1", "-W", "2", "2001:db8:40::1"))))
+	}
+	checkBoth("mixed global policy forwarding")
+	peerNetworks := func(withdraw bool) {
+		command := "network "
+		if withdraw {
+			command = "no network "
+		}
+		peerVTY("configure terminal", "router bgp 64513", "address-family ipv4 unicast", command+"198.19.40.1/32", "exit-address-family", "address-family ipv6 unicast", command+"2001:db8:40::1/128", "exit-address-family")
+	}
+	checkWithdrawn := func(label string) {
+		t.Helper()
+		waitFor(label, func() bool {
+			return !ribHas("198.19.40.1/32") && !ribHas("2001:db8:40::1/128") && !nativeHas("198.19.40.1/32") && !nativeHas("2001:db8:40::1/128")
+		})
+		scope, err := (netlinkFIBBackend{}).KernelScope(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal, found, err := store.ReadBGPFIB(ctx, scope)
+		if err != nil || !found || journal.Pending != nil || len(journal.Applied) != 0 {
+			t.Fatalf("withdrawal retained BGP ownership: %+v found=%t err=%v", journal, found, err)
+		}
+		for _, address := range []string{"198.19.40.1", "2001:db8:40::1"} {
+			out, err := exec.CommandContext(ctx, "ping", "-n", "-c", "1", "-W", "1", address).CombinedOutput()
+			if err == nil {
+				t.Fatalf("withdrawn peer route still forwards to %s: %s", address, out)
+			}
+		}
+	}
+	peerNetworks(true)
+	checkWithdrawn("FRR explicit IPv4/IPv6 withdrawal")
+	run("ping", "-n", "-c", "1", "-W", "2", "198.18.0.2")
+	controller.mu.Lock()
+	established := 0
+	err = controller.Server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(peer *gobgpapi.Peer) {
+		if peer.GetState().GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED {
+			established++
+		}
+	})
+	controller.mu.Unlock()
+	if err != nil || established != 2 {
+		t.Fatalf("withdrawal test lost its underlying BGP sessions: established=%d err=%v", established, err)
+	}
+	peerNetworks(false)
+	checkBoth("FRR readvertisement")
+	if err := stopFRR(ctx); err != nil {
+		t.Fatal(err)
+	}
+	checkWithdrawn("independent FRR process stop")
+	stopFRR = start("frr-restarted", frrCommand())
+	checkBoth("independent FRR restart")
+	if err := stopProduct(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stopProduct = start("routerd-bgp-restarted", productCommand())
+	checkBoth("production routerd-bgp restart from applied state")
+	// Rebuild the controller against the same SQLite journal only after its
+	// watcher and RPC connection acknowledge completion. The daemon stays up.
+	if err := controller.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := (netlinkFIBBackend{}).KernelScope(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := store.ReadBGPFIB(ctx, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = routerstate.OpenSQLite(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller = &Controller{Router: &dual, Store: store, Daemon: spec, StopDaemon: func(stopCtx context.Context) error { return stopProduct(stopCtx) }}
+	checkBoth("controller and SQLite reopen")
+	controller.Start(ctx)
+	after, _, err := store.ReadBGPFIB(ctx, scope)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("reopen replaced the acknowledged kernel generation: before=%+v after=%+v err=%v", before, after, err)
+	}
+	// Exercise actual declared-resource removal: the existing owner records its
+	// removal fence, stops/Waits the daemon, and withdraws exact journal tuples.
+	if err := controller.ReconcileRouter(ctx, &api.Router{}, store); err != nil {
+		t.Fatalf("BGP resource removal: %v", err)
+	}
+	if nativeHas("198.19.40.1/32") || nativeHas("2001:db8:40::1/128") {
+		t.Fatal("BGP resource removal retained owned native routes")
+	}
+	journal, found, err := store.ReadBGPFIB(ctx, scope)
+	if err != nil || !found || journal.Pending != nil || len(journal.Applied) != 0 {
+		t.Fatalf("BGP removal retained ownership: %+v found=%t err=%v", journal, found, err)
+	}
+	if _, err := os.Stat(spec.StatePath); !os.IsNotExist(err) {
+		t.Fatalf("BGP removal retained restart intent: %v", err)
+	}
+	if err := controller.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopFRR(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("independent IPv4/IPv6 FRR reception, exact kernel readback, forwarding, withdrawal, peer/daemon restart, SQLite reopen and declared-resource removal verified")
 }

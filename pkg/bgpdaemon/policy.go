@@ -71,9 +71,11 @@ func BuildPolicyPlan(intent PolicyIntent, paths []AppliedPath) PolicyPlan {
 		neighbor := func() *gobgpapi.MatchSet {
 			return &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: scope.Name + "-neighbors"}
 		}
-		if len(prefixes) > 0 {
-			req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX, Name: name + "-prefixes", Prefixes: prefixes})
-			policy.Statements = []*gobgpapi.Statement{{Name: bgpPolicyStatementName(name, "allow-export"), Conditions: &gobgpapi.Conditions{NeighborSet: neighbor(), PrefixSet: &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: name + "-prefixes"}}, Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT}}}
+		prefixSetName := name + "-prefixes"
+		for _, set := range bgpPolicyPrefixSets(prefixSetName, prefixes) {
+			req.DefinedSets = append(req.DefinedSets, set)
+			suffix := strings.TrimPrefix(set.Name, prefixSetName)
+			policy.Statements = append(policy.Statements, &gobgpapi.Statement{Name: bgpPolicyStatementName(name, "allow-export"+suffix), Conditions: &gobgpapi.Conditions{NeighborSet: neighbor(), PrefixSet: &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: set.Name}}, Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT}})
 		}
 		policy.Statements = append(policy.Statements, &gobgpapi.Statement{Name: bgpPolicyStatementName(name, "reject-unmatched-export"), Conditions: &gobgpapi.Conditions{NeighborSet: neighbor()}, Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT}})
 		req.Policies = append(req.Policies, policy)
@@ -184,12 +186,13 @@ func appendEffectiveImportPolicy(req *gobgpapi.SetPoliciesRequest, policyName st
 func effectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, scope PolicyScope, neighborSetName string) []*gobgpapi.Statement {
 	prefixes := importPolicyPrefixes(scope.Spec)
 	prefixSetName := scope.Name + "-prefixes"
-	if len(prefixes) > 0 {
-		req.DefinedSets = append(req.DefinedSets, &gobgpapi.DefinedSet{
-			DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX,
-			Name:        prefixSetName,
-			Prefixes:    prefixes,
-		})
+	prefixSetNames := []string{""}
+	if sets := bgpPolicyPrefixSets(prefixSetName, prefixes); len(sets) > 0 {
+		req.DefinedSets = append(req.DefinedSets, sets...)
+		prefixSetNames = nil
+		for _, set := range sets {
+			prefixSetNames = append(prefixSetNames, set.Name)
+		}
 	}
 	requiredSetName := scope.Name + "-required-communities"
 	requiredCommunities := cleanCommunityPolicyValues(scope.Spec.RequiredCommunities)
@@ -230,22 +233,25 @@ func effectiveImportPolicyStatements(req *gobgpapi.SetPoliciesRequest, scope Pol
 			Actions: &gobgpapi.Actions{RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_REJECT},
 		})
 	}
-	acceptConditions := &gobgpapi.Conditions{NeighborSet: neighborSet()}
-	if len(prefixes) > 0 {
-		acceptConditions.PrefixSet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: prefixSetName}
+	for _, setName := range prefixSetNames {
+		acceptConditions := &gobgpapi.Conditions{NeighborSet: neighborSet()}
+		if setName != "" {
+			acceptConditions.PrefixSet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ANY, Name: setName}
+		}
+		if len(requiredCommunities) > 0 {
+			acceptConditions.CommunitySet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ALL, Name: requiredSetName}
+		}
+		suffix := strings.TrimPrefix(setName, prefixSetName)
+		statements = append(statements, &gobgpapi.Statement{
+			Name:       bgpPolicyStatementName(scope.Name, "allow-import"+suffix),
+			Conditions: acceptConditions,
+			Actions: &gobgpapi.Actions{
+				RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
+				Nexthop:     nextHopRewriteAction(scope.Spec),
+				LocalPref:   importLocalPreferenceAction(scope.Spec),
+			},
+		})
 	}
-	if len(requiredCommunities) > 0 {
-		acceptConditions.CommunitySet = &gobgpapi.MatchSet{Type: gobgpapi.MatchSet_TYPE_ALL, Name: requiredSetName}
-	}
-	statements = append(statements, &gobgpapi.Statement{
-		Name:       bgpPolicyStatementName(scope.Name, "allow-import"),
-		Conditions: acceptConditions,
-		Actions: &gobgpapi.Actions{
-			RouteAction: gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT,
-			Nexthop:     nextHopRewriteAction(scope.Spec),
-			LocalPref:   importLocalPreferenceAction(scope.Spec),
-		},
-	})
 	statements = append(statements, &gobgpapi.Statement{
 		Name:       bgpPolicyStatementName(scope.Name, "reject-unmatched-import"),
 		Conditions: &gobgpapi.Conditions{NeighborSet: neighborSet()},
@@ -298,6 +304,36 @@ func importPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix
 
 func exportPolicyPrefixes(spec routerapi.BGPExportPolicySpec) []*gobgpapi.Prefix {
 	return bgpImportPolicyPrefixes(routerapi.BGPImportPolicySpec{AllowedPrefixes: spec.AllowedPrefixes})
+}
+
+// GoBGP prefix sets contain exactly one address family. Keep single-family
+// names unchanged; mixed policies get one accept statement for each set.
+func bgpPolicyPrefixSets(name string, prefixes []*gobgpapi.Prefix) []*gobgpapi.DefinedSet {
+	var ipv4, ipv6 []*gobgpapi.Prefix
+	for _, prefix := range prefixes {
+		parsed, err := netip.ParsePrefix(prefix.GetIpPrefix())
+		if err != nil {
+			continue
+		}
+		if parsed.Addr().Is4() {
+			ipv4 = append(ipv4, prefix)
+		} else {
+			ipv6 = append(ipv6, prefix)
+		}
+	}
+	if len(ipv4) == 0 && len(ipv6) == 0 {
+		return nil
+	}
+	set := func(name string, values []*gobgpapi.Prefix) *gobgpapi.DefinedSet {
+		return &gobgpapi.DefinedSet{DefinedType: gobgpapi.DefinedType_DEFINED_TYPE_PREFIX, Name: name, Prefixes: values}
+	}
+	if len(ipv4) == 0 {
+		return []*gobgpapi.DefinedSet{set(name, ipv6)}
+	}
+	if len(ipv6) == 0 {
+		return []*gobgpapi.DefinedSet{set(name, ipv4)}
+	}
+	return []*gobgpapi.DefinedSet{set(name+"-ipv4", ipv4), set(name+"-ipv6", ipv6)}
 }
 
 func bgpImportPolicyPrefixes(spec routerapi.BGPImportPolicySpec) []*gobgpapi.Prefix {
