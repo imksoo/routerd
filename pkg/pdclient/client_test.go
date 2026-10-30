@@ -30,7 +30,7 @@ func prefix(text string, preferred, valid uint32) IAPrefix {
 }
 
 func response(c *Client, kind uint8, entries ...IAPrefix) Message {
-	return Message{Type: kind, TransactionID: c.prefixExchange.message.TransactionID, ClientDUID: c.Config.ClientDUID, ServerDUID: testServer, IAPDs: []IAPD{{IAID: c.Config.IAID, T1: 30, T2: 60, Prefixes: entries}}}
+	return Message{Type: kind, TransactionID: c.leaseExchange.message.TransactionID, ClientDUID: c.Config.ClientDUID, ServerDUID: testServer, IAPDs: []IAPD{{IAID: c.Config.IAID, T1: 30, T2: 60, Prefixes: entries}}}
 }
 
 func mustPayload(t *testing.T, msg Message) []byte {
@@ -114,7 +114,7 @@ func TestAcquiresAllPrefixesAndKeepsExchangeIdentityAfterRequestLoss(t *testing.
 	if c.State != StateBound || len(c.Lease.Prefixes) != 2 || c.Lease.T1 != 30*time.Second {
 		t.Fatalf("association: %+v", c.Lease)
 	}
-	if !c.prefixExchange.retryAt.IsZero() {
+	if !c.leaseExchange.retryAt.IsZero() {
 		t.Fatal("completed Request retained retry ownership")
 	}
 }
@@ -148,7 +148,7 @@ func TestPrefixUpdatesRevocationsOmissionsRecoveryAndRenewPayload(t *testing.T) 
 	if err := restored.Renew(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	ia := restored.prefixExchange.message.IAPDs[0]
+	ia := restored.leaseExchange.message.IAPDs[0]
 	if len(ia.Prefixes) != 2 || ia.Prefixes[0].Valid != 160 || ia.Prefixes[1].Valid != 230 || ia.Prefixes[0].Preferred != 80 {
 		t.Fatalf("Renew must include all remaining lifetimes: %+v", ia)
 	}
@@ -276,7 +276,7 @@ func TestInformationRequestLossRetryStatusAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	infoXID := c.infoExchange.message.TransactionID
-	if infoXID == c.prefixExchange.message.TransactionID {
+	if infoXID == c.leaseExchange.message.TransactionID {
 		t.Fatal("exchanges share transaction")
 	}
 	count := len(transport.sent)
@@ -425,14 +425,14 @@ func TestSendFailureRetainsRetryDeadlineAndRequestRetriesAreFinite(t *testing.T)
 	}
 	transport.failure = nil
 	receive(t, c, response(c, MessageAdvertise, prefix("2001:db8:1::/56", 90, 120)))
-	xid := c.prefixExchange.message.TransactionID
+	xid := c.leaseExchange.message.TransactionID
 	for i := 0; i < 10; i++ {
 		now = c.NextRetryAt()
 		if err := c.Tick(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if c.State != StateSoliciting || c.prefixExchange.message.TransactionID == xid {
+	if c.State != StateSoliciting || c.leaseExchange.message.TransactionID == xid {
 		t.Fatal("exhausted Request retained old exchange")
 	}
 }
@@ -523,7 +523,7 @@ func TestReleaseWithdrawsEveryPrefixAndStopsAfterFiniteRetries(t *testing.T) {
 	if err := c.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if c.prefixExchange.active() {
+	if c.leaseExchange.active() {
 		t.Fatal("Release exceeded finite retry count")
 	}
 	count := len(transport.sent)
@@ -554,12 +554,12 @@ func TestReleaseReplyCompletesRegardlessOfStatusAndChecksSelectedServer(t *testi
 	msg.StatusCode = StatusUnspecFail
 	msg.ServerDUID = []byte{9}
 	receive(t, c, msg)
-	if !c.prefixExchange.active() {
+	if !c.leaseExchange.active() {
 		t.Fatal("unselected server completed Release")
 	}
 	msg.ServerDUID = testServer
 	receive(t, c, msg)
-	if c.prefixExchange.active() || c.State != StateReleased {
+	if c.leaseExchange.active() || c.State != StateReleased {
 		t.Fatal("valid Release Reply failed to complete")
 	}
 }
@@ -582,7 +582,7 @@ func TestLateRenewReplyCannotReviveExpiredAssociationButInformationStillComplete
 	infoXID := c.infoExchange.message.TransactionID
 	now = now.Add(121 * time.Second)
 	receive(t, c, late)
-	if c.State != StateExpired || c.prefixExchange.active() || len(c.Lease.Prefixes) != 0 {
+	if c.State != StateExpired || c.leaseExchange.active() || len(c.Lease.Prefixes) != 0 {
 		t.Fatal("late matching Renew Reply revived expired authority")
 	}
 	receive(t, c, Message{Type: MessageReply, TransactionID: infoXID, ClientDUID: c.Config.ClientDUID, ServerDUID: testServer, AFTRName: "aftr.example"})
@@ -623,7 +623,7 @@ func TestInformationSendFailureDoesNotDelayPrefixExpiry(t *testing.T) {
 	if err := c.Tick(context.Background()); !errors.Is(err, ErrSend) {
 		t.Fatalf("information failure evidence missing: %v", err)
 	}
-	if c.State != StateExpired || len(c.Lease.Prefixes) != 0 || c.prefixExchange.active() {
+	if c.State != StateExpired || len(c.Lease.Prefixes) != 0 || c.leaseExchange.active() {
 		t.Fatal("independent information send blocked prefix expiry")
 	}
 }

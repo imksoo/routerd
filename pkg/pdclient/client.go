@@ -88,18 +88,21 @@ func (a AddressLease) PreferredUntil() time.Time { return lifetimeDeadline(a.Acq
 func (a AddressLease) ExpiresAt() time.Time      { return lifetimeDeadline(a.AcquiredAt, a.Valid) }
 
 type Lease struct {
-	ServerDUID    []byte
-	IAID          uint32
-	T1            time.Duration
-	T2            time.Duration
-	AcquiredAt    time.Time
-	Prefixes      []PrefixLease
-	CurrentPrefix netip.Prefix
-	Addresses     []AddressLease
+	ServerDUID        []byte
+	IAID              uint32
+	T1                time.Duration
+	T2                time.Duration
+	AcquiredAt        time.Time
+	Prefixes          []PrefixLease
+	CurrentPrefix     netip.Prefix
+	Addresses         []AddressLease
+	AddressT1         time.Duration
+	AddressT2         time.Duration
+	AddressAcquiredAt time.Time
 }
 
-func (l Lease) RenewAt() time.Time  { return lifetimeDeadline(l.AcquiredAt, l.T1) }
-func (l Lease) RebindAt() time.Time { return lifetimeDeadline(l.AcquiredAt, l.T2) }
+func (l Lease) RenewAt() time.Time  { return l.associationDeadline(false, 0) }
+func (l Lease) RebindAt() time.Time { return l.associationDeadline(true, 0) }
 
 func lifetimeDeadline(start time.Time, duration time.Duration) time.Time {
 	if duration == infinity {
@@ -157,7 +160,7 @@ type Client struct {
 	State           State
 	Lease           Lease
 	Info            Information
-	prefixExchange  exchange
+	leaseExchange   exchange
 	infoExchange    exchange
 	solicitMaxRT    time.Duration
 	infoMaxRT       time.Duration
@@ -179,6 +182,9 @@ func New(config Config, transport Transport) (*Client, error) {
 	if len(config.ClientDUID) > 130 {
 		return nil, fmt.Errorf("client DUID exceeds the RFC 9915 size limit")
 	}
+	if config.Mode > RequestPrefixAndAddress {
+		return nil, fmt.Errorf("invalid DHCPv6 association request mode")
+	}
 	if config.WantPrefix == 0 {
 		config.WantPrefix = 60
 	}
@@ -194,8 +200,14 @@ func requestedOptions() []uint16 {
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	ia := IAPD{IAID: c.Config.IAID, Prefixes: []IAPrefix{{Prefix: netip.PrefixFrom(netip.IPv6Unspecified(), c.Config.WantPrefix)}}}
-	return c.send(ctx, StateSoliciting, Message{Type: MessageSolicit, IAPDs: []IAPD{ia}, ORO: requestedOptions()})
+	msg := Message{Type: MessageSolicit, ORO: requestedOptions()}
+	if c.wantsPrefixes() {
+		msg.IAPDs = []IAPD{{IAID: c.Config.IAID, Prefixes: []IAPrefix{{Prefix: netip.PrefixFrom(netip.IPv6Unspecified(), c.Config.WantPrefix)}}}}
+	}
+	if c.wantsAddresses() {
+		msg.IANAs = []IANA{{IAID: c.Config.IAID}}
+	}
+	return c.send(ctx, StateSoliciting, msg)
 }
 
 func (c *Client) Tick(ctx context.Context) error { return c.TickWithMargin(ctx, 0, 0) }
@@ -208,25 +220,25 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 	if infoErr := c.tickInformation(ctx, now); infoErr != nil {
 		defer func() { result = errors.Join(infoErr, result) }()
 	}
-	c.prunePrefixes(now)
+	c.pruneBindings(now)
 	if c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding {
-		if len(c.Lease.Prefixes) == 0 {
+		if !c.hasBindings() {
 			c.Lease = Lease{}
 			c.State = StateExpired
-			c.prefixExchange = exchange{}
+			c.leaseExchange = exchange{}
 			return nil
 		}
 		// A margin must never turn a zero server timer into immediate transmissions.
-		rebindAt := maxTime(c.Lease.RebindAt().Add(-max(time.Duration(0), rebindMargin)), c.Lease.AcquiredAt.Add(time.Second))
-		renewAt := maxTime(c.Lease.RenewAt().Add(-max(time.Duration(0), renewMargin)), c.Lease.AcquiredAt.Add(time.Second))
+		rebindAt := c.Lease.associationDeadline(true, rebindMargin)
+		renewAt := c.Lease.associationDeadline(false, renewMargin)
 		if (c.State == StateBound || c.State == StateRenewing) && !now.Before(rebindAt) {
 			return c.Rebind(ctx)
 		}
-		if c.State == StateBound && !now.Before(renewAt) {
+		if c.State == StateBound && !c.leaseExchange.active() && !now.Before(renewAt) {
 			return c.Renew(ctx)
 		}
 	}
-	e := &c.prefixExchange
+	e := &c.leaseExchange
 	if e.active() && !now.Before(e.retryAt) {
 		if e.restartDiscovery {
 			return c.Start(ctx)
@@ -241,21 +253,30 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 				c.Lease.AcquiredAt = now
 				c.Lease.T1 = time.Minute
 				c.Lease.T2 = 2 * time.Minute
-				c.prefixExchange = exchange{}
+				c.Lease.AddressAcquiredAt = now
+				c.Lease.AddressT1 = time.Minute
+				c.Lease.AddressT2 = 2 * time.Minute
+				c.leaseExchange = exchange{}
 				return nil
 			default:
+				if c.hasBindings() {
+					return c.Renew(ctx)
+				}
 				return c.Start(ctx)
 			}
 		}
-		if c.State == StateRequesting && e.attempts >= 10 {
+		if e.message.Type == MessageRequest && e.attempts >= 10 {
+			if c.hasBindings() {
+				return c.Renew(ctx)
+			}
 			return c.Start(ctx)
 		}
 		if e.message.Type == MessageRelease && e.attempts >= 4 {
-			c.prefixExchange = exchange{}
+			c.leaseExchange = exchange{}
 			return nil
 		}
 		if e.message.Type == MessageRenew || e.message.Type == MessageRebind {
-			e.message.IAPDs = []IAPD{c.leaseIA(now)}
+			c.setLeaseAssociations(&e.message, now)
 		}
 		return c.retransmit(ctx, e, now)
 	}
@@ -281,51 +302,59 @@ func (c *Client) NextRetryAt() time.Time {
 			next = at
 		}
 	}
-	if c.prefixExchange.active() {
-		add(c.prefixExchange.retryAt)
+	if c.leaseExchange.active() {
+		add(c.leaseExchange.retryAt)
 	}
 	if c.infoExchange.active() {
 		add(c.infoExchange.retryAt)
 	} else {
 		add(c.Info.RefreshAt)
 	}
-	if c.State == StateBound {
+	if c.State == StateBound && !c.leaseExchange.active() {
 		add(c.Lease.RenewAt())
-		add(c.Lease.RebindAt())
 	}
-	if c.State == StateRenewing {
+	if c.State == StateBound || c.State == StateRenewing {
 		add(c.Lease.RebindAt())
 	}
 	for _, p := range c.Lease.Prefixes {
 		add(p.ExpiresAt())
 	}
+	for _, a := range c.Lease.Addresses {
+		add(a.ExpiresAt())
+	}
 	return next
 }
 
 func (c *Client) Renew(ctx context.Context) error {
-	c.prunePrefixes(c.now())
-	if len(c.Lease.Prefixes) == 0 {
+	c.pruneBindings(c.now())
+	if !c.hasBindings() {
 		return fmt.Errorf("cannot renew without a lease")
 	}
-	return c.send(ctx, StateRenewing, Message{Type: MessageRenew, ServerDUID: c.Lease.ServerDUID, IAPDs: []IAPD{c.leaseIA(c.now())}, ORO: requestedOptions()})
+	msg := Message{Type: MessageRenew, ServerDUID: c.Lease.ServerDUID, ORO: requestedOptions()}
+	c.setLeaseAssociations(&msg, c.now())
+	return c.send(ctx, StateRenewing, msg)
 }
 
 func (c *Client) Rebind(ctx context.Context) error {
-	c.prunePrefixes(c.now())
-	if len(c.Lease.Prefixes) == 0 {
+	c.pruneBindings(c.now())
+	if !c.hasBindings() {
 		return fmt.Errorf("cannot rebind without a lease")
 	}
-	return c.send(ctx, StateRebinding, Message{Type: MessageRebind, IAPDs: []IAPD{c.leaseIA(c.now())}, ORO: requestedOptions()})
+	msg := Message{Type: MessageRebind, ORO: requestedOptions()}
+	c.setLeaseAssociations(&msg, c.now())
+	return c.send(ctx, StateRebinding, msg)
 }
 
 // Release immediately withdraws the local association and retries delivery a
 // finite number of times. Only an explicit Start can reacquire in this process.
 func (c *Client) Release(ctx context.Context) error {
-	c.prunePrefixes(c.now())
-	if len(c.Lease.Prefixes) == 0 {
+	c.pruneBindings(c.now())
+	if !c.hasBindings() {
 		return fmt.Errorf("cannot release without a lease")
 	}
-	err := c.send(ctx, StateReleased, Message{Type: MessageRelease, ServerDUID: c.Lease.ServerDUID, IAPDs: []IAPD{c.leaseIA(c.now())}})
+	msg := Message{Type: MessageRelease, ServerDUID: c.Lease.ServerDUID}
+	c.setLeaseAssociations(&msg, c.now())
+	err := c.send(ctx, StateReleased, msg)
 	if err != nil && !errors.Is(err, ErrSend) {
 		return err
 	}
@@ -397,11 +426,11 @@ func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 	}
 	// A matching identifier does not revive an exchange whose complete lease
 	// authority expired between the preceding tick and packet receipt.
-	c.prunePrefixes(c.now())
-	if (c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding) && len(c.Lease.Prefixes) == 0 {
+	c.pruneBindings(c.now())
+	if (c.State == StateBound || c.State == StateRenewing || c.State == StateRebinding) && !c.hasBindings() {
 		c.Lease = Lease{}
 		c.State = StateExpired
-		c.prefixExchange = exchange{}
+		c.leaseExchange = exchange{}
 	}
 	if c.infoExchange.active() && c.infoExchange.attempts > 0 && msg.Type == MessageReply && msg.TransactionID == c.infoExchange.message.TransactionID {
 		c.acceptMaxRT(msg)
@@ -420,23 +449,23 @@ func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 		c.infoExchange = exchange{}
 		return nil
 	}
-	e := &c.prefixExchange
+	e := &c.leaseExchange
 	if !e.active() || msg.TransactionID != e.message.TransactionID {
 		return nil
 	}
-	if c.State == StateSoliciting {
+	if e.message.Type == MessageSolicit {
 		if msg.Type != MessageAdvertise {
 			return nil
 		}
 	} else if msg.Type != MessageReply {
 		return nil
 	}
-	if (c.State == StateRequesting || c.State == StateRenewing || c.State == StateReleased) && !bytes.Equal(msg.ServerDUID, e.message.ServerDUID) {
+	if (e.message.Type == MessageRequest || e.message.Type == MessageRenew || e.message.Type == MessageRelease) && !bytes.Equal(msg.ServerDUID, e.message.ServerDUID) {
 		return nil
 	}
 	c.acceptMaxRT(msg)
 	if c.State == StateReleased && e.message.Type == MessageRelease {
-		c.prefixExchange = exchange{}
+		c.leaseExchange = exchange{}
 		return nil
 	}
 	if msg.StatusCode == StatusUnspecFail {
@@ -444,59 +473,7 @@ func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 		c.boundFailure(e, c.now())
 		return nil
 	}
-	var ia *IAPD
-	for i := range msg.IAPDs {
-		if msg.IAPDs[i].IAID == c.Config.IAID {
-			ia = &msg.IAPDs[i]
-			break
-		}
-	}
-	if c.State == StateRequesting && (msg.StatusCode == StatusNotOnLink || (ia != nil && ia.StatusCode == StatusNotOnLink)) {
-		c.lastError = "DHCPv6 server reported NotOnLink"
-		e.restartDiscovery = true
-		return nil
-	}
-	if msg.StatusCode != StatusSuccess {
-		c.lastError = fmt.Sprintf("DHCPv6 status %d", msg.StatusCode)
-		return nil
-	}
-	// An absent or independently discarded IA does not revoke a binding or reset
-	// the exchange. Other requested configuration remains independently usable.
-	if c.State != StateSoliciting {
-		c.acceptInformation(msg, false)
-	}
-	if ia == nil {
-		return nil
-	}
-	if ia.T1 > 0 && ia.T2 > 0 && ia.T1 > ia.T2 {
-		return nil
-	}
-	if (c.State == StateRenewing || c.State == StateRebinding) && ia.StatusCode == StatusNoBinding {
-		return c.send(ctx, StateRequesting, Message{Type: MessageRequest, ServerDUID: msg.ServerDUID, IAPDs: []IAPD{c.leaseIA(c.now())}, ORO: requestedOptions()})
-	}
-	if ia.StatusCode != StatusSuccess {
-		c.lastError = fmt.Sprintf("DHCPv6 IA_PD status %d", ia.StatusCode)
-		if ia.StatusCode == StatusUnspecFail {
-			c.boundFailure(e, c.now())
-		}
-		return nil
-	}
-	if c.State == StateSoliciting {
-		var prefixes []IAPrefix
-		for _, p := range ia.Prefixes {
-			if usablePrefix(p) && p.Valid > 0 {
-				prefixes = append(prefixes, IAPrefix{Prefix: p.Prefix})
-			}
-		}
-		if len(prefixes) == 0 {
-			return nil
-		}
-		return c.send(ctx, StateRequesting, Message{Type: MessageRequest, ServerDUID: msg.ServerDUID, IAPDs: []IAPD{{IAID: c.Config.IAID, Prefixes: prefixes}}, ORO: requestedOptions()})
-	}
-	if c.State == StateRequesting || c.State == StateRenewing || c.State == StateRebinding {
-		c.acceptReply(msg.ServerDUID, *ia)
-	}
-	return nil
+	return c.handleAssociations(ctx, msg)
 }
 
 func usablePrefix(p IAPrefix) bool {
@@ -538,10 +515,9 @@ func (c *Client) acceptInformation(msg Message, refresh bool) {
 	}
 }
 
-func (c *Client) acceptReply(server []byte, ia IAPD) {
+func (c *Client) acceptPrefixReply(ia IAPD) {
 	now := c.now()
-	c.lastError = ""
-	c.prunePrefixes(now)
+	c.pruneBindings(now)
 	byPrefix := make(map[netip.Prefix]PrefixLease, len(c.Lease.Prefixes)+len(ia.Prefixes))
 	for _, p := range c.Lease.Prefixes {
 		byPrefix[p.Prefix] = p
@@ -571,8 +547,8 @@ func (c *Client) acceptReply(server []byte, ia IAPD) {
 			selected = p.Prefix
 		}
 	}
-	oldCurrent := c.Lease.CurrentPrefix
-	c.Lease = Lease{ServerDUID: append([]byte(nil), server...), IAID: ia.IAID, AcquiredAt: now, CurrentPrefix: oldCurrent}
+	c.Lease.AcquiredAt = now
+	c.Lease.Prefixes = nil
 	for _, p := range byPrefix {
 		c.Lease.Prefixes = append(c.Lease.Prefixes, p)
 	}
@@ -582,13 +558,6 @@ func (c *Client) acceptReply(server []byte, ia IAPD) {
 	}
 	c.selectCurrent(now)
 	c.Lease.T1, c.Lease.T2 = associationTimers(ia, c.Lease.Prefixes, now)
-	c.prefixExchange = exchange{}
-	if len(c.Lease.Prefixes) == 0 {
-		c.State = StateExpired
-		c.Lease = Lease{}
-	} else {
-		c.State = StateBound
-	}
 }
 
 func associationTimers(ia IAPD, prefixes []PrefixLease, now time.Time) (time.Duration, time.Duration) {
@@ -603,10 +572,14 @@ func associationTimers(ia IAPD, prefixes []PrefixLease, now time.Time) (time.Dur
 			base = min(base, p.ExpiresAt().Sub(now))
 		}
 	}
+	return resolveAssociationTimers(ia.T1, ia.T2, base)
+}
+
+func resolveAssociationTimers(serverT1, serverT2 uint32, base time.Duration) (time.Duration, time.Duration) {
 	if base <= 0 || base >= infinity {
 		base = 24 * time.Hour
 	}
-	t1, t2 := seconds(ia.T1), seconds(ia.T2)
+	t1, t2 := seconds(serverT1), seconds(serverT2)
 	if t2 == 0 {
 		t2 = max(time.Second, max((base*4/5)/time.Second*time.Second, t1))
 	}
@@ -616,7 +589,8 @@ func associationTimers(ia IAPD, prefixes []PrefixLease, now time.Time) (time.Dur
 	return t1, t2
 }
 
-func (c *Client) prunePrefixes(now time.Time) {
+func (c *Client) pruneBindings(now time.Time) {
+	c.Lease.Addresses = slices.DeleteFunc(c.Lease.Addresses, func(a AddressLease) bool { return !now.Before(a.ExpiresAt()) })
 	c.Lease.Prefixes = slices.DeleteFunc(c.Lease.Prefixes, func(p PrefixLease) bool { return !now.Before(p.ExpiresAt()) })
 	c.selectCurrent(now)
 }
@@ -676,11 +650,11 @@ func (c *Client) send(ctx context.Context, next State, msg Message) error {
 		return err
 	}
 	c.State = next
-	c.prefixExchange = exchange{}
+	c.leaseExchange = exchange{}
 	if next == StateSoliciting || next == StateRequesting || next == StateRenewing || next == StateRebinding || (next == StateReleased && msg.Type == MessageRelease) {
 		now := c.now()
-		c.prefixExchange = exchange{message: msg, started: now, attempts: 1}
-		c.scheduleRetry(&c.prefixExchange, now)
+		c.leaseExchange = exchange{message: msg, started: now, attempts: 1}
+		c.scheduleRetry(&c.leaseExchange, now)
 	}
 	if err := c.Transport.Send(ctx, OutboundPacket{Interface: c.Config.Interface, Message: msg, Payload: payload}); err != nil {
 		c.lastError = err.Error()
@@ -770,7 +744,7 @@ func (c *Client) newTransaction() (uint32, error) {
 		return 0, fmt.Errorf("transaction ID must fit in 24 bits")
 	}
 	// Concurrent prefix and information exchanges must never share an identity.
-	for (c.prefixExchange.active() && xid == c.prefixExchange.message.TransactionID) || (c.infoExchange.active() && xid == c.infoExchange.message.TransactionID) {
+	for (c.leaseExchange.active() && xid == c.leaseExchange.message.TransactionID) || (c.infoExchange.active() && xid == c.infoExchange.message.TransactionID) {
 		xid = (xid + 1) & 0xffffff
 	}
 	return xid, nil

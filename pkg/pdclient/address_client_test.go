@@ -22,7 +22,7 @@ func addressClient(t *testing.T, now *time.Time, mode RequestMode) (*Client, *me
 }
 
 func addressResponse(c *Client, kind uint8, addresses ...IAAddress) Message {
-	return Message{Type: kind, TransactionID: c.prefixExchange.message.TransactionID,
+	return Message{Type: kind, TransactionID: c.leaseExchange.message.TransactionID,
 		ClientDUID: c.Config.ClientDUID, ServerDUID: testServer,
 		IANAs: []IANA{{IAID: c.Config.IAID, T1: 30, T2: 60, Addresses: addresses}}}
 }
@@ -109,10 +109,10 @@ func TestAddressClientCombinedRefreshDoesNotExtendMissingPrefix(t *testing.T) {
 	if c.Lease.Prefixes[0].ExpiresAt() != originalPrefixExpiry {
 		t.Fatal("address refresh extended unconfirmed prefix lifetime")
 	}
-	if !c.prefixExchange.active() {
+	if !c.leaseExchange.active() {
 		t.Fatal("missing PD answer silently completed Renew")
 	}
-	now = c.prefixExchange.retryAt
+	now = c.leaseExchange.retryAt
 	if err := c.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -181,5 +181,75 @@ func TestAddressClientWithdrawalKeepsPDAndRestoresIndependentExpiry(t *testing.T
 	addressOnly.Restore(before)
 	if addressOnly.State != StateIdle || len(addressOnly.Lease.Prefixes) != 0 || len(addressOnly.Lease.Addresses) != 0 {
 		t.Fatal("changed request mode adopted another configuration's snapshot")
+	}
+}
+
+func TestAddressClientNoBindingPreservesUpdatedSibling(t *testing.T) {
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	c, transport := addressClient(t, &now, RequestPrefixAndAddress)
+	acquireAddresses(t, c, true)
+	now = now.Add(30 * time.Second)
+	if err := c.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	msg := addressResponse(c, MessageReply)
+	msg.IANAs[0].StatusCode = StatusNoBinding
+	msg.IAPDs = response(c, MessageReply, prefix("2001:db8:10::/56", 180, 240)).IAPDs
+	receive(t, c, msg)
+	if c.State != StateRequesting || c.Snapshot().State != StateBound || c.Lease.Prefixes[0].ExpiresAt() != now.Add(240*time.Second) || len(c.Lease.Addresses) != 1 {
+		t.Fatalf("NoBinding discarded valid sibling or retained address: %+v", c.Snapshot())
+	}
+	if request := transport.last().Message; request.Type != MessageRequest || len(request.IAPDs) != 1 || len(request.IANAs) != 1 {
+		t.Fatalf("NoBinding recovery omitted configured association: %+v", request)
+	}
+}
+
+func TestAddressClientPartialRequestRetryLimitKeepsBindings(t *testing.T) {
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	c, transport := addressClient(t, &now, RequestPrefixAndAddress)
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []uint8{MessageAdvertise, MessageReply} {
+		msg := addressResponse(c, kind, testAddress("2001:db8::123", 3600, 7200))
+		msg.IANAs[0].T1, msg.IANAs[0].T2 = 1800, 3000
+		receive(t, c, msg) // Peer omitted the requested IA_PD entirely.
+	}
+	if c.State != StateBound || !c.leaseExchange.active() {
+		t.Fatal("partial acquisition did not retain the missing association exchange")
+	}
+	for range 10 {
+		now = c.leaseExchange.retryAt
+		if err := c.Tick(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(c.Lease.Addresses) != 1 || transport.last().Message.Type != MessageRenew || c.State != StateRenewing {
+		t.Fatalf("request retry limit abandoned valid lease or failed to renew: state=%s message=%+v", c.State, transport.last().Message)
+	}
+}
+
+func TestAddressClientRejectsForeignAndExpiredRenewReplies(t *testing.T) {
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	c, _ := addressClient(t, &now, RequestAddresses)
+	acquireAddresses(t, c, false)
+	expiry := c.Lease.Addresses[0].ExpiresAt()
+	if err := c.Renew(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	msg := addressResponse(c, MessageReply, testAddress("2001:db8::456", 90, 120))
+	foreign := msg
+	foreign.ServerDUID = []byte{1, 2, 3}
+	receive(t, c, foreign)
+	foreign = msg
+	foreign.TransactionID++
+	receive(t, c, foreign)
+	if len(c.Lease.Addresses) != 1 || c.Lease.Addresses[0].Address.String() != "2001:db8::123" {
+		t.Fatal("foreign exchange changed IA_NA lease")
+	}
+	now = expiry
+	receive(t, c, msg)
+	if c.State != StateExpired || len(c.Lease.Addresses) != 0 {
+		t.Fatal("late Renew Reply revived expired authority")
 	}
 }
