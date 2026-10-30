@@ -818,6 +818,66 @@
         "Earlier persistent-directory run failed two packages under observed high I/O pressure; that storage condition is not qualified",
         "Native peer/platform, reboot and persistent-media durability qualification"
       ]
+    },
+    "persistent-controller-fixtures-593cb42b": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "593cb42b71d854bf618559b90d00018b990f49c1",
+      "reference": "docs/design/routerd15-audit.md#persistent-directory-follow-up",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic, ext4 temporary files, unprivileged user; Go1.25.9 CGO_ENABLED=0 test harnesses, not installed product binaries.",
+      "binaries_sha256": {
+        "chain.test": "9d0b8f1b3fde583f04262b4c70cecd95f03624357c1aebafd13b5fb1feb3cd0b",
+        "render.test": "db1211cf0d60c787a4a9105190993a02bf14f6cd013e023b427747e72befda3e"
+      },
+      "checks": [
+        "TestARPObserverUnknownPlanPreservesActualSupervisorOwner passed (0.09s)",
+        "TestARPObserverRoutineStatusUpdatesKeepDiagnosticsWithoutEvents passed (1.06s)",
+        "TestRAObserveOnlyDoesNotConfigureLinuxHost passed (0.04s)",
+        "TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack shell fixture passed (2.05s)",
+        "Same selected tests also passed on the development host persistent /tmp after observed I/O pressure reduced"
+      ],
+      "excludes": [
+        "Complete persistent-directory Go suite",
+        "Storage-pressure availability and crash durability",
+        "Native FreeBSD and WAN RA peer interoperability"
+      ]
+    },
+    "linux-fou-candidate-5be3b91e": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "5be3b91eceb3c66444f45c3bf0247acfbf3023a6",
+      "reference": "docs/design/routerd15-audit.md#fou-and-gue-candidate-native-gate",
+      "binary_sha256": "d2d5acb9b3cf3b2a059947c1f518b73976d5217ce05eaa95f1f7c0685b689359",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; Go1.25.9 CGO_ENABLED=0 test harness; guest-root network/mount namespaces with fresh sysfs, separate iproute2-configured kernel peer.",
+      "reproduction": "TestTunnelNativeLinuxPeerLifecycle/fou",
+      "checks": [
+        "Echo traffic and peer RX increment; actual parent/child receipts",
+        "No extra apply on unchanged reconcile; injected canonical source expiry withdraws children and tunnel",
+        "Fresh-token reacquisition restores traffic; final receipt withdrawal and peer reap"
+      ],
+      "excludes": [
+        "Candidate is separate from shared proposal integration",
+        "Real DHCP expiry and different-device/platform interoperability",
+        "Complete TunnelInterface preservation or qualification"
+      ]
+    },
+    "linux-gue-candidate-5be3b91e": {
+      "level": "native-kernel",
+      "outcome": "fail",
+      "revision": "5be3b91eceb3c66444f45c3bf0247acfbf3023a6",
+      "reference": "docs/design/routerd15-audit.md#fou-and-gue-candidate-native-gate",
+      "binary_sha256": "d2d5acb9b3cf3b2a059947c1f518b73976d5217ce05eaa95f1f7c0685b689359",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; Go1.25.9 CGO_ENABLED=0 test harness; guest-root network/mount namespaces with fresh sysfs, separate iproute2-configured kernel peer.",
+      "reproduction": "TestTunnelNativeLinuxPeerLifecycle/gue",
+      "checks": [
+        "Controller acquisition failed with ERANGE while peer iproute2 GUE listener setup succeeded",
+        "Candidate FouAdd serializes IPPROTO=0 instead of omitting it; corrected native gate remains open"
+      ],
+      "excludes": [
+        "Candidate is separate from shared proposal integration",
+        "Real DHCP expiry and different-device/platform interoperability",
+        "Complete TunnelInterface preservation or qualification"
+      ]
     }
   },
   "features": [
@@ -1743,7 +1803,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "ra-observe-only-603a815e"
+          "ra-observe-only-603a815e",
+          "persistent-controller-fixtures-593cb42b"
         ]
       },
       "freebsd": {
@@ -2031,7 +2092,10 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-fou-candidate-5be3b91e",
+          "linux-gue-candidate-5be3b91e"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

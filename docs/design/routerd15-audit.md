@@ -1895,3 +1895,52 @@ outputs and the temporary test area are removed after recording these limits.
 
 The change prevents new observe-only effects; it does not restore settings from
 an earlier managed configuration or qualify WAN SLAAC/IA_NA interoperability.
+
+
+#### Persistent-directory follow-up
+
+With I/O pressure reduced, the same three previously failing top-level tests
+and the RA observe-only test passed on the development host's default persistent
+`/tmp`, without changing deadlines or product code. At clean `593cb42b`, pinned
+CGO-disabled Linux test binaries then passed those four tests as an unprivileged
+user in an isolated Ubuntu 24.04.4 VM (kernel 6.8.0-124-generic, ext4 `/tmp`).
+The two ARP tests completed in 0.09 and 1.06 seconds, RA host-effect fixtures in
+0.04 seconds, and the rc.d timeout/rollback fixture in 2.05 seconds. This checks
+actual SQLite files and controller/renderer fixtures; network commands remain
+injected and rc.d behavior is a shell fixture on Linux, not native FreeBSD or
+WAN RA interoperability. The installed router stayed healthy with empty intent.
+This narrower rerun does not replace a complete persistent-directory suite or
+prove operation under sustained storage pressure. Test binaries and successful
+raw outputs are removed; hashes and the source are recorded in the ledger.
+
+### FOU and GUE candidate native gate
+
+Candidate source/test `5be3b91e` was tested separately from the shared proposal,
+using a pinned static Go test binary in an isolated Linux VM. FOU passed actual
+controller/SQLite ownership, separately configured iproute2-peer echo traffic,
+unchanged reconciliation without another apply, source-status revocation,
+parent/child withdrawal, fresh-token reacquisition and final receipt removal.
+The source-status transition is injected through the canonical store, not a
+real DHCP expiry. Both peers use the same Linux kernel in different network
+namespaces; this is not different-device interoperability.
+
+GUE failed during controller acquisition with `numerical result out of range`.
+The separately configured peer's `ip fou add port 5556 gue` succeeded. The
+candidate's `addTunnelNativeFOU` calls netlink v1.3.1 `FouAdd`, which serializes
+`Protocol=0` as an explicit `FOU_ATTR_IPPROTO` attribute. The kernel's
+[FOU attribute policy](https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux.git/+/0506158ac7363a70f0deb49f71d26ccb57e55990/net/ipv4/fou_nl.c)
+requires a supplied IPPROTO value to be at least one. GUE ADD must omit that
+attribute while direct FOU retains protocol 4. The corrected product gate
+has not yet been run; the failure remains open.
+
+Environment certification must precede the test: load guest `ipip`, `ip_gre`
+and `fou` modules, verify an isolated kernel listener/link create-read-delete,
+then run the pinned test with guest-root capability and separate network/mount
+namespaces. `unshare -Urnm` fails before controller execution because FOU's
+`GENL_ADMIN_PERM` needs initial-user-namespace capability. The working wrapper
+uses `unshare -nm`, a private mount tree and a fresh sysfs mount; the test checks
+that host, router and peer network namespaces differ. The peer acknowledged
+exit and was reaped after both the failed setup and actual gate. No trial link,
+named namespace or FOU listener remained in the guest root namespace. Default
+module-created tunnel devices remained down. This candidate gate is not a claim
+that the pending TunnelInterface implementation is integrated or fully qualified.
