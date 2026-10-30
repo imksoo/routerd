@@ -336,11 +336,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					continue
 				}
 			}
-			underlay := interfaceName(c.Router, spec.Interface)
-			if underlay == ifname {
-				underlay = ""
-			}
-			plan := dsliteTunnelPlan{Name: ifname, Underlay: underlay, Local: local, Remote: remote, InnerLocal: innerLocal, EncapLimit: firstNonEmpty(spec.EncapsulationLimit, "none"), MTU: mtu, DefaultRoute: spec.DefaultRoute, RouteMetric: spec.RouteMetric}
+			plan := c.nativeTunnelPlan(resource.Metadata.Name, spec, local, remote, innerLocal)
 			if c.currentOS() == platform.OSFreeBSD && plan.EncapLimit != "none" {
 				return fmt.Errorf("FreeBSD DS-Lite does not support custom encapsulationLimit")
 			}
@@ -426,6 +422,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 type IPv4RouteController struct {
 	Router            *api.Router
 	Segments          *VXLANSegmentController
+ DSLite *DSLiteTunnelController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan

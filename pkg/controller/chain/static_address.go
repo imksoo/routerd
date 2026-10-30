@@ -4,7 +4,6 @@ package chain
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -33,44 +32,17 @@ type staticAddressSnapshot struct {
 	Addresses []netip.Prefix
 }
 
-var errStaticParentNotReady = errors.New("native VXLAN parent is not acquired")
+var errStaticParentNotReady = errors.New("native parent is not acquired")
 
-// The declaration's native name is not proof of its virtual parent's identity.
-// Reuse the actual Segment owner's journal and cookie reader before child effects.
+// The declaration's native name alone cannot authorize a child effect.
 func (c IPv4StaticAddressController) staticSegmentParent(ctx context.Context, reference string, observed staticAddressSnapshot) (string, error) {
-	if c.Router == nil {
-		return "", errors.New("static address parent router is unavailable")
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
-			continue
-		}
-		plan, err := nativeVXLANInterface(resource)
-		if err != nil {
-			return "", err
-		}
-		if resource.Metadata.Name != reference && plan != interfaceIfName(c.Router, reference) {
-			continue
-		}
-		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
-		if c.Segments != nil {
-			owner = *c.Segments
-			owner.Router = c.Router
-			owner.Store = c.Store
-		}
-		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
-		if err != nil {
-			return "", err
-		}
-		if !link.Exists {
-			return "", errStaticParentNotReady
-		}
-		if link.Index != observed.Index || link.Scope != observed.Scope || link.Config.IfName != interfaceIfName(c.Router, reference) {
-			return "", errors.New("static address VXLAN parent identity changed")
-		}
-		return link.Token, nil
-	}
-	return "", nil
+ reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
+ link, err := reader.observeDeclared(ctx, interfaceIfName(c.Router, reference))
+ if err != nil { return "", err }
+ if !link.Declared { return "", nil }
+ if !link.Exists { return "", errStaticParentNotReady }
+ if link.Index != observed.Index || link.Scope != observed.Scope || link.IfName != interfaceIfName(c.Router, reference) { return "", errors.New("static address native parent identity changed") }
+ return link.Token, nil
 }
 
 func (s staticAddressSnapshot) has(address string) bool {
@@ -171,8 +143,7 @@ func staticReceipt(status map[string]any) (*staticAddressReceipt, error) {
 		return nil, errors.New("invalid IPv4StaticAddress native identity")
 	}
 	if receipt.ParentToken != "" {
-		token, err := hex.DecodeString(receipt.ParentToken)
-		if err != nil || len(token) != 16 {
+		if !validNativeParentToken(receipt.ParentToken) {
 			return nil, errors.New("invalid static address parent token")
 		}
 	}
@@ -258,15 +229,12 @@ func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Con
 	if receipt.ParentToken == "" {
 		return nil
 	}
-	owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
-	if c.Segments != nil {
-		owner = *c.Segments
-	}
-	link, err := owner.ObserveRecordedInterface(ctx, receipt.IfName, receipt.ParentToken)
+ reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
+ link, err := reader.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
 	if err != nil {
 		return err
 	}
-	if !link.Exists || link.Scope != receipt.Scope || link.Index != observed.Index || link.Token != receipt.ParentToken || link.Config.IfName != receipt.IfName {
+	if !link.Exists || link.Scope != receipt.Scope || link.Index != observed.Index || link.Token != receipt.ParentToken || link.IfName != receipt.IfName {
 		return errors.New("static address cleanup parent identity is no longer proven")
 	}
 	return nil
@@ -495,7 +463,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 			return abortBeforeCommand(err)
 		}
 		if currentParent != parentToken {
-			return abortBeforeCommand(errors.New("native VXLAN parent changed while recording address intent"))
+			return abortBeforeCommand(errors.New("native parent changed while recording address intent"))
 		}
 		command := c.Command
 		if command == nil {
@@ -521,7 +489,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 			return err
 		}
 		if currentParent != parentToken {
-			return errors.New("native VXLAN parent changed during address acquisition")
+			return errors.New("native parent changed during address acquisition")
 		}
 		// Only this invocation has both the successful exclusive add and its
 		// readback. A restarted invocation sees the durable pending record.

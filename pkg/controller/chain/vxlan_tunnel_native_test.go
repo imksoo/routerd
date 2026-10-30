@@ -165,11 +165,11 @@ func TestVXLANTunnelChildrenUseCurrentGateObservations(t *testing.T) {
 		t.Fatalf("current native tunnel rejected as delegated parent: %+v %v", parent, err)
 	}
 	// The default production constructor must retain the actual state source too.
-	if gate, err := lan.segmentParentOwner().gateReader().gateState(c.Router.Spec.Resources[2]); err != nil || gate != vxlanGateEnabled {
+	if gate, err := lan.nativeParentReader().segmentOwner().gateReader().gateState(c.Router.Spec.Resources[2]); err != nil || gate != vxlanGateEnabled {
 		t.Fatalf("child lost state reader: %s %v", gate, err)
 	}
 	lan.Segments = nil
-	if gate, err := lan.segmentParentOwner().gateReader().gateState(c.Router.Spec.Resources[2]); err != nil || gate != vxlanGateEnabled {
+	if gate, err := lan.nativeParentReader().segmentOwner().gateReader().gateState(c.Router.Spec.Resources[2]); err != nil || gate != vxlanGateEnabled {
 		t.Fatalf("default child lost state reader: %s %v", gate, err)
 	}
 	if _, err := store.Set("ha.role", "backup", "demotion"); err != nil {

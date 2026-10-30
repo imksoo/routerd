@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	ra "github.com/imksoo/routerd/pkg/routeradvertisement"
 	state "github.com/imksoo/routerd/pkg/state"
-	"github.com/imksoo/routerd/pkg/vxlan"
 	"github.com/mdlayher/ndp"
 )
 
@@ -77,6 +76,7 @@ type RouterAdvertisementService struct {
 	loops         map[string]*raLoopState
 	open          func(string) (ra.Endpoint, error)
 	segments      *VXLANSegmentController
+	dslite        *DSLiteTunnelController
 	scope         func(context.Context) (string, error)
 	clock         func() time.Time
 }
@@ -293,11 +293,11 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 	return errors.Join(outcomes...)
 }
 
-func (s *RouterAdvertisementService) advertisementParent(ctx context.Context, ifname string, active bool, recordedToken string) (vxlan.SegmentLink, error) {
-	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments}
+func (s *RouterAdvertisementService) advertisementParent(ctx context.Context, ifname string, active bool, recordedToken string) (nativeParentLink, error) {
+	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments, DSLite:s.dslite}
 	if !active && recordedToken != "" {
-		owner := child.segmentParentOwner()
-		return owner.ObserveRecordedInterface(ctx, ifname, recordedToken)
+		owner := child.nativeParentReader()
+		return owner.observeRecorded(ctx, ifname, recordedToken)
 	}
 	link, err := child.delegatedSegmentParent(ctx, ifname)
 	if err != nil {

@@ -76,43 +76,14 @@ func (c IPv4RouteController) ordinaryRouteScope(ctx context.Context) (string, er
 	return platform.KernelNetworkScope(ctx)
 }
 
-// A declared Segment's native name alone cannot admit child effects. Require
-// the actual parent's applied journal and current native cookie, including after
-// a persistence wait, rather than trusting its public status or a foreign link.
+// Read the concrete parent's applied journal and native cookie after waits.
 func (c IPv4RouteController) ordinaryRouteSegmentParent(ctx context.Context, device, scope string, index int) (string, error) {
-	if c.Router == nil {
-		return "", errors.New("IPv4Route current router is unavailable")
-	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
-			continue
-		}
-		plan, err := nativeVXLANInterface(resource)
-		if err != nil {
-			return "", err
-		}
-		if plan != device {
-			continue
-		}
-		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
-		if c.Segments != nil {
-			owner = *c.Segments
-			owner.Router = c.Router
-			owner.Store = c.Store
-		}
-		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
-		if err != nil {
-			return "", err
-		}
-		if !link.Exists {
-			return "", errors.New("IPv4Route native VXLAN parent is not acquired")
-		}
-		if link.Config.IfName != device || link.Scope != scope || link.Index != index {
-			return "", errors.New("IPv4Route native VXLAN parent identity changed")
-		}
-		return link.Token, nil
-	}
-	return "", nil
+ reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
+ link, err := reader.observeDeclared(ctx, device)
+ if err != nil { return "", err }
+ if !link.Declared { return "", nil }
+ if !link.Exists || link.IfName != device || link.Scope != scope || link.Index != index { return "", errors.New("IPv4Route native parent identity is not proven") }
+ return link.Token, nil
 }
 
 func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.IPv4RouteSpec) (ordinaryRoutePremise, error) {
@@ -340,16 +311,13 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 		return errors.New("IPv4Route native device was removed or replaced")
 	}
 	if receipt.ParentToken != "" {
-		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
-		if c.Segments != nil {
-			owner = *c.Segments
-		}
-		link, err := owner.ObserveRecordedInterface(ctx, receipt.Route.Device, receipt.ParentToken)
+ reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
+ link, err := reader.observeRecorded(ctx, receipt.Route.Device, receipt.ParentToken)
 		if err != nil {
 			return err
 		}
-		if !link.Exists || link.Scope != scope || link.Index != index || link.Config.IfName != receipt.Route.Device || link.Token != receipt.ParentToken {
-			return errors.New("IPv4Route recorded VXLAN parent identity changed")
+		if !link.Exists || link.Scope != scope || link.Index != index || link.IfName != receipt.Route.Device || link.Token != receipt.ParentToken {
+			return errors.New("IPv4Route recorded native parent identity changed")
 		}
 		return nil
 	}
@@ -358,7 +326,7 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 		return err
 	}
 	if token != "" {
-		return errors.New("IPv4Route receipt lacks its VXLAN parent token")
+		return errors.New("IPv4Route receipt lacks its native parent token")
 	}
 	return nil
 }

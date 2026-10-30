@@ -280,7 +280,7 @@ func dsliteNativeToken(alias string) string {
 	return token
 }
 
-func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name string) (dsliteTunnelObservation, error) {
+func (c DSLiteTunnelController) observeNativeTunnelLink(ctx context.Context, name string) (dsliteTunnelObservation, error) {
 	var observed dsliteTunnelObservation
 	if c.currentOS() == platform.OSFreeBSD {
 		list, err := c.endpointCommand(ctx, "ifconfig", "-l")
@@ -389,7 +389,13 @@ func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name st
 	if !observed.Exists {
 		return observed, nil
 	}
-	out, err = c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
+ return observed, nil
+}
+
+func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name string) (dsliteTunnelObservation, error) {
+ observed, err := c.observeNativeTunnelLink(ctx, name)
+ if err != nil || !observed.Exists || c.currentOS() == platform.OSFreeBSD { return observed, err }
+ out, err := c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
 	if err != nil {
 		return observed, err
 	}
