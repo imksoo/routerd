@@ -1266,3 +1266,31 @@ FreeBSD feature parity or the remaining 1.0 function inventory. Those remain
 required work; neither a limited trial nor passing unit tests closes the revision.
 The earlier isolated FreeBSD 14.3 empty apply/restart and PF route-to/NAT44
 smokes at `86ffc265` remain narrower native checks, not full FreeBSD qualification.
+
+## Linux delegated IPv6 lifecycle checkpoint
+
+Product `3da8d066e19535d27610d632391807db7968d1fc`, installed from `make dist`
+in the dedicated Ubuntu 24.04.4 / Linux 6.8.0-124 VM, passes the independent
+Kea 2.4.1 and Linux SLAAC client lifecycle. A real apply first reproduced normal
+DAD wait being returned as `RA LAN readiness is unresolved`; the same failure
+was reproduced in a local regression before repair. Pending DAD now withholds
+positive advertisement without failing apply. DAD failure and unknown ownership
+remain errors, with explicit tests.
+
+Executed checks: /60 acquisition; finite PIO and RDNSS; kernel SLAAC and default
+route; local/forwarded AAAA over UDP/TCP; peer-observed delegated IPv6 source;
+actual Renew/Reply advancing the lease timestamp; systemd restart; upstream-stop
+expiry withdrawing the router address and client default route while the daemon
+remains active; traffic failure after expiry; empty apply and fixture cleanup.
+The final reusable script passed with explicit negative assertions and successful
+raw-output deletion. Procedure and boundaries are in
+[development](../operations/development.md#linux-pdra-lifecycle-vm-gate), with
+`scripts/linux-pd-ra-lifecycle-smoke.sh` and its committed JSON fixture.
+
+At the product checkpoint the complete normal suite again passed: 120 packages,
+nine without tests. Schema/examples, website schema copies and all four website
+locales passed. The trial's preparation errors (Kea runtime directory, extracted
+rdisc6 ownership and DNS forwarder order) were corrected; those failed attempts
+were not counted as pass. WAN transit and return routing are fixture scaffolding.
+WAN RA/IA_NA, prefix renumbering, DHCPv4 renewal, firewall isolation, reboot/crash,
+1.0 cutback, FreeBSD client parity and the remaining 1.0 inventory stay open.

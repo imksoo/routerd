@@ -41,14 +41,16 @@ declaration removal cannot redirect withdrawal onto a foreign link.
 The solicitation receiver binds the wildcard IPv6 address and joins the selected
 interface's all-routers group. A receiver bound to its transmit link-local
 address can exclude multicast solicitations on FreeBSD. Transmissions still use
-an explicitly selected IPv6 link-local source and interface index. Portable
-source-selection and solicitation tests pass; the actual-socket positive test
-is retained but cannot run past this environment's Netlink permission denial.
-Multicast reception on a native FreeBSD target remains unqualified.
+an explicitly selected IPv6 link-local source and interface index. Portable source-selection tests and the explicit actual-socket solicitation
+gate pass on isolated Linux and FreeBSD 14.3. This does not qualify fragmented-RS
+provenance or all native client paths.
 
 Local wire/owner tests cover finite deadlines, previous-prefix withdrawal,
 M/O/MTU/router lifetime, solicitation scheduling, source failures and stop/join.
-Independent clients and native Linux/FreeBSD forwarding are not qualified here.
+The isolated Linux Kea/SLAAC client gate now covers delegated-prefix forwarding,
+renewal, service restart and expiry; see the reproducible
+[VM procedure](../operations/development.md#linux-pdra-lifecycle-vm-gate).
+FreeBSD client forwarding remains a separate unqualified gate.
 The current ndp receive API does not expose fragmented-RS provenance required
 for complete RFC 6980 handling; that receive boundary remains an implementation
 item. The receive API returns ICMPv6 payload/control data, without the IPv6

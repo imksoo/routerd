@@ -1,0 +1,183 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "ipv6-readiness"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "ifname": "rd15-lan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "wan"
+        },
+        "spec": {
+          "ifname": "rd15-wan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "system.routerd.net/v1alpha1",
+        "kind": "Sysctl",
+        "metadata": {
+          "name": "forward-v6"
+        },
+        "spec": {
+          "key": "net.ipv6.conf.all.forwarding",
+          "value": "1"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv6PrefixDelegation",
+        "metadata": {
+          "name": "wan-pd"
+        },
+        "spec": {
+          "interface": "wan",
+          "profile": "default",
+          "prefixLength": 60
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv6DelegatedAddress",
+        "metadata": {
+          "name": "lan-v6"
+        },
+        "spec": {
+          "prefixDelegation": "wan-pd",
+          "interface": "lan",
+          "subnetID": "0",
+          "addressSuffix": "::1",
+          "announce": true
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "IPv6RouterAdvertisement",
+        "metadata": {
+          "name": "lan-ra"
+        },
+        "spec": {
+          "interface": "lan",
+          "prefixFrom": {
+            "resource": "IPv6DelegatedAddress/lan-v6",
+            "field": "address"
+          },
+          "rdnssFrom": [
+            {
+              "resource": "IPv6DelegatedAddress/lan-v6",
+              "field": "address"
+            }
+          ],
+          "routerLifetime": "60"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSResolver",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "listen": [
+            {
+              "name": "lan",
+              "addressFrom": [
+                {
+                  "resource": "IPv6DelegatedAddress/lan-v6",
+                  "field": "address"
+                }
+              ],
+              "port": 53,
+              "sources": [
+                "local",
+                "default"
+              ]
+            }
+          ],
+          "cache": {
+            "enabled": true
+          }
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSZone",
+        "metadata": {
+          "name": "home"
+        },
+        "spec": {
+          "zone": "home.arpa",
+          "records": [
+            {
+              "hostname": "router",
+              "ipv6From": {
+                "resource": "IPv6DelegatedAddress/lan-v6",
+                "field": "address"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSForwarder",
+        "metadata": {
+          "name": "local"
+        },
+        "spec": {
+          "resolver": "DNSResolver/lan",
+          "match": [
+            "home.arpa"
+          ],
+          "zoneRefs": [
+            "DNSZone/home"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSForwarder",
+        "metadata": {
+          "name": "default"
+        },
+        "spec": {
+          "resolver": "DNSResolver/lan",
+          "match": [
+            "."
+          ],
+          "upstreams": [
+            "DNSUpstream/peer"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DNSUpstream",
+        "metadata": {
+          "name": "peer"
+        },
+        "spec": {
+          "protocol": "udp",
+          "address": "2001:db8:17::1"
+        }
+      }
+    ]
+  }
+}

@@ -118,3 +118,44 @@ sudo unshare --mount --pid --fork --mount-proc /tmp/chain-native.test -test.run=
 
 DHCP の取得・更新、DNS、service 再起動は、別途隔離 VM と実クライアントで確認します。
 終了後はテストバイナリを削除します。
+
+## Linux の PD・RA ライフサイクル VM 試験
+
+`scripts/linux-pd-ra-lifecycle-smoke.sh` は `make dist` から導入した製品を
+実 systemd service で検査します。空の router 設定、独立した管理経路、
+本番通信のない専用 Linux VM を使用してください。`--disposable-vm` が必須です。
+ゲストの設定を置換し、試験用インターフェースと IPv6 forwarding を変更するため、
+通常の unit test には含めません。
+
+開始前に systemd の正常性と iproute2、Python 3、curl、jq、dig、dnsmasq を確認します。
+Kea DHCPv6 と ndisc6、および共有ライブラリはゲストと同じディストリビューションの
+パッケージから準備します。専用ディレクトリへ展開する場合も root で展開し、
+setuid executable の `rdisc6` が一般ユーザー所有にならないようにします。
+Kea は `ldd` で依存ライブラリを確認してください。実行済みの組合せは
+Ubuntu 24.04.4 / Kea 2.4.1 です。既存の Kea や `/run/kea` と衝突したら試験を開始しません。
+
+```sh
+sudo scripts/linux-pd-ra-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-pd-ra-lifecycle.json" /opt/routerd-pd-peer
+```
+
+最後の引数は `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、
+`usr/lib/x86_64-linux-gnu` を含むパッケージの展開先です。OS に導入済みなら `/` も
+使えますが、既存 Kea の実行状態を変更する許可を意味しません。
+
+独立した上流・クライアント netns を使い、Kea の /60 委譲、Linux の SLAAC と
+RA default route、ローカル・転送 AAAA の UDP/TCP 応答、対向が観測した IPv6 送信元、
+実 Renew/Reply による lease timestamp 更新、service 再起動を確認します。
+T1/T2 は20/40秒、preferred/valid lifetime は60/90秒です。上流停止後に期限切れで
+router のアドレスと client の default route が撤去され、製品は動いたまま通信が
+失敗することも必須です。最後に空設定の適用、peer・netns 撤去、forwarding 復元を行います。
+
+アドレス追加直後の DAD 待ちは RA の Pending とし、設定適用を失敗させません。
+DAD 完了後に広告を開始します。DAD 失敗・所有権不明は引き続きエラーです。
+DNSForwarder は設定順に評価するため、ローカル zone を default upstream より前に置きます。
+
+成功時の生出力は自動削除します。残すのは revision・判定、手順・fixture・回帰テストです。
+失敗時は製品と peer を停止し、表示した fixture パスを診断用に保持します。
+製品の失敗はローカルで再現・修正してから再検証し、解消後は一時出力を削除します。
+WAN の transit と戻り経路は試験用の事前設定です。WAN RA、DHCPv6 IA_NA、prefix 変更、
+reboot/crash recovery、firewall、FreeBSD、routerd 1.0 全機能の合格とは区別します。

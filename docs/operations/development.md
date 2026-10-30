@@ -122,3 +122,56 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 
 Use that only when the follow-up fix is already clear.
 CI still runs after the branch is pushed.
+
+## Linux PD/RA lifecycle VM gate
+
+`scripts/linux-pd-ra-lifecycle-smoke.sh` exercises an installed `make dist`
+package through its actual systemd service. Use a dedicated, disposable Linux VM
+with an empty router configuration, independent management access, and no
+production traffic. The explicit `--disposable-vm` argument is required. It
+replaces that guest's configuration and changes its test interfaces and IPv6
+forwarding; it is not part of ordinary unit tests.
+
+Certify the guest before running: systemd must be healthy; install iproute2,
+Python 3, curl, jq, dig and dnsmasq. Prepare Kea DHCPv6 and ndisc6 from packages
+matching the guest, with their shared libraries. Either use an installed package
+root or extract the packages as root into a private directory. In particular,
+`rdisc6` must remain root-owned: extracting its setuid executable as an ordinary
+user changes its privilege behavior. Check Kea's shared libraries with `ldd`.
+The tested peer was Kea 2.4.1 on Ubuntu 24.04.4. Its transient unit owns `/run/kea`;
+an existing Kea service/runtime directory is a collision, not permission to stop it.
+
+```sh
+sudo scripts/linux-pd-ra-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-pd-ra-lifecycle.json" /opt/routerd-pd-peer
+```
+
+The package root above contains `usr/sbin/kea-dhcp6`, `usr/bin/rdisc6` and
+`usr/lib/x86_64-linux-gnu`; use `/` only when the prerequisites are already
+installed and no Kea instance owns its runtime directory. See the
+[Kea DHCPv6 configuration reference](https://kea.readthedocs.io/en/kea-2.4.1/arm/dhcp6-srv.html)
+for the independent PD pool and lease timer semantics.
+
+The test uses separate upstream and client namespaces. Kea delegates a /60 with
+20/40-second T1/T2 and 60/90-second preferred/valid lifetimes. Linux processes
+real RA packets to create its SLAAC address and default route; `rdisc6` separately
+checks the PIO. Pass requires local and forwarded AAAA answers over UDP/TCP,
+an HTTP peer observing the client's delegated source, actual Renew/Reply with
+an advanced lease timestamp, service restart, and upstream-stop expiry removing
+the router address and client default route. Traffic must then fail while the
+product service remains active. Final empty apply, peer shutdown, namespace
+removal and restoration of the original forwarding setting are also required.
+
+DAD is asynchronous: a newly installed delegated address holds RA in Pending
+without failing configuration apply. Positive advertisement resumes only after
+address readiness; failed DAD and unknown ownership remain errors. DNSForwarder
+rules are evaluated in configuration order, so the fixture's local zone precedes
+the default upstream rule.
+
+Successful raw output is deleted automatically; retain the revision and verdict,
+this procedure, its fixture and the regression tests. Failures stop the product
+and peers and retain the exact fixture path for diagnosis. Reproduce a product
+failure locally before another native run, and remove retained output after the
+failure is resolved. WAN transit and its return route are fixture scaffolding:
+this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, prefix renumbering,
+reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.

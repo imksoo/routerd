@@ -211,7 +211,9 @@ listeners use their configured binding for source/cache admission. The remaining
 lease attribution gap is a tagless constructor-based IPv6 lease-file row on a
 first start with no journal evidence; it cannot acquire guessed source authority.
 The Linux BusyBox DHCPv4 client and local/forwarded DNS UDP/TCP smoke pass;
-lease renewal/expiry and IPv6 client interoperability remain unqualified.
+Linux delegated IPv6 SLAAC, local/forwarded AAAA, PD renewal, service restart
+and expiry also pass the isolated Kea/client gate. DHCPv4 lease renewal, IPv6
+renumbering and other platform/client modes remain unqualified.
 
 ## Command/control plane
 
