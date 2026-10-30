@@ -65,7 +65,13 @@ func TestDaemonDNSProbeActualUDPAndTCPExpectedAnswers(t *testing.T) {
 		response.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: request.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("192.0.2.55")}}
 		_ = writer.WriteMsg(response)
 	})
-	checks, err := serveProbeChecks(t.Context(), daemonProbeDNSRouter(port), nil, "dns", "lan")
+	server := httptest.NewServer(controlapi.Handler{Probe: serveProbeHandler(func() *api.Router { return daemonProbeDNSRouter(port) }, nil)})
+	defer server.Close()
+	result, err := controlapi.NewHTTPClient(server.URL).Probe(t.Context(), controlapi.ProbeRequest{Subject: "dns", Target: "lan"})
+	var checks []controlapi.ProbeCheck
+	if result != nil {
+		checks = result.Checks
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,11 +170,11 @@ func TestDaemonEgressProbeUsesActualConfiguredTCPAndBoundsAttempts(t *testing.T)
 				t.Fatalf("actual TCP result missing: %+v", check)
 			}
 		}
-		if strings.Contains(check.Detail, "attempt limit") {
+		if strings.Contains(check.Detail, "remaining configured targets are unprobed") {
 			unprobed++
 		}
 	}
-	if attempted != 8 || unprobed != 2 {
+	if attempted != 8 || unprobed != 1 {
 		t.Fatalf("attempt cap silently qualified unprobed candidates: attempted=%d unprobed=%d", attempted, unprobed)
 	}
 }
@@ -268,6 +274,76 @@ func TestDaemonProbeAdmissionRejectsFifthActualBlockedRequest(t *testing.T) {
 		case <-done:
 		case <-time.After(time.Second):
 			t.Fatal("cancelled probe request retained admission")
+		}
+	}
+}
+
+func TestDaemonProbePlanningStopsWithoutAllocatingOneCheckPerUnknownTarget(t *testing.T) {
+	policy := api.EgressRoutePolicySpec{Family: "ipv4"}
+	for i := 0; i < 10000; i++ {
+		policy.Candidates = append(policy.Candidates, api.EgressRoutePolicyCandidate{Name: strconv.Itoa(i), HealthCheck: "unavailable"})
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: policy}}}}
+	checks, err := daemonEgressProbe(t.Context(), router, nil, "wan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) > 26 {
+		t.Fatalf("bounded network probes still allocated unbounded planning output: %d", len(checks))
+	}
+	if !strings.Contains(checks[len(checks)-2].Detail, "remaining configured targets are unprobed") {
+		t.Fatalf("unvisited targets silently disappeared: %+v", checks)
+	}
+}
+
+func TestDaemonProbeUsesCurrentConditionalGraphBeforeChoosingPrivateQuestions(t *testing.T) {
+	observed := make(chan string, 2)
+	_, port := daemonProbeDNSPeer(t, func(writer dns.ResponseWriter, request *dns.Msg) {
+		observed <- request.Question[0].Name
+		response := new(dns.Msg)
+		response.SetReply(request)
+		response.Answer = []dns.RR{&dns.NS{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: 30}, Ns: "root.example."}}
+		_ = writer.WriteMsg(response)
+	})
+	router := daemonProbeDNSRouter(port)
+	private, _ := router.Spec.Resources[1].DNSForwarderSpec()
+	private.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ha.role": {Equals: "master"}}}
+	router.Spec.Resources[1].Spec = private
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"}, Metadata: api.ObjectMeta{Name: "public"}, Spec: api.DNSUpstreamSpec{Protocol: "udp", Address: "127.0.0.1", Port: port}}, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"}, Metadata: api.ObjectMeta{Name: "public"}, Spec: api.DNSForwarderSpec{Resolver: "lan", Match: []string{"."}, Upstreams: []string{"DNSUpstream/public"}}})
+	store, err := state.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Set("ha.role", "backup", "observed role"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(controlapi.Handler{Probe: serveProbeHandler(func() *api.Router { return router }, store)})
+	defer server.Close()
+	result, err := controlapi.NewHTTPClient(server.URL).Probe(t.Context(), controlapi.ProbeRequest{Subject: "dns", Target: "lan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, check := range result.Checks {
+		if check.Kind == "communication" {
+			count++
+			if check.Status != "pass" {
+				t.Fatalf("current eligible root question failed: %+v", check)
+			}
+		}
+	}
+	if count != 2 {
+		t.Fatalf("expected actual UDP and TCP root checks: %+v", result)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case question := <-observed:
+			if question != "." {
+				t.Fatalf("inactive private source leaked a question: %s", question)
+			}
+		default:
+			t.Fatal("actual current graph query missing")
 		}
 	}
 }

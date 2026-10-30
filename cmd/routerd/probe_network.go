@@ -12,6 +12,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/healthcheck"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -26,21 +27,45 @@ func daemonEgressProbe(ctx context.Context, router *api.Router, store *routersta
 		return checks, nil
 	}
 	attempts := 0
-	for _, resource := range selectInspectionResources(router.Spec.Resources, "EgressRoutePolicy", target) {
+	selected, _ := selectProbeResources(router.Spec.Resources, "EgressRoutePolicy", target)
+	for _, resource := range selected {
 		policy, err := resource.EgressRoutePolicySpec()
 		if err != nil {
 			return nil, err
 		}
-		for _, candidate := range policy.Candidates {
+		for index, candidate := range policy.Candidates {
+			if index >= 32 {
+				return append(checks, unobservedProbe("remaining egress candidates", "candidate preparation limit reached; remaining candidates are unprobed"), egressProbeScope()), nil
+			}
 			if candidate.Enabled != nil && !*candidate.Enabled {
 				continue
 			}
-			refs := []string{candidate.HealthCheck}
-			for _, next := range candidate.Targets {
-				refs = append(refs, next.HealthCheck)
+			if resourcequery.ResourceWhenPresent(candidate.When) {
+				if store == nil {
+					checks = append(checks, unobservedProbe(resource.ID()+" candidate/"+candidate.Name, "candidate activation is unobserved"))
+					continue
+				}
+				active, err := resourcequery.ResourceWhenMatches(candidate.When, store)
+				if err != nil {
+					return nil, err
+				}
+				if !active {
+					checks = append(checks, unobservedProbe(resource.ID()+" candidate/"+candidate.Name, "candidate activation is not currently resolved true"))
+					continue
+				}
 			}
 			found := false
-			for _, ref := range refs {
+			for index := -1; index < len(candidate.Targets); index++ {
+				if attempts >= maxDaemonProbeAttempts || len(checks) >= 24 || ctx.Err() != nil {
+					if ctx.Err() == context.Canceled {
+						return nil, ctx.Err()
+					}
+					return append(checks, unobservedProbe("remaining egress targets", "probe attempt or observation limit reached; remaining configured targets are unprobed"), egressProbeScope()), nil
+				}
+				ref := candidate.HealthCheck
+				if index >= 0 {
+					ref = candidate.Targets[index].HealthCheck
+				}
 				if ref == "" {
 					continue
 				}
@@ -73,7 +98,7 @@ func daemonEgressProbe(ctx context.Context, router *api.Router, store *routersta
 					checks = append(checks, unobservedProbe(name, "configured HealthCheck is disabled"))
 					continue
 				}
-				if strings.TrimSpace(spec.Target) == "" || spec.TargetSource != "" && spec.TargetSource != "static" {
+				if strings.TrimSpace(spec.Target) == "" || spec.TargetSource != "" && spec.TargetSource != "static" && spec.TargetSource != "auto" {
 					checks = append(checks, unobservedProbe(name, "no current literal/static probe target; dynamic target resolution is unavailable"))
 					continue
 				}
@@ -99,7 +124,11 @@ func daemonEgressProbe(ctx context.Context, router *api.Router, store *routersta
 				if ctx.Err() != nil && ctx.Err() != context.DeadlineExceeded {
 					return nil, ctx.Err()
 				}
-				check := controlapi.ProbeCheck{Name: name, Kind: "communication", Protocol: spec.Probe().Protocol, Target: net.JoinHostPort(spec.Target, fmt.Sprint(spec.Probe().Port)), ObservedAt: started, DurationMilliseconds: time.Since(started).Milliseconds(), FailureKind: result.FailureKind, BindingInterface: spec.SourceInterface, BindingMark: spec.FwMark, Status: "fail", Detail: result.Message}
+				actualTarget := spec.Target
+				if spec.Probe().Protocol != "icmp" {
+					actualTarget = net.JoinHostPort(spec.Target, fmt.Sprint(spec.Probe().Port))
+				}
+				check := controlapi.ProbeCheck{Name: name, Kind: "communication", Protocol: spec.Probe().Protocol, Target: actualTarget, ObservedAt: started, DurationMilliseconds: time.Since(started).Milliseconds(), FailureKind: result.FailureKind, BindingInterface: spec.SourceInterface, BindingMark: spec.FwMark, Status: "fail", Detail: result.Message}
 				if result.OK {
 					check.Status = "pass"
 				} else if result.FailureKind == healthcheck.FailureKindPermission || result.FailureKind == healthcheck.FailureKindOther {
@@ -113,10 +142,14 @@ func daemonEgressProbe(ctx context.Context, router *api.Router, store *routersta
 			}
 		}
 	}
-	checks = append(checks, controlapi.ProbeCheck{Name: "probe scope", Status: "warn", Kind: "scope", Detail: "router-originated configured HealthCheck attempts do not establish forwarded client traffic, NAT or failover"})
+	checks = append(checks, egressProbeScope())
 	return checks, nil
 }
 
 func unobservedProbe(name, detail string) controlapi.ProbeCheck {
 	return controlapi.ProbeCheck{Name: name, Status: "warn", Kind: "scope", Detail: "unobserved: " + detail}
+}
+
+func egressProbeScope() controlapi.ProbeCheck {
+	return controlapi.ProbeCheck{Name: "probe scope", Status: "warn", Kind: "scope", Detail: "router-originated configured HealthCheck attempts do not establish forwarded client traffic, NAT or failover"}
 }

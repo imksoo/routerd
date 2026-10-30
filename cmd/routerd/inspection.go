@@ -11,6 +11,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -249,7 +250,34 @@ func serveProbeChecks(ctx context.Context, router *api.Router, store *routerstat
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	switch canonicalInspectionSubject(subject) {
+	area := canonicalInspectionSubject(subject)
+	if router != nil && (area == "dns" || area == "egress") {
+		var source resourcequery.StateStore
+		if store != nil {
+			source = store
+		} else {
+			for _, resource := range router.Spec.Resources {
+				if resourcequery.ResourceWhenPresent(resourcequery.ResourceWhen(resource)) {
+					return []controlapi.ProbeCheck{unobservedProbe("current probe graph", "conditional activation observations are unavailable")}, nil
+				}
+			}
+		}
+		effective, err := resourcequery.FilterRouterByResolvedWhen(router, source)
+		if err != nil {
+			return nil, err
+		}
+		kind := "DNSResolver"
+		if area == "egress" {
+			kind = "EgressRoutePolicy"
+		}
+		declared, _ := selectProbeResources(router.Spec.Resources, kind, target)
+		active, _ := selectProbeResources(effective.Spec.Resources, kind, target)
+		if len(declared) > 0 && len(active) == 0 {
+			return []controlapi.ProbeCheck{unobservedProbe("current probe graph", "selected resources are not currently active with resolved conditions")}, nil
+		}
+		router = effective
+	}
+	switch area {
 	case "egress":
 		return daemonEgressProbe(ctx, router, store, target)
 	case "dns":
@@ -265,7 +293,7 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 	if router == nil {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "warn", Kind: "scope", Detail: "unobserved: router config unavailable"}}, nil
 	}
-	resources := selectInspectionResources(router.Spec.Resources, kind, name)
+	resources, more := selectProbeResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
 		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "resource not found"}}, nil
 	}
@@ -293,6 +321,9 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 		}
 		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail, Kind: "reported-status"})
 	}
+	if more {
+		out = append(out, unobservedProbe("remaining resources", "resource limit reached; remaining resources are unprobed"))
+	}
 	return out, nil
 }
 
@@ -312,4 +343,20 @@ func canonicalInspectionSubject(subject string) string {
 	default:
 		return key
 	}
+}
+
+// Selection stops at the probe response's resource budget. Ordinary get/describe
+// selection remains unrestricted by the separate active-probe budget.
+func selectProbeResources(resources []api.Resource, kind, name string) ([]api.Resource, bool) {
+	var selected []api.Resource
+	for _, resource := range resources {
+		if !strings.EqualFold(resource.Kind, kind) || name != "" && resource.Metadata.Name != name {
+			continue
+		}
+		if len(selected) == 8 {
+			return selected, true
+		}
+		selected = append(selected, resource)
+	}
+	return selected, false
 }

@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -19,9 +21,10 @@ import (
 )
 
 type daemonDNSQuestion struct {
-	name     string
-	kind     uint16
-	expected netip.Addr
+	name       string
+	kind       uint16
+	expected   netip.Addr
+	unobserved string
 }
 
 func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.SQLiteStore, target string) ([]controlapi.ProbeCheck, error) {
@@ -33,7 +36,8 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 		return checks, nil
 	}
 	attempts := 0
-	for _, resource := range selectInspectionResources(router.Spec.Resources, "DNSResolver", target) {
+	selected, _ := selectProbeResources(router.Spec.Resources, "DNSResolver", target)
+	for _, resource := range selected {
 		spec, err := resource.DNSResolverSpec()
 		if err != nil {
 			return nil, err
@@ -43,13 +47,26 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 			continue
 		}
 		for _, listen := range spec.Listen {
-			addresses := slices.Clone(listen.Addresses)
+			if ctx.Err() == context.Canceled {
+				return nil, ctx.Err()
+			}
+			if attempts >= maxDaemonProbeAttempts || len(checks) >= 24 || ctx.Err() != nil {
+				return append(checks, unobservedProbe("remaining DNS targets", "probe attempt or observation limit reached; remaining configured listeners are unprobed")), nil
+			}
+			addresses := slices.Clone(listen.Addresses[:min(len(listen.Addresses), 16)])
+			if len(listen.Addresses) > len(addresses) {
+				checks = append(checks, unobservedProbe("remaining DNS addresses", "address limit reached; remaining addresses are unprobed"))
+			}
 			for _, source := range listen.AddressFrom {
+				if len(addresses) >= 16 {
+					checks = append(checks, unobservedProbe("remaining DNS address sources", "address preparation limit reached; remaining sources are unprobed"))
+					break
+				}
 				values, err := resourcequery.ReadValues(store, source)
 				if err != nil {
 					return nil, err
 				}
-				addresses = append(addresses, values...)
+				addresses = append(addresses, values[:min(len(values), 16-len(addresses))]...)
 			}
 			if len(addresses) == 0 {
 				checks = append(checks, unobservedProbe(resource.ID()+" listener/"+listen.Name, "listen address is unresolved"))
@@ -60,7 +77,11 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 				return nil, err
 			}
 			if !ok {
-				checks = append(checks, unobservedProbe(resource.ID()+" listener/"+listen.Name, "no configured static local question or root-forwarding source is selected"))
+				reason := question.unobserved
+				if reason == "" {
+					reason = "no configured static local question or root-forwarding source is selected"
+				}
+				checks = append(checks, unobservedProbe(resource.ID()+" listener/"+listen.Name, reason))
 				continue
 			}
 			for _, address := range addresses {
@@ -87,13 +108,14 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 				endpoint := net.JoinHostPort(ip.String(), strconv.Itoa(port))
 				for _, protocol := range []string{"udp", "tcp"} {
 					name := resource.ID() + " " + protocol + " " + endpoint
-					if attempts >= maxDaemonProbeAttempts {
-						checks = append(checks, unobservedProbe(name, "probe attempt limit reached"))
-						continue
+					if attempts >= maxDaemonProbeAttempts || len(checks) >= 24 {
+						return append(checks, unobservedProbe("remaining DNS targets", "probe attempt or observation limit reached; remaining configured listeners are unprobed")), nil
 					}
 					if ctx.Err() != nil {
-						checks = append(checks, unobservedProbe(name, "request budget exhausted before this attempt"))
-						continue
+						if ctx.Err() == context.Canceled {
+							return nil, ctx.Err()
+						}
+						return append(checks, unobservedProbe("remaining DNS targets", "request budget exhausted; remaining configured listeners are unprobed")), nil
 					}
 					attempts++
 					attemptCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -109,6 +131,11 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 					if exchangeErr != nil {
 						check.Detail = exchangeErr.Error()
 						check.FailureKind = "transport"
+						if errors.Is(exchangeErr, syscall.EPERM) || errors.Is(exchangeErr, syscall.EACCES) {
+							check.Status = "warn"
+							check.FailureKind = "permission"
+							check.Detail = "unobserved: DNS socket capability unavailable: " + exchangeErr.Error()
+						}
 					} else if response != nil && response.Rcode != dns.RcodeSuccess {
 						check.Detail = "DNS transport replied but resolution returned " + dns.RcodeToString[response.Rcode] + " for " + question.name
 						check.FailureKind = "dns_rcode"
@@ -128,31 +155,33 @@ func daemonDNSProbe(ctx context.Context, router *api.Router, store *routerstate.
 	return checks, nil
 }
 
+// Probe preparation has its own small bound: a request cannot spend its whole
+// lifetime scanning speculative source/ref/record alternatives before any I/O.
+const maxDaemonDNSQuestionItems = 64
+
 func daemonDNSProbeQuestion(router *api.Router, resolverName string, spec api.DNSResolverSpec, listen api.DNSResolverListenSpec) (daemonDNSQuestion, bool, error) {
-	type selection struct {
-		ref     string
+	type sourceSelection struct {
+		kind    string
 		matches []string
+		refs    []string
 	}
-	var refs []selection
-	root := false
-	addSource := func(name string, matches, zoneRefs []string) {
+	var sources []sourceSelection
+	prepared := 0
+	addSource := func(name, kind string, matches, refs []string) bool {
+		prepared++
+		if prepared > maxDaemonDNSQuestionItems || len(matches) > maxDaemonDNSQuestionItems || len(refs) > maxDaemonDNSQuestionItems {
+			return false
+		}
 		if len(listen.Sources) > 0 && !slices.Contains(listen.Sources, name) {
-			return
+			return true
 		}
-		for _, ref := range zoneRefs {
-			refs = append(refs, selection{ref: ref, matches: matches})
-		}
-		if len(zoneRefs) == 0 {
-			for _, match := range matches {
-				if strings.TrimSpace(match) == "." {
-					root = true
-				}
-			}
-		}
+		sources = append(sources, sourceSelection{kind: kind, matches: matches, refs: refs})
+		return true
 	}
-	for _, source := range spec.Sources {
-		addSource(source.Name, source.Match, source.ZoneRef)
-	}
+	// attachForwarders replaces inline sources whenever this resolver has any
+	// DNSForwarder resources. Retain the exact resource order, including broad
+	// forwarders that can shadow later local-zone declarations.
+	hasForwarders := false
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DNSForwarder" {
 			continue
@@ -164,46 +193,92 @@ func daemonDNSProbeQuestion(router *api.Router, resolverName string, spec api.DN
 		if strings.TrimPrefix(forwarder.Resolver, "DNSResolver/") != resolverName {
 			continue
 		}
-		addSource(resource.Metadata.Name, forwarder.Match, forwarder.ZoneRefs)
+		hasForwarders = true
+		kind := "forward"
+		if len(forwarder.ZoneRefs) > 0 {
+			kind = "zone"
+		}
+		if !addSource(resource.Metadata.Name, kind, forwarder.Match, forwarder.ZoneRefs) {
+			return daemonDNSQuestion{unobserved: "question preparation limit reached"}, false, nil
+		}
 	}
-	for _, selected := range refs {
-		ref := selected.ref
-		for _, zone := range router.Spec.Resources {
-			if zone.Kind != "DNSZone" || zone.Metadata.Name != strings.TrimPrefix(ref, "DNSZone/") {
-				continue
+	if !hasForwarders {
+		for _, source := range spec.Sources {
+			if !addSource(source.Name, source.Kind, source.Match, source.ZoneRef) {
+				return daemonDNSQuestion{unobserved: "question preparation limit reached"}, false, nil
 			}
-			declared, err := zone.DNSZoneSpec()
-			if err != nil {
-				return daemonDNSQuestion{}, false, err
+		}
+	}
+	matches := func(source sourceSelection, name string) bool {
+		if len(source.matches) == 0 {
+			return true
+		}
+		for _, match := range source.matches {
+			if match == "" || dns.IsSubDomain(dns.Fqdn(strings.ToLower(match)), strings.ToLower(name)) {
+				return true
 			}
-			for _, record := range declared.Records {
-				if strings.Contains(record.Hostname, "*") {
+		}
+		return false
+	}
+	firstSource := func(name string) int {
+		for i, source := range sources {
+			if matches(source, name) {
+				return i
+			}
+		}
+		return -1
+	}
+	for sourceIndex, source := range sources {
+		if source.kind != "zone" {
+			continue
+		}
+		for _, ref := range source.refs {
+			prepared++
+			if prepared > maxDaemonDNSQuestionItems {
+				return daemonDNSQuestion{unobserved: "question preparation limit reached"}, false, nil
+			}
+			for _, zone := range router.Spec.Resources {
+				if zone.APIVersion != api.NetAPIVersion || zone.Kind != "DNSZone" || zone.Metadata.Name != strings.TrimPrefix(ref, "DNSZone/") {
 					continue
 				}
-				name := dns.Fqdn(record.Hostname)
-				if !dns.IsSubDomain(dns.Fqdn(declared.Zone), name) {
-					name = dns.Fqdn(strings.TrimSuffix(record.Hostname, ".") + "." + strings.TrimSuffix(declared.Zone, "."))
+				declared, err := zone.DNSZoneSpec()
+				if err != nil {
+					return daemonDNSQuestion{}, false, err
 				}
-				matched := len(selected.matches) == 0
-				for _, match := range selected.matches {
-					if match == "" || dns.IsSubDomain(dns.Fqdn(strings.ToLower(match)), strings.ToLower(name)) {
-						matched = true
-						break
+				apex := declared.Zone
+				if strings.TrimSpace(apex) == "" {
+					apex = zone.Metadata.Name
+				}
+				for _, record := range declared.Records {
+					prepared++
+					if prepared > maxDaemonDNSQuestionItems {
+						return daemonDNSQuestion{unobserved: "question preparation limit reached"}, false, nil
 					}
-				}
-				if !matched {
-					continue
-				}
-				if ip, err := netip.ParseAddr(record.IPv4); err == nil && ip.Is4() {
-					return daemonDNSQuestion{name: name, kind: dns.TypeA, expected: ip}, true, nil
-				}
-				if ip, err := netip.ParseAddr(record.IPv6); err == nil && ip.Is6() {
-					return daemonDNSQuestion{name: name, kind: dns.TypeAAAA, expected: ip}, true, nil
+					if strings.Contains(record.Hostname, "*") {
+						continue
+					}
+					name := dns.Fqdn(record.Hostname)
+					if !dns.IsSubDomain(dns.Fqdn(apex), name) {
+						name = dns.Fqdn(strings.TrimSuffix(record.Hostname, ".") + "." + strings.TrimSuffix(apex, "."))
+					}
+					// Checking membership alone is insufficient: an earlier selected
+					// forwarder can send this private question outside its local zone.
+					if firstSource(name) != sourceIndex {
+						continue
+					}
+					if ip, err := netip.ParseAddr(record.IPv4); err == nil && ip.Is4() {
+						return daemonDNSQuestion{name: name, kind: dns.TypeA, expected: ip}, true, nil
+					}
+					if ip, err := netip.ParseAddr(record.IPv6); err == nil && ip.Is6() {
+						return daemonDNSQuestion{name: name, kind: dns.TypeAAAA, expected: ip}, true, nil
+					}
 				}
 			}
 		}
 	}
-	if root {
+	// The public root question is safe only when its first matching selected
+	// source is actually a forwarder, rather than a local authoritative zone.
+	if i := firstSource("."); i >= 0 && (sources[i].kind == "forward" || sources[i].kind == "upstream") {
 		return daemonDNSQuestion{name: ".", kind: dns.TypeNS}, true, nil
 	}
 	return daemonDNSQuestion{}, false, nil
@@ -218,7 +293,7 @@ func validDaemonDNSReply(request, response *dns.Msg, question daemonDNSQuestion)
 		return false
 	}
 	for _, rr := range response.Answer {
-		if !strings.EqualFold(rr.Header().Name, question.name) {
+		if rr.Header().Class != dns.ClassINET || !strings.EqualFold(rr.Header().Name, question.name) {
 			continue
 		}
 		switch answer := rr.(type) {

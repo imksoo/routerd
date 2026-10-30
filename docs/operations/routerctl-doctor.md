@@ -131,6 +131,11 @@ non-zero only if `wan` fails).
 router-originated network checks. Resource names and literal LAN-client target
 semantics are unchanged.
 
+DNS/egress probes prepare the currently resolved `when` graph before choosing
+questions or targets. Inactive or indeterminate sources do not authorize a
+private question; observation read failures propagate. Questions also honor the
+first matching selected source, rather than merely zone membership.
+
 - DNS probes send both UDP and TCP questions to explicit configured listeners,
   including currently resolved `addressFrom` values. Wildcard listeners are
   reached through the corresponding loopback address. A selected static zone
@@ -152,7 +157,8 @@ semantics are unchanged.
 
 Each active request has a four-second network budget, at most eight attempts and
 at most 32 returned checks. Individual attempts have at most two seconds.
-Unattempted checks are explicitly reported. Four requests may own probe slots
+Question preparation stops after 64 source/ref/record items; listener address
+and candidate planning have separate small bounds. Unattempted checks are explicitly reported. Four requests may own probe slots
 per API handler; additional requests return an unobserved admission check without
 starting network work. Cancellation closes owned DNS sockets and propagates to
 other protocol helpers. Probes do not modify routing, controller Health history
