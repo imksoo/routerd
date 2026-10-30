@@ -101,7 +101,7 @@ func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[st
 		return nil, fmt.Errorf("observe FRR BFD peers: %w", err)
 	}
 	peers, err := parseFRRBFDPeers(out)
-	if err != nil || len(peers) == 0 {
+	if err != nil {
 		return peers, err
 	}
 	// FRR 8.4 exposes configured/dynamic only in its text display, not JSON.
@@ -127,10 +127,17 @@ func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[st
 	}
 	textPeers := make(map[string]frrPeer, len(peers))
 	key, localTimers := "", false
+	headerSeen := false
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
+		if line == "BFD Peers:" {
+			headerSeen = true
+		}
 		if strings.HasPrefix(line, "peer ") {
 			key = headers[line]
+			if key == "" {
+				return nil, fmt.Errorf("FRR BFD peers changed between JSON and text observation")
+			}
 			localTimers = false
 		}
 		if key == "" {
@@ -159,6 +166,9 @@ func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[st
 			}
 		}
 		textPeers[key] = peer
+	}
+	if !headerSeen {
+		return nil, fmt.Errorf("incomplete FRR BFD text observation")
 	}
 	for key, peer := range peers {
 		text := textPeers[key]

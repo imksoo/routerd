@@ -212,7 +212,8 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		t.Fatal("unavailable local bfdd accepted as a successful observation")
 	}
 	failed, err := store.ReadObjectStatus(api.NetAPIVersion, "BFD", "peer")
-	if err != nil || failed["phase"] != "Degraded" {
+	failedStates, _ := failed["peerStates"].(map[string]any)
+	if err != nil || failed["phase"] != "Degraded" || failedStates["198.18.0.2"] != "Unknown" {
 		t.Fatalf("local bfdd outage did not publish degradation: %+v err=%v", failed, err)
 	}
 	stopLocal = start("bfd-local-restarted", exec.CommandContext(ctx, frr, bfddArgs(localDir)...))

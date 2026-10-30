@@ -177,7 +177,10 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
 			if len(args) == 2 && args[1] == "show bfd peers" {
-				return []byte(nativePeersText), nil
+				if reads <= 2 {
+					return []byte("BFD Peers:\n"), nil
+				}
+				return []byte(nativeOwnedPeersText), nil
 			}
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
 				reads++
@@ -192,7 +195,7 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 5 || !strings.Contains(commands[0], "show bfd peers json") || !strings.Contains(commands[2], "-f ") || !strings.Contains(commands[3], "show bfd peers json") || !strings.HasSuffix(commands[4], "show bfd peers") {
+	if len(commands) != 7 || !strings.Contains(commands[0], "show bfd peers json") || !strings.Contains(commands[4], "-f ") || !strings.Contains(commands[5], "show bfd peers json") || !strings.HasSuffix(commands[6], "show bfd peers") {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
@@ -217,7 +220,10 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
 			if len(args) == 2 && args[1] == "show bfd peers" {
-				return []byte(nativePeersText), nil
+				if reads <= 2 {
+					return []byte("BFD Peers:\n"), nil
+				}
+				return []byte(nativeOwnedPeersText), nil
 			}
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
 				reads++
@@ -232,7 +238,7 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 5 || !strings.HasPrefix(commands[2], "/usr/local/bin/vtysh -f ") || commands[3] != "/usr/local/bin/vtysh -c show bfd peers json" || commands[4] != "/usr/local/bin/vtysh -c show bfd peers" {
+	if len(commands) != 7 || !strings.HasPrefix(commands[4], "/usr/local/bin/vtysh -f ") || commands[5] != "/usr/local/bin/vtysh -c show bfd peers json" || commands[6] != "/usr/local/bin/vtysh -c show bfd peers" {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")

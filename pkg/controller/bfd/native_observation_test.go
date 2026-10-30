@@ -39,7 +39,10 @@ func TestBFDObservationCannotOverwriteChangedReceipt(t *testing.T) {
 					return nil, nil
 				}
 				if args[1] == "show bfd peers" {
-					return []byte(nativePeersText), nil
+					if writes != 0 {
+						return []byte("BFD Peers:\n"), nil
+					}
+					return []byte(nativeOwnedPeersText), nil
 				}
 				reads++
 				if reads == changeAt {
@@ -68,7 +71,7 @@ func TestBFDObservationCannotOverwriteChangedReceipt(t *testing.T) {
 }
 
 func TestBFDMismatchedTextObservationCannotAuthorizeWithdrawal(t *testing.T) {
-	for _, text := range []string{"BFD Peers:\n", strings.ReplaceAll(nativePeersText, "configured", "dynamic"), strings.ReplaceAll(nativePeersText, "wg0", "changed0"), strings.ReplaceAll(nativePeersText, "300ms", "301ms")} {
+	for _, text := range []string{"BFD Peers:\n", strings.ReplaceAll(nativeOwnedPeersText, "configured", "dynamic"), strings.ReplaceAll(nativeOwnedPeersText, "wg0", "changed0"), strings.ReplaceAll(nativeOwnedPeersText, "300ms", "301ms")} {
 		store := testStore{}
 		controller := Controller{Router: &api.Router{}, Store: store, OS: platform.OSLinux, RuntimeDir: t.TempDir()}
 		sessions, _, _ := (Controller{Router: bfdRouter()}).sessions()
@@ -109,7 +112,7 @@ func TestBFDRechecksNativeConfigurationBeforeWithdrawal(t *testing.T) {
 			return nil, nil
 		}
 		if args[1] == "show bfd peers" {
-			text := nativePeersText
+			text := nativeOwnedPeersText
 			if reads >= 2 {
 				text = strings.ReplaceAll(text, "300ms", "301ms")
 			}
