@@ -24,9 +24,13 @@ type FIBStore interface {
 }
 
 type fibLocalAddress struct {
-	Address netip.Addr
-	Prefix  netip.Prefix
+	Address              netip.Addr
+	Prefix               netip.Prefix
+	Tentative, DADFailed bool
 }
+
+func (address fibLocalAddress) usable() bool { return !address.Tentative && !address.DADFailed }
+
 type fibObservedRoute struct {
 	Route bgpstate.NativeFIBRoute
 	Exact bool
@@ -133,7 +137,7 @@ func (s *nativeFIBSyncer) SyncBGP(ctx context.Context, store FIBStore, routes []
 		if r.PreferredSource == "" {
 			best := -1
 			for _, a := range snapshot.Addresses {
-				if a.Address.Is4() == p.Addr().Is4() && a.Address != p.Addr() && a.Prefix.Contains(p.Addr()) && a.Prefix.Bits() > best {
+				if a.usable() && a.Address.Is4() == p.Addr().Is4() && a.Address != p.Addr() && a.Prefix.Contains(p.Addr()) && a.Prefix.Bits() > best {
 					r.PreferredSource = a.Address.String()
 					best = a.Prefix.Bits()
 				}
@@ -141,12 +145,21 @@ func (s *nativeFIBSyncer) SyncBGP(ctx context.Context, store FIBStore, routes []
 		}
 		if r.PreferredSource != "" {
 			local := false
+			reason := "LocalAddressMissing"
 			for _, a := range snapshot.Addresses {
-				local = local || a.Address.String() == r.PreferredSource
+				if a.Address.String() != r.PreferredSource {
+					continue
+				}
+				local = local || a.usable()
+				if a.DADFailed {
+					reason = "LocalAddressDADFailed"
+				} else if a.Tentative {
+					reason = "LocalAddressTentative"
+				}
 			}
 			if !local {
 				result.PreferredSourceSkipped[r.Prefix] = true
-				result.PreferredSourceSkippedReason[r.Prefix] = "LocalAddressMissing"
+				result.PreferredSourceSkippedReason[r.Prefix] = reason
 				r.PreferredSource = ""
 			}
 		}
@@ -431,7 +444,7 @@ func (s *nativeFIBSyncer) prepareCurrent(ctx context.Context, r FIBRoute, snapsh
 	if r.PreferredSource == "" {
 		best := -1
 		for _, a := range snapshot.Addresses {
-			if a.Address.Is4() == p.Addr().Is4() && a.Address != p.Addr() && a.Prefix.Contains(p.Addr()) && a.Prefix.Bits() > best {
+			if a.usable() && a.Address.Is4() == p.Addr().Is4() && a.Address != p.Addr() && a.Prefix.Contains(p.Addr()) && a.Prefix.Bits() > best {
 				r.PreferredSource = a.Address.String()
 				best = a.Prefix.Bits()
 			}
@@ -440,7 +453,7 @@ func (s *nativeFIBSyncer) prepareCurrent(ctx context.Context, r FIBRoute, snapsh
 	if r.PreferredSource != "" {
 		local := false
 		for _, a := range snapshot.Addresses {
-			local = local || a.Address.String() == r.PreferredSource
+			local = local || a.Address.String() == r.PreferredSource && a.usable()
 		}
 		if !local {
 			r.PreferredSource = ""

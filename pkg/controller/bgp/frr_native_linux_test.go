@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,9 +20,9 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/bgpdaemon"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	gobgpapi "github.com/osrg/gobgp/v4/api"
 )
 
 func TestBGPIndependentFRRNativeLinuxLifecycle(t *testing.T) {
@@ -225,7 +226,8 @@ router bgp 64513
 	})
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "198.18.0.1", ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"198.19.40.1/32"}}, Timers: api.BGPTimersSpec{Profile: "fast"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "frr"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/edge", PeerASN: 64513, Peers: []string{"198.18.0.2", "2001:db8:1::2"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "frr-v4"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/edge", PeerASN: 64513, Peers: []string{"198.18.0.2"}, ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"198.19.40.1/32"}, NextHopRewrite: "unchanged"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPPeer"}, Metadata: api.ObjectMeta{Name: "frr-v6"}, Spec: api.BGPPeerSpec{RouterRef: "BGPRouter/edge", PeerASN: 64513, Peers: []string{"2001:db8:1::2"}, ImportPolicy: api.BGPImportPolicySpec{AllowedPrefixes: []string{"2001:db8:40::1/128"}, NextHopRewrite: "unchanged"}}},
 	}}}
 	controller := &Controller{Router: router, Store: store, Daemon: spec, StopDaemon: func(stopCtx context.Context) error { return stopProduct(stopCtx) }}
 	t.Cleanup(func() {
@@ -235,7 +237,6 @@ router bgp 64513
 			t.Error(err)
 		}
 	})
-	control := bgpdaemon.NewControlClient(spec.ControlSocketPath)
 	waitFor := func(label string, ready func() bool) {
 		t.Helper()
 		deadline := time.Now().Add(12 * time.Second)
@@ -255,16 +256,27 @@ router bgp 64513
 		}
 	}
 	ribHas := func(prefix string) bool {
-		paths, err := control.ListObservedPaths(ctx)
+		wanted, err := netip.ParsePrefix(prefix)
 		if err != nil {
 			return false
 		}
-		for _, path := range paths {
-			if path.Prefix == prefix && path.Best && path.Valid {
-				return true
-			}
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		if controller.Server == nil {
+			return false
 		}
-		return false
+		found := false
+		err = controller.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: familyForPrefix(wanted)}, func(destination *gobgpapi.Destination) {
+			if destination.Prefix != prefix {
+				return
+			}
+			for _, path := range destination.Paths {
+				if path.Best && !path.IsNexthopInvalid && !path.IsWithdraw {
+					found = true
+				}
+			}
+		})
+		return err == nil && found
 	}
 	nativeHas := func(prefix string) bool {
 		snapshot, err := (netlinkFIBBackend{}).Snapshot(ctx)
@@ -282,16 +294,34 @@ router bgp 64513
 	controller.Start(ctx)
 	t.Logf("independent IPv4 peer communication: %s", strings.TrimSpace(string(run("ping", "-n", "-c", "1", "-W", "2", "198.19.40.1"))))
 	t.Logf("actual IPv4 BGP kernel routes: %s", strings.TrimSpace(string(run("ip", "-4", "route", "show", "table", "main", "proto", "186"))))
+	waitFor("independent IPv6 route in live RIB", func() bool { return ribHas("2001:db8:40::1/128") })
+	t.Log("independent IPv6 prefix is present, valid and selected in the actual routerd-bgp RIB")
+	controller.mu.Lock()
+	err = controller.Server.ListPath(ctx, &gobgpapi.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: ipv6Family()}, func(destination *gobgpapi.Destination) {
+		for _, path := range destination.Paths {
+			t.Logf("actual IPv6 BGP path: prefix=%s next_hop=%s best=%t", destination.Prefix, pathNextHop(path), path.Best)
+		}
+	})
+	controller.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor("independent IPv6 route in acknowledged kernel FIB", func() bool { return nativeHas("2001:db8:40::1/128") })
+	t.Logf("independent IPv6 peer communication: %s", strings.TrimSpace(string(run("ping", "-6", "-n", "-c", "1", "-W", "2", "2001:db8:40::1"))))
 	dual := *router
 	dual.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources...)
 	global, _ := dual.Spec.Resources[0].BGPRouterSpec()
-	global.ImportPolicy.AllowedPrefixes = append(append([]string(nil), global.ImportPolicy.AllowedPrefixes...), "2001:db8:40::1/128")
+	global.ImportPolicy = api.BGPImportPolicySpec{AllowedPrefixes: []string{"198.19.40.1/32", "2001:db8:40::1/128"}, NextHopRewrite: "unchanged"}
 	dual.Spec.Resources[0].Spec = global
-	if err := controller.ReconcileRouter(ctx, &dual, store); err != nil {
-		t.Logf("dual-stack transition is pending: %v", err)
+	for i := 1; i < len(dual.Spec.Resources); i++ {
+		peer, _ := dual.Spec.Resources[i].BGPPeerSpec()
+		peer.ImportPolicy = api.BGPImportPolicySpec{}
+		dual.Spec.Resources[i].Spec = peer
 	}
-	waitFor("independent IPv6 route in live RIB", func() bool { return ribHas("2001:db8:40::1/128") })
-	t.Log("independent IPv6 prefix is present, valid and selected in the actual routerd-bgp RIB")
-	waitFor("independent IPv6 route in acknowledged kernel FIB", func() bool { return nativeHas("2001:db8:40::1/128") })
-	t.Logf("independent IPv6 peer communication: %s", strings.TrimSpace(string(run("ping", "-6", "-n", "-c", "1", "-W", "2", "2001:db8:40::1"))))
+	if err := controller.ReconcileRouter(ctx, &dual, store); err != nil {
+		t.Logf("mixed global policy transition is pending: %v", err)
+	}
+	waitFor("mixed global policy with both acknowledged families", func() bool {
+		return ribHas("198.19.40.1/32") && ribHas("2001:db8:40::1/128") && nativeHas("198.19.40.1/32") && nativeHas("2001:db8:40::1/128")
+	})
 }
