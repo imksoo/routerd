@@ -67,7 +67,10 @@ Pending parent operations, failed reads, unapplied intent and foreign same-name
 links cannot authorize a child effect. The child stores a `dslite:`-qualified
 cookie to select the concrete owner for later cleanup, including after removing
 the parent declaration. Address, route and RA owners recheck that proof after
-their pending writes. Native link identity is read again after the parent's
+their pending writes. Runtime route/address selection retains the current
+unselected parent graph, so a false condition cannot erase a virtual parent and
+admit its same-name device as a physical link. Native link identity is read again
+after the parent's
 inner-address and journal observation waits. Linux and FreeBSD command/SQLite
 regressions exercise these boundaries; actual kernel/peer forwarding remains
 unqualified. These userspace checks do not establish atomic compare-and-change

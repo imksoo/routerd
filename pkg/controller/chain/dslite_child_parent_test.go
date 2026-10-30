@@ -428,3 +428,32 @@ func TestDSLiteFreeBSDConfiguredNameCannotBypassActualParent(t *testing.T) {
 		t.Fatalf("configured alias admitted foreign parent: %+v %v", proof, err)
 	}
 }
+
+func TestDSLiteWhenMaskedParentCannotBecomeBareNativeDevice(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	spec, _ := parent.Router.Spec.Resources[1].DSLiteTunnelSpec()
+	spec.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.role": {Equals: "master"}}}
+	parent.Router.Spec.Resources[1].Spec = spec
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "gateway", map[string]any{"role": "backup"}); err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{Router: parent.Router, Store: store}
+	view, err := runner.effectiveDynamicRouteSAMViewForReconcile(eventedStore{Store: store}, time.Now().UTC(), platform.OSLinux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range view.RouteRouter.Spec.Resources {
+		if resource.Kind == "DSLiteTunnel" {
+			t.Fatal("fixture did not mask parent")
+		}
+	}
+	native.links["ds-owned"] = dsliteTunnelObservation{Exists: true, Index: 8, Kind: "ip6tnl", MTU: 1454}
+	route := IPv4RouteController{Router: view.RouteRouter, ParentRouter: view.ParentRouter, Store: store, DSLite: &parent}
+	if token, err := route.ordinaryRouteNativeParent(t.Context(), "ds-owned", "linux:boot-a:17", 8); err == nil {
+		t.Fatalf("masked parent admitted bare route device: token=%q", token)
+	}
+	address := IPv4StaticAddressController{Router: view.RouteRouter, ParentRouter: view.ParentRouter, Store: store, DSLite: &parent}
+	if token, err := address.staticNativeParent(t.Context(), "ds-owned", staticAddressSnapshot{Index: 8, Scope: "linux:boot-a:17"}); err == nil {
+		t.Fatalf("masked parent admitted bare address device: token=%q", token)
+	}
+}

@@ -418,6 +418,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
+	ParentRouter      *api.Router
 	Router            *api.Router
 	Segments          *VXLANSegmentController
 	DSLite            *DSLiteTunnelController

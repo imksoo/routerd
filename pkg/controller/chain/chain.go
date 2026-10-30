@@ -2833,6 +2833,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := ipv4Static
 			current.Router = view.RouteRouter
+			current.ParentRouter = view.ParentRouter
 			current.DeclaredRouter = view.RouteRouter
 			current.WhenRouter = view.DeclaredRouter
 			current.Store = store.withRouter(view.RouteRouter)
@@ -2909,6 +2910,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			current := route
 			current.Router = view.RouteRouter
+			current.ParentRouter = view.ParentRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
 			current.MobilitySource = store
@@ -4603,6 +4605,7 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type IPv4StaticAddressController struct {
+	ParentRouter      *api.Router
 	MobilitySource    dynamicConfigPartLister
 	Router            *api.Router
 	DeclaredRouter    *api.Router

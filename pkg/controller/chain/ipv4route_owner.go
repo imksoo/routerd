@@ -76,9 +76,17 @@ func (c IPv4RouteController) ordinaryRouteScope(ctx context.Context) (string, er
 	return platform.KernelNetworkScope(ctx)
 }
 
+func (c IPv4RouteController) parentReader() nativeParentReader {
+	router := c.ParentRouter
+	if router == nil {
+		router = c.Router
+	}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+}
+
 // Read the concrete parent's applied journal and native cookie after waits.
 func (c IPv4RouteController) ordinaryRouteNativeParent(ctx context.Context, device, scope string, index int) (string, error) {
-	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	reader := c.parentReader()
 	link, err := reader.observeDeclared(ctx, device)
 	if err != nil {
 		return "", err
@@ -317,7 +325,7 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 		return errors.New("IPv4Route native device was removed or replaced")
 	}
 	if receipt.ParentToken != "" {
-		reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+		reader := c.parentReader()
 		link, err := reader.observeRecorded(ctx, receipt.Route.Device, receipt.ParentToken)
 		if err != nil {
 			return err

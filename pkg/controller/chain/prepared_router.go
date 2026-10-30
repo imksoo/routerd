@@ -169,5 +169,12 @@ func (p *preparedRouterConfig) observeRuntimeRouter(store resourcequery.StateSto
 	if err != nil {
 		return dynamicRouteSAMView{}, err
 	}
-	return p.buildDynamicRouteSAMView(selected, observation, now)
+	view, err := p.buildDynamicRouteSAMView(selected, observation, now)
+	if err != nil {
+		return dynamicRouteSAMView{}, err
+	}
+	// Native parent authority must retain the current unselected graph: a when
+	// mask cannot turn a declared virtual parent into an unowned physical device.
+	view.ParentRouter = base
+	return view, nil
 }

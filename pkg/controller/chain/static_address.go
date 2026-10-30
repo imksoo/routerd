@@ -34,10 +34,24 @@ type staticAddressSnapshot struct {
 
 var errStaticParentNotReady = errors.New("native parent is not acquired")
 
+func (c IPv4StaticAddressController) parentReader() nativeParentReader {
+	router := c.ParentRouter
+	if router == nil {
+		router = c.WhenRouter
+	}
+	if router == nil {
+		router = c.DeclaredRouter
+	}
+	if router == nil {
+		router = c.Router
+	}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+}
+
 // The declaration's native name alone cannot authorize a child effect.
 func (c IPv4StaticAddressController) staticNativeParent(ctx context.Context, reference string, observed staticAddressSnapshot) (string, error) {
-	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
-	link, err := reader.observeDeclared(ctx, interfaceIfName(c.Router, reference))
+	reader := c.parentReader()
+	link, err := reader.observeDeclared(ctx, interfaceIfName(reader.Router, reference))
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +61,7 @@ func (c IPv4StaticAddressController) staticNativeParent(ctx context.Context, ref
 	if !link.Exists {
 		return "", errStaticParentNotReady
 	}
-	if link.Index != observed.Index || link.Scope != observed.Scope || link.IfName != interfaceIfName(c.Router, reference) {
+	if link.Index != observed.Index || link.Scope != observed.Scope || link.IfName != interfaceIfName(reader.Router, reference) {
 		return "", errors.New("static address native parent identity changed")
 	}
 	return link.Token, nil
@@ -244,7 +258,7 @@ func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Con
 		}
 		return nil
 	}
-	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	reader := c.parentReader()
 	link, err := reader.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
 	if err != nil {
 		return err

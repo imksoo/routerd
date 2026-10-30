@@ -25,6 +25,7 @@ type dynamicConfigPartLister interface {
 }
 
 type dynamicRouteSAMView struct {
+	ParentRouter      *api.Router
 	DeclaredRouter    *api.Router
 	EffectiveRouter   *api.Router
 	RouteRouter       *api.Router
@@ -158,6 +159,7 @@ func (p *preparedRouterConfig) buildDynamicRouteSAMView(base *api.Router, observ
 	}
 	return dynamicRouteSAMView{
 		DeclaredRouter:    p.declared,
+		ParentRouter:      base,
 		EffectiveRouter:   &effective,
 		RouteRouter:       &routeRouter,
 		HybridLowerings:   hybridLowerings,
