@@ -23,13 +23,18 @@ import (
 type TunnelCommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 type TunnelInterfaceController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Command TunnelCommandRunner
-	OS      platform.OS
-	Logger  *slog.Logger
+	Router          *api.Router
+	Bus             *bus.Bus
+	Store           Store
+	DryRun          bool
+	Command         TunnelCommandRunner
+	OS              platform.OS
+	Logger          *slog.Logger
+	NativeScope     func(context.Context) (string, error)
+	ObserveNative   func(context.Context, string) (tunnelNativeLink, error)
+	SetAliasByIndex func(context.Context, int, string, string, string, string) error
+	DeleteByIndex   func(context.Context, int, string, string, string, string) error
+	ApplyNative     func(context.Context, tunnelNativeReceipt) error
 }
 
 type tunnelDesired struct {
