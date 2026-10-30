@@ -136,10 +136,11 @@ func listNativeDnsmasqProcesses(ctx context.Context, spec dnsmasqProcessSpec) ([
 			return nil, errors.New("incomplete FreeBSD process list")
 		}
 		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid < 1 {
+		if err != nil || pid < 0 {
 			return nil, errors.New("invalid FreeBSD process PID")
 		}
-		if pid == os.Getpid() {
+		// PID 0 is the kernel entry in the native FreeBSD process list.
+		if pid == 0 || pid == os.Getpid() {
 			continue
 		}
 		command := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), fields[0]))

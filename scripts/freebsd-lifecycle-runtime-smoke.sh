@@ -563,6 +563,17 @@ retire_managed_dnsmasq() {
     sleep 1
   done
   [ "$managed_retired" -eq 1 ] || return 1
+  # The guest was checked to contain no pre-existing dnsmasq. A removed PID
+  # receipt alone cannot acknowledge helper descendants or their DHCP sockets.
+  if pgrep -x dnsmasq >"$evidence_dir/dnsmasq-after-withdrawal.log"; then
+    ps -axww -o pid= -o ppid= -o state= -o command= >"$evidence_dir/dnsmasq-withdrawal-processes.log"
+    sockstat -46 -l >"$evidence_dir/dnsmasq-withdrawal-sockets.log"
+    echo 'managed dnsmasq processes remain after withdrawal' >&2
+    return 1
+  else
+    remaining_rc=$?
+    [ "$remaining_rc" -eq 1 ] || return 1
+  fi
   stop_owned_process "$routerd_pid" || return 1
   routerd_pid=
   managed_dnsmasq=0
@@ -719,7 +730,7 @@ while [ "$(date +%s)" -lt "$status_deadline" ]; do
   process_alive "$dhcpv6_pid" 2>/dev/null || break
   if ipc_curl --unix-socket "$work/dhcpv6.sock" \
     http://localhost/v1/status >"$evidence_dir/dhcpv6-status-before.json" 2>/dev/null && \
-    jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null; then
+    jq -e '.phase == "Running" and .resources[0].phase == "Bound" and .resources[0].conditions[0].reason == "bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null; then
     break
   fi
   sleep 1
