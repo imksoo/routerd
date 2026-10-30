@@ -4,7 +4,9 @@ package chain
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +43,7 @@ func TestNTPWithdrawalUsesAcquiredConfigurationAfterSQLiteReopen(t *testing.T) {
 			} else {
 				router = ntpServerRouter(api.NTPServerSpec{Provider: "chrony", Managed: true, Servers: []string{"192.0.2.123"}, AllowCIDRs: []string{"192.0.2.0/24"}})
 			}
+			name := router.Spec.Resources[0].Metadata.Name
 			if err := reconcile(); err != nil {
 				t.Fatal(err)
 			}
@@ -61,6 +64,13 @@ func TestNTPWithdrawalUsesAcquiredConfigurationAfterSQLiteReopen(t *testing.T) {
 			}
 			if data, err := os.ReadFile(path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("removed %s declaration retained active configuration %q err=%v", kind, data, err)
+			}
+			status, err := store.ReadObjectStatus(api.SystemAPIVersion, kind, name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status["phase"] == "Applied" || status["servers"] != nil {
+				t.Fatalf("withdrawn %s still publishes active upstreams: %+v", kind, status)
 			}
 		})
 	}
@@ -313,5 +323,54 @@ func TestNTPDRenderedClientOnlyConfigRetainsUpstreamsAndDeniesLANClients(t *test
 		if !strings.Contains(data, line) {
 			t.Errorf("client-only ntpd output missing %q:\n%s", line, data)
 		}
+	}
+}
+
+func TestNTPWithdrawalPublicationFailureRetainsRecoveryRecord(t *testing.T) {
+	for _, kind := range []string{"NTPClient", "NTPServer"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newNTPLifecycleFixture(t, kind)
+			name := f.router.Spec.Resources[0].Metadata.Name
+			if err := f.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			connection, err := sql.Open("sqlite", f.db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer connection.Close()
+			trigger := fmt.Sprintf("CREATE TRIGGER fail_ntp_removed BEFORE UPDATE OF status ON objects WHEN NEW.api_version='%s' AND NEW.kind='%s' AND json_extract(NEW.status,'$.phase')='Removed' BEGIN SELECT RAISE(ABORT,'test-owned withdrawal publication failure'); END", api.SystemAPIVersion, kind)
+			if _, err := connection.Exec(trigger); err != nil {
+				t.Fatal(err)
+			}
+			f.router = &api.Router{}
+			if err := f.reconcile(t.Context()); err == nil {
+				t.Fatal("failed withdrawal publication was forgotten")
+			}
+			if _, err := os.Stat(f.path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("owned fragment was not removed before publication failure: %v", err)
+			}
+			owner := ntpConfigOwner{store: f.store, kind: kind}
+			record, err := owner.get(name)
+			if err != nil || record == nil || !record.Withdrawing {
+				t.Fatalf("unpublished withdrawal lost recovery state: %+v %v", record, err)
+			}
+			if _, err := connection.Exec("DROP TRIGGER fail_ntp_removed"); err != nil {
+				t.Fatal(err)
+			}
+			f.reopen(t)
+			if err := f.reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			owner.store = f.store
+			record, err = owner.get(name)
+			if err != nil || record != nil {
+				t.Fatalf("confirmed withdrawal was not retired: %+v %v", record, err)
+			}
+			status, err := f.store.ReadObjectStatus(api.SystemAPIVersion, kind, name)
+			if err != nil || status["phase"] != "Removed" || status["servers"] != nil {
+				t.Fatalf("confirmed withdrawal status=%+v err=%v", status, err)
+			}
+		})
 	}
 }
