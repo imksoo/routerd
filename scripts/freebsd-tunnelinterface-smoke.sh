@@ -45,6 +45,9 @@ emit_initial_failure() {
 		underlay.ping \
 		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status gre.ping gre.proto47 \
 		apply-second.log gif0.second.status gre0.second.status \
+		child-peer-setup.log apply-child-acquire.log child-acquire.receipts.json gif0.child-acquire.ifconfig gre0.child-acquire.ifconfig gif.child-acquire.route gre.child-acquire.route gif.child-acquire.ping gre.child-acquire.ping \
+		apply-child-parent-noop.log child-parent-noop.receipts.json gif0.child-parent-noop.ifconfig gre0.child-parent-noop.ifconfig gif.child-parent-noop.route gre.child-parent-noop.route gif.child-parent-noop.ping gre.child-parent-noop.ping \
+		apply-child-remove.log child-remove.receipts.json child-remove.routes gif0.child-remove.ifconfig gre0.child-remove.ifconfig gif.child-remove.route gre.child-remove.route \
 		apply-change.log gif0.change gre0.change \
 		apply-gre-key-zero.log gre0.key-zero.status gre.key-zero.ping gre.key-zero.proto47 \
 		apply-restart.log gif0.restart.status gre0.restart.status gre.rekey.ping gre.rekey.proto47 \
@@ -151,7 +154,8 @@ EOF
 
 apply_once() {
 	label=$1
-  r1cmd "$routerd" serve --once --controllers tunnel --config "$work/router.yaml" \
+	controllers=${2:-tunnel}
+  r1cmd "$routerd" serve --once --controllers "$controllers" --config "$work/router.yaml" \
     --state-file "$state" --ledger-file "$ledger" \
     --status-file "$work/status-$label.json" --socket "$work/api-$label.sock" \
     --status-socket "$work/status-$label.sock" >"$work/apply-$label.log" 2>&1
@@ -232,6 +236,90 @@ status_row gre0 "$work/gre0.second.status"
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .interfaceOwned == true' "$work/gif0.second.status" >/dev/null
 jq -e '.phase == "Up" and .reason == "AlreadyConfigured" and .key == 42 and .interfaceOwned == true' "$work/gre0.second.status" >/dev/null
 echo 'freebsd-tunnelinterface-stage=second-noop=ok'
+
+# Acquire separate child aliases and routes through the production controllers.
+# r2 owns independent destinations and explicit return routes for those aliases.
+{
+  r2cmd ifconfig lo0 inet 192.0.2.2/32 alias
+  r2cmd ifconfig lo0 inet 192.0.2.10/32 alias
+  r2cmd route -n add -host 192.0.2.1 10.253.89.1
+  r2cmd route -n add -host 192.0.2.9 10.253.90.1
+} >"$work/child-peer-setup.log" 2>&1
+cat >>"$work/router.yaml" <<'EOF'
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4StaticAddress
+    metadata: {name: gif-child-address}
+    spec: {interface: gif0, address: 192.0.2.1/32}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4StaticAddress
+    metadata: {name: gre-child-address}
+    spec: {interface: gre0, address: 192.0.2.9/32}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4Route
+    metadata: {name: gif-child-route}
+    spec: {destination: 192.0.2.2/32, gateway: 10.253.89.2, device: gif0}
+  - apiVersion: net.routerd.net/v1alpha1
+    kind: IPv4Route
+    metadata: {name: gre-child-route}
+    spec: {destination: 192.0.2.10/32, gateway: 10.253.90.2, device: gre0}
+EOF
+
+child_receipts() {
+  sqlite3 "$state" "SELECT json_group_array(json_object('kind',kind,'name',name,'status',json(status))) FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND name IN ('gif-child-address','gre-child-address','gif-child-route','gre-child-route');" >"$work/$1.receipts.json"
+}
+
+check_child_dataplane() {
+  child_label=$1
+  child_receipts "$child_label"
+  jq -e 'length == 4 and all(.[]; (.status.nativeReceipt // .status.routeOwner) as $receipt | $receipt.pending == false and $receipt.ifIndex > 0 and ($receipt.scope | length) > 0) and ([.[] | select(.kind == "IPv4StaticAddress" and .status.phase == "Applied")] | length) == 2 and ([.[] | select(.kind == "IPv4Route" and .status.phase == "Installed")] | length) == 2' "$work/$child_label.receipts.json" >/dev/null
+  for child_mode in gif gre; do
+    case "$child_mode" in
+      gif) child_if=gif0; child_local=192.0.2.1; child_remote=192.0.2.2; child_gateway=10.253.89.2 ;;
+      gre) child_if=gre0; child_local=192.0.2.9; child_remote=192.0.2.10; child_gateway=10.253.90.2 ;;
+    esac
+    r1cmd ifconfig "$child_if" >"$work/$child_if.$child_label.ifconfig"
+    awk -v address="$child_local" '$1 == "inet" && $2 == address && /netmask 0xffffffff/ { found=1 } END { exit !found }' "$work/$child_if.$child_label.ifconfig"
+    r1cmd route -n get -host "$child_remote" >"$work/$child_mode.$child_label.route" 2>&1
+    awk -v destination="$child_remote" -v gateway="$child_gateway" -v device="$child_if" '$1 == "destination:" && $2 == destination { d=1 } $1 == "gateway:" && $2 == gateway { g=1 } $1 == "interface:" && $2 == device { i=1 } /flags:.*STATIC/ { s=1 } END { exit !(d && g && i && s) }' "$work/$child_mode.$child_label.route"
+    r1cmd ping -n -c 3 -S "$child_local" "$child_remote" >"$work/$child_mode.$child_label.ping" 2>&1
+    grep -F '3 packets transmitted, 3 packets received' "$work/$child_mode.$child_label.ping"
+  done
+}
+
+apply_once child-acquire tunnel,ipv4-static-address,ipv4-route
+check_child_dataplane child-acquire
+echo 'freebsd-tunnelinterface-stage=child-acquire=ok'
+
+# Reconcile only the parent owner. Existing child effects must survive unchanged.
+apply_once child-parent-noop
+check_child_dataplane child-parent-noop
+echo 'freebsd-tunnelinterface-stage=child-parent-preservation=ok'
+
+# Keep both parents declared and run only the child owners to withdraw children.
+write_config 1400
+apply_once child-remove ipv4-route,ipv4-static-address
+child_receipts child-remove
+jq -e 'length == 0' "$work/child-remove.receipts.json" >/dev/null
+r1cmd netstat -rn -f inet >"$work/child-remove.routes"
+grep -F 'Internet:' "$work/child-remove.routes" >/dev/null
+for child_mode in gif gre; do
+  case "$child_mode" in
+    gif) child_if=gif0; child_local=192.0.2.1; child_remote=192.0.2.2; parent_local=10.253.89.1 ;;
+    gre) child_if=gre0; child_local=192.0.2.9; child_remote=192.0.2.10; parent_local=10.253.90.1 ;;
+  esac
+  r1cmd ifconfig "$child_if" >"$work/$child_if.child-remove.ifconfig"
+  if awk -v address="$child_local" '$1 == "inet" && $2 == address { found=1 } END { exit !found }' "$work/$child_if.child-remove.ifconfig"; then
+    echo "removed child address remains on $child_if" >&2
+    exit 1
+  fi
+  awk -v address="$parent_local" '$1 == "inet" && $2 == address { found=1 } END { exit !found }' "$work/$child_if.child-remove.ifconfig"
+  r1cmd route -n get -host "$child_remote" >"$work/$child_mode.child-remove.route" 2>&1 || true
+  if awk -v destination="$child_remote" '$1 == destination || $1 == destination "/32" { found=1 } END { exit !found }' "$work/child-remove.routes"; then
+    echo "removed child route remains in native inventory: $child_remote" >&2
+    exit 1
+  fi
+done
+echo 'freebsd-tunnelinterface-stage=child-owned-withdrawal=ok'
 
 write_config 1300
 apply_once change
