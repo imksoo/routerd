@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,7 +177,13 @@ func TestMobilityNativeAddressPendingSurvivesFailureAndRestart(t *testing.T) {
 	faults := &nativeJournalStore{SQLiteStore: store, failField: "appliedMobilityStaticAddresses", failure: failure}
 	present := false
 	deleteErr := error(nil)
-	controller := IPv4StaticAddressController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, AddressPresent: func(context.Context, string, string) bool { return present }, Command: func(_ context.Context, _ string, args ...string) error {
+	controller := IPv4StaticAddressController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+		var addresses []netip.Prefix
+		if present {
+			addresses = []netip.Prefix{netip.MustParsePrefix("10.88.60.10/32")}
+		}
+		return staticAddressSnapshot{Index: 7, Scope: "address-fixture", Addresses: addresses}, nil
+	}, Command: func(_ context.Context, _ string, args ...string) error {
 		if strings.Contains(strings.Join(args, " "), " del ") {
 			if deleteErr != nil {
 				return deleteErr

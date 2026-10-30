@@ -538,6 +538,9 @@ func validateAppliedMobilityRoute(route mobilityAppliedIPv4Route) error {
 }
 
 func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx context.Context) error {
+	if c.Store == nil && c.MobilitySource == nil && len(c.MobilityDataplane.StaticAddresses) == 0 && len(c.MobilityDataplane.Withdrawals) == 0 {
+		return nil
+	}
 	plan, err := c.currentMobilityAddressPlan()
 	if err != nil {
 		return err
@@ -652,10 +655,6 @@ func normalizedMobilityStaticAddressIntents(intents []dynamicconfig.MobilityIPv4
 func mobilityStaticAddressMatchesIntent(applied mobilityAppliedIPv4Address, intent dynamicconfig.MobilityIPv4AddressIntent) bool {
 	return applied.ID == intent.ID && applied.PoolRef == intent.PoolRef && applied.PoolPrefix == intent.PoolPrefix && applied.Purpose == string(intent.Purpose) &&
 		applied.Interface == intent.Interface && applied.Address == intent.Address
-}
-
-func mobilityStaticAddressesEqual(left, right mobilityAppliedIPv4Address) bool {
-	return left == right
 }
 
 func mobilityStaticAddressDesiredByUser(router *api.Router, ifname, address string) bool {

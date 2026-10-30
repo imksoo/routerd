@@ -13,10 +13,12 @@ import (
 var errMobilityAddressIntentChanged = errors.New("mobility address intent changed")
 
 func (c IPv4StaticAddressController) currentMobilityAddressPlan() (dynamicconfig.MobilityDataplanePlan, error) {
-	return currentMobilityNativePlan(c.MobilitySource, c.MobilityDataplane)
-}
-func mobilityAddressIntent(a mobilityAppliedIPv4Address) dynamicconfig.MobilityIPv4AddressIntent {
-	return dynamicconfig.MobilityIPv4AddressIntent{ID: a.ID, PoolRef: a.PoolRef, PoolPrefix: a.PoolPrefix, Purpose: dynamicconfig.MobilityIPv4AddressPurpose(a.Purpose), Interface: a.Interface, Address: a.Address}
+	plan, err := currentMobilityNativePlan(c.MobilitySource, c.MobilityDataplane)
+	if err != nil {
+		return plan, err
+	}
+	plan.StaticAddresses, err = normalizedMobilityStaticAddressIntents(plan.StaticAddresses)
+	return plan, err
 }
 func mobilityAddressReceipt(a mobilityAppliedIPv4Address) staticAddressReceipt {
 	return staticAddressReceipt{IfName: a.Interface, IfIndex: a.IfIndex, Scope: a.Scope, Address: a.Address, ParentToken: a.ParentToken, Pending: a.Operation != ""}
@@ -107,6 +109,19 @@ func (c IPv4StaticAddressController) applyMobilityStaticAddress(ctx context.Cont
 	}
 	wanted, err := c.currentMobilityAddressPremise(ctx, intent)
 	if err != nil {
+		// A source revoked while the initial native observation waited can
+		// still have a confirmed prior effect. Withdraw that exact receipt.
+		if errors.Is(err, errMobilityAddressIntentChanged) {
+			previous, readErr := c.appliedMobilityStaticAddresses()
+			err = errors.Join(err, readErr)
+			if readErr == nil {
+				for _, old := range previous {
+					if mobilityStaticAddressMatchesIntent(old, intent) {
+						err = errors.Join(err, c.removeMobilityStaticAddress(ctx, old))
+					}
+				}
+			}
+		}
 		return mobilityAppliedIPv4Address{}, err
 	}
 	previous, err := c.appliedMobilityStaticAddresses()
@@ -136,9 +151,20 @@ func (c IPv4StaticAddressController) applyMobilityStaticAddress(ctx context.Cont
 		}
 		fresh, err := c.currentMobilityAddressPremise(ctx, intent)
 		if err != nil || fresh != wanted {
-			return mobilityAppliedIPv4Address{}, errors.Join(err, errMobilityAddressIntentChanged)
+			cause := errors.Join(err, errMobilityAddressIntentChanged)
+			if errors.Is(err, errMobilityAddressIntentChanged) {
+				cause = errors.Join(cause, c.removeMobilityStaticAddress(ctx, wanted))
+			}
+			return mobilityAppliedIPv4Address{}, cause
 		}
 		return wanted, nil
+	}
+	// A confirmed acquisition ceases to authorize ownership once exact absence
+	// is observed. Retire it before preparing a new exclusive acquisition.
+	if owned {
+		if err := c.confirmMobilityAddress(wanted, false, true); err != nil {
+			return mobilityAppliedIPv4Address{}, err
+		}
 	}
 	pending := wanted
 	pending.Operation = "add"
