@@ -41,7 +41,7 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 	run("link", "add", "name", "tnl-underlay", "type", "dummy")
 	run("address", "add", "198.18.0.1/30", "dev", "tnl-underlay")
 	run("link", "set", "dev", "tnl-underlay", "up")
-	for _, scenario := range []string{"replacement-cleanup", "unacquired-child"} {
+	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 			if err != nil {
@@ -52,6 +52,30 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tnl-owned"}, Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "198.18.0.1", Remote: "198.18.0.2", Address: "192.0.2.1/32", MTU: 1400, TrustedUnderlay: true}},
 			}}}
 			parent := TunnelInterfaceController{Router: router, Store: eventedStore{Store: store, Router: router}}
+			if scenario == "source-expired" {
+				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+				spec.Local = ""
+				spec.LocalFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/underlay", Field: "currentAddress"}
+				router.Spec.Resources[0].Spec = spec
+				if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Bound", "currentAddress": "198.18.0.1/30"}); err != nil {
+					t.Fatal(err)
+				}
+				if err := parent.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tnl-owned").CombinedOutput() }()
+				// The DHCPv4 publisher clears currentAddress on real lease expiry.
+				if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Expired", "currentAddress": ""}); err != nil {
+					t.Fatal(err)
+				}
+				if err := parent.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := exec.CommandContext(ctx, "ip", "-j", "link", "show", "dev", "tnl-owned").CombinedOutput(); err == nil {
+					t.Fatalf("expired source retained its applied tunnel: %s", out)
+				}
+				return
+			}
 			if scenario == "replacement-cleanup" {
 				if err := parent.Reconcile(ctx); err != nil {
 					t.Fatal(err)
