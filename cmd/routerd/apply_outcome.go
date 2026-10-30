@@ -99,7 +99,9 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 		return nil
 	}
 	o.Stage = "canonical-write"
-	if strings.TrimSpace(opts.ConfigPath)=="" { return errors.New("canonical configuration path is required before applying effects") }
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		return errors.New("canonical configuration path is required before applying effects")
+	}
 	o.Canonical = canonicalNotReplaced
 	write := config.AtomicWriteFileWithOutcome
 	if opts.attemptHooks != nil && opts.attemptHooks.writeCanonical != nil {
@@ -110,6 +112,8 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 		o.Canonical = canonicalReplaced
 	}
 	o.DurabilityConfirmed = written.DurabilityConfirmed
-	if err==nil && (!written.Replaced || !written.DurabilityConfirmed) { return errors.New("canonical configuration replacement was not durably acknowledged") }
+	if err == nil && (!written.Replaced || !written.DurabilityConfirmed) {
+		return errors.New("canonical configuration replacement was not durably acknowledged")
+	}
 	return err
 }

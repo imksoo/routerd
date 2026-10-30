@@ -21,8 +21,8 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
-	for _, stage := range []string{"rename", "restore-fallback", "restore-unavailable", "directory-sync", "finish-generation", "sandbox-plan"} {
+func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T) {
+	for _, stage := range []string{"rename", "directory-sync", "finish-generation"} {
 		t.Run(stage, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
 			opts.Sandbox = true
@@ -37,8 +37,7 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			current := old
 			active := controllerchain.RuntimeSnapshot{Router: old, Known: true, Available: true, Epoch: 1}
 			fault := errors.New("injected apply failure with secret payload")
-			restoreFault := errors.New("injected restore failure")
-			beforeRename := stage == "rename" || strings.HasPrefix(stage, "restore-")
+			beforeRename := stage == "rename"
 			opts.attemptHooks.writeCanonical = func(path string, data []byte) (config.AtomicWriteOutcome, error) {
 				if beforeRename {
 					return config.AtomicWriteOutcome{}, fault
@@ -73,14 +72,6 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 					gate.RUnlock()
 					t.Error("reload/restore released exclusive gate")
 				}
-				if reloads == 2 && stage == "restore-fallback" {
-					active.Epoch++
-					return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, Restored: true, OperationID: uint64(reloads)}, restoreFault
-				}
-				if reloads == 2 && stage == "restore-unavailable" {
-					active = controllerchain.RuntimeSnapshot{Known: true, Epoch: active.Epoch}
-					return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, OperationID: uint64(reloads)}, restoreFault
-				}
 				active = controllerchain.RuntimeSnapshot{Router: r, Known: true, Available: true, Epoch: active.Epoch + 1}
 				return controllerchain.RuntimeReloadOutcome{Active: active, Accepted: true, OperationID: uint64(reloads)}, nil
 			}
@@ -91,15 +82,12 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if stage != "sandbox-plan" && !errors.Is(err, fault) {
 				t.Errorf("original error lost: %v", err)
 			}
-			if strings.HasPrefix(stage, "restore-") && !errors.Is(err, restoreFault) {
-				t.Errorf("restore error lost: %v", err)
-			}
 			if strings.Contains(err.Error(), "secret payload") {
 				t.Errorf("unsafe API error: %s", err)
 			}
 			wantReloads := 1
-			if beforeRename {
-				wantReloads = 2
+			if beforeRename || stage == "directory-sync" {
+				wantReloads = 0
 			}
 			if reloads != wantReloads {
 				t.Errorf("reload calls=%d,want=%d", reloads, wantReloads)
@@ -156,10 +144,10 @@ func TestFaultMutationRestoresOnlyBeforeCanonicalReplacement(t *testing.T) {
 			if active.Available && current != active.Router {
 				t.Error("published router differs from confirmed active")
 			}
-			if (stage == "rename" || stage == "restore-unavailable") && current != old {
+			if (stage == "rename" || stage == "directory-sync") && current != old {
 				t.Error("uncommitted candidate replaced the last committed declaration")
 			}
-			if stage != "rename" && stage != "restore-unavailable" && current == old {
+			if stage != "rename" && stage != "directory-sync" && current == old {
 				t.Error("confirmed replacement/runtime incorrectly reset to old router")
 			}
 			if !gate.TryLock() {

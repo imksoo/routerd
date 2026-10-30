@@ -70,31 +70,31 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 
 type applyOptions struct {
 	// Supplied only by live mutation; candidate workers/effects start after durable commit.
-	activateCommittedRuntime func(context.Context) (controllerchain.RuntimeReloadOutcome,error)
-	ConfigPath           string
-	StatusFile           string
-	NetplanPath          string
-	DnsmasqConfigPath    string
-	DnsmasqServicePath   string
-	NftablesPath         string
-	LedgerPath           string
-	StatePath            string
-	BGPSocketPath        string
-	BGPControlSocketPath string
-	BGPStatePath         string
-	OverrideClient       string
-	OverrideProfile      string
-	DryRun               bool
-	SkipServiceManager   bool
-	AllowMgmtLockout     bool
-	AnnounceDryRunToCLI  bool
-	MgmtLockoutWriter    io.Writer
-	SkipConfigCommit     bool
-	ConfigYAMLOverride   string
-	Sandbox              bool
-	MutationGate         *sync.RWMutex
-	nativeOwner          *nativeOperationOwner
-	attemptHooks         *applyAttemptHooks
+	activateCommittedRuntime func(context.Context) (controllerchain.RuntimeReloadOutcome, error)
+	ConfigPath               string
+	StatusFile               string
+	NetplanPath              string
+	DnsmasqConfigPath        string
+	DnsmasqServicePath       string
+	NftablesPath             string
+	LedgerPath               string
+	StatePath                string
+	BGPSocketPath            string
+	BGPControlSocketPath     string
+	BGPStatePath             string
+	OverrideClient           string
+	OverrideProfile          string
+	DryRun                   bool
+	SkipServiceManager       bool
+	AllowMgmtLockout         bool
+	AnnounceDryRunToCLI      bool
+	MgmtLockoutWriter        io.Writer
+	SkipConfigCommit         bool
+	ConfigYAMLOverride       string
+	Sandbox                  bool
+	MutationGate             *sync.RWMutex
+	nativeOwner              *nativeOperationOwner
+	attemptHooks             *applyAttemptHooks
 }
 
 func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
@@ -655,17 +655,25 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	runner.HADecision = &decision
 	// Canonical intent authorizes the new side effects. A native effect cannot
 	// be made transactional with a later filesystem rename or fsync.
-	if err := ctx.Err(); err != nil { return result,err }
-	if err := outcome.commit(opts,configYAML); err != nil { return result,err }
-	if opts.activateCommittedRuntime != nil {
-		outcome.Stage="runtime-activation"
-		outcome.Runtime,err=opts.activateCommittedRuntime(ctx)
-		if err!=nil { return result,err }
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
-	outcome.Stage="observe-prefix-delegation"
-	if err:=recordObservedPrefixDelegationState(router,stateStore,eventBus);err!=nil { return result,err }
-	recordWarningEvents(router,stateStore,result.Warnings)
-	recordKnownNGCombinationEvents(router,stateStore,optionWarnings)
+	if err := outcome.commit(opts, configYAML); err != nil {
+		return result, err
+	}
+	if opts.activateCommittedRuntime != nil {
+		outcome.Stage = "runtime-activation"
+		outcome.Runtime, err = opts.activateCommittedRuntime(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
+	outcome.Stage = "observe-prefix-delegation"
+	if err := recordObservedPrefixDelegationState(router, stateStore, eventBus); err != nil {
+		return result, err
+	}
+	recordWarningEvents(router, stateStore, result.Warnings)
+	recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
 	outcome.Stage = "reconcile"
 	if err := runner.ReconcileOnce(ctx); err != nil {
 		return nil, err
@@ -701,7 +709,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	if !configCommitPhase(result.Phase) {
 		outcome.Stage = "observe-result"
-		return result, fmt.Errorf("apply finished with phase %s; desired router state was not confirmed (canonical=%s)", result.Phase,outcome.Canonical)
+		return result, fmt.Errorf("apply finished with phase %s; desired router state was not confirmed (canonical=%s)", result.Phase, outcome.Canonical)
 	}
 	outcome.Stage = "output"
 
