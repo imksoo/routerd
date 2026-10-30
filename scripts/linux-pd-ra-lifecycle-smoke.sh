@@ -20,6 +20,7 @@ rdisc=$fixture/usr/bin/rdisc6
 test "$(stat -c %u "$rdisc")" = 0
 run_start=$(date --iso-8601=seconds)
 work=$(mktemp -d /var/tmp/routerd15-home-v6.XXXXXX)
+active_prefix=2001:db8:1500
 printf '%s\n' "$work"
 lan_ns=rd15-client6
 wan_ns=rd15-upstream6
@@ -124,11 +125,11 @@ grep '2001:db8:1500::/64' "$work/ra.txt"
 probe() {
  local source answer
  source=$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --show-error --max-time 3 'http://[2001:db8:17::1]:8080/')
- [[ "$source" == 2001:db8:1500:* ]]
+ [[ "$source" == "$active_prefix:"* ]]
  for mode in +notcp +tcp; do
- answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @2001:db8:1500::1 router.home.arpa AAAA)
- [ "$answer" = 2001:db8:1500::1 ] || { printf "DNS router.home.arpa %s returned: %s\n" "$mode" "$answer" >&2; return 1; }
- answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @2001:db8:1500::1 peer.test AAAA)
+ answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" "@$active_prefix::1" router.home.arpa AAAA)
+ [ "$answer" = "$active_prefix::1" ] || { printf "DNS router.home.arpa %s returned: %s\n" "$mode" "$answer" >&2; return 1; }
+ answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" "@$active_prefix::1" peer.test AAAA)
  [ "$answer" = 2001:db8:17::1 ] || { printf "DNS peer.test %s returned: %s\n" "$mode" "$answer" >&2; return 1; }
  done
  printf 'PASS: SLAAC, RA default route, IPv6 DNS UDP/TCP and peer-observed source %s\n' "$source"
@@ -144,6 +145,38 @@ done
 journalctl -u rd15-peer-kea --since "$run_start" --no-pager | grep 'RENEW' > "$work/renew.txt"
 jq -e --arg first "$first_reply" '.state == "bound" and .leaseUpdatedAt > $first' "$lease_file" >/dev/null
 probe
+# Change the independent server pool without restarting either product daemon.
+# Kea removes out-of-pool leases on Renew and supplies the replacement prefix.
+router_pid=$(systemctl show -p MainPID --value routerd)
+kea_pid=$(systemctl show -p MainPID --value rd15-peer-kea)
+ip netns exec "$wan_ns" ip -6 route add 2001:db8:1501::/60 via 2001:db8:16::2 dev peer0
+jq '.Dhcp6.subnet6[0]["pd-pools"][0].prefix="2001:db8:1501::"' "$work/kea.json" > "$work/kea-next.json"
+ip netns exec "$wan_ns" "$kea" -t "$work/kea-next.json"
+mv "$work/kea-next.json" "$work/kea.json"
+systemctl kill --kill-whom=main --signal=HUP rd15-peer-kea
+for _ in {1..60}; do
+ if pdstatus > "$work/pd-renumber.json" && jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-renumber.json" >/dev/null && ip -6 addr show dev rd15-lan | grep -q '2001:db8:1501::1/64'; then break; fi
+ sleep 1
+done
+jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-renumber.json" >/dev/null
+active_prefix=2001:db8:1501
+for _ in {1..30}; do
+ if ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e 'any(.[0].addr_info[]; (.local | startswith("2001:db8:1501:")) and .tentative!=true and .dadfailed!=true and ((.flags // []) | index("tentative") | not))' >/dev/null && ! ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then break; fi
+ sleep 1
+done
+test "$(systemctl show -p MainPID --value routerd)" = "$router_pid"
+test "$(systemctl show -p MainPID --value rd15-peer-kea)" = "$kea_pid"
+ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra-renumber.txt"
+grep '2001:db8:1501::/64' "$work/ra-renumber.txt"
+if ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then echo 'revoked router address remains' >&2; exit 1; fi
+# A short-lived SLAAC address can remain until its original expiry under the
+# RFC 4862 two-hour rule, but must no longer be preferred for new connections.
+ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e 'all(.[0].addr_info[]; ((.local | startswith("2001:db8:1500:")) | not) or .preferred_life_time==0)' >/dev/null
+probe
+for mode in +notcp +tcp; do
+ if ip netns exec "$lan_ns" dig +time=1 +tries=1 "$mode" @2001:db8:1500::1 router.home.arpa AAAA > "$work/old-dns.txt" 2>&1; then echo 'revoked DNS endpoint still answers' >&2; exit 1; fi
+done
+printf 'PASS: independent server renumber, new SLAAC/source/DNS and revoked old router address\n'
 systemctl restart routerd.service
 for _ in {1..30}; do
  if pdstatus > "$work/pd-restart.json" && jq -e '.resources[0].phase == "Bound"' "$work/pd-restart.json" >/dev/null; then break; fi
@@ -154,17 +187,25 @@ probe
 systemctl stop rd15-peer-kea.service
 # Verify expiry removes forwarding authority without changing product state manually.
 for _ in {1..110}; do
- if ! ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64' && ! ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
+ if ! ip -6 addr show dev rd15-lan | grep -q "$active_prefix::1/64" && ! ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
  sleep 1
 done
 ip -6 addr show dev rd15-lan > "$work/expired-router-addresses.txt"
 ip netns exec "$lan_ns" ip -6 route show default > "$work/expired-client-routes.txt"
-if grep -q '2001:db8:1500::1/64' "$work/expired-router-addresses.txt" || grep -q 'proto ra' "$work/expired-client-routes.txt"; then
+if grep -q "$active_prefix::1/64" "$work/expired-router-addresses.txt" || grep -q 'proto ra' "$work/expired-client-routes.txt"; then
  echo 'expired authority remains on router/client' >&2; exit 1
 fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'traffic survived expiry' >&2; exit 1; fi
 systemctl is-active --quiet routerd
 printf 'PASS: expired PD withdrawn from router address, client default route and traffic\n'
+systemd-run --unit=rd15-peer-kea --property=Type=exec --property=RuntimeDirectory=kea --setenv="LD_LIBRARY_PATH=$LD_LIBRARY_PATH" ip netns exec "$wan_ns" "$kea" -d -c "$work/kea.json"
+for _ in {1..90}; do
+ if pdstatus > "$work/pd-return.json" && jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null && ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
+ sleep 1
+done
+jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null
+probe
+printf 'PASS: expired upstream returned and forwarding/DNS recovered automatically\n'
 cat > "$work/empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"ipv6-readiness"},"spec":{"resources":[]}}
 JSON
@@ -173,4 +214,4 @@ systemctl stop rd15-peer-http6.service rd15-peer-dns6.service
 ip netns del "$lan_ns"
 ip netns del "$wan_ns"
 sysctl -w "net.ipv6.conf.all.forwarding=$(cat "$work/forward.before")"
-printf 'PASS: PD acquisition, SLAAC, DNS, routed peer, renewal, daemon restart, expiry and withdrawal\n'
+printf 'PASS: PD acquisition, SLAAC, DNS, routed peer, renewal, renumber, daemon restart, expiry, upstream return and withdrawal\n'
