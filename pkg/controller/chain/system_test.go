@@ -264,6 +264,7 @@ func TestSystemdUnitControllerRendersAndEnablesUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -337,6 +338,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			if name == "systemctl" && len(args) >= 2 && (args[0] == "is-active" || args[0] == "is-enabled") {
@@ -379,7 +381,7 @@ func TestSystemdUnitControllerAugmentsRouterdServiceForBGPVRRPIngress(t *testing
 	}
 	gotBGPUnit := string(bgpUnit)
 	for _, want := range []string{
-		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file /var/lib/routerd/bgp/applied.json",
+		"ExecStart=/usr/local/sbin/routerd-bgp daemon --socket /run/routerd/bgp/gobgp.sock --control-socket /run/routerd/bgp/control.sock --state-file " + controller.BGPStatePath,
 		"RuntimeDirectory=routerd/bgp",
 		"StateDirectory=routerd/bgp",
 		"Restart=always",
@@ -411,6 +413,7 @@ func TestSystemdUnitControllerDoesNotRestartActiveBGPDaemonOnUnitChange(t *testi
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -491,6 +494,7 @@ func TestSystemdUnitControllerDoesNotRestartUnchangedActiveUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -525,6 +529,7 @@ func TestSystemdUnitControllerSynthesizesNDPIAgentForAutoClassifier(t *testing.T
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -573,6 +578,7 @@ func TestSystemdUnitControllerDoesNotReloadForAlreadyAbsentUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -603,6 +609,7 @@ func TestSystemdUnitControllerDoesNotStartSupervisedDHCPv6LegacyUnit(t *testing.
 		Router:                      router,
 		Store:                       mapStore{},
 		SystemdSystemDir:            dir,
+		BGPStatePath:                filepath.Join(dir, "bgp", "applied.json"),
 		SynthesizeClientDaemonUnits: false,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
@@ -643,6 +650,7 @@ func TestSystemdUnitControllerDefersActiveStaleClientDaemonCleanup(t *testing.T)
 		Bus:              eventBus,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -700,6 +708,7 @@ func TestSystemdUnitControllerReportsInactiveStaleClientDaemonCleanup(t *testing
 		Bus:              eventBus,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -748,6 +757,7 @@ func TestSystemdUnitControllerSchedulesOwnUnitRestart(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -790,6 +800,7 @@ func TestSystemdUnitControllerKeepsPreparedLiveUnitRunningThenRestartsForLaterCh
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -854,6 +865,7 @@ func TestSystemdUnitControllerRemovesWhenFalseTailscaleUnitAndRecreatesWhenTrue(
 		DeclaredRouter:   router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -940,6 +952,7 @@ func TestSystemdUnitControllerSynthesizesTailscaleUnits(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1021,6 +1034,7 @@ func TestSystemdUnitControllerSynthesizesHealthCheckDaemonUnits(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1121,6 +1135,7 @@ func TestSystemdUnitControllerReportsHealthCheckRestartFailureAfterReady(t *test
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1166,6 +1181,7 @@ func TestSystemdUnitControllerRemovesStaleHealthCheckDaemonUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1210,6 +1226,7 @@ func TestSystemdUnitControllerReconcilesDNSResolverLongLivedUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			line := strings.Join(append([]string{name}, args...), " ")
@@ -1277,6 +1294,7 @@ func TestSystemdUnitControllerRemovesStaleDNSResolverUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1329,6 +1347,7 @@ func TestSystemdUnitControllerRemovesStaleEventFederationUnits(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1398,6 +1417,7 @@ func TestSystemdUnitControllerRestartsEventdOnlyForChangedRuntimeConfig(t *testi
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: filepath.Join(dir, "systemd"),
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		StateDir:         stateDir,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			if name != "systemctl" {
@@ -1544,6 +1564,7 @@ func TestSystemdUnitControllerRemovesIdentityOnlyEventFederationUnit(t *testing.
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1586,6 +1607,7 @@ func TestSystemdUnitControllerNoEventFederationNoAction(t *testing.T) {
 		Router:           router,
 		Store:            mapStore{},
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1620,6 +1642,7 @@ func TestSystemdUnitControllerSynthesizesDHCPClientUnits(t *testing.T) {
 		Router:                      router,
 		Store:                       store,
 		SystemdSystemDir:            dir,
+		BGPStatePath:                filepath.Join(dir, "bgp", "applied.json"),
 		SynthesizeClientDaemonUnits: true,
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
@@ -1754,6 +1777,7 @@ func TestSystemdUnitControllerDisablesHealthCheckDaemonUnit(t *testing.T) {
 		Router:           router,
 		Store:            store,
 		SystemdSystemDir: dir,
+		BGPStatePath:     filepath.Join(dir, "bgp", "applied.json"),
 		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
