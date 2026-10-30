@@ -180,7 +180,7 @@ func TestValidateSAMTransportProfileRejectsInvalidFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := validSAMTransportProfileSpec()
 			tc.mut(&spec)
-			err := Validate(samTransportProfileRouter(spec))
+			err := ValidateForOS(samTransportProfileRouter(spec), platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Validate error = %v, want containing %q", err, tc.want)
 			}
