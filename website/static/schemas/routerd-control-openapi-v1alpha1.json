@@ -2005,13 +2005,38 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "bindingInterface": {
+                  "type": "string"
+                },
+                "bindingMark": {
+                  "type": "integer"
+                },
                 "detail": {
+                  "type": "string"
+                },
+                "durationMilliseconds": {
+                  "type": "integer"
+                },
+                "failureKind": {
+                  "type": "string"
+                },
+                "kind": {
                   "type": "string"
                 },
                 "name": {
                   "type": "string"
                 },
+                "observedAt": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "protocol": {
+                  "type": "string"
+                },
                 "status": {
+                  "type": "string"
+                },
+                "target": {
                   "type": "string"
                 }
               },
