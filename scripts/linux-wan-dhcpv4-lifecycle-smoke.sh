@@ -20,7 +20,7 @@ export LD_LIBRARY_PATH="$fixture/usr/lib/x86_64-linux-gnu"
 kea=$fixture/usr/sbin/kea-dhcp4
 "$kea" -v
 /usr/local/sbin/routerd validate --config "$candidate"
-/usr/local/sbin/routerctl get status -o json | jq -e '.status.phase == "Healthy" and .status.resourceCount == 0' >/dev/null
+/usr/local/sbin/routerctl get status -o json | jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0' >/dev/null
 lan_ns=rd15-lan4-peer
 wan_ns=rd15-wan4-peer
 for ns in "$lan_ns" "$wan_ns"; do
@@ -188,11 +188,11 @@ JSON
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
 for _ in {1..45}; do
  /usr/local/sbin/routerctl get status -o json > "$work/empty-status.json"
- if withdrawn && jq -e '.status.phase == "Healthy" and .status.resourceCount == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null; then break; fi
+ if withdrawn && jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; .currentError == false)' "$work/empty-status.json" >/dev/null; then break; fi
  sleep 1
 done
 withdrawn
-jq -e '.status.phase == "Healthy" and .status.resourceCount == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null
+jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; .currentError == false)' "$work/empty-status.json" >/dev/null
 systemctl stop rd15-peer-kea4 rd15-peer-http4 rd15-peer-dns4
 ip netns del "$lan_ns"
 ip netns del "$wan_ns"
