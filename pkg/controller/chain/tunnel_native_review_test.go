@@ -42,9 +42,12 @@ func tunnelNativeReviewFixture(t *testing.T, fromSource, acquire bool) (TunnelIn
 		return out
 	}
 	run("link", "add", "name", "tn-review-under", "type", "dummy")
-	t.Cleanup(func() {
-		_, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tn-review-under").CombinedOutput()
-	})
+	cleanupLink := func(name string) {
+		cleanupCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer stop()
+		_, _ = exec.CommandContext(cleanupCtx, "ip", "link", "delete", "dev", name).CombinedOutput()
+	}
+	t.Cleanup(func() { cleanupLink("tn-review-under") })
 	run("address", "add", "198.18.10.1/30", "dev", "tn-review-under")
 	run("link", "set", "dev", "tn-review-under", "up")
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
@@ -65,7 +68,7 @@ func tunnelNativeReviewFixture(t *testing.T, fromSource, acquire bool) (TunnelIn
 		Metadata: api.ObjectMeta{Name: "tn-review"}, Spec: spec,
 	}}}}
 	parent := TunnelInterfaceController{Router: router, Store: eventedStore{Store: store, Router: router}}
-	t.Cleanup(func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tn-review").CombinedOutput() })
+	t.Cleanup(func() { cleanupLink("tn-review") })
 	if acquire {
 		if err := parent.Reconcile(ctx); err != nil {
 			t.Fatal(err)
