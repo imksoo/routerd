@@ -2835,6 +2835,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.WhenRouter = view.DeclaredRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
+			current.MobilitySource = store
 			if !current.DryRun {
 				if err := invalidateMobilityNativeAck(current.Store, dynamicconfig.MobilityAddressWithdrawalAcks); err != nil {
 					return false, err
@@ -4599,6 +4600,7 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type IPv4StaticAddressController struct {
+	MobilitySource    dynamicConfigPartLister
 	Router            *api.Router
 	DeclaredRouter    *api.Router
 	WhenRouter        *api.Router
@@ -4608,7 +4610,6 @@ type IPv4StaticAddressController struct {
 	DryRun            bool
 	Logger            *slog.Logger
 	Command           commandFunc
-	AddressPresent    func(context.Context, string, string) bool
 	DevicePresent     func(context.Context, string) bool
 	ObserveAddresses  func(context.Context, string) (staticAddressSnapshot, error)
 	Segments          *VXLANSegmentController

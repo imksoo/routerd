@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"sort"
 	"strings"
@@ -39,12 +38,16 @@ type mobilityAppliedIPv4Route struct {
 // ledger. It is intentionally independent from user-authored
 // IPv4StaticAddress object status.
 type mobilityAppliedIPv4Address struct {
-	ID         string `json:"id"`
-	PoolRef    string `json:"poolRef"`
-	PoolPrefix string `json:"poolPrefix"`
-	Purpose    string `json:"purpose"`
-	Interface  string `json:"interface"`
-	Address    string `json:"address"`
+	Scope       string `json:"scope"`
+	IfIndex     int    `json:"ifIndex"`
+	ParentToken string `json:"parentToken,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	ID          string `json:"id"`
+	PoolRef     string `json:"poolRef"`
+	PoolPrefix  string `json:"poolPrefix"`
+	Purpose     string `json:"purpose"`
+	Interface   string `json:"interface"`
+	Address     string `json:"address"`
 }
 
 func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error {
@@ -564,7 +567,14 @@ func validateAppliedMobilityRoute(route mobilityAppliedIPv4Route) error {
 }
 
 func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx context.Context) error {
-	desired, err := normalizedMobilityStaticAddressIntents(c.MobilityDataplane.StaticAddresses)
+	if c.Store == nil && c.MobilitySource == nil && len(c.MobilityDataplane.StaticAddresses) == 0 && len(c.MobilityDataplane.Withdrawals) == 0 {
+		return nil
+	}
+	plan, err := c.currentMobilityAddressPlan()
+	if err != nil {
+		return err
+	}
+	desired, err := normalizedMobilityStaticAddressIntents(plan.StaticAddresses)
 	if err != nil {
 		return err
 	}
@@ -573,117 +583,27 @@ func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx contex
 	}
 	previous, err := c.appliedMobilityStaticAddresses()
 	if err != nil {
-		return fmt.Errorf("decode applied mobility IPv4 address ledger: %w", err)
+		return err
 	}
-	if len(desired) == 0 && len(previous) == 0 && len(c.MobilityDataplane.Withdrawals) == 0 {
-		return nil
-	}
-	if (len(desired) != 0 || len(previous) != 0) && !c.DryRun {
-		if _, ok := c.Store.(objectStatusMerger); !ok {
-			return fmt.Errorf("mobility IPv4 address effects require an applied-effect status merger")
-		}
-	}
-	previousByID := make(map[string]mobilityAppliedIPv4Address, len(previous))
-	for _, address := range previous {
-		previousByID[address.ID] = address
-	}
-	next := map[string]mobilityAppliedIPv4Address{}
-	failed := map[string]bool{}
 	var failures []error
-	for _, address := range desired {
-		applied, err := c.applyMobilityStaticAddress(ctx, address)
-		if err != nil {
-			failed[address.ID] = true
-			if previous, ok := previousByID[address.ID]; ok && mobilityStaticAddressMatchesIntent(previous, address) {
-				next[address.ID] = previous
+	selected := map[string]bool{}
+	for _, intent := range desired {
+		selected[intent.ID] = true
+		if _, err := c.applyMobilityStaticAddress(ctx, intent); err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", intent.ID, err))
+		}
+	}
+	for _, address := range previous {
+		if !selected[address.ID] {
+			if err := c.removeMobilityStaticAddress(ctx, address); err != nil {
+				failures = append(failures, fmt.Errorf("withdraw %s: %w", address.ID, err))
 			}
-			failures = append(failures, fmt.Errorf("%s: %w", address.ID, err))
-			continue
-		}
-		next[address.ID] = applied
-	}
-	for _, applied := range previous {
-		if current, ok := next[applied.ID]; ok && mobilityStaticAddressesEqual(applied, current) {
-			continue
-		}
-		if failed[applied.ID] || mobilityStaticAddressDesiredByUser(c.Router, applied.Interface, applied.Address) {
-			next[applied.ID] = applied
-			continue
-		}
-		if err := c.removeMobilityStaticAddress(ctx, applied); err != nil {
-			next[applied.ID] = applied
-			failures = append(failures, fmt.Errorf("remove %s: %w", applied.ID, err))
 		}
 	}
-	if err := c.saveAppliedMobilityStaticAddresses(next); err != nil {
-		return err
+	if err := c.publishMobilityAddressWithdrawals(); err != nil {
+		failures = append(failures, err)
 	}
-	if len(failures) != 0 {
-		return fmt.Errorf("reconcile mobility IPv4 addresses: %w", errors.Join(failures...))
-	}
-	return nil
-}
-
-func (c IPv4StaticAddressController) applyMobilityStaticAddress(ctx context.Context, address dynamicconfig.MobilityIPv4AddressIntent) (mobilityAppliedIPv4Address, error) {
-	applied := mobilityAppliedIPv4Address{ID: address.ID, PoolRef: address.PoolRef, PoolPrefix: address.PoolPrefix, Purpose: string(address.Purpose), Interface: address.Interface, Address: address.Address}
-	if c.DryRun {
-		return applied, nil
-	}
-	devicePresent := c.DevicePresent
-	if devicePresent == nil {
-		devicePresent = interfaceDevicePresent
-	}
-	if !devicePresent(ctx, address.Interface) {
-		return mobilityAppliedIPv4Address{}, fmt.Errorf("device %q is not ready", address.Interface)
-	}
-	present, err := c.mobilityAddressPresent(ctx, address.Interface, address.Address)
-	if err != nil {
-		return mobilityAppliedIPv4Address{}, err
-	}
-	owned, err := c.mobilityAddressOwned(applied)
-	if err != nil {
-		return mobilityAppliedIPv4Address{}, err
-	}
-	if present {
-		if !owned {
-			return mobilityAppliedIPv4Address{}, fmt.Errorf("foreign address occupies %s on %s", address.Address, address.Interface)
-		}
-		return applied, nil
-	}
-	if err := c.stageMobilityAddress(applied); err != nil {
-		return mobilityAppliedIPv4Address{}, err
-	}
-	command := c.Command
-	if command == nil {
-		command = runCommandContext
-	}
-	name, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), address.Interface, address.Address)
-	if err := command(ctx, name, args...); err != nil {
-		return mobilityAppliedIPv4Address{}, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return applied, nil
-}
-
-func (c IPv4StaticAddressController) removeMobilityStaticAddress(ctx context.Context, address mobilityAppliedIPv4Address) error {
-	if c.DryRun {
-		return nil
-	}
-	present, err := c.mobilityAddressPresent(ctx, address.Interface, address.Address)
-	if err != nil {
-		return err
-	}
-	if !present {
-		return nil
-	}
-	command := c.Command
-	if command == nil {
-		command = runCommandContext
-	}
-	name, args := ipv4StaticAddressDeleteCommand(platform.CurrentOS(), address.Interface, address.Address)
-	if err := command(ctx, name, args...); err != nil {
-		return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
-	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (c IPv4StaticAddressController) appliedMobilityStaticAddresses() ([]mobilityAppliedIPv4Address, error) {
@@ -706,6 +626,9 @@ func (c IPv4StaticAddressController) appliedMobilityStaticAddresses() ([]mobilit
 		if err := validateAppliedMobilityStaticAddress(address); err != nil {
 			return nil, err
 		}
+		if address.Operation != "" {
+			return nil, errors.New("applied mobility address contains a pending operation")
+		}
 		if previous, exists := byID[address.ID]; exists {
 			if previous != address {
 				return nil, fmt.Errorf("conflicting mobility IPv4 address ledger entries for id %q", address.ID)
@@ -715,46 +638,6 @@ func (c IPv4StaticAddressController) appliedMobilityStaticAddresses() ([]mobilit
 		byID[address.ID] = address
 	}
 	return sortedMobilityAppliedStaticAddresses(byID), nil
-}
-
-func (c IPv4StaticAddressController) saveAppliedMobilityStaticAddresses(addresses map[string]mobilityAppliedIPv4Address) error {
-	if c.DryRun || c.Store == nil {
-		return nil
-	}
-	merger, ok := c.Store.(objectStatusMerger)
-	if !ok {
-		return fmt.Errorf("mobility IPv4 address effects require an applied-effect status merger")
-	}
-	status, err := readMobilityNativeStatus(c.Store)
-	if err != nil {
-		return err
-	}
-	pending, err := pendingMobilityAddresses(status)
-	if err != nil {
-		return err
-	}
-	unresolved := make([]mobilityAppliedIPv4Address, 0, len(pending))
-	for _, address := range pending {
-		if recorded, ok := addresses[address.ID]; !ok || recorded != address {
-			unresolved = append(unresolved, address)
-		}
-	}
-	acks := matchingMobilityWithdrawalAcks(c.MobilityDataplane.Withdrawals, func(request dynamicconfig.MobilityWithdrawalRequest) bool {
-		for _, address := range addresses {
-			if address.PoolRef == request.PoolRef && dynamicconfig.MobilityEffectContainsAddress(address.Address, request.Address) {
-				return false
-			}
-		}
-		for _, address := range unresolved {
-			if address.PoolRef == request.PoolRef && dynamicconfig.MobilityEffectContainsAddress(address.Address, request.Address) {
-				return false
-			}
-		}
-		return true
-	})
-	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
-		"appliedMobilityStaticAddresses": sortedMobilityAppliedStaticAddresses(addresses), "pendingMobilityStaticAddresses": unresolved, dynamicconfig.MobilityAddressWithdrawalAcks: acks,
-	})
 }
 
 func normalizedMobilityStaticAddressIntents(intents []dynamicconfig.MobilityIPv4AddressIntent) ([]dynamicconfig.MobilityIPv4AddressIntent, error) {
@@ -803,10 +686,6 @@ func mobilityStaticAddressMatchesIntent(applied mobilityAppliedIPv4Address, inte
 		applied.Interface == intent.Interface && applied.Address == intent.Address
 }
 
-func mobilityStaticAddressesEqual(left, right mobilityAppliedIPv4Address) bool {
-	return left == right
-}
-
 func mobilityStaticAddressDesiredByUser(router *api.Router, ifname, address string) bool {
 	return ipv4StaticAddressDesiredByAnother(router, "", ifname, address)
 }
@@ -829,32 +708,19 @@ func validateAppliedMobilityStaticAddress(address mobilityAppliedIPv4Address) er
 		Interface:  address.Interface,
 		Address:    address.Address,
 	}
-	_, err := normalizedMobilityStaticAddressIntents([]dynamicconfig.MobilityIPv4AddressIntent{intent})
-	return err
-}
-
-func (c IPv4StaticAddressController) mobilityAddressPresent(ctx context.Context, ifname, address string) (bool, error) {
-	if c.AddressPresent != nil {
-		return c.AddressPresent(ctx, ifname, address), nil
+	if _, err := normalizedMobilityStaticAddressIntents([]dynamicconfig.MobilityIPv4AddressIntent{intent}); err != nil {
+		return err
 	}
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return false, fmt.Errorf("read mobility interfaces: %w", err)
+	if address.Scope == "" || address.IfIndex <= 0 {
+		return errors.New("mobility address has no native-world receipt")
 	}
-	for _, iface := range interfaces {
-		if iface.Name != ifname {
-			continue
-		}
-		addresses, err := iface.Addrs()
-		if err != nil {
-			return false, fmt.Errorf("read mobility addresses on %s: %w", ifname, err)
-		}
-		for _, actual := range addresses {
-			if actual.String() == address {
-				return true, nil
-			}
-		}
-		return false, nil
+	if address.Operation != "" && address.Operation != "add" && address.Operation != "delete" {
+		return errors.New("invalid mobility address pending operation")
 	}
-	return false, nil
+	if address.ParentToken != "" {
+		if _, err := staticReceipt(map[string]any{"nativeReceipt": staticAddressReceipt{IfName: address.Interface, IfIndex: address.IfIndex, Scope: address.Scope, Address: address.Address, ParentToken: address.ParentToken}}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

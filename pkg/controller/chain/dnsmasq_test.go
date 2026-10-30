@@ -1153,11 +1153,15 @@ func TestIPv4StaticAddressControllerPreservesUnownedWhenFalseAddress(t *testing.
 		DeclaredRouter: effective,
 		WhenRouter:     declared,
 		Store:          store,
-		AddressPresent: func(_ context.Context, ifname, address string) bool {
-			if ifname != "ens18" || address != "192.0.2.249/32" {
-				t.Fatalf("address presence check = %s %s", ifname, address)
+		ObserveAddresses: func(_ context.Context, ifname string) (staticAddressSnapshot, error) {
+			if ifname != "ens18" {
+				t.Fatalf("unexpected address interface %s", ifname)
 			}
-			return present
+			var addresses []netip.Prefix
+			if present {
+				addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.249/32")}
+			}
+			return staticAddressSnapshot{Index: 7, Scope: "address-fixture", Addresses: addresses}, nil
 		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
@@ -1233,9 +1237,6 @@ func TestIPv4StaticAddressControllerKeepsGeneratedWireGuardSAMAddress(t *testing
 		DevicePresent: func(context.Context, string) bool {
 			return true
 		},
-		AddressPresent: func(context.Context, string, string) bool {
-			return true
-		},
 		Command: func(context.Context, string, ...string) error {
 			t.Fatal("unexpected address command for retained generated IPv4StaticAddress")
 			return nil
@@ -1264,9 +1265,9 @@ func TestIPv4StaticAddressControllerSuppressesRemovedEventForMissingStaleAddress
 		Router: router,
 		Store:  store,
 		Bus:    eventBus,
-		AddressPresent: func(context.Context, string, string) bool {
-			t.Fatal("address presence should not be checked without a concrete ifname/address")
-			return false
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			t.Fatal("native observation should not run without a concrete ifname/address")
+			return staticAddressSnapshot{}, nil
 		},
 		Command: func(context.Context, string, ...string) error {
 			t.Fatal("unexpected address command for missing stale IPv4StaticAddress")

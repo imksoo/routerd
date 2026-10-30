@@ -180,16 +180,24 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
+	present := false
 	controller := IPv4StaticAddressController{
 		Router: &api.Router{}, Store: store,
 		MobilityDataplane: dynamicconfig.MobilityDataplanePlan{StaticAddresses: []dynamicconfig.MobilityIPv4AddressIntent{{
 			ID: "cloudedge/capture-source", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: dynamicconfig.MobilityIPv4AddressPurposeCaptureSource,
 			Interface: "lan0", Address: "10.77.60.1/32",
 		}}},
-		DevicePresent:  func(context.Context, string) bool { return true },
-		AddressPresent: func(context.Context, string, string) bool { return false },
+		DevicePresent: func(context.Context, string) bool { return true },
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			var addresses []netip.Prefix
+			if present {
+				addresses = []netip.Prefix{netip.MustParsePrefix("10.77.60.1/32")}
+			}
+			return staticAddressSnapshot{Index: 7, Scope: "address-fixture", Addresses: addresses}, nil
+		},
 		Command: func(_ context.Context, name string, args ...string) error {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			present = args[2] == "add"
 			return nil
 		},
 	}
@@ -199,12 +207,12 @@ func TestIPv4StaticAddressControllerAppliesAndWithdrawsTypedMobilityAddress(t *t
 	if addresses, err := controller.appliedMobilityStaticAddresses(); err != nil || len(addresses) != 1 {
 		t.Fatalf("applied mobility addresses = %#v, err=%v", addresses, err)
 	}
-	if len(commands) != 1 || commands[0] != "ip -4 addr replace 10.77.60.1/32 dev lan0" {
+	if len(commands) != 1 || commands[0] != "ip -4 addr add 10.77.60.1/32 dev lan0" {
 		t.Fatalf("apply commands = %#v", commands)
 	}
 
 	controller.MobilityDataplane = dynamicconfig.MobilityDataplanePlan{}
-	controller.AddressPresent = func(context.Context, string, string) bool { return true }
+
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("withdraw: %v", err)
 	}

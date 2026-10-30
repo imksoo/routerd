@@ -179,3 +179,30 @@ activation or child acquisition, and the daemon also requires observations from
 its current lifetime. Gate changes retain exact native ownership for withdrawal;
 read failures preserve uncertainty. Local SQLite/fault and native-message tests
 do not qualify Linux/FreeBSD kernel forwarding or independent peers.
+
+## Mobility IPv4 address receipts
+
+Mobility capture-source addresses use the same error-aware native address
+snapshot and virtual-parent proof as ordinary static addresses. Their typed
+Mobility ledger additionally records kernel scope, interface index, parent token,
+and an explicit pending `add` or `delete`. A plain matching address or an older
+applied row cannot acknowledge a new operation. Legacy rows without native
+identity are rejected; this private-layout change has no migration reader.
+
+The owner records intent before native effects, rechecks the current typed
+Mobility source after persistence and native reads, acquires with Linux exclusive
+`ip -4 addr add`, and acknowledges only after exact native readback. Observed
+absence retires a prior acquisition before reacquiring; a lost acknowledgement
+therefore cannot adopt a later writer through an equal old row. An interrupted
+add or delete with matching presence remains uncertain and is not replayed.
+Native read failures, changed kernel scope or interface identity, and lost parent
+proof retain the receipt and withhold handover completion. A known source
+revocation withdraws the exact confirmed effect; an unreadable source reports a
+failure and preserves the available evidence.
+
+Static-address and route owners share the runtime's native Mobility exclusion.
+Withdrawal acknowledgements are published from their actual confirmed and pending
+ledgers with the currently observed request; copying the request into an older
+status is not proof of withdrawal. Linux/FreeBSD native forwarding and the
+FreeBSD non-exclusive address API limitation above remain separate qualification
+constraints.
