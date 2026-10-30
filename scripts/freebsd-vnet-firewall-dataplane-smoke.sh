@@ -156,6 +156,10 @@ jexec "$sink_a_jail" ifconfig lo0 up
 jexec "$sink_a_jail" ifconfig "$out_b" inet 198.51.100.2/24 up
 jexec "$sink_b_jail" ifconfig lo0 up
 jexec "$sink_b_jail" ifconfig "$out2_b" inet 203.0.113.2/24 up
+# Both independent VNET peers own the routed destination, so each selected
+# egress must return an echo reply through the actual PF/NAT state.
+jexec "$sink_a_jail" ifconfig lo0 inet 10.10.10.1/32 alias
+jexec "$sink_b_jail" ifconfig lo0 inet 10.10.10.1/32 alias
 
 cat >"$work/router.yaml" <<EOF_CONFIG
 apiVersion: routerd.net/v1alpha1
@@ -242,14 +246,26 @@ require_nat44_interface_translation() {
 require_nat44_interface_translation "$out_a"
 require_nat44_interface_translation "$out2_a"
 
-jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" icmp >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
-jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" icmp >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
+jexec "$sink_a_jail" tcpdump -n -l -i "$out_b" 'icmp and icmp[icmptype] = icmp-echo' >"$evidence/sink-a.packets.log" 2>&1 & capture_a=$!
+jexec "$sink_b_jail" tcpdump -n -l -i "$out2_b" 'icmp and icmp[icmptype] = icmp-echo' >"$evidence/sink-b.packets.log" 2>&1 & capture_b=$!
 sleep 1
-jexec "$src_jail" ping -n -S 192.0.2.10 -c 3 -W 1 10.10.10.1 >"$evidence/source-10.first.log" 2>&1 || true
-jexec "$src_jail" ping -n -S 192.0.2.11 -c 3 -W 1 10.10.10.1 >"$evidence/source-11.first.log" 2>&1 || true
-jexec "$src_jail" ping -n -S 192.0.2.10 -c 3 -W 1 10.10.10.1 >"$evidence/source-10.repeat.log" 2>&1 || true
-jexec "$src_jail" ping -n -S 192.0.2.11 -c 3 -W 1 10.10.10.1 >"$evidence/source-11.repeat.log" 2>&1 || true
+jexec "$src_jail" ping -n -S 192.0.2.10 -c 3 -i 0.2 -W 1000 10.10.10.1 >"$evidence/source-10.first.log" 2>&1
+jexec "$src_jail" ping -n -S 192.0.2.11 -c 3 -i 0.2 -W 1000 10.10.10.1 >"$evidence/source-11.first.log" 2>&1
+jexec "$src_jail" ping -n -S 192.0.2.10 -c 3 -i 0.2 -W 1000 10.10.10.1 >"$evidence/source-10.repeat.log" 2>&1
+jexec "$src_jail" ping -n -S 192.0.2.11 -c 3 -i 0.2 -W 1000 10.10.10.1 >"$evidence/source-11.repeat.log" 2>&1
 pfctl -ss -v >"$evidence/pf-states.log" 2>&1
+for log in source-10.first source-11.first source-10.repeat source-11.repeat; do
+  grep -F '3 packets transmitted, 3 packets received' "$evidence/$log.log"
+done
+# A successful echo may arrive before BPF releases its final capture buffer.
+# Observe the required peer evidence before stopping the capture processes.
+for _ in 1 2 3 4 5; do
+  a=$(grep -c '198\.51\.100\.1 > 10\.10\.10\.1: ICMP echo request' "$evidence/sink-a.packets.log" || true)
+  b=$(grep -c '203\.0\.113\.1 > 10\.10\.10\.1: ICMP echo request' "$evidence/sink-b.packets.log" || true)
+  [ "$a" -ge 6 ] && [ "$b" -ge 6 ] && break
+  kill -0 "$capture_a"; kill -0 "$capture_b"
+  sleep 1
+done
 kill "$capture_a" "$capture_b"
 wait "$capture_a" || true; capture_a=
 wait "$capture_b" || true; capture_b=
@@ -267,11 +283,31 @@ fi
 grep -F '192.0.2.10' "$evidence/pf-states.log"
 grep -F '192.0.2.11' "$evidence/pf-states.log"
 grep -F 'rule 1' "$evidence/pf-states.log"
+# Two separate requests from each original source must retain one translated
+# egress, while the two sources exercise different egress peers.
+awk '
+  $1 == "all" && $2 == "icmp" && $4 ~ /^\(192[.]0[.]2[.](10|11):/ {
+    source = $4
+    sub(/^\(/, "", source)
+    sub(/:[0-9]+\)$/, "", source)
+    egress = $3
+    sub(/:.*/, "", egress)
+    if (selected[source] != "" && selected[source] != egress) { bad = 1 }
+    selected[source] = egress
+    count[source]++
+  }
+  END {
+    exit (bad || count["192.0.2.10"] != 2 || count["192.0.2.11"] != 2 ||
+      selected["192.0.2.10"] == selected["192.0.2.11"]) ? 1 : 0
+  }
+' "$evidence/pf-states.log"
 {
   printf 'sink-a translated-source=%s\n' "$nat_a"
   printf 'sink-b translated-source=%s\n' "$nat_b"
   printf 'both-routehosts=1\n'
   printf 'nat44-egress-source-translation=1\n'
   printf 'pf-states-source10-source11-rule1=1\n'
+  printf 'independent-peer-echo-replies=12\n'
+  printf 'source-affinity-across-repeated-requests=1\n'
 } >"$evidence/summary.log"
 printf 'freebsd-vnet-firewall-dataplane=ok\n' >"$evidence/result"
