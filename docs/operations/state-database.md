@@ -23,7 +23,7 @@ routerd persists state and events in SQLite. Each managed daemon additionally ke
 ## routerd 1.5 proposal format
 
 This proposal branch uses one new schema, identified by SQLite `user_version`
-1501, for state and managed-artifact ownership. Persistent paths always use
+1500, for state and managed-artifact ownership. Persistent paths always use
 SQLite; the old JSON backend and prototype migrations are removed. Opening an
 older database fails with an explicit format error. No automatic reset occurs.
 
@@ -110,10 +110,7 @@ per-flow or directional counter is `null`/unobserved, while a measured zero is
 `0`. Client and aggregate incomplete flags mark a known partial sum as a lower
 bound; the console shows `≥` for that sum. Neither a missing flow nor a failed
 collection establishes zero traffic. This traffic format does not change the
-main state's SQLite `user_version` 1501. Named DHCP lease observations and
-withdrawals are functional recovery records in that same journal, committed
-atomically with the accepted lease event; diagnostic history retention does not
-remove them. Earlier private database layouts are rejected, not migrated.
+main state's SQLite `user_version` 1500.
 
 Mobility SAM, routes and addresses also retain pending acquisitions and applied
 ownership. A static handover needs a new `staticHandovers[].id` shared by its

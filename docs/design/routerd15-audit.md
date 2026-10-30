@@ -27,7 +27,7 @@ reported as audited or compliant.
 - Old standalone IPv4/Health application paths: remove unreachable functions and
   tests whose only subject was those superseded paths; retain active FreeBSD paths.
 - State: closed stores and invalid encodings report errors rather than success.
-- Persistence: one schema 1501 shared by status and ownership. Remove old JSON
+- Persistence: one schema 1500 shared by status and ownership. Remove old JSON
   backends, additive migrations and no-op Save calls; reject old DBs explicitly.
 - Planning: read-only current observations and existing synchronous planners;
   remove temporary writable SQLite and simulated controller/event execution.
