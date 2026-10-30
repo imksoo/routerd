@@ -26,6 +26,7 @@ import (
 
 type Engine struct {
 	Command          func(name string, args ...string) ([]byte, error)
+	Segments         VXLANSegmentObserver
 	OSNetworking     *osNetworking
 	operationContext context.Context
 }
@@ -138,6 +139,8 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 			e.observeVRF(res, aliases, includePlan, &rr)
 		case "VXLANTunnel":
 			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
+		case "VXLANSegment":
+			e.observeVXLANSegment(res, includePlan, &rr)
 		case "IPv4StaticAddress":
 			e.observeIPv4Static(res, aliases, policies, overlaps[res.ID()], includePlan, &rr)
 		case "BFD":
@@ -201,7 +204,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 
 		if rr.Phase == "RequiresAdoption" || rr.Phase == "Blocked" {
 			result.Phase = "Blocked"
-		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel") {
+		} else if rr.Phase == "Drifted" && result.Phase == "Healthy" && (res.Kind == "Bridge" || res.Kind == "VXLANTunnel" || res.Kind == "VXLANSegment") {
 			result.Phase = "Drifted"
 		}
 		result.Resources = append(result.Resources, rr)

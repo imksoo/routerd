@@ -545,7 +545,17 @@ func (c VXLANSegmentController) ObserveOwnedInterface(ctx context.Context, resou
 		}
 		return observed, ctx.Err()
 	}
-	return absent, nil
+	observed, err := c.Native.Observe(ctx, plan.IfName)
+	if err != nil {
+		return absent, err
+	}
+	if observed.Scope != c.scope {
+		return absent, errors.New("VXLAN parent kernel scope changed")
+	}
+	if observed.Exists {
+		return absent, errors.New("VXLAN parent is present without its native ownership receipt")
+	}
+	return absent, ctx.Err()
 }
 
 // ObserveRecordedInterface verifies cleanup authority without requiring the old
