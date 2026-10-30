@@ -122,3 +122,172 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 
 Use that only when the follow-up fix is already clear.
 CI still runs after the branch is pushed.
+
+## Linux PD/RA lifecycle VM gate
+
+`scripts/linux-pd-ra-lifecycle-smoke.sh` exercises an installed `make dist`
+package through its actual systemd service. Use a dedicated, disposable Linux VM
+with an empty router configuration, independent management access, and no
+production traffic. The explicit `--disposable-vm` argument is required. It
+replaces that guest's configuration and changes its test interfaces and IPv6
+forwarding; it is not part of ordinary unit tests.
+
+Certify the guest before running: systemd must be healthy; install iproute2,
+Python 3, curl, jq, dig and dnsmasq. Prepare Kea DHCPv6 and ndisc6 from packages
+matching the guest, with their shared libraries. Either use an installed package
+root or extract the packages as root into a private directory. In particular,
+`rdisc6` must remain root-owned: extracting its setuid executable as an ordinary
+user changes its privilege behavior. Check Kea's shared libraries with `ldd`.
+The tested peer was Kea 2.4.1 on Ubuntu 24.04.4. Its transient unit owns `/run/kea`;
+an existing Kea service/runtime directory is a collision, not permission to stop it.
+
+```sh
+sudo scripts/linux-pd-ra-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-pd-ra-lifecycle.json" /opt/routerd-pd-peer
+```
+
+The package root above contains `usr/sbin/kea-dhcp6`, `usr/bin/rdisc6` and
+`usr/lib/x86_64-linux-gnu`; use `/` only when the prerequisites are already
+installed and no Kea instance owns its runtime directory. See the
+[Kea DHCPv6 configuration reference](https://kea.readthedocs.io/en/kea-2.4.1/arm/dhcp6-srv.html)
+for the independent PD pool and lease timer semantics.
+
+The test uses separate upstream and client namespaces. Kea delegates a /60 with
+20/40-second T1/T2 and 60/90-second preferred/valid lifetimes. Linux processes
+real RA packets to create its SLAAC address and default route; `rdisc6` separately
+checks the PIO. Pass requires local and forwarded AAAA answers over UDP/TCP,
+an HTTP peer observing the client's delegated source, actual Renew/Reply with
+an advanced lease timestamp, service restart, and upstream-stop expiry removing
+the router address and client default route. Traffic must then fail while the
+product service remains active. Final empty apply, peer shutdown, namespace
+removal and restoration of the original forwarding setting are also required.
+
+DAD is asynchronous: a newly installed delegated address holds RA in Pending
+without failing configuration apply. Positive advertisement resumes only after
+address readiness; failed DAD and unknown ownership remain errors. DNSForwarder
+rules are evaluated in configuration order, so the fixture's local zone precedes
+the default upstream rule.
+
+Successful raw output is deleted automatically; retain the revision and verdict,
+this procedure, its fixture and the regression tests. Failures stop the product
+and peers and retain the exact fixture path for diagnosis. Reproduce a product
+failure locally before another native run, and remove retained output after the
+failure is resolved. WAN transit and its return route are fixture scaffolding:
+this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, prefix renumbering,
+reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
+
+## Linux DHCP and firewall withdrawal gate
+
+Run the packaged service in an empty disposable VM with independent management
+access. Certify systemd and install `conntrack`, dnsmasq, nftables, iproute2,
+BusyBox (with udhcpc), Python 3, curl, jq and dig first. The test replaces the
+router configuration; the final argument is the guest's management interface.
+
+```sh
+sudo scripts/linux-dhcp-firewall-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcp-firewall-lifecycle.json" eth0
+```
+
+Independent LAN, WAN and management-zone peers first establish positive HTTP
+controls. Pass requires DHCP acquisition with the expected gateway/DNS options,
+a timer-driven renewal of its two-minute lease, local/upstream DNS over UDP/TCP,
+NAT source observation and preservation across service restart. Applying zones
+must block WAN-to-LAN, LAN-to-management and WAN-to-router DNS. The HTTP negative
+checks require both client failure and absence from the destination log, with
+matching nft chain counters. A management-to-LAN positive control must continue.
+An explicit LAN-to-management exception must work and stop working after removal.
+Removing all firewall resources must remove `inet routerd_filter` and restore
+the original positive controls. Empty apply must withdraw managed addresses.
+Successful output is deleted; failed output is retained only until the failure
+is reproduced locally and resolved. A VM reboot, DHCP WAN client, rebind/expiry
+and production WAN behavior are separate gates.
+
+The focused native withdrawal regression runs locally in a separate network
+namespace and is skipped by ordinary `go test`:
+
+```sh
+go test -c -o /tmp/firewall.test ./pkg/controller/firewall
+sudo unshare --net env ROUTERD_RUN_NETNS=1 /tmp/firewall.test \
+  -test.run '^TestFirewallNativeWithdrawal$' -test.v
+rm /tmp/firewall.test
+```
+
+nft ownership comments must be set by the first table creation; a later table
+block does not update the kernel comment. Withdrawal checks that native marker
+and deletes the observed handle, retaining retry input on read/delete failure.
+An unmarked table from an older build is not automatically adopted for deletion.
+Resolve such a table explicitly during isolated-environment preparation; a manual
+cleanup is not a passing product withdrawal result.
+
+## Two-VM reboot and interrupted-apply gate
+
+`scripts/linux-router-reboot-fixture.sh` uses two dedicated disposable Linux VMs
+on an isolated Ethernet segment that passes tagged VLANs 3131–3133. The router
+runs the formal package; the independent peer runs BusyBox udhcpc, dnsmasq,
+Python HTTP servers, curl and dig. Both need iproute2, jq, systemd and independent
+management access. The fixture changes only guest networking and creates a
+boot unit for the router's external test ports. It does not create hypervisor
+networks. Do not use a segment whose VLAN IDs collide with other work.
+
+Copy the shell script and `tests/fixtures/linux-dhcp-firewall-lifecycle.json`
+to `/home/ubuntu/` on both VMs, and `scripts/linux-interrupted-apply-smoke.py`
+to the router. Below, `router-fixture` and `peer-fixture` are operator-configured
+SSH aliases with verified keys; `eth0` is the isolated management/trunk port.
+
+```sh
+ssh router-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo /usr/local/sbin/routerctl apply -f /var/tmp/rd15-reboot/candidate.json --replace'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
+```
+
+Before each interruption, record both `/proc/sys/kernel/random/boot_id` values,
+the router's `systemctl show -p MainPID --value routerd`, and the peer's
+`systemctl show -p MainPID --value rd15-dhcp-client`. Preserve the first `bound`
+address and subsequent `renew` lines in the peer's `/var/tmp/rd15-reboot/leases`.
+Do not restart the peer or its DHCP process between checks.
+
+1. Run `sudo systemctl reboot` on the router. Within 90 seconds require a
+   different router boot ID, active routerd, systemd `running`, and no
+   `currentError` controllers in `routerctl get status -o json`.
+2. Repeat `probe` and `isolation` from the peer. Its boot ID and DHCP PID must
+   match the recorded values. Require the same lease address and another actual
+   timer renewal. Check the router's `wan_to_lan`, `lan_to_admin` and `wan_to_self`
+   nft chain counters after the denied probes.
+3. Run `sudo systemctl kill --kill-whom=main --signal=SIGKILL routerd` on the
+   router. Within 60 seconds require an active replacement PID, an increased
+   `NRestarts`, no controller errors, and repeat the peer checks. The router's
+   boot ID must remain unchanged for this process-crash case.
+4. Run the following only after the previous configuration is healthy:
+
+```sh
+ssh router-fixture 'sudo /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm'
+```
+
+The helper adds `recovery.home.arpa`, observes canonical file replacement and
+kills the exact original product process through pidfd while the apply client
+is still awaiting a response. It requires a failed client response; success
+already acknowledged by the client does not prove this scenario. It does not
+assert whether directory fsync had returned at the interruption. The failed
+apply response must retain an unconfirmed outcome, not claim rollback or success.
+Within 60 seconds require automatic service recovery. From the peer's LAN
+namespace require `dig +short @198.18.15.1 recovery.home.arpa A` to return
+`198.18.15.1`, then repeat `probe`, `isolation`, unchanged peer identity and DHCP
+renewal checks. The helper alone does not establish recovery.
+
+The probe requires local/upstream DNS over UDP/TCP, a WAN HTTP peer observing
+the NAT source, and the management-to-LAN positive control. Isolation requires
+client failure and absence from destination HTTP logs, plus WAN DNS rejection.
+The independent peer keeps its processes and lease throughout all interruptions.
+No manual repair of product state is permitted to turn a failed gate into PASS.
+A fixture setup failure is environment preparation, not a product result.
+
+After a successful campaign, run `cleanup-router` on the router and
+`cleanup-peer` on the peer with the same `--disposable-vm` flag. Router cleanup
+requires empty apply, native firewall absence and address withdrawal before
+removing the fixture ports and unit override. Peer cleanup stops the owned units
+and removes its namespaces. These actions delete the temporary raw output.
+Retain the procedure, revisions and verdict instead. This gate does not prove
+power-loss durability, every possible interruption point, IPv6 reboot, or a
+cross-version cutback; those remain separate checks.

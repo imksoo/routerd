@@ -609,7 +609,9 @@ type NAT44RenderRule struct {
 }
 
 func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
-	buf.WriteString("add table " + family + " " + name + "\n")
+	// nft does not update a comment on an existing table. Set ownership on
+	// the first creation, before the later table block adds chains and rules.
+	buf.WriteString("add table " + family + " " + name + " { comment " + nftQuote(NftablesRouterdOwnerMarker) + "; }\n")
 	buf.WriteString("flush table " + family + " " + name + "\n")
 }
 

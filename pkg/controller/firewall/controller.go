@@ -81,7 +81,7 @@ func (c Controller) reconcileLogged(ctx context.Context) error {
 
 func (c Controller) Reconcile(ctx context.Context) error {
 	targetOS := platform.CurrentOS()
-	if !hasFirewall(c.Router) && (targetOS != platform.OSFreeBSD || len(c.LocalCaptureIntents) == 0 && !hasPFTranslations(c.Router)) {
+	if c.Router == nil || targetOS == platform.OSFreeBSD && !hasFirewall(c.Router) && len(c.LocalCaptureIntents) == 0 && !hasPFTranslations(c.Router) {
 		return nil
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)

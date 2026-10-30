@@ -1267,6 +1267,104 @@ required work; neither a limited trial nor passing unit tests closes the revisio
 The earlier isolated FreeBSD 14.3 empty apply/restart and PF route-to/NAT44
 smokes at `86ffc265` remain narrower native checks, not full FreeBSD qualification.
 
+## Linux delegated IPv6 lifecycle checkpoint
+
+Product `3da8d066e19535d27610d632391807db7968d1fc`, installed from `make dist`
+in the dedicated Ubuntu 24.04.4 / Linux 6.8.0-124 VM, passes the independent
+Kea 2.4.1 and Linux SLAAC client lifecycle. A real apply first reproduced normal
+DAD wait being returned as `RA LAN readiness is unresolved`; the same failure
+was reproduced in a local regression before repair. Pending DAD now withholds
+positive advertisement without failing apply. DAD failure and unknown ownership
+remain errors, with explicit tests.
+
+Executed checks: /60 acquisition; finite PIO and RDNSS; kernel SLAAC and default
+route; local/forwarded AAAA over UDP/TCP; peer-observed delegated IPv6 source;
+actual Renew/Reply advancing the lease timestamp; systemd restart; upstream-stop
+expiry withdrawing the router address and client default route while the daemon
+remains active; traffic failure after expiry; empty apply and fixture cleanup.
+The final reusable script passed with explicit negative assertions and successful
+raw-output deletion. Procedure and boundaries are in
+[development](../operations/development.md#linux-pdra-lifecycle-vm-gate), with
+`scripts/linux-pd-ra-lifecycle-smoke.sh` and its committed JSON fixture.
+
+At the product checkpoint the complete normal suite again passed: 120 packages,
+nine without tests. Schema/examples, website schema copies and all four website
+locales passed. The trial's preparation errors (Kea runtime directory, extracted
+rdisc6 ownership and DNS forwarder order) were corrected; those failed attempts
+were not counted as pass. WAN transit and return routing are fixture scaffolding.
+WAN RA/IA_NA, prefix renumbering, DHCPv4 renewal, firewall isolation, reboot/crash,
+1.0 cutback, FreeBSD client parity and the remaining 1.0 inventory stay open.
+
+## Linux DHCP renewal and firewall withdrawal checkpoint
+
+Product `ad686135b4a751cd99a0aba3d48553eb853e8f7c`, installed from `make dist`
+in the dedicated Ubuntu 24.04.4 / Linux 6.8.0-124 VM, passes the independent
+BusyBox DHCP and three-zone firewall lifecycle. The initial trial passed DHCP
+renewal, DNS/NAT, isolation, restart and exception removal, then failed because
+removing all firewall resources left the native filter active. The controller's
+no-firewall early return skipped withdrawal. A separate real-kernel local test
+also showed that a comment in a later table block did not set kernel ownership.
+Both defects failed locally before repair. Creation now sets the native marker;
+withdrawal verifies that marker and deletes the observed handle. Failed inventory
+reads/deletes retain retry input, and foreign/unmarked tables are not removed.
+
+The exact public `scripts/linux-dhcp-firewall-lifecycle-smoke.sh` passed with its
+committed fixture: expected DHCP address/gateway/DNS, timer-driven renewal after
+61 seconds, local/upstream DNS UDP/TCP, peer-observed NAT source, WAN-to-LAN and
+LAN-to-management isolation, WAN-to-router DNS isolation, positive management
+control, actual service restart, explicit exception add/remove, filter withdrawal
+restoring baseline HTTP paths, empty apply, namespace cleanup and IPv4 forwarding
+restoration. Denied HTTP requests were absent at the destination and the relevant
+nft chain counters increased. Successful raw output was deleted automatically.
+The old unmarked filter was manually removed during environment preparation;
+that cleanup is not counted as successful product withdrawal.
+
+Validation: normal `go test ./...` passed (120 packages, nine without tests),
+focused actual-kernel withdrawal passed in an isolated local netns, schema and
+examples passed, website schema copies and four website locales built. The first
+normal-suite attempt found 16 Linux golden files needing the creation-time
+comment; their diffs were verified to contain only that intended change before
+updating and rerunning the suite. English/Japanese development procedures define
+the setup, commands, positive/negative verdicts and cleanup.
+
+This qualifies DHCPv4 **server** renewal with an independent client, not a WAN
+DHCPv4 client or rebind/expiry. VM reboot, interrupted-operation recovery, 1.0
+cutback, IPv6 renumbering/WAN RA/IA_NA and all other unqualified 1.0 functions
+remain required. Existing tables without the native marker require explicit
+operator resolution; automatic old-format adoption is not provided.
+
+## Independent Linux peer across VM reboot and interrupted apply
+
+The same formal product `ad686135` passed on the dedicated Ubuntu 24.04.4 router
+VM (kernel 6.8.0-124) with a second Ubuntu 24.04.4 peer VM (kernel 6.8.0-117).
+Guest VLANs 3131–3133 separate LAN, WAN and management traffic on the existing
+isolated segment. A fixture boot unit recreates external guest ports only;
+routerd restores addresses, routes, DNS/DHCP, NAT and filtering itself.
+
+The router boot ID changed and its service automatically became active in about
+40 seconds. The peer boot ID and udhcpc PID stayed unchanged; its original
+120-second DHCP lease address continued renewing. Local/upstream DNS UDP/TCP,
+peer-observed NAT source, management positive control, WAN/LAN/management
+isolation and WAN DNS rejection passed after reboot. No controller errors or
+service restart loop were observed. SIGKILL of the main process subsequently
+recovered automatically with a new PID and increased NRestarts (about 16 seconds
+observed), and the same peer checks passed again.
+
+The interrupted ApplyAPI trial added a new DNS record, observed canonical file
+replacement, and killed the exact original process through pidfd while the
+client remained in flight. The client returned EOF with an explicitly unconfirmed
+outcome. Automatic restart loaded the new record; the independent client resolved
+it and passed all traffic/isolation checks without manual product repair. This
+observation does not place the kill on a particular side of directory fsync and
+does not prove power-loss durability or all interruption points.
+
+Reproduction uses `scripts/linux-router-reboot-fixture.sh`, the existing DHCP
+JSON fixture, `scripts/linux-interrupted-apply-smoke.py`, and the English/Japanese
+development procedure. The initial peer helper name shadowed Python's `http`
+module; it was corrected during preparation before product apply. No new product
+code was needed for these successful recovery paths. Cross-version 1.0 cutback,
+IPv6 reboot/renumbering, WAN protocol modes and remaining 1.0 parity stay open.
+
 ## Native ownership and FreeBSD lifecycle checkpoint (2026-10-31)
 
 The final scope remains every pre-1.5 routerd 1.0 function. The new static

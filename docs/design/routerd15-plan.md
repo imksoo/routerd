@@ -114,7 +114,9 @@ Unix sockets, two upstreams and an independent TCP/UDP peer. Start the actual
 routerd/Health processes, preserve the management path, send traffic, interrupt
 one upstream and restore it. Observe routes/nftables and the traffic path; repeat
 with worker restart and stale observations. Record actual setup and revision.
-This cloud session has not established that VM access and does not claim this gate.
+The audit records executed isolated Linux/FreeBSD VM paths and their revisions.
+The full two-WAN failover/recovery gate remains separate from the completed
+single-upstream IPv4 and delegated IPv6 client checks.
 
 ## Repository-wide implementation checkpoint
 
