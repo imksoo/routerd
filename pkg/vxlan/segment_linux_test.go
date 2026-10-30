@@ -91,6 +91,7 @@ func wildcardSegmentFixture(t *testing.T, local string) (SegmentConfig, SegmentI
 	info := nl.NewRtAttr(unix.IFLA_LINKINFO, nil)
 	info.AddRtAttr(nl.IFLA_INFO_KIND, nl.ZeroTerminated("vxlan"))
 	data := info.AddRtAttr(nl.IFLA_INFO_DATA, nil)
+	data.AddRtAttr(nl.IFLA_VXLAN_LEARNING, []byte{1})
 	data.AddRtAttr(nl.IFLA_VXLAN_ID, nl.Uint32Attr(uint32(config.VNI)))
 	data.AddRtAttr(nl.IFLA_VXLAN_LINK, nl.Uint32Attr(uint32(owner.UnderlayIndex)))
 	data.AddRtAttr(nl.IFLA_VXLAN_PORT, binary.BigEndian.AppendUint16(nil, uint16(config.Port)))

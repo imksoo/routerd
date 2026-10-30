@@ -13,6 +13,7 @@ type bsdSegmentConfig struct {
 	Local, Remote         netip.Addr
 	LocalPort, RemotePort int
 	MCIndex               int
+	NoLearning            bool
 }
 
 // ifvxlancfg and vxlan_sockaddr from FreeBSD sys/net/if_vxlan.h. The
@@ -41,7 +42,7 @@ func decodeBSDSegmentConfig(raw bsdVXLANDriverConfig) (bsdSegmentConfig, error) 
 	if err != nil {
 		return bsdSegmentConfig{}, err
 	}
-	return bsdSegmentConfig{VNI: int(raw.VNI), Local: local, Remote: remote, LocalPort: localPort, RemotePort: remotePort, MCIndex: int(raw.MCIndex)}, nil
+	return bsdSegmentConfig{VNI: int(raw.VNI), Local: local, Remote: remote, LocalPort: localPort, RemotePort: remotePort, MCIndex: int(raw.MCIndex), NoLearning: raw.Learning == 0}, nil
 }
 
 func decodeBSDSegmentAddress(raw [28]byte) (netip.Addr, int, error) {

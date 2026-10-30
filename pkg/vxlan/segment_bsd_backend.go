@@ -137,6 +137,7 @@ func (s bsdSegmentSnapshot) observe(name string) (SegmentLink, error) {
 		return SegmentLink{}, err
 	}
 	link.Config.VNI = config.VNI
+	link.Config.NoLearning = config.NoLearning
 	if config.Local.IsValid() {
 		link.Config.Local = config.Local.WithZone("").Unmap().String()
 	}
@@ -227,6 +228,9 @@ func (n freeBSDSegmentNative) ObserveOwned(ctx context.Context, config SegmentCo
 }
 
 func (n freeBSDSegmentNative) Resolve(ctx context.Context, config SegmentConfig, token string) (SegmentIdentity, error) {
+	if config.OuterDF != "" {
+		return SegmentIdentity{}, errors.New("FreeBSD VXLAN does not expose an outer DF control")
+	}
 	if config.VNI < 1 || config.VNI >= 16777215 {
 		return SegmentIdentity{}, errors.New("FreeBSD VXLAN VNI must be within 1-16777214")
 	}
@@ -272,7 +276,11 @@ func (n freeBSDSegmentNative) Resolve(ctx context.Context, config SegmentConfig,
 }
 
 func bsdSegmentArguments(config SegmentConfig) []string {
-	args := []string{"vxlanid", strconv.Itoa(config.VNI), "vxlanlocal", config.Local, "vxlanlocalport", strconv.Itoa(config.Port), "vxlanremoteport", strconv.Itoa(config.Port), "vxlanlearn"}
+	learning := "vxlanlearn"
+	if config.NoLearning {
+		learning = "-vxlanlearn"
+	}
+	args := []string{"vxlanid", strconv.Itoa(config.VNI), "vxlanlocal", config.Local, "vxlanlocalport", strconv.Itoa(config.Port), "vxlanremoteport", strconv.Itoa(config.Port), learning}
 	if config.Group != "" {
 		args = append(args, "vxlangroup", config.Group, "vxlandev", config.Underlay)
 	} else if len(config.Remotes) == 1 {
