@@ -422,7 +422,7 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 type IPv4RouteController struct {
 	Router            *api.Router
 	Segments          *VXLANSegmentController
- DSLite *DSLiteTunnelController
+	DSLite            *DSLiteTunnelController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan

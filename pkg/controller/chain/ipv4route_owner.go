@@ -77,13 +77,19 @@ func (c IPv4RouteController) ordinaryRouteScope(ctx context.Context) (string, er
 }
 
 // Read the concrete parent's applied journal and native cookie after waits.
-func (c IPv4RouteController) ordinaryRouteSegmentParent(ctx context.Context, device, scope string, index int) (string, error) {
- reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
- link, err := reader.observeDeclared(ctx, device)
- if err != nil { return "", err }
- if !link.Declared { return "", nil }
- if !link.Exists || link.IfName != device || link.Scope != scope || link.Index != index { return "", errors.New("IPv4Route native parent identity is not proven") }
- return link.Token, nil
+func (c IPv4RouteController) ordinaryRouteNativeParent(ctx context.Context, device, scope string, index int) (string, error) {
+	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	link, err := reader.observeDeclared(ctx, device)
+	if err != nil {
+		return "", err
+	}
+	if !link.Declared {
+		return "", nil
+	}
+	if !link.Exists || link.IfName != device || link.Scope != scope || link.Index != index {
+		return "", errors.New("IPv4Route native parent identity is not proven")
+	}
+	return link.Token, nil
 }
 
 func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.IPv4RouteSpec) (ordinaryRoutePremise, error) {
@@ -147,7 +153,7 @@ func (c IPv4RouteController) ordinaryRoutePremise(ctx context.Context, spec api.
 			return result, errors.New("IPv4Route kernel scope is unavailable")
 		}
 		if result.Route.Type != "blackhole" {
-			result.ParentToken, err = c.ordinaryRouteSegmentParent(ctx, device, result.Scope, result.IfIndex)
+			result.ParentToken, err = c.ordinaryRouteNativeParent(ctx, device, result.Scope, result.IfIndex)
 			if err != nil {
 				return result, err
 			}
@@ -311,8 +317,8 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 		return errors.New("IPv4Route native device was removed or replaced")
 	}
 	if receipt.ParentToken != "" {
- reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
- link, err := reader.observeRecorded(ctx, receipt.Route.Device, receipt.ParentToken)
+		reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+		link, err := reader.observeRecorded(ctx, receipt.Route.Device, receipt.ParentToken)
 		if err != nil {
 			return err
 		}
@@ -321,7 +327,7 @@ func (c IPv4RouteController) verifyOrdinaryRouteIdentity(ctx context.Context, re
 		}
 		return nil
 	}
-	token, err := c.ordinaryRouteSegmentParent(ctx, receipt.Route.Device, scope, index)
+	token, err := c.ordinaryRouteNativeParent(ctx, receipt.Route.Device, scope, index)
 	if err != nil {
 		return err
 	}

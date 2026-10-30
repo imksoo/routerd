@@ -35,14 +35,22 @@ type staticAddressSnapshot struct {
 var errStaticParentNotReady = errors.New("native parent is not acquired")
 
 // The declaration's native name alone cannot authorize a child effect.
-func (c IPv4StaticAddressController) staticSegmentParent(ctx context.Context, reference string, observed staticAddressSnapshot) (string, error) {
- reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
- link, err := reader.observeDeclared(ctx, interfaceIfName(c.Router, reference))
- if err != nil { return "", err }
- if !link.Declared { return "", nil }
- if !link.Exists { return "", errStaticParentNotReady }
- if link.Index != observed.Index || link.Scope != observed.Scope || link.IfName != interfaceIfName(c.Router, reference) { return "", errors.New("static address native parent identity changed") }
- return link.Token, nil
+func (c IPv4StaticAddressController) staticNativeParent(ctx context.Context, reference string, observed staticAddressSnapshot) (string, error) {
+	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	link, err := reader.observeDeclared(ctx, interfaceIfName(c.Router, reference))
+	if err != nil {
+		return "", err
+	}
+	if !link.Declared {
+		return "", nil
+	}
+	if !link.Exists {
+		return "", errStaticParentNotReady
+	}
+	if link.Index != observed.Index || link.Scope != observed.Scope || link.IfName != interfaceIfName(c.Router, reference) {
+		return "", errors.New("static address native parent identity changed")
+	}
+	return link.Token, nil
 }
 
 func (s staticAddressSnapshot) has(address string) bool {
@@ -229,8 +237,8 @@ func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Con
 	if receipt.ParentToken == "" {
 		return nil
 	}
- reader := nativeParentReader{Router:c.Router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
- link, err := reader.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
+	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	link, err := reader.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
 	if err != nil {
 		return err
 	}
@@ -411,7 +419,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		status["phase"], status["reason"] = "Pending", "InterfaceNotPresent"
 		return c.saveStaticAddress(resource.Metadata.Name, status, nil)
 	}
-	parentToken, err := c.staticSegmentParent(ctx, spec.Interface, observed)
+	parentToken, err := c.staticNativeParent(ctx, spec.Interface, observed)
 	if errors.Is(err, errStaticParentNotReady) {
 		status["phase"], status["reason"] = "Pending", "ParentNotReady"
 		return c.saveStaticAddress(resource.Metadata.Name, status, receipt)
@@ -458,7 +466,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if current.Scope != receipt.Scope || current.Index != receipt.IfIndex || current.has(spec.Address) {
 			return abortBeforeCommand(errors.New("native interface or address changed while recording acquisition intent"))
 		}
-		currentParent, err := c.staticSegmentParent(ctx, spec.Interface, current)
+		currentParent, err := c.staticNativeParent(ctx, spec.Interface, current)
 		if err != nil {
 			return abortBeforeCommand(err)
 		}
@@ -484,7 +492,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.has(spec.Address) {
 			return errors.New("static address acquisition was not confirmed on the same interface")
 		}
-		currentParent, err = c.staticSegmentParent(ctx, spec.Interface, observed)
+		currentParent, err = c.staticNativeParent(ctx, spec.Interface, observed)
 		if err != nil {
 			return err
 		}

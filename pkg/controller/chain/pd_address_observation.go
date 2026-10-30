@@ -102,9 +102,11 @@ func parseDelegatedAddressObservation(out []byte, address string, osName platfor
 }
 
 func (c LANAddressController) nativeParentReader() nativeParentReader {
- router := c.DeclaredRouter
- if router == nil { router = c.Router }
- return nativeParentReader{Router:router, Store:c.Store, Segments:c.Segments, DSLite:c.DSLite}
+	router := c.DeclaredRouter
+	if router == nil {
+		router = c.Router
+	}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
 }
 
 // Withdrawal follows the parent cookie recorded with the confirmed child,
@@ -137,15 +139,19 @@ func (c LANAddressController) observeRecordedDelegatedAddress(ctx context.Contex
 	return observed, nil
 }
 
-func (c LANAddressController) delegatedSegmentParent(ctx context.Context, ifname string) (nativeParentLink, error) {
- link, err := c.nativeParentReader().observeDeclared(ctx, ifname)
- if err != nil { return link, err }
- if link.Declared && (!link.Exists || link.IfName != ifname) { return link, fmt.Errorf("delegated address native parent is not acquired") }
- return link, nil
+func (c LANAddressController) delegatedNativeParent(ctx context.Context, ifname string) (nativeParentLink, error) {
+	link, err := c.nativeParentReader().observeDeclared(ctx, ifname)
+	if err != nil {
+		return link, err
+	}
+	if link.Declared && (!link.Exists || link.IfName != ifname) {
+		return link, fmt.Errorf("delegated address native parent is not acquired")
+	}
+	return link, nil
 }
 
 func (c LANAddressController) observeCurrentDelegatedAddress(ctx context.Context, ifname, address string, staged bool) (delegatedAddressObservation, error) {
-	before, err := c.delegatedSegmentParent(ctx, ifname)
+	before, err := c.delegatedNativeParent(ctx, ifname)
 	if err != nil {
 		return delegatedAddressObservation{}, err
 	}
@@ -153,7 +159,7 @@ func (c LANAddressController) observeCurrentDelegatedAddress(ctx context.Context
 	if err != nil {
 		return observed, err
 	}
-	after, err := c.delegatedSegmentParent(ctx, ifname)
+	after, err := c.delegatedNativeParent(ctx, ifname)
 	if err != nil {
 		return observed, err
 	}

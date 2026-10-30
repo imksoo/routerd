@@ -389,13 +389,15 @@ func (c DSLiteTunnelController) observeNativeTunnelLink(ctx context.Context, nam
 	if !observed.Exists {
 		return observed, nil
 	}
- return observed, nil
+	return observed, nil
 }
 
 func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name string) (dsliteTunnelObservation, error) {
- observed, err := c.observeNativeTunnelLink(ctx, name)
- if err != nil || !observed.Exists || c.currentOS() == platform.OSFreeBSD { return observed, err }
- out, err := c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
+	observed, err := c.observeNativeTunnelLink(ctx, name)
+	if err != nil || !observed.Exists || c.currentOS() == platform.OSFreeBSD {
+		return observed, err
+	}
+	out, err := c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
 	if err != nil {
 		return observed, err
 	}
@@ -422,7 +424,11 @@ func (c DSLiteTunnelController) verifyNativeTunnel(ctx context.Context, record d
 	if err != nil {
 		return err
 	}
-	if record.OS != c.currentOS() || record.Scope != scope {
+	return checkNativeTunnelIdentity(c.currentOS(), scope, record, observed)
+}
+
+func checkNativeTunnelIdentity(osName platform.OS, scope string, record dsliteTunnelReceipt, observed dsliteTunnelObservation) error {
+	if record.OS != osName || record.Scope != scope {
 		return errors.New("DS-Lite native receipt belongs to another kernel scope")
 	}
 	if !observed.Exists {

@@ -294,12 +294,12 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 }
 
 func (s *RouterAdvertisementService) advertisementParent(ctx context.Context, ifname string, active bool, recordedToken string) (nativeParentLink, error) {
-	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments, DSLite:s.dslite}
+	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments, DSLite: s.dslite}
 	if !active && recordedToken != "" {
 		owner := child.nativeParentReader()
 		return owner.observeRecorded(ctx, ifname, recordedToken)
 	}
-	link, err := child.delegatedSegmentParent(ctx, ifname)
+	link, err := child.delegatedNativeParent(ctx, ifname)
 	if err != nil {
 		return link, err
 	}

@@ -155,12 +155,12 @@ func TestVXLANTunnelChildrenUseCurrentGateObservations(t *testing.T) {
 	}
 	current := staticAddressSnapshot{Scope: native.scope, Index: native.link.Index}
 	static := IPv4StaticAddressController{Router: c.Router, Store: store, Segments: &c}
-	token, err := static.staticSegmentParent(t.Context(), "segment", current)
+	token, err := static.staticNativeParent(t.Context(), "segment", current)
 	if err != nil || token != native.link.Token {
 		t.Fatalf("current native tunnel rejected as static parent: %q %v", token, err)
 	}
 	lan := LANAddressController{Router: c.Router, DeclaredRouter: c.Router, Store: store, Segments: &c}
-	parent, err := lan.delegatedSegmentParent(t.Context(), "vxlan100")
+	parent, err := lan.delegatedNativeParent(t.Context(), "vxlan100")
 	if err != nil || parent.Token != native.link.Token {
 		t.Fatalf("current native tunnel rejected as delegated parent: %+v %v", parent, err)
 	}
@@ -175,7 +175,7 @@ func TestVXLANTunnelChildrenUseCurrentGateObservations(t *testing.T) {
 	if _, err := store.Set("ha.role", "backup", "demotion"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := static.staticSegmentParent(t.Context(), "segment", current); !errors.Is(err, errStaticParentNotReady) {
+	if _, err := static.staticNativeParent(t.Context(), "segment", current); !errors.Is(err, errStaticParentNotReady) {
 		t.Fatalf("disabled tunnel admitted static child: %v", err)
 	}
 }

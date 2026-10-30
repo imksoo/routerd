@@ -82,7 +82,7 @@ Implemented in the native/runtime follow-up:
   receipts. WhenFalse/removal and changed intent use the same actual owner.
 - Delegated LAN addresses retain acknowledged deadlines and pending intent,
   including infinite lifetimes. Source revocation/removal cannot fabricate an
-  owned address. Child address/route/RA operations on Segment links use actual
+  owned address. Child address/route/RA operations on VXLAN and DS-Lite links use actual
   journal/cookie proof, including removal of the final parent declaration.
 - DS-Lite now owns the tunnel, inner address/default route and finite endpoint
   coherently, with exact native token/scope/index and no foreign GIF replacement.
@@ -114,8 +114,10 @@ Implemented in the native/runtime follow-up:
 
 Still open:
 
-- Child proof for virtual parents other than the shared native VXLAN owner
-  remains open. VXLAN local wildcard source, nolearning and Linux outer DF
+- Child proof for Bridge, WireGuardInterface, VRF and TunnelInterface remains
+  open. The shared native VXLAN owner and the actual DS-Lite journal/native
+  cookie reader now authorize static IPv4, IPv4Route, delegated LAN and RA
+  effects, including recorded cleanup after parent declaration removal. VXLAN local wildcard source, nolearning and Linux outer DF
   use native readback; explicit FreeBSD outer DF remains unsupported.
 - Fragmented-RS provenance remains unavailable through the current ndp API.
   Separately rendered DHCP DNS selection, FreeBSD forward-zone firewall parity
