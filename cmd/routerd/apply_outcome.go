@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -115,4 +116,51 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 		return errors.New("canonical configuration replacement was not durably acknowledged")
 	}
 	return err
+}
+
+// The selected live Runner owns HA admission, the one canonical commit callback,
+// and native reconciliation. Standalone apply already owns its admitted lease.
+func (o *applyAttemptOutcome) commitAndApplyRuntime(ctx context.Context, opts applyOptions, configYAML string, afterCommit func() error) error {
+	calls := 0
+	commit := func() error {
+		if calls != 0 {
+			return errors.New("canonical commit callback was already consumed")
+		}
+		calls++
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := o.commit(opts, configYAML); err != nil {
+			return err
+		}
+		if afterCommit != nil {
+			if err := afterCommit(); err != nil {
+				return err
+			}
+		}
+		o.Stage = "runtime-apply"
+		return nil
+	}
+	if opts.applyRuntime == nil {
+		return commit()
+	}
+	o.Stage = "runtime-admission"
+	outcome, err := opts.applyRuntime(ctx, commit)
+	o.Runtime = outcome
+	if err != nil {
+		return err
+	}
+	if outcome.Standby {
+		if calls != 0 {
+			return errors.New("standby runtime consumed the canonical commit callback")
+		}
+		return nil
+	}
+	if calls != 1 || o.Canonical != canonicalReplaced || !o.DurabilityConfirmed {
+		return errors.New("live runtime did not consume an acknowledged durable canonical commit")
+	}
+	if !outcome.Active.Known || !outcome.Active.Available {
+		return errors.New("runtime apply did not acknowledge an available selected generation")
+	}
+	return nil
 }

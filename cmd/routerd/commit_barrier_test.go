@@ -134,7 +134,7 @@ func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *test
 					return outcome, failure
 				}
 			}
-			mutator := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, reloadWithOutcome: runner.ReloadRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot, updateRuntime: runner.UpdateRuntimeRouter}
+			mutator := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, applyRuntimeWithOutcome: runner.ApplyRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot}
 			result, err := mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: encoded, Replace: true})
 			if mode == "durable" {
 				if err != nil || result == nil {
@@ -202,7 +202,10 @@ func TestCanonicalBarrierSandboxAdmissionPrecedesCommitAndReload(t *testing.T) {
 		writes++
 		return config.AtomicWriteOutcome{}, errors.New("unexpected commit")
 	}
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, reload: func(context.Context, *api.Router) error { reloads++; return nil }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, applyRuntimeWithOutcome: func(context.Context, *api.Router, bool, func() error) (controllerchain.RuntimeReloadOutcome, error) {
+		reloads++
+		return controllerchain.RuntimeReloadOutcome{}, nil
+	}}
 	if _, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: dnsRuntimeYAML("127.0.0.2"), Replace: true}); err == nil {
 		t.Fatal("invalid options accepted")
 	}
@@ -245,11 +248,11 @@ func TestCanonicalBarrierPostCommitActivationCancellationKeepsDesiredAndActualFa
 			t.Error(err)
 		}
 	}()
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, reloadWithOutcome: runner.ReloadRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot, updateRuntime: runner.UpdateRuntimeRouter}
-	m.reloadWithOutcome = func(ctx context.Context, next *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, applyRuntimeWithOutcome: runner.ApplyRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot}
+	m.applyRuntimeWithOutcome = func(ctx context.Context, next *api.Router, reload bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
 		canceled, cancel := context.WithCancel(ctx)
-		cancel()
-		return runner.ReloadRuntimeWithOutcome(canceled, next)
+		defer cancel()
+		return runner.ApplyRuntimeWithOutcome(canceled, next, reload, func() error { err := commit(); cancel(); return err })
 	}
 	if result, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: encoded, Replace: true}); err == nil || result != nil {
 		t.Fatalf("canceled actual runtime activation reported success: %+v %v", result, err)

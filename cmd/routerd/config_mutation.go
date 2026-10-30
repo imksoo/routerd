@@ -25,20 +25,17 @@ import (
 )
 
 type serveConfigMutator struct {
-	configPath           string
-	statePath            string
-	baseOpts             applyOptions
-	cache                *resultCache
-	logger               *eventlog.Logger
-	getRouter            func() *api.Router
-	setRouter            func(*api.Router)
-	reload               func(context.Context, *api.Router) error
-	reloadWithOutcome    func(context.Context, *api.Router) (controllerchain.RuntimeReloadOutcome, error)
-	activeRuntime        func() controllerchain.RuntimeSnapshot
-	updateRuntime        func(*api.Router) error
-	runtimeMutationError func() error
-	stopping             func() bool
-	servers              *serveHTTPServers
+	configPath              string
+	statePath               string
+	baseOpts                applyOptions
+	cache                   *resultCache
+	logger                  *eventlog.Logger
+	getRouter               func() *api.Router
+	setRouter               func(*api.Router)
+	applyRuntimeWithOutcome func(context.Context, *api.Router, bool, func() error) (controllerchain.RuntimeReloadOutcome, error)
+	activeRuntime           func() controllerchain.RuntimeSnapshot
+	runtimeMutationError    func() error
+	stopping                func() bool
 }
 
 func (m serveConfigMutator) apply(r *http.Request, req controlapi.ApplyRequest) (*controlapi.ApplyResult, error) {
@@ -316,6 +313,9 @@ func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML 
 		if err != nil {
 			return committed, err
 		}
+		if committed.Runtime.Standby {
+			return committed, nil
+		}
 		result.Generation = committed.Generation
 		result.Phase = "Committed"
 		committed.Result = result
@@ -357,29 +357,17 @@ func (m serveConfigMutator) rejectIfStopping() error {
 	return nil
 }
 
-func (m serveConfigMutator) reloadRuntime(router *api.Router) error {
-	_, err := m.reloadRuntimeOutcome(router)
-	return err
-}
-
-func (m serveConfigMutator) reloadRuntimeOutcome(router *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+func (m serveConfigMutator) applyRuntimeOutcome(ctx context.Context, router *api.Router, reload bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
 	outcome := controllerchain.RuntimeReloadOutcome{}
 	if err := m.rejectIfStopping(); err != nil {
 		return outcome, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	if m.applyRuntimeWithOutcome == nil {
+		return outcome, errors.New("selected runtime configuration apply is unavailable")
+	}
+	operationCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	if m.reloadWithOutcome != nil {
-		return m.reloadWithOutcome(ctx, router)
-	}
-	if m.reload == nil {
-		return outcome, errors.New("runtime generation reload is unavailable")
-	}
-	err := m.reload(ctx, router)
-	if err == nil {
-		outcome.Active = controllerchain.RuntimeSnapshot{Router: router, Known: true, Available: true}
-	}
-	return outcome, err
+	return m.applyRuntimeWithOutcome(operationCtx, router, reload, commit)
 }
 
 func (m serveConfigMutator) commitOnly(router *api.Router, configYAML string) (*apply.Result, error) {
@@ -412,15 +400,17 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 	defer outcome.finishEarlyFailure(store, m.baseOpts, &err)
 	opts := m.baseOpts
 	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
-	if err := outcome.commit(opts, configYAML); err != nil {
+	if err := outcome.commitAndApplyRuntime(context.Background(), opts, configYAML, nil); err != nil {
 		return outcome, err
 	}
-	if opts.activateCommittedRuntime != nil {
-		outcome.Stage = "runtime-activation"
-		outcome.Runtime, err = opts.activateCommittedRuntime(context.Background())
-		if err != nil {
+	if outcome.Runtime.Standby {
+		outcome.Result = &apply.Result{Generation: generation, Timestamp: time.Now().UTC(), Phase: "Standby"}
+		outcome.Stage = "finish-generation"
+		if err := outcome.finish(store, opts, "Standby", nil); err != nil {
 			return outcome, err
 		}
+		outcome.Stage = "complete"
+		return outcome, nil
 	}
 	outcome.Stage = "record-applied-path"
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {

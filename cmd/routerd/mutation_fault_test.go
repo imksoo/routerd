@@ -62,8 +62,11 @@ func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T
 			cache := &resultCache{}
 			cache.Store(&apply.Result{Generation: 99, Phase: "Healthy"})
 			reloads := 0
-			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }, activeRuntime: func() controllerchain.RuntimeSnapshot { return active }}
-			m.reloadWithOutcome = func(_ context.Context, r *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }, activeRuntime: func() controllerchain.RuntimeSnapshot { return active }}
+			m.applyRuntimeWithOutcome = func(_ context.Context, r *api.Router, _ bool, commit func() error) (controllerchain.RuntimeReloadOutcome, error) {
+				if err := commit(); err != nil {
+					return controllerchain.RuntimeReloadOutcome{Active: active}, err
+				}
 				reloads++
 				if gate.TryRLock() {
 					gate.RUnlock()
@@ -171,7 +174,7 @@ func TestFaultHTTPFailureIncludesSafePartialProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
 	handler := controlapi.Handler{Apply: m.apply}
 	body := `{"candidateYaml":"apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata: {name: new-router}\nspec: {resources: []}\n","replace":true}`
 	request := httptest.NewRequest(http.MethodPost, controlapi.Prefix+"/apply", strings.NewReader(body))
@@ -201,7 +204,7 @@ func TestFaultDeletePostCommitFailureKeepsNewConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	faultGenerationStore(t, opts.StatePath, true)
-	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
 	response, err := m.delete(nil, controlapi.DeleteRequest{Target: "Hostname/appliance"})
 	if err == nil || response != nil || len(current.Spec.Resources) != 0 {
 		t.Fatalf("delete=%+v,%v,current=%+v", response, err, current)

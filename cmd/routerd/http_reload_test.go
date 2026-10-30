@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
@@ -102,22 +103,32 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		newWebHandler: func(spec api.WebConsoleSpec, candidate *api.Router) http.Handler {
 			return webConsoleHTTPHandler(spec, candidate, current.Load, store, nil, cache, path, nil, nil)
 		}}
-	mutator.servers = servers
+	gate := &sync.RWMutex{}
+	mutator.baseOpts.MutationGate = gate
+	runner := &controllerchain.Runner{Router: initial, Store: store, Bus: bus.NewWithStore(store), Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}, MutationGate: gate, ReconcileHTTPServers: func(ctx context.Context, observation controllerchain.RuntimeRouterObservation) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return servers.reconcile(observation)
+	}}}
+	mutator.applyRuntimeWithOutcome = runner.ApplyRuntimeWithOutcome
+	mutator.activeRuntime = runner.ActiveRuntimeSnapshot
+	runtimeCtx, stopRuntime := context.WithCancel(t.Context())
+	if err := runner.Start(runtimeCtx); err != nil {
+		stopRuntime()
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
+		stopRuntime()
 		ctx, cancel := context.WithTimeout(context.Background(), controllerchain.RuntimeShutdownGrace)
 		defer cancel()
+		if err := runner.Wait(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Error(err)
+		}
 		if err := servers.close(ctx); err != nil {
 			t.Error(err)
 		}
 	})
-	prepared, err := servers.prepareCandidate(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer prepared.close()
-	if err := prepared.publish(); err != nil {
-		t.Fatal(err)
-	}
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", controlPort)
 	old := controlapi.NewHTTPClient(baseURL).WithBearerToken("old-token")
 	if _, err := old.Status(t.Context()); err != nil {

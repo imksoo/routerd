@@ -69,32 +69,32 @@ func applyCommand(args []string, stdout, stderr io.Writer) (err error) {
 }
 
 type applyOptions struct {
-	// Supplied only by live mutation; candidate workers/effects start after durable commit.
-	activateCommittedRuntime func(context.Context) (controllerchain.RuntimeReloadOutcome, error)
-	ConfigPath               string
-	StatusFile               string
-	NetplanPath              string
-	DnsmasqConfigPath        string
-	DnsmasqServicePath       string
-	NftablesPath             string
-	LedgerPath               string
-	StatePath                string
-	BGPSocketPath            string
-	BGPControlSocketPath     string
-	BGPStatePath             string
-	OverrideClient           string
-	OverrideProfile          string
-	DryRun                   bool
-	SkipServiceManager       bool
-	AllowMgmtLockout         bool
-	AnnounceDryRunToCLI      bool
-	MgmtLockoutWriter        io.Writer
-	SkipConfigCommit         bool
-	ConfigYAMLOverride       string
-	Sandbox                  bool
-	MutationGate             *sync.RWMutex
-	nativeOwner              *nativeOperationOwner
-	attemptHooks             *applyAttemptHooks
+	// The selected live owner admits once and consumes the canonical commit before effects.
+	applyRuntime         func(context.Context, func() error) (controllerchain.RuntimeReloadOutcome, error)
+	ConfigPath           string
+	StatusFile           string
+	NetplanPath          string
+	DnsmasqConfigPath    string
+	DnsmasqServicePath   string
+	NftablesPath         string
+	LedgerPath           string
+	StatePath            string
+	BGPSocketPath        string
+	BGPControlSocketPath string
+	BGPStatePath         string
+	OverrideClient       string
+	OverrideProfile      string
+	DryRun               bool
+	SkipServiceManager   bool
+	AllowMgmtLockout     bool
+	AnnounceDryRunToCLI  bool
+	MgmtLockoutWriter    io.Writer
+	SkipConfigCommit     bool
+	ConfigYAMLOverride   string
+	Sandbox              bool
+	MutationGate         *sync.RWMutex
+	nativeOwner          *nativeOperationOwner
+	attemptHooks         *applyAttemptHooks
 }
 
 func routerWithIPv6PDClientOptions(router *api.Router, opts applyOptions, osName string) (*api.Router, []string, error) {
@@ -509,7 +509,7 @@ func runApplyChainOnce(ctx context.Context, router *api.Router, opts applyOption
 }
 
 func runApplyChainOnceWithOutcome(ctx context.Context, router *api.Router, opts applyOptions, stdout io.Writer, logger *eventlog.Logger) (outcome applyAttemptOutcome, err error) {
-	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil {
+	if !opts.DryRun && !opts.Sandbox && opts.nativeOwner == nil && opts.applyRuntime == nil {
 		owner, acquireErr := acquireNativeOperationOwner(ctx)
 		if acquireErr != nil {
 			return outcome, acquireErr
@@ -618,7 +618,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	decision := ha.Decision{Leader: true}
-	if !opts.DryRun {
+	if !opts.DryRun && opts.applyRuntime == nil {
 		outcome.Stage = "ha-admission"
 		var clusterName string
 		decision, clusterName, err = acquireApplyClusterLease(ctx, effectiveRouter, stateStore)
@@ -647,36 +647,44 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		}
 	}
 
-	controllerOpts := applyChainControllerOptions(opts)
-	if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
-		opts.attemptHooks.configureControllers(&controllerOpts)
+	if opts.applyRuntime == nil {
+		controllerOpts := applyChainControllerOptions(opts)
+		if opts.attemptHooks != nil && opts.attemptHooks.configureControllers != nil {
+			opts.attemptHooks.configureControllers(&controllerOpts)
+		}
+		runner.Opts = controllerOpts
+		runner.HADecision = &decision
 	}
-	runner.Opts = controllerOpts
-	runner.HADecision = &decision
-	// Canonical intent authorizes the new side effects. A native effect cannot
-	// be made transactional with a later filesystem rename or fsync.
-	if err := ctx.Err(); err != nil {
+	if err := outcome.commitAndApplyRuntime(ctx, opts, configYAML, func() error {
+		outcome.Stage = "observe-prefix-delegation"
+		if err := recordObservedPrefixDelegationState(router, stateStore, eventBus); err != nil {
+			return err
+		}
+		recordWarningEvents(router, stateStore, result.Warnings)
+		recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
+		return nil
+	}); err != nil {
 		return result, err
 	}
-	if err := outcome.commit(opts, configYAML); err != nil {
-		return result, err
-	}
-	if opts.activateCommittedRuntime != nil {
-		outcome.Stage = "runtime-activation"
-		outcome.Runtime, err = opts.activateCommittedRuntime(ctx)
-		if err != nil {
+	if outcome.Runtime.Standby {
+		result.Phase = "Standby"
+		result.Warnings = append(result.Warnings, "active HA ownership did not admit candidate apply; canonical configuration was not committed")
+		outcome.Stage = "finish-generation"
+		if err := outcome.finish(stateStore, opts, result.Phase, result.Warnings); err != nil {
 			return result, err
 		}
+		outcome.Stage = "output"
+		if err := writeResult(stdout, opts.StatusFile, result); err != nil {
+			return result, err
+		}
+		outcome.Stage = "complete"
+		return result, nil
 	}
-	outcome.Stage = "observe-prefix-delegation"
-	if err := recordObservedPrefixDelegationState(router, stateStore, eventBus); err != nil {
-		return result, err
-	}
-	recordWarningEvents(router, stateStore, result.Warnings)
-	recordKnownNGCombinationEvents(router, stateStore, optionWarnings)
-	outcome.Stage = "reconcile"
-	if err := runner.ReconcileOnce(ctx); err != nil {
-		return nil, err
+	if opts.applyRuntime == nil {
+		outcome.Stage = "reconcile"
+		if err := runner.ReconcileOnce(ctx); err != nil {
+			return nil, err
+		}
 	}
 	view, err = runner.ObserveRuntimeRouter(time.Now().UTC(), platformDefaults.OS)
 	if err != nil {
