@@ -24,7 +24,8 @@ git rev-parse HEAD > "$evidence/revision"
 "$bgpd" --version > "$evidence/bgpd-version"
 sha256sum pkg/controller/bfd/controller.go pkg/controller/bfd/native.go \
     pkg/controller/bfd/controller_test.go pkg/controller/bfd/native_recovery_test.go \
-    pkg/controller/bfd/native_observation_test.go pkg/controller/bfd/frr_native_linux_test.go \
+    pkg/controller/bfd/native_observation_test.go pkg/controller/bfd/native_review_test.go \
+    pkg/controller/bfd/frr_native_linux_test.go \
     pkg/controller/bgp/frr_native_linux_test.go scripts/linux-bfd-frr-smoke.sh > "$evidence/source.sha256"
 CGO_ENABLED=0 "$go_bin" test -c -o "$evidence/bfd.test" ./pkg/controller/bfd > "$evidence/compile.log" 2>&1 || {
     status=$?; printf '%s\n' "$status" > "$evidence/compile.exit"; cat "$evidence/compile.log" >&2; exit "$status";
