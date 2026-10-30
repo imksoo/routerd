@@ -757,3 +757,37 @@ func TestControllerClearsNAT44TableWhenRuleHasNoActiveEgress(t *testing.T) {
 func testShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
+
+// A clean FreeBSD boot has no /dev/pf until the module is loaded. Empty
+// desired state must work without loading PF, while an existing device still
+// requires withdrawal and a nonempty desired anchor must report apply errors.
+func TestControllerPFDeviceAbsence(t *testing.T) {
+ for _, tc := range []struct {
+  name string
+  device bool
+  desired bool
+  wantError bool
+ }{
+  {name: "empty absent"},
+  {name: "empty present", device: true, wantError: true},
+  {name: "desired absent", desired: true, wantError: true},
+ } {
+  t.Run(tc.name, func(t *testing.T) {
+   dir := t.TempDir()
+   device := filepath.Join(dir, "pf")
+   if tc.device { if err := os.WriteFile(device, nil, 0600); err != nil { t.Fatal(err) } }
+   pfctl, logPath, failPath := nftRecoveryFixture(t)
+   if err := os.WriteFile(failPath, []byte("-a"), 0600); err != nil { t.Fatal(err) }
+   router := &api.Router{}
+   if tc.desired { router = natRecoveryRouter("192.0.2.0/24") }
+   c := Controller{OS: platform.OSFreeBSD, Router: router, Store: &testStore{}, NftCommand: pfctl, NftablesPath: filepath.Join(dir,"out","nat44.pf"), PFDevicePath: device}
+   err := c.Reconcile(t.Context())
+   if (err != nil) != tc.wantError { t.Fatalf("reconcile error=%v, wantError=%v",err,tc.wantError) }
+   calls,_ := os.ReadFile(logPath)
+   if !tc.device && !tc.desired {
+    if len(calls)!=0 { t.Fatalf("empty absent PF invoked command: %s",calls) }
+    if _,err:=os.Stat(filepath.Dir(c.NftablesPath)); !os.IsNotExist(err) { t.Fatalf("empty absent PF wrote artifacts: %v",err) }
+   } else if !strings.Contains(string(calls),"-a routerd_nat -f ") { t.Fatalf("required PF apply/withdrawal not attempted: %s",calls) }
+  })
+ }
+}
