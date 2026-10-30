@@ -224,18 +224,32 @@ func (c VRFController) saveReceipts(records []vrfReceipt) error {
 	}
 	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", vrfNativeStatusName, map[string]any{"owners": records})
 }
-func (c VRFController) saveReceipt(record vrfReceipt) error {
+func (c VRFController) saveReceipt(ctx context.Context, before, record vrfReceipt) error {
 	records, err := c.readReceipts()
 	if err != nil {
 		return err
 	}
+	found := false
 	for i, current := range records {
 		if current.Resource == record.Resource {
+			if before.Resource == "" || !sameVRFReceipt(current, before) {
+				return errors.New("VRF receipt changed before persistence")
+			}
 			records[i] = record
-			return c.saveReceipts(records)
+			found = true
+			break
 		}
 	}
-	return c.saveReceipts(append(records, record))
+	if !found {
+		if before.Resource != "" {
+			return errors.New("VRF receipt disappeared before persistence")
+		}
+		records = append(records, record)
+	}
+	if err := c.checkScope(ctx, record); err != nil {
+		return err
+	}
+	return c.saveReceipts(records)
 }
 func (c VRFController) checkScope(ctx context.Context, record vrfReceipt) error {
 	scope, err := c.native().Scope(ctx)
@@ -374,7 +388,7 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 			if err := c.checkScope(ctx, record); err != nil {
 				return err
 			}
-			if err := c.saveReceipt(record); err != nil {
+			if err := c.saveReceipt(ctx, vrfReceipt{}, record); err != nil {
 				return err
 			}
 		}
@@ -424,6 +438,7 @@ func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 		if err := c.native().Cookie(ctx, link, record.Token); err != nil {
 			return err
 		}
+		before := *record
 		record.Index = index
 		link, err = c.native().Observe(ctx, record.Plan.Name)
 		if err != nil {
@@ -438,12 +453,13 @@ func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 		if err := c.checkScope(ctx, *record); err != nil {
 			return err
 		}
-		if err := c.saveReceipt(*record); err != nil {
+		if err := c.saveReceipt(ctx, before, *record); err != nil {
 			return err
 		}
 	} else if record.Index == 0 {
+		before := *record
 		record.Index = link.Index
-		if err := c.saveReceipt(*record); err != nil {
+		if err := c.saveReceipt(ctx, before, *record); err != nil {
 			return err
 		}
 	}
@@ -468,11 +484,9 @@ func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 		}
 		ports = append(ports, vrfPort{Name: name, Index: port.Index})
 	}
+	before := *record
 	record.Ports, record.Pending = ports, true
-	if err := c.checkScope(ctx, *record); err != nil {
-		return err
-	}
-	if err := c.saveReceipt(*record); err != nil {
+	if err := c.saveReceipt(ctx, before, *record); err != nil {
 		return err
 	}
 	for _, port := range record.Ports {
@@ -514,8 +528,9 @@ func (c VRFController) apply(ctx context.Context, record *vrfReceipt) error {
 	if _, err := c.checkCurrent(ctx, *record); err != nil {
 		return err
 	}
+	before = *record
 	record.Pending = false
-	return c.saveReceipt(*record)
+	return c.saveReceipt(ctx, before, *record)
 }
 func (c VRFController) membersMatch(ctx context.Context, record vrfReceipt) (bool, error) {
 	if len(record.Ports) != len(record.Plan.Members) {
@@ -546,8 +561,9 @@ func (c VRFController) withdraw(ctx context.Context, record vrfReceipt) error {
 	if err := checkVRFIdentity(record, link); err != nil {
 		return err
 	}
+	before := record
 	record.Withdrawing = true
-	if err := c.saveReceipt(record); err != nil {
+	if err := c.saveReceipt(ctx, before, record); err != nil {
 		return err
 	}
 	link, err = c.native().Observe(ctx, record.Plan.Name)
