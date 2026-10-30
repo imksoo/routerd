@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/miekg/dns"
 )
 
 func TestProbeHTTPDistinguishesDeclarationsUnknownCommunicationAndSQLFailure(t *testing.T) {
@@ -48,7 +49,7 @@ func TestProbeHTTPDistinguishesDeclarationsUnknownCommunicationAndSQLFailure(t *
 	if err != nil || result.Checks[0].Status != "fail" || result.Checks[0].Detail != "reported phase Error" {
 		t.Fatalf("native Error phase was not failed: %+v %v", result, err)
 	}
-	for _, target := range []string{"invalid", "192.0.2.4"} {
+	for _, target := range []string{"invalid", "fe80::1"} {
 		result, err = client.Probe(t.Context(), controlapi.ProbeRequest{Subject: "lan-client", Target: target})
 		if err != nil {
 			t.Fatal(err)
@@ -57,9 +58,37 @@ func TestProbeHTTPDistinguishesDeclarationsUnknownCommunicationAndSQLFailure(t *
 		if target == "invalid" {
 			want = "fail"
 		}
-		if len(result.Checks) != 1 || result.Checks[0].Status != want {
+		if len(result.Checks) != 1 || result.Checks[0].Status != want || result.Checks[0].Kind != "scope" || !result.Checks[0].ObservedAt.IsZero() {
 			t.Fatalf("LAN target-only probe=%+v", result)
 		}
+		if target == "fe80::1" && !strings.Contains(result.Checks[0].Detail, "unobserved:") {
+			t.Fatalf("missing link-local zone became a communication observation: %+v", result)
+		}
+	}
+	// A real DNS error response is a measured communication failure, unlike
+	// a declaration or a client target missing its native interface scope.
+	_, port := daemonProbeDNSPeer(t, func(writer dns.ResponseWriter, request *dns.Msg) {
+		response := new(dns.Msg)
+		response.SetRcode(request, dns.RcodeServerFailure)
+		_ = writer.WriteMsg(response)
+	})
+	router = daemonProbeDNSRouter(port)
+	result, err = client.Probe(t.Context(), controlapi.ProbeRequest{Subject: "dns", Target: "lan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := 0
+	for _, check := range result.Checks {
+		if check.Kind != "communication" {
+			continue
+		}
+		observed++
+		if check.Status != "fail" || check.FailureKind != "dns_rcode" || check.ObservedAt.IsZero() {
+			t.Fatalf("DNS SERVFAIL was not a measured communication failure: %+v", check)
+		}
+	}
+	if observed != 2 {
+		t.Fatalf("missing actual UDP/TCP communication failures: %+v", result)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
