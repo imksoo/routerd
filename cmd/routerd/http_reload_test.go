@@ -148,7 +148,9 @@ func testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T, rel
 		if err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		// This checks publication and recovery, not a two-second latency SLA.
+		// Allow the durable apply to finish on a contended test filesystem.
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 		_, err = client.Apply(ctx, controlapi.ApplyRequest{CandidateYAML: string(data), Replace: true})
 		return err

@@ -36,7 +36,7 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 			worker := "derived-event"
 			if kind == "EventRule" {
 				worker = "event-rule"
-				resource.Spec = api.EventRuleSpec{Pattern: api.EventRulePatternSpec{Operator: "debounce", Topic: "routerd.test.trigger", Quiet: "300ms", AllowMissingCorrelation: true}, Emit: api.EventRuleEmitSpec{Topic: "routerd.test.old"}}
+				resource.Spec = api.EventRuleSpec{Pattern: api.EventRulePatternSpec{Operator: "debounce", Topic: "routerd.test.trigger", Quiet: "1h", AllowMissingCorrelation: true}, Emit: api.EventRuleEmitSpec{Topic: "routerd.test.old"}}
 			} else if kind == "DerivedEvent" {
 				resource.Spec = api.DerivedEventSpec{Topic: "routerd.test.old", Inputs: []api.ReadyWhenSpec{{Field: "ready", Equals: "ready"}}, EmitInitial: true}
 			} else {
@@ -67,6 +67,7 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 				waitEventGeneration(t, func() bool { active := runner.ActiveRuntimeSnapshot(); return active.Known && !active.Available })
 			}()
 			before := runner.ActiveRuntimeSnapshot()
+			var oldRuleDefinition string
 			if kind == "EventRule" {
 				trigger := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "test"}, "routerd.test.trigger", daemonapi.SeverityInfo)
 				cursor, err := store.RecordBusEvent(ctx, trigger)
@@ -82,6 +83,11 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 					current, err := store.ReadEventRule(ctx, "selection")
 					return err == nil && current.Cursor >= id
 				})
+				pending, err := store.ReadEventRule(ctx, "selection")
+				if err != nil || pending.Correlations["default"].Timer == nil {
+					t.Fatalf("old generation did not persist its pending timer: %+v %v", pending, err)
+				}
+				oldRuleDefinition = pending.Definition
 			} else if kind == "DerivedEvent" {
 				waitEventGeneration(t, func() bool { return len(events.Recent("routerd.test.old.asserted")) != 0 })
 			}
@@ -111,14 +117,25 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 				t.Fatalf("consumer change did not replace the generation: before=%+v after=%+v", before, after)
 			}
 			if kind == "EventRule" {
+				// A slow fsync must not turn this into a test that rejects a
+				// legitimate old emission before cutover. Keep the old timer
+				// pending and verify its durable retirement at the boundary.
+				selected, err := store.ReadEventRule(ctx, "selection")
+				if err != nil || selected.Definition == oldRuleDefinition || selected.FireCount != 0 {
+					t.Fatalf("new generation retained old rule state: %+v %v", selected, err)
+				}
+				for _, correlation := range selected.Correlations {
+					if correlation.Timer != nil {
+						t.Fatal("new generation retained the old pending timer")
+					}
+				}
 				if err := events.Publish(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "test"}, "routerd.test.trigger", daemonapi.SeverityInfo)); err != nil {
 					t.Fatal(err)
 				}
 				waitEventGeneration(t, func() bool { return len(events.Recent("routerd.test.new")) != 0 })
-				// The old debounce was admitted before replacement; its owning
-				// generation must have canceled and acknowledged the timer.
-				timer := time.NewTimer(350 * time.Millisecond)
-				<-timer.C
+				// The generation owner has joined the retired worker. The
+				// blocked-commit cancellation boundary is exercised separately
+				// by eventrule.TestRuleLifetimeWaitsForFiredTimerAndSuppressesCanceledPublication.
 				if old := events.Recent("routerd.test.old"); len(old) != 0 {
 					t.Fatalf("retired generation emitted old rule: %+v", old)
 				}

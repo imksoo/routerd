@@ -87,12 +87,23 @@ func TestAbsence(t *testing.T) {
 	assertTimerRetired(t, c)
 }
 func TestDebounce(t *testing.T) {
-	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorDebounce, Topic: "routerd.a", Quiet: "20ms"})
-	mustReconcile(t, c, testEvent("routerd.a"))
-	mustReconcile(t, c, testEvent("routerd.a"))
+	c, b := newTestController(t, api.EventRulePatternSpec{Operator: OperatorDebounce, Topic: "routerd.a", Quiet: "20ms"})
+	// Capture the input cursor, then enqueue the burst before starting the
+	// consumer. A scheduler pause between SQLite commits must not accidentally
+	// make this a test of two distinct, already-expired quiet windows.
+	if err := c.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := b.PublishDurable(t.Context(), testEvent("routerd.a")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	startTestController(t, c)
 	waitForRecent(t, b, "routerd.out", 1)
 	assertTimerRetired(t, c)
 }
+
 func TestCount(t *testing.T) {
 	c, b := testController(t, api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 2})
 	mustReconcile(t, c, testEvent("routerd.a"))
