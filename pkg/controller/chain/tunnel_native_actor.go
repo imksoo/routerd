@@ -196,6 +196,15 @@ func (c TunnelInterfaceController) reconcileTunnelNative(ctx context.Context, na
 		return err
 	}
 	if !link.Exists {
+		if listener, wanted := fouListenerForDesired(desired); wanted {
+			present, matching, err := c.observeTunnelNativeListener(ctx, listener)
+			if err != nil {
+				return err
+			}
+			if present && (!matching || record.ListenerPending) {
+				return errors.New("TunnelInterface listener is foreign or its create ACK is unknown")
+			}
+		}
 		fresh, err := c.observeOwnedTunnel(ctx, name)
 		if err != nil {
 			return err
