@@ -107,3 +107,26 @@ func wildcardSegmentFixture(t *testing.T, local string) (SegmentConfig, SegmentI
 	}
 	return config, owner, decoded.(*netlink.Vxlan)
 }
+
+func TestLinuxSegmentCreationCookieRequiresAcknowledgedNativeIdentity(t *testing.T) {
+	for _, change := range []string{"exact", "index", "name", "kind", "alias"} {
+		t.Run(change, func(t *testing.T) {
+			attrs := netlink.LinkAttrs{Name: "vx-owned", Index: 42}
+			var link netlink.Link = &netlink.Vxlan{LinkAttrs: attrs}
+			switch change {
+			case "index":
+				link.Attrs().Index++
+			case "name":
+				link.Attrs().Name = "vx-replacement"
+			case "kind":
+				link = &netlink.Dummy{LinkAttrs: attrs}
+			case "alias":
+				link.Attrs().Alias = "operator"
+			}
+			err := checkLinuxSegmentCreationLink("vx-owned", 42, link)
+			if change == "exact" && err != nil || change != "exact" && err == nil {
+				t.Fatalf("creation cookie identity guard: change=%s link=%+v err=%v", change, link, err)
+			}
+		})
+	}
+}

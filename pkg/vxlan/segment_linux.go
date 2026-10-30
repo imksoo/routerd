@@ -6,6 +6,8 @@ package vxlan
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -183,6 +185,9 @@ func segmentIP(ip net.IP) string {
 }
 
 func (n linuxSegmentNative) Create(ctx context.Context, config SegmentConfig, owner SegmentIdentity) error {
+	if owner.Token == "" || owner.Index != 0 || owner.CreationName != config.IfName {
+		return errors.New("VXLAN creation requires its unbound pending ownership identity")
+	}
 	topology, err := n.Resolve(ctx, config, owner.Token)
 	if err != nil {
 		return err
@@ -195,15 +200,59 @@ func (n linuxSegmentNative) Create(ctx context.Context, config SegmentConfig, ow
 		return err
 	}
 	defer handle.Close()
-	link := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: config.IfName, Alias: SegmentProof(owner.Token), MTU: config.MTU}, VxlanId: config.VNI, VtepDevIndex: owner.UnderlayIndex, SrcAddr: net.ParseIP(config.Local), Port: config.Port, Learning: !config.NoLearning, UDPCSum: true}
+	// Linux does not retain IFLA_IFALIAS from VXLAN creation. Bind the
+	// successful exclusive create ACK to an exact requested index before a
+	// separate cookie write; a matching name after a failed ACK grants nothing.
+	digest := sha256.Sum256([]byte(owner.Token))
+	index := int(binary.BigEndian.Uint32(digest[:4])&0x3fffffff) + 1024
+	link := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Index: index, Name: config.IfName, MTU: config.MTU}, VxlanId: config.VNI, VtepDevIndex: owner.UnderlayIndex, SrcAddr: net.ParseIP(config.Local), Port: config.Port, Learning: !config.NoLearning, UDPCSum: true}
 	if config.Group != "" {
 		link.Group = net.ParseIP(config.Group)
 	}
-	// Alias and native tunnel parameters are part of the same RTM_NEWLINK.
 	if err := handle.LinkAdd(link); err != nil {
 		return err
 	}
-	return ctx.Err()
+	scope, err := n.scope(ctx)
+	if err != nil {
+		return err
+	}
+	if scope != owner.Scope {
+		return errors.New("VXLAN kernel scope changed after creation")
+	}
+	created, err := handle.LinkByIndex(index)
+	if err != nil {
+		return err
+	}
+	if err := checkLinuxSegmentCreationLink(config.IfName, index, created); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := handle.LinkSetAlias(created, SegmentProof(owner.Token)); err != nil {
+		return err
+	}
+	created, err = handle.LinkByIndex(index)
+	if err != nil {
+		return err
+	}
+	scope, err = n.scope(ctx)
+	if err != nil {
+		return err
+	}
+	observed, err := linuxSegmentAttributes(scope, created)
+	if err != nil {
+		return err
+	}
+	owner.Index, owner.Pending = index, true
+	return errors.Join(CheckSegmentIdentity(config, owner, observed), ctx.Err())
+}
+
+func checkLinuxSegmentCreationLink(name string, index int, link netlink.Link) error {
+	if link == nil || link.Attrs() == nil || index < 1 || link.Attrs().Index != index || link.Attrs().Name != name || link.Type() != "vxlan" || link.Attrs().Alias != "" {
+		return errors.New("acknowledged VXLAN creation identity changed before cookie installation")
+	}
+	return nil
 }
 
 func (n linuxSegmentNative) owned(ctx context.Context, handle *netlink.Handle, config SegmentConfig, owner SegmentIdentity) (netlink.Link, SegmentLink, error) {

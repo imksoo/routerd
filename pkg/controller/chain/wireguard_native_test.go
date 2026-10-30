@@ -30,13 +30,33 @@ type wireGuardNativeFixture struct {
 // collaborators. It does not decide ownership, readiness, or reconciliation.
 func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuardNativeFixture {
 	t.Helper()
+	if c.NativeScope == nil {
+		c.NativeScope = func(context.Context) (string, error) { return "wg-fixture-kernel", nil }
+	}
 	f := &wireGuardNativeFixture{controller: c, links: map[string]nativeWireGuardLink{}, dumps: map[string]string{}, rules: map[string]bool{}, mtus: map[string]int{}}
+	c.SetAliasByIndex = func(index int, name, proof string) error {
+		link, exists := f.links[name]
+		if !exists || link.IfIndex != index || link.Kind != "wireguard" || link.Token != "" {
+			return fmt.Errorf("acknowledged WireGuard native identity changed")
+		}
+		link.Token = strings.TrimPrefix(proof, "routerd-wg:")
+		f.links[name] = link
+		return nil
+	}
 	run, stdin := c.Command, c.CommandStdin
 	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if name == "ip" && strings.Join(args, " ") == "-j -d link show" {
 			links := []map[string]any{}
 			for name, link := range f.links {
-				links = append(links, map[string]any{"ifname": name, "ifindex": link.IfIndex, "ifalias": "routerd-wg:" + link.Token, "linkinfo": map[string]string{"info_kind": link.Kind}})
+				flags := []string{}
+				if link.Up {
+					flags = append(flags, "UP")
+				}
+				alias := ""
+				if link.Token != "" {
+					alias = "routerd-wg:" + link.Token
+				}
+				links = append(links, map[string]any{"ifname": name, "ifindex": link.IfIndex, "ifalias": alias, "flags": flags, "linkinfo": map[string]string{"info_kind": link.Kind}})
 			}
 			return json.Marshal(links)
 		}
@@ -63,16 +83,20 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 		}
 		if name == "ip" && len(args) > 2 {
 			if args[0] == "link" && args[1] == "add" {
-				native, token := "", ""
+				native, index := "", 0
 				for i := 2; i+1 < len(args); i++ {
 					if args[i] == "name" {
 						native = args[i+1]
 					}
-					if args[i] == "alias" {
-						token = strings.TrimPrefix(args[i+1], "routerd-wg:")
+					if args[i] == "index" {
+						index, _ = strconv.Atoi(args[i+1])
 					}
 				}
-				f.links[native] = nativeWireGuardLink{Exists: true, IfIndex: 7, Token: token, Kind: "wireguard"}
+				if index < 1 {
+					return nil, fmt.Errorf("WireGuard creation did not request an exact native index")
+				}
+				// Linux 6.8 does not install an alias during link creation.
+				f.links[native] = nativeWireGuardLink{Exists: true, IfIndex: index, Kind: "wireguard"}
 				f.dumps[native] = "(none)\t(none)\t0\toff\n"
 			}
 			if args[0] == "link" && args[1] == "delete" {
@@ -80,6 +104,11 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 				delete(f.dumps, args[len(args)-1])
 			}
 			if args[0] == "link" && args[1] == "set" {
+				if len(args) == 5 && args[2] == "up" && args[3] == "dev" {
+					link := f.links[args[4]]
+					link.Up = true
+					f.links[args[4]] = link
+				}
 				for i := 2; i+1 < len(args); i++ {
 					if args[i] == "mtu" && i >= 4 {
 						f.mtus[args[3]], _ = strconv.Atoi(args[i+1])
@@ -172,7 +201,11 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 func (f *wireGuardNativeFixture) own(t *testing.T, resource, name string, ports ...int) {
 	t.Helper()
 	f.links[name] = nativeWireGuardLink{Exists: true, IfIndex: 7, Token: wgFixtureToken, Kind: "wireguard"}
-	if err := f.controller.saveNativeWireGuardRecord(wireGuardNativeRecord{Resource: resource, Name: name, Token: wgFixtureToken, IfIndex: 7, OS: platform.OSLinux, Ports: ports}); err != nil {
+	scope, err := f.controller.wireGuardScope(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.controller.saveNativeWireGuardRecord(wireGuardNativeRecord{Resource: resource, Name: name, Token: wgFixtureToken, Scope: scope, IfIndex: 7, OS: platform.OSLinux, Ports: ports}); err != nil {
 		t.Fatal(err)
 	}
 	for _, port := range ports {

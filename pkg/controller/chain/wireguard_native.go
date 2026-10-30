@@ -5,11 +5,15 @@ package chain
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -27,13 +31,15 @@ type wireGuardStore interface {
 const wireGuardNativeStatusName = "wireguard-native"
 
 type wireGuardNativeRecord struct {
-	Resource string      `json:"resource"`
-	Name     string      `json:"name"`
-	Token    string      `json:"token"`
-	OS       platform.OS `json:"os"`
-	IfIndex  int         `json:"ifindex"`
-	Pending  bool        `json:"pending"`
-	Ports    []int       `json:"ports"`
+	Resource   string      `json:"resource"`
+	Name       string      `json:"name"`
+	Token      string      `json:"token"`
+	Scope      string      `json:"scope"`
+	ConfigHash string      `json:"configHash"`
+	OS         platform.OS `json:"os"`
+	IfIndex    int         `json:"ifindex"`
+	Pending    bool        `json:"pending"`
+	Ports      []int       `json:"ports"`
 }
 
 type nativeWireGuardLink struct {
@@ -41,6 +47,54 @@ type nativeWireGuardLink struct {
 	IfIndex int
 	Token   string
 	Kind    string
+	Scope   string
+	Up      bool
+}
+
+func (c WireGuardController) wireGuardScope(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	read := c.NativeScope
+	if read == nil {
+		read = platform.KernelNetworkScope
+	}
+	scope, err := read(ctx)
+	if err != nil {
+		return "", err
+	}
+	if scope == "" {
+		return "", errors.New("WireGuard kernel scope is unavailable")
+	}
+	return scope, ctx.Err()
+}
+
+func (c WireGuardController) checkWireGuardScope(ctx context.Context, record wireGuardNativeRecord) error {
+	scope, err := c.wireGuardScope(ctx)
+	if err != nil {
+		return err
+	}
+	if record.Scope == "" || record.Scope != scope {
+		return errors.New("WireGuard ownership belongs to another kernel scope")
+	}
+	return nil
+}
+
+func (c WireGuardController) checkNativeWireGuard(ctx context.Context, record wireGuardNativeRecord) error {
+	if err := c.checkWireGuardScope(ctx, record); err != nil {
+		return err
+	}
+	observed, err := c.observeNativeWireGuard(ctx, record.Name)
+	if err != nil {
+		return err
+	}
+	if err := c.verifyNativeWireGuard(record, observed); err != nil {
+		return err
+	}
+	if !observed.Exists {
+		return errors.New("WireGuard native interface disappeared")
+	}
+	return c.checkWireGuardScope(ctx, record)
 }
 
 func (c WireGuardController) currentOS() platform.OS {
@@ -72,7 +126,7 @@ func (c WireGuardController) readNativeWireGuard() ([]wireGuardNativeRecord, err
 				return nil, fmt.Errorf("invalid WireGuard native record")
 			}
 			record := wireGuardNativeRecord{}
-			for key, target := range map[string]*string{"resource": &record.Resource, "name": &record.Name, "token": &record.Token} {
+			for key, target := range map[string]*string{"resource": &record.Resource, "name": &record.Name, "token": &record.Token, "scope": &record.Scope, "configHash": &record.ConfigHash} {
 				value, ok := fields[key].(string)
 				if !ok {
 					return nil, fmt.Errorf("invalid WireGuard native %s", key)
@@ -111,11 +165,17 @@ func (c WireGuardController) readNativeWireGuard() ([]wireGuardNativeRecord, err
 	}
 	seen := map[string]bool{}
 	for _, record := range records {
-		if record.Name == "" || record.Resource == "" || len(record.Token) != 32 || record.OS != platform.OSLinux && record.OS != platform.OSFreeBSD || seen[record.Name] || record.IfIndex < 0 || record.OS == platform.OSLinux && !record.Pending && record.IfIndex == 0 {
+		if record.Name == "" || record.Resource == "" || record.Scope == "" || len(record.Token) != 32 || record.OS != platform.OSLinux && record.OS != platform.OSFreeBSD || seen[record.Name] || record.IfIndex < 0 || record.OS == platform.OSLinux && !record.Pending && record.IfIndex == 0 {
 			return nil, fmt.Errorf("invalid WireGuard native identity")
 		}
 		if _, err := hex.DecodeString(record.Token); err != nil {
 			return nil, fmt.Errorf("invalid WireGuard native owner token")
+		}
+		if record.ConfigHash != "" {
+			digest, err := hex.DecodeString(record.ConfigHash)
+			if err != nil || len(digest) != sha256.Size {
+				return nil, errors.New("invalid WireGuard applied configuration digest")
+			}
 		}
 		seen[record.Name] = true
 		for _, port := range record.Ports {
@@ -158,6 +218,26 @@ func (c WireGuardController) saveNativeWireGuardRecord(record wireGuardNativeRec
 }
 
 func (c WireGuardController) observeNativeWireGuard(ctx context.Context, name string) (nativeWireGuardLink, error) {
+	scope, err := c.wireGuardScope(ctx)
+	if err != nil {
+		return nativeWireGuardLink{}, err
+	}
+	observed, err := c.observeWireGuardLink(ctx, name)
+	if err != nil {
+		return observed, err
+	}
+	current, err := c.wireGuardScope(ctx)
+	if err != nil {
+		return observed, err
+	}
+	if current != scope {
+		return nativeWireGuardLink{}, errors.New("WireGuard kernel scope changed during native observation")
+	}
+	observed.Scope = scope
+	return observed, ctx.Err()
+}
+
+func (c WireGuardController) observeWireGuardLink(ctx context.Context, name string) (nativeWireGuardLink, error) {
 	switch c.currentOS() {
 	case platform.OSLinux:
 		out, err := c.runWireGuardHostCommand(ctx, "ip", "-j", "-d", "link", "show")
@@ -165,9 +245,10 @@ func (c WireGuardController) observeNativeWireGuard(ctx context.Context, name st
 			return nativeWireGuardLink{}, err
 		}
 		var links []struct {
-			Name  string `json:"ifname"`
-			Index int    `json:"ifindex"`
-			Alias string `json:"ifalias"`
+			Name  string   `json:"ifname"`
+			Index int      `json:"ifindex"`
+			Alias string   `json:"ifalias"`
+			Flags []string `json:"flags"`
 			Info  struct {
 				Kind string `json:"info_kind"`
 			} `json:"linkinfo"`
@@ -187,7 +268,7 @@ func (c WireGuardController) observeNativeWireGuard(ctx context.Context, name st
 				if !owned {
 					token = ""
 				}
-				return nativeWireGuardLink{Exists: true, IfIndex: link.Index, Token: token, Kind: link.Info.Kind}, nil
+				return nativeWireGuardLink{Exists: true, IfIndex: link.Index, Token: token, Kind: link.Info.Kind, Up: slices.Contains(link.Flags, "UP")}, nil
 			}
 		}
 		return nativeWireGuardLink{}, nil
@@ -238,6 +319,9 @@ func (c WireGuardController) verifyNativeWireGuard(record wireGuardNativeRecord,
 	if record.OS != c.currentOS() {
 		return fmt.Errorf("WireGuard ownership belongs to %s, current platform is %s", record.OS, c.currentOS())
 	}
+	if record.Scope == "" || record.Scope != observed.Scope {
+		return errors.New("WireGuard native observation differs from its recorded kernel scope")
+	}
 	if !observed.Exists {
 		return nil
 	}
@@ -263,6 +347,9 @@ func (c WireGuardController) ensureNativeWireGuard(ctx context.Context, resource
 	if err != nil {
 		return record, err
 	}
+	if record.Name != "" && record.Scope != observed.Scope {
+		return record, errors.New("WireGuard ownership belongs to another kernel scope")
+	}
 	if observed.Exists {
 		if record.Resource != resource {
 			return record, fmt.Errorf("WireGuard interface %s is not owned by this resource", name)
@@ -283,7 +370,7 @@ func (c WireGuardController) ensureNativeWireGuard(ctx context.Context, resource
 		if _, err := rand.Read(token[:]); err != nil {
 			return record, err
 		}
-		record = wireGuardNativeRecord{Resource: resource, Name: name, Token: hex.EncodeToString(token[:]), OS: c.currentOS(), Pending: true, Ports: []int{}}
+		record = wireGuardNativeRecord{Resource: resource, Name: name, Token: hex.EncodeToString(token[:]), Scope: observed.Scope, OS: c.currentOS(), Pending: true, Ports: []int{}}
 	} else if record.Resource != resource || record.OS != c.currentOS() {
 		return record, fmt.Errorf("WireGuard pending creation has a different owner")
 	}
@@ -291,9 +378,44 @@ func (c WireGuardController) ensureNativeWireGuard(ctx context.Context, resource
 	if err := c.saveNativeWireGuardRecord(record); err != nil {
 		return record, err
 	}
+	if err := c.checkWireGuardScope(ctx, record); err != nil {
+		return record, err
+	}
 	var createErr error
 	if c.currentOS() == platform.OSLinux {
-		_, createErr = c.runWireGuardHostCommand(ctx, "ip", "link", "add", "name", name, "alias", "routerd-wg:"+record.Token, "type", "wireguard")
+		// Linux does not apply IFLA_IFALIAS on RTM_NEWLINK. Only this
+		// successful exclusive create acknowledgement can admit cookie setup.
+		digest := sha256.Sum256([]byte(record.Token))
+		index := int(binary.BigEndian.Uint32(digest[:4])&0x3fffffff) + 1024
+		_, createErr = c.runWireGuardHostCommand(ctx, "ip", "link", "add", "name", name, "index", strconv.Itoa(index), "type", "wireguard")
+		if createErr != nil {
+			return record, createErr
+		}
+		current, err := c.readNativeWireGuard()
+		if err != nil {
+			return record, err
+		}
+		found := false
+		for _, pending := range current {
+			if sameWireGuardNativeRecord(pending, record) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return record, errors.New("WireGuard pending receipt changed before cookie installation")
+		}
+		if err := c.checkWireGuardScope(ctx, record); err != nil {
+			return record, err
+		}
+		install := c.SetAliasByIndex
+		if install == nil {
+			install = setWireGuardAliasByIndex
+		}
+		if err := install(index, name, "routerd-wg:"+record.Token); err != nil {
+			return record, err
+		}
+		record.IfIndex = index
 	} else {
 		_, createErr = c.runWireGuardHostCommand(ctx, "ifconfig", "wg", "create", "name", name, "description", "routerd-wg:"+record.Token)
 	}
@@ -306,6 +428,9 @@ func (c WireGuardController) ensureNativeWireGuard(ctx context.Context, resource
 	}
 	if err := c.verifyNativeWireGuard(record, observed); err != nil {
 		return record, errors.Join(createErr, err)
+	}
+	if err := c.checkWireGuardScope(ctx, record); err != nil {
+		return record, err
 	}
 	record.IfIndex = observed.IfIndex
 	if err := c.saveNativeWireGuardRecord(record); err != nil {
@@ -336,6 +461,9 @@ func (c WireGuardController) cleanupNativeWireGuard(ctx context.Context, active 
 		if observed.Exists {
 			record.Pending = true
 			if err := c.saveNativeWireGuardRecord(record); err != nil {
+				return err
+			}
+			if err := c.checkNativeWireGuard(ctx, record); err != nil {
 				return err
 			}
 			var err error
@@ -381,6 +509,9 @@ func (c WireGuardController) reconcileNativeWireGuardPorts(ctx context.Context, 
 	if c.currentOS() != platform.OSLinux {
 		return record, nil
 	}
+	if err := c.checkNativeWireGuard(ctx, record); err != nil {
+		return record, err
+	}
 	wanted := false
 	for _, existing := range record.Ports {
 		wanted = wanted || existing == port
@@ -393,12 +524,18 @@ func (c WireGuardController) reconcileNativeWireGuardPorts(ctx context.Context, 
 		}
 	}
 	if port > 0 {
+		if err := c.checkNativeWireGuard(ctx, record); err != nil {
+			return record, err
+		}
 		if err := c.ensureOwnedWireGuardInputAccept(ctx, port, record.Token); err != nil {
 			return record, err
 		}
 	}
 	for _, previous := range record.Ports {
 		if previous != port {
+			if err := c.checkWireGuardScope(ctx, record); err != nil {
+				return record, err
+			}
 			if err := c.deleteOwnedWireGuardInputAccept(ctx, previous, record.Token); err != nil {
 				return record, err
 			}
@@ -409,6 +546,10 @@ func (c WireGuardController) reconcileNativeWireGuardPorts(ctx context.Context, 
 		record.Ports = []int{port}
 	}
 	return record, nil
+}
+
+func sameWireGuardNativeRecord(left, right wireGuardNativeRecord) bool {
+	return left.Resource == right.Resource && left.Name == right.Name && left.Token == right.Token && left.Scope == right.Scope && left.ConfigHash == right.ConfigHash && left.OS == right.OS && left.IfIndex == right.IfIndex && left.Pending == right.Pending && slices.Equal(left.Ports, right.Ports)
 }
 
 func wireGuardInputRule(action string, port int, token string) []string {

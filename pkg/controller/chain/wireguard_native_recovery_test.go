@@ -116,7 +116,7 @@ func TestWireGuardNativeFreeBSDUsesOwnedDescriptionAndDestroy(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			controller := WireGuardController{Store: store, OS: platform.OSFreeBSD}
+			controller := WireGuardController{Store: store, OS: platform.OSFreeBSD, NativeScope: func(context.Context) (string, error) { return "freebsd-fixture-kernel", nil }}
 			exists, token := false, ""
 			creates, deletes := 0, 0
 			controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {

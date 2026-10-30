@@ -28,14 +28,16 @@ import (
 )
 
 type WireGuardController struct {
-	Router       *api.Router
-	Bus          *bus.Bus
-	Store        wireGuardStore
-	DryRun       bool
-	Command      wireguard.CommandRunner
-	CommandStdin wireguard.CommandStdinRunner
-	Logger       *slog.Logger
-	OS           platform.OS
+	Router          *api.Router
+	Bus             *bus.Bus
+	Store           wireGuardStore
+	DryRun          bool
+	Command         wireguard.CommandRunner
+	CommandStdin    wireguard.CommandStdinRunner
+	Logger          *slog.Logger
+	OS              platform.OS
+	NativeScope     func(context.Context) (string, error)
+	SetAliasByIndex func(int, string, string) error
 }
 
 type wireGuardPeersFromStatus struct {
@@ -254,7 +256,6 @@ func (c WireGuardController) resolvePeersFrom(iface string, spec api.WireGuardIn
 				status.PeerCount++
 			}
 			statuses = append(statuses, status)
-			_ = c.saveSAMEnrollmentPolicyStatus(ref, status)
 			continue
 		}
 		if sourceOK && sourceKind == "SAMPeerGroup" {
@@ -1106,6 +1107,11 @@ func routerdManagedObjectStatus(item routerstate.ObjectStatus) bool {
 }
 
 func (c WireGuardController) reconcileInterface(ctx context.Context, resource api.Resource, peersFrom []wireGuardPeersFromStatus, pendingSources []string) error {
+	for _, source := range peersFrom {
+		if err := c.saveSAMEnrollmentPolicyStatus(source.Resource, source); err != nil {
+			return err
+		}
+	}
 	cfg, err := wireguard.BuildInterface(resource, c.Router.Spec.Resources)
 	if err != nil {
 		return err
@@ -1194,6 +1200,9 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		if !c.DryRun {
 			native.Pending = true
 			if err := c.saveNativeWireGuardRecord(native); err != nil {
+				return err
+			}
+			if err := c.checkNativeWireGuard(ctx, native); err != nil {
 				return err
 			}
 		}
@@ -1300,7 +1309,11 @@ func (c WireGuardController) reconcileInterface(ctx context.Context, resource ap
 		if statusErr != nil {
 			return statusErr
 		}
+		if err := c.checkNativeWireGuard(ctx, native); err != nil {
+			return err
+		}
 		native.Pending = false
+		native.ConfigHash = configHash
 		if err := c.saveNativeWireGuardRecord(native); err != nil {
 			return err
 		}

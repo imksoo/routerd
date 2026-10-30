@@ -15,11 +15,12 @@ import (
 // Child effects consume proof from each concrete native owner. This reader has
 // no journal, cache, effects, or authority derived from display status.
 type nativeParentReader struct {
-	Router   *api.Router
-	Store    Store
-	Segments *VXLANSegmentController
-	DSLite   *DSLiteTunnelController
-	Bridges  *BridgeController
+	Router    *api.Router
+	Store     Store
+	Segments  *VXLANSegmentController
+	DSLite    *DSLiteTunnelController
+	Bridges   *BridgeController
+	WireGuard *WireGuardController
 }
 type nativeParentLink struct {
 	Exists, Declared     bool
@@ -33,6 +34,8 @@ func validNativeParentToken(token string) bool {
 		token, size = raw, 24
 	} else if raw, ok := strings.CutPrefix(token, "bridge:"); ok {
 		token, size = raw, 24
+	} else if raw, ok := strings.CutPrefix(token, "wireguard:"); ok {
+		token = raw
 	}
 	decoded, err := hex.DecodeString(token)
 	return err == nil && len(decoded) == size
@@ -62,6 +65,18 @@ func (r nativeParentReader) bridgeOwner() BridgeController {
 	owner.Router, owner.Store = r.Router, r.Store
 	return owner
 }
+func (r nativeParentReader) wireGuardOwner() (WireGuardController, error) {
+	owner := WireGuardController{}
+	if r.WireGuard != nil {
+		owner = *r.WireGuard
+	}
+	store, ok := r.Store.(wireGuardStore)
+	if !ok {
+		return owner, errors.New("WireGuard parent journal reader is unavailable")
+	}
+	owner.Router, owner.Store = r.Router, store
+	return owner, nil
+}
 func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) (nativeParentLink, error) {
 	if r.Router == nil {
 		return nativeParentLink{}, errors.New("child parent router is unavailable")
@@ -71,6 +86,13 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var name, configuredAlias string
 		var err error
 		switch resource.Kind {
+		case "WireGuardInterface":
+			if r.WireGuard != nil && r.WireGuard.currentOS() != platform.OSLinux || r.WireGuard == nil && platform.CurrentOS() != platform.OSLinux {
+				continue
+			}
+			var spec api.WireGuardInterfaceSpec
+			spec, err = resource.WireGuardInterfaceSpec()
+			name = firstNonEmpty(spec.IfName, resource.Metadata.Name)
 		case "Bridge":
 			// Only Linux has a Bridge receipt owner here. FreeBSD's existing
 			// boot backend remains outside this owner's qualification scope.
@@ -103,6 +125,12 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		selected = resource
 	}
 	switch selected.Kind {
+	case "WireGuardInterface":
+		owner, err := r.wireGuardOwner()
+		if err != nil {
+			return nativeParentLink{}, err
+		}
+		return owner.observeChildParent(ctx, selected, "", "")
 	case "Bridge":
 		owner := r.bridgeOwner()
 		link, err := owner.observeChildParent(ctx, selected, "", "")
@@ -131,6 +159,13 @@ func (r nativeParentReader) observeRecorded(ctx context.Context, ifname, token s
 	}
 	if raw, ok := strings.CutPrefix(token, "bridge:"); ok {
 		owner := r.bridgeOwner()
+		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
+	}
+	if raw, ok := strings.CutPrefix(token, "wireguard:"); ok {
+		owner, err := r.wireGuardOwner()
+		if err != nil {
+			return nativeParentLink{}, err
+		}
 		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
 	}
 	owner := r.segmentOwner()

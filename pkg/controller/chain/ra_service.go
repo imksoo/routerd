@@ -78,6 +78,7 @@ type RouterAdvertisementService struct {
 	segments      *VXLANSegmentController
 	dslite        *DSLiteTunnelController
 	bridges       *BridgeController
+	wireGuard     *WireGuardController
 	scope         func(context.Context) (string, error)
 	clock         func() time.Time
 }
@@ -295,7 +296,7 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 }
 
 func (s *RouterAdvertisementService) advertisementParent(ctx context.Context, ifname string, active bool, recordedToken string) (nativeParentLink, error) {
-	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments, DSLite: s.dslite, Bridges: s.bridges}
+	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments, DSLite: s.dslite, Bridges: s.bridges, WireGuard: s.wireGuard}
 	if !active && recordedToken != "" {
 		owner := child.nativeParentReader()
 		return owner.observeRecorded(ctx, ifname, recordedToken)

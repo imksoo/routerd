@@ -2486,10 +2486,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	nativeMobilityMu := &sync.Mutex{}
 	vxlanParent := &VXLANSegmentController{Store: store, StartedAt: r.startedAt()}
 	dsliteParent := &DSLiteTunnelController{ResolverPort: opts.DnsmasqPort}
-	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge}
-	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge}
+	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard}
+	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Logger: logger}
@@ -2500,6 +2500,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		lifetimes.advertisements.segments = vxlanParent
 		lifetimes.advertisements.dslite = dsliteParent
 		lifetimes.advertisements.bridges = &bridge
+		lifetimes.advertisements.wireGuard = &wireGuard
 		dhcpv6.Advertisements = lifetimes.advertisements
 	}
 	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
@@ -4651,6 +4652,7 @@ type LANAddressController struct {
 	Segments       *VXLANSegmentController
 	DSLite         *DSLiteTunnelController
 	Bridges        *BridgeController
+	WireGuard      *WireGuardController
 	ObserveAddress func(context.Context, string, string, bool) (delegatedAddressObservation, error)
 	Router         *api.Router
 	DeclaredRouter *api.Router
@@ -4691,6 +4693,7 @@ type IPv4StaticAddressController struct {
 	Segments          *VXLANSegmentController
 	DSLite            *DSLiteTunnelController
 	Bridges           *BridgeController
+	WireGuard         *WireGuardController
 }
 
 type DaemonStatusController struct {
