@@ -651,3 +651,60 @@ func TestBridgeCreationRefusesReplacementBeforeAliasInstallation(t *testing.T) {
 		t.Fatalf("failed alias installation lost pending recovery: %+v %v", owners, err)
 	}
 }
+
+func TestBridgeUnconfirmedCreationRetainsReceiptAfterRemoval(t *testing.T) {
+	for _, scenario := range []string{"removed", "plan-changed"} {
+		t.Run(scenario, func(t *testing.T) {
+			controller, native := bridgeNativeFixture(t, &bridgeActivationStore{mapStore: mapStore{}})
+			install := controller.SetAliasByIndex
+			aliasAttempts := 0
+			controller.SetAliasByIndex = func(index int, ifname, proof string) error {
+				aliasAttempts++
+				if aliasAttempts == 1 {
+					return errors.New("fixture alias installation failure")
+				}
+				return install(index, ifname, proof)
+			}
+			if err := controller.Reconcile(t.Context()); err == nil {
+				t.Fatal("failed alias installation was acknowledged")
+			}
+			owners, err := controller.readBridgeOwners()
+			if err != nil || len(owners) != 1 || owners[0].IfIndex != 0 || owners[0].Activated || native.created != 1 || aliasAttempts != 1 || native.alias["br-l2"] != "" {
+				t.Fatalf("failed alias installation lost its unconfirmed creation: owners=%+v created=%d attempts=%d err=%v", owners, native.created, aliasAttempts, err)
+			}
+			before := owners[0]
+			link := native.links["br-l2"]
+			restarted := controller
+			native.commands = nil
+			if err := restarted.Reconcile(t.Context()); err == nil || aliasAttempts != 1 || len(native.commands) != 0 {
+				t.Fatalf("restart replayed alias installation without its creation acknowledgement: attempts=%d commands=%v err=%v", aliasAttempts, native.commands, err)
+			}
+			if scenario == "removed" {
+				restarted.Router = &api.Router{}
+			} else {
+				restarted.Router = bridgeVXLANTestRouter(false)
+				for i, resource := range restarted.Router.Spec.Resources {
+					if resource.Kind == "Bridge" {
+						spec, err := resource.BridgeSpec()
+						if err != nil {
+							t.Fatal(err)
+						}
+						spec.IfName = "br-new"
+						restarted.Router.Spec.Resources[i].Spec = spec
+					}
+				}
+			}
+			if err := restarted.Reconcile(t.Context()); err == nil {
+				t.Fatal("configuration change retired an unconfirmed native creation")
+			}
+			after, err := restarted.readBridgeOwners()
+			if err != nil || len(after) != 1 || after[0].Token != before.Token || after[0].Scope != before.Scope || after[0].IfIndex != 0 || after[0].Activated || after[0].Plan.digest() != before.Plan.digest() {
+				t.Fatalf("configuration change lost the unconfirmed receipt: before=%+v after=%+v err=%v", before, after, err)
+			}
+			retained, exists := native.links["br-l2"]
+			if !exists || retained.Index != link.Index || retained.Flags != link.Flags || native.alias["br-l2"] != "" || native.created != 1 || aliasAttempts != 1 || len(native.deleted) != 0 || len(native.commands) != 0 {
+				t.Fatalf("unconfirmed native creation was replayed or mutated: attempts=%d native=%+v", aliasAttempts, native)
+			}
+		})
+	}
+}

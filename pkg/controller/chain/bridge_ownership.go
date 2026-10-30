@@ -679,6 +679,9 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 			return err
 		}
 		owned = strings.TrimSpace(string(alias)) == owner.proof() && (owner.IfIndex == 0 || owner.IfIndex == iface.Index)
+		if owner.IfIndex == 0 && !owned {
+			return errors.New("Bridge creation outcome is unconfirmed; retain its receipt until native absence is observed")
+		}
 		if owned {
 			if !c.isKernelBridge(iface.Name) {
 				return fmt.Errorf("owned native link is not a Bridge")
