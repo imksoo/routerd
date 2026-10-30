@@ -29,6 +29,12 @@ LAN 側 (ルーターから内側に提供するサービス) は [LAN 側サー
 
 ISP の提供形態に応じて、必要なリソースの組み合わせを選びます。
 
+`IPv6RAAddress.spec.managed: false` は RA/SLAAC の観測専用の指定です。
+Linux では、この宣言から RA 受信の sysctl や networkd の引き取り設定を生成しません。
+`managed` の省略または `true` は管理を有効にします。同じインターフェースの
+`DHCPv6PrefixDelegation` など、別リソースが必要とするホスト設定は引き続き適用します。
+このフィールドの変更は、以前の管理設定が適用したホスト設定を元に戻す操作ではありません。
+
 ## パターン A: ネイティブデュアルスタック (IPv4 + IPv6)
 
 ISP が同一 WAN インターフェースで IPv4 (DHCPv4) と IPv6 prefix (DHCPv6-PD) を配布する構成です。

@@ -730,12 +730,12 @@ func TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack(t *testing.T) {
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "sh", "-c", script[:end]+name+"_start\nexit $?\n")
 		cmd.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"), "SERVICE_LOG="+serviceLog, "SERVICE_STATE="+filepath.Join(dir, "service.state"), "TAILSCALED_PIDFILE="+pidfile, "TAILSCALE_UP_MARKER="+upMarker, "PROCSTAT_BIN="+filepath.Join(binDir, "procstat"))
-		err := cmd.Run()
+		output, err := cmd.CombinedOutput()
 		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
-			t.Fatalf("timeout start exit = %v, want 124", err)
+			t.Fatalf("timeout start exit = %v, want 124; output: %s", err, output)
 		}
 		if _, err := os.Stat(filepath.Join(markerDir, name+".owner")); !os.IsNotExist(err) {
-			t.Fatalf("ownership marker remains after bounded rollback: %v", err)
+			t.Fatalf("ownership marker remains after bounded rollback: %v; output: %s", err, output)
 		}
 		_, markerErr := os.Stat(upMarker)
 		if wantUp && markerErr != nil {

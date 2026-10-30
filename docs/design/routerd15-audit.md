@@ -1855,3 +1855,130 @@ Successful raw captures are deleted automatically. Resolved failed-run captures,
 outputs and superseded duplicate packages are removed after the final pass.
 The ledger binds the package hash and revisions. FreeBSD WAN DHCP, reboot/NAK,
 server identity changes, multi-WAN failover and complete 1.0 parity remain open.
+
+### Observe-only WAN RA host effects
+
+At `7acdc692`, `IPv6RAAddress.managed: false` still generated an
+`accept_ra=2` runtime write/persistent sysctl file and a networkd adoption
+drop-in/reconfigure. Test-first checkpoint `3469b567` reproduces both effects
+through `SysctlController.Reconcile` and `NetworkAdoptionController.Reconcile`
+with isolated temporary files and injected commands; it does not alter host
+networking. The same missing managed check exists in the 1.0 baseline.
+
+The focused correction gates both derived host settings on the existing
+default-true managed field. The reproducer passes for observe-only, omitted/true
+management, and an independent PD owner on the same interface. Related sysctl
+and network-adoption tests, host dependency tests and schema checks passed.
+The broader render check failed in the existing
+`TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack/tailscale-up` marker
+cleanup assertion, and `make validate-example` failed because its sandbox
+server exited with `context deadline exceeded`. These failures remain under
+investigation at the first checkpoint. Capturing the previously discarded rc.d
+output at `17b303ab` identified the stop-not-confirmed branch, which correctly
+retains ownership. A normal whole-Go run on the persistent test directory failed
+in two packages: two ARP tests timed out while opening a new SQLite database,
+and the Tailscale rollback fixture could not confirm stop. Concurrent host
+observations showed high I/O pressure; this is not a reason to weaken deadlines
+or remove retained ownership. The unchanged baseline passed the focused
+Tailscale check and sandbox startup, and example validation subsequently passed.
+
+At `17b303ab`, the same test deadlines and production code passed the whole Go
+suite with test temporary files on an existing executable tmpfs:
+`TMPDIR=/tmp/r15 GOTMPDIR=/tmp go test -p 2 -json ./...` (`/tmp/r15` was a temporary
+symlink to that tmpfs). There were 120 passing packages, nine with no tests,
+4,161 passing top-level tests, 14 skips and no failures; 46 package verdicts
+were cached. The ARP failure reproducer passed in 0.03 seconds there. This is
+functional unit/control-plane verification, not persistent-media durability or
+proof that the original storage condition is repaired. Four-locale website
+build passed with existing unrelated localized-link warnings. Successful raw
+outputs and the temporary test area are removed after recording these limits.
+
+The change prevents new observe-only effects; it does not restore settings from
+an earlier managed configuration or qualify WAN SLAAC/IA_NA interoperability.
+
+
+#### Persistent-directory follow-up
+
+With I/O pressure reduced, the same three previously failing top-level tests
+and the RA observe-only test passed on the development host's default persistent
+`/tmp`, without changing deadlines or product code. At clean `593cb42b`, pinned
+CGO-disabled Linux test binaries then passed those four tests as an unprivileged
+user in an isolated Ubuntu 24.04.4 VM (kernel 6.8.0-124-generic, ext4 `/tmp`).
+The two ARP tests completed in 0.09 and 1.06 seconds, RA host-effect fixtures in
+0.04 seconds, and the rc.d timeout/rollback fixture in 2.05 seconds. This checks
+actual SQLite files and controller/renderer fixtures; network commands remain
+injected and rc.d behavior is a shell fixture on Linux, not native FreeBSD or
+WAN RA interoperability. The installed router stayed healthy with empty intent.
+This narrower rerun does not replace a complete persistent-directory suite or
+prove operation under sustained storage pressure. Test binaries and successful
+raw outputs are removed; hashes and the source are recorded in the ledger.
+
+### FOU and GUE candidate native gate
+
+Candidate source/test `5be3b91e` was tested separately from the shared proposal,
+using a pinned static Go test binary in an isolated Linux VM. FOU passed actual
+controller/SQLite ownership, separately configured iproute2-peer echo traffic,
+unchanged reconciliation without another apply, source-status revocation,
+parent/child withdrawal, fresh-token reacquisition and final receipt removal.
+The source-status transition is injected through the canonical store, not a
+real DHCP expiry. Both peers use the same Linux kernel in different network
+namespaces; this is not different-device interoperability.
+
+GUE failed during controller acquisition with `numerical result out of range`.
+The separately configured peer's `ip fou add port 5556 gue` succeeded. The
+candidate's `addTunnelNativeFOU` calls netlink v1.3.1 `FouAdd`, which serializes
+`Protocol=0` as an explicit `FOU_ATTR_IPPROTO` attribute. The kernel's
+[FOU attribute policy](https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux.git/+/0506158ac7363a70f0deb49f71d26ccb57e55990/net/ipv4/fou_nl.c)
+requires a supplied IPPROTO value to be at least one. GUE ADD must omit that
+attribute while direct FOU retains protocol 4. The corrected candidate result
+is recorded below; the original failure remains bound to its tested revision.
+
+Environment certification must precede the test: load guest `ipip`, `ip_gre`
+and `fou` modules, verify an isolated kernel listener/link create-read-delete,
+then run the pinned test with guest-root capability and separate network/mount
+namespaces. `unshare -Urnm` fails before controller execution because FOU's
+`GENL_ADMIN_PERM` needs initial-user-namespace capability. The working wrapper
+uses `unshare -nm`, a private mount tree and a fresh sysfs mount; the test checks
+that host, router and peer network namespaces differ. The peer acknowledged
+exit and was reaped after both the failed setup and actual gate. No trial link,
+named namespace or FOU listener remained in the guest root namespace. Default
+module-created tunnel devices remained down. This candidate gate is not a claim
+that the pending TunnelInterface implementation is integrated or fully qualified.
+
+
+#### Corrected GUE candidate
+
+At clean candidate `fedafe49fc05f5e6fd61823572e7d7f87e1c8edf`,
+`addTunnelNativeFOU` uses context-bounded `ip -4 fou add port <port> gue`
+for GUE, leaving direct FOU on its protocol-4 netlink path. The pinned Linux
+Go 1.25.9, CGO-disabled test harness passed both FOU and GUE lifecycle subtests
+on the same certified Ubuntu 24.04.4 / Linux 6.8.0-124-generic VM (2.75 seconds).
+Each independent kernel peer received the two encapsulated test packets.
+Acquisition, unchanged reconciliation, injected source revocation, child/parent
+withdrawal, fresh-token reacquisition with traffic, final receipt removal and
+peer exit/reap all passed. The local `TestTunnelInterface*` and
+`TestTunnelNativeReview*` controller fixtures also passed before the native run.
+The owner's separately supplied test binary at the same revision also passed
+both native subtests (2.70 seconds); both binary hashes are in the ledger.
+
+Reproduce from the pinned candidate source after environment certification:
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o chain.test ./pkg/controller/chain
+# Copy this test harness to the dedicated VM and verify its SHA-256.
+# Run as guest root; keep the guest host network namespace untouched.
+export ROUTERD_RUN_NETNS=1
+export ROUTERD_HOST_NETNS=$(readlink /proc/self/ns/net)
+unshare -nm sh -c 'mount --make-rprivate / && mount -t sysfs sysfs /sys && exec "$@"' sh \
+  /absolute/path/chain.test \
+  -test.run '^TestTunnelNativeLinuxPeerLifecycle$/(fou|gue)$' \
+  -test.count=1 -test.v -test.timeout=150s
+```
+
+This is a controller test harness, not an installed product upgrade. The
+installed `31d5f4d4` router remained Healthy with no controller errors; no trial
+namespace, listener or tunnel remained outside the isolated test. The source
+revocation is still injected and both peers share a Linux kernel. Full daemon
+integration, actual DHCP expiry for this tunnel, other platforms and all
+TunnelInterface functionality remain separate gates. Successful binaries and
+raw logs can be removed after recording the source, hash and verdict.

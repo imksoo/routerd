@@ -35,6 +35,13 @@ first, then use a matching complete example before making a live WAN change.
 
 You typically pick a subset of these depending on what the ISP gives you.
 
+`IPv6RAAddress.spec.managed: false` declares observation-only RA/SLAAC intent.
+On Linux, this declaration does not generate RA-acceptance sysctls or networkd
+adoption settings. Omitting `managed` or setting it to `true` retains management.
+Other resources on the same interface, such as `DHCPv6PrefixDelegation`, still
+apply their own host requirements. Changing this field is not a rollback of
+host settings previously applied by a managed configuration.
+
 ## Pattern A: Native dual-stack (IPv4 + IPv6)
 
 The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6-PD on the same WAN interface.
