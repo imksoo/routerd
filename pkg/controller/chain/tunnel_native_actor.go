@@ -30,18 +30,25 @@ func (c TunnelInterfaceController) currentTunnelDesired(name string) (tunnelDesi
 	return tunnelDesired{}, true, "DeclarationRemoved", nil
 }
 
-func (c TunnelInterfaceController) requireTunnelNativeInputs(ctx context.Context, record tunnelNativeReceipt) error {
+func (c TunnelInterfaceController) checkTunnelNativeInputs(ctx context.Context, record tunnelNativeReceipt) error {
 	desired, pending, _, err := c.currentTunnelDesired(record.Resource)
 	if err != nil {
 		return err
 	}
 	if pending || desired != record.Plan {
-		if err := c.withdrawTunnelNative(ctx, record); err != nil {
-			return err
-		}
 		return errTunnelNativeInputsChanged
 	}
 	return c.checkTunnelNativeReceipt(ctx, record)
+}
+
+func (c TunnelInterfaceController) requireTunnelNativeInputs(ctx context.Context, record tunnelNativeReceipt) error {
+	err := c.checkTunnelNativeInputs(ctx, record)
+	if errors.Is(err, errTunnelNativeInputsChanged) {
+		if withdrawErr := c.withdrawTunnelNative(ctx, record); withdrawErr != nil {
+			return withdrawErr
+		}
+	}
+	return err
 }
 
 func (c TunnelInterfaceController) reconcileNativeTunnels(ctx context.Context) error {
@@ -205,7 +212,15 @@ func (c TunnelInterfaceController) reconcileTunnelNative(ctx context.Context, na
 		if _, err := c.run(ctx, "ip", args...); err != nil {
 			return err
 		}
-		if err := c.requireTunnelNativeInputs(ctx, record); err != nil {
+		// This invocation has the successful exclusive create ACK. If current
+		// intent was revoked while it waited, retire only that exact bare index.
+		// A resumed pending receipt never enters this acknowledged branch.
+		if err := c.checkTunnelNativeInputs(ctx, record); err != nil {
+			if errors.Is(err, errTunnelNativeInputsChanged) {
+				if cleanupErr := c.withdrawAcknowledgedTunnelCreate(ctx, record, index); cleanupErr != nil {
+					return cleanupErr
+				}
+			}
 			return err
 		}
 		install := c.SetAliasByIndex
@@ -261,6 +276,35 @@ func (c TunnelInterfaceController) reconcileTunnelNative(ctx context.Context, na
 	prior := record
 	record.Pending, record.PreviousAddress = false, ""
 	return c.saveTunnelNative(&prior, record, false)
+}
+
+func (c TunnelInterfaceController) withdrawAcknowledgedTunnelCreate(ctx context.Context, record tunnelNativeReceipt, index int) error {
+	if err := c.checkTunnelNativeReceipt(ctx, record); err != nil {
+		return err
+	}
+	prior := record
+	record.Withdrawing = true
+	if err := c.saveTunnelNative(&prior, record, false); err != nil {
+		return err
+	}
+	remove := c.DeleteByIndex
+	if remove == nil {
+		remove = deleteTunnelNativeLink
+	}
+	if err := c.checkTunnelNativeReceipt(ctx, record); err != nil {
+		return err
+	}
+	if err := remove(ctx, index, record.Plan.Name, tunnelNativeKind(record.Plan.Mode), "", record.Scope); err != nil {
+		return err
+	}
+	link, err := c.observeOwnedTunnel(ctx, record.Plan.Name)
+	if err != nil || link.Exists || link.Scope != record.Scope {
+		return errors.Join(err, errors.New("TunnelInterface acknowledged create withdrawal is unconfirmed"))
+	}
+	if err := c.retireTunnelNativeListener(ctx, &record); err != nil {
+		return err
+	}
+	return c.saveTunnelNative(&record, record, true)
 }
 
 func (c TunnelInterfaceController) withdrawTunnelNative(ctx context.Context, record tunnelNativeReceipt) error {
