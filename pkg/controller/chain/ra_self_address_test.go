@@ -233,16 +233,21 @@ func TestRASelfNativeAddressObservationKeepsHostAddressAndLifetime(t *testing.T)
 func TestRASelfPolicyInterfaceAddressUsesLiveCommandAndConfiguredOrder(t *testing.T) {
 	service, _, router, endpoint, socket, _ := raServiceFixture(t)
 	dir := t.TempDir()
-	response := filepath.Join(dir, "addresses.json")
-	write := func(text string) {
+	response := filepath.Join(dir, "addresses.txt")
+	write := func(text, bsd string) {
+		if platform.CurrentOS() == platform.OSFreeBSD {
+			text = bsd
+		}
 		t.Helper()
 		if err := os.WriteFile(response, []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write(`[{"ifname":"ra-test-lan","addr_info":[{"local":"2001:db8::53","prefixlen":128,"preferred_life_time":15,"valid_life_time":23}]}]`)
-	if err := os.WriteFile(filepath.Join(dir, "ip"), []byte("#!/bin/sh\ncat '"+response+"'\n"), 0755); err != nil {
-		t.Fatal(err)
+	write(`[{"ifname":"ra-test-lan","addr_info":[{"local":"2001:db8::53","prefixlen":128,"preferred_life_time":15,"valid_life_time":23}]}]`, "ra-test-lan: flags=\n\tinet6 2001:db8::53 prefixlen 128 pltime 15 vltime 23\n")
+	for _, name := range []string{"ip", "ifconfig"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\ncat '"+response+"'\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	configureRASelfPolicy(t, service, router,
@@ -254,15 +259,17 @@ func TestRASelfPolicyInterfaceAddressUsesLiveCommandAndConfiguredOrder(t *testin
 	if got := raWireDNS(t, socket.packets[0]); len(got) != 1 || got["2001:db8::53"] != 23 {
 		t.Fatalf("live interface self DNS lifetime lost: %v", got)
 	}
-	write(`[{"ifname":"ra-test-lan","addr_info":[]}]`)
+	write(`[{"ifname":"ra-test-lan","addr_info":[]}]`, "ra-test-lan: flags=\n")
 	if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err != nil {
 		t.Fatal(err)
 	}
 	if got := raWireDNS(t, socket.packets[1]); got["2001:db8::53"] != 0 || got["2001:db8::99"] != 109 {
 		t.Fatalf("native disappearance did not select fallback and withdraw old DNS: %v", got)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ip"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"ip", "ifconfig"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err == nil || len(socket.packets) != 2 {
 		t.Fatalf("failed native read selected a fallback/effect: %v", err)
@@ -304,8 +311,14 @@ func TestRASelfPolicyCrossInterfaceRequiresCurrentNativeReceiptIdentity(t *testi
 	candidate := raSelfDNSCandidate{Spec: api.SelfAddressPolicyCandidate{Source: "delegatedAddress", DelegatedAddress: "dns-address"}, IfName: "other-lan", Delegated: &spec}
 	plan := raInterfacePlan{Interface: "ra-test-lan", NativeIndex: 7, NativeScope: receipt.Scope}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ip"), []byte("#!/bin/sh\nprintf '%s\\n' '[{\"ifname\":\"other-lan\",\"addr_info\":[{\"local\":\"2001:db8:1200:1::53\",\"prefixlen\":64,\"preferred_life_time\":15,\"valid_life_time\":23}]}]'\n"), 0755); err != nil {
-		t.Fatal(err)
+	output := `[{"ifname":"other-lan","addr_info":[{"local":"2001:db8:1200:1::53","prefixlen":64,"preferred_life_time":15,"valid_life_time":23}]}]`
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		output = "other-lan: flags=\n\tinet6 2001:db8:1200:1::53 prefixlen 64 pltime 15 vltime 23\n"
+	}
+	for _, name := range []string{"ip", "ifconfig"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\ncat <<'NATIVE'\n"+output+"\nNATIVE\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, tc := range []struct {

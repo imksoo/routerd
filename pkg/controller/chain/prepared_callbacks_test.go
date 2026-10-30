@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	"github.com/imksoo/routerd/pkg/ha"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/miekg/dns"
 )
@@ -61,7 +62,7 @@ func TestPreparedIngressCallbackRefreshesStatusDerivedResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := first.LocalAddr().(*net.UDPAddr).Port
-	second, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.2", strconv.Itoa(port)))
+	second, err := net.ListenPacket("udp6", net.JoinHostPort("::1", strconv.Itoa(port)))
 	if err != nil {
 		first.Close()
 		t.Fatal(err)
@@ -86,10 +87,13 @@ func TestPreparedIngressCallbackRefreshesStatusDerivedResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	loopback := "lo"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		loopback = "lo0"
+	}
 	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "accepted"}, Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "loopback"}, Spec: api.InterfaceSpec{IfName: "lo"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "dns-listen"}, Spec: api.IPv4StaticAddressSpec{Interface: "loopback", Address: "127.0.0.1/8"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{AddressFrom: []api.StatusValueSourceSpec{{Resource: "IPv4StaticAddress/dns-listen", Field: "address"}}, Port: port}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "loopback"}, Spec: api.InterfaceSpec{IfName: loopback}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "resolver"}, Spec: api.DNSResolverSpec{Listen: []api.DNSResolverListenSpec{{AddressFrom: []api.StatusValueSourceSpec{{Resource: "Interface/loopback", Field: "addresses"}}, Port: port}}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSForwarder"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.DNSForwarderSpec{Resolver: "DNSResolver/resolver", Match: []string{"."}, Upstreams: []string{"DNSUpstream/public"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSUpstream"}, Metadata: api.ObjectMeta{Name: "public"}, Spec: api.DNSUpstreamSpec{Protocol: "udp", Address: "127.0.0.1"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "service"}, Spec: api.IngressServiceSpec{Listen: api.IngressListenSpec{Interface: "loopback", Address: "192.0.2.1", Protocol: "tcp", Port: 443}, Backends: []api.IngressBackendSpec{{Name: "backend", Address: "backend.test", Port: 8443}}}},
@@ -97,13 +101,13 @@ func TestPreparedIngressCallbackRefreshesStatusDerivedResolver(t *testing.T) {
 	if err := config.Validate(router); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "dns-listen", map[string]any{"address": "127.0.0.1"}); err != nil {
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "loopback", map[string]any{"addresses": []string{"127.0.0.1/8"}}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &Runner{Router: router, Bus: bus.New(), Store: store, Opts: Options{EnabledControllers: []string{"ingress-service"}, DryRunIngress: true}}
 	controller := preparedCallback(t, runner)
-	for _, point := range []struct{ listen, answer string }{{"127.0.0.1", "192.0.2.11"}, {"127.0.0.2", "192.0.2.22"}} {
-		if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "dns-listen", map[string]any{"address": point.listen}); err != nil {
+	for _, point := range []struct{ listen, answer string }{{"127.0.0.1/8", "192.0.2.11"}, {"::1/128", "192.0.2.22"}} {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "loopback", map[string]any{"addresses": []string{point.listen}}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := controller.PeriodicReconcile(context.Background()); err != nil {
