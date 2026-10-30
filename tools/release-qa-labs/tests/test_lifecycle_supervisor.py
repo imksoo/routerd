@@ -1,4 +1,6 @@
 import argparse
+from contextlib import ExitStack
+import errno
 import importlib.util
 import json
 from pathlib import Path
@@ -30,6 +32,82 @@ class FakeChild:
 
     def wait(self, timeout=None):
         return 0
+
+
+class ProcessNamespaceTests(unittest.TestCase):
+    def members(self, caller_pids, candidate_pids, native_pid, *, invalid_pid=None, mismatched_proc=False, caller_status=None):
+        supervisor = lifecycle.Supervisor.__new__(lifecycle.Supervisor)
+        leader = caller_pids[-1] + 10
+        leader_proc = caller_pids[0] + 10
+        supervisor.state = {"mutationPid": leader, "mutationPgid": leader, "mutationStarted": 42}
+        opened = []
+
+        def pidfd_open(pid):
+            opened.append(pid)
+            # A descendant's inner PID collides with an unrelated native
+            # thread. pidfd_open cannot bind that non-leader thread on 6.8.
+            if pid == 856 or pid == invalid_pid:
+                raise OSError(errno.EINVAL, "Invalid argument")
+            if pid == leader:
+                return 910
+            if pid == native_pid:
+                return 911
+            self.fail(f"unexpected native PID {pid}")
+
+        def read_text(path, *args, **kwargs):
+            path = str(path)
+            if path == "/proc/self/status":
+                if caller_status is not None:
+                    return caller_status
+                return "NSpid:\t" + "\t".join(map(str, caller_pids)) + "\n"
+            if path == "/proc/90000/status":
+                return "NSpid:\t" + "\t".join(map(str, candidate_pids)) + "\n"
+            if path == "/proc/self/fdinfo/910":
+                return f"Pid:\t{leader_proc}\n"
+            if path == "/proc/self/fdinfo/911":
+                return "Pid:\t90001\n" if mismatched_proc else "Pid:\t90000\n"
+            if path in (f"/proc/{leader_proc}/stat", "/proc/90000/stat"):
+                return f"1 (mutation) S 0 {leader} {leader}" + " 0" * 15 + " 42 0\n"
+            self.fail(f"unexpected procfs read {path}")
+
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(lifecycle.Path, "iterdir", return_value=[Path("/proc/90000")]))
+            stack.enter_context(mock.patch.object(lifecycle.Path, "read_text", read_text))
+            stack.enter_context(mock.patch.object(lifecycle.os, "pidfd_open", side_effect=pidfd_open))
+            stack.enter_context(mock.patch.object(lifecycle.os, "getpid", return_value=caller_pids[-1]))
+            stack.enter_context(mock.patch.object(lifecycle.os, "getpgid", return_value=leader))
+            stack.enter_context(mock.patch.object(lifecycle.os, "getsid", return_value=leader))
+            stack.enter_context(mock.patch.object(lifecycle.os, "close"))
+            return supervisor.mutation_members(), opened
+
+    def test_census_uses_callers_namespace_column_before_pidfd_open(self):
+        for caller, candidate, native_pid in (
+            ([70000], [90000, 856], 90000),
+            ([70000, 100], [90000, 101, 856], 101),
+        ):
+            with self.subTest(caller=caller):
+                members, opened = self.members(caller, candidate, native_pid)
+                self.assertEqual([member.pid for member in members], [native_pid])
+                self.assertEqual(opened, [caller[-1] + 10, native_pid])
+                self.assertNotIn(856, opened)
+
+    def test_census_excludes_ancestor_and_keeps_pidfd_proc_identity_check(self):
+        members, opened = self.members([70000, 100], [90000], 90000)
+        self.assertEqual(members, [])
+        self.assertEqual(opened, [110])
+        members, opened = self.members([70000], [90000, 856], 90000, mismatched_proc=True)
+        self.assertEqual(members, [])
+        self.assertEqual(opened, [70010, 90000])
+
+    def test_census_keeps_errors_for_selected_native_processes(self):
+        with self.assertRaisesRegex(lifecycle.SupervisorError, "cannot observe process identity for 90000"):
+            self.members([70000], [90000, 856], 90000, invalid_pid=90000)
+
+    def test_census_requires_current_and_candidate_namespace_identity(self):
+        with self.assertRaisesRegex(lifecycle.SupervisorError, "current PID namespace identity is unavailable"):
+            self.members([70000], [90000], 90000, caller_status="Name:\tsupervisor\n")
+        with self.assertRaisesRegex(lifecycle.SupervisorError, "process observation has no PID namespace identity"):
+            self.members([70000], [], 90000)
 
 
 class ApprovedBudgetTests(unittest.TestCase):

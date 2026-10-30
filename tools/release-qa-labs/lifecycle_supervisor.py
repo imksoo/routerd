@@ -560,6 +560,16 @@ class Supervisor:
         leader = observe_process(self.state["mutationPid"])
         if leader is None or leader.started != self.state["mutationStarted"] or leader.pgid != pgid or leader.session != pgid:
             raise SupervisorError("mutation session identity is absent or replaced; refusing signals")
+        # procfs may be mounted in an ancestor PID namespace. Use the column
+        # visible to this caller, not a descendant's innermost numeric PID.
+        caller_pids = None
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("NSpid:"):
+                caller_pids = line.split()[1:]
+                break
+        if not caller_pids or int(caller_pids[-1]) != os.getpid():
+            raise SupervisorError("current PID namespace identity is unavailable")
+        namespace_column = len(caller_pids) - 1
         members = []
         for entry in Path("/proc").iterdir():
             if not entry.name.isdecimal():
@@ -568,13 +578,20 @@ class Supervisor:
                 status = (entry / "status").read_text(encoding="utf-8")
             except FileNotFoundError:
                 continue
-            namespace_pid = None
+            namespace_pids = None
             for line in status.splitlines():
                 if line.startswith("NSpid:"):
-                    namespace_pid = int(line.split()[-1])
+                    namespace_pids = line.split()[1:]
                     break
-            if namespace_pid is None:
+            if not namespace_pids:
                 raise SupervisorError("process observation has no PID namespace identity")
+            # An ancestor process without this column is not visible
+            # in the caller's namespace and cannot belong to its session.
+            if len(namespace_pids) <= namespace_column:
+                continue
+            namespace_pid = int(namespace_pids[namespace_column])
+            if namespace_pid <= 0:
+                raise SupervisorError("process observation has invalid PID namespace identity")
             observed = observe_process(namespace_pid, int(entry.name))
             if observed is not None and observed.pgid == pgid:
                 if observed.session != pgid:
