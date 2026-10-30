@@ -154,6 +154,8 @@ client MAC. The lease epoch must advance. This distinguishes actual
 fresh acquisition. A second outage must remove address, route, DNS/domain and
 forwarding at real lease expiry; returning Kea must restore them without a
 product restart. Empty apply must then become Healthy with no stale errors.
+The capture is stopped only after the saved file contains the required exchange;
+daemon acknowledgement alone does not prove libpcap has flushed its kernel buffer.
 
 Successful raw captures and outputs are deleted. A failed stage stops the
 product and peers and retains only the current fixture for local reproduction;
