@@ -869,8 +869,14 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var lease dhcpLeaseEvent
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&lease); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&lease); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		http.Error(w, "DHCP lease request must contain exactly one JSON value", http.StatusBadRequest)
 		return
 	}
 	topic, ok := daemonapi.DHCPLeaseEventType(lease.Action)

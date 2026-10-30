@@ -143,7 +143,7 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 		}
 	}()
 	for _, resolver := range resolvers {
-		config, preparedZones, err := c.runtimeConfig(resolver.name, resolver.spec)
+		config, preparedZones, err := c.runtimeConfig(ctx, resolver.name, resolver.spec)
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 	return reconcileErr
 }
 
-func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, []preparedZone, error) {
+func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, []preparedZone, error) {
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
 	var zones []preparedZone
 	servedZones := dnsResolverZoneRefs(spec)
@@ -238,12 +238,12 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	if hostsPath == "" {
 		hostsPath = filepath.Join(runtimeDir, "dnsmasq-hosts.hosts")
 	}
-	hostData, hostReadErr := os.ReadFile(hostsPath)
+	hostData, hostReadErr := readDHCPHosts(hostsPath)
 	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
 		return config, zones, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}
 	scopes := dnsresolver.DHCPScopes(c.Router)
-	dhcpHostRecords, err := c.namedDHCPAssignments(dnsresolver.ParseDNSMasqHostRecords(hostData), scopes)
+	dhcpHostRecords, err := c.namedDHCPAssignments(ctx, dnsresolver.ParseDNSMasqHostRecords(hostData), scopes)
 	if err != nil {
 		return config, zones, err
 	}

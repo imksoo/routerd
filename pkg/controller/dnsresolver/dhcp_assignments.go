@@ -5,6 +5,7 @@ package dnsresolver
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -19,7 +20,10 @@ import (
 // The hosts sidecar describes intended DHCP assignments. It carries neither a
 // named source nor a lease deadline, so it cannot itself become a live lease.
 // Join it to current configured reservations or still-held sticky DB rows.
-func (c Controller) namedDHCPAssignments(parsed []resolverruntime.RuntimeDHCPHostRecord, scopes []resolverruntime.DHCPAddressScope) ([]resolverruntime.RuntimeDHCPHostRecord, error) {
+func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverruntime.RuntimeDHCPHostRecord, scopes []resolverruntime.DHCPAddressScope) ([]resolverruntime.RuntimeDHCPHostRecord, error) {
+	if len(parsed) == 0 {
+		return nil, nil
+	}
 	now := time.Now().UTC()
 	var held []logstore.DHCPStickyLease
 	_, stateDir := c.dirs()
@@ -29,10 +33,13 @@ func (c Controller) namedDHCPAssignments(parsed []resolverruntime.RuntimeDHCPHos
 		if err != nil {
 			return nil, fmt.Errorf("read held DHCP assignments: %w", err)
 		}
-		held, err = store.List(context.Background(), logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
+		held, err = store.List(ctx, logstore.DHCPStickyFilter{HeldOnly: true, Now: now, Limit: 10000})
 		closeErr := store.Close()
 		if err != nil {
 			return nil, err
+		}
+		if len(held) == 10000 {
+			return nil, fmt.Errorf("held DHCP assignment limit reached; snapshot would be incomplete")
 		}
 		if closeErr != nil {
 			return nil, closeErr
@@ -56,7 +63,11 @@ func (c Controller) namedDHCPAssignments(parsed []resolverruntime.RuntimeDHCPHos
 			if err != nil {
 				return nil, err
 			}
-			if spec.Scope != "" || spec.Server != "" && "DHCPv4Server/"+spec.Server != source || !strings.EqualFold(spec.MACAddress, record.MAC) || spec.IPAddress != record.IP || !strings.EqualFold(spec.Hostname, record.Hostname) {
+			server := spec.Server
+			if server == "" {
+				server = spec.Scope
+			}
+			if server != "" && "DHCPv4Server/"+server != source || !strings.EqualFold(spec.MACAddress, record.MAC) || spec.IPAddress != record.IP || !strings.EqualFold(spec.Hostname, record.Hostname) {
 				continue
 			}
 			reservation = true
@@ -87,4 +98,21 @@ func assignmentsForSources(records []resolverruntime.RuntimeDHCPHostRecord, sour
 		}
 	}
 	return out
+}
+
+func readDHCPHosts(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	const maxDHCPHosts = 8 << 20
+	data, err := io.ReadAll(io.LimitReader(file, maxDHCPHosts+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxDHCPHosts {
+		return nil, fmt.Errorf("DHCP assignment sidecar exceeds %d bytes", maxDHCPHosts)
+	}
+	return data, nil
 }

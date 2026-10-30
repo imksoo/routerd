@@ -10,6 +10,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/dnsresolver"
 )
 
 // The shared dnsmasq process labels each allocating range with its configured
@@ -27,6 +28,7 @@ func prepareDHCPLeaseSource(router *api.Router, lease *controlapi.DHCPLeaseEvent
 	if address.Is6() {
 		wantKind = "DHCPv6Server"
 	}
+	scopeSource := dnsresolver.DHCPSourceForAddress(dnsresolver.DHCPScopes(router), lease.IP)
 	var source string
 	for _, resource := range router.Spec.Resources {
 		if resource.APIVersion != api.NetAPIVersion || resource.Kind != wantKind || resource.Metadata.Name == "" {
@@ -36,7 +38,7 @@ func prepareDHCPLeaseSource(router *api.Router, lease *controlapi.DHCPLeaseEvent
 		if lease.Source != "" && lease.Source != identity {
 			continue
 		}
-		if lease.Source == "" && !slices.Contains(lease.Tags, dhcpServerTag(resource.Metadata.Name)) {
+		if lease.Source == "" && !slices.Contains(lease.Tags, dhcpServerTag(resource.Metadata.Name)) && !(len(lease.Tags) == 0 && scopeSource == identity) {
 			continue
 		}
 		if source != "" && source != identity {

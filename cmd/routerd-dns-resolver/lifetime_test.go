@@ -3,11 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -224,5 +228,44 @@ func TestCompleteRequestTimeoutBoundsActualDoHLookup(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("whole lookup ignored requestTimeout: %v", elapsed)
+	}
+}
+
+func TestStoppedLeaseOwnerRejectsLaterCallbacks(t *testing.T) {
+	config := testResolverConfig(nil)
+	d := newTestDaemon(t, filepath.Join(t.TempDir(), "resolver.json"), config, true)
+	d.shutdownDNSServers()
+	lease := observedLeaseForTest(dhcpLeaseEvent{Action: "added", IP: "192.0.2.55", Hostname: "late"})
+	body, err := json.Marshal(lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	d.leaseHandler(response, httptest.NewRequest(http.MethodPost, "/v1/leases", bytes.NewReader(body)))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("stopped lease owner acknowledged callback: %d %s", response.Code, response.Body.String())
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("late.lab.example.", dns.TypeA)
+	answer, _ := d.zones.Answer(query, nil)
+	if answer != nil && len(answer.Answer) != 0 {
+		t.Fatal("callback mutated stopped owner")
+	}
+}
+
+func TestLeaseIPCRejectsTrailingOrUnknownPayload(t *testing.T) {
+	config := testResolverConfig(nil)
+	d := newTestDaemon(t, filepath.Join(t.TempDir(), "resolver.json"), config, true)
+	lease := observedLeaseForTest(dhcpLeaseEvent{Action: "added", IP: "192.0.2.55", Hostname: "invalid"})
+	body, err := json.Marshal(lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, payload := range []string{string(body) + ` {}`, strings.TrimSuffix(string(body), "}") + `,"unexpected":true}`} {
+		response := httptest.NewRecorder()
+		d.leaseHandler(response, httptest.NewRequest(http.MethodPost, "/v1/leases", strings.NewReader(payload)))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("ambiguous lease payload accepted: %d %s", response.Code, response.Body.String())
+		}
 	}
 }

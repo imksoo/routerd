@@ -265,6 +265,7 @@ func TestReloadActiveLeaseEventTakesPrecedenceOverNewStickySnapshot(t *testing.T
 	initial.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
 		Hostname: "client",
 		IP:       "192.0.2.127",
+		Source:   "DHCPv4Server/dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 	}}
 	writeRuntimeConfig(t, configPath, initial)
 	d := newTestDaemon(t, configPath, initial, true)
@@ -309,7 +310,7 @@ func TestReloadStaticAndLeaseFileTakePrecedenceOverOldActiveEvent(t *testing.T) 
 			name: "active lease file",
 			configure: func(t *testing.T, config *resolvercfg.RuntimeConfig) {
 				leaseFile := filepath.Join(t.TempDir(), "dnsmasq.leases")
-				if err := os.WriteFile(leaseFile, []byte("1789306800 02:00:00:00:00:02 192.0.2.130 client *\n"), 0o644); err != nil {
+				if err := os.WriteFile(leaseFile, []byte("0 02:00:00:00:00:02 192.0.2.130 client *\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 				config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
@@ -354,7 +355,7 @@ func TestReloadStaticAndLeaseFileTakePrecedenceOverOldActiveEvent(t *testing.T) 
 
 func TestActiveLeaseEventUpdatesLoadedLeaseFileBeforeReload(t *testing.T) {
 	leaseFile := filepath.Join(t.TempDir(), "dnsmasq.leases")
-	if err := os.WriteFile(leaseFile, []byte("1789306800 02:00:00:00:00:02 192.0.2.127 client *\n"), 0o644); err != nil {
+	if err := os.WriteFile(leaseFile, []byte("0 02:00:00:00:00:02 192.0.2.127 client *\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	config := testResolverConfig(nil)
@@ -378,6 +379,7 @@ func TestReloadPrefersUpdatedRecoveredLeaseOverOldDynamicRecord(t *testing.T) {
 	initial.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
 		Hostname: "leasehost",
 		IP:       "192.0.2.127",
+		Source:   "DHCPv4Server/dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 	}}
 	writeRuntimeConfig(t, configPath, initial)
 	d := newTestDaemon(t, configPath, initial, true)
@@ -386,6 +388,7 @@ func TestReloadPrefersUpdatedRecoveredLeaseOverOldDynamicRecord(t *testing.T) {
 	updated.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{
 		Hostname: "leasehost",
 		IP:       "192.0.2.128",
+		Source:   "DHCPv4Server/dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 	}}
 	writeRuntimeConfig(t, configPath, updated)
 	if _, err := d.reload(context.Background()); err != nil {
@@ -574,7 +577,8 @@ func testResolverConfig(ports []int) resolvercfg.RuntimeConfig {
 			}},
 		},
 		Zones: []resolvercfg.RuntimeZone{{
-			Name: "lan-zone",
+			Name:       "lan-zone",
+			DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/dhcpv4", Start: "192.0.2.0", End: "192.0.2.255"}},
 			Spec: api.DNSZoneSpec{
 				Zone:        "lab.example",
 				DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/dhcpv4"}},

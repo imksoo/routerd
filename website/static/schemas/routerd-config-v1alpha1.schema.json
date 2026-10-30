@@ -8620,6 +8620,10 @@
                         },
                         "type": "object"
                       },
+                      "requestTimeout": {
+                        "description": "RequestTimeout bounds the complete lookup, independently of each upstream attempt.",
+                        "type": "string"
+                      },
                       "when": {
                         "additionalProperties": false,
                         "properties": {

@@ -72,12 +72,19 @@ func DHCPScopes(router *api.Router) []DHCPAddressScope {
 			continue
 		}
 		spec, err := resource.DHCPv4ReservationSpec()
-		if err != nil || spec.Scope != "" || spec.Server == "" {
+		if err != nil {
 			continue
 		}
-		source := "DHCPv4Server/" + spec.Server
+		serverName := spec.Server
+		if serverName == "" {
+			serverName = spec.Scope
+		}
+		if serverName == "" {
+			continue
+		}
+		source := "DHCPv4Server/" + serverName
 		for _, server := range router.Spec.Resources {
-			if server.APIVersion == api.NetAPIVersion && server.Kind == "DHCPv4Server" && server.Metadata.Name == spec.Server {
+			if server.APIVersion == api.NetAPIVersion && server.Kind == "DHCPv4Server" && server.Metadata.Name == serverName {
 				add(source, spec.IPAddress, spec.IPAddress)
 				break
 			}

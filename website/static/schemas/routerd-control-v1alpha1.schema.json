@@ -2709,8 +2709,15 @@
         "apiVersion": {
           "type": "string"
         },
+        "expiresAt": {
+          "format": "date-time",
+          "type": "string"
+        },
         "hostname": {
           "type": "string"
+        },
+        "infinite": {
+          "type": "boolean"
         },
         "interface": {
           "description": "Optional dnsmasq interface observed by the lease hook.",
@@ -2724,6 +2731,15 @@
         },
         "mac": {
           "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [

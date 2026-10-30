@@ -606,12 +606,15 @@ func (z *zoneData) loadDnsmasqLeases(path string) error {
 		if source == "" || !slices.Contains(z.DHCP.Sources, source) {
 			continue
 		}
-		// The IPv6 dnsmasq file carries an IAID in this column, not a client DUID.
-		// Retain only IPv4 rows whose client identity can actually be recovered.
+		// IPv6 rows carry IAID in column two and the client DUID in column five.
+		client := fields[1]
 		if ip.To4() == nil {
-			continue
+			if len(fields) < 5 || fields[4] == "*" {
+				return fmt.Errorf("IPv6 DHCP lease has no client DUID")
+			}
+			client = fields[4]
 		}
-		lease := dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, Source: source, MAC: fields[1], IP: fields[2], Hostname: fields[3], ObservedAt: now, Infinite: deadline == 0}
+		lease := dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, Source: source, MAC: client, IP: fields[2], Hostname: fields[3], ObservedAt: now, Infinite: deadline == 0}
 		if deadline != 0 {
 			lease.ExpiresAt = time.Unix(deadline, 0).UTC()
 		}
