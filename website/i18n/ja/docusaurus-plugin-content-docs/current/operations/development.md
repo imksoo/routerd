@@ -209,6 +209,33 @@ WAN の中継経路と戻り経路は試験用の事前設定です。
 WAN でのルーター広告、DHCPv6 の IA_NA、複数プレフィックスの重複期間を伴う変更は、別の検証対象です。
 再起動・異常終了からの復旧、ファイアウォール、FreeBSD、routerd 1.0 全機能の合格とも区別します。
 
+## Linux の DHCPv6 アドレス・プレフィックス client 試験
+
+iproute2、util-linux、curl、jq、Python 3、展開済み Kea 2.4.1 package を用意した
+専用の破棄可能な Linux VM で実行します。checksum を固定した `make dist` archive の
+helper を使用し、client と peer を network namespace で隔離します。
+導入済み routerd サービスと設定は置き換えません。
+
+```sh
+sudo bash scripts/linux-dhcpv6-association-smoke.sh --disposable-vm \
+  /var/tmp/routerd-CANDIDATE-linux-amd64.tar.gz ARCHIVE_SHA256 /opt/kea-package
+```
+
+先に link-local 疎通、Kea 設定、UDP/547 socket を環境認証します。
+続いて `--request-mode address` と `--request-mode pd-address` の両方を検査します。
+
+- 取得した IA_NA アドレス・IA_PD プレフィックスを Kea のリース DB と照合します。
+- helper を再起動し、取得時刻を延長せず復元できることを確認します。
+- 自然な T1 Renew を観測後、peer を停止状態にして Renew・T2 Rebind・実際の45秒の
+  有効期限切れを確認します。公開状態と保存 snapshot の両方から失効したリースが消えることが必要です。
+- peer だけを再開し、自動で再取得できることを確認します。Release によるローカルの
+  リース権限撤去、helper 終了、fixture の後片付けも合格条件です。
+
+残すのは archive・source・script の hash と対象範囲付きの判定です。成功時の生ログは
+削除し、失敗時はプロセスを止めてローカル再現用の診断情報を保持します。
+この試験は DHCPv6 helper のプロトコル検証です。カーネルへのアドレス適用、DAD/Decline、
+WAN 経路、転送、routerd 全体の監督、FreeBSD、`DHCPv6Address` リソース全体の合格は示しません。
+
 ## Linux の DHCP・firewall 撤去試験
 
 空設定と独立した管理経路を持つ専用 VM に正式パッケージを導入して実行します。
