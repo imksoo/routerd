@@ -142,7 +142,7 @@ func TestBGPProcessOwnerRejectsSecondDaemonBeforeCustomPathsAndSurvivesGC(t *tes
 }
 
 func TestBGPProcessOwnerPreservesLockInodeAfterAcknowledgedStop(t *testing.T) {
-	directory := t.TempDir()
+	directory := filepath.Join(t.TempDir(), "runtime")
 	owner, err := acquireBGPProcessOwner(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
