@@ -3,9 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -55,6 +58,7 @@ func TestColdDNSStartCannotReviveDurablyRemovedLeaseFileRow(t *testing.T) {
 		t.Fatalf("durable named removal missing: %+v", observations)
 	}
 	config := testResolverConfig(nil)
+	config.LeaseJournalPath = journalPath
 	config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
 	config.Zones[0].LeaseObservations = observations
 	// Exercise the actual configuration IPC encoding before constructing a fresh
@@ -119,4 +123,66 @@ func TestReloadCurrentDurableRemovalOutranksUndeliveredOldWorkerLease(t *testing
 		t.Fatal("old in-memory record outranked durable current removal during reload")
 	}
 	assertZoneNoPTRRecord(t, selected, "55.2.0.192.in-addr.arpa.")
+}
+
+func TestAutomaticRestartReadsJournalBeyondUnchangedConsumedConfig(t *testing.T) {
+	root := t.TempDir()
+	journalPath := filepath.Join(root, "journal.db")
+	store, err := state.OpenSQLite(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	config := testResolverConfig([]int{freeTCPPort(t)})
+	config.LeaseJournalPath = journalPath
+	leaseFile := filepath.Join(root, "leases")
+	if err := os.WriteFile(leaseFile, []byte("0 client-a 192.0.2.55 stale *\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
+	configPath := filepath.Join(root, "resolver.json")
+	writeRuntimeConfig(t, configPath, config)
+	consumed, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topic, _ := daemonapi.DHCPLeaseEventType(daemonapi.DHCPLeaseActionRemoved)
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-dhcp-event-relay"}, topic, daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server", Name: "dhcpv4"}
+	event.Attributes = map[string]string{"mac": "client-a", "ip": "192.0.2.55", "hostname": "stale", "observedAt": time.Now().UTC().Format(time.RFC3339Nano)}
+	if _, err := store.RecordBusEvent(t.Context(), event); err != nil {
+		t.Fatal(err)
+	}
+	// A service-manager restart reuses this exact unchanged file. There has been
+	// no controller reconcile, rewritten snapshot, or retried lease POST.
+	loaded, err := loadConfig(options{resource: "lab", configFile: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := newTestDaemon(t, configPath, loaded, false)
+	if err := worker.startDNS(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(config.Spec.Listen[0].Port))
+	answer := namespaceQuery(t, address, "stale.lab.example.")
+	if len(answer.Answer) != 0 {
+		t.Fatal("early query after direct service restart revived a revoked lease")
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(consumed, after) {
+		t.Fatal("test refreshed config rather than exercising unchanged automatic restart")
+	}
+	worker.shutdownDNSServers()
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(journalPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newDaemon(worker.opts, loaded); err == nil {
+		t.Fatal("missing required journal fell back to stale file or embedded observations")
+	}
 }

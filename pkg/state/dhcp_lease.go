@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/netip"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/daemonapi"
@@ -54,6 +56,11 @@ func projectDHCPLeaseObservation(executor interface {
 	}
 	if err == nil && priorObserved == lease.ObservedAt.UnixNano() && (previous.Action != lease.Action || previous.MAC != lease.MAC || previous.Hostname != lease.Hostname || priorExpiry != expiry || previous.Infinite != lease.Infinite) {
 		return fmt.Errorf("conflicting named DHCP observations share source/IP/time")
+	}
+	if err == nil && lease.ObservedAt.UnixNano() > priorObserved && lease.Action == daemonapi.DHCPLeaseActionRemoved && previous.Action != daemonapi.DHCPLeaseActionRemoved && !strings.EqualFold(previous.MAC, lease.MAC) {
+		// Keep the actual current allocation. This other client's removal is
+		// still appended to the journal, but cannot replace its recovery state.
+		return nil
 	}
 	_, err = executor.Exec(`INSERT INTO dhcp_lease_observations(source,ip,action,client,hostname,observed_at,expires_at,infinite)
  VALUES(?,?,?,?,?,?,?,?)
@@ -106,4 +113,19 @@ func (s *SQLiteStore) ReadDHCPLeaseObservations(ctx context.Context) ([]daemonap
 		out = append(out, lease)
 	}
 	return out, rows.Err()
+}
+
+// DHCPLeaseJournalPath identifies the current store that commits lease effects.
+// Workers use this exact source for read-only startup recovery, including direct
+// service-manager restarts that reuse an unchanged runtime config file.
+func (s *SQLiteStore) DHCPLeaseJournalPath() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return "", sql.ErrConnDone
+	}
+	if s.path == "" {
+		return "", fmt.Errorf("DHCP lease journal has no filesystem identity")
+	}
+	return filepath.Abs(s.path)
 }

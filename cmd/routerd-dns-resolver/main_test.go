@@ -24,6 +24,7 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	resolvercfg "github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/logstore"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestSelftest(t *testing.T) {
@@ -608,6 +609,7 @@ func testForwardConfig(name, upstream string) resolvercfg.RuntimeConfig {
 
 func newTestDaemon(t *testing.T, configPath string, config resolvercfg.RuntimeConfig, dryRun bool) *daemon {
 	t.Helper()
+	config = withTestLeaseJournal(t, configPath, config)
 	d, err := newDaemon(options{
 		resource:   "lab",
 		configFile: configPath,
@@ -626,6 +628,7 @@ func newTestDaemon(t *testing.T, configPath string, config resolvercfg.RuntimeCo
 
 func writeRuntimeConfig(t *testing.T, path string, config resolvercfg.RuntimeConfig) {
 	t.Helper()
+	config = withTestLeaseJournal(t, path, config)
 	data, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
@@ -688,4 +691,23 @@ func skipIfListenNotPermitted(t *testing.T, err error) {
 	if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) {
 		t.Skipf("network listen is not permitted in this environment: %v", err)
 	}
+}
+
+func withTestLeaseJournal(t *testing.T, path string, config resolvercfg.RuntimeConfig) resolvercfg.RuntimeConfig {
+	t.Helper()
+	if config.LeaseJournalPath != "" {
+		return config
+	}
+	if path == "" {
+		path = filepath.Join(t.TempDir(), "resolver.json")
+	}
+	config.LeaseJournalPath = filepath.Join(filepath.Dir(path), "lease-journal.db")
+	store, err := routerstate.OpenSQLite(config.LeaseJournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return config
 }

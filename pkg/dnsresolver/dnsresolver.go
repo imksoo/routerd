@@ -23,9 +23,10 @@ const ConfigDigestHeader = "X-Routerd-Config-Digest"
 const DefaultRequestTimeout = 30 * time.Second
 
 type RuntimeConfig struct {
-	Resource string              `json:"resource"`
-	Spec     api.DNSResolverSpec `json:"spec"`
-	Zones    []RuntimeZone       `json:"zones,omitempty"`
+	Resource         string              `json:"resource"`
+	LeaseJournalPath string              `json:"leaseJournalPath,omitempty"`
+	Spec             api.DNSResolverSpec `json:"spec"`
+	Zones            []RuntimeZone       `json:"zones,omitempty"`
 }
 
 // Digest identifies the normalized configuration at the worker IPC boundary.

@@ -20,3 +20,11 @@ func (s eventedStore) ReadDHCPLeaseObservations(ctx context.Context) ([]daemonap
 	}
 	return reader.ReadDHCPLeaseObservations(ctx)
 }
+
+func (s eventedStore) DHCPLeaseJournalPath() (string, error) {
+	reader, ok := s.Store.(interface{ DHCPLeaseJournalPath() (string, error) })
+	if !ok {
+		return "", fmt.Errorf("DHCP lease journal identity unavailable")
+	}
+	return reader.DHCPLeaseJournalPath()
+}

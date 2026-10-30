@@ -210,3 +210,49 @@ func TestConflictingEqualTimeDHCPObservationCannotBeAcknowledged(t *testing.T) {
 		t.Fatalf("conflict changed actual projection: %+v %v", observations, err)
 	}
 }
+
+func TestUnrelatedClientRemovalPreservesCurrentNamedAllocationAfterReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Minute).UTC()
+	current := namedLeaseEvent("added", at)
+	current.Attributes["mac"] = "CURRENT-client"
+	current.Attributes["hostname"] = "current"
+	if _, err := store.RecordBusEvent(t.Context(), current); err != nil {
+		t.Fatal(err)
+	}
+	removal := namedLeaseEvent("removed", at.Add(time.Second))
+	removal.Attributes["mac"] = "former-client"
+	if _, err := store.RecordBusEvent(t.Context(), removal); err != nil {
+		t.Fatal(err)
+	}
+	if stats := store.EventJournalStats(); stats.Rows != 2 {
+		t.Fatal("other-client removal history discarded")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	observations, err := reopened.ReadDHCPLeaseObservations(t.Context())
+	if err != nil || len(observations) != 1 || observations[0].Action != "added" || observations[0].MAC != "CURRENT-client" || observations[0].Hostname != "current" || !observations[0].ObservedAt.Equal(at) {
+		t.Fatalf("other client removal clobbered actual current owner: %+v %v", observations, err)
+	}
+	// The current client's own removal is still authoritative, ignoring only MAC
+	// spelling case across the callback/journal boundary.
+	ownRemoval := namedLeaseEvent("removed", at.Add(2*time.Second))
+	ownRemoval.Attributes["mac"] = "current-CLIENT"
+	if _, err := reopened.RecordBusEvent(t.Context(), ownRemoval); err != nil {
+		t.Fatal(err)
+	}
+	observations, err = reopened.ReadDHCPLeaseObservations(t.Context())
+	if err != nil || len(observations) != 1 || observations[0].Action != "removed" {
+		t.Fatalf("current client's revocation rejected: %+v %v", observations, err)
+	}
+}

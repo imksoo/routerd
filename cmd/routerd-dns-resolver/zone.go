@@ -179,7 +179,7 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 				// An acknowledged withdrawal keeps its exact client/address tuple
 				// fenced until a later event or a different authoritative tuple.
 				for name, record := range zone.Records {
-					if record.Source == zoneRecordSourceActiveLeaseFile && record.LeaseSource == event.Source && strings.EqualFold(record.MAC, event.MAC) && (contains(record.IPv4, event.IP) || contains(record.IPv6, event.IP)) {
+					if record.Source != zoneRecordSourceStatic && record.AssignmentOrigin != dnsresolver.DHCPAssignmentReservation && record.LeaseSource == event.Source && !record.ObservedAt.After(event.ObservedAt) && (event.Action != daemonapi.DHCPLeaseActionRemoved || record.AssignmentOrigin == "" && strings.EqualFold(record.MAC, event.MAC)) && (contains(record.IPv4, event.IP) || contains(record.IPv6, event.IP)) {
 						zone.removeRecord(name)
 					}
 				}
@@ -283,6 +283,12 @@ func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) error {
 		}
 		key := leaseAddress{Source: lease.Source, IP: lease.IP}
 		if previous := zone.LeaseEvents[key]; !previous.ObservedAt.IsZero() && !lease.ObservedAt.After(previous.ObservedAt) {
+			continue
+		}
+		previous := zone.LeaseEvents[key]
+		if lease.Action == daemonapi.DHCPLeaseActionRemoved && !previous.ObservedAt.IsZero() && previous.Action != daemonapi.DHCPLeaseActionRemoved && !strings.EqualFold(previous.MAC, lease.MAC) {
+			// Removal of a former client does not establish absence of the
+			// source/IP currently allocated to a different observed client.
 			continue
 		}
 		zone.LeaseEvents[key] = lease
@@ -572,7 +578,13 @@ func (z *zoneData) removeRecord(name string) {
 
 func (z *zoneData) deleteLease(lease dhcpLeaseEvent) {
 	for name, record := range z.Records {
-		if record.Source == zoneRecordSourceStatic || record.AssignmentOrigin != "" || record.LeaseSource != lease.Source || !strings.EqualFold(record.MAC, lease.MAC) || record.ObservedAt.After(lease.ObservedAt) {
+		if record.Source == zoneRecordSourceStatic || record.AssignmentOrigin == dnsresolver.DHCPAssignmentReservation || record.LeaseSource != lease.Source || record.ObservedAt.After(lease.ObservedAt) {
+			continue
+		}
+		// A current added/renewed allocation replaces the source's previous
+		// address owner even when the new client supplies no hostname. A
+		// removal describes only its own client and cannot revoke another.
+		if lease.Action == daemonapi.DHCPLeaseActionRemoved && (record.AssignmentOrigin != "" || !strings.EqualFold(record.MAC, lease.MAC)) {
 			continue
 		}
 		if contains(record.IPv4, lease.IP) || contains(record.IPv6, lease.IP) {

@@ -14,3 +14,5 @@ func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]an
 func (s mapStore) ReadDHCPLeaseObservations(context.Context) ([]daemonapi.DHCPLeaseUpdate, error) {
 	return nil, nil
 }
+
+func (s mapStore) DHCPLeaseJournalPath() (string, error) { return "/unqualified-test/dhcp.sqlite", nil }
