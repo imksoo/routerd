@@ -143,3 +143,67 @@ func TestBFDReviewPreApplyAbortCannotGrantOwnershipOnRetry(t *testing.T) {
 		t.Fatalf("known no-effect abort became foreign ownership on retry: held=%+v effects=%d first=%v retry=%v removal=%v", adopted.Held, writes, firstErr, secondErr, withdrawErr)
 	}
 }
+
+func TestBFDReviewUnacknowledgedAttemptCannotBecomeOwnershipAfterFailure(t *testing.T) {
+	for _, rollbackFailure := range []bool{true, false} {
+		name := "command-ACK-unknown"
+		if rollbackFailure {
+			name = "rollback-save-failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSLinux, RuntimeDir: t.TempDir()}
+			if rollbackFailure {
+				controller.Store = &receiptFaultStore{SQLiteStore: store, failFinal: true}
+			}
+			foreignHeader := " peer 10.99.0.2 vrf default interface operator0"
+			at := strings.Index(nativePeersText, foreignHeader)
+			if at < 0 {
+				t.Fatal("missing foreign tuple fixture")
+			}
+			reads, writes, attempt := 0, 0, 0
+			controller.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if args[0] == "-f" {
+					writes++
+					// Peers now exist, but the execution boundary lost its ACK.
+					return nil, errors.New("response lost after native peer creation")
+				}
+				if args[1] == "show bfd peers json" {
+					reads++
+					if attempt == 0 {
+						return []byte("[" + foreignPeer + "]"), nil
+					}
+					return []byte("[" + nativePeerA + "," + nativePeerB + "," + foreignPeer + "]"), nil
+				}
+				if attempt > 0 || rollbackFailure && reads > 1 {
+					return []byte(nativePeersText), nil
+				}
+				return []byte("BFD Peers:\n" + nativePeersText[at:]), nil
+			}
+			firstErr := controller.Reconcile(t.Context())
+			wantEffects := 1
+			if rollbackFailure {
+				wantEffects = 0
+			}
+			uncertain, readErr := controller.readNativeReceipt()
+			if firstErr == nil || writes != wantEffects || readErr != nil || len(uncertain.Held) != 0 || len(uncertain.Pending) != 2 || uncertain.Acknowledged {
+				t.Fatalf("failure did not leave an explicit unacknowledged attempt: receipt=%+v effects=%d want=%d reconcile=%v read=%v", uncertain, writes, wantEffects, firstErr, readErr)
+			}
+			// Persistence is healthy again. A later consistent native observation
+			// must still not turn either failed boundary into ownership.
+			controller.Store = store
+			attempt = 1
+			retryErr := controller.Reconcile(t.Context())
+			controller.Router = &api.Router{}
+			removeErr := controller.Reconcile(t.Context())
+			actual, readErr := controller.readNativeReceipt()
+			if retryErr == nil || removeErr == nil || writes != wantEffects || readErr != nil || actual.Acknowledged || !slices.Equal(actual.Held, uncertain.Held) || !slices.Equal(actual.Pending, uncertain.Pending) {
+				t.Fatalf("unacknowledged attempt granted retry/removal authority: receipt=%+v effects=%d want=%d retry=%v removal=%v read=%v", actual, writes, wantEffects, retryErr, removeErr, readErr)
+			}
+		})
+	}
+}
