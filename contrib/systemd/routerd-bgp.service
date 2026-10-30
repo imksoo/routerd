@@ -1,3 +1,4 @@
+# Managed by routerd. Do not edit by hand.
 [Unit]
 Description=routerd BGP daemon
 After=network-online.target
