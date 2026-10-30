@@ -40,6 +40,10 @@ kldstat -q -m ng_ether || {
 }
 
 mkdir -p "$evidence_dir"
+(set -C; printf 'freebsd-pppoe-runtime=in-progress\n' >"$evidence_dir/result") || {
+  echo 'use a fresh evidence directory' >&2
+  exit 2
+}
 work=$(mktemp -d /var/tmp/routerd-pppoe-runtime.XXXXXX)
 epair_a=
 epair_b=
@@ -70,7 +74,7 @@ cleanup() {
   fi
   if [ -n "$client_pid" ]; then
     kill -TERM "$client_pid" 2>/dev/null || true
-    wait "$client_pid" 2>/dev/null || true
+    wait "$client_pid" 2>/dev/null || rc=1
   fi
   if [ -n "$discovery_capture_pid" ]; then
     kill -TERM "$discovery_capture_pid" 2>/dev/null || true
@@ -98,7 +102,25 @@ cleanup() {
     fi
     if kldstat -q -m "$module"; then rc=1; fi
   done
-  rm -rf "$work"
+  if jls -j "$jail_name" >/dev/null 2>&1; then rc=1; fi
+  if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then rc=1; fi
+  if [ -n "$foreign_ppp_ifname" ] && ifconfig "$foreign_ppp_ifname" >/dev/null 2>&1; then rc=1; fi
+  ps -ax -o args= >"$work/processes.txt" || rc=1
+  awk -v owned="$work" 'index($0, owned) { print }' "$work/processes.txt" >"$evidence_dir/owned-processes-after-cleanup.log" || rc=1
+  [ ! -s "$evidence_dir/owned-processes-after-cleanup.log" ] || rc=1
+  sockstat -u >"$work/unix-sockets.txt" || rc=1
+  awk -v owned="$work" 'index($0, owned) { print }' "$work/unix-sockets.txt" >"$evidence_dir/owned-sockets-after-cleanup.log" || rc=1
+  [ ! -s "$evidence_dir/owned-sockets-after-cleanup.log" ] || rc=1
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$work" || rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf 'pppoe-owned-epair-and-process-cleanup=ok\n' >>"$evidence_dir/summary.log"
+    printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"
+  else
+    printf 'freebsd-pppoe-runtime=not-pass exit=%s\n' "$rc" >"$evidence_dir/result"
+    printf 'retained fixture recovery directory: %s\n' "$work" >&2
+  fi
   exit "$rc"
 }
 trap cleanup EXIT HUP INT TERM
@@ -298,4 +320,3 @@ foreign_ppp_ifname=
 printf '%s\n' \
   'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup-foreign-preservation=ok' \
   'pppoe-owned-epair-and-process-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
-printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"
