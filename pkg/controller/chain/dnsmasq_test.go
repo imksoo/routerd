@@ -1443,7 +1443,7 @@ func TestInterfaceIfNameResolvesBridgeIfName(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-lab"}, Spec: api.BridgeSpec{IfName: "bridge100"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg-svnet1"}, Spec: api.WireGuardInterfaceSpec{IfName: "wg-transport0"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "flets"}, Spec: api.PPPoESessionSpec{IfName: "ppp-wan0"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "dslite0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "gif42"}},
 	}}}
 	if got := interfaceIfName(router, "br-lab"); got != "bridge100" {
 		t.Fatalf("interfaceIfName = %q, want bridge100", got)
@@ -1457,8 +1457,8 @@ func TestInterfaceIfNameResolvesBridgeIfName(t *testing.T) {
 	if got := interfaceIfName(router, "flets"); got != "ppp-wan0" {
 		t.Fatalf("PPPoE interfaceIfName = %q, want ppp-wan0", got)
 	}
-	if got := interfaceIfName(router, "ds-lite"); got != "dslite0" {
-		t.Fatalf("DS-Lite interfaceIfName = %q, want dslite0", got)
+	if got := interfaceIfName(router, "ds-lite"); got != "gif42" {
+		t.Fatalf("DS-Lite interfaceIfName = %q, want gif42", got)
 	}
 }
 

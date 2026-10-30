@@ -61,9 +61,19 @@ func TestPathMTUControllerRendersBridgeFamilyMSSClamp(t *testing.T) {
 	dir := t.TempDir()
 	store := mapStore{}
 	path := filepath.Join(dir, "l2-mss.nft")
-	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), L2Path: path, ForceFragmentPath: filepath.Join(dir, "forcefrag.nft")}
+	// A preview renders the requested OS rules without consuming or altering
+	// the live ownership journal, including a journal it cannot decode.
+	ownerPath := path + ".owner"
+	ownerData := []byte("unreadable live ownership journal")
+	if err := os.WriteFile(ownerPath, ownerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controller := PathMTUController{Router: router, OS: platform.OSLinux, Store: store, DryRun: true, Path: filepath.Join(dir, "mss.nft"), L2Path: path, L2OwnerPath: ownerPath, ForceFragmentPath: filepath.Join(dir, "forcefrag.nft"), NftCommand: filepath.Join(dir, "must-not-run")}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(ownerPath); err != nil || !bytes.Equal(got, ownerData) {
+		t.Fatalf("preview changed live ownership: data=%q err=%v", got, err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -206,10 +216,7 @@ func TestPathMTUControllerSkipsUnchangedLiveReload(t *testing.T) {
 
 func TestPathMTUControllerL2OwnerManifestIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, identityErr := currentL2OwnerIdentity()
-	if identityErr != nil {
-		t.Fatal(identityErr)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "t", Chain: "c", Token: "secret", Digest: "digest", Handle: 7, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	if err := writeL2MSSOwner(path, m); err != nil {
@@ -268,6 +275,7 @@ func TestPathMTUControllerDeleteRaceNeverDeletesTable(t *testing.T) {
 }
 
 func TestPathMTUControllerCreateRaceFailsWithoutMutatingReplacement(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0", MTU: 1500}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br"}, Spec: api.BridgeSpec{IfName: "br0", Members: []string{"lan"}, MTU: 1500}},
