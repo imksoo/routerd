@@ -104,6 +104,18 @@ func (f *dsliteNativeFixture) setAliasByIndex(index int, name, proof string) err
 	return nil
 }
 
+func (f *dsliteNativeFixture) deleteByIndex(ctx context.Context, index int, name, proof, scope string) error {
+	link, exists := f.links[name]
+	if !exists {
+		return nil
+	}
+	if scope == "" || link.Index != index || link.Kind != "ip6tnl" || "routerd-dslite:"+link.Token != proof {
+		return errors.New("DS-Lite native identity changed before indexed deletion")
+	}
+	_, err := f.command(ctx, "ip", "link", "delete", "dev", name)
+	return err
+}
+
 func (f *dsliteNativeFixture) command(_ context.Context, name string, args ...string) ([]byte, error) {
 	line := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, line)
@@ -309,7 +321,7 @@ func newDSLiteNativeController(t *testing.T, osName platform.OS) (DSLiteTunnelCo
 	if osName == platform.OSFreeBSD {
 		scope = "freebsd:10:20:0"
 	}
-	c := DSLiteTunnelController{Router: router, Store: s, OS: osName, NativeScope: func(context.Context) (string, error) { return scope, nil }, NativeInterfaceIndex: f.index, CommandOutput: f.command, SetAliasByIndex: f.setAliasByIndex}
+	c := DSLiteTunnelController{Router: router, Store: s, OS: osName, NativeScope: func(context.Context) (string, error) { return scope, nil }, NativeInterfaceIndex: f.index, CommandOutput: f.command, SetAliasByIndex: f.setAliasByIndex, DeleteByIndex: f.deleteByIndex}
 	return c, f, s
 }
 
@@ -395,7 +407,7 @@ func TestDSLiteNativeFailedCleanupAndPublicationRetainRecovery(t *testing.T) {
 	}
 	store.SQLiteStore = reopened
 	t.Cleanup(func() { _ = reopened.Close() })
-	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, NativeInterfaceIndex: c.NativeInterfaceIndex, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex}
+	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, NativeInterfaceIndex: c.NativeInterfaceIndex, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex, DeleteByIndex: c.DeleteByIndex}
 	if err := restarted.reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +438,7 @@ func TestDSLiteNativeAmbiguousCreateCannotRetagBareLink(t *testing.T) {
 	}
 	f.loseCreateReply = false
 	before := len(f.writes)
-	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex}
+	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex, DeleteByIndex: c.DeleteByIndex}
 	if err := restarted.reconcile(t.Context()); err == nil || len(f.writes) != before {
 		t.Fatalf("ambiguous cookieless create was retagged or mutated after restart: %v writes=%v", err, f.writes[before:])
 	}

@@ -255,6 +255,36 @@ func TestDSLiteParentNativeLinuxAFTRLifecycle(t *testing.T) {
 		t.Fatalf("reacquired DS-Lite did not reach the independent AFTR: before=%d after=%d", before, after)
 	}
 	withdraw()
+	// Replace the object after the actor's final observations, at the actual
+	// indexed mutation boundary. The old index must never select the namesake.
+	parent.Router, address.Router, route.Router = router, router, router
+	acquire()
+	address.Router, route.Router = &api.Router{}, &api.Router{}
+	if err := route.reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := address.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	replaced := false
+	parent.DeleteByIndex = func(ctx context.Context, index int, name, proof, scope string) error {
+		run("ip", "link", "delete", "dev", name)
+		run("ip", "link", "add", "name", name, "type", "ip6tnl", "mode", "ipip6", "local", "2001:db8:88::1", "remote", "2001:db8:88::2", "dev", "ds-proof-u", "encaplimit", "none")
+		replaced = true
+		return deleteDSLiteByIndex(ctx, index, name, proof, scope)
+	}
+	parent.Router = &api.Router{}
+	if err := parent.reconcile(ctx); err == nil || !replaced {
+		t.Fatalf("replacement at indexed deletion was acknowledged as absent: replaced=%t err=%v", replaced, err)
+	}
+	if link, err := parent.observeNativeTunnel(ctx, "ds-proof"); err != nil || !link.Exists || link.Token != "" {
+		t.Fatalf("indexed deletion changed the untagged namesake: %+v err=%v", link, err)
+	}
+	run("ip", "link", "delete", "dev", "ds-proof")
+	parent.DeleteByIndex = nil
+	if err := parent.reconcile(ctx); err != nil {
+		t.Fatalf("confirmed old-owner absence did not retire its pending receipt: %v", err)
+	}
 	stopPeer()
 	if err := peerNS.Close(); err != nil {
 		t.Fatal(err)

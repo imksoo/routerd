@@ -446,16 +446,25 @@ func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name st
 		return observed, errors.New("invalid DS-Lite inner address observation")
 	}
 	// ip -4 omits a newly created tunnel until it has an IPv4 address.
-	if len(addresses) == 0 {
-		return observed, nil
-	}
-	for _, address := range addresses[0].Addresses {
-		peer := strings.TrimSuffix(address.Peer, "/32")
-		if peer == dsliteInnerRemoteIPv4 && address.PrefixLen != nil && *address.PrefixLen == 32 {
-			observed.InnerLocal = canonicalIPAddress(address.Local)
+	for _, link := range addresses {
+		for _, address := range link.Addresses {
+			peer := strings.TrimSuffix(address.Peer, "/32")
+			if peer == dsliteInnerRemoteIPv4 && address.PrefixLen != nil && *address.PrefixLen == 32 {
+				observed.InnerLocal = canonicalIPAddress(address.Local)
+			}
 		}
 	}
-	return observed, nil
+	// The address query can wait while the named link is replaced. Its result
+	// belongs only to the same native identity, never to a later namesake.
+	fresh, err := c.observeNativeTunnelLink(ctx, name)
+	if err != nil || !fresh.Exists {
+		return fresh, err
+	}
+	if fresh.Index != observed.Index || fresh.Kind != observed.Kind || fresh.Token != observed.Token {
+		return fresh, errors.New("DS-Lite native identity changed during inner address observation")
+	}
+	fresh.InnerLocal = observed.InnerLocal
+	return fresh, nil
 }
 
 func (c DSLiteTunnelController) verifyNativeTunnel(ctx context.Context, record dsliteTunnelReceipt, observed dsliteTunnelObservation) error {
@@ -542,12 +551,18 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 			return err
 		}
 		if observed.Exists {
-			command, args := "ip", []string{"link", "delete", "dev", record.Plan.Name}
-			if record.OS == platform.OSFreeBSD {
-				command, args = "ifconfig", []string{record.Plan.Name, "destroy"}
-			}
-			if _, err := c.endpointCommand(ctx, command, args...); err != nil {
-				return err
+			if record.OS == platform.OSLinux {
+				remove := c.DeleteByIndex
+				if remove == nil {
+					remove = deleteDSLiteByIndex
+				}
+				if err := remove(ctx, observed.Index, record.Plan.Name, "routerd-dslite:"+record.Token, record.Scope); err != nil {
+					return err
+				}
+			} else {
+				if _, err := c.endpointCommand(ctx, "ifconfig", record.Plan.Name, "destroy"); err != nil {
+					return err
+				}
 			}
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)

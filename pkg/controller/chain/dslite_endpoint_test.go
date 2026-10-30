@@ -155,7 +155,11 @@ func newDSLiteEndpointFixture(t *testing.T, shared bool) (DSLiteTunnelController
 		}
 		return f.native.command(ctx, name, args...)
 	}
-	controller := DSLiteTunnelController{Router: router, Store: f.store, Now: func() time.Time { return f.now }, CommandOutput: command, NativeScope: func(context.Context) (string, error) { return f.scope, nil }, SetAliasByIndex: f.native.setAliasByIndex}
+	remove := func(ctx context.Context, index int, name, proof, scope string) error {
+		f.allCalls = append(f.allCalls, "netlink delete "+name)
+		return f.native.deleteByIndex(ctx, index, name, proof, scope)
+	}
+	controller := DSLiteTunnelController{Router: router, Store: f.store, Now: func() time.Time { return f.now }, CommandOutput: command, NativeScope: func(context.Context) (string, error) { return f.scope, nil }, SetAliasByIndex: f.native.setAliasByIndex, DeleteByIndex: remove}
 	return controller, f, spec
 }
 
@@ -345,7 +349,7 @@ func TestDSLitePDRevocationAfterTunnelReadinessWithdrawsTunnelBeforeSource(t *te
 		t.Fatalf("revoked source/tunnel still installed: %s %+v", f.present, f.native.links)
 	}
 	calls := strings.Join(f.allCalls[before:], "\n")
-	tunnelDelete, sourceDelete := strings.Index(calls, "ip link delete dev ds-lite-ra"), strings.Index(calls, "ip -6 addr del 2001:db8:1200:1::100/128")
+	tunnelDelete, sourceDelete := strings.Index(calls, "netlink delete ds-lite-ra"), strings.Index(calls, "ip -6 addr del 2001:db8:1200:1::100/128")
 	if tunnelDelete < 0 || sourceDelete < 0 || tunnelDelete > sourceDelete {
 		t.Fatalf("source removed before dependent tunnel: %s", calls)
 	}

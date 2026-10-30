@@ -45,7 +45,7 @@ func TestDSLiteWithdrawalRechecksReceiptAfterPendingNativeRead(t *testing.T) {
 	controller.Router = &api.Router{}
 	err := controller.reconcile(t.Context())
 	records, readErr := controller.nativeTunnelReceipts()
-	if err == nil || reads != 3 || len(native.writes) != writes || native.links["ds-owned"] != before || readErr != nil || len(records) != 1 || records[0] != replacement {
+	if err == nil || reads < 3 || len(native.writes) != writes || native.links["ds-owned"] != before || readErr != nil || len(records) != 1 || records[0] != replacement {
 		t.Fatalf("withdrawal crossed a final pending receipt change: reads=%d writes=%v link=%+v records=%+v err=%v read=%v", reads, native.writes[writes:], native.links["ds-owned"], records, err, readErr)
 	}
 }
