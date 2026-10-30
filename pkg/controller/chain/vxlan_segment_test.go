@@ -288,6 +288,9 @@ func TestVXLANSegmentActualRuntimeOwnsDynamicExpiryAndBridgePort(t *testing.T) {
 	base.Spec.Resources[1].Spec = spec
 	dynamic := c.Router.Spec.Resources[2]
 	segment, _ := dynamic.VXLANSegmentSpec()
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		segment.Remotes = segment.Remotes[:1]
+	}
 	segment.Bridge = "bridge"
 	dynamic.Spec = segment
 	now := time.Now().UTC()

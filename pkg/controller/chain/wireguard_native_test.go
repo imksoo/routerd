@@ -39,12 +39,43 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 		if !exists || link.IfIndex != index || link.Kind != "wireguard" || link.Token != "" {
 			return fmt.Errorf("acknowledged WireGuard native identity changed")
 		}
-		link.Token = strings.TrimPrefix(proof, "routerd-wg:")
+		var owned bool
+		link.Token, owned = strings.CutPrefix(proof, "routerd-wg:")
+		if !owned {
+			return fmt.Errorf("invalid WireGuard native alias")
+		}
 		f.links[name] = link
 		return nil
 	}
 	run, stdin := c.Command, c.CommandStdin
 	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "ifconfig" && len(args) == 1 {
+			if args[0] == "-l" {
+				names := []string{}
+				for name, link := range f.links {
+					if link.Exists {
+						names = append(names, name)
+					}
+				}
+				return []byte(strings.Join(names, " ")), nil
+			}
+			link, exists := f.links[args[0]]
+			if !exists || !link.Exists {
+				return nil, fmt.Errorf("interface %s does not exist", args[0])
+			}
+			flags := "POINTOPOINT"
+			if link.Up {
+				flags = "UP," + flags
+			}
+			groups, description := "", ""
+			if link.Kind == "wireguard" {
+				groups = "wg"
+			}
+			if link.Token != "" {
+				description = "routerd-wg:" + link.Token
+			}
+			return []byte(fmt.Sprintf("%s: flags=0<%s> mtu %d\n\tdescription: %s\n\tgroups: %s\n", args[0], flags, f.mtus[args[0]], description, groups)), nil
+		}
 		if name == "ip" && strings.Join(args, " ") == "-j -d link show" {
 			links := []map[string]any{}
 			for name, link := range f.links {
@@ -80,6 +111,44 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 		}
 		if err != nil {
 			return out, err
+		}
+		if name == "ifconfig" && len(args) >= 2 {
+			if args[0] == "wg" && args[1] == "create" {
+				native, token := "", ""
+				for i := 2; i+1 < len(args); i++ {
+					if args[i] == "name" {
+						native = args[i+1]
+					}
+					if args[i] == "description" {
+						if value, owned := strings.CutPrefix(args[i+1], "routerd-wg:"); owned {
+							token = value
+						}
+					}
+				}
+				if native == "" || f.links[native].Exists {
+					return nil, fmt.Errorf("native WireGuard name is absent or already exists")
+				}
+				f.links[native] = nativeWireGuardLink{Exists: true, Kind: "wireguard", Token: token}
+				f.dumps[native] = "(none)\t(none)\t0\toff\n"
+			} else {
+				switch args[1] {
+				case "destroy":
+					delete(f.links, args[0])
+					delete(f.dumps, args[0])
+					delete(f.mtus, args[0])
+				case "up":
+					link := f.links[args[0]]
+					link.Up = true
+					f.links[args[0]] = link
+				case "mtu":
+					if len(args) == 3 {
+						f.mtus[args[0]], err = strconv.Atoi(args[2])
+						if err != nil {
+							return nil, err
+						}
+					}
+				}
+			}
 		}
 		if name == "ip" && len(args) > 2 {
 			if args[0] == "link" && args[1] == "add" {
@@ -200,12 +269,16 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 
 func (f *wireGuardNativeFixture) own(t *testing.T, resource, name string, ports ...int) {
 	t.Helper()
-	f.links[name] = nativeWireGuardLink{Exists: true, IfIndex: 7, Token: wgFixtureToken, Kind: "wireguard", Up: true}
+	index := 7
+	if f.controller.currentOS() == platform.OSFreeBSD {
+		index = 0 // The FreeBSD ifconfig observation does not expose an index.
+	}
+	f.links[name] = nativeWireGuardLink{Exists: true, IfIndex: index, Token: wgFixtureToken, Kind: "wireguard", Up: true}
 	scope, err := f.controller.wireGuardScope(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.controller.saveNativeWireGuardRecord(wireGuardNativeRecord{Resource: resource, Name: name, Token: wgFixtureToken, Scope: scope, IfIndex: 7, OS: platform.OSLinux, Ports: ports}); err != nil {
+	if err := f.controller.saveNativeWireGuardRecord(wireGuardNativeRecord{Resource: resource, Name: name, Token: wgFixtureToken, Scope: scope, IfIndex: index, OS: f.controller.currentOS(), Ports: ports}); err != nil {
 		t.Fatal(err)
 	}
 	for _, port := range ports {

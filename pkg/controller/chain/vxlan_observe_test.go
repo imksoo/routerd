@@ -8,10 +8,16 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/apply"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestVXLANSegmentInspectionRequiresCurrentNativeOwnerReadback(t *testing.T) {
 	controller, native, _, _ := segmentOwnerFixture(t)
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		segment, _ := controller.Router.Spec.Resources[2].VXLANSegmentSpec()
+		segment.Remotes = segment.Remotes[:1]
+		controller.Router.Spec.Resources[2].Spec = segment
+	}
 	controller.Router.TypeMeta = api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}
 	controller.Router.Metadata.Name = "test"
 	engine := apply.New(t.Context())
@@ -46,6 +52,9 @@ func TestVXLANSegmentInspectionRequiresCurrentNativeOwnerReadback(t *testing.T) 
 	inspect("Drifted", "false")
 	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if platform.CurrentOS() == platform.OSLinux && len(native.link.Flood) != 2 {
+		t.Fatalf("Linux multiple-remote coverage was lost: %+v", native.link.Flood)
 	}
 	inspect("Healthy", "true")
 	owner := oneSegmentOwner(t, controller)
