@@ -67,4 +67,16 @@ func TestAddressExpiryPersistsWithoutPrefixOrExchangeChange(t *testing.T) {
 	if status.Resource.Kind != "DHCPv6Address" || status.Phase != daemonapi.ResourcePhaseBound || status.Conditions[0].Status != "True" {
 		t.Fatalf("address-only status mislabeled: %+v", status)
 	}
+	changed := false
+	for _, event := range d.events {
+		if event.Type == daemonapi.EventDHCPv6PrefixBound {
+			t.Fatal("address-only acquisition emitted prefix-bound event")
+		}
+		if event.Type == daemonapi.EventDHCPv6AddressesChanged && event.Attributes["addressCount"] == "1" {
+			changed = true
+		}
+	}
+	if !changed {
+		t.Fatal("secondary expiry was not observable through address event")
+	}
 }
