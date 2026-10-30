@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // FirewallNewFlowQuery describes a new TCP/UDP flow after zone classification.
@@ -103,7 +104,7 @@ func NftablesNewFlowDecision(router *api.Router, query FirewallNewFlowQuery) (Fi
 		return FirewallDecision{Action: "drop", Source: "zone-dispatch"}, nil
 	}
 	policy := firewallPolicyOptions(policies)
-	for _, hole := range InternalFirewallHoles(router) {
+	for _, hole := range InternalFirewallHoles(router, platform.OSLinux) {
 		if hole.FromZone != from.Name || hole.ToZone != to.Name || (to.Name == "self" && implicitFirewallAction(from.Role, to.Role, policy) == "accept") {
 			continue
 		}

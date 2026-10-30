@@ -12,6 +12,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
@@ -22,7 +23,7 @@ func TestDeriveHolesIncludesDSLiteAndDHCPv6(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan", TunnelName: "ds-routerd"}},
 	}}}
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	seen := map[string]bool{}
 	for _, hole := range holes {
 		seen[hole.Name+"|"+hole.FromZone+"|"+hole.ToZone+"|"+hole.Protocol] = true
@@ -43,7 +44,7 @@ func TestWireGuardListenPortOpensUntrustToSelfHole(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "TailscaleNode"}, Metadata: api.ObjectMeta{Name: "tailnet"}, Spec: api.TailscaleNodeSpec{}},
 	}}}
 
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	var foundWG, foundTailscale bool
 	for _, hole := range holes {
 		if hole.Name == "wg0-wireguard" && hole.FromZone == "wan" && hole.ToZone == "self" && hole.Protocol == "udp" && hole.Port == 51820 {

@@ -15,8 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 const NftablesRouterdOwnerMarker = "routerd.owner=routerd routerd.generation=1"
@@ -142,7 +144,7 @@ func NftablesNAT44(router *api.Router) ([]byte, error) {
 		writeBridgeL2FilterTable(&buf, l2FilterVXLANS)
 	}
 	if len(zones) > 0 || len(firewallPolicies) > 0 || len(firewallLogs) > 0 || len(firewallRules) > 0 || len(firewallFlowPinholes) > 0 || len(clientPolicies) > 0 {
-		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, firewallFlowPinholes, clientPolicies, InternalFirewallHoles(router), ingressRules, addressSets, routerWantsTrafficFlowDPIObservation(router), dnsmasqIPv6OnlyFirewallInterfaces(router, aliases)); err != nil {
+		if err := writeFirewallFilterTable(&buf, aliases, zones, firewallPolicies, firewallLogs, firewallRules, firewallFlowPinholes, clientPolicies, InternalFirewallHoles(router, platform.OSLinux), ingressRules, addressSets, routerWantsTrafficFlowDPIObservation(router), dnsmasqIPv6OnlyFirewallInterfaces(router, aliases)); err != nil {
 			return nil, err
 		}
 	}
@@ -730,6 +732,10 @@ func nftOutboundAliases(router *api.Router) (map[string]string, error) {
 }
 
 func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dynamicconfig.LocalCaptureIntent) (map[string]string, error) {
+	return outboundAliasesForOS(router, platform.OSLinux, intents)
+}
+
+func outboundAliasesForOS(router *api.Router, targetOS platform.OS, intents []dynamicconfig.LocalCaptureIntent) (map[string]string, error) {
 	aliases := map[string]string{}
 	for _, res := range router.Spec.Resources {
 		switch res.Kind {
@@ -753,7 +759,7 @@ func nftOutboundAliasesWithLocalCaptureIntents(router *api.Router, intents []dyn
 			if !api.BoolDefault(spec.Enabled, true) {
 				continue
 			}
-			aliases[res.Metadata.Name] = defaultString(spec.TunnelName, res.Metadata.Name)
+			aliases[res.Metadata.Name] = api.DSLiteRuntimeIfName(stringutil.FirstNonEmpty(spec.TunnelName, spec.Interface, res.Metadata.Name), string(targetOS))
 		case "Bridge":
 			spec, err := res.BridgeSpec()
 			if err != nil {

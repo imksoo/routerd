@@ -11,6 +11,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestNftOutboundAliasesResolveWireGuardIfName(t *testing.T) {
@@ -1843,7 +1844,7 @@ func TestNftablesFirewallSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *te
 			},
 		},
 	}
-	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -1879,7 +1880,7 @@ func TestNftablesInternalWANHolesUseOwningInterface(t *testing.T) {
 			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 		},
 	}}}
-	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		t.Fatalf("render nftables: %v", err)
 	}
@@ -1941,7 +1942,7 @@ func TestNftablesFirewallHolesForBGPVRRPAndIngress(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := NftablesFirewall(router, InternalFirewallHoles(router))
+	data, err := NftablesFirewall(router, InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		t.Fatalf("render nftables firewall: %v", err)
 	}

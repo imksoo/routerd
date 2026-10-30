@@ -31,6 +31,7 @@ type Store interface {
 }
 
 type Controller struct {
+	OS           platform.OS
 	Router       *api.Router
 	Bus          *bus.Bus
 	Store        Store
@@ -82,8 +83,12 @@ func (c Controller) reconcileLogged(ctx context.Context) error {
 }
 
 func (c Controller) Reconcile(ctx context.Context) error {
+	targetOS := c.OS
+	if targetOS == "" {
+		targetOS = platform.CurrentOS()
+	}
 	var rules []render.NAT44RenderRule
-	aliases := interfaceAliases(c.Router)
+	aliases := interfaceAliases(c.Router, targetOS)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "NAT44Rule" {
 			continue
@@ -146,7 +151,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 			renderRules = nil
 		}
 	}
-	if platform.CurrentOS() == platform.OSFreeBSD {
+	if targetOS == platform.OSFreeBSD {
 		return c.reconcilePF(ctx, applyRouter, renderRules, rules)
 	}
 	states, err := c.ingressServiceStates()
@@ -490,7 +495,7 @@ func addressFromRouterResource(router *api.Router, source api.StatusValueSourceS
 	return ""
 }
 
-func interfaceAliases(router *api.Router) map[string]string {
+func interfaceAliases(router *api.Router, targetOS platform.OS) map[string]string {
 	aliases := map[string]string{}
 	if router == nil {
 		return aliases
@@ -505,7 +510,7 @@ func interfaceAliases(router *api.Router) map[string]string {
 		case "DSLiteTunnel":
 			spec, err := resource.DSLiteTunnelSpec()
 			if err == nil {
-				aliases[resource.Metadata.Name] = stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
+				aliases[resource.Metadata.Name] = api.DSLiteRuntimeIfName(stringutil.FirstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name), string(targetOS))
 			}
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
