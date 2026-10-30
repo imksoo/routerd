@@ -156,18 +156,18 @@ func (c LANAddressController) delegatedSegmentParent(ctx context.Context, ifname
 		return vxlan.SegmentLink{}, fmt.Errorf("delegated address router unavailable")
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" {
+		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
 			continue
 		}
-		spec, err := resource.VXLANSegmentSpec()
+		plan, err := nativeVXLANInterface(resource)
 		if err != nil {
 			return vxlan.SegmentLink{}, err
 		}
-		if firstNonEmpty(spec.IfName, resource.Metadata.Name) != ifname {
+		if plan != ifname {
 			continue
 		}
 		owner := c.segmentParentOwner()
-		link, err := owner.ObserveOwnedInterface(ctx, resource.Metadata.Name)
+		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
 		if err != nil {
 			return link, err
 		}

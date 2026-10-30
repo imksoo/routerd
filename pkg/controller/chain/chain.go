@@ -1562,7 +1562,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(declared, res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
-			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1585,32 +1584,11 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(declared, res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
-		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// preserveVXLANTunnelCleanupStatus retains the ownership proof needed by the
-// operational controller after spec.when filters the tunnel from the effective
-// graph. Without it a safe controller must treat the still-live link as foreign
-// and cannot close forwarding during HA demotion.
-func preserveVXLANTunnelCleanupStatus(res api.Resource, current, status map[string]any) bool {
-	if res.Kind != "VXLANTunnel" {
-		return false
-	}
-	changed := false
-	for _, key := range []string{"managedBy", "ifname", "bridgeIfname", "underlayIfname", "restartPersistent"} {
-		if value, ok := current[key]; ok {
-			if _, exists := status[key]; !exists {
-				status[key] = value
-				changed = true
-			}
-		}
-	}
-	return changed
 }
 
 // preserveStaticVirtualAddressCleanupStatus retains only the ownership data
@@ -2424,7 +2402,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
-	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
 	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
@@ -2735,28 +2712,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := bridge
 			current.Router = effective
-			current.Store = store.withRouter(effective)
-			return didWorkError(current.Reconcile(ctx))
-		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: func() time.Duration {
-			prepared, err := r.currentPreparedRouter()
-			if err != nil {
-				return 0
-			}
-			current := vxlanTunnel
-			current.Router = prepared.startup.Router()
-			current.DeclaredRouter = prepared.declared
-			current.Store = store.withRouter(prepared.declared)
-			return current.NextExpiryAfter()
-		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			observation, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			effective := observation.EffectiveRouter
-			current := vxlanTunnel
-			current.Router = effective
-			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},

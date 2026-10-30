@@ -42,14 +42,14 @@ func (c IPv4StaticAddressController) staticSegmentParent(ctx context.Context, re
 		return "", errors.New("static address parent router is unavailable")
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" {
+		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
 			continue
 		}
-		spec, err := resource.VXLANSegmentSpec()
+		plan, err := nativeVXLANInterface(resource)
 		if err != nil {
 			return "", err
 		}
-		if resource.Metadata.Name != reference && firstNonEmpty(spec.IfName, resource.Metadata.Name) != interfaceIfName(c.Router, reference) {
+		if resource.Metadata.Name != reference && plan != interfaceIfName(c.Router, reference) {
 			continue
 		}
 		owner := VXLANSegmentController{Router: c.Router}
@@ -57,7 +57,7 @@ func (c IPv4StaticAddressController) staticSegmentParent(ctx context.Context, re
 			owner = *c.Segments
 			owner.Router = c.Router
 		}
-		link, err := owner.ObserveOwnedInterface(ctx, resource.Metadata.Name)
+		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
 		if err != nil {
 			return "", err
 		}

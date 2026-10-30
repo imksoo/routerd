@@ -680,7 +680,7 @@ func (c BridgeController) installBridgeFile(artifact bridgeOwnedFile) error {
 
 func vxlanSegmentMember(router *api.Router, member string) bool {
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind == "VXLANSegment" && resource.Metadata.Name == member {
+		if (resource.Kind == "VXLANSegment" || resource.Kind == "VXLANTunnel") && resource.Metadata.Name == member {
 			return true
 		}
 	}

@@ -136,7 +136,7 @@ func TestOrdinaryRouteRemovedSegmentUsesRecordedParentProof(t *testing.T) {
 				t.Fatalf("route lost its durable parent token: %+v", receipt)
 			}
 			if missingRecord {
-				if err := os.Remove(parent.receiptPath("segment")); err != nil {
+				if err := os.Remove(parent.receiptPath(api.NetAPIVersion + "/VXLANSegment/segment")); err != nil {
 					t.Fatal(err)
 				}
 			}

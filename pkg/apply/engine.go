@@ -138,7 +138,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "VRF":
 			e.observeVRF(res, aliases, includePlan, &rr)
 		case "VXLANTunnel":
-			e.observeVXLANTunnel(res, aliases, includePlan, &rr)
+			e.observeVXLANSegment(res, includePlan, &rr)
 		case "VXLANSegment":
 			e.observeVXLANSegment(res, includePlan, &rr)
 		case "IPv4StaticAddress":
@@ -989,75 +989,6 @@ func (e *Engine) observeVRF(res api.Resource, aliases map[string]string, include
 		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure Linux VRF %s with route table %d", ifname, spec.RouteTable))
 		for _, member := range spec.Members {
 			rr.Plan = append(rr.Plan, fmt.Sprintf("enslave %s to VRF %s", aliases[member], ifname))
-		}
-	}
-}
-
-func (e *Engine) observeVXLANTunnel(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
-	spec, err := res.VXLANTunnelSpec()
-	if err != nil {
-		rr.Phase = "Blocked"
-		rr.Warnings = append(rr.Warnings, err.Error())
-		return
-	}
-	ifname := defaultString(spec.IfName, res.Metadata.Name)
-	rr.Observed["ifname"] = ifname
-	rr.Observed["vni"] = fmt.Sprintf("%d", spec.VNI)
-	rr.Observed["localAddress"] = spec.LocalAddress
-	rr.Observed["underlayInterface"] = spec.UnderlayInterface
-	rr.Observed["underlayIfname"] = aliases[spec.UnderlayInterface]
-	rr.Observed["peers"] = strings.Join(spec.Peers, ",")
-	bridgeIfName := aliases[spec.Bridge]
-	if spec.Bridge != "" {
-		rr.Observed["bridge"] = spec.Bridge
-		rr.Observed["bridgeIfname"] = bridgeIfName
-	}
-	out, observeErr := e.Command("ip", "-details", "link", "show", "dev", ifname)
-	if observeErr != nil {
-		rr.Phase = "Drifted"
-		rr.Observed["present"] = "false"
-		if includePlan {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("create VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
-		}
-		return
-	}
-	rr.Observed["present"] = "true"
-	port := spec.UDPPort
-	if port == 0 {
-		port = 4789
-	}
-	for _, want := range []string{
-		"vxlan id " + strconv.Itoa(spec.VNI),
-		"local " + spec.LocalAddress,
-		"dev " + aliases[spec.UnderlayInterface],
-		"dstport " + strconv.Itoa(port),
-		"nolearning",
-	} {
-		if !strings.Contains(string(out), want) {
-			rr.Phase = "Drifted"
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s readback is missing %q", ifname, want))
-		}
-	}
-	if spec.MTU != 0 && !strings.Contains(string(out), " mtu "+strconv.Itoa(spec.MTU)+" ") {
-		rr.Phase = "Drifted"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s MTU does not match %d", ifname, spec.MTU))
-	}
-	if bridgeIfName != "" && !strings.Contains(string(out), "master "+bridgeIfName) {
-		rr.Phase = "Drifted"
-		rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is not attached to %s", ifname, bridgeIfName))
-	}
-	for _, peer := range spec.Peers {
-		fdb, err := e.Command("bridge", "fdb", "show", "dev", ifname)
-		if err != nil || !strings.Contains(string(fdb), "00:00:00:00:00:00 dst "+peer) {
-			rr.Phase = "Drifted"
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s flood FDB entry for %s is absent", ifname, peer))
-		}
-	}
-	if includePlan {
-		if rr.Phase == "Healthy" {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("keep VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
-		} else {
-			rr.Plan = append(rr.Plan, fmt.Sprintf("reconcile VXLAN tunnel %s vni %d over %s", ifname, spec.VNI, aliases[spec.UnderlayInterface]))
 		}
 	}
 }

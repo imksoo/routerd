@@ -23,17 +23,20 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	"github.com/imksoo/routerd/pkg/vxlan"
 )
 
 // VXLANSegmentController owns the native link, flood entries and its own bridge
 // port. Receipts survive removal of the declaring resource and public statuses.
 type VXLANSegmentController struct {
-	Router   *api.Router
-	Store    Store
-	Native   vxlan.SegmentNative
-	StateDir string
-	DryRun   bool
+	Router        *api.Router
+	Store         Store
+	Native        vxlan.SegmentNative
+	StateDir      string
+	DryRun        bool
+	StartedAt     time.Time
+	gateRevisions map[string]string
 	// scope is captured once by this operation, never an independent authority.
 	scope string
 	// Admit rechecks the actual current selection before forwarding activation.
@@ -96,8 +99,11 @@ func (c VXLANSegmentController) readOwners() ([]vxlanSegmentOwner, error) {
 			return nil, fmt.Errorf("trailing data in VXLAN receipt %s", entry.Name())
 		}
 		token, err := hex.DecodeString(owner.Identity.Token)
-		if err != nil || len(token) != 16 || owner.Version != 1 || owner.Resource == "" || filepath.Base(c.receiptPath(owner.Resource)) != entry.Name() || owner.Identity.Scope != c.scope || owner.Identity.CreationName == "" || owner.Identity.Index < 0 || !owner.Identity.Pending && owner.Identity.Index == 0 || owner.Identity.UnderlayIndex <= 0 || owner.Identity.BridgeIndex < 0 {
+		if err != nil || len(token) != 16 || owner.Version != 2 || owner.Resource == "" || filepath.Base(c.receiptPath(owner.Resource)) != entry.Name() || owner.Identity.Scope != c.scope || owner.Identity.CreationName == "" || owner.Identity.Index < 0 || !owner.Identity.Pending && owner.Identity.Index == 0 || owner.Identity.UnderlayIndex <= 0 || owner.Identity.BridgeIndex < 0 {
 			return nil, fmt.Errorf("invalid native VXLAN receipt %s", entry.Name())
+		}
+		if _, _, err := nativeVXLANIdentity(owner.Resource); err != nil {
+			return nil, err
 		}
 		if err := validateSegmentPlan(owner.Plan); err != nil {
 			return nil, fmt.Errorf("invalid VXLAN receipt plan %s: %w", entry.Name(), err)
@@ -138,7 +144,7 @@ func (c VXLANSegmentController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return errors.New("VXLAN router and status publisher are required")
 	}
-	plans, err := segmentPlans(c.Router)
+	plans, err := c.currentPlans()
 	if err != nil {
 		return err
 	}
@@ -239,7 +245,7 @@ func (c VXLANSegmentController) reconcileSegment(ctx context.Context, name strin
 			return errors.New("VXLAN native preparation lacks ownership identity")
 		}
 		topology.Pending = true
-		owner = vxlanSegmentOwner{Version: 1, Resource: name, Identity: topology, Plan: plan}
+		owner = vxlanSegmentOwner{Version: 2, Resource: name, Identity: topology, Plan: plan}
 		if err := c.saveOwner(owner); err != nil {
 			return err
 		}
@@ -299,6 +305,20 @@ func (c VXLANSegmentController) reconcileSegment(ctx context.Context, name strin
 }
 
 func (c VXLANSegmentController) confirm(ctx context.Context, name string, plan vxlan.SegmentConfig) error {
+	if revision, guarded := c.gateRevisions[name]; guarded {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.ID() != name {
+				continue
+			}
+			reader := vxlanGateReader{Store: c.Store, StartedAt: c.StartedAt}
+			if err := reader.requireCurrentGate(resource, revision, true); err != nil {
+				if errors.Is(err, errVXLANGateRevisionChanged) {
+					return errSegmentIntentChanged
+				}
+				return err
+			}
+		}
+	}
 	matches, err := c.Admit(ctx, name, plan)
 	if err != nil {
 		return err
@@ -357,7 +377,11 @@ func (c VXLANSegmentController) saveStatus(name string, plan vxlan.SegmentConfig
 	if failure != nil {
 		status["error"] = failure.Error()
 	}
-	return c.Store.SaveObjectStatus(api.NetAPIVersion, "VXLANSegment", name, status)
+	kind, resourceName, err := nativeVXLANIdentity(name)
+	if err != nil {
+		return err
+	}
+	return c.Store.SaveObjectStatus(api.NetAPIVersion, kind, resourceName, status)
 }
 
 func (c VXLANSegmentController) saveError(name string, plan vxlan.SegmentConfig, err error) error {
@@ -365,25 +389,42 @@ func (c VXLANSegmentController) saveError(name string, plan vxlan.SegmentConfig,
 }
 
 func sameSegmentPlan(a, b vxlan.SegmentConfig) bool {
-	return a.IfName == b.IfName && a.VNI == b.VNI && a.Local == b.Local && slices.Equal(a.Remotes, b.Remotes) && a.Group == b.Group && a.Underlay == b.Underlay && a.Port == b.Port && a.MTU == b.MTU && a.Bridge == b.Bridge
+	return a.IfName == b.IfName && a.VNI == b.VNI && a.Local == b.Local && slices.Equal(a.Remotes, b.Remotes) && a.Group == b.Group && a.Underlay == b.Underlay && a.Port == b.Port && a.MTU == b.MTU && a.Bridge == b.Bridge && a.NoLearning == b.NoLearning && a.OuterDF == b.OuterDF
 }
 
 func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
 	plans := map[string]vxlan.SegmentConfig{}
 	aliases := bridgeInterfaceAliases(router)
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" {
+		var plan vxlan.SegmentConfig
+		var underlay, bridge string
+		switch resource.Kind {
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err != nil {
+				return nil, err
+			}
+			plan = vxlan.SegmentConfig{IfName: firstNonEmpty(spec.IfName, resource.Metadata.Name), VNI: spec.VNI, Local: spec.LocalAddress, Remotes: append([]string(nil), spec.Remotes...), Group: spec.MulticastGroup, Port: chainFirstNonZero(spec.UDPPort, 4789), MTU: spec.MTU}
+			underlay, bridge = spec.UnderlayInterface, spec.Bridge
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err != nil {
+				return nil, err
+			}
+			df := spec.OuterDF
+			if df == "" && platform.CurrentOS() == platform.OSLinux {
+				df = "inherit"
+			}
+			plan = vxlan.SegmentConfig{IfName: firstNonEmpty(spec.IfName, resource.Metadata.Name), VNI: spec.VNI, Local: spec.LocalAddress, Remotes: append([]string(nil), spec.Peers...), Port: chainFirstNonZero(spec.UDPPort, 4789), MTU: spec.MTU, NoLearning: true, OuterDF: df}
+			underlay, bridge = spec.UnderlayInterface, spec.Bridge
+		default:
 			continue
 		}
-		spec, err := resource.VXLANSegmentSpec()
-		if err != nil {
-			return nil, err
-		}
-		plan := vxlan.SegmentConfig{IfName: firstNonEmpty(spec.IfName, resource.Metadata.Name), VNI: spec.VNI, Local: spec.LocalAddress, Remotes: append([]string(nil), spec.Remotes...), Group: spec.MulticastGroup, Underlay: aliases[spec.UnderlayInterface], Port: chainFirstNonZero(spec.UDPPort, 4789), MTU: spec.MTU, Bridge: aliases[spec.Bridge]}
+		plan.Underlay, plan.Bridge = aliases[underlay], aliases[bridge]
 		// This is an already admitted effective graph. When filtering can
 		// remove a declared dependency; that is known ineligibility, whereas
 		// an unreadable condition would have failed observation before here.
-		if plan.Underlay == "" || spec.Bridge != "" && plan.Bridge == "" {
+		if plan.Underlay == "" || bridge != "" && plan.Bridge == "" {
 			continue
 		}
 		for _, bridge := range router.Spec.Resources {
@@ -417,12 +458,15 @@ func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
 		}
 		slices.Sort(plan.Remotes)
 		plan.Remotes = slices.Compact(plan.Remotes)
-		plans[resource.Metadata.Name] = plan
+		plans[resource.ID()] = plan
 	}
 	return plans, nil
 }
 
 func validateSegmentPlan(plan vxlan.SegmentConfig) error {
+	if plan.OuterDF != "" && plan.OuterDF != "set" && plan.OuterDF != "unset" && plan.OuterDF != "inherit" {
+		return errors.New("invalid VXLAN outer DF mode")
+	}
 	if plan.IfName == "" || plan.Underlay == "" || plan.VNI < 1 || plan.VNI > 16777215 || plan.Port < 1 || plan.Port > 65535 {
 		return errors.New("VXLAN interface, underlay, VNI and UDP port are required")
 	}
@@ -449,12 +493,19 @@ func validateSegmentPlan(plan vxlan.SegmentConfig) error {
 // vxlanSegmentController binds a single captured observation to each operation.
 // Admission is repeated at the native activation boundary after any slow work.
 func (r *Runner) vxlanSegmentController(store eventedStore, actor VXLANSegmentController) framework.Controller {
-	return framework.FuncController{ControllerName: "vxlan-segment", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptions("Interface", "Bridge", "VXLANSegment")), NextAfter: func() time.Duration {
+	return framework.FuncController{ControllerName: "vxlan-segment", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions(statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Interface", "Bridge", "VXLANSegment", "VXLANTunnel")), NextAfter: func() time.Duration {
 		view, err := r.ObserveRuntimeRouter(time.Now().UTC(), platform.CurrentOS())
-		if err != nil || view.NextChangeAt.IsZero() {
+		if err != nil {
 			return 0
 		}
-		return max(time.Until(view.NextChangeAt), time.Nanosecond)
+		expiry := (vxlanGateReader{DeclaredRouter: view.DeclaredRouter, Store: store, StartedAt: r.startedAt()}).NextExpiryAfter()
+		if !view.NextChangeAt.IsZero() {
+			viewExpiry := max(time.Until(view.NextChangeAt), time.Nanosecond)
+			if expiry == 0 || viewExpiry < expiry {
+				expiry = viewExpiry
+			}
+		}
+		return expiry
 	}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -465,6 +516,7 @@ func (r *Runner) vxlanSegmentController(store eventedStore, actor VXLANSegmentCo
 		}
 		current := actor
 		current.Router = view.EffectiveRouter
+		current.StartedAt = r.startedAt()
 		current.Store = store.withRouter(view.EffectiveRouter)
 		current.Admit = func(ctx context.Context, name string, plan vxlan.SegmentConfig) (bool, error) {
 			if err := ctx.Err(); err != nil {
@@ -511,7 +563,7 @@ func (c VXLANSegmentController) ObserveOwnedInterface(ctx context.Context, resou
 	if c.Router == nil {
 		return absent, errors.New("VXLAN current router is required")
 	}
-	plans, err := segmentPlans(c.Router)
+	plans, err := c.currentPlans()
 	if err != nil {
 		return absent, err
 	}
@@ -634,4 +686,58 @@ func makeVXLANReceiptDir(path string) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
+}
+
+func nativeVXLANIdentity(id string) (string, string, error) {
+	rest, ok := strings.CutPrefix(id, api.NetAPIVersion+"/")
+	if !ok {
+		return "", "", fmt.Errorf("invalid native VXLAN resource %q", id)
+	}
+	kind, name, ok := strings.Cut(rest, "/")
+	if !ok || name == "" || strings.Contains(name, "/") || kind != "VXLANSegment" && kind != "VXLANTunnel" {
+		return "", "", fmt.Errorf("invalid native VXLAN resource %q", id)
+	}
+	return kind, name, nil
+}
+
+func (c *VXLANSegmentController) currentPlans() (map[string]vxlan.SegmentConfig, error) {
+	plans, err := segmentPlans(c.Router)
+	if err != nil {
+		return nil, err
+	}
+	c.gateRevisions = map[string]string{}
+	reader := vxlanGateReader{Store: c.Store, StartedAt: c.StartedAt}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "VXLANTunnel" {
+			continue
+		}
+		gate, err := reader.gateState(resource)
+		if err != nil {
+			return nil, err
+		}
+		if gate != vxlanGateEnabled {
+			delete(plans, resource.ID())
+			continue
+		}
+		if !resourcequery.ResourceWhenPresent(resourcequery.ResourceWhen(resource)) {
+			continue
+		}
+		revision, guarded, err := reader.dependencyRevision(resource)
+		if err != nil {
+			return nil, err
+		}
+		if guarded {
+			c.gateRevisions[resource.ID()] = revision
+		}
+	}
+	return plans, nil
+}
+
+func nativeVXLANInterface(resource api.Resource) (string, error) {
+	if resource.Kind == "VXLANSegment" {
+		spec, err := resource.VXLANSegmentSpec()
+		return firstNonEmpty(spec.IfName, resource.Metadata.Name), err
+	}
+	spec, err := resource.VXLANTunnelSpec()
+	return firstNonEmpty(spec.IfName, resource.Metadata.Name), err
 }

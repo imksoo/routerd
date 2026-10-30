@@ -317,12 +317,7 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		ifname := defaultString(spec.IfName, res.Metadata.Name)
 		return []resource.Intent{artifact("net.vrf", ifname, resource.ActionEnsure, "ip-link", map[string]string{"routeTable": fmt.Sprintf("%d", spec.RouteTable)})}
-	case "VXLANTunnel":
-		spec, err := res.VXLANTunnelSpec()
-		if err != nil {
-			return nil
-		}
-		return []resource.Intent{artifact("net.vxlan.tunnel", defaultString(spec.IfName, res.Metadata.Name), resource.ActionEnsure, "ip-link", map[string]string{"vni": fmt.Sprintf("%d", spec.VNI)})}
+
 	case "DHCPv4Server", "DHCPv6Server":
 		if res.Kind == "DHCPv6Server" {
 			spec, err := res.DHCPv6ServerSpec()

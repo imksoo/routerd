@@ -99,7 +99,7 @@ func mustDaemonWhenRouter(t *testing.T, runner *Runner, store eventedStore) *api
 	return result
 }
 
-func mustVXLANGateState(t *testing.T, controller VXLANTunnelController, resource api.Resource) vxlanGateState {
+func mustVXLANGateState(t *testing.T, controller vxlanGateReader, resource api.Resource) vxlanGateState {
 	t.Helper()
 	result, err := controller.gateState(resource)
 	if err != nil {
