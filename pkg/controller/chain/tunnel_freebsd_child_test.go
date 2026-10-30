@@ -23,7 +23,7 @@ func TestTunnelFreeBSDParentPreservesAcquiredChildAddress(t *testing.T) {
 				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: tt.name}, Spec: spec},
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "inside"}, Spec: api.IPv4StaticAddressSpec{Interface: tt.name, Address: "192.0.2.99/32"}},
 			}}}
-			store := mapStore{api.HybridAPIVersion + "/TunnelInterface/" + tt.name: {"phase": "Up", "interfaceOwned": true, "address": spec.Address, "peerAddress": spec.PeerAddress, "key": spec.Key}}
+			store := mapStore{api.HybridAPIVersion + "/TunnelInterface/" + tt.name: {"phase": "Up", "interfaceOwned": true, "address": spec.Address, "peerAddress": spec.PeerAddress, "key": spec.Key, "observedAddress": spec.Address, "observedPeerAddress": spec.PeerAddress}}
 			child := IPv4StaticAddressController{Store: store}
 			if err := child.saveStaticAddress("inside", map[string]any{"phase": "Applied"}, &staticAddressReceipt{IfName: tt.name, IfIndex: 7, Scope: "freebsd:fixture", Address: "192.0.2.99/32"}); err != nil {
 				t.Fatal(err)
