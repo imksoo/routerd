@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -130,6 +131,10 @@ func dnsmasqHostnameField(value string) bool {
 }
 
 func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
+	// The declared spec is shared by controller input snapshots. Normalizing a
+	// value must not write defaults through its Listen or Sources slice storage.
+	spec.Listen = slices.Clone(spec.Listen)
+	spec.Sources = slices.Clone(spec.Sources)
 	if len(spec.Listen) == 0 {
 		spec.Listen = []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}}
 	}
@@ -183,6 +188,19 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 
 func Validate(spec api.DNSResolverSpec) error {
 	spec = NormalizeSpec(spec)
+	if spec.Cache.MaxEntries < 0 {
+		return fmt.Errorf("cache.maxEntries must not be negative")
+	}
+	for _, ttl := range []struct{ name, value string }{
+		{"minTTL", spec.Cache.MinTTL}, {"maxTTL", spec.Cache.MaxTTL}, {"negativeTTL", spec.Cache.NegativeTTL},
+	} {
+		if ttl.value == "" {
+			continue
+		}
+		if duration, err := time.ParseDuration(ttl.value); err != nil || duration < 0 {
+			return fmt.Errorf("cache.%s must be a non-negative duration", ttl.name)
+		}
+	}
 	for _, listen := range spec.Listen {
 		if listen.Port < 1 || listen.Port > 65535 {
 			return fmt.Errorf("listen port must be between 1 and 65535")
