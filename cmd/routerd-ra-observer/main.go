@@ -46,11 +46,16 @@ type daemon struct {
 	events     []daemonapi.DaemonEvent
 	nextCursor uint64
 
-	observerError string
-	selfMAC       string
-	packetsSeen   uint64
-	lastObserved  time.Time
-	routers       map[string]raobserver.RouterObservation
+	observerError           string
+	selfMAC                 string
+	packetsSeen             uint64
+	lastObserved            time.Time
+	routers                 map[string]raobserver.RouterObservation
+	clock                   func() time.Time
+	historyExpired          uint64
+	historyEvicted          uint64
+	observationsTruncated   uint64
+	observationItemsOmitted uint64
 }
 
 type eventsResponse struct {
@@ -171,16 +176,26 @@ func (d *daemon) observeSocket(ctx context.Context, socket *packetSocket) error 
 }
 
 func (d *daemon) recordAdvertisement(adv raobserver.Advertisement) {
-	now := time.Now().UTC()
+	now := d.now()
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.packetsSeen++
 	d.lastObserved = now
+	d.expireRoutersLocked(now)
 	self := raobserver.IsSelfAdvertisement(adv, d.selfMAC)
 	if !self {
 		key := raobserver.ObservationKey(adv)
 		current := d.routers[key]
 		first := current.Count == 0
-		d.routers[key] = raobserver.UpdateObservation(current, adv, now)
+		if first && len(d.routers) >= maxObservedRouters {
+			d.evictOldestRouterLocked()
+		}
+		bounded, omitted := boundedAdvertisement(adv)
+		if omitted > 0 {
+			d.observationsTruncated++
+			d.observationItemsOmitted += uint64(omitted)
+		}
+		d.routers[key] = raobserver.UpdateObservation(current, bounded, now)
 		if first {
 			d.publishLocked("routerd.ipv6.ra.rogue_detected", daemonapi.SeverityWarning, "RogueRADetected", "observed non-self IPv6 router advertisement", map[string]string{
 				"interface":      d.opts.ifname,
@@ -190,7 +205,6 @@ func (d *daemon) recordAdvertisement(adv raobserver.Advertisement) {
 			})
 		}
 	}
-	d.mu.Unlock()
 }
 
 func (d *daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +261,7 @@ func (d *daemon) serve(ctx context.Context) error {
 func (d *daemon) status() daemonapi.DaemonStatus {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	d.expireRoutersLocked(d.now())
 	phase := daemonapi.PhaseRunning
 	health := daemonapi.HealthOK
 	resourcePhase := "Watching"
@@ -260,11 +275,17 @@ func (d *daemon) status() daemonapi.DaemonStatus {
 	}
 	observedRouters, _ := json.Marshal(d.observedRoutersLocked())
 	observed := map[string]string{
-		"interface":       d.opts.ifname,
-		"selfMAC":         d.selfMAC,
-		"packetsSeen":     strconv.FormatUint(d.packetsSeen, 10),
-		"rogueCount":      strconv.Itoa(len(d.routers)),
-		"observedRouters": string(observedRouters),
+		"interface":               d.opts.ifname,
+		"selfMAC":                 d.selfMAC,
+		"packetsSeen":             strconv.FormatUint(d.packetsSeen, 10),
+		"rogueCount":              strconv.Itoa(len(d.routers)),
+		"observedRouters":         string(observedRouters),
+		"historyExpired":          strconv.FormatUint(d.historyExpired, 10),
+		"historyEvicted":          strconv.FormatUint(d.historyEvicted, 10),
+		"observationsTruncated":   strconv.FormatUint(d.observationsTruncated, 10),
+		"observationItemsOmitted": strconv.FormatUint(d.observationItemsOmitted, 10),
+		"historyTTL":              routerObservationTTL.String(),
+		"historyLimit":            strconv.Itoa(maxObservedRouters),
 	}
 	if !d.lastObserved.IsZero() {
 		observed["lastObservedAt"] = d.lastObserved.Format(time.RFC3339Nano)

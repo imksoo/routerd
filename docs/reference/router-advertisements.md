@@ -41,3 +41,9 @@ item. Custom DHCPv6 `SelfAddressPolicy` live resolution also remains open.
 Some FreeBSD 14.3 ifconfig builds report zero for an individual infinite lifetime;
 the owner retains uncertainty instead of guessing infinity from that output.
 That native lifetime observation still requires closure and target qualification.
+
+The passive RA observer retains recent diagnostic history for ten minutes and
+at most 64 router identities. It bounds each retained observation before placing
+it in the status response; excessive options are omitted from diagnostics without
+rejecting an otherwise usable advertisement. Status reports expiry, eviction and
+truncation counters. This history is not forwarding or prefix authority.
