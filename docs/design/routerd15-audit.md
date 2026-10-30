@@ -1565,7 +1565,59 @@ and fixture retain the regression criteria. Relevant PD/RA/daemon tests, shell
 checks and four website locales passed.
 
 The failed-run cleanup separately exposed stale undeclared Pending/Expired
-resource rows affecting overall status after empty apply. That existing
-aggregation issue remains open; the successful run does not fix it. This gate
+resource rows affecting overall status after empty apply. That successful run
+did not fix it; the subsequent owner cleanup is recorded below. This gate
 does not qualify overlapping multi-prefix lifetimes, WAN RA/IA_NA, IPv6 reboot,
 FreeBSD forwarding or the full routerd 1.0 feature inventory.
+
+## Removed PD and DNS status lifecycle
+
+Baseline `e3b49dbb` and product `b4965652` retained undeclared Pending/Expired
+PD, delegated-address and DNS rows after expiry followed by empty apply. A
+formerly Bound PD observation also projected Expired later, making a previously
+Healthy empty router Degraded. Global status aggregation was not filtered or
+weakened. The responsible owners now retire completed state:
+
+- LAN removes an undeclared display row only after its native receipt is gone.
+  Pending, ambiguous or failed native withdrawal retains its receipt.
+- The client supervisor retires removed PD state after acknowledged child stops
+  and event-reader joins. A disabled declaration remains distinct from removal.
+- The DNS controller retires removed zone projections. Resolver process status
+  is retired by its process owner after shutdown acknowledgement.
+- In production Linux serve, that resolver owner is `SystemdUnitController`:
+  `SuperviseDNSResolvers` is false. Unit stop, artifact removal and daemon-reload
+  must succeed before retiring resolver status. The durable Removed unit result
+  lets a failed DB deletion retry after the unit file is gone. Missing/failed
+  acknowledgement and `when:false` declarations retain their status.
+
+The initial candidate `6de787cd` passed local Go tests but the extended VM gate
+still found DNSResolver Pending after empty apply: it covered the optional child
+supervisor rather than the actual systemd owner. `7f36957c` reproduces that owner
+path, including failed stop and failed status deletion. `9524e671` corrects it.
+
+Formal `make dist` product `9524e671` passed the extended
+`scripts/linux-pd-ra-lifecycle-smoke.sh` on Ubuntu 24.04.4 / Linux
+6.8.0-124-generic with independent Kea 2.4.1 and Linux SLAAC namespaces. The run
+covered acquisition, actual renewal, pool renumbering, old endpoint withdrawal,
+service restart, expiry, upstream-only return and restored DNS/forwarding. It
+then expired the lease again and applied an empty configuration. Routerd kept
+the same PID throughout expiry, recovery and final removal, with zero automatic
+restarts. Final inspection found Healthy, zero resources, no phase issues or
+controller errors, and no remaining PD/LAN/DNS rows in SQLite. Trial namespaces,
+ports and peer units were removed and the original forwarding setting restored.
+
+Validation: `go test ./...` passed at the final product source (120 packages,
+nine without tests), including stop/deletion failure, disabled declaration and
+native-receipt retention regressions. Shell syntax/ShellCheck, schema/example
+checks, four website locales and formal static Linux distribution checks passed.
+The English/Japanese development procedure includes the expiry-before-removal
+criterion. Resolved failed-run output and duplicate/older packages are removed;
+the procedure, tests and this scoped verdict are retained.
+
+Relevant source/caller review: `cmd/routerd/cmd_serve.go`,
+`pkg/controller/chain/chain.go`, `lan_native_receipt.go`, `pd_observation.go`,
+`system.go`, `daemon_removed_status.go`, `system_dns_removed_status.go`,
+`pkg/controller/dnsresolver/controller.go`, `removed_zone.go`,
+`pkg/state/pdlease.go` and `pkg/state/sqlite.go`, with their focused regression
+tests. Native FreeBSD removal, WAN RA/IA_NA, overlapping prefixes and the remaining
+1.0 function/platform inventory are not qualified by this Linux result.
