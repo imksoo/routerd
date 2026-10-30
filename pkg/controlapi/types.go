@@ -405,9 +405,17 @@ type ProbeRequest struct {
 }
 
 type ProbeCheck struct {
-	Name   string `json:"name" yaml:"name"`
-	Status string `json:"status" yaml:"status"`
-	Detail string `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Name                 string    `json:"name" yaml:"name"`
+	Status               string    `json:"status" yaml:"status"`
+	Detail               string    `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Kind                 string    `json:"kind,omitempty" yaml:"kind,omitempty"`
+	Protocol             string    `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+	Target               string    `json:"target,omitempty" yaml:"target,omitempty"`
+	ObservedAt           time.Time `json:"observedAt,omitempty" yaml:"observedAt,omitempty"`
+	DurationMilliseconds int64     `json:"durationMilliseconds,omitempty" yaml:"durationMilliseconds,omitempty"`
+	FailureKind          string    `json:"failureKind,omitempty" yaml:"failureKind,omitempty"`
+	BindingInterface     string    `json:"bindingInterface,omitempty" yaml:"bindingInterface,omitempty"`
+	BindingMark          int       `json:"bindingMark,omitempty" yaml:"bindingMark,omitempty"`
 }
 
 type ProbeResult struct {

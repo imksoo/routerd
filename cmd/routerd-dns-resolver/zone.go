@@ -684,12 +684,15 @@ func dnsCacheKey(localAddr string, req *dns.Msg) string {
 	}
 	query := req.Copy()
 	query.Id = 0
+	// RD selects whether a miss may use upstream service; it does not change
+	// cached local information. Echo the current request's RD on a cache hit.
+	query.RecursionDesired = false
 	query.Question[0].Name = strings.ToLower(query.Question[0].Name)
 	wire, err := query.Pack()
 	if err != nil {
 		return ""
 	}
-	// Keep class, header flags and all EDNS parameters in the cache identity.
+	// Keep class, other header flags and all EDNS parameters in the identity.
 	return localAddr + "\x00" + string(wire)
 }
 
