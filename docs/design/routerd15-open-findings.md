@@ -47,9 +47,13 @@ Implemented in the daemon policy/path checkpoint:
 - Required Mobility/FIB and native address reads return errors rather than empty
   inputs. Watch cancellation owns its RPC subscription; it cannot close a shared
   connection. Startup waits for daemon restoration before controller BGP calls.
-- Community send modes are parsed, but the pinned GoBGP RPC does not enforce
-  every requested outbound mask. Standard, extended and large-community wire
-  filtering remains open; accepting the setting is not proof of its effect.
+- Standard/extended community send modes now survive the GoBGP peer/group
+  API conversion and filter cloned outbound paths after export policy. The
+  pinned local v4.7.0 source correction covers both extended attribute forms;
+  large communities retain their independent always-advertised behavior. Raw
+  TCP BGP UPDATE and withdrawal regressions cover static/dynamic peers and
+  verify original local RIB attributes remain intact. Independent-device
+  interoperability remains unqualified.
   Unsupported `communities.accept` and `communities.set.in` are rejected;
   prefix-length bounds require an allowlist.
   Control requests and acknowledgements use complete, bounded typed decoding.
