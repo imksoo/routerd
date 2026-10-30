@@ -371,7 +371,11 @@ func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	defer packetConn.Close()
-	conn, err := quic.Dial(ctx, packetConn, udpAddr, &tls.Config{ServerName: upstream.ServerName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
+	serverName := upstream.ServerName
+	if serverName == "" {
+		serverName = host // TLS also verifies certificate IP address identities.
+	}
+	conn, err := quic.Dial(ctx, packetConn, udpAddr, &tls.Config{ServerName: serverName, NextProtos: []string{"doq"}, MinVersion: tls.VersionTLS13}, &quic.Config{})
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +385,41 @@ func (p *upstreamPool) exchangeDoQ(ctx context.Context, upstream *dnsUpstream, q
 		return nil, err
 	}
 	defer stream.Close()
-	return exchangeLengthPrefixed(ctx, stream, query)
+	return exchangeDoQMessage(ctx, stream, query)
+}
+
+// RFC9250 section4.2: the query has ID0 and a sending-direction FIN before
+// waiting for the response. A peer may wait for that FIN before answering.
+func exchangeDoQMessage(ctx context.Context, stream *quic.Stream, query []byte) ([]byte, error) {
+	if len(query) < 12 {
+		return nil, fmt.Errorf("DoQ query has no DNS header")
+	}
+	stop := setExchangeDeadline(ctx, stream)
+	defer stop()
+	wire := append([]byte(nil), query...)
+	wire[0], wire[1] = 0, 0
+	if err := writeDNSMessage(stream, wire); err != nil {
+		return nil, err
+	}
+	if err := stream.Close(); err != nil {
+		return nil, err
+	}
+	response, err := readDNSMessage(stream)
+	if err != nil {
+		return nil, err
+	}
+	if len(response) < 12 || response[0] != 0 || response[1] != 0 {
+		return nil, fmt.Errorf("DoQ response must have DNS message ID0")
+	}
+	var extra [1]byte
+	if n, err := stream.Read(extra[:]); n != 0 || err != io.EOF {
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		return nil, fmt.Errorf("DoQ peer sent more than one DNS response")
+	}
+	response[0], response[1] = query[0], query[1]
+	return response, nil
 }
 
 func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, query []byte) ([]byte, error) {
@@ -464,21 +502,30 @@ type deadlineConn interface {
 func exchangeLengthPrefixed(ctx context.Context, conn deadlineConn, query []byte) ([]byte, error) {
 	stop := setExchangeDeadline(ctx, conn)
 	defer stop()
-	if len(query) > maxDNSMessageSize {
-		return nil, fmt.Errorf("DNS query too large")
-	}
-	if err := binary.Write(conn, binary.BigEndian, uint16(len(query))); err != nil {
+	if err := writeDNSMessage(conn, query); err != nil {
 		return nil, err
 	}
-	if _, err := conn.Write(query); err != nil {
-		return nil, err
+	return readDNSMessage(conn)
+}
+
+func writeDNSMessage(writer io.Writer, message []byte) error {
+	if len(message) > maxDNSMessageSize {
+		return fmt.Errorf("DNS query too large")
 	}
+	frame := make([]byte, 2+len(message))
+	binary.BigEndian.PutUint16(frame, uint16(len(message)))
+	copy(frame[2:], message)
+	_, err := bytes.NewReader(frame).WriteTo(writer)
+	return err
+}
+
+func readDNSMessage(reader io.Reader) ([]byte, error) {
 	var length uint16
-	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
+	if err := binary.Read(reader, binary.BigEndian, &length); err != nil {
 		return nil, err
 	}
 	resp := make([]byte, int(length))
-	if _, err := io.ReadFull(conn, resp); err != nil {
+	if _, err := io.ReadFull(reader, resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
