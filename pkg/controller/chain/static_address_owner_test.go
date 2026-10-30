@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/vxlan"
 )
@@ -121,8 +122,12 @@ func TestStaticAddressReplacementMissingStillWithdrawsRevokedIdentity(t *testing
 			}
 			return result, nil
 		},
-		Command: func(_ context.Context, _ string, args ...string) error {
-			if !strings.Contains(strings.Join(args, " "), "del 192.0.2.1/24") {
+		Command: func(_ context.Context, name string, args ...string) error {
+			want := "ip -4 addr del 192.0.2.1/24 dev test0"
+			if platform.CurrentOS() == platform.OSFreeBSD {
+				want = "ifconfig test0 inet 192.0.2.1/24 -alias"
+			}
+			if name+" "+strings.Join(args, " ") != want {
 				t.Fatalf("unexpected command %v", args)
 			}
 			present = false
@@ -175,7 +180,8 @@ func TestStaticAddressPendingSurvivesPublicationFailureAndRestart(t *testing.T) 
 				t.Fatalf("effect preceded durable pending identity: %#v, %v", receipt, err)
 			}
 			calls++
-			present = !strings.Contains(strings.Join(args, " "), "del")
+			line := strings.Join(args, " ")
+			present = !strings.Contains(line, "del") && !strings.Contains(line, "-alias")
 			return nil
 		},
 	}
@@ -408,7 +414,8 @@ func TestStaticAddressRemovedSegmentKeepsExactCleanupAuthority(t *testing.T) {
 					return snapshot, nil
 				},
 				Command: func(_ context.Context, _ string, args ...string) error {
-					if strings.Contains(strings.Join(args, " "), "del") {
+					line := strings.Join(args, " ")
+					if strings.Contains(line, "del") || strings.Contains(line, "-alias") {
 						deletes++
 						present = false
 					} else {
