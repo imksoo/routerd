@@ -61,6 +61,14 @@ func awaitRetiredHTTP(t *testing.T, owner *ownedHTTPServer) {
 }
 
 func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
+	for _, reload := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reload-%t", reload), func(t *testing.T) {
+			testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t, reload)
+		})
+	}
+}
+
+func testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T, reload bool) {
 	t.Setenv("ROUTERD_HTTP_OLD_TOKEN", "old-token")
 	t.Setenv("ROUTERD_HTTP_NEW_TOKEN", "new-token")
 	controlPort, webPort := unusedHTTPPort(t), unusedHTTPPort(t)
@@ -146,6 +154,18 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		return err
 	}
 	updated := httpConfigRouter(controlPort, webPort, "ROUTERD_HTTP_NEW_TOKEN", "updated console", true)
+	if reload {
+		// Exercise the actual generation replacement path together with HTTP
+		// publication. The selected test controllers do not start DNS services.
+		dns, err := config.LoadBytes([]byte(dnsRuntimeYAML("127.0.0.1")), "candidate")
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated.Spec.Resources = append(updated.Spec.Resources, dns.Spec.Resources...)
+	}
+	if changed, _ := runtimeShapeChanged(initial, updated); changed != reload {
+		t.Fatalf("HTTP fixture selected wrong runtime path: reload=%t changed=%t", reload, changed)
+	}
 	if err := apply(old, updated); err != nil {
 		t.Fatalf("same-listener self mutation: %v", err)
 	}

@@ -422,7 +422,11 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 		return outcome, err
 	}
 	if m.logger != nil {
-		m.logger.Emit(eventlog.LevelInfo, "apply", "committed canonical router config without reconcile", map[string]string{"config": m.configPath})
+		message := "committed canonical router config without reconcile"
+		if opts.applyRuntime != nil {
+			message = "committed canonical router config and applied the selected runtime"
+		}
+		m.logger.Emit(eventlog.LevelInfo, "apply", message, map[string]string{"config": m.configPath})
 	}
 	outcome.Stage = "complete"
 	return outcome, nil
