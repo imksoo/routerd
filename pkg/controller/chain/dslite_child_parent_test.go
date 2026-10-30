@@ -13,19 +13,25 @@ import (
 )
 
 func TestDSLiteForeignParentCannotAcquireStaticAddress(t *testing.T) {
-	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
-	native.links["ds-owned"] = dsliteTunnelObservation{Exists: true, Index: 8, Kind: "ip6tnl", MTU: 1454}
+	parent, native, store := newDSLiteNativeController(t, platform.CurrentOS())
+	ifname := interfaceIfName(parent.Router, "ds")
+	scope, _ := parent.NativeScope(t.Context())
+	kind := "ip6tnl"
+	if parent.currentOS() == platform.OSFreeBSD {
+		kind = "gif"
+	}
+	native.links[ifname] = dsliteTunnelObservation{Exists: true, Index: 8, Kind: kind, MTU: 1454}
 	parent.Router.Spec.Resources = append(parent.Router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "child"}, Spec: api.IPv4StaticAddressSpec{Interface: "ds", Address: "192.0.2.1/24"}})
 	present, writes := false, 0
 	child := IPv4StaticAddressController{Router: parent.Router, Store: store, DSLite: &parent, ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
-		snapshot := staticAddressSnapshot{Index: 8, Scope: "linux:boot-a:17"}
+		snapshot := staticAddressSnapshot{Index: 8, Scope: scope}
 		if present {
 			snapshot.Addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/24")}
 		}
 		return snapshot, nil
 	}, Command: func(context.Context, string, ...string) error { writes++; present = true; return nil }}
 	err := child.Reconcile(t.Context())
-	if writes != 0 || present {
+	if err == nil || writes != 0 || present {
 		t.Fatalf("foreign DS-Lite parent received child address: writes=%d err=%v", writes, err)
 	}
 }
@@ -33,7 +39,9 @@ func TestDSLiteForeignParentCannotAcquireStaticAddress(t *testing.T) {
 func TestDSLiteParentStaticAddressProofAndRecordedCleanup(t *testing.T) {
 	for _, scenario := range []string{"owned", "pending", "foreign-after-save", "removed", "removed-foreign", "removed-missing-receipt"} {
 		t.Run(scenario, func(t *testing.T) {
-			parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+			parent, native, store := newDSLiteNativeController(t, platform.CurrentOS())
+			ifname := interfaceIfName(parent.Router, "ds")
+			scope, _ := parent.NativeScope(t.Context())
 			if err := parent.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -48,17 +56,18 @@ func TestDSLiteParentStaticAddressProofAndRecordedCleanup(t *testing.T) {
 				}
 			}
 			if scenario == "foreign-after-save" {
-				db.afterPending = func() { link := native.links["ds-owned"]; link.Token = "foreign"; native.links["ds-owned"] = link }
+				db.afterPending = func() { link := native.links[ifname]; link.Token = "foreign"; native.links[ifname] = link }
 			}
 			present, adds, deletes := false, 0, 0
 			child := IPv4StaticAddressController{Router: parent.Router, Store: db, DSLite: &parent, ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
-				snapshot := staticAddressSnapshot{Index: native.links["ds-owned"].Index, Scope: "linux:boot-a:17"}
+				snapshot := staticAddressSnapshot{Index: native.links[ifname].Index, Scope: scope}
 				if present {
 					snapshot.Addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/24")}
 				}
 				return snapshot, nil
 			}, Command: func(_ context.Context, _ string, args ...string) error {
-				if strings.Contains(strings.Join(args, " "), "del") {
+				line := strings.Join(args, " ")
+				if strings.Contains(line, "del") || strings.Contains(line, "-alias") {
 					deletes++
 					present = false
 				} else {
@@ -87,9 +96,9 @@ func TestDSLiteParentStaticAddressProofAndRecordedCleanup(t *testing.T) {
 			}
 			child.Router = &api.Router{}
 			if scenario == "removed-foreign" {
-				link := native.links["ds-owned"]
+				link := native.links[ifname]
 				link.Token = "foreign"
-				native.links["ds-owned"] = link
+				native.links[ifname] = link
 			}
 			if scenario == "removed-missing-receipt" {
 				records, _ := parent.nativeTunnelReceipts()
@@ -185,7 +194,9 @@ func TestDSLiteParentDelegatedLANProofAndRecordedCleanup(t *testing.T) {
 	for _, scenario := range []string{"foreign", "owned", "changed-during-save"} {
 		t.Run(scenario, func(t *testing.T) {
 			store, router, child, _ := sqliteNativeLANFixture(t)
-			parent, native, _ := newDSLiteNativeController(t, platform.OSLinux)
+			parent, native, _ := newDSLiteNativeController(t, platform.CurrentOS())
+			ifname := interfaceIfName(parent.Router, "ds")
+			scope, _ := parent.NativeScope(t.Context())
 			parent.Store = store
 			native.store = func() Store { return store }
 			if err := parent.reconcile(t.Context()); err != nil {
@@ -201,7 +212,7 @@ func TestDSLiteParentDelegatedLANProofAndRecordedCleanup(t *testing.T) {
 			if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "ds", map[string]any{"phase": "Up"}); err != nil {
 				t.Fatal(err)
 			}
-			replace := func() { link := native.links["ds-owned"]; link.Token = "foreign"; native.links["ds-owned"] = link }
+			replace := func() { link := native.links[ifname]; link.Token = "foreign"; native.links[ifname] = link }
 			if scenario == "foreign" {
 				replace()
 			}
@@ -210,11 +221,12 @@ func TestDSLiteParentDelegatedLANProofAndRecordedCleanup(t *testing.T) {
 			}
 			present, writes := false, 0
 			child.ObserveAddress = func(context.Context, string, string, bool) (delegatedAddressObservation, error) {
-				return delegatedAddressObservation{ifIndex: native.links["ds-owned"].Index, scope: "linux:boot-a:17", present: present, usable: present}, nil
+				return delegatedAddressObservation{ifIndex: native.links[ifname].Index, scope: scope, present: present, usable: present, lifetimeKnown: present, preferredSeconds: 90, validSeconds: 120}, nil
 			}
 			child.Command = func(_ context.Context, _ string, args ...string) error {
 				writes++
-				present = !strings.Contains(strings.Join(args, " "), "del")
+				line := strings.Join(args, " ")
+				present = !strings.Contains(line, "del") && !strings.Contains(line, "-alias")
 				return nil
 			}
 			err := child.Reconcile(t.Context())
@@ -232,16 +244,16 @@ func TestDSLiteParentDelegatedLANProofAndRecordedCleanup(t *testing.T) {
 			if err != nil || receipt == nil || !strings.HasPrefix(receipt.ParentToken, "dslite:") {
 				t.Fatalf("LAN parent proof absent: %+v %v", receipt, err)
 			}
-			token := native.links["ds-owned"].Token
+			token := native.links[ifname].Token
 			replace()
 			child.Router = &api.Router{}
 			child.DeclaredRouter = child.Router
 			if err := child.Reconcile(t.Context()); err == nil || writes != 1 || !present {
 				t.Fatalf("foreign parent admitted LAN withdrawal: writes=%d err=%v", writes, err)
 			}
-			link := native.links["ds-owned"]
+			link := native.links[ifname]
 			link.Token = token
-			native.links["ds-owned"] = link
+			native.links[ifname] = link
 			if err := child.Reconcile(t.Context()); err != nil || writes != 2 || present {
 				t.Fatalf("recorded parent LAN cleanup failed: writes=%d err=%v", writes, err)
 			}
@@ -280,7 +292,8 @@ func TestDSLiteParentProofUsesBothNativeDrivers(t *testing.T) {
 func TestDSLiteParentRAProofAndRecordedWithdrawal(t *testing.T) {
 	for _, scenario := range []string{"foreign", "owned", "changed-during-save"} {
 		t.Run(scenario, func(t *testing.T) {
-			parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+			parent, native, store := newDSLiteNativeController(t, platform.CurrentOS())
+			ifname := interfaceIfName(parent.Router, "ds")
 			if err := parent.reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -302,16 +315,16 @@ func TestDSLiteParentRAProofAndRecordedWithdrawal(t *testing.T) {
 			}
 			service.prepared = prepared
 			socket := &raCapturedSocket{}
-			endpoint := ra.Endpoint{Conn: socket, Source: netip.MustParseAddr("fe80::1"), Index: native.links["ds-owned"].Index, MTU: 1454}
-			replace := func() { link := native.links["ds-owned"]; link.Token = "foreign"; native.links["ds-owned"] = link }
-			token := native.links["ds-owned"].Token
+			endpoint := ra.Endpoint{Conn: socket, Source: netip.MustParseAddr("fe80::1"), Index: native.links[ifname].Index, MTU: 1454}
+			replace := func() { link := native.links[ifname]; link.Token = "foreign"; native.links[ifname] = link }
+			token := native.links[ifname].Token
 			if scenario == "foreign" {
 				replace()
 			}
 			if scenario == "changed-during-save" {
 				service.store = &raPendingParentFault{SQLiteStore: store.SQLiteStore, afterPending: replace}
 			}
-			err = service.transmit(t.Context(), "ds-owned", endpoint, false)
+			err = service.transmit(t.Context(), ifname, endpoint, false)
 			if scenario != "owned" {
 				if err == nil || len(socket.packets) != 0 {
 					t.Fatalf("unproved parent emitted RA: packets=%d err=%v", len(socket.packets), err)
@@ -322,19 +335,19 @@ func TestDSLiteParentRAProofAndRecordedWithdrawal(t *testing.T) {
 				t.Fatalf("owned parent RA rejected: %v", err)
 			}
 			journal, err := readRAJournal(store)
-			if err != nil || journal["ds-owned"].ParentToken != "dslite:"+token {
+			if err != nil || journal[ifname].ParentToken != "dslite:"+token {
 				t.Fatalf("RA parent proof absent: %+v %v", journal, err)
 			}
 			service.plans = map[string]raInterfacePlan{}
 			service.declared = &api.Router{}
 			replace()
-			if err := service.transmit(t.Context(), "ds-owned", endpoint, true); err == nil || len(socket.packets) != 1 {
+			if err := service.transmit(t.Context(), ifname, endpoint, true); err == nil || len(socket.packets) != 1 {
 				t.Fatalf("foreign parent emitted withdrawal: %v", err)
 			}
-			link := native.links["ds-owned"]
+			link := native.links[ifname]
 			link.Token = token
-			native.links["ds-owned"] = link
-			if err := service.transmit(t.Context(), "ds-owned", endpoint, true); err != nil {
+			native.links[ifname] = link
+			if err := service.transmit(t.Context(), ifname, endpoint, true); err != nil {
 				t.Fatal(err)
 			}
 			if prefixes := raWirePrefixes(t, socket.packets[len(socket.packets)-1]); len(socket.packets) != 2 || prefixes["2001:db8:7::/64"] != (raWirePrefix{}) {
@@ -431,7 +444,9 @@ func TestDSLiteFreeBSDConfiguredNameCannotBypassActualParent(t *testing.T) {
 }
 
 func TestDSLiteWhenMaskedParentCannotBecomeBareNativeDevice(t *testing.T) {
-	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	parent, native, store := newDSLiteNativeController(t, platform.CurrentOS())
+	ifname := interfaceIfName(parent.Router, "ds")
+	scope, _ := parent.NativeScope(t.Context())
 	spec, _ := parent.Router.Spec.Resources[1].DSLiteTunnelSpec()
 	spec.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.role": {Equals: "master"}}}
 	parent.Router.Spec.Resources[1].Spec = spec
@@ -439,7 +454,7 @@ func TestDSLiteWhenMaskedParentCannotBecomeBareNativeDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := Runner{Router: parent.Router, Store: store}
-	view, err := runner.effectiveDynamicRouteSAMViewForReconcile(eventedStore{Store: store}, time.Now().UTC(), platform.OSLinux)
+	view, err := runner.effectiveDynamicRouteSAMViewForReconcile(eventedStore{Store: store}, time.Now().UTC(), platform.CurrentOS())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,13 +463,17 @@ func TestDSLiteWhenMaskedParentCannotBecomeBareNativeDevice(t *testing.T) {
 			t.Fatal("fixture did not mask parent")
 		}
 	}
-	native.links["ds-owned"] = dsliteTunnelObservation{Exists: true, Index: 8, Kind: "ip6tnl", MTU: 1454}
+	kind := "ip6tnl"
+	if parent.currentOS() == platform.OSFreeBSD {
+		kind = "gif"
+	}
+	native.links[ifname] = dsliteTunnelObservation{Exists: true, Index: 8, Kind: kind, MTU: 1454}
 	route := IPv4RouteController{Router: view.RouteRouter, ParentRouter: view.ParentRouter, Store: store, DSLite: &parent}
-	if token, err := route.ordinaryRouteNativeParent(t.Context(), "ds-owned", "linux:boot-a:17", 8); err == nil {
+	if token, err := route.ordinaryRouteNativeParent(t.Context(), ifname, scope, 8); err == nil {
 		t.Fatalf("masked parent admitted bare route device: token=%q", token)
 	}
 	address := IPv4StaticAddressController{Router: view.RouteRouter, ParentRouter: view.ParentRouter, Store: store, DSLite: &parent}
-	if token, err := address.staticNativeParent(t.Context(), "ds-owned", staticAddressSnapshot{Index: 8, Scope: "linux:boot-a:17"}); err == nil {
+	if token, err := address.staticNativeParent(t.Context(), ifname, staticAddressSnapshot{Index: 8, Scope: scope}); err == nil {
 		t.Fatalf("masked parent admitted bare address device: token=%q", token)
 	}
 }
