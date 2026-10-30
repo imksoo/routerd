@@ -198,6 +198,40 @@ nft の所有 comment は最初のテーブル作成時に指定します。後�
 読み取り・削除失敗時は再試行用の状態を保持します。旧ビルドのマーカーなしテーブルは
 自動削除しません。隔離環境の準備段階で明示的に処理し、手動撤去を製品の合格結果に含めません。
 
+## バージョン間の停止切替・切戻し
+
+下記の2台構成で、固定した1.0 baselineと候補版をそれぞれ`make dist`で配布し、
+archiveのchecksumを検証します。peer VMとDHCPプロセスは動かし続けます。
+計画停止とリース再取得を伴う試験です。1.0のDBを1.5へ流用したり、
+バイナリだけ戻せば復旧できると仮定したりしません。
+
+1. 1.0で設定をvalidateし、Healthy・controller errorなしとpeerの`probe`・`isolation`
+   を確認します。バージョン、両VMのboot ID、DHCP PID、アドレス、実際の更新を記録します。
+2. `routerd`、続いて`routerd-dnsmasq`・`routerd-dns-resolver@lan`を停止します。
+   停止中の`/var/lib/routerd`、`/usr/local/etc/routerd`、生成済みの
+   `/etc/systemd/system/routerd.service`と隣接する
+   `routerd.service.routerd-activation.json`を一組の復旧用データとして保存します。
+   fixtureの起動unitと管理経路のoverrideは維持します。
+3. 新規の状態ディレクトリと検証済み1.5設定を選び、候補archive内から
+   `sudo ./install.sh --no-install-deps --no-restart --no-config-update`を実行します。
+   起動前にunitの再生成、`CAP_SYS_PTRACE`・`CAP_KILL`、サービス停止を確認して再起動します。
+4. 期待する版、routerのboot ID変更、systemd `running`、Healthy・controller errorなしを
+   確認します。peerの両試験と、再取得後の実際のDHCPタイマー更新も必要です。
+   peerのboot ID・DHCP PIDが変わっていないこと、現在のbootでhelperの所有・権限エラーが
+   ないことを確認します。通信が通るだけでは合格にしません。
+5. 同じサービスを停止して1.5の復旧用データを保存し、1.0の設定・状態を復元します。
+   元の1.0 archiveを同じ停止オプションで導入し、保存したunitとactivation receiptも
+   復元します。`sudo systemctl daemon-reload`後に再起動し、手順4を1.0で繰り返します。
+   正本設定が保存ファイルと一致することも確認します。
+6. 保存した1.5の設定・状態と対応する候補packageへ戻し、起動・peer試験を繰り返します。
+   全段階の合格後、fixtureのcleanupを実行し、一時archive・snapshot・生ログを削除します。
+   残すのはソース版、再現手順、合否です。
+
+失敗時はその段階で止め、復旧用データと原因のローカル再現に必要な情報を保持します。
+修正packageで失敗した試験をやり直し、unit権限の手修正を合格に数えません。
+この構成の対象はIPv4 DHCP/DNS・NAT・ゾーン隔離です。IPv6、WAN接続方式、
+その他の1.0機能の切替試験は別途必要です。
+
 ## 2台の VM による再起動・適用中断試験
 
 `scripts/linux-router-reboot-fixture.sh` は、独立した router VM と peer VM を使います。

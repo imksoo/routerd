@@ -1364,3 +1364,38 @@ development procedure. The initial peer helper name shadowed Python's `http`
 module; it was corrected during preparation before product apply. No new product
 code was needed for these successful recovery paths. Cross-version 1.0 cutback,
 IPv6 reboot/renumbering, WAN protocol modes and remaining 1.0 parity stay open.
+
+## Linux 1.0 cold cutover and cutback
+
+The two-VM fixture passed `1.0 -> 1.5 -> 1.0 -> 1.5` using formal `make dist`
+archives: baseline `e3b49dbb` and repaired candidate `b4965652`. The router used
+Ubuntu 24.04.4 / Linux 6.8.0-124-generic; its independent peer used Ubuntu
+24.04.4 / Linux 6.8.0-117-generic. Each transition rebooted only the router.
+The peer boot identity and BusyBox DHCP PID stayed unchanged throughout.
+
+The first candidate (`ad686135`) failed status qualification after upgrading
+from the 1.0 generated systemd unit: the installer preserved its old capability
+set, so the native dnsmasq owner could not inspect the helper after UID drop.
+Local installer regressions failed first. The installer now regenerates owned
+generated units from canonical config through the new binary's read-only render
+command before activation. Config-derived access/telemetry remain intact; render
+failure restores the previous payload before service recovery starts.
+
+The repaired candidate passed initial cold upgrade, 1.0 recovery from a stopped
+binary/config/state/unit recovery set, and restoration of its saved 1.5 state.
+Every stage required Healthy/no current controller errors, systemd running,
+local/upstream DNS UDP/TCP, peer-observed IPv4 NAT, management positive control,
+WAN/LAN/management isolation, and a real DHCP timer renewal after reacquisition.
+The same client address was reacquired; this was a planned outage, not hitless
+lease continuity. No generated-unit hand repair was used to pass the candidate.
+
+Empty apply withdrew addresses and firewall tables. Fixture shutdown also
+stopped routerd through its temporary Requires dependency; cleanup now removes
+that dependency and starts the empty product service. That final cleanup tail
+was executed and verified: Healthy, zero resources, no controller errors, no
+nft tables, forwarding disabled; peer namespaces/processes were removed.
+The normal Go gate passed (120 packages, nine without tests), installer tests,
+schema/examples, shell checks and four website locales passed. The reusable
+English/Japanese development procedure retains the cross-version gate.
+IPv6 cutover, WAN protocol modes and the remainder of the 1.0 feature inventory
+remain unqualified by this IPv4 fixture.

@@ -291,3 +291,47 @@ and removes its namespaces. These actions delete the temporary raw output.
 Retain the procedure, revisions and verdict instead. This gate does not prove
 power-loss durability, every possible interruption point, IPv6 reboot, or a
 cross-version cutback; those remain separate checks.
+
+## Cross-version cold cutover and cutback
+
+Use the same two-VM fixture for this separate gate. Build both the pinned 1.0
+baseline and the candidate with `make dist`; verify the archive checksums before
+extracting them on the router. Keep the peer VM and its DHCP process running.
+This is a planned outage with lease reacquisition, not a hitless upgrade. Do not
+reuse a 1.0 state database in 1.5 or assume a binary-only downgrade is sufficient.
+
+1. On 1.0, validate the fixture configuration, require Healthy status without
+   controller errors, and run the peer's `probe` and `isolation` roles. Record the
+   version, boot ID, peer DHCP PID, address and a timer renewal.
+2. Stop `routerd`, then `routerd-dnsmasq` and `routerd-dns-resolver@lan`. Save the
+   stopped `/var/lib/routerd` directory, `/usr/local/etc/routerd`, generated
+   `/etc/systemd/system/routerd.service` and its adjacent
+   `routerd.service.routerd-activation.json` receipt as one 1.0 recovery set.
+   Keep the external fixture boot unit and management override in place.
+3. Select a fresh `/var/lib/routerd` directory and the validated 1.5 configuration.
+   From the extracted candidate archive, run
+   `sudo ./install.sh --no-install-deps --no-restart --no-config-update`.
+   Require successful unit regeneration before boot, both `CAP_SYS_PTRACE` and
+   `CAP_KILL` in its capability set, and an inactive service. Reboot the router.
+4. Require the expected version and a changed router boot ID, systemd `running`,
+   Healthy status and no controller errors. Repeat both peer roles and wait for
+   an actual DHCP timer renewal after any reacquisition. The peer boot ID and
+   DHCP PID must be unchanged. Inspect the current boot for helper ownership or
+   permission errors. A responsive data path alone does not pass this gate.
+5. For cutback, stop the same services, save the stopped 1.5 recovery set, and
+   restore the saved 1.0 configuration and state directories. Install the exact
+   baseline archive with the same no-restart options. Restore its saved unit and
+   activation receipt, run `sudo systemctl daemon-reload`, then reboot. Repeat
+   all step 4 checks against the 1.0 version and verify the restored canonical
+   configuration equals the saved file.
+6. Restore the stopped 1.5 configuration/state with its matching candidate
+   package and repeat the cold boot and peer checks. Only after all gates pass,
+   run the fixture cleanup roles and remove this campaign's temporary archives,
+   snapshots and raw output. Keep source revisions, the procedure and verdict.
+
+Stop on the first failed gate and retain only the working recovery set and
+failure data needed to reproduce it locally. Repair and qualify a new package
+before restarting the failed gate; do not repair generated unit permissions by
+hand to turn the candidate into PASS. This fixture qualifies IPv4 DHCP/DNS,
+NAT and zone isolation; IPv6, WAN protocol modes and other 1.0 functions need
+their own cutover coverage.
