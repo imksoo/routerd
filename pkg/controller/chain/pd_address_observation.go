@@ -106,7 +106,7 @@ func (c LANAddressController) nativeParentReader() nativeParentReader {
 	if router == nil {
 		router = c.Router
 	}
-	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite, Bridges: c.Bridges}
 }
 
 // Withdrawal follows the parent cookie recorded with the confirmed child,

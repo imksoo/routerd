@@ -25,6 +25,7 @@ type BridgeController struct {
 	DryRun           bool
 	NetworkdDir      string
 	OperatingSystem  platform.OS
+	NativeScope      func(context.Context) (string, error)
 	Command          func(context.Context, string, ...string) error
 	ReadFile         func(string) ([]byte, error)
 	Readlink         func(string) (string, error)
@@ -67,7 +68,10 @@ func (c BridgeController) savePlannedBridgeStatus(resource api.Resource) error {
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", resource.Metadata.Name, status)
 }
 
-func (c BridgeController) saveAppliedBridgeStatus(owner bridgeOwner) error {
+func (c BridgeController) saveAppliedBridgeStatus(ctx context.Context, owner bridgeOwner) error {
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
+		return err
+	}
 	iface, err := c.observedOwnedBridge(owner)
 	if err != nil {
 		return err
@@ -82,7 +86,39 @@ func (c BridgeController) saveAppliedBridgeStatus(owner bridgeOwner) error {
 	if !healthy {
 		return errors.New("Bridge changed before applied publication")
 	}
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
+		return err
+	}
 	return c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", owner.Resource, map[string]any{"phase": "Healthy", "ifname": iface.Name, "index": iface.Index, "mtu": iface.MTU, "flags": iface.Flags.String(), "members": append([]string(nil), owner.Plan.Members...), "persistent": true, "backend": "routerd/networkd", "networkdGeneration": owner.Plan.digest()})
+}
+
+func (c BridgeController) bridgeScope(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	readScope := c.NativeScope
+	if readScope == nil {
+		readScope = platform.KernelNetworkScope
+	}
+	scope, err := readScope(ctx)
+	if err != nil {
+		return "", err
+	}
+	if scope == "" {
+		return "", errors.New("Bridge kernel scope is unavailable")
+	}
+	return scope, ctx.Err()
+}
+
+func (c BridgeController) checkBridgeScope(ctx context.Context, owner bridgeOwner) error {
+	scope, err := c.bridgeScope(ctx)
+	if err != nil {
+		return err
+	}
+	if owner.Scope == "" || owner.Scope != scope {
+		return errors.New("Bridge ownership belongs to a different kernel scope")
+	}
+	return nil
 }
 
 func (c BridgeController) networkdPath(path string) string {

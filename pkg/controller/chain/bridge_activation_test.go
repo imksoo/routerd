@@ -54,6 +54,7 @@ func bridgeNativeFixture(t *testing.T, store *bridgeActivationStore) (BridgeCont
 	t.Helper()
 	kernel := &bridgeKernelFixture{links: map[string]net.Interface{"ens19": {Name: "ens19", Index: 5, MTU: 1500, Flags: net.FlagUp}, "ens20": {Name: "ens20", Index: 6, MTU: 1500, Flags: net.FlagUp}}, alias: map[string]string{}, settings: map[string]map[string]string{}, master: map[string]string{}, nextIndex: 12}
 	controller := BridgeController{Router: bridgeVXLANTestRouter(false), Store: store, NetworkdDir: t.TempDir(), OperatingSystem: platform.OSLinux}
+	controller.NativeScope = func(context.Context) (string, error) { return "fixture-kernel", nil }
 	controller.Interfaces = func() ([]net.Interface, error) {
 		if kernel.failRead {
 			return nil, errors.New("native snapshot failed")
@@ -451,5 +452,159 @@ func TestBridgeCancellationAfterNativePreparationDoesNotEnableForwarding(t *test
 	owners, err := controller.readBridgeOwners()
 	if err != nil || len(owners) != 1 || owners[0].Activated {
 		t.Fatalf("cancelled activation lost pending recovery: %v %v", owners, err)
+	}
+}
+
+func TestBridgeKernelScopeChangePreservesOwnedGeneration(t *testing.T) {
+	for _, operation := range []string{"retained", "changed", "removed", "changed-during-read"} {
+		t.Run(operation, func(t *testing.T) {
+			store := &bridgeActivationStore{mapStore: mapStore{}}
+			controller, kernel := bridgeNativeFixture(t, store)
+			if err := controller.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			path := controller.bridgeOwnerPath("legacy-l2")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owners, err := controller.readBridgeOwners()
+			if err != nil || len(owners) != 1 || owners[0].Scope != "fixture-kernel" || owners[0].Version != 2 {
+				t.Fatalf("new receipt lost its creation scope: %v %v", owners, err)
+			}
+			var artifacts []bridgeOwnedFile
+			for _, file := range owners[0].Plan.Files {
+				data, err := os.ReadFile(filepath.Join(controller.NetworkdDir, file.Path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				artifacts = append(artifacts, bridgeOwnedFile{Path: file.Path, Data: data})
+			}
+			scope := "different-kernel"
+			controller.NativeScope = func(context.Context) (string, error) { return scope, nil }
+			if operation == "changed" {
+				for i, resource := range controller.Router.Spec.Resources {
+					if resource.Kind == "Bridge" {
+						spec, _ := resource.BridgeSpec()
+						spec.IfName = "br-new"
+						controller.Router.Spec.Resources[i].Spec = spec
+					}
+				}
+			} else if operation == "removed" {
+				controller.Router = &api.Router{}
+			} else if operation == "changed-during-read" {
+				scope = "fixture-kernel"
+				read := controller.Interfaces
+				controller.Interfaces = func() ([]net.Interface, error) {
+					links, err := read()
+					scope = "different-kernel"
+					return links, err
+				}
+			}
+			kernel.commands = nil
+			if err := controller.Reconcile(t.Context()); err == nil {
+				t.Fatal("different kernel scope accepted the existing receipt")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(before) || len(kernel.commands) != 0 || len(kernel.deleted) != 0 || kernel.created != 1 || kernel.links["br-l2"].Flags&net.FlagUp == 0 || kernel.master["ens19"] != "br-l2" {
+				t.Fatalf("scope mismatch changed the owned generation: %v %+v", err, kernel)
+			}
+			for _, file := range artifacts {
+				data, err := os.ReadFile(filepath.Join(controller.NetworkdDir, file.Path))
+				if err != nil || string(data) != string(file.Data) {
+					t.Fatalf("scope mismatch changed owned artifact %s: %v", file.Path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestBridgeScopeChangeAfterPreparationDoesNotEnableForwarding(t *testing.T) {
+	store := &bridgeActivationStore{mapStore: mapStore{}}
+	controller, kernel := bridgeNativeFixture(t, store)
+	scope := "fixture-kernel"
+	controller.NativeScope = func(context.Context) (string, error) { return scope, nil }
+	run := controller.Command
+	controller.Command = func(ctx context.Context, name string, args ...string) error {
+		err := run(ctx, name, args...)
+		if name == "networkctl" && strings.Join(args, " ") == "reconfigure br-l2" {
+			scope = "different-kernel"
+		}
+		return err
+	}
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("scope change during activation was acknowledged")
+	}
+	if kernel.master["ens19"] != "" || kernel.links["br-l2"].Flags&net.FlagUp != 0 {
+		t.Fatal("scope change during activation enabled native forwarding")
+	}
+	owners, err := controller.readBridgeOwners()
+	if err != nil || len(owners) != 1 || owners[0].Activated || owners[0].Scope != "fixture-kernel" {
+		t.Fatalf("scope change lost the original pending receipt: %v %v", owners, err)
+	}
+}
+
+func TestBridgeScopeChangeDuringWithdrawalRetainsReceiptAndNativeLink(t *testing.T) {
+	store := &bridgeActivationStore{mapStore: mapStore{}}
+	controller, kernel := bridgeNativeFixture(t, store)
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	scope := "fixture-kernel"
+	controller.NativeScope = func(context.Context) (string, error) { return scope, nil }
+	run := controller.Command
+	controller.Command = func(ctx context.Context, name string, args ...string) error {
+		err := run(ctx, name, args...)
+		if name == "networkctl" && strings.Join(args, " ") == "reload" {
+			scope = "different-kernel"
+		}
+		return err
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("scope change during withdrawal was acknowledged")
+	}
+	owners, err := controller.readBridgeOwners()
+	if err != nil || len(owners) != 1 || !owners[0].Withdrawing || owners[0].Scope != "fixture-kernel" || len(kernel.deleted) != 0 || kernel.links["br-l2"].Index != owners[0].IfIndex {
+		t.Fatalf("scope change lost native cleanup authority: %v %v", owners, err)
+	}
+}
+
+func TestBridgeReceiptRequiresCurrentVersionAndCreationScope(t *testing.T) {
+	for _, invalid := range []string{"old-version", "missing-scope"} {
+		t.Run(invalid, func(t *testing.T) {
+			store := &bridgeActivationStore{mapStore: mapStore{}}
+			controller, kernel := bridgeNativeFixture(t, store)
+			if err := controller.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			owners, err := controller.readBridgeOwners()
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner := owners[0]
+			if invalid == "old-version" {
+				owner.Version = 1
+			} else {
+				owner.Scope = ""
+			}
+			if err := controller.writeBridgeOwner(owner); err != nil {
+				t.Fatal(err)
+			}
+			path := controller.bridgeOwnerPath(owner.Resource)
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.Router = &api.Router{}
+			kernel.commands = nil
+			if err := controller.Reconcile(t.Context()); err == nil {
+				t.Fatal("invalid Bridge receipt authorized withdrawal")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || string(after) != string(before) || len(kernel.commands) != 0 || len(kernel.deleted) != 0 || kernel.links["br-l2"].Flags&net.FlagUp == 0 {
+				t.Fatalf("invalid receipt was migrated or its effects were lost: %v", err)
+			}
+		})
 	}
 }

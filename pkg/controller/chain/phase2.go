@@ -422,6 +422,7 @@ type IPv4RouteController struct {
 	Router            *api.Router
 	Segments          *VXLANSegmentController
 	DSLite            *DSLiteTunnelController
+	Bridges           *BridgeController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan

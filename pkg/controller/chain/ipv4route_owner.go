@@ -81,7 +81,7 @@ func (c IPv4RouteController) parentReader() nativeParentReader {
 	if router == nil {
 		router = c.Router
 	}
-	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite, Bridges: c.Bridges}
 }
 
 // Read the concrete parent's applied journal and native cookie after waits.

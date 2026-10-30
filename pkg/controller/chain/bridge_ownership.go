@@ -28,6 +28,7 @@ import (
 type bridgeOwner struct {
 	Version     int          `json:"version"`
 	Resource    string       `json:"resource"`
+	Scope       string       `json:"scope"`
 	Token       string       `json:"token"`
 	IfIndex     int          `json:"ifIndex"`
 	Activated   bool         `json:"activated"`
@@ -134,7 +135,7 @@ func (c BridgeController) readBridgeOwners() ([]bridgeOwner, error) {
 			return nil, fmt.Errorf("trailing data in Bridge receipt %s", entry.Name())
 		}
 		token, err := hex.DecodeString(owner.Token)
-		if err != nil || len(token) != 24 || owner.Version != 1 || owner.Resource == "" || owner.Plan.IfName == "" || owner.IfIndex < 0 || filepath.Base(c.bridgeOwnerPath(owner.Resource)) != entry.Name() {
+		if err != nil || len(token) != 24 || owner.Version != 2 || owner.Resource == "" || owner.Scope == "" || owner.Plan.IfName == "" || owner.IfIndex < 0 || filepath.Base(c.bridgeOwnerPath(owner.Resource)) != entry.Name() {
 			return nil, fmt.Errorf("invalid Bridge ownership receipt %s", entry.Name())
 		}
 		for _, file := range owner.Plan.Files {
@@ -199,6 +200,10 @@ func (c BridgeController) writeBridgeOwner(owner bridgeOwner) error {
 }
 
 func (c BridgeController) reconcileOwnedBridges(ctx context.Context) error {
+	scope, err := c.bridgeScope(ctx)
+	if err != nil {
+		return err
+	}
 	desired := make(map[string]api.Resource)
 	plans := make(map[string]bridgePlan)
 	for _, resource := range c.Router.Spec.Resources {
@@ -224,6 +229,9 @@ func (c BridgeController) reconcileOwnedBridges(ctx context.Context) error {
 		if _, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "Bridge", owner.Resource); err != nil {
 			return err
 		}
+		if err := c.checkBridgeScope(ctx, owner); err != nil {
+			return err
+		}
 		plan, retained := plans[owner.Resource]
 		native, err := c.bridgeInterface(owner.Plan.IfName)
 		if err != nil {
@@ -245,6 +253,9 @@ func (c BridgeController) reconcileOwnedBridges(ctx context.Context) error {
 				}
 				drifted = !healthy
 			}
+		}
+		if err := c.checkBridgeScope(ctx, owner); err != nil {
+			return err
 		}
 		if !retained || owner.Withdrawing || nativeGone || drifted || plan.digest() != owner.Plan.digest() {
 			if c.DryRun {
@@ -295,7 +306,10 @@ func (c BridgeController) reconcileOwnedBridges(ctx context.Context) error {
 			if _, err := rand.Read(raw); err != nil {
 				return err
 			}
-			owner = bridgeOwner{Version: 1, Resource: name, Token: hex.EncodeToString(raw), Plan: plan}
+			owner = bridgeOwner{Version: 2, Resource: name, Scope: scope, Token: hex.EncodeToString(raw), Plan: plan}
+			if err := c.checkBridgeScope(ctx, owner); err != nil {
+				return err
+			}
 			if err := c.writeBridgeOwner(owner); err != nil {
 				return err
 			}
@@ -309,7 +323,7 @@ func (c BridgeController) reconcileOwnedBridges(ctx context.Context) error {
 			saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", name, map[string]any{"phase": "Error", "reason": "NativeActivationFailed", "ifname": plan.IfName, "error": err.Error()})
 			return errors.Join(err, saveErr)
 		}
-		if err := c.saveAppliedBridgeStatus(owner); err != nil {
+		if err := c.saveAppliedBridgeStatus(ctx, owner); err != nil {
 			return err
 		}
 	}
@@ -358,13 +372,25 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 		if result == nil {
 			return
 		}
+		cleanupCtx := context.WithoutCancel(ctx)
+		if err := c.checkBridgeScope(cleanupCtx, *owner); err != nil {
+			result = errors.Join(result, err)
+			return
+		}
 		iface, err := c.observedOwnedBridge(*owner)
 		if err == nil && iface != nil {
+			if err := c.checkBridgeScope(cleanupCtx, *owner); err != nil {
+				result = errors.Join(result, err)
+				return
+			}
 			if downErr := c.setBridgeAdmin(iface.Index, owner.proof(), false); downErr != nil {
 				result = errors.Join(result, downErr)
 			}
 		}
 	}()
+	if err := c.checkBridgeScope(ctx, *owner); err != nil {
+		return err
+	}
 	iface, err := c.observedOwnedBridge(*owner)
 	if err != nil {
 		return err
@@ -381,6 +407,9 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 			args = append(args, "address", owner.Plan.MACAddress)
 		}
 		args = append(args, "type", "bridge", "stp_state", strconv.Itoa(boolInt(owner.Plan.STP)), "mcast_snooping", strconv.Itoa(boolInt(owner.Plan.MulticastSnooping)), "forward_delay", strconv.Itoa(owner.Plan.ForwardDelay*100), "hello_time", strconv.Itoa(owner.Plan.HelloTime*100))
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		if err := c.command(ctx, "ip", args...); err != nil {
 			return err
 		}
@@ -391,12 +420,18 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 		if iface == nil {
 			return fmt.Errorf("Bridge %s create has no native readback", owner.Plan.IfName)
 		}
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		owner.IfIndex = iface.Index
 		if err := c.writeBridgeOwner(*owner); err != nil {
 			return err
 		}
 	}
 	if owner.IfIndex == 0 {
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		owner.IfIndex = iface.Index
 		if err := c.writeBridgeOwner(*owner); err != nil {
 			return err
@@ -421,6 +456,9 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 		if err != nil {
 			return err
 		}
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		if healthy && filesPresent {
 			return nil
 		}
@@ -443,25 +481,37 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 		}
 		ports = append(ports, bridgePort{IfName: member, IfIndex: port.Index})
 	}
+	if err := c.checkBridgeScope(ctx, *owner); err != nil {
+		return err
+	}
 	owner.Ports = ports
 	if err := c.writeBridgeOwner(*owner); err != nil {
 		return err
 	}
 	for _, file := range owner.Plan.Files {
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		if err := c.installBridgeFile(file); err != nil {
 			return err
 		}
+	}
+	if err := c.checkBridgeScope(ctx, *owner); err != nil {
+		return err
 	}
 	if err := c.command(ctx, "networkctl", "reload"); err != nil {
 		return err
 	}
 	for _, member := range append(append([]string(nil), owner.Plan.Members...), owner.Plan.IfName) {
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
 		if err := c.command(ctx, "networkctl", "reconfigure", member); err != nil {
 			return err
 		}
 	}
 	for _, port := range owner.Ports {
-		if err := ctx.Err(); err != nil {
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
 			return err
 		}
 		attach := c.SetMasterByIndex
@@ -472,7 +522,7 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 			return err
 		}
 	}
-	if err := ctx.Err(); err != nil {
+	if err := c.checkBridgeScope(ctx, *owner); err != nil {
 		return err
 	}
 	if err := c.setBridgeAdmin(iface.Index, owner.proof(), true); err != nil {
@@ -492,7 +542,7 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 	if !healthy {
 		return fmt.Errorf("Bridge %s native activation readback mismatched", iface.Name)
 	}
-	if err := ctx.Err(); err != nil {
+	if err := c.checkBridgeScope(ctx, *owner); err != nil {
 		return err
 	}
 	owner.Activated = true
@@ -570,6 +620,9 @@ func (c BridgeController) setBridgeAdmin(index int, proof string, up bool) error
 }
 
 func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner) error {
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
+		return err
+	}
 	if !owner.Withdrawing {
 		owner.Withdrawing = true
 		if err := c.writeBridgeOwner(owner); err != nil {
@@ -577,6 +630,9 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 		}
 	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", owner.Resource, map[string]any{"phase": "Pending", "reason": "NativeWithdrawalPending", "ifname": owner.Plan.IfName}); err != nil {
+		return err
+	}
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
 		return err
 	}
 	iface, err := c.bridgeInterface(owner.Plan.IfName)
@@ -594,6 +650,9 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 			if !c.isKernelBridge(iface.Name) {
 				return fmt.Errorf("owned native link is not a Bridge")
 			}
+			if err := c.checkBridgeScope(ctx, owner); err != nil {
+				return err
+			}
 			if err := c.setBridgeAdmin(iface.Index, owner.proof(), false); err != nil {
 				return err
 			}
@@ -609,10 +668,16 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 			return err
 		}
 		if bytes.Equal(data, file.Data) {
+			if err := c.checkBridgeScope(ctx, owner); err != nil {
+				return err
+			}
 			if err := os.Remove(path); err != nil {
 				return err
 			}
 		}
+	}
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
+		return err
 	}
 	if err := c.command(ctx, "networkctl", "reload"); err != nil {
 		return err
@@ -621,6 +686,9 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 		remove := c.DeleteByIndex
 		if remove == nil {
 			remove = deleteBridgeByIndex
+		}
+		if err := c.checkBridgeScope(ctx, owner); err != nil {
+			return err
 		}
 		if err := remove(iface.Index, owner.proof()); err != nil {
 			return err
@@ -633,7 +701,13 @@ func (c BridgeController) withdrawBridge(ctx context.Context, owner bridgeOwner)
 			return fmt.Errorf("Bridge %s still exists after native delete", iface.Name)
 		}
 	}
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
+		return err
+	}
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "Bridge", owner.Resource, map[string]any{"phase": "Absent", "reason": "OwnedGenerationWithdrawn"}); err != nil {
+		return err
+	}
+	if err := c.checkBridgeScope(ctx, owner); err != nil {
 		return err
 	}
 	return os.Remove(c.bridgeOwnerPath(owner.Resource))

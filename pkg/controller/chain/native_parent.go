@@ -18,6 +18,7 @@ type nativeParentReader struct {
 	Store    Store
 	Segments *VXLANSegmentController
 	DSLite   *DSLiteTunnelController
+	Bridges  *BridgeController
 }
 type nativeParentLink struct {
 	Exists, Declared     bool
@@ -28,6 +29,8 @@ type nativeParentLink struct {
 func validNativeParentToken(token string) bool {
 	size := 16
 	if raw, ok := strings.CutPrefix(token, "dslite:"); ok {
+		token, size = raw, 24
+	} else if raw, ok := strings.CutPrefix(token, "bridge:"); ok {
 		token, size = raw, 24
 	}
 	decoded, err := hex.DecodeString(token)
@@ -50,6 +53,14 @@ func (r nativeParentReader) dsliteOwner() DSLiteTunnelController {
 	owner.Router, owner.DeclaredRouter, owner.Store = r.Router, r.Router, r.Store
 	return owner
 }
+func (r nativeParentReader) bridgeOwner() BridgeController {
+	owner := BridgeController{}
+	if r.Bridges != nil {
+		owner = *r.Bridges
+	}
+	owner.Router, owner.Store = r.Router, r.Store
+	return owner
+}
 func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) (nativeParentLink, error) {
 	if r.Router == nil {
 		return nativeParentLink{}, errors.New("child parent router is unavailable")
@@ -59,6 +70,10 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var name, configuredAlias string
 		var err error
 		switch resource.Kind {
+		case "Bridge":
+			var spec api.BridgeSpec
+			spec, err = resource.BridgeSpec()
+			name = firstNonEmpty(spec.IfName, resource.Metadata.Name)
 		case "VXLANSegment", "VXLANTunnel":
 			name, err = nativeVXLANInterface(resource)
 		case "DSLiteTunnel":
@@ -82,6 +97,11 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		selected = resource
 	}
 	switch selected.Kind {
+	case "Bridge":
+		owner := r.bridgeOwner()
+		link, err := owner.observeChildParent(ctx, selected, "", "")
+		link.Declared = true
+		return link, err
 	case "VXLANSegment", "VXLANTunnel":
 		owner := r.segmentOwner()
 		link, err := owner.ObserveOwnedInterface(ctx, selected.ID())
@@ -101,6 +121,10 @@ func (r nativeParentReader) observeRecorded(ctx context.Context, ifname, token s
 	}
 	if raw, ok := strings.CutPrefix(token, "dslite:"); ok {
 		owner := r.dsliteOwner()
+		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
+	}
+	if raw, ok := strings.CutPrefix(token, "bridge:"); ok {
+		owner := r.bridgeOwner()
 		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
 	}
 	owner := r.segmentOwner()
