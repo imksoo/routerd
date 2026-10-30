@@ -16,6 +16,7 @@ type HealthCheckSystemdOptions struct {
 	Resource             string
 	Target               string
 	Protocol             string
+	AddressFamily        string
 	Via                  string
 	FwMark               int
 	RequireDSLiteBinding bool
@@ -143,6 +144,9 @@ func HealthCheckSystemdUnit(options HealthCheckSystemdOptions) []byte {
 	}
 	if options.Protocol != "" {
 		args += " --protocol " + strconv.Quote(options.Protocol)
+	}
+	if options.AddressFamily != "" {
+		args += " --address-family " + strconv.Quote(options.AddressFamily)
 	}
 	if options.Via != "" {
 		args += " --via " + strconv.Quote(options.Via)

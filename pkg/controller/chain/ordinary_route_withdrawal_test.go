@@ -113,3 +113,36 @@ func TestOrdinaryRouteReactivatedDuringPostAddWithdrawalKeepsAcknowledgedOwner(t
 		t.Fatalf("post-add caller overwrote the restored known receipt: %+v", receipt)
 	}
 }
+
+func TestOrdinaryRouteRestoredDuringRemovalKeepsOwnerForNextReconcile(t *testing.T) {
+	controller, store, native, _ := newOrdinaryRouteFixture(t)
+	if err := controller.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	resource := controller.Router.Spec.Resources[0]
+	controller.Router.Spec.Resources = nil
+	native.calls = nil
+	waitObserved := false
+	store.afterSave = func(status map[string]any) {
+		if status["phase"] == "Withdrawing" {
+			waitObserved, store.afterSave = true, nil
+			controller.Router.Spec.Resources = []api.Resource{resource}
+		}
+	}
+	if err := controller.reconcile(t.Context()); err == nil {
+		t.Fatal("removed-resource cleanup forgot a reactivated owner")
+	}
+	if !waitObserved || strings.Contains(strings.Join(native.calls, "\n"), "route del") || native.output != ordinaryRouteNativeResponse("old0", "boot") {
+		t.Fatalf("removed-resource cleanup deleted a restored route: %v", native.calls)
+	}
+	if receipt := readOrdinaryRouteReceipt(t, store); receipt == nil || receipt.Pending {
+		t.Fatalf("removed-resource cleanup lost the known owner: %+v", receipt)
+	}
+	native.calls = nil
+	if err := controller.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if calls := strings.Join(native.calls, "\n"); strings.Contains(calls, "route del") || strings.Contains(calls, "route add") {
+		t.Fatalf("next reconcile replayed the retained native effect: %s", calls)
+	}
+}

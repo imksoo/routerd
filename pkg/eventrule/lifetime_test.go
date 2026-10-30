@@ -15,7 +15,7 @@ func TestRuleLifetimeWaitsForFiredTimerAndSuppressesCanceledPublication(t *testi
 	for _, operator := range []string{OperatorDebounce, OperatorAbsence} {
 		t.Run(operator, func(t *testing.T) {
 			c, events := newTestController(t, api.EventRulePatternSpec{Operator: operator, Topic: "routerd.trigger", Duration: "1ms", Quiet: "1ms"})
-			db := c.Store.EventRuleJournal()
+			db := c.Store.EventJournal()
 			blocked := &blockedRuleCommitStore{ruleTestStore: ruleTestStore{db}, entered: make(chan struct{}), release: make(chan struct{}), onlyOutput: true}
 			c.Store = blocked
 			ctx, cancel := context.WithCancel(t.Context())

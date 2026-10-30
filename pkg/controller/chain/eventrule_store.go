@@ -12,23 +12,23 @@ import (
 )
 
 type eventRuleJournalProvider interface {
-	EventRuleJournal() *routerstate.SQLiteStore
+	EventJournal() *routerstate.SQLiteStore
 }
 
 // The existing status decorator owns declaration metadata. Its concrete
 // journal getter also proves that atomic results and bus wakeups share a DB.
 type eventRuleStore struct{ eventedStore }
 
-func (s eventRuleStore) EventRuleJournal() *routerstate.SQLiteStore {
+func (s eventRuleStore) EventJournal() *routerstate.SQLiteStore {
 	provider, ok := s.Store.(eventRuleJournalProvider)
 	if !ok {
 		return nil
 	}
-	return provider.EventRuleJournal()
+	return provider.EventJournal()
 }
 
 func (s eventRuleStore) CommitRule(ctx context.Context, expected, next routerstate.EventRuleCheckpoint, output *daemonapi.DaemonEvent, atTip bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
-	journal := s.EventRuleJournal()
+	journal := s.EventJournal()
 	if journal == nil {
 		return expected, nil, fmt.Errorf("EventRule journal unavailable")
 	}

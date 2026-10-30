@@ -3,10 +3,11 @@
 package eventrule
 
 import (
-	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/daemonapi"
 	"strconv"
 	"strings"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func correlationKey(event daemonapi.DaemonEvent, pattern api.EventRulePatternSpec) (string, bool) {
@@ -64,21 +65,56 @@ func renderAttributes(template map[string]string, input daemonapi.DaemonEvent, c
 }
 
 func renderValue(value string, input daemonapi.DaemonEvent, correlation string, count int) string {
-	replacements := map[string]string{
-		"${event.type}":  input.Type,
-		"${correlation}": correlation,
-		"${count}":       strconv.Itoa(count),
+	var out strings.Builder
+	for {
+		prefix, after, found := strings.Cut(value, "${")
+		out.WriteString(prefix)
+		if !found {
+			break
+		}
+		key, rest, closed := strings.Cut(after, "}")
+		if !closed {
+			out.WriteString("${")
+			out.WriteString(after)
+			break
+		}
+		var replacement string
+		known := true
+		switch key {
+		case "event.type":
+			replacement = input.Type
+		case "correlation":
+			replacement = correlation
+		case "count":
+			replacement = strconv.Itoa(count)
+		case "resource.name", "resource.kind", "resource.apiVersion":
+			known = input.Resource != nil
+			if known {
+				switch key {
+				case "resource.name":
+					replacement = input.Resource.Name
+				case "resource.kind":
+					replacement = input.Resource.Kind
+				default:
+					replacement = input.Resource.APIVersion
+				}
+			}
+		default:
+			if attr, ok := strings.CutPrefix(key, "attributes."); ok {
+				replacement, known = input.Attributes[attr]
+			} else {
+				known = false
+			}
+		}
+		if known {
+			// Replacements are input data; never parse their placeholders.
+			out.WriteString(replacement)
+		} else {
+			out.WriteString("${")
+			out.WriteString(key)
+			out.WriteString("}")
+		}
+		value = rest
 	}
-	if input.Resource != nil {
-		replacements["${resource.name}"] = input.Resource.Name
-		replacements["${resource.kind}"] = input.Resource.Kind
-		replacements["${resource.apiVersion}"] = input.Resource.APIVersion
-	}
-	for key, attr := range input.Attributes {
-		replacements["${attributes."+key+"}"] = attr
-	}
-	for old, replacement := range replacements {
-		value = strings.ReplaceAll(value, old, replacement)
-	}
-	return value
+	return out.String()
 }

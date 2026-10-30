@@ -67,6 +67,11 @@ status views are derived on read, so an expired lease is not revived by a stale
 display projection. Source identity, observation timestamps and explicit release
 govern whether a daemon snapshot may update that observation. Lease transitions
 and their required EventRule input history commit together.
+EventRule correlation checkpoints and their sole per-rule input cursors are
+durable too. A matched result, its public status and local output events commit
+with that checkpoint. Restart resumes an unchanged rule; changing its pattern
+starts a new rule at the prepared input position. If retention has removed unread
+input, processing reports a history gap instead of inferring an absent event.
 The complete association is authoritative for live prefixes; local address
 receipts retain cleanup identity and cannot revive a prefix the client revoked.
 

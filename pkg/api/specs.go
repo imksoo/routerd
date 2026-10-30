@@ -2351,7 +2351,7 @@ type EventRulePatternSpec struct {
 	Window                  string   `yaml:"window,omitempty" json:"window,omitempty"`
 	Quiet                   string   `yaml:"quiet,omitempty" json:"quiet,omitempty"`
 	Interval                string   `yaml:"interval,omitempty" json:"interval,omitempty"`
-	Rate                    int      `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0"`
+	Rate                    int      `yaml:"rate,omitempty" json:"rate,omitempty" jsonschema:"minimum=0,maximum=0"`
 	Threshold               int      `yaml:"threshold,omitempty" json:"threshold,omitempty" jsonschema:"minimum=0"`
 	CorrelateBy             string   `yaml:"correlate_by,omitempty" json:"correlate_by,omitempty"`
 	AllowMissingCorrelation bool     `yaml:"allow_missing_correlation,omitempty" json:"allow_missing_correlation,omitempty"`

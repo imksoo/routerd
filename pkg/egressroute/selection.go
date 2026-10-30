@@ -14,9 +14,9 @@ import (
 
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 

@@ -12,7 +12,7 @@ import (
 
 func TestSelectedEmptyRuleGenerationDoesNotReplayAbsentInputsOnReadd(t *testing.T) {
 	c, events := newTestController(t, api.EventRulePatternSpec{Operator: OperatorAnyOf, Topic: "routerd.a"})
-	db := c.Store.EventRuleJournal()
+	db := c.Store.EventJournal()
 	stop := startTestController(t, c)
 	stop()
 	empty := &Controller{Router: &api.Router{}, Bus: events, Store: ruleTestStore{db}, Poll: time.Millisecond}

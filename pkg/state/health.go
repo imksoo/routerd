@@ -8,8 +8,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 // HealthObservation reads the same current object that owns status publication.

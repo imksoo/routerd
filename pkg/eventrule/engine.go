@@ -34,7 +34,7 @@ const (
 // Store is the actual public-status owner around one concrete SQLite journal.
 // Its commit binds declared ownership metadata to checkpoint/result publication.
 type Store interface {
-	EventRuleJournal() *routerstate.SQLiteStore
+	EventJournal() *routerstate.SQLiteStore
 	CommitRule(context.Context, routerstate.EventRuleCheckpoint, routerstate.EventRuleCheckpoint, *daemonapi.DaemonEvent, bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error)
 }
 
@@ -85,17 +85,17 @@ func (c *Controller) Prepare(ctx context.Context) error {
 			rules = append(rules, r)
 		}
 	}
-	if c.Store == nil || c.Store.EventRuleJournal() == nil {
+	if c.Store == nil || c.Store.EventJournal() == nil {
 		if len(rules) > 0 {
 			return fmt.Errorf("EventRule requires its transactional journal")
 		}
 		c.prepared = true
 		return ctx.Err()
 	}
-	if len(rules) > 0 && (c.Bus == nil || !c.Bus.PersistsTo(c.Store.EventRuleJournal())) {
+	if len(rules) > 0 && (c.Bus == nil || !c.Bus.PersistsTo(c.Store.EventJournal())) {
 		return fmt.Errorf("EventRule status and bus must share the same journal")
 	}
-	tip, err := c.Store.EventRuleJournal().EventJournalTip(ctx)
+	tip, err := c.Store.EventJournal().EventJournalTip(ctx)
 	if err != nil {
 		return err
 	}
@@ -170,7 +170,7 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 		close(done)
 		return done, err
 	}
-	if c.Store == nil || c.Store.EventRuleJournal() == nil {
+	if c.Store == nil || c.Store.EventJournal() == nil {
 		close(done)
 		return done, nil
 	}
@@ -178,12 +178,12 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 	for _, r := range c.rules {
 		definitions = append(definitions, r.definition)
 	}
-	if err := c.Store.EventRuleJournal().InitializeEventRules(ctx, definitions, c.initialCursor); err != nil {
+	if err := c.Store.EventJournal().InitializeEventRules(ctx, definitions, c.initialCursor); err != nil {
 		close(done)
 		return done, err
 	}
 	for _, r := range c.rules {
-		cp, err := c.Store.EventRuleJournal().ReadEventRule(ctx, r.definition.Name)
+		cp, err := c.Store.EventJournal().ReadEventRule(ctx, r.definition.Name)
 		if err != nil {
 			close(done)
 			return done, err
@@ -192,7 +192,7 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 			close(done)
 			return done, err
 		}
-		if _, _, err := c.Store.EventRuleJournal().EventRuleInputs(ctx, cp.Cursor); err != nil {
+		if _, _, err := c.Store.EventJournal().EventRuleInputs(ctx, cp.Cursor); err != nil {
 			close(done)
 			return done, err
 		}
@@ -265,70 +265,77 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 	defer c.mu.Unlock()
 	c.nextWake = time.Time{}
 	for _, r := range c.rules {
-		for {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			cp, err := c.Store.EventRuleJournal().ReadEventRule(ctx, r.definition.Name)
-			if err != nil {
-				return err
-			}
-			if err := validateCheckpoint(r, cp); err != nil {
-				return err
-			}
-			inputs, _, err := c.Store.EventRuleJournal().EventRuleInputs(ctx, cp.Cursor)
-			if err != nil {
-				return err
-			}
-			if len(inputs) > 0 {
-				for _, input := range inputs {
-					next := copyCheckpoint(cp)
-					var output *daemonapi.DaemonEvent
-					if input.SourceKind != "routerd-eventrule" {
-						output, err = evaluate(r, &next, eventconsumer.Event(input))
-						if err != nil {
-							return err
-						}
-					}
-					next.Cursor = input.ID
-					cp, err = c.commit(ctx, cp, next, output, false)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		cp, err := c.Store.EventJournal().ReadEventRule(ctx, r.definition.Name)
+		if err != nil {
+			return err
+		}
+		if err := validateCheckpoint(r, cp); err != nil {
+			return err
+		}
+		inputs, _, err := c.Store.EventJournal().EventRuleInputs(ctx, cp.Cursor)
+		if err != nil {
+			return err
+		}
+		if len(inputs) > 0 {
+			// A continuously written journal must not let its first rule
+			// monopolize this owner. Each rule gets one bounded page per pass.
+			for _, input := range inputs {
+				next := copyCheckpoint(cp)
+				var output *daemonapi.DaemonEvent
+				if input.SourceKind != "routerd-eventrule" {
+					output, err = evaluate(r, &next, eventconsumer.Event(input))
 					if err != nil {
 						return err
 					}
 				}
-				continue
-			}
-			now := c.now()
-			key := ""
-			var due time.Time
-			for k, state := range cp.Correlations {
-				if state.Timer != nil && (due.IsZero() || state.Timer.Due.Before(due)) {
-					key, due = k, state.Timer.Due
+				next.Cursor = input.ID
+				cp, err = c.commit(ctx, cp, next, output, false)
+				if err != nil {
+					return err
 				}
 			}
-			if due.IsZero() {
-				break
-			}
-			if due.After(now) {
-				if c.nextWake.IsZero() || due.Before(c.nextWake) {
-					c.nextWake = due
-				}
-				break
-			}
-			next := copyCheckpoint(cp)
-			correlation := next.Correlations[key]
-			input := correlation.Timer.Input
-			correlation.Timer = nil
-			next.Correlations[key] = correlation
-			output := emitEvent(r, input, key, 0)
-			next.FireCount++
-			next.LastFiredAt = now
-			if _, err := c.commit(ctx, cp, next, &output, true); err != nil {
-				return err
+			c.wakeAt(c.now())
+			continue
+		}
+		now := c.now()
+		key := ""
+		var due time.Time
+		for k, state := range cp.Correlations {
+			if state.Timer != nil && (due.IsZero() || state.Timer.Due.Before(due) || state.Timer.Due.Equal(due) && k < key) {
+				key, due = k, state.Timer.Due
 			}
 		}
+		if due.IsZero() {
+			continue
+		}
+		if due.After(now) {
+			c.wakeAt(due)
+			continue
+		}
+		next := copyCheckpoint(cp)
+		correlation := next.Correlations[key]
+		input := correlation.Timer.Input
+		correlation.Timer = nil
+		next.Correlations[key] = correlation
+		output := emitEvent(r, input, key, 0)
+		next.FireCount++
+		next.LastFiredAt = now
+		if _, err := c.commit(ctx, cp, next, &output, true); err != nil {
+			return err
+		}
+		c.wakeAt(now)
 	}
 	return nil
+}
+
+// Called only by the loop while holding mu.
+func (c *Controller) wakeAt(at time.Time) {
+	if c.nextWake.IsZero() || at.Before(c.nextWake) {
+		c.nextWake = at
+	}
 }
 
 func (c *Controller) commit(ctx context.Context, expected, next routerstate.EventRuleCheckpoint, output *daemonapi.DaemonEvent, atTip bool) (routerstate.EventRuleCheckpoint, error) {

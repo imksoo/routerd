@@ -2,25 +2,39 @@
 package chain
 
 import (
-	"fmt"
-	"github.com/imksoo/routerd/pkg/api"
-	"strconv"
+	"testing"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 )
 
-// Existing fixtures describe observations using maps. Narrow them here; product
-// routing reads typed observations from the real store instead.
+// Fixtures carry the same typed sample as the real persistence boundary.
 func fixtureHealthObservation(status map[string]any) (api.HealthObservation, error) {
-	if o, ok := status["routing"].(api.HealthObservation); ok {
-		return o, nil
-	}
-	if observed, ok := status["observed"].(map[string]any); ok && len(observed) > 0 {
-		status = observed
-	}
-	at, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(status["lastCheckedAt"]))
-	count, _ := strconv.Atoi(fmt.Sprint(status["consecutiveFailed"]))
-	return api.HealthObservation{Phase: fmt.Sprint(status["phase"]), CheckedAt: at, ConsecutiveFailed: count}, nil
+	observation, _ := status["routing"].(api.HealthObservation)
+	return observation, nil
 }
+
+func healthProbeStatusForTest(t *testing.T, router *api.Router, store Store, name, phase string, checkedAt time.Time, failures int) map[string]any {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		bound, err := healthcheck.ResolveSpecWithStoreForResource(router, store, name, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return map[string]any{"phase": phase, "routing": api.HealthObservation{Probe: bound.Probe(), Phase: phase, CheckedAt: checkedAt, ConsecutiveFailed: failures}}
+	}
+	t.Fatalf("HealthCheck/%s not declared", name)
+	return nil
+}
+
 func (s *countingSAMStatusStore) HealthObservation(name string) (api.HealthObservation, error) {
 	return fixtureHealthObservation(s.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
 }

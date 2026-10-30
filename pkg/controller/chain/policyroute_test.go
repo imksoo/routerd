@@ -618,6 +618,12 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 		api.NetAPIVersion + "/HealthCheck/hc-b": {"phase": "Unhealthy", "lastCheckedAt": now},
 		api.NetAPIVersion + "/HealthCheck/hc-c": {"phase": "Unhealthy", "lastCheckedAt": now},
 	}
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "hc-a"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "hc-b"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "hc-c"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	store[api.NetAPIVersion+"/HealthCheck/hc-a"] = healthProbeStatusForTest(t, router, store, "hc-a", "Healthy", time.Now().UTC(), 0)
+	store[api.NetAPIVersion+"/HealthCheck/hc-b"] = healthProbeStatusForTest(t, router, store, "hc-b", "Unhealthy", time.Now().UTC(), 0)
+	store[api.NetAPIVersion+"/HealthCheck/hc-c"] = healthProbeStatusForTest(t, router, store, "hc-c", "Unhealthy", time.Now().UTC(), 0)
 	controller := IPv4PolicyRouteController{Router: router, Store: store}
 	data, err := render.NftablesIPv4PolicyRoutes(effectivePolicyRouterForTest(t, controller, context.Background(), map[string]bool{}))
 	if err != nil {
@@ -638,7 +644,7 @@ func TestEgressRoutePolicyFiltersUnhealthyTargets(t *testing.T) {
 
 func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Interval: "30s", Timeout: "3s", UnhealthyThreshold: 3}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1", Interval: "30s", Timeout: "3s", UnhealthyThreshold: 3}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet": {
@@ -647,6 +653,7 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}}
+	controller.Store = mapStore{api.NetAPIVersion + "/HealthCheck/internet": healthProbeStatusForTest(t, router, controller.Store, "internet", "Failing", time.Now().UTC(), 1)}
 	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("single transient failing probe should not remove a policy route candidate")
 	}
@@ -671,9 +678,9 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 	}
 }
 
-func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
+func TestIPv4PolicyRouteRejectsRetainedObservedHealthCheckStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Interval: "30s", Timeout: "3s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1", Interval: "30s", Timeout: "3s"}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet": {
@@ -685,8 +692,8 @@ func TestIPv4PolicyRouteUsesObservedHealthCheckStatus(t *testing.T) {
 			},
 		},
 	}}
-	if !policyTargetHealthyForTest(t, controller, "internet") {
-		t.Fatal("fresh observed healthcheck status should keep a policy route candidate ready")
+	if policyTargetHealthyForTest(t, controller, "internet") {
+		t.Fatal("retained observed history must not authorize a policy route candidate")
 	}
 }
 
@@ -737,7 +744,7 @@ func TestIPv4PolicyRouteSkipsDSLiteCandidateDuringMasterStartup(t *testing.T) {
 	}
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-ra"}, Spec: api.DSLiteTunnelSpec{TunnelName: missing}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-ra"}, Spec: api.HealthCheckSpec{Interval: "3s", Timeout: "2s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-dslite-ra"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1", Interval: "3s", Timeout: "2s"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
 			Mode: "priority",
 			Candidates: []api.EgressRoutePolicyCandidate{{
@@ -984,6 +991,10 @@ func TestIPv4PolicyRouteOwnsPriorityPolicyWithoutChurn(t *testing.T) {
 			},
 		}},
 	}}}
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-a"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-b"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	base[api.NetAPIVersion+"/HealthCheck/internet-a"] = healthProbeStatusForTest(t, router, base, "internet-a", "Healthy", time.Now().UTC(), 0)
+	base[api.NetAPIVersion+"/HealthCheck/internet-b"] = healthProbeStatusForTest(t, router, base, "internet-b", "Healthy", time.Now().UTC(), 0)
 	controller := IPv4PolicyRouteController{Router: router, Store: eventedStore{Store: base, Bus: eventBus}, Bus: eventBus, DryRun: true}
 	controller.CommandOutput = loopbackPolicyLinkObservation
 
@@ -1076,7 +1087,7 @@ func TestIPv4PolicyRoutePublishesHADatapathConvergence(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "lan-gw"}, Spec: api.VirtualAddressSpec{Mode: "vrrp"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite-a"}, Spec: api.DSLiteTunnelSpec{TunnelName: "lo"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-a"}, Spec: api.HealthCheckSpec{Interval: "3s", Timeout: "2s", UnhealthyThreshold: 1}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-a"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1", Interval: "3s", Timeout: "2s", UnhealthyThreshold: 1}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
 			Mode: "priority", HashFields: []string{"sourceAddress"}, Candidates: []api.EgressRoutePolicyCandidate{
 				{Name: "dslite", Weight: 120, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/lan-gw.role": {Equals: "master"}}}, Targets: []api.EgressRoutePolicyTarget{{Name: "a", Interface: "ds-lite-a", Table: 110, Priority: 10110, Mark: 0x110, HealthCheck: "internet-a"}}},
@@ -1094,7 +1105,7 @@ func TestIPv4PolicyRoutePublishesHADatapathConvergence(t *testing.T) {
 		t.Fatalf("converging datapath status = %#v", status)
 	}
 
-	store[api.NetAPIVersion+"/HealthCheck/internet-a"] = map[string]any{"phase": "Healthy", "lastCheckedAt": now.Format(time.RFC3339Nano)}
+	store[api.NetAPIVersion+"/HealthCheck/internet-a"] = healthProbeStatusForTest(t, router, store, "internet-a", "Healthy", now, 0)
 	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "ready.nft")); err != nil {
 		t.Fatal(err)
 	}
@@ -1133,6 +1144,10 @@ func TestIPv4PolicyRoutePrioritySelectionUsesWeightThenPriority(t *testing.T) {
 			},
 		}},
 	}}}
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "primary"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "fallback"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	store[api.NetAPIVersion+"/HealthCheck/primary"] = healthProbeStatusForTest(t, router, store, "primary", "Healthy", time.Now().UTC(), 0)
+	store[api.NetAPIVersion+"/HealthCheck/fallback"] = healthProbeStatusForTest(t, router, store, "fallback", "Healthy", time.Now().UTC(), 0)
 	controller := IPv4PolicyRouteController{Router: router, Store: store, DryRun: true}
 	controller.CommandOutput = loopbackPolicyLinkObservation
 	if err := controller.applyDefaultRoutePolicies(t.Context(), "nft", filepath.Join(t.TempDir(), "default.nft")); err != nil {
@@ -1312,7 +1327,7 @@ func drainEvents(ch <-chan daemonapi.DaemonEvent) {
 
 func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Interval: "30s", Timeout: "3s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: api.HealthCheckSpec{Target: "192.0.2.1", Interval: "30s", Timeout: "3s"}},
 	}}}
 	controller := IPv4PolicyRouteController{Router: router, Store: mapStore{
 		api.NetAPIVersion + "/HealthCheck/internet": {
@@ -1329,6 +1344,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
+	controller.Store = mapStore{api.NetAPIVersion + "/HealthCheck/internet": healthProbeStatusForTest(t, router, controller.Store, "internet", "Healthy", time.Now().UTC(), 0)}
 	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("fresh healthy status should be treated as healthy")
 	}

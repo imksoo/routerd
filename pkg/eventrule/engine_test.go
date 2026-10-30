@@ -137,7 +137,7 @@ func (s *blockedRuleCommitStore) CommitRule(ctx context.Context, old, next route
 func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *testing.T) {
 	const eventCount = 130
 	c, b := newTestController(t, api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: eventCount})
-	db := c.Store.EventRuleJournal()
+	db := c.Store.EventJournal()
 	blocked := &blockedRuleCommitStore{ruleTestStore: ruleTestStore{db}, entered: make(chan struct{}), release: make(chan struct{})}
 	c.Store = blocked
 	var release sync.Once
@@ -249,7 +249,7 @@ func waitForRecent(t *testing.T, b *bus.Bus, topic string, want int) {
 }
 func assertTimerRetired(t *testing.T, c *Controller) {
 	t.Helper()
-	cp, err := c.Store.EventRuleJournal().ReadEventRule(t.Context(), "rule")
+	cp, err := c.Store.EventJournal().ReadEventRule(t.Context(), "rule")
 	if err != nil {
 		t.Fatal(err)
 	}

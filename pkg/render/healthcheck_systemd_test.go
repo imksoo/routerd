@@ -136,3 +136,10 @@ func TestFreeBSDHealthBindingResolvesDeclarationNameOnce(t *testing.T) {
 		t.Fatalf("public Interface was ignored or native name was reinterpreted as an alias:\n%s", script)
 	}
 }
+
+func TestHealthCheckRuntimeUnitPropagatesAddressFamily(t *testing.T) {
+	unit := string(HealthCheckSystemdUnit(HealthCheckSystemdOptions{Target: "2001:db8::1", AddressFamily: "ipv6"}))
+	if !strings.Contains(unit, `--address-family "ipv6"`) {
+		t.Fatalf("worker would probe another family:\n%s", unit)
+	}
+}

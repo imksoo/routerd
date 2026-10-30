@@ -55,13 +55,13 @@ type ProbeResult struct {
 
 type State struct {
 	Probe             api.HealthProbe `json:"probe"`
-	Phase             string    `json:"phase"`
-	LastResult        string    `json:"lastResult,omitempty"`
-	LastMessage       string    `json:"message,omitempty"`
-	LastTransitionAt  time.Time `json:"lastTransitionAt,omitempty"`
-	LastCheckedAt     time.Time `json:"lastCheckedAt,omitempty"`
-	ConsecutivePassed int       `json:"consecutivePassed,omitempty"`
-	ConsecutiveFailed int       `json:"consecutiveFailed,omitempty"`
+	Phase             string          `json:"phase"`
+	LastResult        string          `json:"lastResult,omitempty"`
+	LastMessage       string          `json:"message,omitempty"`
+	LastTransitionAt  time.Time       `json:"lastTransitionAt,omitempty"`
+	LastCheckedAt     time.Time       `json:"lastCheckedAt,omitempty"`
+	ConsecutivePassed int             `json:"consecutivePassed,omitempty"`
+	ConsecutiveFailed int             `json:"consecutiveFailed,omitempty"`
 
 	// Failure-history bookkeeping. FailureCount totals only consecutive
 	// failures; reset on the next success so it matches "ongoing outage
@@ -440,7 +440,7 @@ func resultFromError(ctx context.Context, err error) ProbeResult {
 
 func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, result ProbeResult, now time.Time) Evaluation {
 	probe := spec.Probe()
-	if state.Probe != probe {
+	if state.Probe != probe || state.LastCheckedAt.IsZero() || now.Before(state.LastCheckedAt) || now.Sub(state.LastCheckedAt) > probe.Freshness() {
 		state.Phase = PhaseUnknown
 		state.LastTransitionAt = now
 		state.ConsecutivePassed, state.ConsecutiveFailed = 0, 0

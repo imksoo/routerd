@@ -24,6 +24,7 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonStatus(t *testing.T
 			"consecutivePassed": 12,
 		},
 	}
+	store[api.NetAPIVersion+"/HealthCheck/internet"]["routing"] = healthProbeStatusForTest(t, router, store, "internet", "Healthy", checkedAt, 0)["routing"]
 	if err := (&Runner{Router: router}).saveWhenFalseStatuses(eventedStore{Store: store}); err != nil {
 		t.Fatalf("saveWhenFalseStatuses returned error: %v", err)
 	}
@@ -444,6 +445,7 @@ func whenFalseHealthCheck(name string) api.Resource {
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 		Metadata: api.ObjectMeta{Name: name},
 		Spec: api.HealthCheckSpec{
+			Target:   "192.0.2.1",
 			Interval: "30s",
 			Timeout:  "3s",
 			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{

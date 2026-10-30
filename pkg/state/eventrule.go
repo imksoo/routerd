@@ -22,9 +22,9 @@ var ErrEventRuleHistoryGap = errors.New("EventRule input history is no longer av
 
 const maxEventRuleCheckpointBytes = 8 << 20
 
-// EventRuleJournal exposes the concrete journal behind status decorators. It
+// EventJournal exposes the concrete journal behind status decorators. It
 // establishes bus identity without introducing a second event-store registry.
-func (s *SQLiteStore) EventRuleJournal() *SQLiteStore { return s }
+func (s *SQLiteStore) EventJournal() *SQLiteStore { return s }
 
 type EventRuleDefinition struct{ Name, Digest string }
 type EventRuleTimer struct {
