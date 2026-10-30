@@ -16,11 +16,7 @@ import (
 // or while the parent is withdrawing; it cannot acquire a new child effect.
 func (c BridgeController) observeChildParent(ctx context.Context, resource api.Resource, ifname, token string) (nativeParentLink, error) {
 	absent := nativeParentLink{Declared: true}
-	osName := c.OperatingSystem
-	if osName == "" {
-		osName = platform.CurrentOS()
-	}
-	if osName != platform.OSLinux {
+	if c.currentOS() != platform.OSLinux {
 		return absent, errors.New("Bridge native child ownership is unavailable on this OS")
 	}
 	active := resource.Kind != ""
@@ -59,17 +55,31 @@ func (c BridgeController) observeChildParent(ctx context.Context, resource api.R
 		if iface != nil {
 			return absent, errors.New("Bridge parent is present without its native ownership receipt")
 		}
+		currentScope, err := c.bridgeScope(ctx)
+		if err != nil {
+			return absent, err
+		}
+		if currentScope != absent.Scope {
+			return absent, errors.New("Bridge parent scope changed while observing absence")
+		}
 		return absent, ctx.Err()
 	}
 	if err := c.checkBridgeScope(ctx, record); err != nil {
 		return absent, err
 	}
+	absent.Scope = record.Scope
 	if record.IfIndex < 1 || active && (!record.Activated || record.Withdrawing || record.Plan.digest() != desired.digest()) {
 		return absent, errors.New("Bridge parent is pending or differs from current intent")
 	}
 	iface, err := c.observedOwnedBridge(record)
-	if err != nil || iface == nil {
+	if err != nil {
 		return absent, err
+	}
+	if err := c.checkBridgeScope(ctx, record); err != nil {
+		return absent, err
+	}
+	if iface == nil {
+		return absent, ctx.Err()
 	}
 	if active {
 		healthy, err := c.bridgeHealthy(record, *iface)
@@ -79,13 +89,6 @@ func (c BridgeController) observeChildParent(ctx context.Context, resource api.R
 		if !healthy {
 			return absent, errors.New("Bridge parent native readback differs from applied intent")
 		}
-		current, err := c.childBridgePlan(resource)
-		if err != nil {
-			return absent, err
-		}
-		if current.digest() != desired.digest() {
-			return absent, errors.New("Bridge parent intent changed while observing")
-		}
 	}
 	// Health and artifact observations can wait. Recheck the actual receipt,
 	// scope and native identity rather than publishing the earlier snapshot.
@@ -93,8 +96,14 @@ func (c BridgeController) observeChildParent(ctx context.Context, resource api.R
 		return absent, err
 	}
 	iface, err = c.observedOwnedBridge(record)
-	if err != nil || iface == nil {
+	if err != nil {
 		return absent, err
+	}
+	if err := c.checkBridgeScope(ctx, record); err != nil {
+		return absent, err
+	}
+	if iface == nil {
+		return absent, ctx.Err()
 	}
 	if active {
 		current, err := c.childBridgePlan(resource)

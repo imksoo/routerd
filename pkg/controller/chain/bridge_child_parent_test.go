@@ -4,6 +4,8 @@ package chain
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -12,11 +14,13 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	ra "github.com/imksoo/routerd/pkg/routeradvertisement"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 func TestBridgeForeignParentCannotAcquireStaticAddress(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +55,15 @@ func TestBridgeForeignParentCannotAcquireStaticAddress(t *testing.T) {
 	err = child.Reconcile(t.Context())
 	if writes != 0 || present {
 		t.Fatalf("foreign Bridge parent received child address: writes=%d err=%v", writes, err)
+	}
+}
+
+func TestBridgeParentReaderLeavesFreeBSDBootBackendUnchanged(t *testing.T) {
+	parent := BridgeController{OperatingSystem: platform.OSFreeBSD}
+	reader := nativeParentReader{Router: bridgeVXLANTestRouter(false), Bridges: &parent}
+	link, err := reader.observeDeclared(t.Context(), "br-l2")
+	if err != nil || link.Declared || link.Exists || link.Token != "" {
+		t.Fatalf("Linux Bridge ownership replaced the FreeBSD backend: %+v %v", link, err)
 	}
 }
 
@@ -348,5 +361,150 @@ func TestBridgeParentRAProofAndRecordedWithdrawal(t *testing.T) {
 	prefixes := raWirePrefixes(t, socket.packets[len(socket.packets)-1])
 	if len(socket.packets) != 2 || len(prefixes) != 1 || prefixes["2001:db8:7::/64"] != (raWirePrefix{}) {
 		t.Fatalf("recorded Bridge withdrawal is not exact: prefixes=%+v packets=%d", prefixes, len(socket.packets))
+	}
+}
+
+func TestBridgeParentAbsenceCannotCrossKernelScope(t *testing.T) {
+	for _, scenario := range []string{"with-receipt", "without-receipt"} {
+		t.Run(scenario, func(t *testing.T) {
+			parent, native, store := bridgeChildParentFixture(t)
+			owners, err := parent.readBridgeOwners()
+			if err != nil || len(owners) != 1 {
+				t.Fatalf("parent receipt: %+v %v", owners, err)
+			}
+			owner := owners[0]
+			path := parent.bridgeOwnerPath(owner.Resource)
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "without-receipt" {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			scope := "fixture-kernel"
+			parent.NativeScope = func(context.Context) (string, error) { return scope, nil }
+			read := parent.Interfaces
+			observed := false
+			parent.Interfaces = func() ([]net.Interface, error) {
+				links, err := read()
+				if err != nil {
+					return nil, err
+				}
+				// The complete snapshot belongs to another kernel scope. Its
+				// absence cannot retire cleanup authority in the original scope.
+				scope = "different-kernel"
+				observed = true
+				var otherScope []net.Interface
+				for _, iface := range links {
+					if iface.Name != owner.Plan.IfName {
+						otherScope = append(otherScope, iface)
+					}
+				}
+				return otherScope, nil
+			}
+			native.commands = nil
+			reader := nativeParentReader{Router: &api.Router{}, Store: store, Bridges: &parent}
+			link, err := reader.observeRecorded(t.Context(), owner.Plan.IfName, "bridge:"+owner.Token)
+			if !observed || err == nil || link.Exists || len(native.commands) != 0 {
+				t.Fatalf("cross-scope absence retired recorded cleanup authority: link=%+v observed=%t err=%v commands=%v", link, observed, err, native.commands)
+			}
+			if scenario == "with-receipt" {
+				after, err := os.ReadFile(path)
+				if err != nil || string(after) != string(before) {
+					t.Fatalf("cross-scope observation changed the ownership receipt: %v", err)
+				}
+			} else if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("cross-scope observation fabricated an ownership receipt: %v", err)
+			}
+		})
+	}
+}
+
+func TestBridgeChildWhenFalseRetainsFailedWithdrawalWithoutReplay(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	parent, native, store := bridgeChildParentFixture(t)
+	setRole := func(role string) {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "gateway", map[string]any{"role": role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRole("master")
+	parent.Router.Spec.Resources = append(parent.Router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{Name: "child"},
+		Spec:     api.IPv4StaticAddressSpec{Interface: "legacy-l2", Address: "192.0.2.1/24", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.role": {Equals: "master"}}}},
+	})
+	present, adds, deletes := false, 0, 0
+	child := IPv4StaticAddressController{Router: parent.Router, Store: store, Bridges: &parent,
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			observed := staticAddressSnapshot{Index: native.links["br-l2"].Index, Scope: "fixture-kernel"}
+			if present {
+				observed.Addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/24")}
+			}
+			return observed, nil
+		},
+		Command: func(_ context.Context, _ string, args ...string) error {
+			if strings.Contains(strings.Join(args, " "), "del") {
+				deletes++
+				return errors.New("withdrawal acknowledgement lost")
+			}
+			adds++
+			present = true
+			return nil
+		},
+	}
+	if err := child.Reconcile(t.Context()); err != nil || adds != 1 || !present {
+		t.Fatalf("owned Bridge child acquisition failed: adds=%d present=%t err=%v", adds, present, err)
+	}
+	setRole("backup")
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := child.Reconcile(t.Context()); err == nil || deletes != 1 || !present {
+			t.Fatalf("WhenFalse repeated an uncertain withdrawal: attempt=%d deletes=%d present=%t err=%v", attempt, deletes, present, err)
+		}
+		status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "child")
+		receipt, decodeErr := staticReceipt(status)
+		if err != nil || decodeErr != nil || receipt == nil || !receipt.Pending || !strings.HasPrefix(receipt.ParentToken, "bridge:") {
+			t.Fatalf("failed Bridge child withdrawal lost pending proof: %+v read=%v decode=%v", receipt, err, decodeErr)
+		}
+	}
+}
+
+func TestBridgeChildRechecksParentIdentityAfterPendingWrite(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	for _, change := range []string{"interface-index", "kernel-scope"} {
+		t.Run(change, func(t *testing.T) {
+			parent, native, db := bridgeChildParentFixture(t)
+			parent.Router.Spec.Resources = append(parent.Router.Spec.Resources, api.Resource{
+				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+				Metadata: api.ObjectMeta{Name: "child"},
+				Spec:     api.IPv4StaticAddressSpec{Interface: "legacy-l2", Address: "192.0.2.1/24"},
+			})
+			scope := "fixture-kernel"
+			parent.NativeScope = func(context.Context) (string, error) { return scope, nil }
+			index := native.links["br-l2"].Index
+			store := &staticAddressFaultStore{SQLiteStore: db, afterPending: func() {
+				if change == "kernel-scope" {
+					scope = "different-kernel"
+				} else {
+					link := native.links["br-l2"]
+					link.Index++
+					native.links["br-l2"] = link
+				}
+			}}
+			writes := 0
+			child := IPv4StaticAddressController{Router: parent.Router, Store: store, Bridges: &parent,
+				ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+					// The earlier address snapshot cannot authorize an operation
+					// after the actual parent identity changed during persistence.
+					return staticAddressSnapshot{Index: index, Scope: "fixture-kernel"}, nil
+				},
+				Command: func(context.Context, string, ...string) error { writes++; return nil },
+			}
+			if err := child.Reconcile(t.Context()); err == nil || writes != 0 {
+				t.Fatalf("changed Bridge parent authorized child write: writes=%d err=%v", writes, err)
+			}
+		})
 	}
 }

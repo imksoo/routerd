@@ -42,7 +42,6 @@ type bridgeKernelFixture struct {
 	settings    map[string]map[string]string
 	master      map[string]string
 	commands    []string
-	nextIndex   int
 	failCommand string
 	failDelete  bool
 	failRead    bool
@@ -52,7 +51,7 @@ type bridgeKernelFixture struct {
 
 func bridgeNativeFixture(t *testing.T, store *bridgeActivationStore) (BridgeController, *bridgeKernelFixture) {
 	t.Helper()
-	kernel := &bridgeKernelFixture{links: map[string]net.Interface{"ens19": {Name: "ens19", Index: 5, MTU: 1500, Flags: net.FlagUp}, "ens20": {Name: "ens20", Index: 6, MTU: 1500, Flags: net.FlagUp}}, alias: map[string]string{}, settings: map[string]map[string]string{}, master: map[string]string{}, nextIndex: 12}
+	kernel := &bridgeKernelFixture{links: map[string]net.Interface{"ens19": {Name: "ens19", Index: 5, MTU: 1500, Flags: net.FlagUp}, "ens20": {Name: "ens20", Index: 6, MTU: 1500, Flags: net.FlagUp}}, alias: map[string]string{}, settings: map[string]map[string]string{}, master: map[string]string{}}
 	controller := BridgeController{Router: bridgeVXLANTestRouter(false), Store: store, NetworkdDir: t.TempDir(), OperatingSystem: platform.OSLinux}
 	controller.NativeScope = func(context.Context) (string, error) { return "fixture-kernel", nil }
 	controller.Interfaces = func() ([]net.Interface, error) {
@@ -111,16 +110,34 @@ func bridgeNativeFixture(t *testing.T, store *bridgeActivationStore) (BridgeCont
 			if value := values["mtu"]; value != "" {
 				mtu, _ = strconv.Atoi(value)
 			}
-			kernel.links[ifname] = net.Interface{Name: ifname, Index: kernel.nextIndex, MTU: mtu}
-			kernel.nextIndex++
+			index, err := strconv.Atoi(values["index"])
+			if err != nil || index < 1 {
+				t.Fatalf("native Bridge create lacks an explicit interface index: %v", args)
+			}
+			for _, link := range kernel.links {
+				if link.Index == index {
+					return errors.New("native index collision")
+				}
+			}
+			kernel.links[ifname] = net.Interface{Name: ifname, Index: index, MTU: mtu}
 			kernel.created++
-			kernel.alias[ifname] = values["alias"]
+			// Linux bridge creation does not preserve IFLA_IFALIAS. Its
+			// acknowledged exact index is required for the later alias set.
+			kernel.alias[ifname] = ""
 			values["multicast_snooping"] = values["mcast_snooping"]
 			kernel.settings[ifname] = values
 		}
 		// networkd cannot attach to an undeclared NetDev. KeepMaster only
 		// preserves membership established by the native Bridge owner.
 
+		return nil
+	}
+	controller.SetAliasByIndex = func(index int, ifname, proof string) error {
+		link, present := kernel.links[ifname]
+		if !present || link.Index != index || link.Name != ifname || kernel.alias[ifname] != "" || kernel.settings[ifname]["type"] != "bridge" {
+			return errors.New("native identity changed before alias installation")
+		}
+		kernel.alias[ifname] = proof
 		return nil
 	}
 	controller.SetAdminByIndex = func(index int, proof string, up bool) error {
@@ -207,7 +224,7 @@ func TestBridgeActivationRetriesUnacknowledgedNativeEffects(t *testing.T) {
 				t.Fatal("failed effect was acknowledged")
 			}
 			owners, err := controller.readBridgeOwners()
-			if err != nil || len(owners) != 1 || owners[0].IfIndex != 12 {
+			if err != nil || len(owners) != 1 || owners[0].IfIndex < 1 || owners[0].IfIndex != kernel.links["br-l2"].Index {
 				t.Fatalf("lost recovery receipt: %v %v", owners, err)
 			}
 			kernel.commands = nil
@@ -264,6 +281,7 @@ func TestBridgeRecreationAndRemovalRetainFailedCleanup(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	originalIndex := kernel.links["br-l2"].Index
 	updated := bridgeVXLANTestRouter(false)
 	updated.Spec.Resources = append(updated.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "new-lan"}, Spec: api.InterfaceSpec{IfName: "ens20"}})
 	for i, resource := range updated.Spec.Resources {
@@ -287,7 +305,7 @@ func TestBridgeRecreationAndRemovalRetainFailedCleanup(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, old := kernel.links["br-l2"]; old || kernel.created != 2 || len(kernel.deleted) != 1 || kernel.deleted[0] != 12 {
+	if _, old := kernel.links["br-l2"]; old || kernel.created != 2 || len(kernel.deleted) != 1 || kernel.deleted[0] != originalIndex {
 		t.Fatalf("old/new ownership confused: %+v", kernel)
 	}
 	if _, err := os.Stat(filepath.Join(controller.NetworkdDir, "10-netplan-ens19.network.d", "88-routerd-bridge.conf")); !os.IsNotExist(err) {
@@ -410,6 +428,7 @@ func TestBridgeRemovalPreservesOtherOwnedBridge(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := kernel.links["br-second"]
+	originalIndex := kernel.links["br-l2"].Index
 	retained := make([]api.Resource, 0, len(controller.Router.Spec.Resources))
 	for _, resource := range controller.Router.Spec.Resources {
 		if resource.Kind == "Bridge" && resource.Metadata.Name == "legacy-l2" {
@@ -421,7 +440,7 @@ func TestBridgeRemovalPreservesOtherOwnedBridge(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(kernel.deleted) != 1 || kernel.deleted[0] != 12 || kernel.links["br-second"].Index != second.Index || kernel.master["ens20"] != "br-second" {
+	if len(kernel.deleted) != 1 || kernel.deleted[0] != originalIndex || kernel.links["br-second"].Index != second.Index || kernel.master["ens20"] != "br-second" {
 		t.Fatalf("removal affected another native owner: %+v", kernel)
 	}
 	owners, err := controller.readBridgeOwners()
@@ -606,5 +625,29 @@ func TestBridgeReceiptRequiresCurrentVersionAndCreationScope(t *testing.T) {
 				t.Fatalf("invalid receipt was migrated or its effects were lost: %v", err)
 			}
 		})
+	}
+}
+
+func TestBridgeCreationRefusesReplacementBeforeAliasInstallation(t *testing.T) {
+	controller, native := bridgeNativeFixture(t, &bridgeActivationStore{mapStore: mapStore{}})
+	install := controller.SetAliasByIndex
+	attempted := false
+	controller.SetAliasByIndex = func(index int, ifname, proof string) error {
+		attempted = true
+		link := native.links[ifname]
+		link.Index++
+		native.links[ifname] = link
+		native.alias[ifname] = "operator"
+		return install(index, ifname, proof)
+	}
+	if err := controller.Reconcile(t.Context()); err == nil || !attempted {
+		t.Fatalf("native replacement before alias was accepted: attempted=%t err=%v", attempted, err)
+	}
+	if native.alias["br-l2"] != "operator" || native.links["br-l2"].Flags&net.FlagUp != 0 || native.master["ens19"] != "" {
+		t.Fatalf("foreign replacement acquired ownership or forwarding: %+v", native)
+	}
+	owners, err := controller.readBridgeOwners()
+	if err != nil || len(owners) != 1 || owners[0].Activated {
+		t.Fatalf("failed alias installation lost pending recovery: %+v %v", owners, err)
 	}
 }

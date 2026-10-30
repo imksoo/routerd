@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // Child effects consume proof from each concrete native owner. This reader has
@@ -71,6 +72,11 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var err error
 		switch resource.Kind {
 		case "Bridge":
+			// Only Linux has a Bridge receipt owner here. FreeBSD's existing
+			// boot backend remains outside this owner's qualification scope.
+			if r.bridgeOwner().currentOS() != platform.OSLinux {
+				continue
+			}
 			var spec api.BridgeSpec
 			spec, err = resource.BridgeSpec()
 			name = firstNonEmpty(spec.IfName, resource.Metadata.Name)

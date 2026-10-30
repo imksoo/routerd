@@ -30,6 +30,7 @@ type BridgeController struct {
 	ReadFile         func(string) ([]byte, error)
 	Readlink         func(string) (string, error)
 	Interfaces       func() ([]net.Interface, error)
+	SetAliasByIndex  func(int, string, string) error
 	SetAdminByIndex  func(int, string, bool) error
 	DeleteByIndex    func(int, string) error
 	SetMasterByIndex func(bridgePort, int, string) error
@@ -42,14 +43,17 @@ func (c BridgeController) Reconcile(ctx context.Context) error {
 	if c.Router == nil || c.Store == nil {
 		return nil
 	}
-	osName := c.OperatingSystem
-	if osName == "" {
-		osName = platform.CurrentOS()
-	}
-	if osName != platform.OSLinux {
+	if c.currentOS() != platform.OSLinux {
 		return nil
 	}
 	return c.reconcileOwnedBridges(ctx)
+}
+
+func (c BridgeController) currentOS() platform.OS {
+	if c.OperatingSystem != "" {
+		return c.OperatingSystem
+	}
+	return platform.CurrentOS()
 }
 
 func (c BridgeController) savePlannedBridgeStatus(resource api.Resource) error {

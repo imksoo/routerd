@@ -74,8 +74,54 @@ after the parent's
 inner-address and journal observation waits. Linux and FreeBSD command/SQLite
 regressions exercise these boundaries; actual kernel/peer forwarding remains
 unqualified. These userspace checks do not establish atomic compare-and-change
-against unrelated native writers. Bridge, WireGuard, VRF and TunnelInterface
+against unrelated native writers. WireGuard, VRF and TunnelInterface
 child ownership remain separate open work.
+
+## Native Linux Bridge parents
+
+Bridge child address, route, delegated LAN and RA effects read the existing
+Bridge owner's concrete receipt and native alias, kind and interface index.
+New effects additionally require the current plan, acknowledged activation and
+healthy native readback. A pending or withdrawing parent, a foreign same-name
+link, and an unavailable receipt cannot authorize acquisition. The reader checks
+current intent, receipt and native identity again after observation waits.
+
+The Bridge receipt format is 2 and records its actual kernel boot/network scope.
+An earlier format or a different scope is rejected without deleting the receipt
+or mutating its possibly live effects. Cutover requires explicit resolution of
+old effects; no old-format reader, automatic reset or inferred migration is used.
+
+Children retain a `bridge:`-qualified parent token. Recorded cleanup requires
+the same receipt, scope, native alias and interface index after declaration
+removal. It does not require current parent health or activation, so a still-owned
+parent can release its children while withdrawing or recovering. Foreign
+replacements and failed observations preserve uncertainty and child receipts.
+An absence observed across a scope change cannot acknowledge cleanup.
+
+Linux 6.8 does not apply `IFLA_IFALIAS` on its new-link path, even though
+iproute2 sends the attribute. The owner requests a token-derived positive native
+index in the exclusive create, then installs its alias only after that command's
+successful kernel acknowledgement. The alias operation checks the exact index,
+name, bridge kind and empty previous alias; it never overwrites a foreign alias.
+The pending receipt and kernel scope are checked before that operation. Only
+exact cookie/index readback acknowledges the acquisition. A restart with a
+present, cookieless pending link cannot adopt it or replay alias installation.
+See the [Linux 6.8 creation path](https://github.com/torvalds/linux/blob/v6.8/net/core/rtnetlink.c#L3345-L3554)
+and [iproute2 6.1 exclusive creation](https://github.com/iproute2/iproute2/blob/v6.1.0/ip/iplink.c#L1818-L1821).
+This acknowledged sequence is not an atomic compare-and-change against an
+unrelated writer deliberately reusing the same native index.
+
+SQLite/native-command boundary tests exercise actual child controller callers
+and RA transmission, interrupted activation, receipt changes during observation,
+scope changes and recorded withdrawal. The opt-in
+`TestBridgeParentNativeLinuxAddressLifecycle` also exercises actual Linux bridge,
+alias, address, SQLite reopen and exact withdrawal inside a verified isolated
+network namespace. Only `networkctl` is excluded from that test; systemd and
+peer communication remain unqualified. This is Linux ownership behavior, not
+Linux/FreeBSD peer forwarding qualification. FreeBSD retains its existing boot
+backend; its Bridge child ownership has no receipt owner in this controller
+and remains outside this proof. Userspace rechecks do not
+establish atomic compare-and-change against unrelated native writers.
 
 This contract describes these concrete owners. Mobility, BGP kernel FIB, tunnel
 cookies and policy-routing effects have separate recovery boundaries; their

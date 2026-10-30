@@ -407,7 +407,7 @@ check-routerd15-focused: check-spec
 	go vet ./...
 
 .PHONY: check-routerd15-recovery
-check-routerd15-recovery: check-routerd15-activation
+check-routerd15-recovery: check-routerd15-activation check-routerd15-bridge-parent
 	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
 	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
 	go test ./pkg/controller/mobility
@@ -436,6 +436,10 @@ test: check-spec
 generate-schema: generate-spec
 
 .PHONY: check-routerd15-policy-native
+.PHONY: check-routerd15-bridge-parent
+check-routerd15-bridge-parent:
+	go test ./pkg/controller/chain -run '^TestBridge' -count=1
+
 check-routerd15-policy-native:
 	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1
 	go test ./pkg/apply ./pkg/lifecycle -count=1

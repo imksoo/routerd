@@ -34,6 +34,31 @@ func ownedBridgeByIndex(handle *netlink.Handle, index int, proof string) (netlin
 	return link, nil
 }
 
+// A successful exclusive create ACK supplies this exact requested index. A
+// restart without the cookie cannot call this path to adopt a matching name.
+func setBridgeAliasByIndex(index int, name, proof string) error {
+	if index < 1 || name == "" || proof == "" {
+		return fmt.Errorf("invalid acknowledged Bridge creation identity")
+	}
+	handle, err := bridgeNetlinkHandle()
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	link, err := handle.LinkByIndex(index)
+	if err != nil {
+		return err
+	}
+	if link == nil || link.Attrs() == nil || link.Attrs().Index != index || link.Attrs().Name != name || link.Type() != "bridge" || link.Attrs().Alias != "" {
+		return fmt.Errorf("acknowledged Bridge creation identity changed before cookie installation")
+	}
+	if err := handle.LinkSetAlias(link, proof); err != nil {
+		return err
+	}
+	_, err = ownedBridgeByIndex(handle, index, proof)
+	return err
+}
+
 func setBridgeAdminByIndex(index int, proof string, up bool) error {
 	handle, err := bridgeNetlinkHandle()
 	if err != nil {

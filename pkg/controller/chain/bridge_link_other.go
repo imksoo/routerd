@@ -6,6 +6,10 @@ package chain
 
 import "fmt"
 
+func setBridgeAliasByIndex(index int, name, proof string) error {
+	return fmt.Errorf("native Bridge cookie installation is unsupported on this platform")
+}
+
 func setBridgeAdminByIndex(index int, proof string, up bool) error {
 	return fmt.Errorf("native Bridge index mutation is unsupported on this platform")
 }

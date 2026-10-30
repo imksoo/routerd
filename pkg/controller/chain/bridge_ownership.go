@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -399,7 +400,12 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 		if owner.IfIndex > 0 {
 			return fmt.Errorf("owned Bridge %s disappeared; withdrawal is required before recreation", owner.Plan.IfName)
 		}
-		args := []string{"link", "add", "name", owner.Plan.IfName, "alias", owner.proof()}
+		// Linux 6.8 does not apply IFLA_IFALIAS during RTM_NEWLINK. Bind
+		// the successful exclusive create ACK to a requested native index;
+		// only this invocation may then install the cookie on that identity.
+		digest := sha256.Sum256([]byte(owner.Token))
+		createdIndex := int(binary.BigEndian.Uint32(digest[:4])&0x3fffffff) + 1024
+		args := []string{"link", "add", "name", owner.Plan.IfName, "index", strconv.Itoa(createdIndex)}
 		if owner.Plan.MTU > 0 {
 			args = append(args, "mtu", strconv.Itoa(owner.Plan.MTU))
 		}
@@ -411,6 +417,33 @@ func (c BridgeController) applyOwnedBridge(ctx context.Context, owner *bridgeOwn
 			return err
 		}
 		if err := c.command(ctx, "ip", args...); err != nil {
+			return err
+		}
+		// Keep the requested index in memory for failure cleanup, but do
+		// not acknowledge it on disk before the actual cookie readback.
+		owner.IfIndex = createdIndex
+		pending, err := c.readBridgeOwners()
+		if err != nil {
+			return err
+		}
+		current := false
+		for _, receipt := range pending {
+			if receipt.Resource == owner.Resource && receipt.Token == owner.Token && receipt.Scope == owner.Scope && receipt.IfIndex == 0 && !receipt.Activated && !receipt.Withdrawing && receipt.Plan.digest() == owner.Plan.digest() {
+				current = true
+				break
+			}
+		}
+		if !current {
+			return errors.New("Bridge creation receipt changed before cookie installation")
+		}
+		if err := c.checkBridgeScope(ctx, *owner); err != nil {
+			return err
+		}
+		setAlias := c.SetAliasByIndex
+		if setAlias == nil {
+			setAlias = setBridgeAliasByIndex
+		}
+		if err := setAlias(createdIndex, owner.Plan.IfName, owner.proof()); err != nil {
 			return err
 		}
 		iface, err = c.observedOwnedBridge(*owner)

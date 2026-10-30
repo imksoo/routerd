@@ -119,8 +119,15 @@ Implemented in the native/runtime follow-up:
 
 Still open:
 
-- Child proof for Bridge, WireGuardInterface, VRF and TunnelInterface remains
-  open. The shared native VXLAN owner and the actual DS-Lite journal/native
+- Child proof for WireGuardInterface, VRF and TunnelInterface remains
+  open. Linux Bridge child effects now consume the existing Bridge receipt,
+  kernel scope and native cookie/index through the same concrete-owner reader.
+  Active acquisition requires current acknowledged/healthy intent; recorded
+  cleanup survives parent declaration removal, withdrawal and recovery while
+  retaining foreign/unknown receipts. The private Bridge receipt is format 2;
+  old or other-scope receipts are rejected and preserved. FreeBSD Bridge child
+  ownership and native independent-peer qualification remain open.
+  The shared native VXLAN owner and the actual DS-Lite journal/native
   cookie reader now authorize static IPv4, IPv4Route, delegated LAN and RA
   effects, including recorded cleanup after parent declaration removal. VXLAN local wildcard source, nolearning and Linux outer DF
   use native readback; explicit FreeBSD outer DF remains unsupported.
