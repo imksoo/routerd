@@ -284,3 +284,34 @@ func TestNTPCanceledReconcileDoesNotAcquireConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestNTPDRenderedAccessPreservesCIDRsAndClientSources(t *testing.T) {
+	data := string(renderNTPServerConfig("ntpd", []string{"time.example.test"}, []string{"192.0.2.129/25", "2001:db8:55::1/64"}, []string{"198.51.100.1"}))
+	for _, line := range []string{
+		"restrict -4 default ignore\n", "restrict -6 default ignore\n",
+		"restrict source nomodify notrap noquery\n", "restrict 127.0.0.1\n", "restrict ::1\n",
+		"restrict 192.0.2.128 mask 255.255.255.128 nomodify notrap noquery\n",
+		"restrict 2001:db8:55:: mask ffff:ffff:ffff:ffff:: nomodify notrap noquery\n",
+		"server time.example.test iburst\n", "interface listen 198.51.100.1\n",
+	} {
+		if !strings.Contains(data, line) {
+			t.Errorf("ntpd output missing %q:\n%s", line, data)
+		}
+	}
+}
+
+func TestNTPDRenderedAccessAllowsExplicitDefaultPerFamily(t *testing.T) {
+	data := string(renderNTPServerConfig("ntpd", []string{"192.0.2.123"}, []string{"0.0.0.0/0"}, nil))
+	if !strings.Contains(data, "restrict -4 default nomodify notrap noquery\n") || !strings.Contains(data, "restrict -6 default ignore\n") || strings.Contains(data, "restrict -4 default ignore\n") {
+		t.Fatalf("explicit IPv4 allow-all changed IPv6 or retained an overlapping ignore rule:\n%s", data)
+	}
+}
+
+func TestNTPDRenderedClientOnlyConfigRetainsUpstreamsAndDeniesLANClients(t *testing.T) {
+	data := string(renderNTPServerConfig("ntpd", []string{"192.0.2.123"}, nil, nil))
+	for _, line := range []string{"restrict -4 default ignore\n", "restrict -6 default ignore\n", "restrict source nomodify notrap noquery\n", "server 192.0.2.123 iburst\n"} {
+		if !strings.Contains(data, line) {
+			t.Errorf("client-only ntpd output missing %q:\n%s", line, data)
+		}
+	}
+}
