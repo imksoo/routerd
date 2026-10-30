@@ -20,12 +20,12 @@ import (
 type policyNativeTestStore struct {
 	*routerstate.SQLiteStore
 	failPending, failApplied bool
-	afterSave                func(policyIPv4Journal)
+	afterSave                func(policyRouteJournal)
 }
 
 func (s *policyNativeTestStore) SaveObjectStatus(v, k, n string, status map[string]any) error {
-	if n == policyIPv4JournalName {
-		receipts := status["receipts"].([]policyIPv4Receipt)
+	if n == policyRouteJournalName(4) || n == policyRouteJournalName(6) {
+		receipts := status["receipts"].([]policyRouteReceipt)
 		pending := false
 		for _, r := range receipts {
 			pending = pending || r.Pending != ""
@@ -37,8 +37,8 @@ func (s *policyNativeTestStore) SaveObjectStatus(v, k, n string, status map[stri
 	if err := s.SQLiteStore.SaveObjectStatus(v, k, n, status); err != nil {
 		return err
 	}
-	if n == policyIPv4JournalName && s.afterSave != nil {
-		j := policyIPv4Journal{Receipts: append([]policyIPv4Receipt{}, status["receipts"].([]policyIPv4Receipt)...)}
+	if (n == policyRouteJournalName(4) || n == policyRouteJournalName(6)) && s.afterSave != nil {
+		j := policyRouteJournal{Receipts: append([]policyRouteReceipt{}, status["receipts"].([]policyRouteReceipt)...)}
 		s.afterSave(j)
 	}
 	return nil
@@ -66,7 +66,7 @@ func (f *policyNativeCommands) command(ctx context.Context, name string, args ..
 		return []byte(fmt.Sprintf("%d: wan0: <BROADCAST,UP> mtu 1500 state UP\n", f.index)), nil
 	case "ip link show dev wan0":
 		return nil, nil
-	case "ip -4 -N route show default table 100":
+	case "ip -4 -N route show table all exact default":
 		if f.failRead {
 			return nil, errors.New("route inventory failed")
 		}
@@ -88,7 +88,7 @@ func (f *policyNativeCommands) command(ctx context.Context, name string, args ..
 		switch call {
 		case "ip -4 route add default via 192.0.2.1 dev wan0 table 100 metric 50 proto static":
 			if !f.ignoreAdd {
-				f.route = "default via 192.0.2.1 dev wan0 proto static metric 50\n"
+				f.route = "default via 192.0.2.1 dev wan0 table 100 proto static metric 50\n"
 			}
 		case "ip -4 route del default via 192.0.2.1 dev wan0 table 100 metric 50 proto static":
 			if !f.ignoreDelete {
@@ -146,7 +146,7 @@ func applyPolicyNative(t *testing.T, c IPv4PolicyRouteController) error {
 func TestPolicyIPv4NativeAcquisitionAndExactWithdrawal(t *testing.T) {
 	c, store, native, _ := newPolicyNativeFixture(t)
 	native.foreignRule = "100: from all fwmark 0x999 lookup 999 proto static\n"
-	store.afterSave = func(j policyIPv4Journal) {
+	store.afterSave = func(j policyRouteJournal) {
 		for _, r := range j.Receipts {
 			if r.Pending == "add" {
 				if r.Scope == "" {
@@ -161,7 +161,7 @@ func TestPolicyIPv4NativeAcquisitionAndExactWithdrawal(t *testing.T) {
 	if got := native.mutations(); len(got) != 2 {
 		t.Fatalf("acquisition writes=%v", got)
 	}
-	j, err := c.readPolicyIPv4Journal()
+	j, err := c.readPolicyRouteJournal(4)
 	if err != nil || len(j.Receipts) != 2 {
 		t.Fatalf("journal=%+v, %v", j, err)
 	}
@@ -193,7 +193,7 @@ func TestPolicyIPv4NativeRefusesForeignPresenceBeforeAnyMutation(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			c, _, native, _ := newPolicyNativeFixture(t)
 			if kind == "route" {
-				native.route = "default via 192.0.2.1 dev wan0 proto static metric 50\n"
+				native.route = "default via 192.0.2.1 dev wan0 table 100 proto static metric 50\n"
 			} else {
 				native.rule = "100: from all fwmark 0x100 lookup 100 proto static\n"
 			}
@@ -257,7 +257,7 @@ func TestPolicyIPv4NativeRereadsAuthorityAfterPendingWrite(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "condition", map[string]any{"phase": "Up"}); err != nil {
 		t.Fatal(err)
 	}
-	store.afterSave = func(j policyIPv4Journal) {
+	store.afterSave = func(j policyRouteJournal) {
 		for _, r := range j.Receipts {
 			if r.Pending == "add" {
 				store.afterSave = nil
@@ -296,7 +296,7 @@ func TestPolicyIPv4NativeReadFailureAndWorldChangePreserveOwnership(t *testing.T
 	if len(native.mutations()) != 0 {
 		t.Fatal(native.mutations())
 	}
-	j, err := c.readPolicyIPv4Journal()
+	j, err := c.readPolicyRouteJournal(4)
 	if err != nil || len(j.Receipts) != 2 {
 		t.Fatalf("old-world receipt discarded: %+v %v", j, err)
 	}
@@ -337,7 +337,7 @@ func TestPolicyIPv4NativeNumericReadbackAndForeignProtocol(t *testing.T) {
 			if len(native.mutations()) != 0 {
 				t.Fatal(native.mutations())
 			}
-			match, collision, err := c.observePolicyIPv4Effect(t.Context(), policyIPv4Effect{Kind: "rule", Table: 100, Priority: 100, Mark: 256})
+			match, collision, err := c.observePolicyRouteEffect(t.Context(), policyRouteEffect{Family: 4, Kind: "rule", Table: 100, Priority: 100, Mark: 256})
 			if err != nil || !collision || match != (protocol == "4") {
 				t.Fatalf("numeric protocol matching=%v collision=%v err=%v", match, collision, err)
 			}
@@ -349,13 +349,13 @@ func TestPolicyIPv4NativeRejectsFractionalAndDuplicateReceipts(t *testing.T) {
 	for _, duplicate := range []bool{false, true} {
 		t.Run(fmt.Sprint(duplicate), func(t *testing.T) {
 			c, store, native, _ := newPolicyNativeFixture(t)
-			e := policyIPv4Effect{Kind: "rule", Table: 100, Priority: 100, Mark: 256}
+			e := policyRouteEffect{Family: 4, Kind: "rule", Table: 100, Priority: 100, Mark: 256}
 			if duplicate {
-				if err := c.savePolicyIPv4Journal(policyIPv4Journal{Receipts: []policyIPv4Receipt{{Effect: e, Scope: "linux:fixture:1"}, {Effect: e, Scope: "linux:fixture:1", Pending: "add"}}}); err != nil {
+				if err := c.savePolicyRouteJournal(4, policyRouteJournal{Receipts: []policyRouteReceipt{{Effect: e, Scope: "linux:fixture:1"}, {Effect: e, Scope: "linux:fixture:1", Pending: "add"}}}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				if err := store.SQLiteStore.SaveObjectStatus(api.RouterAPIVersion, "Router", policyIPv4JournalName, map[string]any{"version": 1, "receipts": []any{map[string]any{"scope": "linux:fixture:1", "pending": "", "effect": map[string]any{"kind": "rule", "table": 100.5, "priority": 100, "mark": 256, "metric": 0, "interface": "", "gateway": "", "ifIndex": 0}}}}); err != nil {
+				if err := store.SQLiteStore.SaveObjectStatus(api.RouterAPIVersion, "Router", policyRouteJournalName(4), map[string]any{"version": 2, "receipts": []any{map[string]any{"scope": "linux:fixture:1", "pending": "", "effect": map[string]any{"family": 4, "source": "", "inputIf": "", "kind": "rule", "table": 100.5, "priority": 100, "mark": 256, "metric": 0, "interface": "", "gateway": "", "ifIndex": 0}}}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -405,7 +405,7 @@ func TestPolicyIPv4NativeSelectionRefreshesAfterPendingPersistence(t *testing.T)
 	if err != nil || !before["policy/primary"] {
 		t.Fatalf("initial candidate=%v, %v", before, err)
 	}
-	store.afterSave = func(j policyIPv4Journal) {
+	store.afterSave = func(j policyRouteJournal) {
 		store.afterSave = nil
 		if err := store.SQLiteStore.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "selection", healthProbeStatusForTest(t, c.Router, store, "selection", "Unhealthy", time.Now().UTC(), 0)); err != nil {
 			t.Fatal(err)
@@ -431,5 +431,21 @@ func TestPolicyIPv4NativeSelectionRefreshesAfterPendingPersistence(t *testing.T)
 	}
 	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "policy"); status["phase"] != "Pending" || status["reason"] != "NoReadyCandidates" {
 		t.Fatalf("stale candidate published: %v", status)
+	}
+}
+
+func TestPolicyIPv4NativeAllTableObservationIgnoresForeignTables(t *testing.T) {
+	c, _, native, _ := newPolicyNativeFixture(t)
+	native.route = "default via 198.51.100.1 dev other proto 9 expires 42sec metric 50\nunreachable default table 999 proto 4 metric 50\n"
+	effect := policyRouteEffect{Family: 4, Kind: "route", Table: 100, Gateway: "192.0.2.1", Interface: "wan0", Metric: 50, IfIndex: 17}
+	match, collision, err := c.observePolicyRouteEffect(t.Context(), effect)
+	if err != nil || match || collision {
+		t.Fatalf("foreign table observation=%v %v %v", match, collision, err)
+	}
+	native.route = "default dev wan0 table 100 proto 4 scope 253 metric 50\n"
+	effect.Gateway = ""
+	match, collision, err = c.observePolicyRouteEffect(t.Context(), effect)
+	if err != nil || !match || !collision {
+		t.Fatalf("numeric link-scope observation=%v %v %v", match, collision, err)
 	}
 }
