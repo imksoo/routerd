@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	bfdcontroller "github.com/imksoo/routerd/pkg/controller/bfd"
 	"github.com/imksoo/routerd/pkg/manageddaemon"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	gobgpapi "github.com/osrg/gobgp/v4/api"
@@ -66,7 +67,7 @@ func TestBGPIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		t.Skip("independent FRR bgpd is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	evidence := os.Getenv("ROUTERD_NATIVE_EVIDENCE")
 	if evidence == "" {
 		evidence = t.TempDir()
@@ -375,6 +376,101 @@ router bgp 64513
 		t.Logf("%s IPv6: %s", label, strings.TrimSpace(string(run("ping", "-6", "-n", "-c", "1", "-W", "2", "2001:db8:40::1"))))
 	}
 	checkBoth("mixed global policy forwarding")
+	if os.Getenv("ROUTERD_BFD_INTEROP") == "1" {
+		bfdd := os.Getenv("ROUTERD_FRR_BFDD")
+		if bfdd == "" {
+			bfdd = "/usr/lib/frr/bfdd"
+		}
+		localBFD, peerBFD := filepath.Join(base, "bfd-local"), filepath.Join(base, "bfd-peer")
+		for _, dir := range []string{localBFD, peerBFD} {
+			if err := os.MkdirAll(filepath.Join(dir, "vty"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "vtysh.conf"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "bfdd.conf"), []byte("log stdout\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(peerBFD, "bfdd.conf"), []byte("log stdout\nbfd\n peer 198.18.0.1 multihop local-address 198.18.0.2\n  receive-interval 100\n  transmit-interval 100\n  detect-multiplier 3\n exit\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		bfdArgs := func(dir string) []string {
+			return []string{"-u", "root", "-g", "root", "-f", filepath.Join(dir, "bfdd.conf"), "-i", filepath.Join(dir, "bfdd.pid"), "--vty_socket", filepath.Join(dir, "vty"), "-z", filepath.Join(dir, "zebra.sock"), "--bfdctl", filepath.Join(dir, "bfdctl.sock"), "--log", "stdout"}
+		}
+		stopLocalBFD := start("bgp-bfd-local", exec.CommandContext(ctx, bfdd, bfdArgs(localBFD)...))
+		stopPeerBFD := start("bgp-bfd-peer", peerCommand(bfdd, bfdArgs(peerBFD)...))
+		withBFD := dual
+		withBFD.Spec.Resources = append([]api.Resource(nil), dual.Spec.Resources...)
+		v4Peer, _ := withBFD.Spec.Resources[1].BGPPeerSpec()
+		v4Peer.BFD = "BFD/frr-v4"
+		withBFD.Spec.Resources[1].Spec = v4Peer
+		withBFD.Spec.Resources = append(withBFD.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "frr-v4"}, Spec: api.BFDSpec{Peer: "BGPPeer/frr-v4", MinRx: "100ms", MinTx: "100ms", DetectMultiplier: 3}})
+		bfd := bfdcontroller.Controller{Router: &withBFD, Store: store, RuntimeDir: filepath.Join(base, "bfd-runtime"), Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, append([]string{"--config_dir", localBFD, "--vty_socket", filepath.Join(localBFD, "vty"), "--histfile", filepath.Join(localBFD, "history"), "-d", "bfdd"}, args...)...).CombinedOutput()
+		}}
+		waitBFD := func(want string) {
+			t.Helper()
+			deadline := time.Now().Add(8 * time.Second)
+			for {
+				reconcileErr := bfd.Reconcile(ctx)
+				status, readErr := store.ReadObjectStatus(api.NetAPIVersion, "BFD", "frr-v4")
+				if reconcileErr == nil && readErr == nil && status["phase"] == want {
+					t.Logf("actual BFD %s: %+v", want, status)
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("BFD did not reach %s: status=%+v reconcile=%v read=%v", want, status, reconcileErr, readErr)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}
+		waitBFD("Up")
+		if err := controller.ReconcileRouter(ctx, &withBFD, store); err != nil {
+			t.Fatal(err)
+		}
+		checkBoth("BFD Up preserves IPv4/IPv6 forwarding")
+		if err := stopPeerBFD(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitBFD("Down")
+		controller.mu.Lock()
+		liveBeforeReset, err := controller.liveEstablishedPeers(ctx)
+		controller.mu.Unlock()
+		if err != nil || !liveBeforeReset["198.18.0.2"] || !liveBeforeReset["2001:db8:1::2"] {
+			t.Fatalf("BFD-only failure unexpectedly stopped BGP before its controller reset: %+v err=%v", liveBeforeReset, err)
+		}
+		waitFor("BFD Down hard reset and only its IPv4 RIB/FIB withdrawal", func() bool {
+			controller.mu.Lock()
+			live, err := controller.liveEstablishedPeers(ctx)
+			reset := !controller.bfdPeerLastResetAt[bfdPeerGateKey("BFD/frr-v4", "198.18.0.2")].IsZero()
+			controller.mu.Unlock()
+			return err == nil && reset && !live["198.18.0.2"] && live["2001:db8:1::2"] && !ribHas("198.19.40.1/32") && !nativeHas("198.19.40.1/32") && ribHas("2001:db8:40::1/128") && nativeHas("2001:db8:40::1/128")
+		})
+		if out, err := exec.CommandContext(ctx, "ping", "-n", "-c", "1", "-W", "1", "198.19.40.1").CombinedOutput(); err == nil {
+			t.Fatalf("BFD-withdrawn IPv4 route still forwards: %s", out)
+		}
+		run("ping", "-6", "-n", "-c", "1", "-W", "2", "2001:db8:40::1")
+		t.Log("actual BFD Down reset its established BGP peer and withdrew IPv4 forwarding; unrelated IPv6 remained up")
+		stopPeerBFD = start("bgp-bfd-peer-restarted", peerCommand(bfdd, bfdArgs(peerBFD)...))
+		waitBFD("Up")
+		checkBoth("BFD recovery restores BGP IPv4 forwarding")
+		if err := controller.ReconcileRouter(ctx, &dual, store); err != nil {
+			t.Fatal(err)
+		}
+		bfd.Router = &api.Router{}
+		if err := bfd.Reconcile(ctx); err != nil {
+			t.Fatalf("withdraw BFD after unlinking its BGP reference: %v", err)
+		}
+		checkBoth("BFD configuration removal preserves both BGP peers")
+		if err := stopPeerBFD(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := stopLocalBFD(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	peerNetworks := func(withdraw bool) {
 		command := "network "
 		if withdraw {

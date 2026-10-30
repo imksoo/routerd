@@ -19,6 +19,32 @@ const nativePeerA = `{"peer":"10.99.0.2","vrf":"default","interface":"wg0","stat
 const nativePeerB = `{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}`
 const foreignPeer = `{"peer":"10.99.0.2","vrf":"default","interface":"operator0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}`
 
+const nativeOwnedPeersText = `BFD Peers:
+ peer 10.99.0.2 vrf default interface wg0
+  Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
+ peer 10.99.0.3 vrf default interface wg0
+  Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
+`
+
+const nativeForeignPeerText = `BFD Peers:
+ peer 10.99.0.2 vrf default interface operator0
+  Peer Type: configured
+  Local timers:
+   Detect-multiplier: 3
+   Receive interval: 300ms
+   Transmission interval: 300ms
+`
+
+const nativePeersText = nativeOwnedPeersText + nativeForeignPeerText
+
 type receiptFaultStore struct {
 	*routerstate.SQLiteStore
 	failFinal bool
@@ -50,6 +76,12 @@ func TestBFDRecoversUncertainAddAndWithdrawsOnlyOwnedPeers(t *testing.T) {
 	failedDelete := true
 	controller := Controller{Router: bfdRouter(), Store: fault, OS: platform.OSLinux, RuntimeDir: dir}
 	controller.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "-c" && args[1] == "show bfd peers" {
+			if installed {
+				return []byte(nativePeersText), nil
+			}
+			return []byte(nativeForeignPeerText), nil
+		}
 		if args[0] == "-c" {
 			if installed {
 				return []byte("[" + nativePeerA + "," + nativePeerB + "," + foreignPeer + "]"), nil
@@ -81,6 +113,10 @@ func TestBFDRecoversUncertainAddAndWithdrawsOnlyOwnedPeers(t *testing.T) {
 	}
 	if err := controller.Reconcile(t.Context()); err == nil {
 		t.Fatal("native success plus failed final receipt accepted")
+	}
+	acknowledged, err := controller.readNativeReceipt()
+	if err != nil || !acknowledged.Acknowledged || len(acknowledged.Pending) != 2 || len(acknowledged.Held) != 0 {
+		t.Fatalf("successful command/readback was not acknowledged before final receipt failure: %+v err=%v", acknowledged, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -135,6 +171,9 @@ func TestBFDIntentWriteFailurePreventsNativeApply(t *testing.T) {
 	failure := errors.New("intent unavailable")
 	writes := 0
 	controller := Controller{Router: bfdRouter(), Store: &receiptFaultStore{SQLiteStore: store, intentErr: failure}, OS: platform.OSLinux, RuntimeDir: t.TempDir(), Command: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "-c" && args[1] == "show bfd peers" {
+			return []byte("BFD Peers:\n"), nil
+		}
 		if args[0] == "-f" {
 			writes++
 		}
