@@ -6,8 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/netip"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +54,9 @@ type nativeRouteFixture struct {
 }
 
 func (n *nativeRouteFixture) command(_ context.Context, name string, args ...string) ([]byte, error) {
+	if name == "route" {
+		return n.freeBSDCommand(args)
+	}
 	if name != "ip" {
 		return nil, errors.New("unexpected native command")
 	}
@@ -68,6 +74,12 @@ func (n *nativeRouteFixture) command(_ context.Context, name string, args ...str
 				route.Device = args[i+1]
 			case "src":
 				route.PreferredSource = args[i+1]
+			case "metric":
+				metric, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return nil, err
+				}
+				route.Metric = metric
 			}
 		}
 		if !n.ignoreAdd {
@@ -85,6 +97,68 @@ func (n *nativeRouteFixture) command(_ context.Context, name string, args ...str
 		return nil, nil
 	}
 	return nil, errors.New("unexpected native command: " + name + " " + strings.Join(args, " "))
+}
+
+func (n *nativeRouteFixture) freeBSDCommand(args []string) ([]byte, error) {
+	if len(args) < 4 || args[0] != "-n" || args[2] != "-host" && args[2] != "-net" {
+		return nil, fmt.Errorf("unexpected FreeBSD route command: %v", args)
+	}
+	switch args[1] {
+	case "get":
+		if n.route == nil {
+			return []byte("route: route has not been found\n"), errors.New("not found")
+		}
+		prefix, err := netip.ParsePrefix(n.route.Destination)
+		if err != nil {
+			address, parseErr := netip.ParseAddr(n.route.Destination)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			prefix = netip.PrefixFrom(address, 32)
+		}
+		flags := "UP,DONE"
+		if n.route.Protocol == "boot" || n.route.Protocol == "3" || n.route.Protocol == "bgp" {
+			flags += ",STATIC"
+		}
+		if n.route.Protocol == "bgp" {
+			flags += ",PROTO1"
+		}
+		if prefix.Bits() == 32 {
+			flags += ",HOST"
+		}
+		// route get does not expose Linux metric or preferred-source fields.
+		return []byte(fmt.Sprintf("destination: %s\nmask: %s\ninterface: %s\nflags: <%s>\n", prefix.Masked().Addr(), net.IP(net.CIDRMask(prefix.Bits(), 32)), n.route.Device, flags)), nil
+	case "add":
+		if n.route != nil {
+			return nil, errors.New("File exists")
+		}
+		route := ordinaryIPv4RouteObservation{Type: "unicast", Destination: args[3], Protocol: "boot"}
+		if args[2] == "-host" {
+			route.Destination += "/32"
+		}
+		for i := 4; i+1 < len(args); i += 2 {
+			switch args[i] {
+			case "-interface", "-ifp":
+				route.Device = args[i+1]
+			case "-ifa":
+				route.PreferredSource = args[i+1]
+			}
+		}
+		if !n.ignoreAdd {
+			n.route = &route
+		}
+		n.writes++
+		return nil, nil
+	case "delete":
+		if n.deleteErr != nil {
+			return nil, n.deleteErr
+		}
+		n.route = nil
+		n.writes++
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected FreeBSD route operation: %v", args)
+	}
 }
 
 func nativeWithdrawalFixture() dynamicconfig.MobilityDataplanePlan {
@@ -118,9 +192,6 @@ func assertNativeAck(t *testing.T, status map[string]any, field string, want []d
 }
 
 func TestMobilityNativeRoutePendingSurvivesFailureAndRestart(t *testing.T) {
-	if platform.CurrentOS() != platform.OSLinux {
-		t.Skip("Linux command fixture")
-	}
 	path := filepath.Join(t.TempDir(), "native.db")
 	store, err := routerstate.OpenSQLite(path)
 	if err != nil {
@@ -194,7 +265,8 @@ func TestMobilityNativeAddressPendingSurvivesFailureAndRestart(t *testing.T) {
 		}
 		return staticAddressSnapshot{Index: 7, Scope: "address-fixture", Addresses: addresses}, nil
 	}, Command: func(_ context.Context, _ string, args ...string) error {
-		if strings.Contains(strings.Join(args, " "), " del ") {
+		line := strings.Join(args, " ")
+		if strings.Contains(line, " del ") || strings.Contains(line, "-alias") {
 			if deleteErr != nil {
 				return deleteErr
 			}
@@ -235,9 +307,6 @@ func TestMobilityNativeAddressPendingSurvivesFailureAndRestart(t *testing.T) {
 }
 
 func TestMobilityNativePendingSaveFailurePreventsKernelWrite(t *testing.T) {
-	if platform.CurrentOS() != platform.OSLinux {
-		t.Skip("Linux command fixture")
-	}
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "native.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -256,9 +325,6 @@ func TestMobilityNativePendingSaveFailurePreventsKernelWrite(t *testing.T) {
 }
 
 func TestMobilityNativeRouteReplacesItsOwnedDevice(t *testing.T) {
-	if platform.CurrentOS() != platform.OSLinux {
-		t.Skip("Linux command fixture")
-	}
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "native.db"))
 	if err != nil {
 		t.Fatal(err)

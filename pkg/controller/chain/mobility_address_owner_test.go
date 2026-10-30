@@ -50,16 +50,28 @@ func (n *addressOwnerNative) observe(context.Context, string) (staticAddressSnap
 	return observed, n.readErr
 }
 func (n *addressOwnerNative) command(_ context.Context, name string, args ...string) error {
-	if name != "ip" || len(args) < 6 || args[0] != "-4" || args[1] != "addr" || args[4] != "dev" {
+	var operation, address string
+	if name == "ip" && len(args) >= 6 && args[0] == "-4" && args[1] == "addr" && args[4] == "dev" {
+		operation, address = args[2], args[3]
+	} else if name == "ifconfig" && len(args) == 4 && args[1] == "inet" {
+		address = args[2]
+		switch args[3] {
+		case "alias":
+			operation = "add"
+		case "-alias":
+			operation = "del"
+		}
+	}
+	if operation == "" {
 		return errors.New("unexpected address command")
 	}
 	n.writes++
-	switch args[2] {
+	switch operation {
 	case "add":
-		if len(n.snapshot.Addresses) > 0 {
+		if name == "ip" && len(n.snapshot.Addresses) > 0 {
 			return errors.New("exclusive add collision")
 		}
-		n.snapshot.Addresses = []netip.Prefix{netip.MustParsePrefix(args[3])}
+		n.snapshot.Addresses = []netip.Prefix{netip.MustParsePrefix(address)}
 		if n.afterCommand != nil {
 			n.afterCommand()
 		}
