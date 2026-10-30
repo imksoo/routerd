@@ -73,7 +73,7 @@ cat > "$work/kea.json" <<EOF
 {"Dhcp4":{
  "interfaces-config":{"interfaces":["peer0"]},
  "lease-database":{"type":"memfile","persist":true,"lfc-interval":0,"name":"$work/leases.csv"},
- "data-directory":"$work","renew-timer":20,"rebind-timer":40,"valid-lifetime":90,
+ "renew-timer":20,"rebind-timer":40,"valid-lifetime":90,
  "subnet4":[{"id":45,"subnet":"198.18.46.0/24","interface":"peer0","pools":[{"pool":"198.18.46.100-198.18.46.100"}],
  "option-data":[{"name":"routers","data":"198.18.46.1"},{"name":"domain-name-servers","data":"198.18.46.1"}]}]
 }}
