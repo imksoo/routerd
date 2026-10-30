@@ -123,7 +123,10 @@ func prepareRAPlans(declared *api.Router) ([]raInterfacePlan, error) {
 				intent.Spec.RDNSS = nil
 				intent.Spec.RDNSSFrom = nil
 			}
-			intent.DefaultDelegatedDNS = intent.Delegated != nil && firstNonEmpty(server.DNSSource, "self") == "self" && server.SelfAddressPolicy == "" && len(intent.Spec.RDNSS) == 0 && len(intent.Spec.RDNSSFrom) == 0
+			intent.SelfDNS, err = prepareRASelfDNS(declared, server, intent)
+			if err != nil {
+				return nil, fmt.Errorf("%s self DNS: %w", resource.ID(), err)
+			}
 			if server.Mode == "ra-only" {
 				intent.Name = resource.Metadata.Name
 				intent.StatusKind = "DHCPv6Server"
@@ -212,7 +215,7 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 	}
 	prefixes := map[netip.Prefix]raPrefixValue{}
 	var statuses []raResourceStatus
-	dns := map[netip.Addr]bool{}
+	dns := map[netip.Addr]uint32{}
 	domains := map[string]bool{}
 	for _, intent := range plan.Resources {
 		stateStore, _ := store.(resourcequery.StateStore)
@@ -258,13 +261,16 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 		if err != nil {
 			return nil, nil, err
 		}
-		if intent.DefaultDelegatedDNS {
-			address, err := currentDelegatedRADNS(store, intent, now)
+		selfDNSSelected := len(intent.SelfDNS) == 0
+		if len(intent.SelfDNS) > 0 {
+			selected, err := selectRASelfDNS(ctx, router, store, plan, intent.SelfDNS, now)
 			if err != nil {
 				return nil, nil, err
 			}
-			if address != "" {
-				servers = append(servers, address)
+			if selected.Address.IsValid() {
+				selfDNSSelected = true
+				dns[selected.Address] = max(dns[selected.Address], selected.Valid)
+				status.RDNSS = append(status.RDNSS, selected.Address.String())
 			}
 		}
 		for _, value := range append(expandServers(intent.Spec.RDNSS), servers...) {
@@ -272,8 +278,11 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 			if err != nil || !address.Is6() || address.Is4In6() || address.IsMulticast() || address.IsUnspecified() {
 				return nil, nil, fmt.Errorf("RA RDNSS address %q is invalid", value)
 			}
-			dns[address] = true
+			dns[address] = math.MaxUint32
 			status.RDNSS = append(status.RDNSS, address.String())
+		}
+		if !selfDNSSelected && len(status.RDNSS) == 0 {
+			status.Pending = "SelfDNSNotReady"
 		}
 		search, _, err := expandDomainValues(router, store, intent.Spec.DNSSL, intent.Spec.DNSSLFrom, "DNSSLFrom")
 		if err != nil {
@@ -304,12 +313,21 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 		dnsLifetime = 0
 	}
 	if len(dns) > 0 {
-		servers := make([]netip.Addr, 0, len(dns))
-		for server := range dns {
-			servers = append(servers, server)
+		byLifetime := map[uint32][]netip.Addr{}
+		for server, valid := range dns {
+			lifetime := min(valid, dnsLifetime)
+			byLifetime[lifetime] = append(byLifetime[lifetime], server)
 		}
-		sort.Slice(servers, func(i, j int) bool { return servers[i].Less(servers[j]) })
-		packet.Options = append(packet.Options, &ndp.RecursiveDNSServer{Servers: servers, Lifetime: time.Duration(dnsLifetime) * time.Second})
+		lifetimes := make([]uint32, 0, len(byLifetime))
+		for lifetime := range byLifetime {
+			lifetimes = append(lifetimes, lifetime)
+		}
+		sort.Slice(lifetimes, func(i, j int) bool { return lifetimes[i] < lifetimes[j] })
+		for _, lifetime := range lifetimes {
+			servers := byLifetime[lifetime]
+			sort.Slice(servers, func(i, j int) bool { return servers[i].Less(servers[j]) })
+			packet.Options = append(packet.Options, &ndp.RecursiveDNSServer{Servers: servers, Lifetime: time.Duration(lifetime) * time.Second})
+		}
 	}
 	if len(domains) > 0 {
 		names := make([]string, 0, len(domains))
@@ -440,42 +458,4 @@ func resolveRAPrefixes(ctx context.Context, router *api.Router, store Store, ifn
 		return applied, nil
 	}
 	return values, nil
-}
-
-// The ordinary delegated self DNS address comes from the same canonical
-// association and confirmed native receipt as its PIO, never from display text.
-func currentDelegatedRADNS(store Store, intent raResourceIntent, now time.Time) (string, error) {
-	lease, found, err := livePDLease(store, intent.Delegated.PrefixDelegation, now)
-	if err != nil || !found {
-		return "", err
-	}
-	if !lease.HasFreshTransactionEvidence(now) {
-		return "", nil
-	}
-	address, err := DeriveIPv6Address(lease.CurrentPrefix, intent.Delegated.SubnetID, intent.Delegated.AddressSuffix)
-	if err != nil {
-		return "", err
-	}
-	address, err = delegatedAddressWithPrefixLength(address, intent.Delegated.PrefixLength)
-	if err != nil {
-		return "", err
-	}
-	status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", intent.DelegatedName)
-	if err != nil {
-		return "", err
-	}
-	receipt, err := delegatedReceipt(status)
-	if err != nil {
-		return "", err
-	}
-	if receipt == nil {
-		return "", nil
-	}
-	for _, entry := range receipt.Addresses {
-		if entry.Address == address && entry.Held && (entry.Pending == nil || entry.Pending.Operation == "apply") && now.Before(entry.ValidUntil) {
-			prefix, _ := netip.ParsePrefix(address)
-			return prefix.Addr().String(), nil
-		}
-	}
-	return "", nil
 }

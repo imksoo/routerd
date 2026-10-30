@@ -42,9 +42,9 @@ func pendingMobilityAddresses(status map[string]any) ([]mobilityAppliedIPv4Addre
 	return pending, nil
 }
 
-// Pending writes are recovered before a newer desired snapshot is applied.
-// Deleting a pending tuple is safe only through the same exact native identity
-// observation as ordinary owned-route removal. A foreign replacement survives.
+// A pending write is an uncertain operation, not an acquisition receipt.
+// Presence cannot prove which writer installed the tuple. Only an authoritative
+// absence observation permits retiring pending work; never delete it to recover.
 func (c IPv4RouteController) beginMobilityRoutes(ctx context.Context) error {
 	if c.DryRun {
 		return nil
@@ -71,8 +71,12 @@ func (c IPv4RouteController) beginMobilityRoutes(ctx context.Context) error {
 		return err
 	}
 	for _, route := range pending {
-		if err := c.removeMobilityRoute(ctx, route); err != nil {
-			return fmt.Errorf("recover pending mobility route %s: %w", route.ID, err)
+		matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
+		if err != nil {
+			return fmt.Errorf("observe pending mobility route %s: %w", route.ID, err)
+		}
+		if matching {
+			return fmt.Errorf("pending mobility route %s is present without acknowledged ownership; inspect and remove it before retrying", route.ID)
 		}
 	}
 	if len(pending) != 0 {
@@ -153,8 +157,12 @@ func (c IPv4StaticAddressController) beginMobilityAddresses(ctx context.Context)
 		if mobilityStaticAddressDesiredByUser(c.Router, address.Interface, address.Address) {
 			return fmt.Errorf("pending mobility address %s is also desired by a user resource", address.Address)
 		}
-		if err := c.removeMobilityStaticAddress(ctx, address); err != nil {
-			return fmt.Errorf("recover pending mobility address %s: %w", address.ID, err)
+		present, err := c.mobilityAddressPresent(ctx, address.Interface, address.Address)
+		if err != nil {
+			return fmt.Errorf("observe pending mobility address %s: %w", address.ID, err)
+		}
+		if present {
+			return fmt.Errorf("pending mobility address %s is present without acknowledged ownership; inspect and remove it before retrying", address.ID)
 		}
 	}
 	if len(pending) != 0 {

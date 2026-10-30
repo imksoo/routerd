@@ -121,6 +121,10 @@ func linuxSegmentObservation(ctx context.Context, handle *netlink.Handle, scope 
 	if err != nil || observed.Kind != "vxlan" {
 		return observed, err
 	}
+	observed.Config.OuterDF, err = readLinuxVXLANDF(ctx, observed.Index)
+	if err != nil {
+		return SegmentLink{}, err
+	}
 	neighbors, err := handle.NeighList(observed.Index, syscall.AF_BRIDGE)
 	if err != nil {
 		return SegmentLink{}, err
@@ -158,6 +162,7 @@ func linuxSegmentAttributes(scope string, link netlink.Link) (SegmentLink, error
 		return observed, nil
 	}
 	observed.Config.VNI, observed.Config.Port = vx.VxlanId, vx.Port
+	observed.Config.NoLearning = !vx.Learning
 	observed.LocalPort = vx.Port
 	observed.Config.Local = segmentIP(vx.SrcAddr)
 	observed.LocalWildcard = len(vx.SrcAddr) == 0 || vx.SrcAddr.IsUnspecified()
@@ -190,7 +195,7 @@ func (n linuxSegmentNative) Create(ctx context.Context, config SegmentConfig, ow
 		return err
 	}
 	defer handle.Close()
-	link := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: config.IfName, Alias: SegmentProof(owner.Token), MTU: config.MTU}, VxlanId: config.VNI, VtepDevIndex: owner.UnderlayIndex, SrcAddr: net.ParseIP(config.Local), Port: config.Port, Learning: true, UDPCSum: true}
+	link := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: config.IfName, Alias: SegmentProof(owner.Token), MTU: config.MTU}, VxlanId: config.VNI, VtepDevIndex: owner.UnderlayIndex, SrcAddr: net.ParseIP(config.Local), Port: config.Port, Learning: !config.NoLearning, UDPCSum: true}
 	if config.Group != "" {
 		link.Group = net.ParseIP(config.Group)
 	}
@@ -243,6 +248,14 @@ func (n linuxSegmentNative) Configure(ctx context.Context, config SegmentConfig,
 	}
 	if err := handle.LinkSetDown(link); err != nil {
 		return err
+	}
+	if config.OuterDF != "" && observed.Config.OuterDF != config.OuterDF {
+		if _, _, err := n.owned(ctx, handle, config, owner); err != nil {
+			return err
+		}
+		if err := setLinuxVXLANDF(ctx, owner.Index, config.OuterDF); err != nil {
+			return err
+		}
 	}
 	if config.MTU > 0 {
 		link, _, err = n.owned(ctx, handle, config, owner)

@@ -104,10 +104,13 @@ Still open:
   owner. Engine VXLANSegment observations can default to Healthy without native
   proof; wire the actual read-only owner observation instead. Unspecified local
   source readback and child proof for other virtual parents need closure.
-- RA fragmented-RS provenance is unavailable through the current ndp API; custom
-  DHCPv6 SelfAddressPolicy live resolution remains incomplete. FreeBSD forward
-  zone firewall parity is also unsupported. Native independent peers remain
-  required even where local wire/ownership tests pass.
+- RA custom DHCPv6 SelfAddressPolicy selection now prepares ordered candidates
+  and uses current native address validity or canonical PD plus acknowledged
+  exact address receipts. Per-address RDNSS deadlines, fallback/withdrawal, failed
+  reads, DAD failure and cross-interface native identity have local regressions.
+  Fragmented-RS provenance remains unavailable through the current ndp API;
+  native independent peers remain required. Separately rendered DHCP DNS
+  selection and FreeBSD forward-zone firewall parity remain unqualified.
 
 ## Runtime graph and process owner
 

@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -20,6 +21,10 @@ import (
 // desired-state channel. Its only purpose is exact, safe withdrawal of a
 // route which the typed MobilityDataplane plan previously installed.
 type mobilityAppliedIPv4Route struct {
+	Scope           string `json:"scope,omitempty"`
+	IfIndex         int    `json:"ifIndex,omitempty"`
+	ParentToken     string `json:"parentToken,omitempty"`
+	Operation       string `json:"operation,omitempty"`
 	ID              string `json:"id"`
 	PoolRef         string `json:"poolRef"`
 	PoolPrefix      string `json:"poolPrefix"`
@@ -69,7 +74,7 @@ func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error 
 
 	next := map[string]mobilityAppliedIPv4Route{}
 	failed := map[string]bool{}
-	var failures []string
+	var failures []error
 	for _, route := range desired {
 		applied, err := c.applyMobilityRoute(ctx, route)
 		if err != nil {
@@ -77,7 +82,7 @@ func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error 
 			if previous, ok := previousByID[route.ID]; ok && mobilityRouteMatchesIntent(previous, route) {
 				next[route.ID] = previous
 			}
-			failures = append(failures, fmt.Sprintf("%s: %v", route.ID, err))
+			failures = append(failures, fmt.Errorf("%s: %w", route.ID, err))
 			continue
 		}
 		next[route.ID] = applied
@@ -101,14 +106,14 @@ func (c IPv4RouteController) reconcileMobilityRoutes(ctx context.Context) error 
 		}
 		if err := c.removeMobilityRoute(ctx, applied); err != nil {
 			next[applied.ID] = applied
-			failures = append(failures, fmt.Sprintf("remove %s: %v", applied.ID, err))
+			failures = append(failures, fmt.Errorf("remove %s: %w", applied.ID, err))
 		}
 	}
-	if err := c.saveAppliedMobilityRoutes(next); err != nil {
+	if err := c.publishMobilityRouteWithdrawals(); err != nil {
 		return err
 	}
 	if len(failures) != 0 {
-		return fmt.Errorf("reconcile mobility IPv4 routes: %s", strings.Join(failures, "; "))
+		return fmt.Errorf("reconcile mobility IPv4 routes: %w", errors.Join(failures...))
 	}
 	return nil
 }
@@ -132,7 +137,7 @@ func (c IPv4RouteController) cleanupRemovedMobilityRoutes(ctx context.Context) e
 		return fmt.Errorf("decode applied mobility IPv4 route ledger: %w", err)
 	}
 	if len(previous) == 0 {
-		return c.saveAppliedMobilityRoutes(map[string]mobilityAppliedIPv4Route{})
+		return c.publishMobilityRouteWithdrawals()
 	}
 	if !c.DryRun {
 		if _, ok := c.Store.(objectStatusMerger); !ok {
@@ -140,7 +145,7 @@ func (c IPv4RouteController) cleanupRemovedMobilityRoutes(ctx context.Context) e
 		}
 	}
 	next := map[string]mobilityAppliedIPv4Route{}
-	var failures []string
+	var failures []error
 	for _, applied := range previous {
 		if desiredByID[applied.ID] {
 			next[applied.ID] = applied
@@ -148,86 +153,120 @@ func (c IPv4RouteController) cleanupRemovedMobilityRoutes(ctx context.Context) e
 		}
 		if err := c.removeMobilityRoute(ctx, applied); err != nil {
 			next[applied.ID] = applied
-			failures = append(failures, fmt.Sprintf("remove %s: %v", applied.ID, err))
+			failures = append(failures, fmt.Errorf("remove %s: %w", applied.ID, err))
 		}
 	}
-	if err := c.saveAppliedMobilityRoutes(next); err != nil {
+	if err := c.publishMobilityRouteWithdrawals(); err != nil {
 		return err
 	}
 	if len(failures) != 0 {
-		return fmt.Errorf("withdraw mobility IPv4 routes: %s", strings.Join(failures, "; "))
+		return fmt.Errorf("withdraw mobility IPv4 routes: %w", errors.Join(failures...))
 	}
 	return nil
 }
 
 func (c IPv4RouteController) applyMobilityRoute(ctx context.Context, route dynamicconfig.MobilityIPv4RouteIntent) (mobilityAppliedIPv4Route, error) {
-	applied := mobilityAppliedIPv4Route{
-		ID:          route.ID,
-		PoolRef:     route.PoolRef,
-		PoolPrefix:  route.PoolPrefix,
-		Purpose:     string(route.Purpose),
-		Destination: route.Destination,
-		Device:      route.Device,
-		Metric:      route.Metric,
+	premise, err := c.currentMobilityRoutePremise(ctx, route)
+	if err != nil {
+		return mobilityAppliedIPv4Route{}, err
 	}
+	applied := mobilityAppliedIPv4Route{ID: route.ID, PoolRef: route.PoolRef, PoolPrefix: route.PoolPrefix, Purpose: string(route.Purpose), Destination: route.Destination, Device: route.Device, Metric: route.Metric, PreferredSource: premise.Route.PreferredSource, Scope: premise.Scope, IfIndex: premise.IfIndex, ParentToken: premise.ParentToken}
 	if c.DryRun {
 		return applied, nil
 	}
-	devicePresent := c.DevicePresent
-	if devicePresent == nil {
-		devicePresent = interfaceDevicePresent
+	if !premise.Active {
+		return mobilityAppliedIPv4Route{}, fmt.Errorf("mobility route %s device is not ready", route.ID)
 	}
-	if !devicePresent(ctx, route.Device) {
-		return mobilityAppliedIPv4Route{}, fmt.Errorf("device %q is not ready", route.Device)
+	previous, err := c.appliedMobilityRoutes()
+	if err != nil {
+		return mobilityAppliedIPv4Route{}, err
 	}
-	preferredSource := route.PreferredSource
-	if preferredSource != "" {
-		local, err := c.ordinaryRoutePreferredSourceIsLocal(ctx, preferredSource)
+	for _, old := range previous {
+		if old.ID != applied.ID {
+			continue
+		}
+		matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(old))
 		if err != nil {
 			return mobilityAppliedIPv4Route{}, err
 		}
-		if !local {
-			preferredSource = ""
+		if matching && old == applied {
+			if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(old)); err != nil {
+				return mobilityAppliedIPv4Route{}, err
+			}
+			return applied, nil
+		}
+		if err := c.removeMobilityRoute(ctx, old); err != nil {
+			return mobilityAppliedIPv4Route{}, err
 		}
 	}
-	applied.PreferredSource = preferredSource
-	matching, collision, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
+	_, collision, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, err
 	}
-	owned, unchanged, err := c.mobilityRouteOwned(ctx, applied)
-	if err != nil {
-		return mobilityAppliedIPv4Route{}, err
-	}
-	if matching && unchanged {
-		return applied, nil
-	}
-	if collision && !owned {
+	if collision {
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("foreign route occupies %s", route.Destination)
 	}
-	if err := c.stageMobilityRoute(applied); err != nil {
+	pending := applied
+	pending.Operation = "add"
+	if err := c.stageMobilityRoute(pending); err != nil {
 		return mobilityAppliedIPv4Route{}, err
 	}
-	args := []string{"route", "replace", route.Destination, "dev", route.Device}
-	if preferredSource != "" {
-		args = append(args, "src", preferredSource)
+	fresh, err := c.currentMobilityRoutePremise(ctx, route)
+	if err != nil {
+		return mobilityAppliedIPv4Route{}, err
 	}
-	if route.Metric > 0 {
-		args = append(args, "metric", fmt.Sprintf("%d", route.Metric))
+	_, collision, err = c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(applied))
+	if err != nil {
+		return mobilityAppliedIPv4Route{}, err
 	}
-	name := "ip"
-	if platform.CurrentOS() == platform.OSFreeBSD {
-		name, args = freeBSDIPv4RouteApplyCommand("unicast", route.Destination, route.Device, "", preferredSource)
+	if fresh != premise || collision {
+		return mobilityAppliedIPv4Route{}, errors.Join(errors.New("mobility route premise changed before exclusive add"), c.finishMobilityRoute(pending, false, false))
 	}
+	name, args := ordinaryRouteApplyCommand(premise.Route)
 	out, err := c.run(ctx, name, args...)
-	if err != nil && platform.CurrentOS() == platform.OSFreeBSD && freeBSDRouteNeedsAdd(out) {
-		args = freeBSDIPv4RouteAddArgs(args)
-		out, err = c.run(ctx, name, args...)
-	}
 	if err != nil {
 		return mobilityAppliedIPv4Route{}, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
+	matching, _, err := c.observeOrdinaryRoute(ctx, premise.Route)
+	if err != nil || !matching {
+		return mobilityAppliedIPv4Route{}, errors.Join(err, errors.New("mobility route add did not read back the exact native tuple"))
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(applied)); err != nil {
+		return mobilityAppliedIPv4Route{}, err
+	}
+	if err := c.finishMobilityRoute(pending, true, false); err != nil {
+		return mobilityAppliedIPv4Route{}, err
+	}
+	fresh, err = c.currentMobilityRoutePremise(ctx, route)
+	if err != nil || fresh != premise {
+		return mobilityAppliedIPv4Route{}, errors.Join(err, errors.New("mobility route source changed during acquisition"))
+	}
 	return applied, nil
+}
+
+func mobilityRouteReceipt(route mobilityAppliedIPv4Route) ipv4RouteReceipt {
+	return ipv4RouteReceipt{Route: mobilityRouteRemoval(route), Scope: route.Scope, IfIndex: route.IfIndex, ParentToken: route.ParentToken, Pending: route.Operation != ""}
+}
+
+func (c IPv4RouteController) currentMobilityRoutePremise(ctx context.Context, intent dynamicconfig.MobilityIPv4RouteIntent) (ordinaryRoutePremise, error) {
+	current, err := normalizedMobilityRouteIntents(c.MobilityDataplane.Routes)
+	if err != nil {
+		return ordinaryRoutePremise{}, err
+	}
+	found := false
+	for _, candidate := range current {
+		if candidate == intent {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ordinaryRoutePremise{}, errors.New("mobility route intent changed")
+	}
+	if platform.CurrentOS() == platform.OSFreeBSD && intent.Metric != 0 {
+		return ordinaryRoutePremise{}, errors.New("FreeBSD Mobility routes do not support a Linux metric")
+	}
+	return c.ordinaryRoutePremise(ctx, api.IPv4RouteSpec{Type: "unicast", Destination: intent.Destination, Device: intent.Device, PreferredSource: intent.PreferredSource, Metric: intent.Metric})
 }
 
 func mobilityRouteRemoval(route mobilityAppliedIPv4Route) ipv4RouteRemoval {
@@ -245,7 +284,94 @@ func (c IPv4RouteController) removeMobilityRoute(ctx context.Context, route mobi
 	if c.DryRun {
 		return nil
 	}
-	return c.removeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
+	current, err := c.appliedMobilityRoutes()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, prior := range current {
+		if prior == route {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
+	if err != nil {
+		return err
+	}
+	if !matching {
+		return c.finishMobilityRoute(route, false, true)
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+		return err
+	}
+	pending := route
+	pending.Operation = "delete"
+	if err := c.stageMobilityRoute(pending); err != nil {
+		return err
+	}
+	if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+		return err
+	}
+	for _, intent := range c.MobilityDataplane.Routes {
+		if !mobilityRouteMatchesIntent(route, intent) {
+			continue
+		}
+		premise, err := c.currentMobilityRoutePremise(ctx, intent)
+		if err != nil {
+			return err
+		}
+		if premise.Active && premise.Route == mobilityRouteRemoval(route) {
+			return errors.Join(errors.New("mobility route intent became active; no delete issued"), c.finishMobilityRoute(pending, true, false))
+		}
+	}
+	if err := c.removeOrdinaryRoute(ctx, mobilityRouteRemoval(route)); err != nil {
+		return err
+	}
+	return c.finishMobilityRoute(pending, false, true)
+}
+
+// Record acquisition/withdrawal acknowledgement and pending retirement together.
+// A failed acknowledgement leaves the previous confirmed ledger and pending
+// fence intact; an outer reconciliation cannot infer success by value equality.
+func (c IPv4RouteController) finishMobilityRoute(route mobilityAppliedIPv4Route, acquired, withdrawn bool) error {
+	status, err := readMobilityNativeStatus(c.Store)
+	if err != nil {
+		return err
+	}
+	pending, err := pendingMobilityRoutes(status)
+	if err != nil {
+		return err
+	}
+	applied, err := c.appliedMobilityRoutes()
+	if err != nil {
+		return err
+	}
+	next := map[string]mobilityAppliedIPv4Route{}
+	known := route
+	known.Operation = ""
+	for _, prior := range applied {
+		if !withdrawn || prior != known {
+			next[prior.ID] = prior
+		}
+	}
+	if acquired {
+		next[known.ID] = known
+	}
+	remaining := make([]mobilityAppliedIPv4Route, 0, len(pending))
+	for _, prior := range pending {
+		if prior != route {
+			remaining = append(remaining, prior)
+		}
+	}
+	merger, ok := c.Store.(objectStatusMerger)
+	if !ok {
+		return errors.New("mobility route ownership merger unavailable")
+	}
+	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"appliedMobilityRoutes": sortedMobilityAppliedRoutes(next), "pendingMobilityRoutes": remaining})
 }
 
 func (c IPv4RouteController) appliedMobilityRoutes() ([]mobilityAppliedIPv4Route, error) {
@@ -279,7 +405,7 @@ func (c IPv4RouteController) appliedMobilityRoutes() ([]mobilityAppliedIPv4Route
 	return sortedMobilityAppliedRoutes(byID), nil
 }
 
-func (c IPv4RouteController) saveAppliedMobilityRoutes(routes map[string]mobilityAppliedIPv4Route) error {
+func (c IPv4RouteController) publishMobilityRouteWithdrawals() error {
 	if c.DryRun || c.Store == nil {
 		return nil
 	}
@@ -295,12 +421,11 @@ func (c IPv4RouteController) saveAppliedMobilityRoutes(routes map[string]mobilit
 	if err != nil {
 		return err
 	}
-	unresolved := make([]mobilityAppliedIPv4Route, 0, len(pending))
-	for _, route := range pending {
-		if recorded, ok := routes[route.ID]; !ok || recorded != route {
-			unresolved = append(unresolved, route)
-		}
+	routes, err := c.appliedMobilityRoutes()
+	if err != nil {
+		return err
 	}
+	unresolved := pending
 	acks := matchingMobilityWithdrawalAcks(c.MobilityDataplane.Withdrawals, func(request dynamicconfig.MobilityWithdrawalRequest) bool {
 		for _, route := range routes {
 			if route.PoolRef == request.PoolRef && dynamicconfig.MobilityEffectContainsAddress(route.Destination, request.Address) {
@@ -315,7 +440,7 @@ func (c IPv4RouteController) saveAppliedMobilityRoutes(routes map[string]mobilit
 		return true
 	})
 	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{
-		"appliedMobilityRoutes": sortedMobilityAppliedRoutes(routes), "pendingMobilityRoutes": unresolved, dynamicconfig.MobilityRouteWithdrawalAcks: acks,
+		dynamicconfig.MobilityRouteWithdrawalAcks: acks,
 	})
 }
 
@@ -435,7 +560,7 @@ func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx contex
 	}
 	next := map[string]mobilityAppliedIPv4Address{}
 	failed := map[string]bool{}
-	var failures []string
+	var failures []error
 	for _, address := range desired {
 		applied, err := c.applyMobilityStaticAddress(ctx, address)
 		if err != nil {
@@ -443,7 +568,7 @@ func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx contex
 			if previous, ok := previousByID[address.ID]; ok && mobilityStaticAddressMatchesIntent(previous, address) {
 				next[address.ID] = previous
 			}
-			failures = append(failures, fmt.Sprintf("%s: %v", address.ID, err))
+			failures = append(failures, fmt.Errorf("%s: %w", address.ID, err))
 			continue
 		}
 		next[address.ID] = applied
@@ -458,14 +583,14 @@ func (c IPv4StaticAddressController) reconcileMobilityStaticAddresses(ctx contex
 		}
 		if err := c.removeMobilityStaticAddress(ctx, applied); err != nil {
 			next[applied.ID] = applied
-			failures = append(failures, fmt.Sprintf("remove %s: %v", applied.ID, err))
+			failures = append(failures, fmt.Errorf("remove %s: %w", applied.ID, err))
 		}
 	}
 	if err := c.saveAppliedMobilityStaticAddresses(next); err != nil {
 		return err
 	}
 	if len(failures) != 0 {
-		return fmt.Errorf("reconcile mobility IPv4 addresses: %s", strings.Join(failures, "; "))
+		return fmt.Errorf("reconcile mobility IPv4 addresses: %w", errors.Join(failures...))
 	}
 	return nil
 }

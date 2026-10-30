@@ -24,7 +24,7 @@ type RouterIndex struct {
 	PrefixDelegations          map[string]bool
 	DelegatedAddresses         map[string]bool
 	DelegatedAddressInterfaces map[string]string
-	SelfAddressPolicies        map[string]bool
+	SelfAddressPolicies        map[string]string
 	DSLiteTunnels              map[string]bool
 	OverlayPeers               map[string]api.OverlayPeerSpec
 	VirtualAddresses           map[string]api.VirtualAddressSpec
@@ -78,7 +78,7 @@ func newRouterIndex(router *api.Router) *RouterIndex {
 		PrefixDelegations:          map[string]bool{},
 		DelegatedAddresses:         map[string]bool{},
 		DelegatedAddressInterfaces: map[string]string{},
-		SelfAddressPolicies:        map[string]bool{},
+		SelfAddressPolicies:        map[string]string{},
 		DSLiteTunnels:              map[string]bool{},
 		OverlayPeers:               map[string]api.OverlayPeerSpec{},
 		VirtualAddresses:           map[string]api.VirtualAddressSpec{},
@@ -231,7 +231,11 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRun
 			idx.DelegatedAddressInterfaces[res.Metadata.Name] = spec.Interface
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "SelfAddressPolicy" {
-			idx.SelfAddressPolicies[res.Metadata.Name] = true
+			spec, err := res.SelfAddressPolicySpec()
+			if err != nil {
+				return err
+			}
+			idx.SelfAddressPolicies[res.Metadata.Name] = spec.AddressFamily
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "DNSZone" {
 			idx.DNSZones[res.Metadata.Name] = true

@@ -12,15 +12,17 @@ import (
 // SegmentConfig is the native link input shared by the VXLAN resource owners.
 // Remotes are the complete unicast flood set; Group selects multicast instead.
 type SegmentConfig struct {
-	IfName   string   `json:"ifname"`
-	VNI      int      `json:"vni"`
-	Local    string   `json:"local"`
-	Remotes  []string `json:"remotes"`
-	Group    string   `json:"group,omitempty"`
-	Underlay string   `json:"underlay"`
-	Port     int      `json:"port"`
-	MTU      int      `json:"mtu"`
-	Bridge   string   `json:"bridge,omitempty"`
+	IfName     string   `json:"ifname"`
+	VNI        int      `json:"vni"`
+	Local      string   `json:"local"`
+	Remotes    []string `json:"remotes"`
+	Group      string   `json:"group,omitempty"`
+	Underlay   string   `json:"underlay"`
+	Port       int      `json:"port"`
+	MTU        int      `json:"mtu"`
+	Bridge     string   `json:"bridge,omitempty"`
+	NoLearning bool     `json:"noLearning,omitempty"`
+	OuterDF    string   `json:"outerDF,omitempty"`
 }
 
 // SegmentIdentity binds an operation to the actual kernel object and the
@@ -87,7 +89,7 @@ func CheckSegmentIdentity(config SegmentConfig, owner SegmentIdentity, link Segm
 		local, err := netip.ParseAddr(config.Local)
 		localMatches = err == nil && local.IsUnspecified()
 	}
-	if !owner.Pending && (link.Config.VNI != config.VNI || !localMatches || link.Config.Group != config.Group || link.Config.Port != config.Port || link.LocalPort != config.Port || link.UnderlayIndex != 0 && link.UnderlayIndex != owner.UnderlayIndex) {
+	if !owner.Pending && (link.Config.VNI != config.VNI || !localMatches || link.Config.Group != config.Group || link.Config.Port != config.Port || link.LocalPort != config.Port || link.Config.NoLearning != config.NoLearning || config.OuterDF != "" && link.Config.OuterDF != config.OuterDF || link.UnderlayIndex != 0 && link.UnderlayIndex != owner.UnderlayIndex) {
 		return fmt.Errorf("VXLAN %s native tunnel tuple changed", config.IfName)
 	}
 	return nil
