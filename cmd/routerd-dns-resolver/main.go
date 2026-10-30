@@ -277,7 +277,11 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 	}
 	d.sourceCtx, d.sourceCancel = context.WithCancel(context.Background())
 	d.cond = sync.NewCond(&d.mu)
-	d.zones = newZoneTable(config.Zones)
+	zones, err := currentLeaseZones(context.Background(), config)
+	if err != nil {
+		return nil, err
+	}
+	d.zones = newZoneTable(zones)
 	if err := d.zones.LoadError(); err != nil {
 		return nil, err
 	}
@@ -421,7 +425,6 @@ func (d *daemon) startDNS(ctx context.Context) error {
 }
 
 func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct{}) (map[string]*boundListener, error) {
-	handler := dns.HandlerFunc(d.handleDNS)
 	listenConfig := dnsListenConfig()
 	listeners := map[string]*boundListener{}
 	for addr := range addrs {
@@ -438,11 +441,17 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 		}
 		bound := &boundListener{
 			Addr:    addr,
-			UDP:     &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize, Handler: handler},
-			TCP:     &dns.Server{Listener: dnsDeadlineListener{Listener: listener}, Net: "tcp", Handler: handler},
+			UDP:     &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize},
+			TCP:     &dns.Server{Listener: dnsDeadlineListener{Listener: listener}, Net: "tcp"},
 			UDPDone: make(chan struct{}),
 			TCPDone: make(chan struct{}),
 		}
+		// Binding is staging, not publication. New sockets may already receive
+		// packets while retirement waits for old queries/history. Admit only
+		// the exact listener selected together with the current configuration.
+		// Rejection is immediate, so staged sockets create no waiting handlers.
+		handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) { d.handleDNSOnListener(w, req, bound) })
+		bound.UDP.Handler, bound.TCP.Handler = handler, handler
 		udpWrites := new(sync.Mutex)
 		bound.UDP.DecorateWriter = func(writer dns.Writer) dns.Writer {
 			return dnsPacketWriter{Writer: writer, packet: packetConn, mu: udpWrites}
@@ -518,6 +527,19 @@ func shutdownBoundListeners(listeners map[string]*boundListener) {
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
+	d.handleDNSOnListener(w, req, nil)
+}
+
+func (d *daemon) handleDNSOnListener(w dns.ResponseWriter, req *dns.Msg, listener *boundListener) {
+	if listener != nil {
+		d.stateMu.RLock()
+		selected := d.listeners[listener.Addr] == listener
+		d.stateMu.RUnlock()
+		if !selected {
+			_ = w.Close()
+			return
+		}
+	}
 	select {
 	case d.querySlots <- struct{}{}:
 	default:
@@ -532,8 +554,19 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		d.queryMu.RUnlock()
 	}()
 	d.stateMu.RLock()
+	// A listener may have retired while this request waited for the query lock.
+	// The writer lock keeps this admission and source selection in one generation.
+	if listener != nil && d.listeners[listener.Addr] != listener {
+		d.stateMu.RUnlock()
+		_ = w.Close()
+		return
+	}
 	ctx := d.sourceCtx
 	requestTimeout, generation := d.requestTimeout, d.generation
+	localAddr := w.LocalAddr().String()
+	if listener != nil {
+		localAddr = listener.Addr
+	}
 	d.stateMu.RUnlock()
 	if ctx.Err() != nil {
 		_ = w.Close()
@@ -542,7 +575,7 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	started := time.Now()
-	result, err := d.resolveContext(ctx, w.LocalAddr().String(), req)
+	result, err := d.resolveContext(ctx, localAddr, req)
 	d.stateMu.RLock()
 	currentGeneration := d.generation
 	owner := d.sourceCtx
@@ -953,7 +986,11 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 	if err != nil {
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}
-	zones := newZoneTable(config.Zones)
+	currentZones, err := currentLeaseZones(ctx, config)
+	if err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
+	zones := newZoneTable(currentZones)
 	if err := zones.LoadError(); err != nil {
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}

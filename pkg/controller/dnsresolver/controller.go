@@ -257,9 +257,14 @@ func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNS
 		}
 		reader, ok := c.Store.(interface {
 			ReadDHCPLeaseObservations(context.Context) ([]daemonapi.DHCPLeaseUpdate, error)
+			DHCPLeaseJournalPath() (string, error)
 		})
 		if !ok {
 			return config, zones, fmt.Errorf("DHCP-derived DNS requires durable lease observations")
+		}
+		config.LeaseJournalPath, err = reader.DHCPLeaseJournalPath()
+		if err != nil || !filepath.IsAbs(config.LeaseJournalPath) {
+			return config, zones, fmt.Errorf("DNS requires current absolute DHCP lease journal identity: %v", err)
 		}
 		leaseObservations, err = reader.ReadDHCPLeaseObservations(ctx)
 		if err != nil {

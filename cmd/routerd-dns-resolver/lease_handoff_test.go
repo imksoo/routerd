@@ -57,9 +57,20 @@ func TestLeaseCallbackWaitsForActualReloadHandoff(t *testing.T) {
 				_, err := d.reload(ctx)
 				reloadDone <- err
 			}()
-			// A response from the new listener proves actual reload has already
-			// copied the old dynamic records, before its final table selection.
-			assertDNSAnswer(t, address, "router.lab.example.", "192.0.2.1")
+			// Binding follows the dynamic copy, but a staged listener must not
+			// serve the old generation. Observe the real TCP bind as the barrier.
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+				if err == nil {
+					_ = connection.Close()
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("reload did not bind its staged listener: %v", err)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
 			body := &observedLeaseBody{Reader: strings.NewReader(fmt.Sprintf(`{"action":"added","source":"DHCPv4Server/dhcpv4","mac":"02:00:00:00:00:55","ip":"192.0.2.55","hostname":"client","observedAt":%q,"infinite":true}`, time.Now().UTC().Format(time.RFC3339Nano))), read: make(chan struct{})}
 			requestCtx, cancelRequest := context.WithCancel(t.Context())
 			defer cancelRequest()

@@ -75,3 +75,19 @@ and [explicit infinite lease semantics](https://lists.thekelleys.org.uk/pipermai
 The unreleased SQLite format is now `1501`. Previous formats are rejected
 without migration or automatic deletion; development/cutover must use the
 chosen fresh state format intentionally.
+
+The private runtime config also names the current journal's exact absolute
+filesystem path, obtained from the store that commits callbacks. Every worker
+startup and table reload reads that database through a read-only connection
+before selecting the serving table. This includes direct systemd/supervisor
+restarts using unchanged config bytes; an embedded observation snapshot cannot
+establish current absence or override a later committed removal. Missing or
+unreadable required journals block serving/reload rather than falling back to an
+old file. A local loopback regression commits a removal after writing the config,
+restarts from the unchanged file, and checks the first DNS answer.
+
+A newly observed client without a hostname still owns its source/address
+allocation and withdraws older dynamic names and PTRs at that address. A delayed
+removal for a different, former client preserves the current client's live and
+durable observation. Explicit static DNS and configured reservations retain
+their separate intent ownership.

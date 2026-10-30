@@ -172,9 +172,20 @@ DNS workers reject another resource's runtime configuration and use exact zone
 resource references and DNS label boundaries, including escaped dots and
 separate resources sharing an apex. Reload preserves DHCP observations only
 within the same zone resource, apex and declared source namespace, with the
-current TTL. Lease POST acknowledgement is serialized with table handover.
-Named lease provenance/expiry, old query/probe quiescence and bounded response
-writes remain open.
+current TTL. Named DHCP observations carry source identity and acknowledged
+expiry, and journal insertion atomically updates the current source/IP lease or
+withdrawal projection. Startup and reload read that current journal directly;
+an unchanged consumed runtime file cannot resurrect a later withdrawn name.
+Client reassignment, unrelated-client removal and IPv6 textual aliases have
+live/update and SQLite-reopen regressions.
+
+Lease POST acknowledgement is serialized with table handover. Old query/probe
+owners are joined, complete requests and response writes are bounded, and staged
+or retired listeners cannot serve a different selected generation. TCP wildcard
+listeners use their configured binding for source/cache admission. The remaining
+lease attribution gap is a tagless constructor-based IPv6 lease-file row on a
+first start with no journal evidence; it cannot acquire guessed source authority.
+Native dnsmasq/client interoperability remains unqualified.
 
 ## Command/control plane
 
