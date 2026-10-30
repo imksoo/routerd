@@ -158,7 +158,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 		cmd.Env = append(os.Environ(), append([]string{"ROUTERD_NTPD_HELPER=" + helper}, extra...)...)
 		out, err := cmd.CombinedOutput()
 		t.Logf("independent %s/%s:\n%s", jail, helper, out)
-		if err != nil {
+		if err != nil || !bytes.Contains(out, []byte("--- PASS: "+test)) || bytes.Contains(out, []byte("--- SKIP:")) {
 			t.Fatalf("independent jailed child: %v", err)
 		}
 	}
@@ -236,7 +236,10 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 	// fragment. The fragment is consumed verbatim by the real provider.
 	write(runtime, "disable ntp\nincludefile "+fragment+"\ndisable ntp\ndriftfile "+filepath.Join(base, "managed.drift")+"\n")
 	var provider *ntpdNativeProcess
-	command := func(_ context.Context, name string, args ...string) ([]byte, error) {
+	command := func(operation context.Context, name string, args ...string) ([]byte, error) {
+		if err := operation.Err(); err != nil {
+			return nil, err
+		}
 		if name == "sysrc" && len(args) == 1 && (args[0] == "ntpd_enable=YES" || args[0] == "ntpd_sync_on_start=YES" || args[0] == "ntpd_config="+fragment) {
 			return nil, nil // Never dispatch shared rc.conf mutations.
 		}
@@ -256,6 +259,9 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 				}
 			}
 			if _, err := os.Stat(fragment); err != nil {
+				return nil, err
+			}
+			if err := operation.Err(); err != nil {
 				return nil, err
 			}
 			provider = start(managed, runtime, "managed")
