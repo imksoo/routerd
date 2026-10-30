@@ -153,12 +153,15 @@ func TestRADelegatedLANReceiptMustMatchCurrentSegmentCookie(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "segment", map[string]any{"phase": "Up"}); err != nil {
 		t.Fatal(err)
 	}
-	present := false
 	lan.Segments = &parent
-	lan.ObserveAddress = func(context.Context, string, string, bool) (delegatedAddressObservation, error) {
-		return delegatedAddressObservation{ifIndex: native.link.Index, scope: native.scope, present: present, usable: present}, nil
+	lan.Command = nil
+	installLANIOFixture(&lan)
+	observe := lan.ObserveAddress
+	lan.ObserveAddress = func(ctx context.Context, ifname, address string, staged bool) (delegatedAddressObservation, error) {
+		out, err := observe(ctx, ifname, address, staged)
+		out.ifIndex, out.scope = native.link.Index, native.scope
+		return out, err
 	}
-	lan.Command = func(context.Context, string, ...string) error { present = true; return nil }
 	if err := lan.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}

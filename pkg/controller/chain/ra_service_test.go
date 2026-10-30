@@ -18,6 +18,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/daemonapi"
+	"github.com/imksoo/routerd/pkg/platform"
 	ra "github.com/imksoo/routerd/pkg/routeradvertisement"
 	state "github.com/imksoo/routerd/pkg/state"
 	"github.com/mdlayher/ndp"
@@ -547,8 +548,13 @@ func TestRAZeroPIOLifetimeDoesNotOverrideExplicitRouterRole(t *testing.T) {
 func TestRAImplicitServerModesHaveIndependentFlagsAndNativeDeadlines(t *testing.T) {
 	bin := t.TempDir()
 	output := `[{"ifname":"ra-test-lan","addr_info":[{"local":"2001:db8:3000::1","prefixlen":64,"flags":["mngtmpaddr"],"preferred_life_time":40,"valid_life_time":90},{"local":"2001:db8:3000::2","prefixlen":64,"preferred_life_time":30,"valid_life_time":60},{"local":"2001:db8:4000::1","prefixlen":64,"temporary":true,"preferred_life_time":80,"valid_life_time":100}]}]`
-	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\ncat <<'NATIVE'\n"+output+"\nNATIVE\n"), 0755); err != nil {
-		t.Fatal(err)
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		output = "ra-test-lan: flags=\n\tinet6 2001:db8:3000::1 prefixlen 64 pltime 40 vltime 90\n\tinet6 2001:db8:3000::2 prefixlen 64 pltime 30 vltime 60\n\tinet6 2001:db8:4000::1 prefixlen 64 pltime 80 vltime 100 temporary\n"
+	}
+	for _, name := range []string{"ip", "ifconfig"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\ncat <<'NATIVE'\n"+output+"\nNATIVE\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for _, tc := range []struct {
