@@ -63,19 +63,22 @@ func TestConnectionObserversCancelTheirOwnedCommands(t *testing.T) {
 
 func TestConnectionsRejectOversizedSnapshotAndKeepStatesOutOfErrors(t *testing.T) {
 	dir := t.TempDir()
-	command := filepath.Join(dir, "conntrack")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nexec /bin/dd if=/dev/zero bs=1048576 count=65 status=none\n"), 0o755); err != nil {
-		t.Fatal(err)
+	writeCommands := func(script string) {
+		t.Helper()
+		for _, name := range []string{"conntrack", "pfctl"} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeCommands("#!/bin/sh\nexec /bin/dd if=/dev/zero bs=1048576 count=65 2>/dev/null\n")
 	table, err := Connections(context.Background(), -1)
 	var limitErr *subprocessio.OutputLimitError
 	if table != nil || !errors.As(err, &limitErr) || limitErr.Stream != "stdout" || limitErr.Limit != connectionOutputLimit {
 		t.Fatalf("oversized dump became a complete observation: table=%v error=%v", table, err)
 	}
-	if err := os.WriteFile(command, []byte("#!/bin/sh\nprintf 'private-connection-state'\nprintf 'permission denied' >&2\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeCommands("#!/bin/sh\nprintf 'private-connection-state'\nprintf 'permission denied' >&2\nexit 1\n")
 	table, err = Connections(context.Background(), 1)
 	if table != nil || err == nil || strings.Contains(err.Error(), "private-connection-state") || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("failed observer diagnostics: table=%v error=%v", table, err)
