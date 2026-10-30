@@ -277,6 +277,104 @@
         "Skipped cases",
         "Whole-product forwarding qualification"
       ]
+    },
+    "linux-nonresource-code-c7f89dda": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "c7f89ddaaaf1b9211ddf50b3a9e014d936baa224",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "environment": "Linux/amd64; Go 1.25.9; GOMAXPROCS=2; GOFLAGS=-p=2 -buildvcs=false; GOTOOLCHAIN=local.",
+      "source_binding": {
+        "execution_tree": "Tracked and untracked changes were present. The revision identifies the closing checkpoint, not a clean-commit or whole-tree test run.",
+        "initial_head": "e8537199ad0e82aaef0773699809f45279a37919",
+        "closing_head": "c7f89ddaaaf1b9211ddf50b3a9e014d936baa224",
+        "initial_working_tree_status_sha256": "ecbd361a044bac1c32632cc452d6b3fdfdd99066f37f7340847303a8a21dc557",
+        "manifest_definition": "SHA-256 of a UTF-8 JSON path-to-file-SHA-256 manifest, including tracked and untracked Go/shell files, Makefile, go.mod and go.sum. Each command has its own before/after manifest; unrelated changes remain explicit."
+      },
+      "reproduction": "Run the existing Go/Make/shell entries below with the recorded Go environment. The reference describes fixture boundaries; a repeated run must bind its own source tree rather than reuse these historical digests.",
+      "runs": [
+        {
+          "entry": "go test ./cmd/routerctl ./pkg/controlapi ./pkg/webconsole -count=1 -timeout 180s",
+          "exit_code": 0,
+          "manifest_before_sha256": "dbc9781a910dbc443752ab3eb9d24667c8373599bdc2181b590ea4b801f2ac2a",
+          "manifest_after_sha256": "197547ee9ac965716bc57cce17bb023783d5224e75311105728716e045a51eb6",
+          "source_change": "Only another package FreeBSD-specific test changed; excluded from these Linux test packages. The two opt-in browser tests were skipped in this run and executed separately below."
+        },
+        {
+          "entry": "make check-routerd15-activation",
+          "exit_code": 0,
+          "manifest_before_sha256": "197547ee9ac965716bc57cce17bb023783d5224e75311105728716e045a51eb6",
+          "manifest_after_sha256": "197547ee9ac965716bc57cce17bb023783d5224e75311105728716e045a51eb6",
+          "source_change": "None in the recorded manifest scope."
+        },
+        {
+          "entry": "go test ./tests/install ./tests/liveiso -count=1 -timeout 180s",
+          "exit_code": 0,
+          "manifest_before_sha256": "197547ee9ac965716bc57cce17bb023783d5224e75311105728716e045a51eb6",
+          "manifest_after_sha256": "a7eb57be51b3375cdba2edee005909784c7b966cb9c5652130b099832f05e9cc",
+          "source_change": "Only pkg/controller/chain/chain.go changed. go list -deps -test confirmed that these test packages do not import that package."
+        },
+        {
+          "entry": "sh scripts/install-sh-cwd-smoke.sh",
+          "exit_code": 0,
+          "manifest_before_sha256": "a7eb57be51b3375cdba2edee005909784c7b966cb9c5652130b099832f05e9cc",
+          "manifest_after_sha256": "a7eb57be51b3375cdba2edee005909784c7b966cb9c5652130b099832f05e9cc",
+          "source_change": "None in the recorded manifest scope."
+        },
+        {
+          "entry": "make check-install-deps check-version-ldflags check-tar-safe-paths-test",
+          "exit_code": 0,
+          "manifest_before_sha256": "96272362089cf2fa97a308aaa506258c7c26837606ddf52529d5d9552c715db5",
+          "manifest_after_sha256": "1d559c8c1d4ac7e9c3aecb6e874f423fc27114f102ae6c7e12abb502385509cd",
+          "source_change": "chain.go changed during the version build. Version verification was repeated in the next run; dependency listing and tar-path checks do not import that Go package."
+        },
+        {
+          "entry": "make check-version-ldflags",
+          "exit_code": 0,
+          "manifest_before_sha256": "e706a6c2e8c8f23f8a07a8725a3a175d3d65ae3d12f72992b046047557661aad",
+          "manifest_after_sha256": "57bc66adce8f4202e8d32bed9910b7fc55ede4c4f5990d3c7b561169dd632386",
+          "source_change": "Only vrf_child_parent_test.go changed. The go build invocations exclude test files; production Go and shell/build-input digests were unchanged."
+        }
+      ],
+      "checks": [
+        "CLI/control API/server-handler code checks, including stored-configuration rollback diagnostics",
+        "Canonical mutation, commit barrier, fault and rollback code paths through the existing activation target",
+        "Installer and firstboot scripts with private files, real configuration parsing and substituted OS/service-manager commands",
+        "Installer payload-directory/dependency-list checks, safe tar paths and release version ldflags"
+      ],
+      "excludes": [
+        "A clean-commit full Go run or semantic parity of every baseline command/API/UI workflow",
+        "Actual packaged-daemon browser integration or native systemd/rc.d service upgrade recovery",
+        "Cross-version 1.0-to-1.5 upgrade, binary cutback, host reboot/crash or live ISO boot",
+        "Native FreeBSD execution, kernel networking, independent-peer communication or production qualification"
+      ]
+    },
+    "linux-webconsole-browser-c7f89dda": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "c7f89ddaaaf1b9211ddf50b3a9e014d936baa224",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "environment": "Linux/amd64; Go 1.25.9; Chromium Headless Shell 147.0.7727.15; Playwright, playwright-core and @playwright/test 1.59.1 in a dedicated directory outside the repository. An existing browser was used without system/browser configuration changes.",
+      "source_binding": {
+        "execution_tree": "HEAD was unchanged, but tracked and untracked changes were present. This is a manifest-bound execution tree, not a clean-commit full-product result.",
+        "head_before_and_after": "c7f89ddaaaf1b9211ddf50b3a9e014d936baa224",
+        "working_tree_status_sha256": "bad839fc691565ab472f5376e7735f36c4d11b63dcb0ae32b1c2f90ad68b6cac",
+        "manifest_definition": "SHA-256 of a UTF-8 JSON path-to-file-SHA-256 manifest covering tracked/untracked Go files, embedded webconsole static assets, webconsole scripts, go.mod and go.sum.",
+        "manifest_before_sha256": "1c3d2bbbf6614d64ff85b8c03cb3b378676b136a51382f95f59d89322dbfc09e",
+        "manifest_after_sha256": "1c3d2bbbf6614d64ff85b8c03cb3b378676b136a51382f95f59d89322dbfc09e",
+        "script_execution": "The two existing ESM scripts were executed as byte-identical copies beside external runtime dependencies through a wrapper restricted to those script paths. No repository test or node_modules directory was changed."
+      },
+      "reproduction": "ROUTERD_WEB_CONSOLE_CHROMIUM_PATH=<existing Chromium executable> GOMAXPROCS=2 GOFLAGS='-p=2 -buildvcs=false' go test -json ./pkg/webconsole -run '^(TestTrafficCounterBrowserRefreshesPresentZeroAndUnknown|TestOperationalBrowserKeepsNewerStatusAndUnknownObservations)$' -count=1 -timeout 120s; use the reference for isolated Node dependency resolution.",
+      "checks": [
+        "TestTrafficCounterBrowserRefreshesPresentZeroAndUnknown: real browser/Handler/SQLite fixture preserves partial counters, refreshes updates and distinguishes observed zero from not collected",
+        "TestOperationalBrowserKeepsNewerStatusAndUnknownObservations: real browser/Handler/SQLite fixture preserves unknown observations and prevents a late old response from replacing newer displayed status",
+        "Exit 0; both selected tests passed and neither was skipped; recorded source manifests were unchanged"
+      ],
+      "excludes": [
+        "Actual controller/kernel observations: input observations are controlled test fixtures",
+        "A packaged running routerd daemon, CLI mutation authorization or every baseline UI workflow",
+        "Independent-peer interoperability, native FreeBSD/browser qualification or complete feature/OS qualification"
+      ]
     }
   },
   "features": [
@@ -512,7 +610,10 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda",
+          "linux-webconsole-browser-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -554,7 +655,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1882,7 +1985,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1920,7 +2025,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2000,7 +2107,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2036,7 +2145,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2073,7 +2184,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-packaged-service-6135bb03"
+          "linux-packaged-service-6135bb03",
+          "linux-nonresource-code-c7f89dda"
         ]
       },
       "freebsd": {
@@ -2108,7 +2220,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-nonresource-code-c7f89dda"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

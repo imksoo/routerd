@@ -1266,3 +1266,97 @@ FreeBSD feature parity or the remaining 1.0 function inventory. Those remain
 required work; neither a limited trial nor passing unit tests closes the revision.
 The earlier isolated FreeBSD 14.3 empty apply/restart and PF route-to/NAT44
 smokes at `86ffc265` remain narrower native checks, not full FreeBSD qualification.
+
+## Native ownership and FreeBSD lifecycle checkpoint (2026-10-31)
+
+The final scope remains every pre-1.5 routerd 1.0 function. The new static
+`routerd15-feature-qualification.json` maps all 87 baseline resource kinds,
+all 90 example artifacts (63 YAML files), and non-resource command, API, UI and
+distribution scopes. Registration or file presence is not functional parity.
+All whole-feature preservation/platform verdicts remain unknown until their
+required behavior and recovery have been exercised.
+
+The Linux ownership work is preserved on `work/routerd15-native-20261031`.
+The implementation checkpoint `e8537199` and follow-ups `6a7c264e`, `bca3330e`
+and `5c677869` distinguish native effects from completed ownership receipts:
+
+- WireGuard child acquisition requires the actual parent cookie, index,
+  network scope, completed configuration digest and native configuration. It
+  rechecks current source and the actual receipt after native waits. Recorded
+  cleanup remains usable after the declaration is removed.
+- Native WireGuard and VXLAN creation reproduced the Linux behavior already
+  observed for Bridge: a successful create ACK did not install the requested
+  alias. The repair binds cookie installation to the exclusive create ACK and
+  requested positive index, validates the native object and reads the cookie
+  back. An uncertain creation is not adopted or replayed after restart.
+- The independent review reproduced a VXLAN withdrawal race through the real
+  static-address caller: one address write occurred after the parent marked
+  itself withdrawing. `bca3330e` rereads the same actual receipt after the native
+  observation and rejects pending, withdrawing or changed identity/plan.
+
+`make check-routerd15-native-parent-linux` passed on Linux 6.8 with Go 1.25.9.
+Every mutation was inside new user/network/mount namespaces with their own sysfs.
+The target exercised Bridge address acquisition/reopen/withdrawal and native
+VXLAN cookie/configuration/withdrawal. A separately configured kernel WireGuard
+peer in another network namespace exchanged real encrypted traffic with the
+production WireGuard, address and route controllers. Both ends reported a
+handshake and nonzero encrypted transmit/receive counters. SQLite reopen kept
+the same ownership identity; child/parent withdrawal removed the actual effects
+and receipts, and the directly launched peer process exited and was reaped.
+
+Stopping and restarting the owned WireGuard interface preserved its address but
+removed its route; an automatic listen port also changed. Reapplying only the
+parent restored its administrative state but did not restore traffic. The
+production order of parent, address and route controllers restored the missing
+route and traffic with the same parent index/cookie. This narrower result does
+not establish packaged service reboot, all peer-source integrations or FreeBSD
+WireGuard qualification.
+
+Non-resource checks passed with Go 1.25.9 and bounded build concurrency: the
+CLI/control API/WebConsole packages, `check-routerd15-activation`, installer and
+live-ISO tests, installer working-directory/dependency checks, version embedding
+and safe archive-path checks. The series began at `e8537199` and ended at
+`c7f89dda`; per-check source manifests record concurrent changes and relevant
+rechecks. It is not a clean-commit whole-repository run. Two existing browser
+checks also passed with zero skips using Chromium Headless Shell 147.0.7727.15
+and Playwright 1.59.1; their Go/static asset/script manifests were unchanged.
+They exercise real handlers, SQLite and browser display/response ordering, not
+native controller forwarding. `bd8bc7dc` separately repaired the doctor command
+that treated any generation record as a usable rollback: it now verifies a
+readable saved configuration within the existing bounded history search and
+leaves reapplication validation explicit.
+
+Native FreeBSD 14.3 tests executed the BPF receive implementation with aligned
+multiple replies and an unrelated frame before a valid reply; both passed.
+The existing lifecycle smoke first stopped despite a real DHCPv4 Bound lease:
+its assertions expected superseded event names and incorrectly treated a
+stream as its last record. The assertions now inspect the current state-change
+events over the complete stream. Actual startup then exposed both supervisor
+and dnsmasq process inventories rejecting the legitimate `0 [kernel]` entry.
+Native regression tests failed before repair and passed after PID 0 was skipped
+as a non-daemon entry. The repaired product recovered its pending supervisor
+receipt without deleting the database or ownership file manually.
+
+An initial full lifecycle-script exit 0 was rejected by independent inspection.
+Two dnsmasq helper descendants remained alive with UDP port 67 after the recorded
+main processes exited and the receipts were removed. Bare devfs exposed only
+descriptors 0/1/2 under `/dev/fd`; the remaining helpers retained sockets, BPF
+descriptors and both pipe ends. This agrees with the helper/descriptor-closing
+paths in the [upstream dnsmasq 2.91 source](https://thekelleys.org.uk/dnsmasq/dnsmasq-2.91.tar.xz).
+The old script result is not a native-cleanup pass. The script now independently
+requires process disappearance after managed withdrawal. The controller checks
+the descriptor view before creating a process receipt, and the FreeBSD platform
+instructions identify the `fdescfs` prerequisite. The two known leaked fixture
+helpers were separately identified and stopped by the operator; this cleanup
+does not count as product recovery.
+
+A fresh complete run with `fdescfs` and the DHCP event-relay helper at its
+configured path passed, including the strengthened withdrawal check. Independent
+post-run `ps`/`pgrep`, `sockstat` and interface inspection found no dnsmasq/helper
+process, fixture listening socket or epair pair left behind. The run exercised
+real BPF DHCPv4 acquisition, supervised-client crash/restart/declaration removal,
+markerless foreign-process preservation, serve-owned dnsmasq peer acquisition,
+configuration replacement/idempotence/withdrawal, foreign-artifact preservation,
+Kea DHCPv6 prefix acquisition/reacquisition and resolver health/reload/restart.
+The resolver slice still lacks independent DNS UDP/TCP queries. This is not
+FreeBSD package upgrade/rollback, CARP failover or complete platform parity.
