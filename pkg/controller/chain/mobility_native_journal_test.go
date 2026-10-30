@@ -139,16 +139,20 @@ func TestMobilityNativeRoutePendingSurvivesFailureAndRestart(t *testing.T) {
 	defer store.Close()
 	controller.Store = store
 	controller.MobilityDataplane = nativeWithdrawalFixture()
-	native.deleteErr = errors.New("native delete failed")
-	if err := controller.reconcileMobilityRoutes(context.Background()); !errors.Is(err, native.deleteErr) {
-		t.Fatalf("withdrawal failure hidden: %v", err)
+	writes := native.writes
+	if err := controller.reconcileMobilityRoutes(context.Background()); err == nil || !strings.Contains(err.Error(), "without acknowledged ownership") {
+		t.Fatalf("pending presence was treated as ownership: %v", err)
+	}
+	if native.writes != writes {
+		t.Fatal("restart mutated an uncertain native route")
 	}
 	assertNativeAck(t, nativeStatus(t, store), dynamicconfig.MobilityRouteWithdrawalAcks, nil)
 	pending, _ = pendingMobilityRoutes(nativeStatus(t, store))
 	if len(pending) != 1 || native.route == nil {
 		t.Fatal("failed cleanup lost recoverable ownership")
 	}
-	native.deleteErr = nil
+	// An independent operator confirms removal; recovery can now retire the fence.
+	native.route = nil
 	if err := controller.reconcileMobilityRoutes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -194,12 +198,16 @@ func TestMobilityNativeAddressPendingSurvivesFailureAndRestart(t *testing.T) {
 	restarted := controller
 	restarted.Store = store
 	restarted.MobilityDataplane = nativeWithdrawalFixture()
-	deleteErr = errors.New("address delete failed")
-	if err := restarted.reconcileMobilityStaticAddresses(context.Background()); !errors.Is(err, deleteErr) {
-		t.Fatalf("delete failure hidden: %v", err)
+	deleteErr = errors.New("uncertain native address must not be deleted")
+	if err := restarted.reconcileMobilityStaticAddresses(context.Background()); err == nil || !strings.Contains(err.Error(), "without acknowledged ownership") {
+		t.Fatalf("pending address was treated as ownership: %v", err)
+	}
+	if !present {
+		t.Fatal("restart deleted an uncertain address")
 	}
 	assertNativeAck(t, nativeStatus(t, store), dynamicconfig.MobilityAddressWithdrawalAcks, nil)
-	deleteErr = nil
+	// Independent removal establishes absence; no routerd delete is authorized.
+	present = false
 	if err := restarted.reconcileMobilityStaticAddresses(context.Background()); err != nil {
 		t.Fatal(err)
 	}
