@@ -207,8 +207,11 @@ establish independent RR/leaf interoperability.
   cleanup. Standalone certification reuses the same supervisor. Token revocation
   resolves lost replies through authoritative absence; unknown recovery is
   retained. Offline subprocess/fault checks pass; boot-enabled systemd/PVE/cloud
-  lifecycle qualification remains unexecuted. Proxy I/O bounds remain a separate
-  review item.
+  lifecycle qualification remains unexecuted. The proxy now has one header
+  deadline, bounded tunnel writes and a shared TCP-connect budget; bytes received
+  with CONNECT are retained, and established tunnels never receive an injected
+  HTTP error. Real socket regressions pass. Synchronous OS name resolution and
+  concurrent handler admission still need lifetime/resource-bound review.
 - Unimplemented labctl live operations now fail and preserve manifests. Required
   protocol evidence cannot be promoted to PASS by a result override. Remaining
   collectors still need complete parse/measurement identity; capture
