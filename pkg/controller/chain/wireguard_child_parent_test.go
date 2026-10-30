@@ -215,3 +215,66 @@ func TestWireGuardUnconfirmedCookieIsNotReplayedOrWithdrawn(t *testing.T) {
 		t.Fatalf("unconfirmed native creation lost: records=%+v err=%v", records, err)
 	}
 }
+
+func TestWireGuardChildRechecksSourceAfterLastNativeWait(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	parent, native, store := wireGuardChildFixture(t)
+	parent.Router.Spec.Resources = append(parent.Router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{Name: "child"},
+		Spec:     api.IPv4StaticAddressSpec{Interface: "parent", Address: "192.0.2.1/24"},
+	})
+	run := parent.Command
+	reads := 0
+	parent.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		output, err := run(ctx, name, args...)
+		if name == "ip" && strings.Join(args, " ") == "-j -d link show" {
+			reads++
+			// The first proof precedes the child's pending write. Change the
+			// source during the last native read of its second proof.
+			if reads == 6 {
+				spec, err := parent.Router.Spec.Resources[0].WireGuardInterfaceSpec()
+				if err != nil {
+					t.Fatal(err)
+				}
+				spec.ListenPort = 51820
+				parent.Router.Spec.Resources[0].Spec = spec
+			}
+		}
+		return output, err
+	}
+	present, writes := false, 0
+	child := IPv4StaticAddressController{Router: parent.Router, Store: store, WireGuard: &parent,
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			observed := staticAddressSnapshot{Index: native.links["wg-owned"].IfIndex, Scope: "wg-fixture-kernel"}
+			if present {
+				observed.Addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/24")}
+			}
+			return observed, nil
+		},
+		Command: func(context.Context, string, ...string) error { writes++; present = true; return nil },
+	}
+	if err := child.Reconcile(t.Context()); err == nil || !strings.Contains(err.Error(), "source changed while observing") || reads != 6 || writes != 0 || present {
+		t.Fatalf("source change during final parent read authorized child write: reads=%d writes=%d present=%t err=%v", reads, writes, present, err)
+	}
+}
+
+func TestWireGuardOwnedDownInterfaceRecoversWithoutReplacement(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
+	parent, native, store := wireGuardChildFixture(t)
+	before := native.links["wg-owned"]
+	down := before
+	down.Up = false
+	native.links["wg-owned"] = down
+	if err := parent.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after := native.links["wg-owned"]
+	if !after.Up || after.IfIndex != before.IfIndex || after.Token != before.Token {
+		t.Fatalf("owned Down interface was not restored under the same native identity: before=%+v after=%+v", before, after)
+	}
+	reader := nativeParentReader{Router: parent.Router, Store: store, WireGuard: &parent}
+	if proof, err := reader.observeDeclared(t.Context(), "wg-owned"); err != nil || !proof.Exists || proof.Index != before.IfIndex || proof.Token != "wireguard:"+before.Token {
+		t.Fatalf("restored WireGuard parent could not authorize a child: proof=%+v err=%v", proof, err)
+	}
+}

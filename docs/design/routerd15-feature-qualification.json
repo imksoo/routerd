@@ -1,0 +1,2369 @@
+{
+  "format": "routerd15-feature-qualification/v1",
+  "updated_date": "2026-10-31",
+  "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
+  "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
+  "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
+  "policy_references": [
+    "AGENTS.md",
+    "docs/design/routerd15-plan.md#completion-and-first-live-use-milestone",
+    "docs/operations/release-qualification-policy.md",
+    "docs/releases/manifests/release-qualification-result.schema.json"
+  ],
+  "verdict_rules": {
+    "unknown": "No complete baseline parity or platform qualification verdict has been established. A partial pass or inventory presence must not become a full-feature pass.",
+    "pass": "Only for a specific executed check at its recorded source, environment, peer and configuration; does not propagate to sibling resource kinds or later revisions.",
+    "fail": "An observed violation; classify using the existing release policy instead of automatically excluding it as an environment problem.",
+    "evidence_levels": {
+      "code-passed": "Compiled or executed local code checks; skip and compile-only remain explicit.",
+      "actual-controller": "Production caller/controller/process behavior with the stated boundaries.",
+      "native-kernel": "Real kernel/service effects on the stated isolated target.",
+      "independent-peer": "Actual exchange/traffic with a distinct peer/client implementation as described by the evidence."
+    },
+    "unsupported": "Do not assign without baseline/current implementation and target-platform evidence. Unobserved OS behavior remains unknown.",
+    "revision_binding": "Evidence is historical and scoped to its revision. Apply/change review and relevant retesting are required before carrying a result to the inventory snapshot or a later revision.",
+    "completion": "A main-router trial is intermediate. Every baseline function, command/UI/platform/distribution surface and required failure/recovery path must remain covered; unknown rows prevent a whole-task completion claim."
+  },
+  "coverage": {
+    "baseline_registered_resource_kind_count": 87,
+    "current_registered_resource_kind_count": 90,
+    "missing_baseline_registrations": [],
+    "current_registration_additions": [
+      {
+        "api_version": "net.routerd.net/v1alpha1",
+        "kind": "Bridge",
+        "spec_type": "BridgeSpec"
+      },
+      {
+        "api_version": "net.routerd.net/v1alpha1",
+        "kind": "VXLANSegment",
+        "spec_type": "VXLANSegmentSpec"
+      },
+      {
+        "api_version": "net.routerd.net/v1alpha1",
+        "kind": "IPv6StaticRoute",
+        "spec_type": "IPv6StaticRouteSpec"
+      }
+    ],
+    "baseline_example_file_count": 90,
+    "baseline_yaml_example_count": 63,
+    "baseline_top_level_yaml_example_count": 51,
+    "missing_baseline_example_paths": [],
+    "baseline_example_kinds_outside_registration": [
+      "IPv4StaticRoute",
+      "IPv6StaticRoute"
+    ],
+    "inventory_limit": "87 registered kinds and 90 tracked example artifacts are coverage checks, not the complete function definition and not qualification. The 90 artifacts include 63 YAML files plus documentation, scripts, provider implementations/tests and a NixOS example.",
+    "body_review_limit": "Body/entry-point files and related tests are verified path mappings, not a claim that every body, caller or option has completed semantic parity review.",
+    "feature_scope_count": 50,
+    "non_resource_scope_count": 11,
+    "full_feature_pass_count": 0,
+    "resource_inventory_source": {
+      "path": "pkg/api/resource_kinds.go",
+      "symbol": "ConfigResourceKinds",
+      "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
+      "current_revision": "3da8d066e19535d27610d632391807db7968d1fc",
+      "kind_inventory": "Every baseline kind occurs exactly once in features[].baseline_resource_kinds; registration presence alone has no qualification verdict."
+    },
+    "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
+  },
+  "examples": [
+    "examples/README.md",
+    "examples/basic-dhcp.yaml",
+    "examples/basic-static.yaml",
+    "examples/bgp-bfd.yaml",
+    "examples/bgp-transit-export.yaml",
+    "examples/cloudedge-acceptance-scenarios.json",
+    "examples/cloudedge-aws-rr-dynamic-leaf.yaml",
+    "examples/cloudedge-dynamic-leaf-a-wg.yaml",
+    "examples/cloudedge-dynamic-leaf-b-fou.yaml",
+    "examples/cloudedge-dynamic-leaf-pve.yaml",
+    "examples/cloudedge-dynamic-rr-a-hub.yaml",
+    "examples/cloudedge-dynamic-rr-b-hub.yaml",
+    "examples/cloudedge-mobility-demo/README.md",
+    "examples/cloudedge-mobility-demo/aws.yaml",
+    "examples/cloudedge-mobility-demo/azure.yaml",
+    "examples/cloudedge-mobility-demo/collect-evidence.sh",
+    "examples/cloudedge-mobility-demo/env.example",
+    "examples/cloudedge-mobility-demo/iam/README.md",
+    "examples/cloudedge-mobility-demo/iam/aws-policy.json",
+    "examples/cloudedge-mobility-demo/iam/azure-custom-role.json",
+    "examples/cloudedge-mobility-demo/iam/oci-policy.txt",
+    "examples/cloudedge-mobility-demo/oci.yaml",
+    "examples/cloudedge-mobility-demo/onprem.yaml",
+    "examples/cloudedge-mobility-demo/phase-f/README.md",
+    "examples/cloudedge-mobility-demo/phase-f/handover-to-aws-a.yaml",
+    "examples/cloudedge-mobility-demo/phase-f/release-static-owned.yaml",
+    "examples/cloudedge-mobility-demo/phase-f/rollback-onprem-owned.yaml",
+    "examples/cloudedge-mobility-demo/plugins/provider-private-ip-inventory",
+    "examples/cloudedge-mobility-demo/plugins/provider_private_ip_inventory_test.go",
+    "examples/cloudedge-mobility-demo/reset-lab.sh",
+    "examples/cloudedge-mobility-demo/run-demo.sh",
+    "examples/dhcp-lease-sync-ha.yaml",
+    "examples/dns-local-zone.yaml",
+    "examples/dns-nextdns-failover.yaml",
+    "examples/dns-private-upstream.yaml",
+    "examples/dslite-lan-range-snat.yaml",
+    "examples/dualstack-bgp.yaml",
+    "examples/event-federation/sender-onprem.yaml",
+    "examples/example-basic-ipv4-nat.yaml",
+    "examples/example-dslite-home.yaml",
+    "examples/example-lan-dns-dhcp.yaml",
+    "examples/example-local-dns-redirect.yaml",
+    "examples/example-port-forward-web.yaml",
+    "examples/example-pppoe-ipv4-nat.yaml",
+    "examples/firewall-rate-limit.yaml",
+    "examples/freebsd-edge.yaml",
+    "examples/freebsd-vrrp.yaml",
+    "examples/guest-mode.yaml",
+    "examples/ha-2-node.yaml",
+    "examples/home-router-mgmt-protected.yaml",
+    "examples/home-router.yaml",
+    "examples/hybrid-l3-fou.yaml",
+    "examples/hybrid-l3-ipip.yaml",
+    "examples/hybrid-l3-wireguard.yaml",
+    "examples/hybrid-sam-transport-profile.yaml",
+    "examples/k8s-api-vip-dualstack.yaml",
+    "examples/k8s-cluster-routes.yaml",
+    "examples/kubernetes-api-vip-external-dns.yaml",
+    "examples/kubernetes-api-vip.yaml",
+    "examples/lan-advertise-with-community.yaml",
+    "examples/linux-dslite-policy.yaml",
+    "examples/multi-instance-bgp.yaml",
+    "examples/multi-wan-home.yaml",
+    "examples/nixos-edge-configuration.nix",
+    "examples/observability-loki.yaml",
+    "examples/plugins/aws-provider-executor/main.go",
+    "examples/plugins/aws-provider-executor/main_test.go",
+    "examples/plugins/aws-provider-executor/plugin.yaml",
+    "examples/plugins/aws-provider-executor/runner.go",
+    "examples/plugins/azure-provider-executor/main.go",
+    "examples/plugins/azure-provider-executor/main_test.go",
+    "examples/plugins/azure-provider-executor/plugin.yaml",
+    "examples/plugins/azure-provider-executor/runner.go",
+    "examples/plugins/fake-provider-executor/main.go",
+    "examples/plugins/fake-provider-executor/main_test.go",
+    "examples/plugins/fake-provider-executor/plugin.yaml",
+    "examples/plugins/oci-provider-executor/main.go",
+    "examples/plugins/oci-provider-executor/main_test.go",
+    "examples/plugins/oci-provider-executor/plugin.yaml",
+    "examples/plugins/oci-provider-executor/route_table_test.go",
+    "examples/plugins/oci-provider-executor/runner.go",
+    "examples/pve-minimal-rr-b.yaml",
+    "examples/pve-minimal-rr.yaml",
+    "examples/router-lab.yaml",
+    "examples/tailscale-exit-subnet.yaml",
+    "examples/tailscale-minimal.yaml",
+    "examples/telemetry-export.yaml",
+    "examples/vrf-lab.yaml",
+    "examples/vrrp-tuning-presets.yaml",
+    "examples/wireguard-hub-spoke.yaml"
+  ],
+  "scoped_evidence": {
+    "linux-packaged-service-6135bb03": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "6135bb038dcad2805090506cc53b342b0c47391d",
+      "reference": "docs/design/routerd15-audit.md#packaged-linux-service-and-independent-ipv4-client-checkpoint",
+      "environment": "Dedicated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; make dist archive installed using its checksum, actual systemd unit and default paths.",
+      "checks": [
+        "Clean install with empty config, apply and service restart",
+        "Verified dnsmasq observation/signaling after UID drop"
+      ],
+      "excludes": [
+        "Cross-version upgrade/rollback",
+        "Host reboot/crash",
+        "Production deployment",
+        "Complete 1.0 functional parity"
+      ]
+    },
+    "linux-independent-ipv4-6135bb03": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "6135bb038dcad2805090506cc53b342b0c47391d",
+      "reference": "docs/design/routerd15-audit.md#packaged-linux-service-and-independent-ipv4-client-checkpoint",
+      "environment": "BusyBox DHCP client in an independent LAN netns; upstream dnsmasq and HTTP peer in another netns in the dedicated VM.",
+      "checks": [
+        "Client DHCP address/gateway/DNS options",
+        "Local and forwarded DNS over UDP/TCP",
+        "HTTP peer observed translated IPv4 source",
+        "Service restart and upstream disconnect/reconnect",
+        "Managed-address/routing withdrawal"
+      ],
+      "excludes": [
+        "DHCP lease renewal/expiry/reservations",
+        "WAN DHCP/PPPoE/DS-Lite",
+        "IPv6",
+        "Firewall isolation",
+        "All resource combinations"
+      ]
+    },
+    "linux-bridge-aa9f3cac": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "aa9f3cac5649a9ff1363439b89bf2bf855b2cb10",
+      "reference": "docs/design/routerd15-audit.md#on-prem-linux-bridge-and-process-identity-checkpoint-2026-10-30",
+      "reproduction": "ROUTERD_RUN_NETNS=1 with a verified new user/network/mount namespace and new sysfs mount; TestBridgeParentNativeLinuxAddressLifecycle.",
+      "checks": [
+        "Actual Bridge/index/alias creation",
+        "Static IPv4 child acquisition",
+        "SQLite reopen with unchanged receipts",
+        "Recorded child/parent withdrawal"
+      ],
+      "excludes": [
+        "networkctl/systemd",
+        "Bridge peer forwarding",
+        "FreeBSD Bridge child proof"
+      ]
+    },
+    "freebsd-smokes-86ffc265": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "86ffc265",
+      "reference": "docs/design/routerd15-audit.md#packaged-linux-service-and-independent-ipv4-client-checkpoint",
+      "environment": "Isolated FreeBSD 14.3 guest.",
+      "checks": [
+        "Empty apply/restart",
+        "PF route-to/NAT44 narrow smokes"
+      ],
+      "excludes": [
+        "Full FreeBSD functional parity",
+        "All PF/state/selector paths",
+        "All independent-peer forwarding requirements"
+      ]
+    },
+    "normal-code-gate-4d767077": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "4d767077c3e72194ae424de35ea5ffb7fc331206",
+      "reference": "docs/design/routerd15-audit.md#packaged-linux-service-and-independent-ipv4-client-checkpoint",
+      "reproduction": "GOMAXPROCS=2 go test -p 2 ./...",
+      "checks": [
+        "Exit 0; 120 packages passed and nine had no tests",
+        "Schema/example checks",
+        "All four website locale builds"
+      ],
+      "excludes": [
+        "Unexecuted opt-in/native tests",
+        "Current snapshot beyond this revision without revalidation",
+        "Interoperability or complete baseline parity"
+      ]
+    },
+    "freebsd-compile-aa9f3cac": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "aa9f3cac5649a9ff1363439b89bf2bf855b2cb10",
+      "reference": "docs/design/routerd15-audit.md#on-prem-linux-bridge-and-process-identity-checkpoint-2026-10-30",
+      "checks": [
+        "20 FreeBSD release binaries and 128 test packages compiled"
+      ],
+      "excludes": [
+        "Test body execution",
+        "FreeBSD native runtime or peer results"
+      ]
+    },
+    "qa-offline-ba054d2f": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "ba054d2fd30653b01a8bc63b2c12c57a3af74e5a",
+      "reference": "docs/design/routerd15-audit.md#on-prem-linux-bridge-and-process-identity-checkpoint-2026-10-30",
+      "checks": [
+        "499 offline cases: 492 passed, seven skipped",
+        "Actual process/loopback/fault paths only where the individual test executes them"
+      ],
+      "excludes": [
+        "Provider mutations",
+        "Certified PVE/cloud lifecycle",
+        "Skipped cases",
+        "Whole-product forwarding qualification"
+      ]
+    }
+  },
+  "features": [
+    {
+      "id": "plugin-and-dynamic-configuration",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "Plugin",
+        "DynamicConfigSource",
+        "DynamicOverridePolicy"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/plugin/runner.go",
+          "pkg/plugin/dynamic_config.go",
+          "pkg/dynamicconfig/merge.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/plugin/runner.go",
+          "pkg/plugin/dynamic_config.go",
+          "pkg/dynamicconfig/merge.go"
+        ],
+        "related_test_files": [
+          "pkg/plugin/runner_test.go",
+          "pkg/dynamicconfig/merge_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Full current-source body/caller parity",
+        "Real external plugin publication, restart and withdrawal"
+      ]
+    },
+    {
+      "id": "logging-and-retention",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "LogSink",
+        "ObservabilityPipeline",
+        "LogRetention"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/observabilitypipeline/exporter.go",
+          "pkg/controller/chain/logretention.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/observabilitypipeline/exporter.go",
+          "pkg/controller/chain/logretention.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/logretention_test.go",
+          "pkg/controller/chain/pipeline_generation_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent log destination delivery",
+        "Backpressure, outage/recovery and retention on target storage"
+      ]
+    },
+    {
+      "id": "telemetry-and-flow-observation",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "Telemetry",
+        "TrafficFlowLog",
+        "FirewallEventLog"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/otel/controller.go",
+          "pkg/observe/conntrack.go",
+          "cmd/routerd-firewall-logger/main.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/otel/controller.go",
+          "pkg/observe/conntrack.go",
+          "cmd/routerd-firewall-logger/main.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/conntrackobserver/controller_test.go",
+          "pkg/observe/conntrack_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent exporter/collector interoperability",
+        "Native traffic attribution and complete unknown/zero observations"
+      ]
+    },
+    {
+      "id": "system-policy-and-dependencies",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "Sysctl",
+        "SysctlProfile",
+        "Package",
+        "Hostname"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/sysctl.go",
+          "pkg/controller/chain/package.go",
+          "pkg/controller/chain/system.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/sysctl.go",
+          "pkg/controller/chain/package.go",
+          "pkg/controller/chain/system.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/sysctl_test.go",
+          "pkg/controller/chain/package_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Fresh target OS dependency installation and removal",
+        "Runtime/declarative ownership and recovery on each baseline platform"
+      ]
+    },
+    {
+      "id": "ntp-client-and-server",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "NTPClient",
+        "NTPServer"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/ntp.go",
+          "pkg/render/timesyncd.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/ntp.go",
+          "pkg/render/timesyncd.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/ntp_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent NTP server/client exchange",
+        "Provider replacement, restart, configuration withdrawal"
+      ]
+    },
+    {
+      "id": "web-console",
+      "scope": "resource-and-operator-ui",
+      "baseline_resource_kinds": [
+        "WebConsole"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/webconsole/console.go",
+          "pkg/webconsole/config.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/webconsole/console.go",
+          "pkg/webconsole/config.go"
+        ],
+        "related_test_files": [
+          "pkg/webconsole/config_diff_test.go",
+          "pkg/webconsole/client_observation_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Browser operation against packaged running daemon",
+        "Live current/unknown observations, configuration/control permissions and baseline UI workflows"
+      ]
+    },
+    {
+      "id": "control-api-and-command-surface",
+      "scope": "resource-and-command-control",
+      "baseline_resource_kinds": [
+        "ControlAPI"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerctl/main.go",
+          "cmd/routerd/main.go",
+          "pkg/controlapi/server.go",
+          "pkg/controlapi/client.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerctl/main.go",
+          "cmd/routerd/main.go",
+          "pkg/controlapi/server.go",
+          "pkg/controlapi/client.go"
+        ],
+        "related_test_files": [
+          "cmd/routerctl/main_test.go",
+          "pkg/controlapi/controller_runtime_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All baseline command/API behavior and authorization",
+        "Running daemon, remote caller, rejected/committed mutation and recovery"
+      ]
+    },
+    {
+      "id": "cluster-ha-and-virtual-address",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "RouterdCluster",
+        "VirtualAddress"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/ha/lease.go",
+          "pkg/controller/vrrp/controller.go",
+          "pkg/render/carp.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/ha/lease.go",
+          "pkg/controller/vrrp/controller.go",
+          "pkg/render/carp.go"
+        ],
+        "related_test_files": [
+          "pkg/ha/lease_test.go",
+          "pkg/controller/chain/cluster_acceptance_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent two-router election and fencing",
+        "Actual VIP client traffic, failover, restart and withdrawal on both OSes"
+      ]
+    },
+    {
+      "id": "physical-link-and-bridge",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "Interface"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/bridge.go",
+          "pkg/render/bridge.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/link.go",
+          "pkg/controller/chain/bridge.go",
+          "pkg/render/bridge.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/link_observation_test.go",
+          "pkg/controller/chain/bridge_child_parent_native_linux_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-bridge-aa9f3cac"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent bridged peer forwarding",
+        "FreeBSD Bridge child proof and equivalent lifecycle"
+      ],
+      "current_registration_additions": [
+        "Bridge"
+      ]
+    },
+    {
+      "id": "wireguard",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "WireGuardInterface",
+        "WireGuardPeer"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/wireguard.go",
+          "pkg/wireguard/wireguard.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/wireguard.go",
+          "pkg/wireguard/wireguard.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/wireguard_test.go",
+          "pkg/wireguard/wireguard_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Native parent proof, address/route/RA children at the pinned revision",
+        "Independent tunnel handshake/traffic, key rotation, restart and withdrawal"
+      ],
+      "finding_references": [
+        "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
+      ]
+    },
+    {
+      "id": "tailscale",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "TailscaleNode"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/tailscale/tailscale.go",
+          "pkg/render/tailscale_systemd.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/tailscale/tailscale.go",
+          "pkg/render/tailscale_systemd.go"
+        ],
+        "related_test_files": [
+          "pkg/tailscale/tailscale_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent control plane/peer session",
+        "Exit-node/subnet routing, expiration, withdrawal and service recovery"
+      ]
+    },
+    {
+      "id": "ipsec",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "IPsecConnection"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/ipsec/ipsec.go",
+          "cmd/routerd/ipsec_apply.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/ipsec/controller.go",
+          "pkg/ipsec/ipsec.go",
+          "cmd/routerd/ipsec_apply.go"
+        ],
+        "related_test_files": [
+          "pkg/ipsec/ipsec_test.go",
+          "pkg/controller/chain/ipsec_owner_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Native IKE/CHILD_SA and packet exchange with an independent peer",
+        "Rekey, loss/recovery, restart and withdrawal"
+      ]
+    },
+    {
+      "id": "vrf",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "VRF"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/vrf/vrf.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/vrf/vrf.go"
+        ],
+        "related_test_files": [
+          "pkg/vrf/vrf_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Native parent and child ownership",
+        "Independent per-VRF forwarding/isolation, restart and withdrawal"
+      ],
+      "finding_references": [
+        "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
+      ]
+    },
+    {
+      "id": "vxlan",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "VXLANTunnel"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/hybrid.go",
+          "pkg/render/bridge.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/hybrid.go",
+          "pkg/vxlan/segment.go",
+          "pkg/render/bridge.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/vxlan_segment_test.go",
+          "pkg/controller/chain/vxlan_tunnel_native_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Actual product-owned tunnel/segment peer forwarding",
+        "Linux/FreeBSD independent peer, HA, restart, expiry and withdrawal"
+      ],
+      "current_registration_additions": [
+        "VXLANSegment"
+      ]
+    },
+    {
+      "id": "static-ipv4-address",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "IPv4StaticAddress"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/static_address.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/static_address_owner_test.go",
+          "pkg/controller/chain/bridge_child_parent_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-bridge-aa9f3cac"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Target link kinds beyond the proved Linux Bridge slice",
+        "Scope changes, native API acquisition limits and recovery"
+      ]
+    },
+    {
+      "id": "ipv4-and-cluster-routes",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "IPv4Route",
+        "ClusterNetworkRoute"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/api/cluster_routes.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/controller/chain/ipv4route_owner.go",
+          "pkg/api/cluster_routes.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/ipv4route_owner_test.go",
+          "pkg/controller/chain/ipv4route_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-independent-ipv4-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent routed packets and removal for all baseline route types",
+        "Kernel/FIB identity, dynamic cluster changes, reboot and error recovery"
+      ]
+    },
+    {
+      "id": "ipv6-static-routing",
+      "scope": "baseline-example-and-runtime-function",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/render/networkd.go",
+          "pkg/render/freebsd.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/render/networkd.go",
+          "pkg/render/freebsd.go"
+        ],
+        "related_test_files": [
+          "pkg/render/networkd_test.go",
+          "pkg/render/freebsd_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Baseline example/runtime IPv6StaticRoute behavior through actual caller",
+        "Native IPv6 route application, forwarding and withdrawal"
+      ],
+      "current_registration_additions": [
+        "IPv6StaticRoute"
+      ]
+    },
+    {
+      "id": "bgp",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "BGPRouter",
+        "BGPPeer",
+        "BGPDynamicPeer"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-bgp/main.go",
+          "pkg/controller/bgp/controller.go",
+          "pkg/bgpdaemon/applied.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-bgp/main.go",
+          "pkg/controller/bgp/controller.go",
+          "pkg/controller/bgp/fib.go",
+          "pkg/bgpdaemon/applied.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/bgp/controller_test.go",
+          "cmd/routerd-bgp/native_owner_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent router BGP sessions, communities, policy and dynamic peers",
+        "Native FIB forwarding, withdrawal, restart and journal recovery"
+      ],
+      "finding_references": [
+        "docs/design/routerd15-open-findings.md#bgp-ownership-and-current-observations"
+      ]
+    },
+    {
+      "id": "bfd",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "BFD"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/bfd/controller.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/bfd/controller.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/bfd/controller_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent BFD peer loss/recovery",
+        "Routing/HA consequences, session identity and restart"
+      ]
+    },
+    {
+      "id": "dhcpv4-client",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv4Client"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-dhcpv4-client/main.go",
+          "pkg/controller/dhcpv4client/controller.go",
+          "pkg/dhcpv4client/message.go",
+          "pkg/dhcpv4client/snapshot.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-dhcpv4-client/main.go",
+          "pkg/dhcpv4client/client.go",
+          "pkg/controller/dhcpv4client/controller.go"
+        ],
+        "related_test_files": [
+          "pkg/dhcpv4client/client_test.go",
+          "pkg/controller/dhcpv4client/controller_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent WAN DHCP acquisition/renewal/rebind/expiry",
+        "Address/default route/DNS effects and recovery on each OS"
+      ]
+    },
+    {
+      "id": "dhcpv4-server-and-reservation",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv4Server",
+        "DHCPv4Reservation"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/lan/dhcpv4server/dnsmasq.go",
+          "pkg/render/dnsmasq.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/lan/dhcpv4server/dnsmasq.go",
+          "pkg/render/dnsmasq.go"
+        ],
+        "related_test_files": [
+          "pkg/lan/dhcpv4server/dnsmasq_test.go",
+          "pkg/controller/chain/dnsmasq_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-independent-ipv4-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Reservation-specific client matching",
+        "Lease renewal/expiry, conflict handling and server restart"
+      ]
+    },
+    {
+      "id": "ipv6-client-address-and-delegation-sources",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv6Address",
+        "IPv6RAAddress",
+        "DHCPv6PrefixDelegation",
+        "DHCPv6Information"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-dhcpv6-client/main.go",
+          "pkg/pdclient/client.go",
+          "pkg/raobserver/raobserver.go",
+          "pkg/controller/chain/phase2.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "cmd/routerd-dhcpv6-client/main.go",
+          "pkg/pdclient/client.go",
+          "pkg/raobserver/raobserver.go",
+          "pkg/controller/chain/phase2.go"
+        ],
+        "related_test_files": [
+          "pkg/pdclient/client_test.go",
+          "pkg/raobserver/raobserver_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent DHCPv6/RA server exchange for each source mode",
+        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal"
+      ]
+    },
+    {
+      "id": "delegated-ipv6-and-ra",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "IPv6DelegatedAddress",
+        "IPv6RouterAdvertisement",
+        "SelfAddressPolicy"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/lan_native_receipt.go",
+          "pkg/controller/chain/ra_service.go",
+          "pkg/api/routeradvertisement.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/ra_segment_parent_test.go",
+          "pkg/controller/chain/lan_segment_parent_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent IPv6 clients, delegated addresses and forwarded packets",
+        "Prefix/DNS lifetime, renewal, expiry, restart and withdrawal",
+        "Fragmented solicitation provenance remains a documented API limitation"
+      ]
+    },
+    {
+      "id": "dhcpv6-server",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv6Server"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/render/dnsmasq.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/render/dnsmasq.go",
+          "pkg/render/dhcpv6_range.go"
+        ],
+        "related_test_files": [
+          "pkg/render/dnsmasq_test.go",
+          "pkg/controller/chain/dnsmasq_ipv4_only_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent DHCPv6 clients for supported address/DNS modes",
+        "Renewal, expiry, RA interaction, family isolation and restart"
+      ]
+    },
+    {
+      "id": "dhcp-lease-synchronization",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv4ServerLeaseSync",
+        "DHCPv6ServerLeaseSync",
+        "DHCPv6PrefixDelegationLeaseSync"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/filesync.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/filesync.go",
+          "pkg/state/dhcp_lease.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/filesync_test.go",
+          "pkg/controller/chain/filesync_sqlite_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent HA peers and actual client lease continuity",
+        "DNS name/tombstone, journal recovery, failure and revocation"
+      ]
+    },
+    {
+      "id": "dhcpv4-relay",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DHCPv4Relay"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/render/dnsmasq.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/render/dnsmasq.go"
+        ],
+        "related_test_files": [
+          "pkg/render/dnsmasq_test.go",
+          "pkg/controller/chain/dnsmasq_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent relay/client/server exchange",
+        "Interface/server identity, packet options, failure and withdrawal"
+      ]
+    },
+    {
+      "id": "dns",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DNSZone",
+        "DNSResolver",
+        "DNSForwarder",
+        "DNSUpstream"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/dnsresolver/controller.go",
+          "pkg/dnsresolver/dnsresolver.go",
+          "cmd/routerd-dns-resolver/main.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/dnsresolver/controller.go",
+          "pkg/dnsresolver/dnsresolver.go",
+          "cmd/routerd-dns-resolver/main.go"
+        ],
+        "related_test_files": [
+          "pkg/dnsresolver/dnsresolver_test.go",
+          "pkg/controller/dnsresolver/controller_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-independent-ipv4-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All baseline source/query policies, private containment and DNS transports",
+        "Lease update/tombstone/negative replies, runtime changes and restart"
+      ]
+    },
+    {
+      "id": "ds-lite",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "DSLiteTunnel"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/phase2.go",
+          "pkg/controller/chain/dslite_native.go",
+          "pkg/controller/chain/dslite_endpoint.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/dslite_child_parent_test.go",
+          "pkg/render/dslite_alias_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent AFTR and inside IPv4 through-traffic",
+        "Source expiry, NAT/MSS/PF binding, restart and withdrawal"
+      ]
+    },
+    {
+      "id": "hybrid-and-overlay-routing",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "TunnelInterface",
+        "OverlayPeer",
+        "HybridRoute"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/hybrid.go",
+          "pkg/hybrid/hybrid.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/hybrid.go",
+          "pkg/hybrid/hybrid.go"
+        ],
+        "related_test_files": [
+          "pkg/hybrid/hybrid_test.go",
+          "pkg/hybrid/semantic_review_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Actual IPIP/FOU/WireGuard peers and routing",
+        "Native parent proof, MTU, cloud/on-prem source identity and withdrawal"
+      ],
+      "finding_references": [
+        "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
+      ]
+    },
+    {
+      "id": "provider-actions-and-inventory",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "CloudProviderProfile",
+        "ProviderActionPolicy"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/provideraction/controller.go",
+          "pkg/provideraction/executor.go",
+          "pkg/providerinventory/executor.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/provideraction/controller.go",
+          "pkg/provideraction/executor.go",
+          "pkg/providerinventory/executor.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/provideraction/controller_test.go",
+          "pkg/providerinventory/observation_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Actual AWS/Azure/OCI provider actions under certified topology",
+        "Conditional identity, ambiguous writes, takeover/rollback and independent inventory"
+      ],
+      "finding_references": [
+        "docs/design/routerd15-open-findings.md#provider-action-and-observation-boundary"
+      ]
+    },
+    {
+      "id": "event-federation",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "EventGroup",
+        "EventPeer",
+        "EventSubscription",
+        "FederationSLO"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/eventfederation/controller.go",
+          "pkg/controller/eventsubscription/controller.go",
+          "pkg/federation/event.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/eventfederation/controller.go",
+          "pkg/controller/eventsubscription/controller.go",
+          "pkg/federation/event.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/eventfederation/controller_test.go",
+          "pkg/controller/eventsubscription/lifetime_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent sender/receiver, authenticated topology and SLO observations",
+        "Expiry, durable delivery/subscription, cancellation and restart"
+      ]
+    },
+    {
+      "id": "selective-address-mobility",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "MobilityPool",
+        "SAMNodeSet",
+        "SAMEnrollmentPolicy",
+        "SAMEnrollmentClaim",
+        "SAMEnrollmentClient",
+        "SAMTransportProfile",
+        "SAMSubnetPolicy"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/mobility/controller.go",
+          "pkg/sam/sam.go",
+          "pkg/samenrollment/enrollment.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/mobility/controller.go",
+          "pkg/sam/sam.go",
+          "pkg/samenrollment/enrollment.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/mobility/controller_test.go",
+          "pkg/controller/mobility/transport_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent RR/leaf enrollment, ownership and real mobility traffic",
+        "Provider-enforced distributed exclusion and takeover authority",
+        "Handover, loss/recovery, cross-node capture and cleanup"
+      ]
+    },
+    {
+      "id": "health-and-policy-routing",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "HealthCheck",
+        "EgressRoutePolicy"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/policyroute.go",
+          "pkg/healthcheck/engine.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/health_observation.go",
+          "pkg/controller/chain/policyroute.go",
+          "pkg/healthcheck/engine.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/policyroute_native_test.go",
+          "pkg/controller/chain/health_observation_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "freebsd-smokes-86ffc265"
+        ]
+      },
+      "required_remaining_checks": [
+        "Actual independent two-WAN probe/forwarded traffic and failover",
+        "Freshness/expiry and native IPv4/IPv6 policy withdrawal/recovery"
+      ]
+    },
+    {
+      "id": "event-rules-and-derived-events",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "EventRule",
+        "DerivedEvent"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/eventrule/engine.go",
+          "pkg/derived/engine.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/eventrule/engine.go",
+          "pkg/derived/engine.go",
+          "pkg/controller/chain/eventrule_store.go",
+          "pkg/controller/chain/derived_store.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/eventrule_activation_test.go",
+          "pkg/controller/chain/derived_store_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Real producer-to-effect behavior with current configuration",
+        "Restart, delayed timer cancellation, history and retention"
+      ]
+    },
+    {
+      "id": "nat-port-forward-and-redirect",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "NAT44Rule",
+        "NAT44FlowDNATPinhole",
+        "NAT44SessionSync",
+        "PortForward",
+        "LocalServiceRedirect"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/nat44/controller.go",
+          "pkg/controller/chain/nat44sessionsync.go",
+          "pkg/render/nftables.go",
+          "pkg/render/pf.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/nat44/controller.go",
+          "pkg/controller/chain/nat44sessionsync.go",
+          "pkg/render/nftables.go",
+          "pkg/render/pf.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/nat44/controller_test.go",
+          "pkg/controller/chain/nat44sessionsync_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-independent-ipv4-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "freebsd-smokes-86ffc265"
+        ]
+      },
+      "required_remaining_checks": [
+        "Independent DNAT, hairpin, pinhole and synchronized state paths",
+        "All configured backends, expiry, rule withdrawal/new versus existing flows"
+      ]
+    },
+    {
+      "id": "ingress-services-and-flow-pinholes",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "IngressService",
+        "FirewallFlowPinhole"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/ingressservice/controller.go",
+          "pkg/ingressdrain/drain.go",
+          "pkg/render/ingress.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/ingressservice/controller.go",
+          "pkg/ingressdrain/drain.go",
+          "pkg/render/ingress.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/ingressservice/controller_test.go",
+          "pkg/controller/ingressservice/target_change_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent client/backend failover and drain behavior",
+        "Target/source changes, dynamic flow expiry, restart and withdrawal"
+      ]
+    },
+    {
+      "id": "firewall-policy-and-address-sets",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "FirewallZone",
+        "FirewallPolicy",
+        "ClientPolicy",
+        "FirewallRule",
+        "IPAddressSet"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/firewall/controller.go",
+          "pkg/firewallbackend/backend.go",
+          "pkg/controller/chain/ipaddressset.go",
+          "pkg/render/nftables.go",
+          "pkg/render/pf.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/firewall/controller.go",
+          "pkg/firewallbackend/backend.go",
+          "pkg/controller/chain/ipaddressset.go",
+          "pkg/render/nftables.go",
+          "pkg/render/pf.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/firewall/controller_test.go",
+          "pkg/render/firewall_family_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent accept/deny and zone/client isolation",
+        "Selector and NAT conjunctions, local output, native state and withdrawal"
+      ]
+    },
+    {
+      "id": "management-access",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "ManagementAccess"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/render/firewall_holes.go",
+          "pkg/render/ingress.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/render/firewall_holes.go",
+          "pkg/render/ingress.go"
+        ],
+        "related_test_files": [
+          "pkg/render/ingress_test.go",
+          "pkg/render/firewall_family_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Real management path while data-plane faults/configuration change",
+        "Independent admission and exercised recovery/cutback"
+      ]
+    },
+    {
+      "id": "configuration-lifecycle",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "cmd/routerd/cmd_apply.go",
+          "cmd/routerd/config_mutation.go",
+          "cmd/routerd/cmd_rollback.go",
+          "pkg/apply/engine.go",
+          "pkg/lifecycle/registry.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "cmd/routerd/cmd_apply.go",
+          "cmd/routerd/config_mutation.go",
+          "cmd/routerd/cmd_rollback.go",
+          "pkg/apply/engine.go",
+          "pkg/lifecycle/registry.go"
+        ],
+        "related_test_files": [
+          "cmd/routerd/config_mutation_shape_test.go",
+          "cmd/routerd/rollback_canonical_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All baseline validate/plan/apply/delete/rollback outcomes",
+        "Canonical durability, interrupted activation, actual 1.0 cutback and rejected writes"
+      ]
+    },
+    {
+      "id": "state-history-and-recovery",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/state/sqlite.go",
+          "pkg/lifecycle/registry.go",
+          "cmd/routerctl/cmd_ledger.go",
+          "cmd/routerctl/cmd_logs.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/state/sqlite.go",
+          "pkg/lifecycle/registry.go",
+          "cmd/routerctl/cmd_ledger.go",
+          "cmd/routerctl/cmd_logs.go"
+        ],
+        "related_test_files": [
+          "pkg/state/sqlite_test.go",
+          "pkg/controller/chain/static_address_owner_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Target-storage crash and reopen semantics across all owners",
+        "Leases/history/retention/pending operations without data reset"
+      ]
+    },
+    {
+      "id": "process-and-service-supervision",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/render/routerd_systemd.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/chain/dnsmasq_process.go",
+          "pkg/manageddaemon/manageddaemon.go",
+          "pkg/render/routerd_systemd.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/chain/dnsmasq_capability_linux_test.go",
+          "pkg/controller/chain/supervisor_lifetime_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-packaged-service-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All daemon/service lifetime contracts on actual service managers",
+        "Stop acknowledgement, privilege changes, replacement and reboot"
+      ]
+    },
+    {
+      "id": "diagnostics-and-observers",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "cmd/routerctl/doctor.go",
+          "cmd/routerd/inspection.go",
+          "cmd/routerd-arp-observer/main.go",
+          "cmd/routerd-ra-observer/main.go",
+          "cmd/routerd-dpi-classifier/main.go",
+          "cmd/routerd-dhcp-fingerprint-watcher/main.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "cmd/routerctl/doctor.go",
+          "cmd/routerd/inspection.go",
+          "cmd/routerd-arp-observer/main.go",
+          "cmd/routerd-ra-observer/main.go",
+          "cmd/routerd-dpi-classifier/main.go",
+          "cmd/routerd-dhcp-fingerprint-watcher/main.go"
+        ],
+        "related_test_files": [
+          "cmd/routerctl/doctor_test.go",
+          "cmd/routerd/probe_dns_selection_review_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All baseline diagnose/get/describe/log/ledger/action commands",
+        "Independent neighbor/conntrack/ARP/RA/DPI/fingerprint packet observations"
+      ]
+    },
+    {
+      "id": "distribution-build-and-release",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "Makefile",
+          "scripts/release.sh",
+          "scripts/collect-third-party-licenses.sh"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "Makefile",
+          "scripts/release.sh",
+          "scripts/collect-third-party-licenses.sh"
+        ],
+        "related_test_files": [
+          "tests/install/install_test.go",
+          "scripts/release-prepare-only-test.sh"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "All baseline artifacts/architectures and retained notices",
+        "Release provenance and target install/update qualification"
+      ]
+    },
+    {
+      "id": "packaged-install-update-and-rollback",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "packaging/install.sh",
+          "pkg/render/routerd_systemd.go",
+          "pkg/render/freebsd_rcd.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "packaging/install.sh",
+          "pkg/render/routerd_systemd.go",
+          "pkg/render/freebsd_rcd.go"
+        ],
+        "related_test_files": [
+          "tests/install/install_test.go",
+          "scripts/install-sh-cwd-smoke.sh"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "linux-packaged-service-6135bb03"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "freebsd-smokes-86ffc265"
+        ]
+      },
+      "required_remaining_checks": [
+        "Cross-version upgrade, rollback and 1.0 configuration/database cutback",
+        "Reboot, interrupted install and target permission/dependency handling"
+      ]
+    },
+    {
+      "id": "live-iso-and-firstboot",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "scripts/build-live-iso.sh"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "scripts/build-live-iso.sh"
+        ],
+        "related_test_files": [
+          "tests/liveiso/ownership_test.go",
+          "tests/liveiso/live_autostart_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Actual image build, modes, boot and firstboot on independent VM",
+        "Failure/cleanup and installed router traffic"
+      ]
+    },
+    {
+      "id": "pve-and-cloud-lab-integration",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "scripts/certify-pve-substrate.sh",
+          "scripts/cloudedge-labctl.sh"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "scripts/certify-pve-substrate.sh",
+          "scripts/cloudedge-labctl.sh"
+        ],
+        "related_test_files": [
+          "tools/release-qa-labs/tests/test_pve_capture_bridge.py",
+          "scripts/cloudedge-acceptance-offline-test.sh"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Certified independent PVE/cloud topology, supervisor and guest lifecycle",
+        "VM restart/failover, boot, real capture and owned cleanup"
+      ]
+    },
+    {
+      "id": "nixos-declarative-platform",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/netconfigbackend/backend.go",
+          "examples/nixos-edge-configuration.nix"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/netconfigbackend/backend.go",
+          "examples/nixos-edge-configuration.nix"
+        ],
+        "related_test_files": [
+          "pkg/render/networkd_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Baseline declarative behavior and actual NixOS module evaluation/boot",
+        "Independent native router functions and rollback"
+      ],
+      "additional_platforms": {
+        "nixos": {
+          "qualification": "unknown",
+          "scoped_evidence": []
+        }
+      },
+      "notes": [
+        "The baseline hand-written example invokes render nixos and a nixos-edge.yaml file; a usable implementation/configuration for that promise was not established by this entry-point mapping. Do not infer supported or unsupported behavior from that example alone."
+      ]
+    },
+    {
+      "id": "schemas-examples-and-documentation",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/api/resource_kinds.go",
+          "schemas/routerd-config-v1alpha1.schema.json",
+          "website/package.json",
+          "examples/README.md"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/api/resource_kinds.go",
+          "schemas/routerd-config-v1alpha1.schema.json",
+          "website/package.json",
+          "examples/README.md"
+        ],
+        "related_test_files": [
+          "pkg/config/load_test.go",
+          "pkg/api/specs_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Functional behavior of all retained examples; inventory is not qualification",
+        "Operator procedures against actual installed binaries and external clients"
+      ]
+    },
+    {
+      "id": "release-qa-lifecycle-tooling",
+      "scope": "non-resource",
+      "baseline_resource_kinds": [],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "tools/release-qa-labs/lifecycle_supervisor.py",
+          "scripts/release_certification.py",
+          "scripts/release-qualification-smoke.sh"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "tools/release-qa-labs/lifecycle_supervisor.py",
+          "scripts/release_certification.py",
+          "scripts/release-qualification-smoke.sh"
+        ],
+        "related_test_files": [
+          "tools/release-qa-labs/tests/test_lifecycle_supervisor.py",
+          "tools/release-qa-labs/tests/test_supervisor_process_ownership.py"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": [
+          "qa-offline-ba054d2f"
+        ]
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Actual certified service/PVE/cloud qualification lifecycle",
+        "Input/process identity, paid admission, cleanup/inventory and interruption"
+      ]
+    },
+    {
+      "id": "pppoe",
+      "scope": "resource-function",
+      "baseline_resource_kinds": [
+        "PPPoESession"
+      ],
+      "baseline": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/pppoesession/controller.go",
+          "pkg/pppoeclient/client.go",
+          "pkg/render/pppoe.go"
+        ]
+      },
+      "current": {
+        "body_and_entrypoint_files": [
+          "pkg/controller/chain/chain.go",
+          "pkg/controller/pppoesession/controller.go",
+          "pkg/pppoeclient/client.go",
+          "pkg/render/pppoe.go"
+        ],
+        "related_test_files": [
+          "pkg/controller/pppoesession/source_test.go",
+          "pkg/pppoeclient/client_test.go"
+        ]
+      },
+      "preservation_verdict": "unknown",
+      "linux": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "freebsd": {
+        "qualification": "unknown",
+        "scoped_evidence": []
+      },
+      "required_remaining_checks": [
+        "Independent PPPoE access concentrator exchange and IPv4/IPv6 traffic",
+        "Credential/session identity, renewal/loss/recovery, restart and withdrawal"
+      ]
+    }
+  ],
+  "next_live_trial_requirements": [
+    "Clean packaged installation/service lifecycle with independent management/recovery",
+    "Independent DHCP/DNS and IPv4 NAT traffic",
+    "Independent IPv6 delegation/RA/client forwarding and source expiry",
+    "Renewal/rebind, upstream loss/return, process restart/reboot and interrupted configuration change",
+    "Exercised cutback to the previous working 1.0 router/configuration/database",
+    "Passing complete local regression gate; continue every other baseline feature after the limited trial"
+  ],
+  "evidence_update_rule": "Append a source revision and durable audit/procedure reference with the exact function/configuration and observed level. Keep contradictory or failed observations. Do not turn a resource name, matching configuration, status receipt, skipped test, cross-compilation or a partial lab success into functional pass.",
+  "example_kind_changes": [
+    {
+      "path": "examples/router-lab.yaml",
+      "baseline_declared_kinds": [
+        "DHCPv4Client",
+        "DHCPv4Server",
+        "DHCPv6PrefixDelegation",
+        "DNSForwarder",
+        "DNSResolver",
+        "DNSUpstream",
+        "EgressRoutePolicy",
+        "FirewallPolicy",
+        "FirewallZone",
+        "HealthCheck",
+        "IPv4StaticAddress",
+        "IPv4StaticRoute",
+        "IPv6DelegatedAddress",
+        "IPv6StaticRoute",
+        "Interface",
+        "NAT44Rule",
+        "NTPClient",
+        "Router"
+      ],
+      "current_declared_kinds": [
+        "DHCPv4Client",
+        "DHCPv4Server",
+        "DHCPv6PrefixDelegation",
+        "DNSForwarder",
+        "DNSResolver",
+        "DNSUpstream",
+        "EgressRoutePolicy",
+        "FirewallPolicy",
+        "FirewallZone",
+        "HealthCheck",
+        "IPv4Route",
+        "IPv4StaticAddress",
+        "IPv6DelegatedAddress",
+        "IPv6StaticRoute",
+        "Interface",
+        "NAT44Rule",
+        "NTPClient",
+        "Router"
+      ]
+    }
+  ]
+}

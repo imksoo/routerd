@@ -106,15 +106,6 @@ func (c WireGuardController) observeChildParent(ctx context.Context, resource ap
 	}
 	// Config, key-file and native observations can wait. The final proof uses
 	// current source, native cookie/index/scope and the same actual receipt.
-	if active {
-		current, currentDigest, err := c.childWireGuardConfig(resource)
-		if err != nil {
-			return absent, err
-		}
-		if currentDigest != digest || current.Name != desired.Name || current.MTU != desired.MTU {
-			return absent, errors.New("WireGuard parent source changed while observing")
-		}
-	}
 	observed, err = c.observeNativeWireGuard(ctx, name)
 	if err != nil {
 		return absent, err
@@ -127,6 +118,15 @@ func (c WireGuardController) observeChildParent(ctx context.Context, resource ap
 	}
 	if active && !observed.Up {
 		return absent, errors.New("WireGuard parent stopped during observation")
+	}
+	if active {
+		current, currentDigest, err := c.childWireGuardConfig(resource)
+		if err != nil {
+			return absent, err
+		}
+		if currentDigest != digest || current.Name != desired.Name || current.MTU != desired.MTU {
+			return absent, errors.New("WireGuard parent source changed while observing")
+		}
 	}
 	records, err = c.readNativeWireGuard()
 	if err != nil {

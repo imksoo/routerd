@@ -94,6 +94,20 @@ func (c WireGuardController) checkNativeWireGuard(ctx context.Context, record wi
 	if !observed.Exists {
 		return errors.New("WireGuard native interface disappeared")
 	}
+	records, err := c.readNativeWireGuard()
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, current := range records {
+		if sameWireGuardNativeRecord(current, record) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errors.New("WireGuard native ownership receipt changed while observing")
+	}
 	return c.checkWireGuardScope(ctx, record)
 }
 
@@ -455,6 +469,9 @@ func (c WireGuardController) cleanupNativeWireGuard(ctx context.Context, active 
 		if err != nil {
 			return err
 		}
+		if err := c.checkWireGuardScope(ctx, record); err != nil {
+			return err
+		}
 		if err := c.verifyNativeWireGuard(record, observed); err != nil {
 			return err
 		}
@@ -484,6 +501,9 @@ func (c WireGuardController) cleanupNativeWireGuard(ctx context.Context, active 
 			}
 		}
 		for _, port := range record.Ports {
+			if err := c.checkWireGuardScope(ctx, record); err != nil {
+				return err
+			}
 			if err := c.deleteOwnedWireGuardInputAccept(ctx, port, record.Token); err != nil {
 				return err
 			}
@@ -493,6 +513,9 @@ func (c WireGuardController) cleanupNativeWireGuard(ctx context.Context, active 
 			return err
 		}
 		remaining := make([]wireGuardNativeRecord, 0, len(current))
+		if err := c.checkWireGuardScope(ctx, record); err != nil {
+			return err
+		}
 		for _, other := range current {
 			if other.Name != record.Name {
 				remaining = append(remaining, other)

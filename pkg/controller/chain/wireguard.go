@@ -1452,6 +1452,15 @@ func (c WireGuardController) interfaceMatchesDesired(ctx context.Context, cfg wi
 	if expected := wireGuardPublicKeyFromConfig(cfg); expected == "" || observed.PublicKey != expected {
 		return false, nil
 	}
+	if c.currentOS() == platform.OSLinux {
+		link, err := c.observeNativeWireGuard(ctx, cfg.Name)
+		if err != nil {
+			return false, err
+		}
+		if !link.Exists || !link.Up {
+			return false, nil
+		}
+	}
 	if cfg.ListenPort != 0 && observed.ListenPort != cfg.ListenPort {
 		return false, nil
 	}

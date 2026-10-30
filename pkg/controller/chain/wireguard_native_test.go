@@ -200,7 +200,7 @@ func withWireGuardNativeFixture(t *testing.T, c *WireGuardController) *wireGuard
 
 func (f *wireGuardNativeFixture) own(t *testing.T, resource, name string, ports ...int) {
 	t.Helper()
-	f.links[name] = nativeWireGuardLink{Exists: true, IfIndex: 7, Token: wgFixtureToken, Kind: "wireguard"}
+	f.links[name] = nativeWireGuardLink{Exists: true, IfIndex: 7, Token: wgFixtureToken, Kind: "wireguard", Up: true}
 	scope, err := f.controller.wireGuardScope(t.Context())
 	if err != nil {
 		t.Fatal(err)

@@ -792,7 +792,15 @@ spec:
 	if peer["phase"] != "Connected" || peer["latestEndpoint"] != "198.51.100.2:51820" {
 		t.Fatalf("peer status = %+v", peer)
 	}
-	for _, want := range []string{"ip link add name wg0 alias routerd-wg:", "wg setconf wg0", "ip link set up dev wg0"} {
+	records, err := controller.readNativeWireGuard()
+	if err != nil || len(records) != 1 || records[0].IfIndex < 1 || records[0].Pending {
+		t.Fatalf("creation has no acknowledged native identity: %+v %v", records, err)
+	}
+	native, err := controller.observeNativeWireGuard(t.Context(), "wg0")
+	if err != nil || !native.Exists || native.IfIndex != records[0].IfIndex || native.Token != records[0].Token {
+		t.Fatalf("post-create cookie does not match its actual receipt: %+v %v", native, err)
+	}
+	for _, want := range []string{fmt.Sprintf("ip link add name wg0 index %d type wireguard", records[0].IfIndex), "wg setconf wg0", "ip link set up dev wg0"} {
 		found := false
 		for _, call := range calls {
 			if strings.HasPrefix(call, want) {
@@ -957,7 +965,15 @@ spec:
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"ip link add name wg-transport0 alias routerd-wg:", "wg setconf wg-transport0", "ip link set up dev wg-transport0"} {
+	records, err := controller.readNativeWireGuard()
+	if err != nil || len(records) != 1 || records[0].IfIndex < 1 || records[0].Pending {
+		t.Fatalf("creation has no acknowledged native identity: %+v %v", records, err)
+	}
+	native, err := controller.observeNativeWireGuard(t.Context(), "wg-transport0")
+	if err != nil || !native.Exists || native.IfIndex != records[0].IfIndex || native.Token != records[0].Token {
+		t.Fatalf("post-create cookie does not match its actual receipt: %+v %v", native, err)
+	}
+	for _, want := range []string{fmt.Sprintf("ip link add name wg-transport0 index %d type wireguard", records[0].IfIndex), "wg setconf wg-transport0", "ip link set up dev wg-transport0"} {
 		found := false
 		for _, call := range calls {
 			if strings.HasPrefix(call, want) {
