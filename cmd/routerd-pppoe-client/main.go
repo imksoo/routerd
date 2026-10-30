@@ -348,7 +348,16 @@ func (d *daemon) Run(ctx context.Context) error {
 	case runErr = <-serveDone:
 	}
 	d.stopSession()
+	d.mu.Lock()
+	cleanupFailed, diagnostic := d.teardownFailed, d.snapshot.LastError
+	d.mu.Unlock()
+	if cleanupFailed {
+		return fmt.Errorf("PPPoE native cleanup is unresolved: %s", diagnostic)
+	}
 	d.publish(daemonapi.EventDaemonStopped, daemonapi.SeverityInfo, "Stopped", "PPPoE client daemon stopped", nil)
+	if errors.Is(runErr, context.Canceled) && ctx.Err() == context.Canceled {
+		return nil
+	}
 	return runErr
 }
 

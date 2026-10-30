@@ -23,14 +23,27 @@ command -v mpd5 >/dev/null
 command -v jq >/dev/null
 command -v curl >/dev/null
 ipc_curl() {
-  curl --connect-timeout 1 --max-time 1 --fail --silent --show-error "$@" || {
+  # Native stop allows three seconds for the child plus five for its interface.
+  curl --connect-timeout 1 --max-time 12 --fail --silent --show-error "$@" || {
     echo 'INCONCLUSIVE: IPC request failed or exceeded its deadline' >&2
     return 3
   }
 }
 command -v tcpdump >/dev/null
+# ng_ether attaches persistent nodes to every Ethernet interface. Its upstream
+# unload contract requires all such interfaces to be removed, so prepare it
+# before this fixture rather than claiming it can be restored at fixture exit.
+# https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netgraph/ng_ether.c
+kldstat -q -m ng_ether || {
+  echo 'INCONCLUSIVE: prepare ng_ether before the disposable-VM fixture' >&2
+  exit 3
+}
 
 mkdir -p "$evidence_dir"
+(set -C; printf 'freebsd-pppoe-runtime=in-progress\n' >"$evidence_dir/result") || {
+  echo 'use a fresh evidence directory' >&2
+  exit 2
+}
 work=$(mktemp -d /var/tmp/routerd-pppoe-runtime.XXXXXX)
 epair_a=
 epair_b=
@@ -41,6 +54,12 @@ client_pid=
 discovery_capture_pid=
 session_capture_pid=
 foreign_ppp_ifname=
+restore_modules=
+# Record only modules absent before this exclusive disposable-VM fixture.
+# Leave every pre-existing module loaded, including the client's prerequisites.
+for module in ng_vjc ng_tee ng_mppc rc4 ng_ppp ng_socket ng_iface ng_pppoe netgraph; do
+  if ! kldstat -q -m "$module"; then restore_modules="$restore_modules $module"; fi
+done
 
 cleanup() {
   rc=$?
@@ -55,7 +74,7 @@ cleanup() {
   fi
   if [ -n "$client_pid" ]; then
     kill -TERM "$client_pid" 2>/dev/null || true
-    wait "$client_pid" 2>/dev/null || true
+    wait "$client_pid" 2>/dev/null || rc=1
   fi
   if [ -n "$discovery_capture_pid" ]; then
     kill -TERM "$discovery_capture_pid" 2>/dev/null || true
@@ -77,7 +96,31 @@ cleanup() {
   if [ -n "$foreign_ppp_ifname" ] && ifconfig "$foreign_ppp_ifname" >/dev/null 2>&1; then
     ifconfig "$foreign_ppp_ifname" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
-  rm -rf "$work"
+  for module in $restore_modules; do
+    if kldstat -q -m "$module"; then
+      kldunload "$module" >>"$evidence_dir/module-cleanup.log" 2>&1 || rc=1
+    fi
+    if kldstat -q -m "$module"; then rc=1; fi
+  done
+  if jls -j "$jail_name" >/dev/null 2>&1; then rc=1; fi
+  if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then rc=1; fi
+  if [ -n "$foreign_ppp_ifname" ] && ifconfig "$foreign_ppp_ifname" >/dev/null 2>&1; then rc=1; fi
+  ps -ax -o args= >"$work/processes.txt" || rc=1
+  awk -v owned="$work" 'index($0, owned) { print }' "$work/processes.txt" >"$evidence_dir/owned-processes-after-cleanup.log" || rc=1
+  [ ! -s "$evidence_dir/owned-processes-after-cleanup.log" ] || rc=1
+  sockstat -u >"$work/unix-sockets.txt" || rc=1
+  awk -v owned="$work" 'index($0, owned) { print }' "$work/unix-sockets.txt" >"$evidence_dir/owned-sockets-after-cleanup.log" || rc=1
+  [ ! -s "$evidence_dir/owned-sockets-after-cleanup.log" ] || rc=1
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$work" || rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    printf 'pppoe-owned-epair-and-process-cleanup=ok\n' >>"$evidence_dir/summary.log"
+    printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"
+  else
+    printf 'freebsd-pppoe-runtime=not-pass exit=%s\n' "$rc" >"$evidence_dir/result"
+    printf 'retained fixture recovery directory: %s\n' "$work" >&2
+  fi
   exit "$rc"
 }
 trap cleanup EXIT HUP INT TERM
@@ -176,7 +219,7 @@ awk -v want="$epair_b:" '{ gsub(/\r/, "") } $1 == "Iface" && $2 == "Node" && $4 
 
 "$pppoe_client" daemon --resource lifecycle-pppoe --interface "$epair_a" \
   --username routerd --password pppoe-secret --auth-method pap --service-name routerd-lifecycle \
-  --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
+  --runtime-dir "$work/client" --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
   --event-file "$evidence_dir/pppoe-events.jsonl" >"$evidence_dir/pppoe.stdout.log" 2>"$evidence_dir/pppoe.stderr.log" &
 client_pid=$!
 for _ in $(jot 30); do
@@ -274,7 +317,28 @@ cmp "$evidence_dir/pppoe-foreign-interface-before-start.ifconfig" "$evidence_dir
 ifconfig "$foreign_ppp_ifname" destroy
 foreign_ppp_ifname=
 
+# Terminate the actual daemon while a third independent session is connected.
+# A normal exit is accepted only after its native backend/interface is gone.
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-start-before-daemon-term.json"
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-before-daemon-term.json" || true
+  jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2"' "$evidence_dir/pppoe-status-before-daemon-term.json" >/dev/null 2>&1 && break
+  sleep 1
+done
+jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2"' "$evidence_dir/pppoe-status-before-daemon-term.json" >/dev/null
+term_started=$(date +%s)
+kill -TERM "$client_pid"
+client_exit=0
+wait "$client_pid" || client_exit=$?
+client_pid=
+printf 'exit=%s durationSeconds=%s\n' "$client_exit" "$(( $(date +%s) - term_started ))" >"$evidence_dir/pppoe-daemon-term.log"
+[ "$client_exit" -eq 0 ]
+if ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-daemon-term.ifconfig" 2>&1; then
+  echo 'native PPP interface survived daemon termination' >&2
+  exit 1
+fi
+
 printf '%s\n' \
   'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup-foreign-preservation=ok' \
   'pppoe-owned-epair-and-process-cleanup=pending-exit-trap' >"$evidence_dir/summary.log"
-printf 'freebsd-pppoe-runtime=ok\n' >"$evidence_dir/result"
