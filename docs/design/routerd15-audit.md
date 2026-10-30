@@ -2025,3 +2025,27 @@ The helper now launches `nsenter` directly as the background process, so kill
 and wait address the actual daemon. The product gate already uses direct
 `ip netns exec` processes. Named-namespace absence alone is not a cleanup proof;
 verify that the identified peer processes have exited as well.
+
+
+### WAN RA planned restart and SIGKILL recovery
+
+The installed `a00a4826` make-dist package passed the expanded WAN RA fixture
+at `2b8ad0683d48393f83e0d103a0ea18867b6b07af` on the same isolated Ubuntu
+24.04.4 / Linux 6.8.0-124-generic VM. After actual SLAAC/default-route acquisition,
+a planned service restart produced a new Healthy daemon with both declarations,
+unchanged canonical configuration and the original RA/HTTP peer processes.
+The off-link HTTP probe passed with its expected SLAAC source.
+
+A separate SIGKILL of the main process then recovered through the installed
+systemd `Restart=always` policy. Exactly one automatic restart occurred; no
+manual start or configuration reapply was used. The new daemon again reported
+Healthy with two declared resources and no controller errors, and the HTTP
+probe passed. After those recovery checks, the same daemon passed the original
+real RA/SLAAC lifetime expiry and peer-only recovery gate, followed by empty
+apply and fixture cleanup.
+
+This checks service recovery while kernel networking remains present. It does
+not prove host reboot, kernel-state loss, storage failure recovery or continuity
+of already established application sessions. The source package is unchanged;
+the new commit extends the test and its documented acceptance criteria. The
+ledger separately binds package revision/hash and executed fixture revision/hash.

@@ -924,6 +924,30 @@
         "Automatic host-setting restoration when managed intent is removed",
         "Complete 1.0 feature preservation or release qualification"
       ]
+    },
+    "linux-wan-ra-recovery-2b8ad068": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "a00a4826d5028319e9fafc5dbd523ea2f5bf690f",
+      "reference": "docs/design/routerd15-audit.md#wan-ra-planned-restart-and-sigkill-recovery",
+      "archive_sha256": "cc9a6990255dc9b6f74b267ac07ff20d49c3ad64692ea12597303b5a646877dc",
+      "fixture_revision": "2b8ad0683d48393f83e0d103a0ea18867b6b07af",
+      "executed_fixture_sha256": "6e53c0dc1cea2d9928a76d678783f16c702cfc4cef8863d58c44a3693cd6d12b",
+      "environment": "Installed static make dist package, isolated Ubuntu 24.04.4 VM/Linux 6.8.0-124-generic, actual systemd-networkd-managed WAN; dnsmasq 2.91 RA-only and Python HTTP in a separate network namespace; rdisc6 packet decoder.",
+      "reproduction": "scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm",
+      "checks": [
+        "Planned service restart produces a new Healthy daemon with two declared resources, unchanged canonical configuration and peer PIDs; off-link HTTP succeeds",
+        "SIGKILL of main process recovers through exactly one automatic systemd restart, without manual start or reapply; same declaration/config checks and HTTP succeed",
+        "After service recovery, actual 15-second route and 120-second SLAAC expiry plus peer-only reacquisition pass with unchanged routerd PID",
+        "Fresh observe-only intent and managed acquisition still pass; final empty apply and fixture/process cleanup"
+      ],
+      "excludes": [
+        "Host reboot or loss of kernel networking state",
+        "Storage failure and continuity of established application sessions",
+        "RDNSS/DNSSL consumption, DHCPv6 IA_NA, LAN forwarding and other platforms",
+        "Automatic restoration of host settings on intent removal",
+        "Complete 1.0 feature preservation or release qualification"
+      ]
     }
   },
   "features": [
@@ -1851,7 +1875,8 @@
         "scoped_evidence": [
           "ra-observe-only-603a815e",
           "persistent-controller-fixtures-593cb42b",
-          "linux-wan-ra-lifecycle-a00a4826"
+          "linux-wan-ra-lifecycle-a00a4826",
+          "linux-wan-ra-recovery-2b8ad068"
         ]
       },
       "freebsd": {
