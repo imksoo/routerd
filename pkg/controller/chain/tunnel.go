@@ -251,8 +251,12 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
-	if desired.Address != "" || statusvalue.Field(previous, "address") != "" {
-		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
+	previousAddress := ""
+	if !created {
+		previousAddress = statusvalue.Field(previous, "observedAddress")
+	}
+	if desired.Address != "" || previousAddress != "" {
+		addressChanged, err := c.reconcileTunnelAddress(ctx, desired, previousAddress)
 		if err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
@@ -362,6 +366,13 @@ func tunnelInterfaceOwned(status map[string]any) bool {
 func preserveTunnelInterfaceOwnership(status, previous map[string]any) {
 	if tunnelInterfaceOwned(previous) {
 		status["interfaceOwned"] = true
+		if status["phase"] != "Up" {
+			for _, field := range []string{"observedAddress", "observedPeerAddress"} {
+				if value, present := previous[field]; present {
+					status[field] = value
+				}
+			}
+		}
 	}
 }
 
@@ -800,7 +811,7 @@ func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname s
 	return commandError("bring tunnel interface "+ifname+" up", err)
 }
 
-func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired) (bool, error) {
+func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired, previousAddress string) (bool, error) {
 	current, err := c.tunnelIPv4Addresses(ctx, desired.Name)
 	if err != nil {
 		return false, err
@@ -810,6 +821,9 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 	for _, address := range current {
 		if address == desired.Address {
 			hasDesired = true
+			continue
+		}
+		if address != previousAddress {
 			continue
 		}
 		if err := c.deleteTunnelAddress(ctx, desired.Name, address); err != nil {
