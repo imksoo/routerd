@@ -64,3 +64,22 @@ func (l *AcquiredLease) Transfer(cfg Config) (*AcquiredLease, error) {
 	l.File = nil
 	return next, nil
 }
+
+// Observe returns current lease facts under the same owner lock used by its
+// heartbeat. Display/status consumers must not race Lease updates or substitute
+// a cached Leader decision for this descriptor's actual authority.
+func (l *AcquiredLease) Observe() (Decision, error) {
+	if l == nil {
+		return Decision{}, ErrLeaseClosed
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	same, err := l.ownsPathLocked(l.Config.LeasePath)
+	if err != nil {
+		return Decision{}, err
+	}
+	if !same {
+		return Decision{}, errors.New("cluster lease ownership is unavailable")
+	}
+	return Decision{Enabled: true, Leader: true, Identity: l.Config.Identity, Holder: l.Lease.Holder, LeasePath: l.Config.LeasePath, ExpiresAt: l.Lease.ExpiresAt, Reason: "held-by-selected-runtime", Lease: l}, nil
+}

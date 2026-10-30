@@ -46,6 +46,49 @@ func runtimeClusterConfig(router *api.Router) (ha.Config, bool, error) {
 	return cfg, cfg.LeasePath != "" && len(cfg.Peers) > 0, nil
 }
 
+func (r *Runner) validateSelectedApplyOwner(current *controllerGeneration) error {
+	if current == nil {
+		return ErrRuntimeMutationStopped
+	}
+	err := current.ctx.Err()
+	if err == nil && current.decision.Enabled {
+		if current.decision.Lease == nil {
+			err = errors.New("selected HA leader has no native lease owner")
+		} else {
+			same, observeErr := current.decision.Lease.OwnsPath(current.decision.Lease.Config.LeasePath)
+			if observeErr != nil || !same {
+				err = errors.Join(observeErr, errors.New("selected HA lease ownership is unavailable"))
+			}
+		}
+	}
+	if err != nil {
+		r.fenceRuntime(true)
+		current.cancel()
+	}
+	return err
+}
+
+func recordRuntimeHADecision(router *api.Router, store Store, decision ha.Decision) error {
+	resource, _, present, err := routerdClusterResource(router)
+	if err != nil || !present {
+		return err
+	}
+	if decision.Lease != nil {
+		decision, err = decision.Lease.Observe()
+		if err != nil {
+			return err
+		}
+	}
+	phase := "Standby"
+	if decision.Leader {
+		phase = "Leader"
+	}
+	return store.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", resource.Metadata.Name, map[string]any{
+		"phase": phase, "identity": decision.Identity, "holder": decision.Holder, "leasePath": decision.LeasePath,
+		"expiresAt": decision.ExpiresAt.Format(time.RFC3339Nano), "reason": decision.Reason, "observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	})
+}
+
 func (r *Runner) admitRuntimeApply(ctx context.Context, current *controllerGeneration, next *api.Router, _ eventedStore) (runtimeApplyAdmission, bool, error) {
 	admission := runtimeApplyAdmission{decision: ha.Decision{Leader: true}}
 	if err := ctx.Err(); err != nil {
@@ -112,6 +155,28 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 		admission.closeNew()
 		return current, false, err
 	}
+	if err := current.ctx.Err(); err != nil {
+		admission.closeNew()
+		r.fenceRuntime(true)
+		current.cancel()
+		return current, false, err
+	}
+	// Canonical persistence and stopping the loop can wait. Re-observe both
+	// actual lease descriptors before candidate preparation or native effects.
+	for _, lease := range []*ha.AcquiredLease{current.decision.Lease, admission.decision.Lease} {
+		if lease == nil {
+			continue
+		}
+		same, authorityErr := lease.OwnsPath(lease.Config.LeasePath)
+		if authorityErr != nil || !same {
+			admission.closeNew()
+			if lease == current.decision.Lease {
+				r.fenceRuntime(true)
+				current.cancel()
+			}
+			return current, false, errors.Join(authorityErr, errors.New("HA lease authority changed while canonical commit waited"))
+		}
+	}
 	if !request.reload {
 		defer admission.closeNew()
 		if admission.newLease {
@@ -121,6 +186,13 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 			return current, false, err
 		}
 		current.router = request.router
+		statusErr := recordRuntimeHADecision(request.router, store.withRouter(request.router), current.decision)
+		// Status persistence can wait; its preceding lease observation cannot
+		// authorize effects after the native pathname changes during that wait.
+		authorityErr := r.validateSelectedApplyOwner(current)
+		if err := errors.Join(statusErr, authorityErr); err != nil {
+			return current, false, err
+		}
 		required := framework.Runner{Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
 		return current, false, required.RunOnce(current.ctx, current.controllers...)
 	}
@@ -135,6 +207,8 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 		heldOld, err = oldDecision.Lease.Transfer(oldDecision.Lease.Config)
 		if err != nil {
 			admission.closeNew()
+			r.fenceRuntime(true)
+			current.cancel()
 			return current, false, err
 		}
 	}
@@ -167,7 +241,7 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 			next, err = r.prepareControllerGenerationOwned(ctx, request.ctx, logger, store.withRouter(request.router), nil, &admission.decision, true)
 			if next != nil {
 				if heldOld != nil && heldOld != next.decision.Lease {
-					_ = heldOld.Close()
+					err = errors.Join(err, heldOld.Close())
 				}
 				return next, false, err // A strict effect failure remains visible, not Healthy.
 			}

@@ -2006,6 +2006,12 @@ func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Contex
 		cancel()
 		return nil, err
 	}
+	if admitted != nil {
+		if err := recordRuntimeHADecision(router, store, decision); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	builder := r.frameworkControllers
 	if r.generationBuilder != nil {
 		builder = r.generationBuilder
@@ -2021,6 +2027,15 @@ func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Contex
 			err = errors.Join(err, stopErr)
 		}
 		return nil, err
+	}
+	if admitted != nil && decision.Enabled {
+		owned, authorityErr := decision.Lease.OwnsPath(decision.Lease.Config.LeasePath)
+		if authorityErr != nil || !owned {
+			cancel()
+			r.fenceRuntime(true)
+			stopErr := r.closeControllerLifetimes(lifetimes, nil)
+			return nil, errors.Join(authorityErr, errors.New("admitted HA lease no longer owns its pathname"), stopErr)
+		}
 	}
 	heartbeatStarted := false
 	if decision.Enabled && decision.Leader && decision.Lease != nil {
@@ -2180,6 +2195,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	waitForGeneration:
 		select {
 		case <-ctx.Done():
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
@@ -2188,6 +2204,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			}
 			return ctx.Err()
 		case <-generation.ctx.Done():
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			<-loopDone
 			if err := stopCurrentGeneration(); err != nil {
@@ -2208,6 +2225,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 					}
 					if admitErr == nil {
 						admitErr = request.commit()
+						admitErr = errors.Join(admitErr, r.validateSelectedApplyOwner(generation))
 					}
 				}
 				if admitErr != nil || standby {
@@ -2225,6 +2243,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 				continue
 			}
 			pending = &request
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
@@ -3463,20 +3482,14 @@ func acquireClusterLease(ctx context.Context, router *api.Router, store Store) (
 		return decision, err
 	}
 	if store != nil {
-		phase := "Standby"
-		if decision.Leader {
-			phase = "Leader"
+		if err := recordRuntimeHADecision(router, store, decision); err != nil {
+			if decision.Lease != nil {
+				err = errors.Join(err, decision.Lease.Close())
+			}
+			return decision, err
 		}
-		_ = store.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", resource.Metadata.Name, map[string]any{
-			"phase":      phase,
-			"identity":   decision.Identity,
-			"holder":     decision.Holder,
-			"leasePath":  decision.LeasePath,
-			"expiresAt":  decision.ExpiresAt.Format(time.RFC3339Nano),
-			"reason":     decision.Reason,
-			"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		})
 	}
+
 	return decision, nil
 }
 
