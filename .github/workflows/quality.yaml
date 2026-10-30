@@ -120,6 +120,11 @@ jobs:
           go test -tags routerd_native -c -o "$RUNNER_TEMP/routeradvertisement-native.test" ./pkg/routeradvertisement
           sudo unshare --net sh -ec 'ip link set lo up; exec "$1" -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v' sh "$RUNNER_TEMP/routeradvertisement-native.test"
 
+      - name: Check helper ownership with the installed service capabilities
+        run: |
+          go test -tags routerd_native -c -o "$RUNNER_TEMP/chain-native.test" ./pkg/controller/chain
+          sudo unshare --mount --pid --fork --mount-proc "$RUNNER_TEMP/chain-native.test" -test.run="^TestDnsmasqOwnerWithServiceCapabilities$" -test.v
+
   linux-static:
     name: Linux static binaries
     runs-on: ubuntu-latest

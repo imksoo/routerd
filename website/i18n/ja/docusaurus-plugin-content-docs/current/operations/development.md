@@ -97,3 +97,24 @@ sudo unshare --net sh -ec 'ip link set lo up; exec /tmp/routeradvertisement-nati
 隔離 FreeBSD VM でも同じ tag でコンパイルし、テストバイナリを root で実行します。
 対象は実カーネルでの受信とパケットの付帯情報です。転送や独立した対向機との疎通の証明とは分けます。
 終了後はテストバイナリを削除します。
+
+
+## 子プロセスの所有確認と service の権限
+
+Linux service は、dnsmasq が UID を落とした後も procfs で正確なプロセス identity を
+確認するために `CAP_SYS_PTRACE`、確認済みの子へ pidfd でシグナルを送るために
+`CAP_KILL` を必要とします。同梱 unit と runtime renderer の権限を揃えます。
+所有確認を省略したり dnsmasq を root のまま動かしたりして権限不足を隠しません。
+procfs のアクセス条件は [ptrace(2)](https://man7.org/linux/man-pages/man2/ptrace.2.html) を参照してください。
+
+通常ユーザーでコンパイルし、専用の PID/mount namespace で実行します。試験は
+実 service と同じ capability 制限で、別 UID の子の確認と停止を製品の owner 経由で検査します。
+確認・停止の失敗はゲートの失敗です。CI も同じ試験を実行します。
+
+```sh
+go test -tags routerd_native -c -o /tmp/chain-native.test ./pkg/controller/chain
+sudo unshare --mount --pid --fork --mount-proc /tmp/chain-native.test -test.run="^TestDnsmasqOwnerWithServiceCapabilities$" -test.v
+```
+
+DHCP の取得・更新、DNS、service 再起動は、別途隔離 VM と実クライアントで確認します。
+終了後はテストバイナリを削除します。

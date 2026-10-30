@@ -72,6 +72,29 @@ On a disposable FreeBSD VM, build with the same tag and execute the test binary
 as root. This checks actual kernel reception and packet metadata; it does not
 prove forwarding or peer interoperability. Remove the binary when finished.
 
+## Native helper ownership and service capabilities
+
+The Linux service needs `CAP_SYS_PTRACE` to read the exact procfs identity of
+its dnsmasq child after dnsmasq drops UID, and `CAP_KILL` to signal that verified
+child through a pidfd. The packaged unit and runtime renderer carry the same
+capabilities. Do not weaken native identity checks or keep dnsmasq running as
+root to hide a permission failure. The procfs access checks are described in
+[ptrace(2)](https://man7.org/linux/man-pages/man2/ptrace.2.html).
+
+Compile without privilege, then run the explicit native test in new PID/mount
+namespaces. It drops the observer to the actual service bounding set, observes
+a child under another UID and confirms its termination through the production
+owner. Failure to observe or signal is a failed gate. CI runs the same test.
+
+```sh
+go test -tags routerd_native -c -o /tmp/chain-native.test ./pkg/controller/chain
+sudo unshare --mount --pid --fork --mount-proc /tmp/chain-native.test -test.run="^TestDnsmasqOwnerWithServiceCapabilities$" -test.v
+```
+
+This proves the native privilege boundary. Actual DHCP acquisition, renewal,
+DNS requests and service restart still require the isolated VM/client tests.
+Remove the test binary after use.
+
 ## Pre-commit hook
 
 The repository includes an optional pre-commit hook script:
