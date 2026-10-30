@@ -191,6 +191,23 @@ func staticReceipt(status map[string]any) (*staticAddressReceipt, error) {
 	return &receipt, nil
 }
 
+var errStaticReceiptChanged = errors.New("static address ownership changed during the operation")
+
+func (c IPv4StaticAddressController) requireStaticReceipt(name string, expected staticAddressReceipt) error {
+	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", name)
+	if err != nil {
+		return err
+	}
+	current, err := staticReceipt(status)
+	if err != nil {
+		return err
+	}
+	if current == nil || *current != expected {
+		return errStaticReceiptChanged
+	}
+	return nil
+}
+
 func (c IPv4StaticAddressController) saveStaticAddress(name string, status map[string]any, receipt *staticAddressReceipt) error {
 	if receipt != nil {
 		status["nativeReceipt"] = *receipt
@@ -231,7 +248,13 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err := c.saveStaticAddress(name, status, receipt); err != nil {
 		return err
 	}
+	if err := c.requireStaticReceipt(name, *receipt); err != nil {
+		return err
+	}
 	abortBeforeDelete := func(cause error) error {
+		if err := c.requireStaticReceipt(name, *receipt); err != nil {
+			return errors.Join(cause, err)
+		}
 		// No native deletion was issued. Preserve the prior acquisition and
 		// report the failed attempt without manufacturing a lost-reply fence.
 		receipt.Pending = false
@@ -366,6 +389,9 @@ func (c IPv4StaticAddressController) Reconcile(ctx context.Context) error {
 }
 
 func (c IPv4StaticAddressController) staticAddressFailure(name string, cause error) error {
+	if errors.Is(cause, errStaticReceiptChanged) {
+		return fmt.Errorf("IPv4StaticAddress/%s: %w", name, cause)
+	}
 	// Read again: a failed effect may already have persisted a pending fence.
 	// A display update must never replace it with the pre-attempt receipt.
 	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", name)
@@ -486,7 +512,13 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
 			return err
 		}
+		if err := c.requireStaticReceipt(resource.Metadata.Name, *receipt); err != nil {
+			return err
+		}
 		abortBeforeCommand := func(cause error) error {
+			if err := c.requireStaticReceipt(resource.Metadata.Name, *receipt); err != nil {
+				return errors.Join(cause, err)
+			}
 			status["phase"], status["reason"], status["error"] = "Error", "AcquisitionNotStarted", cause.Error()
 			delete(status, "nativeReceipt")
 			return errors.Join(cause, c.saveStaticAddress(resource.Metadata.Name, status, nil))

@@ -69,7 +69,7 @@ func TestStaticPeerReceiptReplacementSurvivesPendingAbort(t *testing.T) {
 				reconcileErr := controller.Reconcile(ctx)
 				status, readErr := db.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "address")
 				actual, decodeErr := staticReceipt(status)
-				if !injected || reconcileErr == nil || writes != 0 || !present || readErr != nil || decodeErr != nil || actual == nil || *actual != replacement {
+				if !injected || reconcileErr == nil || writes != 0 || !present || status["phase"] != "Applied" || readErr != nil || decodeErr != nil || actual == nil || *actual != replacement {
 					t.Fatalf("stale operation replaced another peer receipt: injected=%v err=%v writes=%d nativePresent=%v actual=%+v expected=%+v readErr=%v decodeErr=%v", injected, reconcileErr, writes, present, actual, replacement, readErr, decodeErr)
 				}
 			})
