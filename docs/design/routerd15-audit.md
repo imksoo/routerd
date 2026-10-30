@@ -1221,3 +1221,48 @@ Required assertions were not passed by running as root or modifying production
 directories. These normal-suite failures and native/peer/platform qualification
 remain separate follow-up work. No production deployment or cloud mutation was
 executed.
+
+
+## Packaged Linux service and independent IPv4 client checkpoint
+
+Baseline remains `e3b49dbb69c7de97bab9595884745eb7cbe93d92` (pre-1.5 routerd).
+All of its 87 registered resource kinds and 90 example files remain represented;
+that inventory is not functional qualification. The final goal is preservation
+of every routerd 1.0 function. A home/site router trial is an intermediate gate.
+
+The product checkpoint `6135bb038dcad2805090506cc53b342b0c47391d` was built by
+`make dist` with CGO disabled and tested in a dedicated Ubuntu 24.04.4 VM,
+Linux 6.8.0-124-generic. The installed archive and its checksum, real systemd
+unit and default filesystem paths were used. Initial tests exposed two product
+integration defects: the packaged BGP unit lacked its ownership header, and the
+service could not inspect or signal dnsmasq after it dropped UID. Regression
+tests reproduced these failures before repair. The native capability test fails
+at procfs observation without CAP_SYS_PTRACE and at pidfd signaling without
+CAP_KILL; the corrected service passes both with exact identity checks intact.
+The native test is now an explicit CI gate.
+
+An independent BusyBox DHCP client ran in a LAN network namespace, with a
+separate upstream namespace running dnsmasq and an HTTP peer. The executed
+checks passed: DHCP address/gateway/DNS options, local and forwarded DNS over
+UDP/TCP, the HTTP peer observing the translated source, service restart,
+upstream disconnect/reconnect and managed-address/routing withdrawal. The peers
+were checked before applying the candidate. The isolated guest needed conntrack
+installed before this run; a prior missing-package run was not counted as pass.
+Empty-config installation/apply/restart also passed. An earlier empty guest
+without loaded conntrack reported Unavailable, which was not called Healthy.
+
+At `4d767077c3e72194ae424de35ea5ffb7fc331206`, subsequent changes are test-only.
+`GOMAXPROCS=2 go test -p 2 ./...` exited 0: 120 packages passed and nine had no
+tests. Existing system-unit fixtures now use private BGP state paths. EventRule
+fixtures enqueue their durable burst before starting consumption and assert
+retirement of the old checkpoint; real timer-commit cancellation tests remain.
+HTTP publication checks retain a bounded deadline without treating two seconds
+as a product latency contract. Schema/example checks and all four website
+locales built successfully. Existing documentation-link warnings remain.
+
+These results do not establish IPv6 PD/RA/renewal/expiry, DHCP lease renewal,
+WAN DHCP/PPPoE/DS-Lite, firewall isolation, reboot/crash recovery, 1.0 cutback,
+FreeBSD feature parity or the remaining 1.0 function inventory. Those remain
+required work; neither a limited trial nor passing unit tests closes the revision.
+The earlier isolated FreeBSD 14.3 empty apply/restart and PF route-to/NAT44
+smokes at `86ffc265` remain narrower native checks, not full FreeBSD qualification.

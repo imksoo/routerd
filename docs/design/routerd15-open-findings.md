@@ -156,7 +156,9 @@ cover startup/stop/retry, exact command and systemd fragment/input identity.
 Linux signals bind to pidfds, including ancestor-procfs PID mapping. FreeBSD's
 bounded birth/jail/executable/argv observation still has second-resolution birth
 and a check-to-PID-signal race; it is not a pidfd-equivalent atomic guarantee.
-Actual systemd/FreeBSD DHCP/RA communication remains unqualified.
+The packaged Linux systemd DHCPv4/DNS/NAT44 client smoke now passes;
+FreeBSD DHCP/RA communication remains unqualified. See the latest
+[executed checkpoint](routerd15-audit.md).
 
 ## Current Health and event decisions
 
@@ -208,7 +210,8 @@ or retired listeners cannot serve a different selected generation. TCP wildcard
 listeners use their configured binding for source/cache admission. The remaining
 lease attribution gap is a tagless constructor-based IPv6 lease-file row on a
 first start with no journal evidence; it cannot acquire guessed source authority.
-Native dnsmasq/client interoperability remains unqualified.
+The Linux BusyBox DHCPv4 client and local/forwarded DNS UDP/TCP smoke pass;
+lease renewal/expiry and IPv6 client interoperability remain unqualified.
 
 ## Command/control plane
 
@@ -240,8 +243,8 @@ forwarding; SAM tests do not establish independent RR/leaf interoperability.
 ## Build, release and isolated lab tools
 
 - Installer stop/restart/rollback ordering and retained recovery backups are
-  implemented with subprocess regressions. Actual service installation and
-  native rollback qualification remain unexecuted.
+  implemented with subprocess regressions. Packaged Linux clean installation and service restart now pass;
+  cross-version upgrade and native rollback qualification remain unexecuted.
 - Live ISO builder uses a private mount namespace, exact workdir ownership,
   pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
   all-root image rewriting are removed; old mode-damaged caches are rejected.
@@ -286,7 +289,8 @@ forwarding; SAM tests do not establish independent RR/leaf interoperability.
   address before our add. This is a native API limitation, not established
   foreign-safe acquisition. See [native ownership](../reference/native-ownership.md).
 
-Native Unix/raw/Netlink, Linux/FreeBSD peer traffic, PVE and real provider effects
-remain separate unestablished gates in this cloud environment. No production
+Native qualification is limited to the paths and revisions recorded in the
+[executed audit](routerd15-audit.md); remaining peer/platform paths and real
+provider effects are still separate gates. No production
 cutover, reset of an operator's data or live cloud mutation is authorized merely
 by recording or implementing these fixes.
