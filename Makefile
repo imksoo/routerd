@@ -453,6 +453,10 @@ check-routerd15-dslite-parent:
 check-routerd15-bgp-native-linux:
 	sh scripts/linux-bgp-frr-smoke.sh
 
+.PHONY: check-routerd15-plugin-process
+check-routerd15-plugin-process:
+	sh scripts/plugin-dynamic-process-smoke.sh
+
 .PHONY: check-routerd15-bfd-native-linux
 check-routerd15-bfd-native-linux:
 	sh scripts/linux-bfd-frr-smoke.sh

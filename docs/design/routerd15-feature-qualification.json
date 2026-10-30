@@ -948,6 +948,117 @@
         "Automatic restoration of host settings on intent removal",
         "Complete 1.0 feature preservation or release qualification"
       ]
+    },
+    "freebsd-normal-go-f294bb23": {
+      "level": "native-os-tests",
+      "outcome": "pass",
+      "revision": "f294bb23e42f6d3a552d340779a3af1dca88f147",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Native FreeBSD 14.3 / Go1.25.9 CGO0 complete ordinary suite: 119 packages pass, 9 no-test",
+        "3949 top-level pass, 206 explicit skip, 0 fail; including subtests, 5928 pass and 250 skip events",
+        "Clean tracked source before/after; first owner-transfer failure occurred before tests and was corrected"
+      ],
+      "excludes": [
+        "Explicit skipped/native opt-in tests",
+        "Full kernel/peer functionality or complete feature preservation"
+      ]
+    },
+    "linux-normal-go-f294bb23": {
+      "level": "ordinary-tests",
+      "outcome": "fail",
+      "revision": "f294bb23e42f6d3a552d340779a3af1dca88f147",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "119 packages pass, 1 fail, 9 no-test; 4160 top-level pass, 1 fail, 14 skip",
+        "Raw BGP peer received EOF before passive FSM readiness; fixed-source focused evidence is separate"
+      ],
+      "excludes": [
+        "No whole-suite pass at this revision",
+        "Newer integrated changes and complete feature qualification"
+      ]
+    },
+    "bgp-peer-readiness-64f4a479": {
+      "level": "native-loopback",
+      "outcome": "pass",
+      "revision": "64f4a47923e539ec79bb31258482481d4e7d89b4",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Existing community UPDATE/withdrawal/local-RIB assertions: six modes times 50 repetitions on each of Linux and actual FreeBSD",
+        "Complete Linux BGP package passed; static fixture now waits for actual Active state under existing deadline"
+      ],
+      "excludes": [
+        "Installed routing daemon/native forwarding",
+        "A new complete integrated Go gate"
+      ],
+      "freebsd_binary_sha256": "26a28065423cd891f021d59d6a451e02c25254679b5facc20952f796606d99f0"
+    },
+    "linux-bfd-both-modes-6aab35b5": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "6aab35b502542637a570275f08570c9384a149ff",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Independent FRR single-hop and multihop Up/Down/recovery/admin shutdown/local restart/SQLite reopen/foreign preservation/withdrawal",
+        "Actual BFD-driven IPv4 BGP reset and RIB/FIB/traffic loss with IPv6 maintained, followed by recovery and existing full BGP lifecycle",
+        "Owned Zebra processes exited normally and were reaped"
+      ],
+      "excludes": [
+        "Different-kernel/device failure domains",
+        "Every BFD option and complete feature/platform qualification"
+      ],
+      "binary_sha256": "5725c2d1624517f3f83a4a5c63660a15d3633647ffc047117dfaa8f817555310",
+      "bgp_test_sha256": "628dbc280a68447f17c068af95fab5834337768cc651833af4d40c463850563b",
+      "bgp_binary_sha256": "d599a378667e4c56ef9e327378f447d58b248506f4101b8333e31100c227f60e"
+    },
+    "freebsd-pppoe-auth-matrix-2b0f019a": {
+      "level": "native-peer",
+      "outcome": "pass",
+      "revision": "ee305683342033706ed3b9d234acd13b65ddd748",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Independent mpd5 pap/pap, chap/chap, both/pap and both/chap; actual PAP/CHAP wire header assertions",
+        "Each mode: 3/3 bidirectional traffic before/after stop-start, foreign preservation, connected-daemon TERM exit0 in 2-3 seconds and native interface removal",
+        "All four final result markers followed successful owned cleanup"
+      ],
+      "excludes": [
+        "Full Router resource/installed service qualification",
+        "Prepared ng_ether/module baseline restoration",
+        "Authentication failure/MTU/device matrices and full PPPoE feature qualification"
+      ],
+      "script_revision": "2b0f019aa6e78fe6ccb2c8e41bd8ca2e927b03ed",
+      "binary_sha256": "22dca768e4debc5a1e3b1d0bb33fae39a214cf0662087c19cab96649b10cd3ba"
+    },
+    "plugin-process-linux-e4097d0b": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Real subscription controller/default plugin runner/subprocess/SQLite: stop, exit7, retry and durable no replay",
+        "Separate production CLI processes: stdin identity, generations, effective configuration and mask policy, failure retention, wall-clock TTL expiry and fallback restoration"
+      ],
+      "excludes": [
+        "Native route application/forwarding and provider credentials",
+        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Complete plugin/dynamic-configuration qualification"
+      ]
+    },
+    "plugin-process-freebsd-e4097d0b": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c",
+      "reference": "docs/design/routerd15-audit.md#integrated-native-go-and-expanded-peer-checks-2026-10-31",
+      "checks": [
+        "Real subscription controller/default plugin runner/subprocess/SQLite: stop, exit7, retry and durable no replay",
+        "Separate production CLI processes: stdin identity, generations, effective configuration and mask policy, failure retention, wall-clock TTL expiry and fallback restoration"
+      ],
+      "excludes": [
+        "Native route application/forwarding and provider credentials",
+        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Complete plugin/dynamic-configuration qualification"
+      ],
+      "cli_sha256": "67466729a122032e828961a6d20708adb795c7c2cfa5e66158826bb921538511"
     }
   },
   "features": [
@@ -982,11 +1093,15 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "plugin-process-linux-e4097d0b"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "plugin-process-freebsd-e4097d0b"
+        ]
       },
       "required_remaining_checks": [
         "Full current-source body/caller parity",
@@ -1692,13 +1807,16 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-combined-native-3e58c93a",
-          "linux-bfd-bgp-native-d1cfff8a"
+          "linux-bfd-bgp-native-d1cfff8a",
+          "bgp-peer-readiness-64f4a479",
+          "linux-bfd-both-modes-6aab35b5"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-portability-a2ba1bfa"
+          "freebsd-portability-a2ba1bfa",
+          "bgp-peer-readiness-64f4a479"
         ]
       },
       "required_remaining_checks": [
@@ -1734,7 +1852,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-bfd-bgp-native-d1cfff8a"
+          "linux-bfd-bgp-native-d1cfff8a",
+          "linux-bfd-both-modes-6aab35b5"
         ]
       },
       "freebsd": {
@@ -3051,7 +3170,8 @@
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-pppoe-shutdown-ee305683"
+          "freebsd-pppoe-shutdown-ee305683",
+          "freebsd-pppoe-auth-matrix-2b0f019a"
         ]
       },
       "required_remaining_checks": [

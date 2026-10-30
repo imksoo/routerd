@@ -2049,3 +2049,116 @@ not prove host reboot, kernel-state loss, storage failure recovery or continuity
 of already established application sessions. The source package is unchanged;
 the new commit extends the test and its documented acceptance criteria. The
 ledger separately binds package revision/hash and executed fixture revision/hash.
+
+
+### Integrated native Go and expanded peer checks, 2026-10-31
+
+The clean combined source `f294bb23e42f6d3a552d340779a3af1dca88f147`
+passed the complete ordinary Go suite on FreeBSD 14.3 amd64 with the native
+Go 1.25.9 toolchain, CGO disabled, two package/build workers and the pinned
+local module proxy. All 119 test-bearing packages passed: 3,949 top-level
+passes, 206 explicit skips and no failures (199.412 seconds including runner
+checks). All test events, including subtests, were 5,928 passes and 250 skips; nine packages had no
+tests. Source Git status was clean before and after execution. The first
+transfer retained the Linux file owner and Git refused to run before any test;
+correcting the private checkout's ownership resolved that setup failure without
+adding a global safe-directory exception.
+
+This combines the actual-OS LAN, mobility, RA, prepared resolver callback,
+WireGuard and VXLAN fixture repairs. The previous complete `7acdc692` native
+run had 43 top-level failures in `pkg/controller/chain`; it reached the end
+without the earlier MSS preview panic. The fixed-source result replaces those
+failures for this ordinary-test scope. It does not qualify every corresponding
+kernel operation or independent peer.
+
+The earlier clean Linux `7acdc692` whole suite passed 120 packages with 4,160
+top-level passes and 14 skips. The combined Linux `f294bb23` run completed with
+119 passing packages and one failing BGP package: 4,160 top-level passes,
+one failure and 14 skips. The raw BGP peer connected while its asynchronously
+created passive FSM was still Idle, which closes incoming connections. An
+unchanged-source 25-run repetition reproduced one failure. Test-only
+`64f4a47923e539ec79bb31258482481d4e7d89b4` waits for the actual Active state,
+within the existing deadline, before dialing the static peer. Dynamic peers,
+UPDATE/withdrawal and local-RIB assertions remain unchanged. All six modes
+passed 50 repetitions on Linux and 50 on actual FreeBSD; the complete Linux
+BGP package also passed. This focused repair is not a whole-suite pass at a
+newer integrated revision. The FreeBSD test binary SHA-256 was
+`26a28065423cd891f021d59d6a451e02c25254679b5facc20952f796606d99f0`.
+
+#### Single-hop and multihop BFD
+
+Clean `6aab35b502542637a570275f08570c9384a149ff` passed
+`sh scripts/linux-bfd-frr-smoke.sh` with both existing BFD configuration forms:
+a declared interface for single-hop and a local address for multihop. Each
+uses independent FRR processes and isolated network namespaces. Up, peer loss,
+Down, peer return, administrative shutdown, local restart, SQLite reopen,
+foreign-peer preservation and withdrawal passed in both forms. Single-hop FRR
+requires its fixture's real Zebra interface inventory; the first fixture lacked
+that inventory and reported a nonexistent interface. Supplying isolated Zebra
+processes resolved that setup problem, and both exited normally and were reaped.
+The same gate also passed actual BFD-driven IPv4 BGP reset, RIB/FIB withdrawal
+and traffic failure while IPv6 remained usable, recovery, and the full existing
+BGP lifecycle. This is same-kernel interoperability, not a physical failure-domain
+or every BFD option qualification.
+
+The pinned artifacts were BFD test
+`5725c2d1624517f3f83a4a5c63660a15d3633647ffc047117dfaa8f817555310`,
+BGP test `628dbc280a68447f17c068af95fab5834337768cc651833af4d40c463850563b`,
+and production routerd-bgp
+`d599a378667e4c56ef9e327378f447d58b248506f4101b8333e31100c227f60e`.
+
+#### FreeBSD PPPoE authentication matrix
+
+The actual `ee305683342033706ed3b9d234acd13b65ddd748` client binary
+(SHA-256 `22dca768e4debc5a1e3b1d0bb33fae39a214cf0662087c19cab96649b10cd3ba`)
+passed the `2b0f019aa6e78fe6ccb2c8e41bd8ca2e927b03ed` runtime script in all
+four supported client/independent-mpd5 combinations: pap/pap, chap/chap,
+both/pap and both/chap. Each acquired an IPCP address, passed 3/3 replies in
+both directions before and after stop/start, preserved a foreign same-name
+interface, and terminated a third connected session with exit zero and native
+interface removal. Connected termination took two or three seconds. Each final
+result was written only after owned process/interface cleanup passed.
+Authentication evidence captures only the 26-byte Ethernet/PPPoE/PPP/FSM header
+prefix; the protocol assertions distinguish PAP and CHAP without authentication
+payloads. Prepared ng_ether and its baseline module set remain a disposable-VM
+prerequisite; these results do not claim that preparation restored the original
+VM module state or that the full Router resource/installed service is qualified.
+
+#### Plugin process and effective-configuration checks
+
+At `e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c`, the actual subscription
+controller, default runner, independent shell executable and SQLite passed
+stop/child exit, exit-status-7 failure, retry and durable no-replay checks on
+Linux and FreeBSD. Separately built production routerctl processes passed
+stdin identity, generation publication, effective-route replacement, allowed
+masking, policy-removal rejection, preservation of the prior generation and
+expiry after failure, real-time TTL expiry and fallback restoration, and later
+generation advancement. The FreeBSD CLI SHA-256 was
+`67466729a122032e828961a6d20708adb795c7c2cfa5e66158826bb921538511`;
+its two native checks passed in 0.06 and 10.13 seconds. Reproduce the Linux
+process gate with `make check-routerd15-plugin-process`; the direct script's
+required tools and limitations are documented in
+[the process procedure](../operations/plugin-dynamic-process-test.md).
+These prove local process/persistence/effective-configuration behavior, not
+native route installation or forwarding. DynamicConfigSource and declared
+Plugin triggers still have no automatic execution caller in either reviewed
+baseline or current source and remain unfinished advertised entry points.
+
+#### Newly observed native boundaries and remaining work
+
+FreeBSD 14.3 `route -n get -host` can print
+`route: route has not been found: No error: 0` and exit zero. Native child
+acquisition exposed this before the parent-preservation stage. Production
+`2237d1ec6e5f1b3a058192d0e636058c9f1d6b14` recognizes the existing narrow
+absence messages independently of exit status. Unknown empty output, foreign
+routes, BGP protocol markers and replacement-interface protection remain
+unchanged; all related route tests passed after the actual-output regression
+was first observed failing. The same native trial showed that a FreeBSD P2P
+alias needs an explicit destination. Retaining another owner's child addresses
+and routing through the actual parent remains an active separate acceptance
+gate, not a pass inferred from the ordinary suite.
+
+All full-feature/platform verdicts remain unknown. The complete 1.0 scope,
+unimplemented advertised entry points, native forwarding and failure recovery,
+remaining platform/service combinations, and release qualification remain in
+the completion criteria. No production deployment or main merge is included.
