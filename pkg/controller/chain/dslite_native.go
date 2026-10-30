@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -96,15 +98,18 @@ func (c DSLiteTunnelController) recheckTunnelLease(spec api.DSLiteTunnelSpec, pr
 	return nil
 }
 
-func (c DSLiteTunnelController) requireTunnelInputs(ctx context.Context, name string, spec api.DSLiteTunnelSpec, plan dsliteTunnelPlan) error {
-	err := c.checkTunnelInputs(ctx, name, spec, plan)
+func (c DSLiteTunnelController) requireTunnelInputs(ctx context.Context, record dsliteTunnelReceipt, spec api.DSLiteTunnelSpec) error {
+	err := c.checkTunnelInputs(ctx, record.Resource, spec, record.Plan)
 	if errors.Is(err, errDSLiteInputsChanged) {
-		if withdrawErr := c.withdrawNativeTunnelResource(ctx, name); withdrawErr != nil {
+		if withdrawErr := c.withdrawNativeTunnel(ctx, record); withdrawErr != nil {
 			return fmt.Errorf("withdraw DS-Lite after source change: %w", withdrawErr)
 		}
 		return err
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return c.checkTunnelReceipt(ctx, record)
 }
 
 // The tunnel owns its inner addresses. The source /128 has its separate finite
@@ -254,22 +259,51 @@ func (c DSLiteTunnelController) nativeTunnelReceipts() ([]dsliteTunnelReceipt, e
 	return records, nil
 }
 
-func (c DSLiteTunnelController) saveNativeTunnel(record dsliteTunnelReceipt, remove bool) error {
+func (c DSLiteTunnelController) saveNativeTunnel(previous *dsliteTunnelReceipt, record dsliteTunnelReceipt, remove bool) error {
 	records, err := c.nativeTunnelReceipts()
 	if err != nil {
 		return err
 	}
 	next := make([]dsliteTunnelReceipt, 0, len(records)+1)
+	found := false
 	for _, existing := range records {
 		if existing.Resource != record.Resource {
 			next = append(next, existing)
+			continue
 		}
+		if previous == nil || existing != *previous {
+			return errors.New("DS-Lite ownership receipt changed before persistence")
+		}
+		found = true
+	}
+	if previous != nil && (!found || previous.Resource != record.Resource) {
+		return errors.New("DS-Lite ownership receipt disappeared before persistence")
 	}
 	if !remove {
 		next = append(next, record)
 	}
 	sort.Slice(next, func(i, j int) bool { return next[i].Resource < next[j].Resource })
 	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", dsliteNativeStatusName, map[string]any{"tunnels": next})
+}
+
+func (c DSLiteTunnelController) checkTunnelReceipt(ctx context.Context, record dsliteTunnelReceipt) error {
+	scope, err := c.tunnelScope(ctx)
+	if err != nil {
+		return err
+	}
+	if scope != record.Scope {
+		return errors.New("DS-Lite kernel scope changed while observing ownership")
+	}
+	records, err := c.nativeTunnelReceipts()
+	if err != nil {
+		return err
+	}
+	for _, current := range records {
+		if current == record {
+			return nil
+		}
+	}
+	return errors.New("DS-Lite ownership receipt changed while observing")
 }
 
 func dsliteNativeToken(alias string) string {
@@ -403,20 +437,34 @@ func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name st
 	}
 	var addresses []struct {
 		Addresses []struct {
-			Local, Peer string
-			PrefixLen   *int `json:"prefixlen"`
+			Local     string
+			Peer      string `json:"address"`
+			PrefixLen *int   `json:"prefixlen"`
 		} `json:"addr_info"`
 	}
-	if err := json.Unmarshal(out, &addresses); err != nil || len(addresses) != 1 || addresses[0].Addresses == nil {
+	if err := json.Unmarshal(out, &addresses); err != nil || addresses == nil || len(addresses) > 1 || len(addresses) == 1 && addresses[0].Addresses == nil {
 		return observed, errors.New("invalid DS-Lite inner address observation")
 	}
-	for _, address := range addresses[0].Addresses {
-		peer := strings.TrimSuffix(address.Peer, "/32")
-		if peer == dsliteInnerRemoteIPv4 && address.PrefixLen != nil && *address.PrefixLen == 32 {
-			observed.InnerLocal = canonicalIPAddress(address.Local)
+	// ip -4 omits a newly created tunnel until it has an IPv4 address.
+	for _, link := range addresses {
+		for _, address := range link.Addresses {
+			peer := strings.TrimSuffix(address.Peer, "/32")
+			if peer == dsliteInnerRemoteIPv4 && address.PrefixLen != nil && *address.PrefixLen == 32 {
+				observed.InnerLocal = canonicalIPAddress(address.Local)
+			}
 		}
 	}
-	return observed, nil
+	// The address query can wait while the named link is replaced. Its result
+	// belongs only to the same native identity, never to a later namesake.
+	fresh, err := c.observeNativeTunnelLink(ctx, name)
+	if err != nil || !fresh.Exists {
+		return fresh, err
+	}
+	if fresh.Index != observed.Index || fresh.Kind != observed.Kind || fresh.Token != observed.Token {
+		return fresh, errors.New("DS-Lite native identity changed during inner address observation")
+	}
+	fresh.InnerLocal = observed.InnerLocal
+	return fresh, nil
 }
 
 func (c DSLiteTunnelController) verifyNativeTunnel(ctx context.Context, record dsliteTunnelReceipt, observed dsliteTunnelObservation) error {
@@ -441,7 +489,15 @@ func checkNativeTunnelIdentity(osName platform.OS, scope string, record dsliteTu
 	if observed.Kind != kind || observed.Token != record.Token || record.IfIndex != 0 && record.IfIndex != observed.Index {
 		return fmt.Errorf("DS-Lite interface %s is foreign or has been replaced", record.Plan.Name)
 	}
+	if record.OS == platform.OSLinux && record.IfIndex == 0 && observed.Index != dsliteCreationIndex(record.Token) {
+		return errors.New("DS-Lite pending creation index differs from its requested identity")
+	}
 	return nil
+}
+
+func dsliteCreationIndex(token string) int {
+	digest := sha256.Sum256([]byte(token))
+	return int(binary.BigEndian.Uint32(digest[:4])&0x3fffffff) + 1024
 }
 
 func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record dsliteTunnelReceipt) error {
@@ -456,8 +512,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 		return err
 	}
 	if observed.Exists || record.OwnDefault {
+		previous := record
 		record.Pending = true
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&previous, record, false); err != nil {
 			return err
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)
@@ -465,6 +522,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 			return err
 		}
 		if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
+			return err
+		}
+		if err := c.checkTunnelReceipt(ctx, record); err != nil {
 			return err
 		}
 	}
@@ -475,8 +535,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 	}
 
 	if observed.Exists {
+		previous := record
 		record.Pending = true
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&previous, record, false); err != nil {
 			return err
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)
@@ -486,13 +547,22 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 		if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
 			return err
 		}
+		if err := c.checkTunnelReceipt(ctx, record); err != nil {
+			return err
+		}
 		if observed.Exists {
-			command, args := "ip", []string{"link", "delete", "dev", record.Plan.Name}
-			if record.OS == platform.OSFreeBSD {
-				command, args = "ifconfig", []string{record.Plan.Name, "destroy"}
-			}
-			if _, err := c.endpointCommand(ctx, command, args...); err != nil {
-				return err
+			if record.OS == platform.OSLinux {
+				remove := c.DeleteByIndex
+				if remove == nil {
+					remove = deleteDSLiteByIndex
+				}
+				if err := remove(ctx, observed.Index, record.Plan.Name, "routerd-dslite:"+record.Token, record.Scope); err != nil {
+					return err
+				}
+			} else {
+				if _, err := c.endpointCommand(ctx, "ifconfig", record.Plan.Name, "destroy"); err != nil {
+					return err
+				}
 			}
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)
@@ -506,7 +576,7 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", record.Resource, map[string]any{"phase": PhaseDisabled, "reason": "Withdrawn", "interface": record.Plan.Name, "dryRun": false}); err != nil {
 		return err
 	}
-	return c.saveNativeTunnel(record, true)
+	return c.saveNativeTunnel(&record, record, true)
 }
 
 func (c DSLiteTunnelController) withdrawNativeTunnelResource(ctx context.Context, name string) error {
@@ -567,7 +637,7 @@ func (c DSLiteTunnelController) cleanupNativeTunnels(ctx context.Context) error 
 			if !oldOK || !newOK || oldKernel == newKernel {
 				return errors.New("DS-Lite receipt belongs to another namespace or jail")
 			}
-			if err := c.saveNativeTunnel(record, true); err != nil {
+			if err := c.saveNativeTunnel(&record, record, true); err != nil {
 				return err
 			}
 			continue
@@ -655,11 +725,21 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 	if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
 		return err
 	}
+	var previous *dsliteTunnelReceipt
+	if record.IfIndex > 0 || record.Pending {
+		for _, current := range records {
+			if current == record {
+				prior := current
+				previous = &prior
+				break
+			}
+		}
+	}
 	record.Pending = true
 	if !observed.Exists {
 		record.IfIndex = 0
 	}
-	if err := c.saveNativeTunnel(record, false); err != nil {
+	if err := c.saveNativeTunnel(previous, record, false); err != nil {
 		return err
 	}
 	// SQLite writes may wait: recheck native identity after the pending fence.
@@ -674,18 +754,34 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		return errors.New("DS-Lite creation premise changed after pending write")
 	}
 	observed = current
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
 	if !observed.Exists {
 		var createErr error
 		if record.OS == platform.OSLinux {
-			args := []string{"link", "add", "name", plan.Name, "alias", "routerd-dslite:" + record.Token, "type", "ip6tnl", "mode", "ipip6", "local", plan.Local, "remote", plan.Remote}
+			index := dsliteCreationIndex(record.Token)
+			args := []string{"link", "add", "name", plan.Name, "index", strconv.Itoa(index), "type", "ip6tnl", "mode", "ipip6", "local", plan.Local, "remote", plan.Remote}
 			if plan.Underlay != "" {
 				args = append(args, "dev", plan.Underlay)
 			}
 			args = append(args, "encaplimit", plan.EncapLimit)
 			_, createErr = c.endpointCommand(ctx, "ip", args...)
+			if createErr != nil {
+				return createErr
+			}
+			// Only the exclusive create ACK authorizes installing a cookie.
+			// A resumed pending record cannot grant this authority to a bare link.
+			if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
+				return err
+			}
+			install := c.SetAliasByIndex
+			if install == nil {
+				install = setDSLiteAliasByIndex
+			}
+			if err := install(index, plan.Name, "routerd-dslite:"+record.Token); err != nil {
+				return err
+			}
 		} else {
 			_, createErr = c.endpointCommand(ctx, "ifconfig", "gif", "create", "name", plan.Name, "description", "routerd-dslite:"+record.Token)
 		}
@@ -699,8 +795,9 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		if !observed.Exists {
 			return errors.Join(createErr, errors.New("DS-Lite interface absent after creation"))
 		}
+		prior := record
 		record.IfIndex = observed.Index
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&prior, record, false); err != nil {
 			return errors.Join(createErr, err)
 		}
 		if createErr != nil {
@@ -708,12 +805,13 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		}
 	}
 	if record.IfIndex == 0 {
+		prior := record
 		record.IfIndex = observed.Index
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&prior, record, false); err != nil {
 			return err
 		}
 	}
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
 	if record.OS == platform.OSFreeBSD {
@@ -761,11 +859,12 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 			return err
 		}
 	}
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
+	prior := record
 	record.Pending = false
-	return c.saveNativeTunnel(record, false)
+	return c.saveNativeTunnel(&prior, record, false)
 }
 
 func (c DSLiteTunnelController) observeTunnelDefault(ctx context.Context, record dsliteTunnelReceipt) (bool, bool, error) {
@@ -825,8 +924,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 	if matching {
 		return nil
 	}
+	previous := *record
 	record.OwnDefault = true
-	if err := c.saveNativeTunnel(*record, false); err != nil {
+	if err := c.saveNativeTunnel(&previous, *record, false); err != nil {
 		return err
 	}
 	matching, collision, err = c.observeTunnelDefault(ctx, *record)
@@ -835,6 +935,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 	}
 	if collision {
 		return errors.New("DS-Lite default route premise changed after pending write")
+	}
+	if err := c.checkTunnelReceipt(ctx, *record); err != nil {
+		return err
 	}
 	var applyErr error
 	if record.OS == platform.OSFreeBSD {
@@ -852,6 +955,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 func (c DSLiteTunnelController) withdrawTunnelDefault(ctx context.Context, record dsliteTunnelReceipt) error {
 	matching, _, err := c.observeTunnelDefault(ctx, record)
 	if err != nil || !matching {
+		return err
+	}
+	if err := c.checkTunnelReceipt(ctx, record); err != nil {
 		return err
 	}
 	if record.OS == platform.OSFreeBSD {

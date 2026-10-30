@@ -93,6 +93,29 @@ func (f *dsliteNativeFixture) pendingBeforeWrite(line string) {
 	f.writes = append(f.writes, line)
 }
 
+func (f *dsliteNativeFixture) setAliasByIndex(index int, name, proof string) error {
+	link, exists := f.links[name]
+	if !exists || link.Index != index || link.Kind != "ip6tnl" || link.Token != "" {
+		return errors.New("acknowledged DS-Lite identity changed before cookie installation")
+	}
+	f.pendingBeforeWrite("netlink alias " + name)
+	link.Token = strings.TrimPrefix(proof, "routerd-dslite:")
+	f.links[name] = link
+	return nil
+}
+
+func (f *dsliteNativeFixture) deleteByIndex(ctx context.Context, index int, name, proof, scope string) error {
+	link, exists := f.links[name]
+	if !exists {
+		return nil
+	}
+	if scope == "" || link.Index != index || link.Kind != "ip6tnl" || "routerd-dslite:"+link.Token != proof {
+		return errors.New("DS-Lite native identity changed before indexed deletion")
+	}
+	_, err := f.command(ctx, "ip", "link", "delete", "dev", name)
+	return err
+}
+
 func (f *dsliteNativeFixture) command(_ context.Context, name string, args ...string) ([]byte, error) {
 	line := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, line)
@@ -127,9 +150,12 @@ func (f *dsliteNativeFixture) command(_ context.Context, name string, args ...st
 	}
 	if len(args) > 3 && strings.Join(args[:3], " ") == "-j -4 addr" {
 		link := f.links[value("dev")]
+		if link.InnerLocal == "" {
+			return []byte(`[]`), nil
+		}
 		entries := []map[string]any{}
 		if link.InnerLocal != "" {
-			entries = append(entries, map[string]any{"family": "inet", "local": link.InnerLocal, "prefixlen": 32, "peer": dsliteInnerRemoteIPv4})
+			entries = append(entries, map[string]any{"family": "inet", "local": link.InnerLocal, "prefixlen": 32, "address": dsliteInnerRemoteIPv4})
 		}
 		return json.Marshal([]map[string]any{{"addr_info": entries}})
 	}
@@ -190,9 +216,14 @@ func (f *dsliteNativeFixture) command(_ context.Context, name string, args ...st
 			return nil, errors.New("File exists")
 		}
 		f.nextIndex++
-		link := dsliteTunnelObservation{Exists: true, Index: f.nextIndex, MTU: 1280, Kind: "ip6tnl", Token: strings.TrimPrefix(value("alias"), "routerd-dslite:"), Local: value("local"), Remote: value("remote"), Underlay: value("dev"), EncapLimit: value("encaplimit")}
+		link := dsliteTunnelObservation{Exists: true, Index: f.nextIndex, MTU: 1280, Kind: "ip6tnl", Local: value("local"), Remote: value("remote"), Underlay: value("dev"), EncapLimit: value("encaplimit")}
 		if name == "ifconfig" {
 			link.Kind, link.Token = "gif", strings.TrimPrefix(value("description"), "routerd-dslite:")
+		} else {
+			link.Index, _ = strconv.Atoi(value("index"))
+			if link.Index < 1 {
+				return nil, errors.New("DS-Lite creation did not request an exact index")
+			}
 		}
 		f.links[native] = link
 		if f.loseCreateReply {
@@ -290,7 +321,7 @@ func newDSLiteNativeController(t *testing.T, osName platform.OS) (DSLiteTunnelCo
 	if osName == platform.OSFreeBSD {
 		scope = "freebsd:10:20:0"
 	}
-	c := DSLiteTunnelController{Router: router, Store: s, OS: osName, NativeScope: func(context.Context) (string, error) { return scope, nil }, NativeInterfaceIndex: f.index, CommandOutput: f.command}
+	c := DSLiteTunnelController{Router: router, Store: s, OS: osName, NativeScope: func(context.Context) (string, error) { return scope, nil }, NativeInterfaceIndex: f.index, CommandOutput: f.command, SetAliasByIndex: f.setAliasByIndex, DeleteByIndex: f.deleteByIndex}
 	return c, f, s
 }
 
@@ -376,7 +407,7 @@ func TestDSLiteNativeFailedCleanupAndPublicationRetainRecovery(t *testing.T) {
 	}
 	store.SQLiteStore = reopened
 	t.Cleanup(func() { _ = reopened.Close() })
-	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, NativeInterfaceIndex: c.NativeInterfaceIndex, CommandOutput: c.CommandOutput}
+	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, NativeInterfaceIndex: c.NativeInterfaceIndex, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex, DeleteByIndex: c.DeleteByIndex}
 	if err := restarted.reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -399,15 +430,17 @@ func TestDSLiteNativeFailedCleanupAndPublicationRetainRecovery(t *testing.T) {
 	}
 }
 
-func TestDSLiteNativeAmbiguousCreateRecoversOnlyTaggedLink(t *testing.T) {
-	c, f, _ := newDSLiteNativeController(t, platform.OSLinux)
+func TestDSLiteNativeAmbiguousCreateCannotRetagBareLink(t *testing.T) {
+	c, f, store := newDSLiteNativeController(t, platform.OSLinux)
 	f.loseCreateReply = true
 	if err := c.reconcile(t.Context()); err == nil {
 		t.Fatal("lost creation result acknowledged")
 	}
 	f.loseCreateReply = false
-	if err := c.reconcile(t.Context()); err != nil {
-		t.Fatal(err)
+	before := len(f.writes)
+	restarted := DSLiteTunnelController{Router: c.Router, Store: store, OS: c.OS, NativeScope: c.NativeScope, CommandOutput: c.CommandOutput, SetAliasByIndex: c.SetAliasByIndex, DeleteByIndex: c.DeleteByIndex}
+	if err := restarted.reconcile(t.Context()); err == nil || len(f.writes) != before {
+		t.Fatalf("ambiguous cookieless create was retagged or mutated after restart: %v writes=%v", err, f.writes[before:])
 	}
 	creates := 0
 	for _, write := range f.writes {
@@ -417,6 +450,26 @@ func TestDSLiteNativeAmbiguousCreateRecoversOnlyTaggedLink(t *testing.T) {
 	}
 	if creates != 1 {
 		t.Fatalf("pending token recovery duplicated creation: %v", f.writes)
+	}
+	if receipts, err := c.nativeTunnelReceipts(); err != nil || len(receipts) != 1 || !receipts[0].Pending || f.links["ds-owned"].Token != "" {
+		t.Fatalf("ambiguous creation lost its unresolved receipt: %+v err=%v", receipts, err)
+	}
+}
+
+func TestDSLiteNativeReplacementBeforeCookieIsNotAdopted(t *testing.T) {
+	c, f, _ := newDSLiteNativeController(t, platform.OSLinux)
+	c.SetAliasByIndex = func(index int, name, proof string) error {
+		link := f.links[name]
+		link.Index++
+		f.links[name] = link
+		return f.setAliasByIndex(index, name, proof)
+	}
+	if err := c.reconcile(t.Context()); err == nil {
+		t.Fatal("same-name replacement received the pending creation cookie")
+	}
+	before := len(f.writes)
+	if err := c.reconcile(t.Context()); err == nil || len(f.writes) != before || f.links["ds-owned"].Token != "" {
+		t.Fatalf("replacement was retagged or destroyed: %v writes=%v", err, f.writes[before:])
 	}
 }
 
