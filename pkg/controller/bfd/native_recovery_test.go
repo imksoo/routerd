@@ -114,6 +114,10 @@ func TestBFDRecoversUncertainAddAndWithdrawsOnlyOwnedPeers(t *testing.T) {
 	if err := controller.Reconcile(t.Context()); err == nil {
 		t.Fatal("native success plus failed final receipt accepted")
 	}
+	acknowledged, err := controller.readNativeReceipt()
+	if err != nil || !acknowledged.Acknowledged || len(acknowledged.Pending) != 2 || len(acknowledged.Held) != 0 {
+		t.Fatalf("successful command/readback was not acknowledged before final receipt failure: %+v err=%v", acknowledged, err)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
