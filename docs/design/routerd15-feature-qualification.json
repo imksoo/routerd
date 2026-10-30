@@ -628,6 +628,57 @@
         "Physical or separate-OS-host failure domains; peers use distinct VNET kernel stacks",
         "All firewall actions, IPv6 PF, port forwarding or complete baseline NAT/policy functions"
       ]
+    },
+    "linux-wan-dhcpv4-31d5f4d4": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "31d5f4d4d4d650c44d88cd89ff2f41b94821932c",
+      "fixture_revision": "670992a30f5ed0bec9d74d16e95ec4e811a82054",
+      "reference": "docs/design/routerd15-audit.md#wan-dhcpv4-first-apply-and-independent-lease-lifecycle",
+      "package_sha256": "9d1b37216097215effd5c49c1d8fbee99ac952fc3f4dd0701400fe75733172d2",
+      "environment": "Dedicated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; formal CGO_ENABLED=0 make dist package through systemd; Kea 2.4.1, upstream DNS/HTTP and LAN peer in separate network namespaces inside the VM.",
+      "reproduction": "sudo bash scripts/linux-wan-dhcpv4-lifecycle-smoke.sh --disposable-vm \"$PWD/tests/fixtures/linux-wan-dhcpv4-lifecycle.json\" /opt/routerd-wan-peer",
+      "checks": [
+        "First apply from empty configuration succeeds while a not-yet-started DHCP helper is honestly Pending; usable lease then installs address/default route with metric 4242 and per-link resolved DNS/domain",
+        "LAN DNS over UDP/TCP and routed HTTP; independent peer observes leased WAN NAT source",
+        "T1 renewal advances lease epoch; unanswered next T1 and restored Kea before T2 yield captured unicast Renew, broadcast Rebind and correlated ACK",
+        "Real 90-second expiry withdraws address/default route/resolved DNS/domain and forwarding",
+        "Kea-only return restores address/route/DNS/NAT without product restart; main PID unchanged",
+        "Empty apply returns Healthy with zero resources/issues/controller errors; no trial namespaces/interfaces/nft tables/units and original IPv4 forwarding restored",
+        "Direct read-only SQLite inspection finds zero DHCPv4Client and DNSResolver rows; DNSForwarder/Upstream retain empty configuration rows, not live lease/process authority"
+      ],
+      "excludes": [
+        "FreeBSD DHCPv4 dataplane",
+        "Physical or separate-host failure domains",
+        "Other DHCP servers, WAN hardware and multi-WAN failover",
+        "WAN DHCP reboot/NAK/server identity changes and complete 1.0 parity"
+      ]
+    },
+    "linux-wan-first-apply-4ac07b78": {
+      "level": "actual-controller",
+      "outcome": "fail",
+      "revision": "4ac07b786556a55f1e0daaa4df4bc18973b4d296",
+      "reference": "docs/design/routerd15-audit.md#wan-dhcpv4-first-apply-and-independent-lease-lifecycle",
+      "checks": [
+        "Initial live apply returned runtime-apply failure because the lease actor read its socket before supervisor startup; locally reproduced by controller and actual one-shot tests, fixed in 31d5f4d4"
+      ],
+      "excludes": [
+        "This historical failed observation does not describe the later fixed package"
+      ]
+    },
+    "normal-code-gate-31d5f4d4": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "31d5f4d4d4d650c44d88cd89ff2f41b94821932c",
+      "reference": "docs/design/routerd15-audit.md#wan-dhcpv4-first-apply-and-independent-lease-lifecycle",
+      "environment": "Linux amd64, Go 1.25.9, CGO_ENABLED=1; no cached package verdicts reported. Distribution separately built static with CGO_ENABLED=0.",
+      "reproduction": "go test -json ./...",
+      "checks": [
+        "120 packages passed; nine had no tests; 4,152 top-level tests passed; 13 skipped; zero failures"
+      ],
+      "excludes": [
+        "Normal tests do not replace opt-in native/peer/platform qualification"
+      ]
     }
   },
   "features": [
@@ -1447,21 +1498,29 @@
         ],
         "related_test_files": [
           "pkg/dhcpv4client/client_test.go",
-          "pkg/controller/dhcpv4client/controller_test.go"
+          "pkg/controller/dhcpv4client/controller_test.go",
+          "pkg/controller/dhcpv4client/startup_pending_test.go",
+          "pkg/controller/chain/dhcpv4_first_apply_test.go",
+          "scripts/linux-wan-dhcpv4-lifecycle-smoke.sh",
+          "scripts/verify-dhcpv4-rebind_test.py"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-wan-dhcpv4-31d5f4d4",
+          "linux-wan-first-apply-4ac07b78",
+          "normal-code-gate-31d5f4d4"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent WAN DHCP acquisition/renewal/rebind/expiry",
-        "Address/default route/DNS effects and recovery on each OS"
+        "Independent FreeBSD WAN DHCP acquisition/renewal/rebind/expiry and address/default-route/DNS recovery",
+        "WAN DHCP reboot, NAK, server identity changes, multi-WAN and remaining baseline options/peer modes"
       ]
     },
     {

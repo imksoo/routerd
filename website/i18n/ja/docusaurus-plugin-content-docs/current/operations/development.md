@@ -145,6 +145,8 @@ client MAC が一致する ACK を要求し、lease 時刻の更新も確認し�
 [RFC 2131 の再バインド](https://www.rfc-editor.org/rfc/rfc2131#section-4.4.5)と新規取得を区別します。
 再度停止して実期限でアドレス・経路・DNS/domain・転送が失われること、Kea の復帰だけで
 製品再起動なしに復旧すること、空設定への置換が古いエラーを残さず Healthy になることも検査します。
+必要な交換が保存済みファイルに揃ったことを確認してから capture を停止します。
+daemon の ACK 受信だけでは libpcap のカーネルバッファから保存済みとは判断できません。
 
 成功時の生 capture・出力は削除し、namespace を撤去して元の forwarding 値へ戻します。
 失敗時は製品と peer を停止し、当該 fixture をローカル再現・修正まで保持します。

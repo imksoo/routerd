@@ -80,6 +80,13 @@ The ISP gives you a public IPv4 address via DHCPv4 and an IPv6 prefix via DHCPv6
 
 `DHCPv4Client` runs `routerd-dhcpv4-client` and writes the lease to `lease.json`. The kernel takes the address; routerd publishes events for downstream resources to react.
 
+On first apply, the supervised client's socket may not exist yet. With no prior
+lease or pending/applied effects, this is reported as `Pending/DaemonUnavailable`
+while the supervisor starts the client; apply does not fail solely on that initial
+missing socket. Pending is not lease readiness. Loss of an existing client's
+authority or other socket errors remains an error, and a known expired lease
+still requires address, route and DNS withdrawal.
+
 `DHCPv6PrefixDelegation` runs `routerd-dhcpv6-client` and obtains an IA_PD. `IPv6DelegatedAddress` carves a `/64` (or other length) for a LAN side.
 
 ## Upstream NTP / SNTP

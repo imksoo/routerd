@@ -1713,3 +1713,66 @@ found no trial jail/interface, restored forwarding=0, empty rules/states and
 PF returned to its previously unloaded state. This qualifies rendered PF
 source-affinity/NAT traffic in VNET, not controller-owned reconciliation,
 IPv6, physical failover or complete firewall parity.
+
+
+### WAN DHCPv4 first apply and independent lease lifecycle
+
+The formal static Linux package `31d5f4d4`, with fixture `670992a3`, passed
+`scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` in an isolated Ubuntu 24.04.4 VM
+(kernel 6.8.0-124-generic). Its independent Kea 2.4.1 server, DNS/HTTP upstream
+and LAN client used separate namespaces inside that VM. This is a real-kernel,
+independent-implementation gate, not a separate-machine or physical WAN trial.
+
+The gate starts from empty configuration and applies the product configuration
+through routerctl. A leased /24 address, metric-4242 default route and actual
+systemd-resolved per-link DNS/domain appear. The LAN client obtains UDP/TCP DNS
+answers from the learned upstream and reaches an off-link HTTP destination;
+the independent HTTP peer sees the leased WAN address after NAT. T1 renewal
+advances the lease epoch. Kea then stops for the next T1 attempt and returns
+before T2; capture must contain the same transaction/MAC's unicast Renew,
+broadcast Rebind with ciaddr and matching ACK. The exchange and post-rebind
+traffic passed. Stopping Kea again causes real 90-second expiry: address,
+default route, learned DNS/domain and forwarding disappear. Returning only
+Kea restores all four and LAN DNS/NAT without restarting the product.
+
+Empty apply finishes Healthy with zero declared resources, phase issues or
+controller errors. Independent post-inspection found only original interfaces,
+no trial namespaces/nft tables/units, restored IPv4 forwarding=0 and unchanged
+IPv6 forwarding=1. The service remained active with no automatic restarts.
+SQLite contained zero DHCPv4Client and DNSResolver rows. Two empty DNSForwarder/
+DNSUpstream configuration rows remain; they carry no lease/process authority,
+and this check does not claim that every historical configuration row is removed.
+
+The initial `4ac07b78` run exposed a product failure: the DHCPv4 lease actor read
+its socket before the supervisor started the helper, causing first apply to
+return runtime-apply failure. Test-first commit `ba81d2cd` reproduced it both in
+the controller and actual one-shot caller. `31d5f4d4` permits Pending only for
+ENOENT without a prior lease, deadline, applied or pending effect. Existing
+worker loss, other I/O errors, expiry withdrawal and ownership-read failures
+remain failures. A newly available helper replaces the pending observation.
+
+Two fixture errors were corrected before the final pass: Kea DHCPv4 does not
+accept DHCPv6's data-directory setting (same-binary local parser RED/GREEN),
+and stopping tcpdump immediately after the helper's ACK can discard the final
+kernel-buffered exchange. An isolated local netns reproduced zero saved packets
+on immediate stop and one saved packet after observing it. The procedure now
+waits for the correlated exchange in the saved capture before stopping capture;
+it does not infer wire success from lease status. The lease state names use the
+actual case-sensitive Bound/Renewing contract.
+
+At `31d5f4d4`, the full Linux `go test -json ./...` gate passed 120 packages and
+4,152 top-level tests, with nine no-test packages, 13 skipped tests and zero
+failures (no cached package verdicts). Focused controller/one-shot safety cases,
+Python capture tests, shell checks, schema/examples and formal static distribution
+checks passed. The relevant source review covered `pkg/dhcpv4client/client.go`,
+`snapshot.go`, `cmd/routerd-dhcpv4-client/main.go`,
+`pkg/controller/dhcpv4client/controller.go`, `pkg/controller/chain/chain.go`,
+`startup_supervisor_order_test.go`, `runtime_apply.go`, `pkg/api/specs.go`,
+`pkg/controller/dnsresolver/controller.go` and their focused tests.
+
+Reproduction prerequisites and pass criteria are in the English/Japanese
+[development procedure](../operations/development.md#linux-wan-dhcpv4-lifecycle-vm-gate).
+Successful raw captures are deleted automatically. Resolved failed-run captures,
+outputs and superseded duplicate packages are removed after the final pass.
+The ledger binds the package hash and revisions. FreeBSD WAN DHCP, reboot/NAK,
+server identity changes, multi-WAN failover and complete 1.0 parity remain open.
