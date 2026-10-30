@@ -49,6 +49,7 @@ func TestTunnelFreeBSDParentPreservesAcquiredChildAddress(t *testing.T) {
 				t.Fatal(err)
 			}
 			failDelete := tt.scenario == "delete-error"
+			implicitReplacement := false
 			var effects [][]string
 			parent := TunnelInterfaceController{Router: router, Store: store, OS: platform.OSFreeBSD,
 				Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -64,7 +65,7 @@ func TestTunnelFreeBSDParentPreservesAcquiredChildAddress(t *testing.T) {
 						return []byte(output), nil
 					}
 					effects = append(effects, append([]string{name}, args...))
-					if name == "ifconfig" && len(args) == 4 && args[0] == tt.name && args[1] == "inet" {
+					if name == "ifconfig" && len(args) >= 4 && args[0] == tt.name && args[1] == "inet" {
 						if args[3] == "-alias" {
 							if failDelete && args[2] == oldAddress {
 								failDelete = false
@@ -72,6 +73,9 @@ func TestTunnelFreeBSDParentPreservesAcquiredChildAddress(t *testing.T) {
 							}
 							delete(addresses, args[2])
 						} else {
+							if len(args) != 5 || args[4] != "alias" {
+								implicitReplacement = true
+							}
 							addresses[args[2]] = args[3]
 						}
 					}
@@ -92,6 +96,9 @@ func TestTunnelFreeBSDParentPreservesAcquiredChildAddress(t *testing.T) {
 			}
 			if _, present := addresses["192.0.2.99/32"]; !present {
 				t.Fatalf("FreeBSD %s parent removed its acknowledged child address: %v", tt.mode, effects)
+			}
+			if implicitReplacement {
+				t.Fatalf("parent address update used implicit first-address replacement: %v", effects)
 			}
 			if spec.Address != oldAddress {
 				if _, present := addresses[oldAddress]; present {
