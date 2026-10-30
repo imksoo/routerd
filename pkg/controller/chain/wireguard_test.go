@@ -1028,7 +1028,11 @@ spec:
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 1 || calls[0] != "ip link delete dev wg-old" {
+	want := "ip link delete dev wg-old"
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		want = "ifconfig wg-old destroy"
+	}
+	if len(calls) != 1 || calls[0] != want {
 		t.Fatalf("calls = %#v, want stale link delete", calls)
 	}
 	if _, ok := store[api.NetAPIVersion+"/WireGuardInterface/old"]; ok {
@@ -1185,6 +1189,7 @@ spec:
 	}
 	native := withWireGuardNativeFixture(t, &controller)
 	native.own(t, "wg0", "wg0", 51820)
+	native.mtus["wg0"] = 1420
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -1508,7 +1513,9 @@ func TestCloudEdgeRRExamplesDeriveOnlyWGAdmissionPeers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load %s: %v", example, err)
 			}
-			if err := config.Validate(router); err != nil {
+			// These examples declare Linux-only FOU transports. Peer derivation
+			// is pure configuration work against that explicit target platform.
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
 				t.Fatalf("validate %s: %v", example, err)
 			}
 			assertResourceCount(t, router.Spec.Resources, api.MobilityAPIVersion, "SAMEnrollmentClaim", 0)
