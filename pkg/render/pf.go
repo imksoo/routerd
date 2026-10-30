@@ -4,6 +4,8 @@ package render
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -11,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/sam"
 )
@@ -72,8 +75,8 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 				if err != nil {
 					return nil, err
 				}
-				if spec.FromZone == "self" || spec.ToZone != "self" {
-					return nil, fmt.Errorf("%s FreeBSD PF supports only input rules to self; forwarding/output zone selectors cannot be enforced by this backend", res.ID())
+				if err := config.ValidatePFFirewallRule(res.ID(), spec); err != nil {
+					return nil, err
 				}
 				rules = append(rules, res)
 			}
@@ -107,6 +110,13 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 
 	zoneMap, err := nftFirewallZones(aliases, zones)
 	if err != nil {
+		return nil, err
+	}
+	sourceSelectorIngress, err := pfIngressSourceSelectorRules(router, aliases, ingressRules, rules)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePFZoneRules(zoneMap, rules, nat44Rules, sourceSelectorIngress, aliases); err != nil {
 		return nil, err
 	}
 	pfClientPolicies, err := pfClientPolicies(router, aliases, clientPolicies)
@@ -184,7 +194,7 @@ func (rule pfEgressRouteToRule) render(onExpr string) string {
 	if onExpr != "" {
 		on = " on " + onExpr
 	}
-	return "pass in quick" + on + " route-to { " + strings.Join(rule.hosts, ", ") + " } round-robin sticky-address " + rule.family + " from " + rule.source + " to " + rule.destination + " keep state label " + pfQuote("routerd:egress-route:"+rule.name)
+	return "pass in quick" + on + " route-to { " + strings.Join(rule.hosts, ", ") + " } round-robin sticky-address " + rule.family + " from " + rule.source + " to " + rule.destination + " keep state label " + pfRuleLabel("routerd:egress-route:"+rule.name)
 }
 
 func pfEgressRouteToRules(resources []api.Resource, aliases map[string]string) ([]pfEgressRouteToRule, error) {
@@ -454,7 +464,7 @@ func PFNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule, states .
 		destination := defaultString(rule.ListenAddress, "any")
 		ifnames := compactStrings(append([]string{rule.ListenInterface}, rule.HairpinInterfaces...))
 		for _, ifname := range ifnames {
-			buf.WriteString("block " + action + " in quick on " + pfQuote(ifname) + " inet proto " + rule.Protocol + " from any to " + destination + " port " + strconv.Itoa(rule.ListenPort) + " label " + pfQuote("routerd:"+rule.ResourceKind+":"+rule.Name+":unavailable") + "\n")
+			buf.WriteString("block " + action + " in quick on " + pfQuote(ifname) + " inet proto " + rule.Protocol + " from any to " + destination + " port " + strconv.Itoa(rule.ListenPort) + " label " + pfRuleLabel("routerd:"+rule.ResourceKind+":"+rule.Name+":unavailable") + "\n")
 		}
 	}
 	return buf.Bytes(), nil
@@ -667,7 +677,9 @@ func pfClientPolicyReservation(res api.Resource, name string, reservations map[s
 func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, clientPolicies []pfClientPolicy, policy firewallPolicy, logging firewallLogging, routeToRules []pfEgressRouteToRule, allLocal string) error {
 	buf.WriteString("block drop all\n")
 	buf.WriteString("pass quick on lo0 all\n")
-	buf.WriteString("pass out quick all keep state\n")
+	if len(routeToRules) > 0 {
+		buf.WriteString("pass out quick all keep state\n")
+	}
 	for _, zone := range sortedFirewallZones(zones) {
 		for _, clientPolicy := range clientPolicies {
 			for _, expr := range pfClientPolicyIPv6DenyExprs(zone, clientPolicy, logging) {
@@ -692,7 +704,7 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		// inbound hook. Confine self rules to local destinations before testing
 		// their own destination selectors. Link-local control destinations also
 		// reach this anchor (DHCP, VRRP and IPv6 multicast cannot be routed).
-		buf.WriteString("anchor " + pfQuote("routerd_input_"+zone.Name) + " in on $" + pfZoneMacro(zone) + " to { self, 255.255.255.255, 224.0.0.0/24, ff02::/16 } {\n")
+		buf.WriteString("anchor " + pfQuote(pfInternalName("routerd_input_"+zone.Name)) + " in on $" + pfZoneMacro(zone) + " to { (self), 255.255.255.255, 224.0.0.0/24, ff02::/16 } {\n")
 		selfAccepted := implicitFirewallAction(zone.Role, "self", policy) == "accept"
 		for _, clientPolicy := range clientPolicies {
 			for _, expr := range pfClientPolicyInputExprs(zone, clientPolicy, logging) {
@@ -725,6 +737,9 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		}
 		buf.WriteString("}\n")
 	}
+	if len(routeToRules) == 0 {
+		return writePFZoneForwards(buf, zones, rules, holes, clientPolicies, policy, logging)
+	}
 	routeToEmitted := false
 	for _, from := range sortedFirewallZones(zones) {
 		if len(from.IfNames) == 0 {
@@ -747,15 +762,15 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 				// Protect every router-owned interface address, including another
 				// zone or a routehost interface absent from zoneMap, before the
 				// route-to pass can be evaluated.
-				buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " to " + allLocal + " keep state label " + pfQuote("routerd:"+from.Name+":route-to-self") + "\n")
+				buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " to " + allLocal + " keep state label " + pfRuleLabel("routerd:"+from.Name+":route-to-self") + "\n")
 			} else {
-				buf.WriteString("block drop in quick on $" + pfZoneMacro(from) + " to " + allLocal + " label " + pfQuote("routerd:"+from.Name+":route-to-self-deny") + "\n")
+				buf.WriteString("block drop in quick on $" + pfZoneMacro(from) + " to " + allLocal + " label " + pfRuleLabel("routerd:"+from.Name+":route-to-self-deny") + "\n")
 			}
 			if internal := pfForwardDestinationNetworkSet(accepted); internal != "" {
 				// These pass rules are no broader than the broad forward passes
 				// emitted below, but prevent route-to from steering connected
 				// zone traffic toward an external routehost.
-				buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " to " + internal + " keep state label " + pfQuote("routerd:"+from.Name+":route-to-connected") + "\n")
+				buf.WriteString("pass in quick on $" + pfZoneMacro(from) + " to " + internal + " keep state label " + pfRuleLabel("routerd:"+from.Name+":route-to-connected") + "\n")
 			}
 			for _, routeTo := range routeToRules {
 				buf.WriteString(routeTo.render("$"+pfZoneMacro(from)) + "\n")
@@ -767,7 +782,7 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 			if logging.Enabled && logging.AcceptSampleRate > 0 {
 				logExpr = " log"
 			}
-			buf.WriteString("pass in" + logExpr + " quick on $" + pfZoneMacro(from) + " keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
+			buf.WriteString("pass in" + logExpr + " quick on $" + pfZoneMacro(from) + " keep state label " + pfRuleLabel("routerd:"+from.Name+"-to-"+to.Name) + "\n")
 		}
 		for _, hole := range holes {
 			if hole.FromZone == from.Name && hole.ToZone != "self" {
@@ -845,7 +860,7 @@ func writePFDisallowedForwardDestinations(buf *bytes.Buffer, from firewallZone, 
 			continue
 		}
 		for _, ifname := range to.IfNames {
-			buf.WriteString("block drop in quick on $" + pfZoneMacro(from) + " to (" + ifname + ":network) label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name+"-deny") + "\n")
+			buf.WriteString("block drop in quick on $" + pfZoneMacro(from) + " to (" + ifname + ":network) label " + pfRuleLabel("routerd:"+from.Name+"-to-"+to.Name+"-deny") + "\n")
 		}
 	}
 	return nil
@@ -857,7 +872,7 @@ func pfIPv6ControlExpr(zone firewallZone) string {
 		values = append(values, "("+ifname+")")
 	}
 	values = append(values, "ff02::1", "ff02::2", "ff02::1:ff00:0/104")
-	return "pass in quick on $" + pfZoneMacro(zone) + " inet6 proto icmp6 to " + pfAddressSet(values) + " icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label " + pfQuote("routerd:"+zone.Name+":ipv6-control")
+	return "pass in quick on $" + pfZoneMacro(zone) + " inet6 proto icmp6 to " + pfAddressSet(values) + " icmp6-type { routersol, routeradv, neighbrsol, neighbradv } keep state label " + pfRuleLabel("routerd:"+zone.Name+":ipv6-control")
 }
 
 func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging firewallLogging) []string {
@@ -888,7 +903,7 @@ func pfClientPolicyInputExprs(zone firewallZone, policy pfClientPolicy, logging 
 		if stringInSlice("ssdp", policy.GuestServices) {
 			exprs = append(exprs, pfClientPolicyServiceExpr(onExpr, selfExpr, policy.Name, match, "udp", 1900, "ssdp", logging))
 		}
-		exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to "+selfExpr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":self-deny"))
+		exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+onExpr+" from "+match+" to "+selfExpr+" label "+pfRuleLabel("routerd:client-policy:"+policy.Name+":self-deny"))
 	}
 	return exprs
 }
@@ -919,10 +934,10 @@ func pfClientPolicyForwardFamilyExprs(zone firewallZone, policy pfClientPolicy, 
 	var exprs []string
 	for _, ifname := range policy.IfNames {
 		for _, cidr := range allow {
-			exprs = append(exprs, "pass in quick on "+ifname+family+" from "+match+" to "+cidr+" keep state label "+pfQuote("routerd:client-policy:"+policy.Name+":allow"))
+			exprs = append(exprs, "pass in quick on "+ifname+family+" from "+match+" to "+cidr+" keep state label "+pfRuleLabel("routerd:client-policy:"+policy.Name+":allow"))
 		}
 		for _, cidr := range deny {
-			exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+ifname+family+" from "+match+" to "+cidr+" label "+pfQuote("routerd:client-policy:"+policy.Name+":deny"))
+			exprs = append(exprs, "block drop in "+pfLogExpr(logging)+" quick on "+ifname+family+" from "+match+" to "+cidr+" label "+pfRuleLabel("routerd:client-policy:"+policy.Name+":deny"))
 		}
 	}
 	return exprs
@@ -977,7 +992,7 @@ func pfCompactAddresses(values []string) []string {
 }
 
 func pfClientPolicyServiceExpr(onExpr, selfExpr, name, source, proto string, port int, service string, logging firewallLogging) string {
-	return "pass in quick on " + onExpr + " proto " + proto + " from " + source + " to " + selfExpr + " port " + strconv.Itoa(port) + " keep state label " + pfQuote("routerd:client-policy:"+name+":"+service)
+	return "pass in quick on " + onExpr + " proto " + proto + " from " + source + " to " + selfExpr + " port " + strconv.Itoa(port) + " keep state label " + pfRuleLabel("routerd:client-policy:"+name+":"+service)
 }
 
 func pfCanRenderBroadForwardPass(from, to firewallZone) bool {
@@ -1010,6 +1025,9 @@ func pfFirewallRuleExprOn(onExpr, name string, spec api.FirewallRuleSpec, loggin
 }
 
 func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
+	return pfFirewallRuleExprDirection("in", onExpr, selfExpr, name, spec, logging)
+}
+func pfFirewallRuleExprDirection(direction, onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
 	action := "block drop"
 	if spec.Action == "accept" {
 		action = "pass"
@@ -1017,7 +1035,7 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 		action = "block return"
 	}
 	var parts []string
-	parts = append(parts, action, "in")
+	parts = append(parts, action, direction)
 	if spec.Log {
 		parts = append(parts, pfLogExpr(logging))
 	}
@@ -1037,7 +1055,7 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 	}
 	if len(spec.DestinationCIDRs) > 0 {
 		parts = append(parts, "to", pfCIDRSet(spec.DestinationCIDRs))
-	} else if spec.ToZone == "self" {
+	} else {
 		parts = append(parts, "to", selfExpr)
 	}
 	if ports := pfFirewallDestinationPorts(spec); len(ports) > 0 {
@@ -1049,7 +1067,7 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 	if spec.Action == "accept" {
 		parts = append(parts, "keep", "state")
 	}
-	parts = append(parts, "label", pfQuote("routerd:"+name))
+	parts = append(parts, "label", pfRuleLabel("routerd:"+name))
 	return strings.Join(parts, " ")
 }
 
@@ -1231,3 +1249,16 @@ func pfIdent(value string) string {
 func pfQuote(value string) string {
 	return strconv.Quote(value)
 }
+
+// FreeBSD 14.3 gives anchor components, packet tags and rule labels 64-byte
+// buffers, including the terminator. Resource names need not share that bound.
+// Hash the entire overlong identifier so similar names remain distinct.
+func pfInternalName(value string) string {
+	if len(value) < 64 {
+		return value
+	}
+	digest := sha256.Sum256([]byte(value))
+	return "routerd_" + hex.EncodeToString(digest[:16])
+}
+
+func pfRuleLabel(value string) string { return pfQuote(pfInternalName(value)) }

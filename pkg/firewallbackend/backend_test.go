@@ -350,7 +350,7 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 		`nat-anchor "routerd_nat"`,
 		`rdr-anchor "routerd_nat"`,
 		`anchor "routerd_nat" quick`,
-		`anchor "routerd_input_wan" in on $wan_if to { self, 255.255.255.255, 224.0.0.0/24, ff02::/16 } {`,
+		`anchor "routerd_input_wan" in on $wan_if to { (self), 255.255.255.255, 224.0.0.0/24, ff02::/16 } {`,
 		`pass in quick on $wan_if proto tcp to 203.0.113.10/32 port 6443 keep state label "routerd:api"`,
 	} {
 		if !strings.Contains(got, want) {
@@ -362,13 +362,62 @@ func TestPFBespokeSyntaxSurvivesBackendRefactor(t *testing.T) {
 	}
 }
 
-func TestPFBackendRejectsForwardedDestinationCIDRRule(t *testing.T) {
+func TestPFBackendForwardedDestinationCIDRUsesActualEgress(t *testing.T) {
 	ruleset, err := PF{}.Render(pfBespokeRouter(), "", nil)
-	if err == nil || !strings.Contains(err.Error(), "FirewallRule/api") || !strings.Contains(err.Error(), "forwarding/output zone selectors") {
-		t.Fatalf("forwarded-CIDR rule must report its unsupported zone semantics: %v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(ruleset.Data) != 0 {
-		t.Fatalf("unsupported forwarded rule produced an applicable ruleset: %s", ruleset.Data)
+	for _, want := range []string{`anchor "routerd_forward_wan_lan_em0" out on $lan_if tagged "routerd_ingress_em0" {`, `pass out quick on $lan_if proto tcp to 172.18.1.10/32 port 6443 keep state label "routerd:api"`} {
+		if !strings.Contains(string(ruleset.Data), want) {
+			t.Fatalf("forward selector lost on runtime backend: %s", ruleset.Data)
+		}
+	}
+}
+
+func TestPFBackendWithdrawsForwardRuleFromTheSameRootRuleset(t *testing.T) {
+	var loaded []string
+	backend := PF{Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "-f" {
+			data, err := os.ReadFile(args[1])
+			if err != nil {
+				return nil, err
+			}
+			loaded = append(loaded, string(data))
+		}
+		return nil, nil
+	}}
+	router := pfBespokeRouter()
+	path := filepath.Join(t.TempDir(), "firewall.pf")
+	first, err := backend.Render(router, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Apply(t.Context(), first, false); err != nil {
+		t.Fatal(err)
+	}
+	var retained []api.Resource
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "FirewallRule" {
+			retained = append(retained, resource)
+		}
+	}
+	router.Spec.Resources = retained
+	second, err := backend.Render(router, path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backend.Apply(t.Context(), second, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 || !strings.Contains(loaded[0], `label "routerd:api"`) || strings.Contains(loaded[1], `label "routerd:api"`) {
+		t.Fatalf("root rule replacement failed: %v", loaded)
+	}
+	for _, data := range loaded {
+		for _, anchor := range []string{`nat-anchor "routerd_nat"`, `rdr-anchor "routerd_nat"`, `anchor "routerd_sam_forward" quick`} {
+			if !strings.Contains(data, anchor) {
+				t.Fatalf("independent native anchor was withdrawn: %s", data)
+			}
+		}
 	}
 }
 

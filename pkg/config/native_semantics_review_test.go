@@ -10,7 +10,7 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
-func TestFreeBSDFirewallAdmissionPreservesInputAndRejectsUnimplementedZonePairs(t *testing.T) {
+func TestFreeBSDFirewallAdmissionPreservesInputAndAdmitsOwnedZonePairs(t *testing.T) {
 	for _, pair := range [][2]string{{"lan", "self"}, {"lan", "wan"}, {"self", "wan"}} {
 		router := routerWithResources(
 			testResource(api.NetAPIVersion, "Interface", "lan", api.InterfaceSpec{IfName: "em0"}),
@@ -20,11 +20,8 @@ func TestFreeBSDFirewallAdmissionPreservesInputAndRejectsUnimplementedZonePairs(
 			testResource(api.FirewallAPIVersion, "FirewallRule", "web", api.FirewallRuleSpec{FromZone: pair[0], ToZone: pair[1], Action: "accept", Protocol: "tcp", Port: 443}),
 		)
 		err := ValidateForOS(router, platform.OSFreeBSD)
-		if pair[1] == "self" && err != nil {
-			t.Fatalf("supported router input rule rejected: %v", err)
-		}
-		if pair[1] != "self" && (err == nil || !strings.Contains(err.Error(), "cannot enforce forwarded/output zone pairs")) {
-			t.Fatalf("unsupported zone pair admitted: %v", err)
+		if err != nil {
+			t.Fatalf("supported PF zone pair %v rejected: %v", pair, err)
 		}
 		if err := ValidateForOS(router, platform.OSLinux); err != nil {
 			t.Fatalf("Linux zone semantics regressed: %v", err)
