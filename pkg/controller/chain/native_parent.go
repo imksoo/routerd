@@ -39,6 +39,8 @@ func validNativeParentToken(token string) bool {
 		token = raw
 	} else if raw, ok := strings.CutPrefix(token, "vrf:"); ok {
 		token = raw
+	} else if raw, ok := strings.CutPrefix(token, "tunnel:"); ok {
+		token = raw
 	}
 	decoded, err := hex.DecodeString(token)
 	return err == nil && len(decoded) == size
@@ -88,6 +90,9 @@ func (r nativeParentReader) vrfOwner() VRFController {
 	owner.Router, owner.Store = r.Router, r.Store
 	return owner
 }
+func (r nativeParentReader) tunnelOwner() TunnelInterfaceController {
+	return TunnelInterfaceController{Router: r.Router, Store: r.Store}
+}
 func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) (nativeParentLink, error) {
 	if r.Router == nil {
 		return nativeParentLink{}, errors.New("child parent router is unavailable")
@@ -97,6 +102,11 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var name, configuredAlias string
 		var err error
 		switch resource.Kind {
+		case "TunnelInterface":
+			if platform.CurrentOS() != platform.OSLinux {
+				continue
+			}
+			name = resource.Metadata.Name
 		case "VRF":
 			if r.vrfOwner().currentOS() != platform.OSLinux {
 				continue
@@ -143,6 +153,11 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		selected = resource
 	}
 	switch selected.Kind {
+	case "TunnelInterface":
+		owner := r.tunnelOwner()
+		link, err := owner.observeChildParent(ctx, selected, "", "")
+		link.Declared = true
+		return link, err
 	case "VRF":
 		owner := r.vrfOwner()
 		return owner.observeChildParent(ctx, selected, "", "")
@@ -173,6 +188,10 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 func (r nativeParentReader) observeRecorded(ctx context.Context, ifname, token string) (nativeParentLink, error) {
 	if !validNativeParentToken(token) {
 		return nativeParentLink{}, errors.New("invalid recorded native parent token")
+	}
+	if raw, ok := strings.CutPrefix(token, "tunnel:"); ok {
+		owner := r.tunnelOwner()
+		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
 	}
 	if raw, ok := strings.CutPrefix(token, "dslite:"); ok {
 		owner := r.dsliteOwner()

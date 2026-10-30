@@ -42,6 +42,10 @@ func observeTunnelNativeLink(ctx context.Context, name string) (tunnelNativeLink
 	link, err := handle.LinkByName(name)
 	var absent netlink.LinkNotFoundError
 	if errors.As(err, &absent) {
+		current, scopeErr := platform.KernelNetworkScope(ctx)
+		if scopeErr != nil || current != scope {
+			return result, errors.Join(scopeErr, errors.New("TunnelInterface scope changed during absence observation"))
+		}
 		return result, nil
 	}
 	if err != nil {
