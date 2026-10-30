@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 func dhcpv6WorkerRouter() *api.Router {
@@ -16,6 +17,36 @@ func dhcpv6WorkerRouter() *api.Router {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "address"}, Spec: api.DHCPv6AddressSpec{Interface: "alias"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan", IAID: "7", ClientDUID: "00030001020000000001"}},
 	}}}
+}
+
+func TestDHCPv6ObservedWorkerFollowsResolvedPDCondition(t *testing.T) {
+	router := dhcpv6WorkerRouter()
+	pd, _ := router.Spec.Resources[3].DHCPv6PrefixDelegationSpec()
+	pd.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gw.role": {Equals: "master"}}}
+	router.Spec.Resources[3].Spec = pd
+	for _, role := range []string{"master", "backup"} {
+		store := mapStore{api.NetAPIVersion + "/VirtualAddress/gw": {"role": role}}
+		effective, err := resourcequery.FilterRouterByResolvedWhen(router, store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := &Runner{Router: router, Store: store}
+		specs := runner.clientDaemonSpecs(effective)
+		if len(specs) != 1 {
+			t.Fatalf("role %s workers=%v", role, specs)
+		}
+		want := defaultClientSocket(specs[0].Binary, specs[0].ResourceName)
+		sources := runner.daemonEventSourceSpecs(router, nil)
+		sockets, err := (DaemonStatusController{Router: router, Store: store}).daemonSockets()
+		if err != nil || len(sockets) != 1 || sockets[0] != want || len(sources) != 1 {
+			t.Fatalf("role %s observes a different worker: want=%s sockets=%v sources=%v err=%v", role, want, sockets, sources, err)
+		}
+		for _, source := range sources {
+			if source.Socket != want {
+				t.Fatalf("role %s events use inactive worker %s", role, source.Socket)
+			}
+		}
+	}
 }
 
 func TestDHCPv6DeclarationsShareOneWorkerAndEventSource(t *testing.T) {
