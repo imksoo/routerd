@@ -160,3 +160,17 @@ CREATE INDEX events_resource ON events(resource_kind, resource_name, id);
 CREATE INDEX events_topic ON events(topic, id);
 CREATE INDEX events_type ON events(type, id);
 CREATE INDEX federation_events_group ON federation_events(group_name, observed_at);
+
+-- Current named DHCP observation is functional recovery state, not retained
+-- display history. The event journal transaction is its sole writer.
+CREATE TABLE dhcp_lease_observations (
+  source TEXT NOT NULL,
+  ip TEXT NOT NULL,
+  action TEXT NOT NULL,
+  client TEXT NOT NULL,
+  hostname TEXT NOT NULL,
+  observed_at INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  infinite INTEGER NOT NULL CHECK(infinite IN (0,1)),
+  PRIMARY KEY(source, ip)
+);

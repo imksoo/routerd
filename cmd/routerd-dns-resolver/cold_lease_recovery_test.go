@@ -98,3 +98,25 @@ func TestColdDNSStartCannotReviveDurablyRemovedLeaseFileRow(t *testing.T) {
 	worker = newTestDaemon(t, filepath.Join(root, "resolver2.json"), recovered, true)
 	assertZoneARecord(t, worker.zones, "stale.lab.example.", "192.0.2.55")
 }
+
+func TestReloadCurrentDurableRemovalOutranksUndeliveredOldWorkerLease(t *testing.T) {
+	config := testResolverConfig(nil)
+	old := newZoneTable(config.Zones)
+	lease := observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, MAC: "client-a", IP: "192.0.2.55", Hostname: "old"})
+	lease.ObservedAt = time.Now().UTC().Add(-time.Second)
+	if err := old.ApplyLease(lease); err != nil {
+		t.Fatal(err)
+	}
+	lease.Action = daemonapi.DHCPLeaseActionRemoved
+	lease.ObservedAt = time.Now().UTC()
+	config.Zones[0].LeaseObservations = []daemonapi.DHCPLeaseUpdate{lease}
+	selected := newZoneTable(config.Zones)
+	selected.CopyDynamicFrom(old)
+	query := new(dns.Msg)
+	query.SetQuestion("old.lab.example.", dns.TypeA)
+	answer, _ := selected.Answer(query, nil)
+	if len(answer.Answer) != 0 {
+		t.Fatal("old in-memory record outranked durable current removal during reload")
+	}
+	assertZoneNoPTRRecord(t, selected, "55.2.0.192.in-addr.arpa.")
+}

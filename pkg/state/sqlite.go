@@ -1187,7 +1187,11 @@ func (s *SQLiteStore) RecordBusEvent(ctx context.Context, event daemonapi.Daemon
 
 func recordBusEvent(executor interface {
 	Exec(string, ...any) (sql.Result, error)
+	QueryRow(string, ...any) *sql.Row
 }, generation int64, now time.Time, event daemonapi.DaemonEvent) (string, int64, error) {
+	if err := projectDHCPLeaseObservation(executor, now, event); err != nil {
+		return "", 0, err
+	}
 	event, attrs := boundedJournalEvent(event)
 	apiVersion := event.APIVersion
 	kind := event.Kind

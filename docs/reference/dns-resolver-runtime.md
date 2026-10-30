@@ -45,10 +45,15 @@ lease. Renewals are enabled with dnsmasq's `script-on-renewal` option.
 A finite lease caps both forward and PTR TTLs at its remaining lifetime. Removal
 and hostname withdrawal remove both records. Reload retains the latest event for
 each source/address, including removal; reading an unchanged old lease file does
-not turn that removed lease into a new observation. These tombstones survive
-table reload only; full DNS-process restart does not yet restore named removal
-state from the durable DHCP journal. A stale, unexpired file row at cold start
-therefore remains an open recovery limitation. Static DNS records and
+not turn that removed lease into a new observation. The existing SQLite event
+journal commits the typed latest source/address observation in the same
+transaction as callback history. The current projection retains revocations and
+expired observations even when diagnostic events are pruned. A fresh worker
+receives that projection in its runtime configuration before serving; no old
+in-memory table or callback redelivery is required to fence a stale file after
+restart. Required projection reads fail explicitly. Duplicate observations are
+idempotent; conflicting observations with the same timestamp cannot be
+acknowledged as one current value. Static DNS records and
 explicit configured reservations remain separate assignment intent. Sticky host
 snapshots require a matching, still-held row from the actual sticky database and
 retain its hold deadline; unqualified hostname/address sidecar text cannot grant
@@ -66,3 +71,7 @@ Protocol references: the upstream [callback documentation](https://thekelleys.or
 (`--dhcp-script`, `--script-on-renewal`), the maintainer's
 [IPv4/IPv6 lease-file description](https://lists.thekelleys.org.uk/pipermail/dnsmasq-discuss/2013q3/007544.html),
 and [explicit infinite lease semantics](https://lists.thekelleys.org.uk/pipermail/dnsmasq-discuss/2016q4/011019.html).
+
+The unreleased SQLite format is now `1501`. Previous formats are rejected
+without migration or automatic deletion; development/cutover must use the
+chosen fresh state format intentionally.

@@ -13,7 +13,7 @@ import (
 )
 
 // This branch starts a new format. Earlier prototype databases are not migrated.
-const Version = 1500
+const Version = 1501
 
 var ErrSchemaVersion = errors.New("unsupported routerd database format; initialize a fresh routerd 1.5 database")
 

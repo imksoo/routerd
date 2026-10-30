@@ -190,6 +190,18 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 			ttl = 60
 		}
 		for _, record := range item.records {
+			if record.Source == zoneRecordSourceActiveEvent {
+				newer := false
+				for _, ip := range append(slices.Clone(record.IPv4), record.IPv6...) {
+					if current := zone.LeaseEvents[leaseAddress{Source: record.LeaseSource, IP: ip}]; current.ObservedAt.After(record.ObservedAt) {
+						newer = true
+						break
+					}
+				}
+				if newer {
+					continue
+				}
+			}
 			record.TTL = ttl
 			zone.mergeRecord(record)
 		}
