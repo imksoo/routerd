@@ -127,11 +127,44 @@ non-zero only if `wan` fails).
 ### Daemon inspection through `--probe`
 
 `routerctl doctor --probe egress [resource]`, `--probe dns [resource]`, and
-`--probe lan-client IP` use the running daemon's control API. They currently
-report resource phases and explicitly mark current network communication as
-`unobserved`. They do not execute an end-to-end packet, DNS, neighbor or conntrack
-probe. A reported Applied phase does not establish communication, and exit zero
-with a warning must not be used as a qualification PASS.
+`--probe lan-client IP` use the running daemon's control API and execute bounded
+router-originated network checks. Resource names and literal LAN-client target
+semantics are unchanged.
+
+- DNS probes send both UDP and TCP questions to explicit configured listeners,
+  including currently resolved `addressFrom` values. Wildcard listeners are
+  reached through the corresponding loopback address. A selected static zone
+  record supplies an exact expected A/AAAA answer. A selected root-forwarding
+  source can instead answer a root NS question. Missing usable listeners or
+  questions remain unobserved; private names outside a selected forwarder's
+  match are never chosen. SERVFAIL/REFUSED proves a transport reply, not
+  successful resolution, and is reported as a failed DNS answer.
+- Egress probes execute the candidate's configured enabled HealthCheck using its
+  existing protocol, target, interface and mark binding. They do not reuse an old
+  healthy sample. Missing checks, unresolved dynamic targets and unavailable
+  native bindings remain unobserved. These host-originated attempts do not
+  establish forwarded client traffic, NAT or automatic failover.
+- LAN-client probes send an actual ICMP echo with the existing per-exchange
+  identity and peer checks. A response proves that router-originated exchange.
+  Permission denial remains unknown; a deadline without a matching echo is a
+  failed attempt and may mean that the client filters ICMP. IPv6 link-local
+  addresses require an explicit native zone such as `fe80::1%eth0`.
+
+Each active request has a four-second network budget, at most eight attempts and
+at most 32 returned checks. Individual attempts have at most two seconds.
+Unattempted checks are explicitly reported. Four requests may own probe slots
+per API handler; additional requests return an unobserved admission check without
+starting network work. Cancellation closes owned DNS sockets and propagates to
+other protocol helpers. Probes do not modify routing, controller Health history
+or stored decisions.
+
+Optional structured fields identify `kind` (`communication`, `reported-status`,
+or `scope`), protocol, actual target, observation start, elapsed milliseconds,
+failure category and configured binding interface/mark. Reported phases remain
+separate diagnostic checks; their PASS does not establish current traffic.
+Existing CLI exit behavior is retained: FAIL checks return nonzero, while WARN
+checks may return zero. A warning or a router-originated PASS must not be used as
+independent client/forwarding qualification.
 
 These daemon inspection commands reject `--server`, `--name`, and `--no-host`
 instead of silently ignoring them. The ordinary local `doctor AREA` commands

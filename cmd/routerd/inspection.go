@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
- "time"
+	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
@@ -93,18 +93,30 @@ func serveDescribeHandler(currentRouter func() *api.Router, store *routerstate.S
 }
 
 func serveProbeHandler(currentRouter func() *api.Router, store *routerstate.SQLiteStore) func(*http.Request, controlapi.ProbeRequest) (*controlapi.ProbeResult, error) {
- slots:=make(chan struct{},4)
+	slots := make(chan struct{}, 4)
 	return func(r *http.Request, req controlapi.ProbeRequest) (*controlapi.ProbeResult, error) {
 		subject := strings.TrimSpace(req.Subject)
 		if subject == "" {
 			return nil, fmt.Errorf("%w: doctor --probe requires subject", controlapi.ErrBadRequest)
 		}
-		select {case slots<-struct{}{}: defer func(){<-slots}()
-		default: result:=controlapi.NewProbeResult(subject,req.Target,[]controlapi.ProbeCheck{{Name:"probe admission",Status:"warn",Kind:"scope",Detail:"unobserved: four active probe requests already own the available slots"}});return &result,nil}
-		ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second);defer cancel()
-		checks, err := serveProbeChecks(ctx,currentRouter(), store, subject, strings.TrimSpace(req.Target))
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			result := controlapi.NewProbeResult(subject, req.Target, []controlapi.ProbeCheck{{Name: "probe admission", Status: "warn", Kind: "scope", Detail: "unobserved: four active probe requests already own the available slots"}})
+			return &result, nil
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		defer cancel()
+		checks, err := serveProbeChecks(ctx, currentRouter(), store, subject, strings.TrimSpace(req.Target))
 		if err != nil {
 			return nil, err
+		}
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		if len(checks) > 32 {
+			checks = append(checks[:31], unobservedProbe("remaining checks", "response check limit reached; remaining checks are unprobed"))
 		}
 		result := controlapi.NewProbeResult(subject, req.Target, checks)
 		return &result, nil
@@ -233,19 +245,25 @@ func serveInspectionLedger(store *routerstate.SQLiteStore, limit int) (controlap
 	return controlapi.LedgerReport{Integrity: integrity, Generations: generations}, nil
 }
 
-func serveProbeChecks(ctx context.Context,router *api.Router, store *routerstate.SQLiteStore, subject, target string) ([]controlapi.ProbeCheck, error) {
- if err:=ctx.Err();err!=nil{return nil,err}
- switch canonicalInspectionSubject(subject) {
- case "egress":return daemonEgressProbe(ctx,router,store,target)
- case "dns":return daemonDNSProbe(ctx,router,store,target)
- case "lan-client":return daemonLANClientProbe(ctx,router,store,target)
- default:return []controlapi.ProbeCheck{{Name:"subject",Status:"fail",Kind:"scope",Detail:"unknown probe subject "+subject}},nil
- }
+func serveProbeChecks(ctx context.Context, router *api.Router, store *routerstate.SQLiteStore, subject, target string) ([]controlapi.ProbeCheck, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	switch canonicalInspectionSubject(subject) {
+	case "egress":
+		return daemonEgressProbe(ctx, router, store, target)
+	case "dns":
+		return daemonDNSProbe(ctx, router, store, target)
+	case "lan-client":
+		return daemonLANClientProbe(ctx, router, store, target)
+	default:
+		return []controlapi.ProbeCheck{{Name: "subject", Status: "fail", Kind: "scope", Detail: "unknown probe subject " + subject}}, nil
+	}
 }
 
 func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind, name string) ([]controlapi.ProbeCheck, error) {
 	if router == nil {
-		return []controlapi.ProbeCheck{{Name: kind, Status: "fail", Detail: "router config unavailable"}}, nil
+		return []controlapi.ProbeCheck{{Name: kind, Status: "warn", Kind: "scope", Detail: "unobserved: router config unavailable"}}, nil
 	}
 	resources := selectInspectionResources(router.Spec.Resources, kind, name)
 	if len(resources) == 0 {
@@ -273,7 +291,7 @@ func resourcePhaseProbe(router *api.Router, store *routerstate.SQLiteStore, kind
 		if phase == "" {
 			detail = "unobserved: resource is declared without an observed phase"
 		}
-		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail,Kind:"reported-status"})
+		out = append(out, controlapi.ProbeCheck{Name: res.Kind + "/" + res.Metadata.Name + " status", Status: checkStatus, Detail: detail, Kind: "reported-status"})
 	}
 	return out, nil
 }
