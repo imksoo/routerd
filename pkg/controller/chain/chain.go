@@ -2951,6 +2951,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Router = view.RouteRouter
 			current.Store = store.withRouter(view.RouteRouter)
 			current.MobilityDataplane = view.MobilityDataplane
+			current.MobilitySource = store
 			if !current.DryRun {
 				if err := invalidateMobilityNativeAck(current.Store, dynamicconfig.MobilityRouteWithdrawalAcks); err != nil {
 					return false, err
@@ -2995,6 +2996,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			routeTeardown.Router = view.RouteRouter
 			routeTeardown.Store = store.withRouter(view.RouteRouter)
 			routeTeardown.MobilityDataplane = view.MobilityDataplane
+			routeTeardown.MobilitySource = store
 			return didWorkError(reconcileSAMAfterRouteTeardown(ctx, routeTeardown, current))
 		}},
 		framework.FuncController{ControllerName: "path-mtu", Subs: pathMTUStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {

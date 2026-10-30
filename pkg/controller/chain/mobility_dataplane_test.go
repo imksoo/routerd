@@ -60,7 +60,9 @@ func (s *mobilityEffectStore) ListObjectStatuses() ([]routerstate.ObjectStatus, 
 func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *testing.T) {
 	store := &mobilityEffectStore{}
 	var commands []string
+	applied := false
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{
 			ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix,
@@ -70,7 +72,13 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
 			if name == "ip" && len(args) > 0 && args[0] == "-j" {
+				if applied {
+					return []byte(`[{"dst":"10.77.60.0/24","dev":"lan0","protocol":"boot","metric":90}]`), nil
+				}
 				return []byte("[]"), nil
+			}
+			if name == "ip" && len(args) > 1 && args[0] == "route" && args[1] == "add" {
+				applied = true
 			}
 			return nil, nil
 		},
@@ -81,7 +89,7 @@ func TestIPv4RouteControllerAppliesTypedMobilityRouteWithoutGenericResource(t *t
 	if len(controller.Router.Spec.Resources) != 0 {
 		t.Fatalf("typed mobility route must not become a generic resource: %#v", controller.Router.Spec.Resources)
 	}
-	if !containsMobilityDataplaneCommand(commands, "ip route replace 10.77.60.0/24 dev lan0 metric 90") {
+	if !containsMobilityDataplaneCommand(commands, "ip route add 10.77.60.0/24 dev lan0 metric 90 proto boot") {
 		t.Fatalf("commands = %#v", commands)
 	}
 	routes, err := controller.appliedMobilityRoutes()
@@ -97,13 +105,14 @@ func TestIPv4RouteControllerDoesNotDeleteBGPRouteWhenTypedMobilityEffectWithdraw
 	store := &mobilityEffectStore{statuses: map[string]map[string]any{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
 			"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{
-				ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix),
+				ID: "cloudedge/capture-prefix", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix), Scope: "linux:fixture:1", IfIndex: 17,
 				Destination: "10.77.60.0/24", Device: "lan0", Metric: 90,
 			}},
 		},
 	}}
 	var commands []string
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")
@@ -131,7 +140,7 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 	store := &mobilityEffectStore{statuses: map[string]map[string]any{
 		api.RouterAPIVersion + "/Router/" + samDataplaneStatusName: {
 			"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{
-				ID: "cloudedge/local-10.77.60.20", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeLocalInventory),
+				ID: "cloudedge/local-10.77.60.20", PoolRef: "cloudedge", PoolPrefix: "10.77.60.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeLocalInventory), Scope: "linux:fixture:1", IfIndex: 17,
 				Destination: "10.77.60.20/32", Device: "lan0", PreferredSource: "10.77.60.1", Metric: 90,
 			}},
 		},
@@ -139,6 +148,7 @@ func TestIPv4RouteControllerWithdrawsTypedMobilityRouteFromItsAppliedLedger(t *t
 	var commands []string
 	deleted := false
 	controller := IPv4RouteController{
+		NativeScope: ordinaryFixtureScope, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil },
 		Router: &api.Router{}, Store: store,
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			command := name + " " + strings.Join(args, " ")

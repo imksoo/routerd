@@ -71,6 +71,12 @@ func (c IPv4RouteController) beginMobilityRoutes(ctx context.Context) error {
 		return err
 	}
 	for _, route := range pending {
+		if route.Scope == "" || route.IfIndex < 1 {
+			return fmt.Errorf("pending mobility route %s has no native-world receipt", route.ID)
+		}
+		if err := c.verifyOrdinaryRouteIdentity(ctx, mobilityRouteReceipt(route)); err != nil {
+			return fmt.Errorf("pending mobility route %s identity is unconfirmed: %w", route.ID, err)
+		}
 		matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
 		if err != nil {
 			return fmt.Errorf("observe pending mobility route %s: %w", route.ID, err)
@@ -78,9 +84,9 @@ func (c IPv4RouteController) beginMobilityRoutes(ctx context.Context) error {
 		if matching {
 			return fmt.Errorf("pending mobility route %s is present without acknowledged ownership; inspect and remove it before retrying", route.ID)
 		}
-	}
-	if len(pending) != 0 {
-		return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingMobilityRoutes": []mobilityAppliedIPv4Route{}})
+		if err := c.finishMobilityRoute(route, false, true); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -105,27 +111,6 @@ func (c IPv4RouteController) stageMobilityRoute(route mobilityAppliedIPv4Route) 
 		return fmt.Errorf("mobility route ownership merger unavailable")
 	}
 	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingMobilityRoutes": pending, dynamicconfig.MobilityRouteWithdrawalAcks: []dynamicconfig.MobilityWithdrawalRequest{}})
-}
-
-func (c IPv4RouteController) mobilityRouteOwned(ctx context.Context, wanted mobilityAppliedIPv4Route) (bool, bool, error) {
-	previous, err := c.appliedMobilityRoutes()
-	if err != nil {
-		return false, false, err
-	}
-	for _, route := range previous {
-		oldKey, newKey := mobilityRouteRemoval(route), mobilityRouteRemoval(wanted)
-		if route.ID != wanted.ID || route.PoolRef != wanted.PoolRef || route.PoolPrefix != wanted.PoolPrefix || oldKey.Destination != newKey.Destination || oldKey.Metric != newKey.Metric {
-			continue
-		}
-		matching, _, err := c.observeOrdinaryRoute(ctx, mobilityRouteRemoval(route))
-		if err != nil {
-			return false, false, err
-		}
-		if matching {
-			return true, route == wanted, nil
-		}
-	}
-	return false, false, nil
 }
 
 func (c IPv4StaticAddressController) beginMobilityAddresses(ctx context.Context) error {

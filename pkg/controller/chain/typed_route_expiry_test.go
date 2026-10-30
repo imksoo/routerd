@@ -44,7 +44,7 @@ func TestTypedRouteExpiryWithdrawsOwnedRoute(t *testing.T) {
 			if err := src.UpsertDynamicConfigPart(record); err != nil {
 				t.Fatal(err)
 			}
-			if err := src.SaveObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{ID: "pool/capture-prefix", PoolRef: "pool", PoolPrefix: "192.0.2.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix), Destination: "192.0.2.0/24", Device: "lan0", Metric: 90}}}); err != nil {
+			if err := src.SaveObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"appliedMobilityRoutes": []mobilityAppliedIPv4Route{{ID: "pool/capture-prefix", PoolRef: "pool", PoolPrefix: "192.0.2.0/24", Purpose: string(dynamicconfig.MobilityIPv4RoutePurposeCapturePrefix), Destination: "192.0.2.0/24", Device: "lan0", Metric: 90, Scope: "linux:fixture:1", IfIndex: 17}}}); err != nil {
 				t.Fatal(err)
 			}
 			candidate := &api.Router{}
@@ -65,7 +65,7 @@ func TestTypedRouteExpiryWithdrawsOwnedRoute(t *testing.T) {
 				var commands []string
 				routePresent := true
 				controller := IPv4RouteController{Router: view.RouteRouter, Store: store, MobilityDataplane: view.MobilityDataplane,
-					DevicePresent: func(context.Context, string) bool { return true },
+					DevicePresent: func(context.Context, string) bool { return true }, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil }, NativeScope: ordinaryFixtureScope,
 					Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 						command := name + " " + strings.Join(args, " ")
 						commands = append(commands, command)

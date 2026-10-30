@@ -116,3 +116,36 @@ source/Health authority during persistence, exact teardown and family separation
 Native Netlink/forwarding qualification remains unexecuted. Delegated DS-Lite
 source lifetime/native-authority qualification remains part of the broader source
 owner finding; this change establishes the policy effects' ownership boundary.
+
+## Mobility IPv4 routes
+
+The typed Mobility route owner now records the current kernel scope, interface
+index and virtual-parent cookie with its exact route tuple. Acquisition uses the
+ordinary owner's exclusive native add and exact readback, rather than replace
+or adoption by route presence. A changed owned route is withdrawn under its
+receipt before the new tuple is acquired. Required source or native observation
+failures preserve the previous confirmed effect and any pending uncertainty.
+
+Pending add/delete records are retired only by an explicit acknowledged result
+or exact absence in their recorded native world. An acknowledgement and its
+applied ledger update share one SQLite write; retaining an older equal applied
+value cannot resolve a failed new acknowledgement. A different scope or recycled
+interface cannot authorize cleanup or retirement of the old pending operation.
+Legacy Mobility route rows without a native-world receipt require explicit
+operator resolution or the authorized new-format cutover; they cannot acquire
+ownership of an existing route.
+
+The production Runner supplies the current typed DynamicConfigPart source.
+Acquisition and withdrawal read that source again after persistence, checking
+actual current expiry/revocation as well as native identity and preferred-source
+availability. If intent recovers while deletion persistence waits, the known
+receipt is retained without deleting its route. If intent changes during the
+acquisition acknowledgement, the owner attempts to withdraw that acknowledged
+effect. Required read failures remain errors and cannot fabricate withdrawal ACKs.
+
+SQLite/process-boundary regressions exercise the source changes, native ignored
+add, lost acknowledgement, new kernel world and restored deletion intent. Native
+Linux/FreeBSD forwarding remains unqualified. FreeBSD does not report Linux route
+metrics or preferred source through its exact withdrawal observation, so nonzero
+Mobility route metrics are rejected and preferred source is not ownership proof.
+Mobility IPv4 addresses retain a separate implementation/qualification boundary.

@@ -429,6 +429,7 @@ type IPv4RouteController struct {
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
+	MobilitySource    dynamicConfigPartLister
 	DryRun            bool
 	Logger            *slog.Logger
 	Command           func(ctx context.Context, name string, args ...string) ([]byte, error)
