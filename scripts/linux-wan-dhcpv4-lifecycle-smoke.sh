@@ -111,7 +111,7 @@ bound() { jq -e '.state == "Bound" and .currentAddress == "198.18.46.100"' "$lea
 for _ in {1..45}; do bound && break; sleep 1; done
 bound
 native_ready() {
- ip -4 -j addr show rd15-wan | jq -e 'any(.[0].addr_info[]; .local == "198.18.46.100" and .prefixlen == 24)' >/dev/null &&
+ ip -4 -j addr show rd15-wan | jq -e 'any(.[0].addr_info[]?; .local == "198.18.46.100" and .prefixlen == 24)' >/dev/null &&
  ip -4 -j route show default | jq -e 'any(.[]; .gateway == "198.18.46.1" and .dev == "rd15-wan" and .metric == 4242)' >/dev/null &&
  resolvectl dns rd15-wan | grep -q '198.18.46.1' &&
  resolvectl domain rd15-wan | grep -q '~\.'
@@ -156,6 +156,12 @@ for _ in {1..35}; do
  sleep 1
 done
 jq -e --arg first "$before_rebind" '.state == "Bound" and .acquiredAt > $first' "$lease" >/dev/null
+# libpcap can still hold the final exchange in its kernel buffer when the
+# daemon has already acknowledged it. Observe the saved exchange before stop.
+for _ in {1..10}; do
+ if python3 "$verifier" "$work/wan.pcap" 198.18.46.100 198.18.46.1 > "$work/capture-verdict.txt" 2> "$work/capture-error.txt"; then break; fi
+ sleep 1
+done
 systemctl stop rd15-wan4-capture
 python3 "$verifier" "$work/wan.pcap" 198.18.46.100 198.18.46.1
 probe
