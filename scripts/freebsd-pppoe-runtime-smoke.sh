@@ -219,7 +219,7 @@ awk -v want="$epair_b:" '{ gsub(/\r/, "") } $1 == "Iface" && $2 == "Node" && $4 
 
 "$pppoe_client" daemon --resource lifecycle-pppoe --interface "$epair_a" \
   --username routerd --password pppoe-secret --auth-method pap --service-name routerd-lifecycle \
-  --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
+  --runtime-dir "$work/client" --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
   --event-file "$evidence_dir/pppoe-events.jsonl" >"$evidence_dir/pppoe.stdout.log" 2>"$evidence_dir/pppoe.stderr.log" &
 client_pid=$!
 for _ in $(jot 30); do
@@ -316,6 +316,28 @@ ifconfig "$foreign_ppp_ifname" >"$evidence_dir/pppoe-foreign-interface-after-sta
 cmp "$evidence_dir/pppoe-foreign-interface-before-start.ifconfig" "$evidence_dir/pppoe-foreign-interface-after-start.ifconfig"
 ifconfig "$foreign_ppp_ifname" destroy
 foreign_ppp_ifname=
+
+# Terminate the actual daemon while a third independent session is connected.
+# A normal exit is accepted only after its native backend/interface is gone.
+ipc_curl --unix-socket "$work/pppoe.sock" -X POST http://localhost/v1/commands/start >"$evidence_dir/pppoe-start-before-daemon-term.json"
+status_deadline=$(( $(date +%s) + 30 ))
+while [ "$(date +%s)" -lt "$status_deadline" ]; do
+  ipc_curl --unix-socket "$work/pppoe.sock" http://localhost/v1/status >"$evidence_dir/pppoe-status-before-daemon-term.json" || true
+  jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2"' "$evidence_dir/pppoe-status-before-daemon-term.json" >/dev/null 2>&1 && break
+  sleep 1
+done
+jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2"' "$evidence_dir/pppoe-status-before-daemon-term.json" >/dev/null
+term_started=$(date +%s)
+kill -TERM "$client_pid"
+client_exit=0
+wait "$client_pid" || client_exit=$?
+client_pid=
+printf 'exit=%s durationSeconds=%s\n' "$client_exit" "$(( $(date +%s) - term_started ))" >"$evidence_dir/pppoe-daemon-term.log"
+[ "$client_exit" -eq 0 ]
+if ifconfig "$owned_ppp_ifname" >"$evidence_dir/pppoe-owned-interface-after-daemon-term.ifconfig" 2>&1; then
+  echo 'native PPP interface survived daemon termination' >&2
+  exit 1
+fi
 
 printf '%s\n' \
   'pppoe-mpd5-peer-configure-start-observe-bidirectional-stop-restart-cleanup-foreign-preservation=ok' \
