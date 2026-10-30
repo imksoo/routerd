@@ -449,3 +449,40 @@ func TestPolicyIPv4NativeAllTableObservationIgnoresForeignTables(t *testing.T) {
 		t.Fatalf("numeric link-scope observation=%v %v %v", match, collision, err)
 	}
 }
+
+func TestPolicyIPv4NativeOwnedReceiptCannotHideForeignSelectorOverlap(t *testing.T) {
+	c, _, native, _ := newPolicyNativeFixture(t)
+	if err := applyPolicyNative(t, c); err != nil {
+		t.Fatal(err)
+	}
+	native.calls = nil
+	native.foreignRule = "100: from all fwmark 0x100 lookup 999 proto 4\n"
+	if err := applyPolicyNative(t, c); err == nil {
+		t.Fatal("owned rule masked a foreign overlapping selector")
+	}
+	if len(native.mutations()) != 0 {
+		t.Fatal(native.mutations())
+	}
+}
+
+func TestPolicyIPv4NativeLinkDownDoesNotDiscardRouteReceipt(t *testing.T) {
+	c, _, native, _ := newPolicyNativeFixture(t)
+	if err := applyPolicyNative(t, c); err != nil {
+		t.Fatal(err)
+	}
+	native.route = strings.TrimSpace(native.route) + " linkdown\n"
+	native.calls = nil
+	if err := applyPolicyNative(t, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.mutations()) != 0 {
+		t.Fatal(native.mutations())
+	}
+	c.Router = &api.Router{}
+	if err := applyPolicyNative(t, c); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.mutations()) != 2 {
+		t.Fatal(native.mutations())
+	}
+}

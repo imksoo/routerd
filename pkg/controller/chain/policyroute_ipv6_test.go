@@ -343,3 +343,18 @@ func TestPolicyIPv6NativeFamilyJournalDoesNotWithdrawIPv4(t *testing.T) {
 		t.Fatal(ipv4.mutations())
 	}
 }
+
+func TestPolicyIPv6NativeOwnedReceiptCannotHideForeignSelectorOverlap(t *testing.T) {
+	c, _, native, _ := newPolicyIPv6Fixture(t)
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	native.calls = nil
+	native.rules[10120] += "10120: from all lookup 999 proto 4\n"
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err == nil {
+		t.Fatal("owned rule masked a foreign overlapping selector")
+	}
+	if len(native.mutations()) != 0 {
+		t.Fatal(native.mutations())
+	}
+}
