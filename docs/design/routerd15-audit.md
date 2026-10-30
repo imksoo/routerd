@@ -1294,3 +1294,41 @@ rdisc6 ownership and DNS forwarder order) were corrected; those failed attempts
 were not counted as pass. WAN transit and return routing are fixture scaffolding.
 WAN RA/IA_NA, prefix renumbering, DHCPv4 renewal, firewall isolation, reboot/crash,
 1.0 cutback, FreeBSD client parity and the remaining 1.0 inventory stay open.
+
+## Linux DHCP renewal and firewall withdrawal checkpoint
+
+Product `ad686135b4a751cd99a0aba3d48553eb853e8f7c`, installed from `make dist`
+in the dedicated Ubuntu 24.04.4 / Linux 6.8.0-124 VM, passes the independent
+BusyBox DHCP and three-zone firewall lifecycle. The initial trial passed DHCP
+renewal, DNS/NAT, isolation, restart and exception removal, then failed because
+removing all firewall resources left the native filter active. The controller's
+no-firewall early return skipped withdrawal. A separate real-kernel local test
+also showed that a comment in a later table block did not set kernel ownership.
+Both defects failed locally before repair. Creation now sets the native marker;
+withdrawal verifies that marker and deletes the observed handle. Failed inventory
+reads/deletes retain retry input, and foreign/unmarked tables are not removed.
+
+The exact public `scripts/linux-dhcp-firewall-lifecycle-smoke.sh` passed with its
+committed fixture: expected DHCP address/gateway/DNS, timer-driven renewal after
+61 seconds, local/upstream DNS UDP/TCP, peer-observed NAT source, WAN-to-LAN and
+LAN-to-management isolation, WAN-to-router DNS isolation, positive management
+control, actual service restart, explicit exception add/remove, filter withdrawal
+restoring baseline HTTP paths, empty apply, namespace cleanup and IPv4 forwarding
+restoration. Denied HTTP requests were absent at the destination and the relevant
+nft chain counters increased. Successful raw output was deleted automatically.
+The old unmarked filter was manually removed during environment preparation;
+that cleanup is not counted as successful product withdrawal.
+
+Validation: normal `go test ./...` passed (120 packages, nine without tests),
+focused actual-kernel withdrawal passed in an isolated local netns, schema and
+examples passed, website schema copies and four website locales built. The first
+normal-suite attempt found 16 Linux golden files needing the creation-time
+comment; their diffs were verified to contain only that intended change before
+updating and rerunning the suite. English/Japanese development procedures define
+the setup, commands, positive/negative verdicts and cleanup.
+
+This qualifies DHCPv4 **server** renewal with an independent client, not a WAN
+DHCPv4 client or rebind/expiry. VM reboot, interrupted-operation recovery, 1.0
+cutback, IPv6 renumbering/WAN RA/IA_NA and all other unqualified 1.0 functions
+remain required. Existing tables without the native marker require explicit
+operator resolution; automatic old-format adoption is not provided.

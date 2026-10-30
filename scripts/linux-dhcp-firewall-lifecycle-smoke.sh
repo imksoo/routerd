@@ -22,7 +22,8 @@ for side in lan wan admin; do
 done
 units=(rd15-http-lan rd15-http-wan rd15-http-admin rd15-upstream-dns rd15-dhcp-client)
 for unit in "${units[@]}"; do test "$(systemctl show -p LoadState --value "$unit.service")" = not-found; done
-if nft list table inet routerd_filter >/dev/null 2>&1; then echo 'existing product firewall; empty dedicated guest required' >&2; exit 1; fi
+tables=$(nft -j list tables)
+if jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")' <<< "$tables" >/dev/null; then echo 'existing product firewall; empty dedicated guest required' >&2; exit 1; fi
 /usr/local/sbin/routerd validate --config "$candidate"
 work=$(mktemp -d /var/tmp/routerd15-dhcp-firewall.XXXXXX)
 printf '%s\n' "$work"
@@ -132,6 +133,7 @@ test "$(http lan 198.18.17.2 baseline-lan-admin)" = "$client"
 test "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short @198.18.15.1 router.home.arpa A)" = 198.18.15.1
 /usr/local/sbin/routerctl apply -f "$work/filtered.json" --replace > "$work/filter-apply.txt"
 nft -j list table inet routerd_filter > "$work/filter.json"
+jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter") | .comment=="routerd.owner=routerd routerd.generation=1"' "$work/filter.json" >/dev/null
 deny_http() {
  local source=$1 address=$2 destination=$3 tag=$4
  if http "$source" "$address" "$tag"; then echo "unexpected allowed path: $tag" >&2; return 1; fi
@@ -170,7 +172,8 @@ test "$(http lan 198.18.17.2 explicit-exception)" = "$client"
 deny_http lan 198.18.17.2 admin deny-removed-exception
 # Removing only the firewall must restore the already-proven paths.
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/filter-withdraw.txt"
-if nft list table inet routerd_filter >/dev/null 2>&1; then echo 'removed firewall table still exists' >&2; exit 1; fi
+nft -j list tables > "$work/tables-withdrawn.json"
+jq -e '[.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")] | length==0' "$work/tables-withdrawn.json" >/dev/null
 test "$(http wan "$client" filter-withdrawn-wan-lan)" = 198.18.16.1
 test "$(http lan 198.18.17.2 filter-withdrawn-lan-admin)" = "$client"
 cat > "$work/empty.json" <<'JSON'
