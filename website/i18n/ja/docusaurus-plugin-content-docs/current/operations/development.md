@@ -359,6 +359,9 @@ RA-only peer を使います。router lifetime は15秒、prefix の preferred/v
 - 新規 managed:false 宣言で RA 受信設定や networkd adoption を変更せず、default route を取得しない。
 - managed:true に変更すると、手動の WAN アドレス・default route 追加なしで SLAAC を取得し、
   proto ra の経路を使って HTTP に到達する。peer が観測した送信元を照合する。
+- service の通常再起動と、main process の SIGKILL を別々に実施する。新 PID の Healthy な
+  daemon が同じ2 resource を読み、正規設定と peer を変えずに HTTP が使えること。
+  SIGKILL 後は systemd による自動再起動がちょうど1回で、手動起動や再 apply を行わない。
 - RA 送信プロセスだけを SIGSTOP で停止し、shutdown RA を送らせない。
   router lifetime 後は経路検索と HTTP が失敗し、valid lifetime 後は SLAAC アドレスも消える。
   Linux は GC 前の期限切れ行を expires -Nsec として一覧に残すことがあるため、
@@ -370,4 +373,5 @@ RA-only peer を使います。router lifetime は15秒、prefix の preferred/v
 この明示的な後片付けは、管理解除時の自動ロールバックの証明ではありません。
 失敗時は製品と peer を停止して診断用出力を保持し、原因をローカルで再現してから再試験します。
 成功ログは削除し、リビジョン・手順・合否基準を残します。RDNSS/DNSSL、DHCPv6 IA_NA、
-LAN 転送、再起動・クラッシュ復旧、他 OS はこの試験の対象外であり、全体の残件として扱います。
+LAN 転送、ホスト再起動・カーネル状態喪失・ストレージ障害、他 OS は未検証です。
+service 再起動と SIGKILL の試験ではカーネル状態が維持されるため、これらを区別します。

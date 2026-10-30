@@ -254,6 +254,11 @@ Pass requires all of the following:
 - Switching to managed mode enables reception without manually assigning a
   WAN global address/default route. Require kernel SLAAC, a `proto ra` default,
   and an HTTP peer observing the SLAAC source.
+- Restart the service, then separately SIGKILL its main process. Require a new
+  Healthy daemon with the same two declared resources, unchanged canonical
+  configuration and peer processes, and successful HTTP after each recovery.
+  The SIGKILL path must recover through exactly one systemd automatic restart;
+  do not manually start the service or reapply its configuration.
 - Freeze only the RA sender using SIGSTOP so it cannot send a shutdown RA.
   After the router lifetime, route lookup and HTTP must fail. Linux can retain
   an expired row until garbage collection: an `expires -Nsec` row alone is not
@@ -270,7 +275,8 @@ automatic rollback when managed intent is removed. Failed gates stop routerd
 and peers and preserve diagnostic files; investigate and reproduce locally
 before retrying. Successful raw output is deleted. Retain the tested revisions,
 procedure and criteria. This gate excludes RDNSS/DNSSL consumption, DHCPv6 IA_NA,
-LAN forwarding, restart/crash recovery and other platforms.
+LAN forwarding, host reboot, loss of kernel state, storage failure and other
+platforms. Service restart/SIGKILL checks retain the kernel network state.
 
 ## Linux DHCP and firewall withdrawal gate
 

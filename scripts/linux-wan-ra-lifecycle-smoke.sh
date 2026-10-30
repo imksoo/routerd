@@ -131,6 +131,39 @@ probe() {
 wait_ready
 test "$(sysctl -n net.ipv6.conf.rd15-ra.accept_ra)" = 2
 probe
+# Preserve canonical intent and peers across both service recovery paths.
+config_digest=$(sha256sum /usr/local/etc/routerd/router.yaml)
+wait_new_daemon() {
+ local old_pid=$1 current_pid
+ for _ in {1..30}; do
+  current_pid=$(systemctl show routerd -p MainPID --value)
+  if [ "$current_pid" -gt 0 ] && [ "$current_pid" != "$old_pid" ] &&
+     systemctl is-active --quiet routerd &&
+     routerctl get status -o json > "$work/restarted-status.json" 2>/dev/null &&
+     jq -e '.status.phase=="Healthy" and .status.resourceCount==2 and all(.status.controllers[]; .currentError!=true)' "$work/restarted-status.json" >/dev/null; then
+   test "$(sha256sum /usr/local/etc/routerd/router.yaml)" = "$config_digest"
+   kill -0 "$dns" "$http"
+   return 0
+  fi
+  sleep 1
+ done
+ return 1
+}
+router_pid=$(systemctl show routerd -p MainPID --value)
+systemctl restart routerd
+wait_new_daemon "$router_pid"
+wait_ready
+probe
+printf 'PASS: planned service restart %s -> %s, canonical intent and peers unchanged\n' "$router_pid" "$(systemctl show routerd -p MainPID --value)"
+router_pid=$(systemctl show routerd -p MainPID --value)
+restarts_before=$(systemctl show routerd -p NRestarts --value)
+# SIGKILL exercises service-manager recovery without a graceful product shutdown.
+systemctl kill --kill-whom=main --signal=KILL routerd
+wait_new_daemon "$router_pid"
+test "$(systemctl show routerd -p NRestarts --value)" -eq "$((restarts_before + 1))"
+wait_ready
+probe
+printf 'PASS: SIGKILL recovered automatically %s -> %s, exactly one systemd restart\n' "$router_pid" "$(systemctl show routerd -p MainPID --value)"
 router_pid=$(systemctl show routerd -p MainPID --value)
 # Freeze the independent RA sender: no zero-lifetime shutdown advertisements.
 kill -STOP "$dns"
