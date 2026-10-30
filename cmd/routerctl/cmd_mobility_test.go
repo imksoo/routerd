@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +189,13 @@ func TestMobilityLeafConfigCommandGeneratesValidConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SAMTransportProfile spec: %v", err)
 		}
+	}
+	wantMode := "fou"
+	if runtime.GOOS == "freebsd" {
+		wantMode = "gre"
+	}
+	if transport.Mode != wantMode {
+		t.Fatalf("generated transport mode = %q, want %q", transport.Mode, wantMode)
 	}
 	if len(transport.PeersFrom) != 2 || transport.PeersFrom[0].Resource != "SAMRRSet/pve-rrs" || transport.PeersFrom[1].Resource != "SAMPeerGroup/pve-fou-direct-leaves" || !transport.PeersFrom[1].Direct {
 		t.Fatalf("generated direct transport peersFrom = %#v", transport.PeersFrom)

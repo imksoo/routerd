@@ -2265,7 +2265,7 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 			}},
 		}},
 	}
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate FirewallRule IPAddressSet ref: %v", err)
 	}
 	router.Spec.Resources[5].Spec = api.FirewallRuleSpec{
@@ -2274,7 +2274,7 @@ func TestValidateFirewallRuleAddressSetRef(t *testing.T) {
 		DestinationSetRefs: []string{"IPAddressSet/missing"},
 		Action:             "accept",
 	}
-	if err := Validate(router); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
+	if err := ValidateForOS(router, platform.OSLinux); err == nil || !strings.Contains(err.Error(), "references missing IPAddressSet") {
 		t.Fatalf("expected missing IPAddressSet error, got %v", err)
 	}
 }
@@ -2538,7 +2538,7 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 		RateLimit:        api.FirewallRateLimitSpec{Rate: 10, Burst: 20, Unit: "packet", Per: "second"},
 		ConnLimit:        api.FirewallConnLimitSpec{MaxPerSource: 4},
 	}
-	if err := Validate(base(valid)); err != nil {
+	if err := ValidateForOS(base(valid), platform.OSLinux); err != nil {
 		t.Fatalf("valid stateful firewall rule rejected: %v", err)
 	}
 	for _, tt := range []struct {
@@ -2553,7 +2553,7 @@ func TestValidateFirewallRuleStatefulExpressions(t *testing.T) {
 		{name: "bad rate unit", spec: api.FirewallRuleSpec{FromZone: "wan", ToZone: "self", Protocol: "tcp", DestinationPorts: []api.FirewallPort{"22"}, Action: "drop", RateLimit: api.FirewallRateLimitSpec{Rate: 1, Unit: "bit", Per: "second"}}, want: "unit"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(base(tt.spec))
+			err := ValidateForOS(base(tt.spec), platform.OSLinux)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Validate error = %v, want containing %q", err, tt.want)
 			}
@@ -2858,7 +2858,7 @@ func TestValidateVXLANSegment(t *testing.T) {
 		}},
 	}
 
-	if err := Validate(router); err != nil {
+	if err := ValidateForOS(router, platform.OSLinux); err != nil {
 		t.Fatalf("validate vxlan config: %v", err)
 	}
 }
