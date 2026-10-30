@@ -290,3 +290,47 @@ func TestMobilityAddressPendingOtherWorldCannotBeRetiredByLocalAbsence(t *testin
 	}
 	assertNativeAck(t, nativeStatus(t, s.SQLiteStore), dynamicconfig.MobilityAddressWithdrawalAcks, nil)
 }
+
+func TestMobilityAddressSourceRevokedWhileAcknowledgementWaits(t *testing.T) {
+	c, s, n := mobilityAddressOwnerFixture(t)
+	changed := false
+	s.afterMerge = func(updates map[string]any) {
+		rows, ok := updates["appliedMobilityStaticAddresses"].([]mobilityAppliedIPv4Address)
+		if ok && len(rows) > 0 && !changed {
+			changed = true
+			c.MobilityDataplane.StaticAddresses = nil
+			writeMobilityAddressPlan(t, c, s)
+		}
+	}
+	if err := c.reconcileMobilityStaticAddresses(t.Context()); err == nil || !changed {
+		t.Fatalf("source revocation reported success: %v", err)
+	}
+	rows, err := c.appliedMobilityStaticAddresses()
+	if err != nil || len(rows) != 0 || len(n.snapshot.Addresses) != 0 || len(addressPending(t, s)) != 0 {
+		t.Fatalf("known stale address retained: %+v %v", rows, err)
+	}
+}
+
+func TestMobilityAddressVirtualParentIsRecheckedAfterPendingWrite(t *testing.T) {
+	parent, native, raw, _ := segmentOwnerFixture(t)
+	if err := parent.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	store := &addressOwnerStore{SQLiteStore: raw}
+	n := &addressOwnerNative{snapshot: staticAddressSnapshot{Index: native.link.Index, Scope: native.link.Scope}}
+	c := IPv4StaticAddressController{Router: parent.Router, Store: store, Segments: &parent, ObserveAddresses: n.observe, Command: n.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{StaticAddresses: []dynamicconfig.MobilityIPv4AddressIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4AddressPurposeCaptureSource, Interface: "vxlan100", Address: "10.88.60.10/32"}}}}
+	changed := false
+	store.afterMerge = func(updates map[string]any) {
+		pending, ok := updates["pendingMobilityStaticAddresses"].([]mobilityAppliedIPv4Address)
+		if ok && len(pending) > 0 && !changed {
+			changed = true
+			native.link.Token = "foreign-replacement"
+		}
+	}
+	if err := c.reconcileMobilityStaticAddresses(t.Context()); err == nil || !changed {
+		t.Fatalf("replaced parent authorized address: %v", err)
+	}
+	if n.writes != 0 || len(addressPending(t, store)) != 0 {
+		t.Fatal("address effect or uncertainty survived a known pre-effect parent replacement")
+	}
+}

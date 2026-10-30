@@ -4651,7 +4651,6 @@ type IPv4StaticAddressController struct {
 	DryRun            bool
 	Logger            *slog.Logger
 	Command           commandFunc
-	AddressPresent    func(context.Context, string, string) bool
 	DevicePresent     func(context.Context, string) bool
 	ObserveAddresses  func(context.Context, string) (staticAddressSnapshot, error)
 	Segments          *VXLANSegmentController
