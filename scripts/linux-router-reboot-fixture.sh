@@ -171,6 +171,10 @@ JSON
   rm -- /etc/systemd/system/rd15-links.service /etc/systemd/system/routerd.service.d/90-rd15-links.conf
   systemctl daemon-reload
   sysctl -w net.ipv4.ip_forward=0
+  # Stopping the fixture unit also stops routerd through Requires=. Once that
+  # dependency is gone, leave the product running with its withdrawn config.
+  systemctl start routerd
+  /usr/local/sbin/routerctl get status -o json | jq -e '.status.phase=="Healthy" and (.status.resourceCount // 0)==0 and ([.status.controllers[] | select(.currentError==true)] | length==0)' >/dev/null
   rm -r -- "$work"
   ;;
  *) echo 'unknown role' >&2; exit 2;;
