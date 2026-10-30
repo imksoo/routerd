@@ -81,6 +81,13 @@ spec:
 
 The MVP merge policy supports only `conflict: reject`.
 
+The configured `ttl` bounds direct `Plugin/<name>` publications, including
+manual `routerctl plugin run` invocations. When multiple sources bind the same
+plugin, the shortest declared bound applies. A shorter plugin-result lifetime
+is retained. The bound is measured from the original `observedAt`, so invoking
+a plugin does not make an old observation fresh. Results already expired under
+that policy are rejected before publication.
+
 ## DynamicConfigDirective
 
 The MVP supports one directive operation:
