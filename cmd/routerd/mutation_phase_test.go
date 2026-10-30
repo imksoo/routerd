@@ -33,7 +33,7 @@ const missingBridgeYAML = `
       spec: {ifname: rd-phase-test, members: [test-member]}
 `
 
-func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *testing.T) {
+func TestMutationDriftFailureRetainsCommittedIntentAndTerminalEvidence(t *testing.T) {
 	for _, operation := range []string{"apply", "delete"} {
 		t.Run(operation, func(t *testing.T) {
 			_, opts := faultApplyFixture(t)
@@ -69,11 +69,13 @@ func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *tes
 				configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache,
 				getRouter: func() *api.Router { return current },
 				setRouter: func(router *api.Router) {
-					if router != old {
-						t.Error("uncommitted candidate was published")
+					canonical, err := os.ReadFile(opts.ConfigPath)
+					if err != nil || string(canonical) == before {
+						t.Error("candidate was published before durable desired replacement")
 					}
 					current = router
 				},
+				updateRuntime: func(router *api.Router) error { active.Router = router; return nil },
 				activeRuntime: func() controllerchain.RuntimeSnapshot { return active },
 				reloadWithOutcome: func(_ context.Context, router *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
 					reloads++
@@ -97,18 +99,18 @@ func TestMutationDriftFailurePreservesCanonicalRuntimeAndTerminalEvidence(t *tes
 				t.Fatalf("failed mutation reported success: HTTP %d %s", response.Code, response.Body.String())
 			}
 			canonical, err := os.ReadFile(opts.ConfigPath)
-			if err != nil || string(canonical) != before || current != old || active.Router != old {
-				t.Fatalf("failed mutation changed canonical or active runtime: config=%s error=%v current=%p active=%p old=%p", canonical, err, current, active.Router, old)
+			if err != nil || string(canonical) == before || current == old || active.Router != current {
+				t.Fatalf("nonconvergence lost committed desired or actual runtime: config=%s error=%v current=%p active=%p old=%p", canonical, err, current, active.Router, old)
 			}
 			wantReloads := 0
 			if operation == "apply" {
-				wantReloads = 2
+				wantReloads = 1
 			}
 			if reloads != wantReloads {
 				t.Fatalf("reload/restore count=%d, want %d", reloads, wantReloads)
 			}
 			attempt, _, ok := cache.LastAttempt()
-			if !ok || attempt.Result == nil || attempt.Result.Phase != "Drifted" || !attempt.TerminalSucceeded || attempt.Canonical == canonicalReplaced || cache.Load().Phase != "Error" {
+			if !ok || attempt.Result == nil || attempt.Result.Phase != "Drifted" || !attempt.TerminalSucceeded || attempt.Canonical != canonicalReplaced || !attempt.DurabilityConfirmed || cache.Load().Phase != "Error" {
 				t.Fatalf("failed mutation lost its evidence: %+v", attempt)
 			}
 			store := faultGenerationStore(t, opts.StatePath, false)

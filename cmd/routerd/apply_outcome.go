@@ -20,7 +20,6 @@ const (
 	canonicalNotRequested canonicalWriteState = "not-requested"
 	canonicalNotReplaced  canonicalWriteState = "not-replaced"
 	canonicalReplaced     canonicalWriteState = "replaced"
-	canonicalUnknown      canonicalWriteState = "unknown"
 )
 
 // applyAttemptOutcome records independent facts, including partial progress.
