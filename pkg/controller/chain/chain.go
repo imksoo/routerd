@@ -1758,38 +1758,23 @@ func (r *Runner) preserveFreshDaemonStatusWhenFalse(res api.Resource, apiVersion
 	if err != nil {
 		return false, err
 	}
-	return observation.Phase == statusvalue.Field(status, "phase") && !observation.CheckedAt.IsZero() &&
-		!now.Before(observation.CheckedAt) && !now.After(observation.CheckedAt.Add(healthCheckStatusFreshness(res))), nil
+	spec, err := res.HealthCheckSpec()
+	if err != nil {
+		return false, err
+	}
+	router := store.Router
+	if router == nil {
+		router = r.currentRouter()
+	}
+	resolved, err := healthcheck.ResolveSpecWithStoreForResource(router, store, res.Metadata.Name, spec)
+	if err != nil {
+		return false, err
+	}
+	return observation.Phase == statusvalue.Field(status, "phase") && observation.Probe == resolved.Probe() && observation.Current(now), nil
 }
 
 func statusIsWhenFalse(status map[string]any) bool {
 	return strings.TrimSpace(fmt.Sprint(status["reason"])) == "WhenFalse"
-}
-
-func healthCheckStatusFreshness(res api.Resource) time.Duration {
-	freshness := 2 * time.Minute
-	spec, err := res.HealthCheckSpec()
-	if err != nil {
-		return freshness
-	}
-	interval := parseDurationOrDefault(spec.Interval, 30*time.Second)
-	timeout := parseDurationOrDefault(spec.Timeout, 3*time.Second)
-	candidate := interval*3 + timeout
-	if candidate > freshness {
-		return candidate
-	}
-	return freshness
-}
-
-func parseDurationOrDefault(value string, fallback time.Duration) time.Duration {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil || duration <= 0 {
-		return fallback
-	}
-	return duration
 }
 
 func (r *Runner) effectiveRouterForReconcile(store eventedStore) (routerObservation, error) {
@@ -4726,6 +4711,12 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				}
 				continue
 			}
+			if observed.Resource.Kind == "HealthCheck" {
+				observed, err = c.currentHealthSnapshot(observed, time.Now().UTC())
+				if err != nil {
+					return err
+				}
+			}
 			base := map[string]any{
 				"phase":      observed.Phase,
 				"health":     observed.Health,
@@ -4741,13 +4732,10 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 				}
 			}
 			if observed.Resource.Kind == "HealthCheck" {
-				if observed.Routing == nil {
-					if c.Logger != nil {
-						c.Logger.Warn("Health snapshot has no typed routing observation", "resource", observed.Resource.Name)
-					}
-					continue
+				delete(next, "routing")
+				if observed.Routing != nil {
+					next["routing"] = *observed.Routing
 				}
-				next["routing"] = *observed.Routing
 			}
 			if err := c.Store.SaveObjectStatus(observed.Resource.APIVersion, observed.Resource.Kind, observed.Resource.Name, next); err != nil {
 				return err

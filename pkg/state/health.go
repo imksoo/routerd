@@ -6,7 +6,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
+
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 // HealthObservation reads the same current object that owns status publication.
@@ -25,18 +28,42 @@ func (s *SQLiteStore) HealthObservation(name string) (api.HealthObservation, err
 	if err != nil {
 		return api.HealthObservation{}, err
 	}
-	var status struct {
-		Phase   string                `json:"phase"`
-		Routing api.HealthObservation `json:"routing"`
-	}
+	return currentHealthObservation(raw, s.now().UTC())
+}
+
+type healthStatusDocument struct {
+	Phase   string                `json:"phase"`
+	Routing api.HealthObservation `json:"routing"`
+}
+
+func currentHealthObservation(raw string, now time.Time) (api.HealthObservation, error) {
+	var status healthStatusDocument
 	if err := json.Unmarshal([]byte(raw), &status); err != nil {
 		return api.HealthObservation{}, err
 	}
-	switch status.Phase {
-	case "Healthy", "Passing", "Failing", "Unhealthy":
-		if status.Phase == status.Routing.Phase {
-			return status.Routing, nil
-		}
+	if status.Phase == status.Routing.Phase && status.Routing.Current(now) {
+		return status.Routing, nil
 	}
 	return api.HealthObservation{}, nil
+}
+
+// This is a read projection only. The raw sample remains available as history;
+// an expired, identityless, or inconsistent sample is never a current phase.
+func projectHealthStatus(status map[string]any, raw string, now time.Time) error {
+	switch status["phase"] {
+	case "Healthy", "Passing", "Failing", "Unhealthy":
+	default:
+		return nil
+	}
+	current, err := currentHealthObservation(raw, now)
+	if err != nil {
+		return err
+	}
+	if current == (api.HealthObservation{}) {
+		status["phase"] = "Unknown"
+		status["health"] = daemonapi.HealthUnknown
+		status["reason"] = "ProbeObservationUnknown"
+		status["conditions"] = []daemonapi.Condition{{Type: "Healthy", Status: daemonapi.ConditionUnknown, Reason: "ProbeObservationUnknown"}}
+	}
+	return nil
 }

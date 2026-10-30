@@ -136,3 +136,20 @@ func TestFreeBSDHealthBindingResolvesDeclarationNameOnce(t *testing.T) {
 		t.Fatalf("public Interface was ignored or native name was reinterpreted as an alias:\n%s", script)
 	}
 }
+
+func TestHealthCheckRuntimeUnitPropagatesAddressFamily(t *testing.T) {
+	unit := string(HealthCheckSystemdUnit(HealthCheckSystemdOptions{Target: "2001:db8::1", AddressFamily: "ipv6"}))
+	if !strings.Contains(unit, `--address-family "ipv6"`) {
+		t.Fatalf("worker would probe another family:\n%s", unit)
+	}
+}
+
+func TestHealthCheckDaemonUnitPassesConfiguredDefaultProtocol(t *testing.T) {
+	unit, err := HealthCheckDaemonSystemdSpec(HealthCheckDaemonUnitOptions{Resource: "internet", Spec: api.HealthCheckSpec{Target: "192.0.2.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(unit.ExecStart, " "), "--protocol icmp") {
+		t.Fatalf("worker would use standalone TCP default: %v", unit.ExecStart)
+	}
+}

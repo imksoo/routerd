@@ -154,6 +154,11 @@ func TestProbeOnceUpdatesStateHistory(t *testing.T) {
 	if len(d.state.History) != 1 {
 		t.Fatalf("history len = %d", len(d.state.History))
 	}
+	status := d.statusLocked()
+	if len(status.Resources) != 1 || status.Resources[0].Routing == nil || !status.Resources[0].Routing.Usable(time.Now(), d.spec) {
+		t.Fatalf("actual TCP probe did not publish a current typed sample: %+v", status.Resources)
+	}
+
 	if d.state.History[0].ProbeEvidence.NextHop != "192.0.2.1" {
 		t.Errorf("nextHop = %q", d.state.History[0].NextHop)
 	}

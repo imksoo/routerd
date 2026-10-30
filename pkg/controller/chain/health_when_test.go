@@ -19,7 +19,12 @@ func TestHealthWhenTrueDoesNotPromoteRetainedSQLiteHistory(t *testing.T) {
 	defer store.Close()
 	resource := whenFalseHealthCheck("internet")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
-	sample := api.HealthObservation{Phase: "Healthy", CheckedAt: time.Now().UTC()}
+	spec, err := resource.HealthCheckSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Target = "192.0.2.1"
+	sample := api.HealthObservation{Probe: spec.Probe(), Phase: "Healthy", CheckedAt: time.Now().UTC()}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "internet", map[string]any{
 		"phase": "Pending", "reason": "WhenFalse", "routing": sample,
 		"observed": map[string]any{"phase": "Healthy", "lastResult": "passed", "lastCheckedAt": sample.CheckedAt.Format(time.RFC3339Nano)},
@@ -48,7 +53,7 @@ func TestHealthWhenTrueDoesNotPromoteRetainedSQLiteHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := store.HealthObservation("internet")
-	if err != nil || !current.Usable(time.Now(), api.HealthCheckSpec{}) {
+	if err != nil || !current.Usable(time.Now(), spec) {
 		t.Fatalf("new observation did not restore authority: %+v %v", current, err)
 	}
 }

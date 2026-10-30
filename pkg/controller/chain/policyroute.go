@@ -1405,22 +1405,28 @@ func (c IPv4PolicyRouteController) targetHealthy(name string) (bool, error) {
 	if name == "" {
 		return true, nil
 	}
-	var spec api.HealthCheckSpec
+	if c.Router == nil {
+		return false, nil
+	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "HealthCheck" && resource.Metadata.Name == name {
-			var err error
-			spec, err = resource.HealthCheckSpec()
-			if err != nil {
-				return false, err
-			}
-			break
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
 		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			return false, err
+		}
+		resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, name, spec)
+		if err != nil {
+			return false, err
+		}
+		observation, err := c.Store.HealthObservation(name)
+		if err != nil {
+			return false, err
+		}
+		return observation.Usable(c.now(), resolved), nil
 	}
-	observation, err := c.Store.HealthObservation(name)
-	if err != nil {
-		return false, err
-	}
-	return observation.Usable(c.now(), spec), nil
+	return false, nil
 }
 
 func statusInt(value any) (int, bool) {

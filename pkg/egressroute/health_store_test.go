@@ -2,25 +2,46 @@
 package egressroute
 
 import (
-	"fmt"
-	"github.com/imksoo/routerd/pkg/api"
-	"strconv"
+	"testing"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 )
 
-// Existing fixtures describe observations using maps. Narrow them here; product
-// routing reads typed observations from the real store instead.
-func fixtureHealthObservation(status map[string]any) (api.HealthObservation, error) {
-	if o, ok := status["routing"].(api.HealthObservation); ok {
-		return o, nil
-	}
-	if observed, ok := status["observed"].(map[string]any); ok && len(observed) > 0 {
-		status = observed
-	}
-	at, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(status["lastCheckedAt"]))
-	count, _ := strconv.Atoi(fmt.Sprint(status["consecutiveFailed"]))
-	return api.HealthObservation{Phase: fmt.Sprint(status["phase"]), CheckedAt: at, ConsecutiveFailed: count}, nil
-}
 func (s mapStore) HealthObservation(name string) (api.HealthObservation, error) {
-	return fixtureHealthObservation(s.ObjectStatus(api.NetAPIVersion, "HealthCheck", name))
+	observation, _ := s.ObjectStatus(api.NetAPIVersion, "HealthCheck", name)["routing"].(api.HealthObservation)
+	return observation, nil
+}
+
+func healthCheckResource(name string, spec api.HealthCheckSpec) api.Resource {
+	return api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+		Metadata: api.ObjectMeta{Name: name},
+		Spec:     spec,
+	}
+}
+
+func storeHealthObservation(t *testing.T, router *api.Router, store mapStore, name, phase string, checkedAt time.Time, failed int) {
+	t.Helper()
+	for _, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err = healthcheck.ResolveSpecWithStoreForResource(router, store, name, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", name, map[string]any{
+			"routing": api.HealthObservation{Probe: spec.Probe(), Phase: phase, CheckedAt: checkedAt, ConsecutiveFailed: failed},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	t.Fatalf("HealthCheck/%s is not declared", name)
 }

@@ -251,3 +251,32 @@ func TestFailureGraceRequiresPreviouslyHealthyPath(t *testing.T) {
 		t.Fatalf("threshold did not withdraw eligibility: %s", expired.State.Phase)
 	}
 }
+
+func TestApplyResultDoesNotRestoreFailureGraceFromAnotherOrExpiredProbe(t *testing.T) {
+	now := time.Now().UTC()
+	resource := api.Resource{Metadata: api.ObjectMeta{Name: "wan"}}
+	spec := api.HealthCheckSpec{Target: "192.0.2.1", Protocol: "tcp", HealthyThreshold: 2, UnhealthyThreshold: 3}
+	first := ApplyResult(resource, spec, State{}, ProbeResult{OK: true}, now)
+	healthy := ApplyResult(resource, spec, first.State, ProbeResult{OK: true}, now.Add(time.Second))
+	if healthy.State.Phase != PhaseHealthy {
+		t.Fatal(healthy.State.Phase)
+	}
+	for _, changed := range []bool{false, true} {
+		current, checked := spec, now.Add(3*time.Minute)
+		if changed {
+			current.Target = "192.0.2.2"
+			checked = now.Add(2 * time.Second)
+		}
+		failed := ApplyResult(resource, current, healthy.State, ProbeResult{Message: "unreachable"}, checked)
+		if failed.State.Phase != PhaseUnknown || failed.State.ConsecutiveFailed != 1 {
+			t.Fatalf("old sample restored failure grace: %+v", failed.State)
+		}
+		passed := ApplyResult(resource, current, healthy.State, ProbeResult{OK: true}, checked)
+		if passed.State.Phase != PhasePassing || passed.State.ConsecutivePassed != 1 {
+			t.Fatalf("old sample bypassed healthy threshold: %+v", passed.State)
+		}
+		if passed.State.Probe != current.Probe() {
+			t.Fatal("worker did not stamp actual configured identity")
+		}
+	}
+}

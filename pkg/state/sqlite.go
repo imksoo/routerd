@@ -924,6 +924,11 @@ func (s *SQLiteStore) ReadObjectStatus(apiVersion, kind, name string) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "HealthCheck" {
+		if err := projectHealthStatus(status, raw, s.now().UTC()); err != nil {
+			return nil, err
+		}
+	}
 	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6PrefixDelegation" {
 		if err := projectPDStatus(status, raw, s.now().UTC()); err != nil {
 			return nil, err
@@ -959,6 +964,11 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		}
 		if item.Status == nil {
 			return nil, fmt.Errorf("decode %s/%s status: expected an object", item.Kind, item.Name)
+		}
+		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "HealthCheck" {
+			if err := projectHealthStatus(item.Status, raw, s.now().UTC()); err != nil {
+				return nil, err
+			}
 		}
 		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6PrefixDelegation" {
 			if err := projectPDStatus(item.Status, raw, s.now().UTC()); err != nil {
