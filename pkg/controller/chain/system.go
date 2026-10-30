@@ -1769,7 +1769,7 @@ func (c SystemdUnitController) cleanupStaleDNSResolverUnits(ctx context.Context,
 			return err
 		}
 	}
-	return nil
+	return c.cleanupRemovedDNSResolverStatuses()
 }
 
 func (c SystemdUnitController) cleanupStaleEventFederationUnits(ctx context.Context, command outputCommandFunc) error {

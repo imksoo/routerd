@@ -58,7 +58,7 @@ func TestSystemdDNSRemovalRetiresStatusOnlyAfterStopAndRetriesDeletion(t *testin
 	if err := c.cleanupStaleDNSResolverUnits(t.Context(), command); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "old"); got != nil {
+	if got, exists := store.mapStore[api.NetAPIVersion+"/DNSResolver/old"]; exists {
 		t.Fatalf("removed resolver retains status: %v", got)
 	}
 }
