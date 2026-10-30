@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,6 +134,35 @@ func eventFromArgs(args []string, env []string) (controlapi.DHCPLeaseEventReques
 		event.Hostname = args[3]
 	}
 	event.Interface = dnsmasqInterface(env)
+	hasExpiry := false
+	for _, value := range env {
+		if tags, ok := strings.CutPrefix(value, "DNSMASQ_TAGS="); ok {
+			event.Tags = strings.Fields(tags)
+		}
+		if expiry, ok := strings.CutPrefix(value, "DNSMASQ_LEASE_EXPIRES="); ok {
+			hasExpiry = true
+			seconds, err := strconv.ParseInt(expiry, 10, 64)
+			if err != nil || seconds < 0 {
+				return controlapi.DHCPLeaseEventRequest{}, fmt.Errorf("invalid dnsmasq lease expiry %q", expiry)
+			}
+			if seconds == 0 {
+				event.Infinite = true
+			} else {
+				event.ExpiresAt = time.Unix(seconds, 0).UTC()
+			}
+		}
+	}
+	if !hasExpiry {
+		for _, value := range env {
+			if remaining, ok := strings.CutPrefix(value, "DNSMASQ_TIME_REMAINING="); ok {
+				seconds, err := strconv.ParseInt(remaining, 10, 64)
+				if err != nil || seconds < 0 || seconds > int64((time.Duration(1<<63-1))/time.Second) {
+					return controlapi.DHCPLeaseEventRequest{}, fmt.Errorf("invalid dnsmasq lease remaining time %q", remaining)
+				}
+				event.ExpiresAt = time.Now().UTC().Add(time.Duration(seconds) * time.Second)
+			}
+		}
+	}
 	return event, nil
 }
 

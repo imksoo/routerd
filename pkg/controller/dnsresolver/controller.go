@@ -143,7 +143,7 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 		}
 	}()
 	for _, resolver := range resolvers {
-		config, preparedZones, err := c.runtimeConfig(resolver.name, resolver.spec)
+		config, preparedZones, err := c.runtimeConfig(ctx, resolver.name, resolver.spec)
 		if err != nil {
 			return err
 		}
@@ -225,7 +225,7 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 	return reconcileErr
 }
 
-func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, []preparedZone, error) {
+func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNSResolverSpec) (dnsresolver.RuntimeConfig, []preparedZone, error) {
 	config := dnsresolver.RuntimeConfig{Resource: name, Spec: spec}
 	var zones []preparedZone
 	servedZones := dnsResolverZoneRefs(spec)
@@ -238,11 +238,39 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 	if hostsPath == "" {
 		hostsPath = filepath.Join(runtimeDir, "dnsmasq-hosts.hosts")
 	}
-	hostData, hostReadErr := os.ReadFile(hostsPath)
+	hostData, hostReadErr := readDHCPHosts(hostsPath)
 	if hostReadErr != nil && !os.IsNotExist(hostReadErr) {
 		return config, zones, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}
-	dhcpHostRecords := dnsresolver.ParseDNSMasqHostRecords(hostData)
+	scopes := dnsresolver.DHCPScopes(c.Router)
+	var leaseObservations []daemonapi.DHCPLeaseUpdate
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DNSZone" {
+			continue
+		}
+		zoneSpec, err := resource.DNSZoneSpec()
+		if err != nil {
+			return config, zones, err
+		}
+		if len(zoneSpec.DHCPDerived.Sources) == 0 {
+			continue
+		}
+		reader, ok := c.Store.(interface {
+			ReadDHCPLeaseObservations(context.Context) ([]daemonapi.DHCPLeaseUpdate, error)
+		})
+		if !ok {
+			return config, zones, fmt.Errorf("DHCP-derived DNS requires durable lease observations")
+		}
+		leaseObservations, err = reader.ReadDHCPLeaseObservations(ctx)
+		if err != nil {
+			return config, zones, fmt.Errorf("read named DHCP lease observations: %w", err)
+		}
+		break
+	}
+	dhcpHostRecords, err := c.namedDHCPAssignments(ctx, dnsresolver.ParseDNSMasqHostRecords(hostData), scopes)
+	if err != nil {
+		return config, zones, err
+	}
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DNSZone" {
 			continue
@@ -259,9 +287,14 @@ func (c Controller) runtimeConfig(name string, spec api.DNSResolverSpec) (dnsres
 			return config, zones, err
 		}
 		zones = append(zones, preparedZone{Name: resource.Metadata.Name, Zone: zoneSpec.Zone, Records: len(zoneSpec.Records), PendingRecords: pendingRecords})
-		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec}
+		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec, DHCPScopes: scopes}
 		if len(zoneSpec.DHCPDerived.Sources) > 0 {
-			runtimeZone.DHCPHostRecords = append([]dnsresolver.RuntimeDHCPHostRecord(nil), dhcpHostRecords...)
+			runtimeZone.DHCPHostRecords = assignmentsForSources(dhcpHostRecords, zoneSpec.DHCPDerived.Sources)
+			for _, observation := range leaseObservations {
+				if slices.Contains(zoneSpec.DHCPDerived.Sources, observation.Source) {
+					runtimeZone.LeaseObservations = append(runtimeZone.LeaseObservations, observation)
+				}
+			}
 		}
 		config.Zones = append(config.Zones, runtimeZone)
 	}
@@ -803,15 +836,12 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 	if c.DryRun || c.Router == nil {
 		return nil
 	}
-	action, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type)
-	if !ok {
-		return nil
+	payload, err := daemonapi.DHCPLeaseFromEvent(event)
+	if err != nil {
+		return err
 	}
-	payload := map[string]string{
-		"action":   action,
-		"mac":      event.Attributes["mac"],
-		"ip":       event.Attributes["ip"],
-		"hostname": event.Attributes["hostname"],
+	if err := payload.Validate(time.Now().UTC()); err != nil {
+		return err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

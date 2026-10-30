@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,18 +53,23 @@ type daemon struct {
 	cancel     context.CancelFunc
 	runCtx     context.Context
 
-	stateMu      sync.RWMutex
-	reloadMu     sync.Mutex
-	zones        *zoneTable
-	sources      []runtimeSource
-	listeners    map[string]*boundListener
-	sourceCancel context.CancelFunc
-	generation   uint64
-	configDigest string
-	cache        map[string]cacheEntry
-	queryLogMu   sync.Mutex
-	queryLog     *logstore.DNSQueryLog
-	queryHistory queryHistory
+	stateMu        sync.RWMutex
+	reloadMu       sync.Mutex
+	queryMu        sync.RWMutex
+	querySlots     chan struct{}
+	queryRejected  atomic.Uint64
+	requestTimeout time.Duration
+	zones          *zoneTable
+	sources        []runtimeSource
+	listeners      map[string]*boundListener
+	sourceCancel   context.CancelFunc
+	sourceCtx      context.Context
+	generation     uint64
+	configDigest   string
+	cache          map[string]cacheEntry
+	queryLogMu     sync.Mutex
+	queryLog       *logstore.DNSQueryLog
+	queryHistory   queryHistory
 }
 
 type runtimeSource struct {
@@ -72,9 +78,11 @@ type runtimeSource struct {
 }
 
 type boundListener struct {
-	Addr string
-	UDP  *dns.Server
-	TCP  *dns.Server
+	Addr    string
+	UDP     *dns.Server
+	TCP     *dns.Server
+	UDPDone chan struct{}
+	TCPDone chan struct{}
 }
 
 type cacheEntry struct {
@@ -252,17 +260,27 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 	if err := validateLocalZones(config); err != nil {
 		return nil, err
 	}
-	d := &daemon{
-		opts:      opts,
-		config:    config,
-		startedAt: time.Now().UTC(),
-		phase:     daemonapi.PhaseStarting,
-		health:    daemonapi.HealthUnknown,
-		cache:     map[string]cacheEntry{},
-		listeners: map[string]*boundListener{},
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil {
+		return nil, err
 	}
+	d := &daemon{
+		opts:           opts,
+		config:         config,
+		startedAt:      time.Now().UTC(),
+		phase:          daemonapi.PhaseStarting,
+		health:         daemonapi.HealthUnknown,
+		cache:          map[string]cacheEntry{},
+		listeners:      map[string]*boundListener{},
+		querySlots:     make(chan struct{}, maxDNSQueries),
+		requestTimeout: requestTimeout,
+	}
+	d.sourceCtx, d.sourceCancel = context.WithCancel(context.Background())
 	d.cond = sync.NewCond(&d.mu)
 	d.zones = newZoneTable(config.Zones)
+	if err := d.zones.LoadError(); err != nil {
+		return nil, err
+	}
 	sources, err := buildRuntimeSources(config)
 	if err != nil {
 		return nil, err
@@ -347,7 +365,8 @@ func (d *daemon) Run(ctx context.Context) error {
 		d.startQueryHistory(ctx)
 		sourceCtx, sourceCancel := context.WithCancel(ctx)
 		d.stateMu.Lock()
-		d.sourceCancel = sourceCancel
+		d.sourceCancel()
+		d.sourceCtx, d.sourceCancel = sourceCtx, sourceCancel
 		sources := append([]runtimeSource(nil), d.sources...)
 		d.stateMu.Unlock()
 		for i := range sources {
@@ -357,6 +376,7 @@ func (d *daemon) Run(ctx context.Context) error {
 		}
 		if err := d.startDNS(ctx); err != nil {
 			sourceCancel()
+			stopRuntimeSources(sources)
 			d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
 			d.publish(daemonapi.EventDaemonCrashed, daemonapi.SeverityError, "ListenFailed", err.Error(), nil)
 			return err
@@ -393,7 +413,7 @@ func (d *daemon) startDNS(ctx context.Context) error {
 	d.stateMu.Unlock()
 	select {
 	case <-ctx.Done():
-		d.shutdownDNSServers()
+		d.shutdownDNSLocked()
 		return ctx.Err()
 	case <-time.After(200 * time.Millisecond):
 		return nil
@@ -417,13 +437,41 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 			return nil, fmt.Errorf("listen tcp %s: %w", addr, err)
 		}
 		bound := &boundListener{
-			Addr: addr,
-			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize, Handler: handler},
-			TCP:  &dns.Server{Listener: listener, Net: "tcp", Handler: handler},
+			Addr:    addr,
+			UDP:     &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize, Handler: handler},
+			TCP:     &dns.Server{Listener: dnsDeadlineListener{Listener: listener}, Net: "tcp", Handler: handler},
+			UDPDone: make(chan struct{}),
+			TCPDone: make(chan struct{}),
 		}
+		udpWrites := new(sync.Mutex)
+		bound.UDP.DecorateWriter = func(writer dns.Writer) dns.Writer {
+			return dnsPacketWriter{Writer: writer, packet: packetConn, mu: udpWrites}
+		}
+		udpReady, tcpReady := make(chan struct{}), make(chan struct{})
+		bound.UDP.NotifyStartedFunc = func() { close(udpReady) }
+		bound.TCP.NotifyStartedFunc = func() { close(tcpReady) }
 		listeners[addr] = bound
-		go d.serveDNS(bound.UDP, addr, "udp")
-		go d.serveDNS(bound.TCP, addr, "tcp")
+		go func() { defer close(bound.UDPDone); d.serveDNS(bound.UDP, addr, "udp") }()
+		go func() { defer close(bound.TCPDone); d.serveDNS(bound.TCP, addr, "tcp") }()
+		for i, ready := range []chan struct{}{udpReady, tcpReady} {
+			done := bound.UDPDone
+			if i == 1 {
+				done = bound.TCPDone
+			}
+			select {
+			case <-ready:
+			case <-done:
+				packetConn.Close()
+				listener.Close()
+				shutdownBoundListeners(listeners)
+				return nil, fmt.Errorf("DNS server %s exited before listener readiness", addr)
+			case <-ctx.Done():
+				packetConn.Close()
+				listener.Close()
+				shutdownBoundListeners(listeners)
+				return nil, ctx.Err()
+			}
+		}
 	}
 	return listeners, nil
 }
@@ -435,23 +483,74 @@ func (d *daemon) serveDNS(server *dns.Server, addr, network string) {
 }
 
 func (d *daemon) shutdownDNSServers() {
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
+	d.shutdownDNSLocked()
+}
+
+func (d *daemon) shutdownDNSLocked() {
 	d.stateMu.Lock()
 	listeners := d.listeners
 	d.listeners = map[string]*boundListener{}
+	cancel, sources := d.sourceCancel, append([]runtimeSource(nil), d.sources...)
 	d.stateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	stopRuntimeSources(sources)
 	shutdownBoundListeners(listeners)
+	// Stop admission before reporting exit; retained direct handlers also join.
+	d.queryMu.Lock()
+	d.queryMu.Unlock()
 }
 
 func shutdownBoundListeners(listeners map[string]*boundListener) {
 	for _, listener := range listeners {
 		_ = listener.UDP.Shutdown()
 		_ = listener.TCP.Shutdown()
+		if listener.UDPDone != nil {
+			<-listener.UDPDone
+		}
+		if listener.TCPDone != nil {
+			<-listener.TCPDone
+		}
 	}
 }
 
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
+	select {
+	case d.querySlots <- struct{}{}:
+	default:
+		// No waiting query queue: UDP drops and TCP closes on saturation.
+		d.queryRejected.Add(1)
+		_ = w.Close()
+		return
+	}
+	d.queryMu.RLock()
+	defer func() {
+		<-d.querySlots
+		d.queryMu.RUnlock()
+	}()
+	d.stateMu.RLock()
+	ctx := d.sourceCtx
+	requestTimeout, generation := d.requestTimeout, d.generation
+	d.stateMu.RUnlock()
+	if ctx.Err() != nil {
+		_ = w.Close()
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	started := time.Now()
-	result, err := d.resolve(w.LocalAddr().String(), req)
+	result, err := d.resolveContext(ctx, w.LocalAddr().String(), req)
+	d.stateMu.RLock()
+	currentGeneration := d.generation
+	owner := d.sourceCtx
+	d.stateMu.RUnlock()
+	if owner.Err() != nil || generation != currentGeneration {
+		_ = w.Close()
+		return
+	}
 	resp := result.Response
 	if err != nil {
 		resp = new(dns.Msg)
@@ -477,7 +576,16 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		}
 		resp.Truncate(limit)
 	}
-	_ = w.WriteMsg(resp)
+	writeErr := w.WriteMsg(resp)
+	if ctx.Err() != nil {
+		return
+	}
+	if writeErr != nil {
+		d.publish("routerd.dns.reply.failed", daemonapi.SeverityWarning, "DNSReplyFailed", writeErr.Error(), nil)
+		result.ResponseCode = "WRITE_FAILED"
+		d.recordQuery(w.RemoteAddr().String(), req, result, time.Since(started))
+		return
+	}
 	if err != nil && len(req.Question) > 0 {
 		client := w.RemoteAddr().String()
 		if host, _, splitErr := net.SplitHostPort(client); splitErr == nil {
@@ -492,6 +600,10 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 }
 
 func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) {
+	return d.resolveContext(context.Background(), localAddr, req)
+}
+
+func (d *daemon) resolveContext(ctx context.Context, localAddr string, req *dns.Msg) (resolveResult, error) {
 	config, sources, zones, generation := d.runtimeSnapshot()
 	if len(req.Question) == 0 {
 		resp := new(dns.Msg)
@@ -536,7 +648,7 @@ func (d *daemon) resolve(localAddr string, req *dns.Msg) (resolveResult, error) 
 			if err != nil {
 				return result, err
 			}
-			out, err := source.Pool.Exchange(context.Background(), wire, d.publish)
+			out, err := source.Pool.Exchange(ctx, wire, d.publish)
 			if err != nil {
 				// Failover is limited to this source's explicitly configured
 				// upstreams. Falling through could leak a private query to a
@@ -759,8 +871,14 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 	var lease dhcpLeaseEvent
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&lease); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&lease); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		http.Error(w, "DHCP lease request must contain exactly one JSON value", http.StatusBadRequest)
 		return
 	}
 	topic, ok := daemonapi.DHCPLeaseEventType(lease.Action)
@@ -778,9 +896,22 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.stateMu.RLock()
-	zones := d.zones
+	zones, owner := d.zones, d.sourceCtx
 	d.stateMu.RUnlock()
-	zones.ApplyLease(lease)
+	if owner.Err() != nil {
+		http.Error(w, "DNS resolver owner is stopped", http.StatusServiceUnavailable)
+		return
+	}
+	if err := zones.ApplyLease(lease); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	d.stateMu.Lock()
+	d.generation++
+	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
 	d.publish(topic, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
@@ -807,6 +938,10 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 	if expectedDigest != "" && digest != expectedDigest {
 		return reloadSummary{}, &reloadError{status: http.StatusConflict, err: fmt.Errorf("desired configuration changed before reload")}
 	}
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
 	d.stateMu.RLock()
 	unchanged := expectedDigest != "" && d.configDigest == digest
 	summary := reloadSummary{ConfigDigest: d.configDigest, Listeners: len(d.listeners), Sources: len(d.sources)}
@@ -819,11 +954,15 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
 	}
 	zones := newZoneTable(config.Zones)
+	if err := zones.LoadError(); err != nil {
+		return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err}
+	}
 
 	d.stateMu.RLock()
 	oldZones := d.zones
 	oldListeners := d.listeners
 	oldSourceCancel := d.sourceCancel
+	oldSources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	zones.CopyDynamicFrom(oldZones)
 
@@ -883,20 +1022,36 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		return reloadSummary{}, err
 	}
 
-	var sourceCancel context.CancelFunc
-	if !d.opts.dryRun {
-		var sourceCtx context.Context
-		sourceCtx, sourceCancel = context.WithCancel(ctx)
-		for i := range sources {
-			if sources[i].Pool != nil {
-				sources[i].Pool.Start(sourceCtx, d.publish)
-			}
-		}
-	}
-
-	// Retire the old log only after its bounded write/reopen operation stops.
-	// DNS enqueue never takes this mutex and cannot wait on disk or reload.
+	// Finish staging before retiring the current owner. History enqueue never
+	// takes this operation lock, so DNS work can always finish while we join it.
 	d.queryHistory.operation.Lock()
+	defer d.queryHistory.operation.Unlock()
+	if err := ctx.Err(); err != nil {
+		shutdownBoundListeners(newListeners)
+		return reloadSummary{}, err
+	}
+	if oldSourceCancel != nil {
+		oldSourceCancel()
+	}
+	stopRuntimeSources(oldSources)
+	// Stop removed listeners before taking the query writer lock: Shutdown
+	// joins their handlers, including ones waiting for query admission.
+	shutdownBoundListeners(removals)
+	d.queryMu.Lock()
+	if err := ctx.Err(); err != nil {
+		d.queryMu.Unlock()
+		shutdownBoundListeners(newListeners)
+		d.stateMu.Lock()
+		d.configDigest = ""
+		for addr := range removals {
+			delete(d.listeners, addr)
+		}
+		d.stateMu.Unlock()
+		d.setState(daemonapi.PhaseBlocked, daemonapi.HealthFailed)
+		return reloadSummary{}, err
+	}
+	defer d.queryMu.Unlock()
+	sourceCtx, sourceCancel := context.WithCancel(ctx)
 	d.stateMu.Lock()
 	d.queryLogMu.Lock()
 	var retiredQueryLog *logstore.DNSQueryLog
@@ -916,26 +1071,27 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		mergedListeners[addr] = listener
 	}
 	d.config = config
+	d.requestTimeout = requestTimeout
 	d.configDigest = digest
 	d.sources = sources
 	d.zones = zones
 	d.listeners = mergedListeners
-	d.sourceCancel = sourceCancel
+	d.sourceCtx, d.sourceCancel = sourceCtx, sourceCancel
 	d.generation++
 	d.queryLogMu.Unlock()
 	d.stateMu.Unlock()
 	if retiredQueryLog != nil {
 		_ = retiredQueryLog.Close()
 	}
-	d.queryHistory.operation.Unlock()
+	for _, source := range sources {
+		if source.Pool != nil && !d.opts.dryRun {
+			source.Pool.Start(sourceCtx, d.publish)
+		}
+	}
 	d.mu.Lock()
 	clear(d.cache)
 	d.mu.Unlock()
 
-	shutdownBoundListeners(removals)
-	if oldSourceCancel != nil {
-		oldSourceCancel()
-	}
 	if !d.opts.dryRun {
 		if len(mergedListeners) > 0 {
 			d.setState(daemonapi.PhaseRunning, daemonapi.HealthOK)
@@ -980,6 +1136,7 @@ func (d *daemon) observedStatus() map[string]string {
 	sources := append([]runtimeSource(nil), d.sources...)
 	d.stateMu.RUnlock()
 	observed := map[string]string{"listeners": fmt.Sprintf("%d", listenerCount), "zones": fmt.Sprintf("%d", zones.ZoneCount())}
+	observed["queryRejected"] = fmt.Sprintf("%d", d.queryRejected.Load())
 	d.queryLogMu.Lock()
 	queryLog := d.queryLog
 	queue := d.queryHistory.queue

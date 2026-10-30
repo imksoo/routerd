@@ -18,6 +18,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	resolverruntime "github.com/imksoo/routerd/pkg/dnsresolver"
+	"github.com/imksoo/routerd/pkg/logstore"
 )
 
 type mapStore map[string]map[string]any
@@ -70,12 +71,13 @@ func TestRuntimeConfigCapturesStickyDNSMasqHosts(t *testing.T) {
 		RuntimeDir: runtimeDir,
 		StateDir:   filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
 	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	config, _, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +117,8 @@ func TestReconcileReloadsResolverWhenStickyDNSMasqHostsChange(t *testing.T) {
 		RuntimeDir: runtimeDir,
 		StateDir:   filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.128", "MacBookProM5Max")
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -722,7 +726,7 @@ func TestRuntimeConfigResolvesDNSZoneRecordAddressSourcesWithoutPublishing(t *te
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, prepared, err := controller.runtimeConfig("lan-resolver", spec)
+	config, prepared, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +758,7 @@ func TestRuntimeConfigPreparesDNSZoneRecordPendingWithoutPublishing(t *testing.T
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lab.example"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, prepared, err := controller.runtimeConfig("lan-resolver", spec)
+	config, prepared, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,7 +787,7 @@ func TestRuntimeConfigAddsHostnameRecordsFromVIPAndIngress(t *testing.T) {
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, _, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +824,7 @@ func TestRuntimeConfigKeepsExplicitDNSZoneRecordOverHostnameRecord(t *testing.T)
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, _, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +850,7 @@ func TestRuntimeConfigSkipsExternalDNSHostnameRecords(t *testing.T) {
 		Listen:  []api.DNSResolverListenSpec{{Name: "lan", Addresses: []string{"127.0.0.1"}, Port: 53}},
 		Sources: []api.DNSResolverSourceSpec{{Name: "local", Kind: "zone", Match: []string{"lain.local"}, ZoneRef: []string{"DNSZone/lan-zone"}}},
 	}
-	config, _, err := controller.runtimeConfig("lan-resolver", resolverSpec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", resolverSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1001,12 +1005,13 @@ func TestRuntimeConfigUsesExplicitDHCPHostsPath(t *testing.T) {
 		DHCPHostsPath: filepath.Join(runtimeDir, "dnsmasq-hosts.hosts"),
 		StateDir:      filepath.Join(dir, "state"),
 	}
+	prepareHeldAssignment(t, &controller, "fc:b2:14:8c:49:1a", "172.18.1.127", "MacBookProM5Max")
 	spec, err := controller.Router.Spec.Resources[1].DNSResolverSpec()
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec = resolverruntime.NormalizeSpec(spec)
-	config, _, err := controller.runtimeConfig("lan-resolver", spec)
+	config, _, err := controller.runtimeConfig(context.Background(), "lan-resolver", spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1016,5 +1021,29 @@ func TestRuntimeConfigUsesExplicitDHCPHostsPath(t *testing.T) {
 	record := config.Zones[0].DHCPHostRecords[0]
 	if record.Hostname != "MacBookProM5Max" || record.IP != "172.18.1.127" {
 		t.Fatalf("runtime DHCP host record = %#v", record)
+	}
+}
+
+func prepareHeldAssignment(t *testing.T, controller *Controller, mac, ip, hostname string) {
+	t.Helper()
+	hasServer := false
+	for _, resource := range controller.Router.Spec.Resources {
+		if resource.Kind == "DHCPv4Server" && resource.Metadata.Name == "lan-dhcpv4" {
+			hasServer = true
+		}
+	}
+	if !hasServer {
+		controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{StickyHoldDays: 1, AddressPool: api.DHCPAddressPoolSpec{Start: "172.18.0.0", End: "172.18.255.255"}}})
+	}
+	_, stateDir := controller.dirs()
+	store, err := logstore.OpenDHCPStickyLog(filepath.Join(stateDir, "dhcp-sticky.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordLeaseEvent(t.Context(), "removed", mac, ip, hostname, 1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -76,7 +76,8 @@ func TestZoneAnswerWildcard(t *testing.T) {
 
 func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}, TTL: 60},
@@ -84,6 +85,7 @@ func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "MacBookProM5Max",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 	req := new(dns.Msg)
@@ -106,14 +108,15 @@ func TestZoneRestoresStickyHostRecordAfterRestart(t *testing.T) {
 
 func TestZoneStickySnapshotKeepsFirstDuplicateHostname(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}, TTL: 60},
 		},
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{
-			{Hostname: "MacBookProM5Max", IP: "172.18.1.127"},
-			{Hostname: "MacBookProM5Max", IP: "172.18.1.181"},
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.127", Source: "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour)},
+			{Hostname: "MacBookProM5Max", IP: "172.18.1.181", Source: "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour)},
 		},
 	}})
 
@@ -131,11 +134,12 @@ func TestZoneStickySnapshotKeepsFirstDuplicateHostname(t *testing.T) {
 func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := dir + "/dnsmasq.leases"
-	if err := os.WriteFile(leaseFile, []byte("1789306800 fc:b2:14:8c:49:1a 172.18.1.127 MacBookProM5Max *\n"), 0o644); err != nil {
+	if err := os.WriteFile(leaseFile, []byte("0 fc:b2:14:8c:49:1a 172.18.1.127 MacBookProM5Max *\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone: "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{
@@ -146,6 +150,7 @@ func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "MacBookProM5Max",
 			IP:       "172.18.1.181",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 	req := new(dns.Msg)
@@ -161,7 +166,8 @@ func TestZoneActiveLeaseTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 
 func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone:        "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/lan-dhcpv4"}},
@@ -173,6 +179,7 @@ func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "sticky-name",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 
@@ -191,11 +198,12 @@ func TestZoneStaticPTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 func TestZoneActiveLeasePTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 	dir := t.TempDir()
 	leaseFile := dir + "/dnsmasq.leases"
-	if err := os.WriteFile(leaseFile, []byte("1789306800 fc:b2:14:8c:49:1a 172.18.1.127 active-name *\n"), 0o644); err != nil {
+	if err := os.WriteFile(leaseFile, []byte("0 fc:b2:14:8c:49:1a 172.18.1.127 active-name *\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	table := newZoneTable([]resolvercfg.RuntimeZone{{
-		Name: "home",
+		Name:       "home",
+		DHCPScopes: []resolvercfg.DHCPAddressScope{{Source: "DHCPv4Server/lan-dhcpv4", Start: "172.18.0.0", End: "172.18.255.255"}},
 		Spec: api.DNSZoneSpec{
 			Zone: "home.internal",
 			DHCPDerived: api.DNSZoneDHCPDerivedSpec{
@@ -206,6 +214,7 @@ func TestZoneActiveLeasePTRTakesPrecedenceOverStickyHostRecord(t *testing.T) {
 		DHCPHostRecords: []resolvercfg.RuntimeDHCPHostRecord{{
 			Hostname: "sticky-name",
 			IP:       "172.18.1.127",
+			Source:   "DHCPv4Server/lan-dhcpv4", MAC: "02:00:00:00:00:55", Origin: resolvercfg.DHCPAssignmentHeld, ExpiresAt: time.Now().Add(time.Hour),
 		}},
 	}})
 

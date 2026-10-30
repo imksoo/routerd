@@ -3,9 +3,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +23,9 @@ import (
 )
 
 type zoneTable struct {
-	mu    sync.RWMutex
-	zones map[string]*zoneData
+	mu      sync.RWMutex
+	zones   map[string]*zoneData
+	loadErr error
 }
 
 type zoneData struct {
@@ -28,17 +33,27 @@ type zoneData struct {
 	Name         string
 	TTL          uint32
 	DHCP         api.DNSZoneDHCPDerivedSpec
+	DHCPScopes   []dnsresolver.DHCPAddressScope
+	LeaseEvents  map[leaseAddress]dhcpLeaseEvent
 	Records      map[string]zoneRecord
 	PTR          map[string]string
 	ReverseZone  map[string]bool
 }
 
+type leaseAddress struct{ Source, IP string }
+
 type zoneRecord struct {
-	Hostname string
-	IPv4     []string
-	IPv6     []string
-	TTL      uint32
-	Source   zoneRecordSource
+	Hostname         string
+	IPv4             []string
+	IPv6             []string
+	TTL              uint32
+	Source           zoneRecordSource
+	LeaseSource      string
+	AssignmentOrigin string
+	MAC              string
+	ObservedAt       time.Time
+	ExpiresAt        time.Time
+	Infinite         bool
 }
 
 type zoneRecordSource uint8
@@ -50,6 +65,7 @@ const (
 	zoneRecordSourceStickySnapshot  zoneRecordSource = 20
 	zoneRecordSourceActiveEvent     zoneRecordSource = 30
 	zoneRecordSourceActiveLeaseFile zoneRecordSource = 40
+	zoneRecordSourceReservation     zoneRecordSource = 46
 	zoneRecordSourceStatic          zoneRecordSource = 50
 
 	// A newly received event is newer than the lease file loaded into the
@@ -58,12 +74,7 @@ const (
 	zoneRecordPriorityLiveActiveEvent zoneRecordSource = 45
 )
 
-type dhcpLeaseEvent struct {
-	Action   string `json:"action"`
-	MAC      string `json:"mac,omitempty"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname,omitempty"`
-}
+type dhcpLeaseEvent = daemonapi.DHCPLeaseUpdate
 
 func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 	table := &zoneTable{zones: map[string]*zoneData{}}
@@ -79,6 +90,8 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 			Name:         name,
 			TTL:          ttl,
 			DHCP:         spec.DHCPDerived,
+			DHCPScopes:   slices.Clone(runtime.DHCPScopes),
+			LeaseEvents:  map[leaseAddress]dhcpLeaseEvent{},
 			Records:      map[string]zoneRecord{},
 			PTR:          map[string]string{},
 			ReverseZone:  map[string]bool{},
@@ -91,15 +104,24 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 		}
 		zone.rebuildStaticPTR(spec.Records)
 		if spec.DHCPDerived.LeaseFile != "" {
-			zone.loadDnsmasqLeases(spec.DHCPDerived.LeaseFile)
+			table.loadErr = errors.Join(table.loadErr, zone.loadDnsmasqLeases(spec.DHCPDerived.LeaseFile))
 		}
 		for _, record := range runtime.DHCPHostRecords {
 			zone.addRecoveredLease(record)
 		}
 		table.zones[zone.ResourceName] = zone
 	}
+	// Replay the current journal projection after file/assignment loading. A
+	// file read is not a newer lease mutation and cannot erase a durable revoke.
+	for _, runtime := range zones {
+		for _, observation := range runtime.LeaseObservations {
+			table.loadErr = errors.Join(table.loadErr, table.ApplyLease(observation))
+		}
+	}
 	return table
 }
+
+func (t *zoneTable) LoadError() error { return t.loadErr }
 
 func (t *zoneTable) ZoneCount() int {
 	t.mu.RLock()
@@ -115,12 +137,19 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 		apex, resource string
 		dhcp           api.DNSZoneDHCPDerivedSpec
 		records        []zoneRecord
+		observations   map[leaseAddress]dhcpLeaseEvent
 	}
 	var retained []dynamicZone
 	old.mu.RLock()
 	for _, zone := range old.zones {
-		item := dynamicZone{apex: zone.Name, resource: zone.ResourceName, dhcp: zone.DHCP}
+		item := dynamicZone{apex: zone.Name, resource: zone.ResourceName, dhcp: zone.DHCP, observations: make(map[leaseAddress]dhcpLeaseEvent, len(zone.LeaseEvents))}
+		for key, at := range zone.LeaseEvents {
+			item.observations[key] = at
+		}
 		for _, record := range zone.Records {
+			if !record.live(time.Now().UTC()) {
+				continue
+			}
 			switch record.Source {
 			case zoneRecordSourceActiveEvent:
 				item.records = append(item.records, cloneZoneRecord(record))
@@ -141,11 +170,38 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 		if zone == nil || zone.Name != item.apex || !sameDHCPNamespace(zone.DHCP, item.dhcp) {
 			continue
 		}
+		for key, event := range item.observations {
+			if zone.LeaseEvents[key].ObservedAt.Before(event.ObservedAt) {
+				zone.LeaseEvents[key] = event
+			}
+			if event.Action == daemonapi.DHCPLeaseActionRemoved || event.Hostname == "" || !event.Infinite && !event.ExpiresAt.IsZero() && !time.Now().UTC().Before(event.ExpiresAt) {
+				// Reading a stale lease file again is not evidence of a new lease.
+				// An acknowledged withdrawal keeps its exact client/address tuple
+				// fenced until a later event or a different authoritative tuple.
+				for name, record := range zone.Records {
+					if record.Source == zoneRecordSourceActiveLeaseFile && record.LeaseSource == event.Source && strings.EqualFold(record.MAC, event.MAC) && (contains(record.IPv4, event.IP) || contains(record.IPv6, event.IP)) {
+						zone.removeRecord(name)
+					}
+				}
+			}
+		}
 		ttl := uint32(zone.DHCP.TTL)
 		if ttl == 0 {
 			ttl = 60
 		}
 		for _, record := range item.records {
+			if record.Source == zoneRecordSourceActiveEvent {
+				newer := false
+				for _, ip := range append(slices.Clone(record.IPv4), record.IPv6...) {
+					if current := zone.LeaseEvents[leaseAddress{Source: record.LeaseSource, IP: ip}]; current.ObservedAt.After(record.ObservedAt) {
+						newer = true
+						break
+					}
+				}
+				if newer {
+					continue
+				}
+			}
 			record.TTL = ttl
 			zone.mergeRecord(record)
 		}
@@ -171,8 +227,16 @@ func cloneZoneRecord(record zoneRecord) zoneRecord {
 }
 
 func (t *zoneTable) Answer(req *dns.Msg, refs []string) (*dns.Msg, bool) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now().UTC()
+	for _, zone := range t.zones {
+		for name, record := range zone.Records {
+			if !record.live(now) {
+				zone.removeRecord(name)
+			}
+		}
+	}
 	if len(req.Question) == 0 {
 		return nil, false
 	}
@@ -207,20 +271,48 @@ func (t *zoneTable) selectedZones(refs []string) []*zoneData {
 	return out
 }
 
-func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) {
+func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) error {
+	if err := lease.Validate(time.Now().UTC()); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, zone := range t.zones {
-		if len(zone.DHCP.Sources) == 0 {
+		if !slices.Contains(zone.DHCP.Sources, lease.Source) {
 			continue
 		}
+		key := leaseAddress{Source: lease.Source, IP: lease.IP}
+		if previous := zone.LeaseEvents[key]; !previous.ObservedAt.IsZero() && !lease.ObservedAt.After(previous.ObservedAt) {
+			continue
+		}
+		zone.LeaseEvents[key] = lease
 		switch lease.Action {
 		case daemonapi.DHCPLeaseActionRemoved:
-			zone.deleteDynamic(lease.IP)
+			zone.deleteLease(lease)
 		default:
+			if lease.Hostname == "" || !lease.Infinite && !time.Now().UTC().Before(lease.ExpiresAt) {
+				zone.deleteLease(lease)
+				continue
+			}
 			zone.addLeaseWithPriority(lease, zoneRecordSourceActiveEvent, zoneRecordPriorityLiveActiveEvent)
 		}
 	}
+	return nil
+}
+
+func (record zoneRecord) live(now time.Time) bool {
+	return record.Source == zoneRecordSourceStatic || record.AssignmentOrigin == dnsresolver.DHCPAssignmentReservation || record.Infinite || !record.ExpiresAt.IsZero() && now.Before(record.ExpiresAt)
+}
+
+func (record zoneRecord) ttl(now time.Time) uint32 {
+	if record.ExpiresAt.IsZero() {
+		return record.TTL
+	}
+	remaining := record.ExpiresAt.Sub(now) / time.Second
+	if remaining < 0 {
+		return 0
+	}
+	return min(record.TTL, uint32(remaining))
 }
 
 func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
@@ -254,11 +346,11 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 		switch q.Qtype {
 		case dns.TypeA:
 			for _, ip := range record.IPv4 {
-				msg.Answer = append(msg.Answer, &dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: record.TTL}, A: net.ParseIP(ip)})
+				msg.Answer = append(msg.Answer, &dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: record.ttl(time.Now().UTC())}, A: net.ParseIP(ip)})
 			}
 		case dns.TypeAAAA:
 			for _, ip := range record.IPv6 {
-				msg.Answer = append(msg.Answer, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: record.TTL}, AAAA: net.ParseIP(ip)})
+				msg.Answer = append(msg.Answer, &dns.AAAA{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: record.ttl(time.Now().UTC())}, AAAA: net.ParseIP(ip)})
 			}
 		}
 		if len(msg.Answer) > 0 {
@@ -281,7 +373,12 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 		}
 		msg := new(dns.Msg)
 		msg.SetReply(req)
-		msg.Answer = append(msg.Answer, &dns.PTR{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: z.TTL}, Ptr: target})
+		record := z.Records[strings.ToLower(dns.Fqdn(target))]
+		ttl := record.ttl(time.Now().UTC())
+		if record.Source == zoneRecordSourceStatic {
+			ttl = z.TTL
+		}
+		msg.Answer = append(msg.Answer, &dns.PTR{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: ttl}, Ptr: target})
 		return msg, true
 	}
 	return nil, false
@@ -350,18 +447,55 @@ func (z *zoneData) addLeaseWithPriority(lease dhcpLeaseEvent, source, priority z
 	if ip == nil {
 		return
 	}
+	observedAt := lease.ObservedAt
+	if source == zoneRecordSourceActiveLeaseFile {
+		observedAt = time.Time{}
+	} // A file read does not date its last mutation.
+	record := zoneRecord{Hostname: z.recordName(lease.Hostname), TTL: ttl, Source: source, LeaseSource: lease.Source, MAC: lease.MAC, ObservedAt: observedAt, ExpiresAt: lease.ExpiresAt, Infinite: lease.Infinite}
 	if ip.To4() != nil {
-		z.addRecordWithPriority(lease.Hostname, lease.IP, "", ttl, source, priority)
+		record.IPv4 = []string{lease.IP}
+	} else {
+		record.IPv6 = []string{lease.IP}
+	}
+	if existing, ok := z.Records[strings.ToLower(dns.Fqdn(record.Hostname))]; ok && existing.ObservedAt.After(record.ObservedAt) {
 		return
 	}
-	z.addRecordWithPriority(lease.Hostname, "", lease.IP, ttl, source, priority)
+	z.mergeRecordWithPriority(record, priority)
 }
 
 func (z *zoneData) addRecoveredLease(record dnsresolver.RuntimeDHCPHostRecord) {
-	if record.Hostname == "" || record.IP == "" {
+	if record.Hostname == "" || record.MAC == "" || !slices.Contains(z.DHCP.Sources, record.Source) {
 		return
 	}
-	z.addLease(dhcpLeaseEvent{IP: record.IP, Hostname: record.Hostname}, zoneRecordSourceStickySnapshot)
+	ip := net.ParseIP(record.IP)
+	if ip == nil || !dnsresolver.DHCPSourceKind(record.Source, ip.To4() == nil) {
+		return
+	}
+	source := zoneRecordSourceStickySnapshot
+	switch record.Origin {
+	case dnsresolver.DHCPAssignmentReservation:
+		if !record.ExpiresAt.IsZero() {
+			return
+		}
+		source = zoneRecordSourceReservation
+	case dnsresolver.DHCPAssignmentHeld:
+		if record.ExpiresAt.IsZero() || !time.Now().Before(record.ExpiresAt) {
+			return
+		}
+	default:
+		return
+	}
+	ttl := uint32(z.DHCP.TTL)
+	if ttl == 0 {
+		ttl = 60
+	}
+	value := zoneRecord{Hostname: z.recordName(record.Hostname), TTL: ttl, Source: source, LeaseSource: record.Source, MAC: record.MAC, ExpiresAt: record.ExpiresAt, AssignmentOrigin: record.Origin}
+	if ip.To4() != nil {
+		value.IPv4 = []string{record.IP}
+	} else {
+		value.IPv6 = []string{record.IP}
+	}
+	z.mergeRecord(value)
 }
 
 func (z *zoneData) mergeRecord(record zoneRecord) {
@@ -436,38 +570,73 @@ func (z *zoneData) removeRecord(name string) {
 	}
 }
 
-func (z *zoneData) deleteDynamic(ip string) {
+func (z *zoneData) deleteLease(lease dhcpLeaseEvent) {
 	for name, record := range z.Records {
-		if record.Source == zoneRecordSourceStatic {
+		if record.Source == zoneRecordSourceStatic || record.AssignmentOrigin != "" || record.LeaseSource != lease.Source || !strings.EqualFold(record.MAC, lease.MAC) || record.ObservedAt.After(lease.ObservedAt) {
 			continue
 		}
-		if contains(record.IPv4, ip) || contains(record.IPv6, ip) {
-			delete(z.Records, name)
+		if contains(record.IPv4, lease.IP) || contains(record.IPv6, lease.IP) {
+			z.removeRecord(name)
 		}
-	}
-	if ptr, err := dns.ReverseAddr(ip); err == nil {
-		ptrName := dns.Fqdn(ptr)
-		if target := z.PTR[ptrName]; target != "" {
-			if record, exists := z.Records[strings.ToLower(dns.Fqdn(target))]; exists && record.Source == zoneRecordSourceStatic {
-				return
-			}
-		}
-		delete(z.PTR, ptrName)
 	}
 }
 
-func (z *zoneData) loadDnsmasqLeases(path string) {
-	data, err := os.ReadFile(path)
+func (z *zoneData) loadDnsmasqLeases(path string) error {
+	file, err := os.Open(path)
 	if err != nil {
-		return
+		return fmt.Errorf("read DHCP lease file: %w", err)
 	}
+	defer file.Close()
+	const maxLeaseFile = 8 << 20
+	data, err := io.ReadAll(io.LimitReader(file, maxLeaseFile+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxLeaseFile {
+		return fmt.Errorf("DHCP lease file exceeds %d bytes", maxLeaseFile)
+	}
+	now := time.Now().UTC()
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 || fields[3] == "*" {
+		if len(fields) == 0 || fields[0] == "duid" {
 			continue
 		}
-		z.addLease(dhcpLeaseEvent{MAC: fields[1], IP: fields[2], Hostname: fields[3]}, zoneRecordSourceActiveLeaseFile)
+		if len(fields) < 4 {
+			return fmt.Errorf("malformed DHCP lease file row")
+		}
+		deadline, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || deadline < 0 {
+			return fmt.Errorf("invalid DHCP lease expiry %q", fields[0])
+		}
+		ip := net.ParseIP(fields[2])
+		if ip == nil {
+			return fmt.Errorf("invalid DHCP lease address %q", fields[2])
+		}
+		if fields[3] == "*" || deadline != 0 && deadline <= now.Unix() {
+			continue
+		}
+		source := dnsresolver.DHCPSourceForAddress(z.DHCPScopes, fields[2])
+		if source == "" || !slices.Contains(z.DHCP.Sources, source) {
+			continue
+		}
+		// IPv6 rows carry IAID in column two and the client DUID in column five.
+		client := fields[1]
+		if ip.To4() == nil {
+			if len(fields) < 5 || fields[4] == "*" {
+				return fmt.Errorf("IPv6 DHCP lease has no client DUID")
+			}
+			client = fields[4]
+		}
+		lease := dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, Source: source, MAC: client, IP: fields[2], Hostname: fields[3], ObservedAt: now, Infinite: deadline == 0}
+		if deadline != 0 {
+			lease.ExpiresAt = time.Unix(deadline, 0).UTC()
+		}
+		if err := lease.Validate(now); err != nil {
+			return err
+		}
+		z.addLease(lease, zoneRecordSourceActiveLeaseFile)
 	}
+	return nil
 }
 
 func sourceMatches(matches []string, qname string) bool {

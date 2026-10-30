@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const DaemonKind = "routerd-dns-resolver"
 const ConfigDigestHeader = "X-Routerd-Config-Digest"
+const DefaultRequestTimeout = 30 * time.Second
 
 type RuntimeConfig struct {
 	Resource string              `json:"resource"`
@@ -43,19 +45,28 @@ type ReloadResult struct {
 }
 
 type RuntimeZone struct {
-	Name            string                  `json:"name"`
-	Spec            api.DNSZoneSpec         `json:"spec"`
-	DHCPHostRecords []RuntimeDHCPHostRecord `json:"dhcpHostRecords,omitempty"`
+	Name              string                      `json:"name"`
+	Spec              api.DNSZoneSpec             `json:"spec"`
+	DHCPHostRecords   []RuntimeDHCPHostRecord     `json:"dhcpHostRecords,omitempty"`
+	DHCPScopes        []DHCPAddressScope          `json:"dhcpScopes,omitempty"`
+	LeaseObservations []daemonapi.DHCPLeaseUpdate `json:"leaseObservations,omitempty"`
 }
 
-// RuntimeDHCPHostRecord is a routerd-generated dnsmasq host entry captured in
-// the resolver runtime snapshot. It lets a freshly started resolver restore a
-// sticky DHCP hostname even when that client is not present in the active
-// dnsmasq lease file and has not emitted a new lease event yet.
+// RuntimeDHCPHostRecord represents configured assignment intent, not evidence of
+// an active lease. Held assignments retain the actual sticky-hold deadline.
 type RuntimeDHCPHostRecord struct {
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
+	Hostname  string    `json:"hostname"`
+	IP        string    `json:"ip"`
+	MAC       string    `json:"mac"`
+	Source    string    `json:"source"`
+	Origin    string    `json:"origin"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
+
+const (
+	DHCPAssignmentReservation = "reservation"
+	DHCPAssignmentHeld        = "held"
+)
 
 // ParseDNSMasqHostRecords extracts hostname/address pairs from routerd's
 // dnsmasq-hosts sidecar. The sidecar contains both reservation form
@@ -100,7 +111,7 @@ func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
 			continue
 		}
 		seen[key] = true
-		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip})
+		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip, MAC: fields[0]})
 	}
 	sort.Slice(records, func(i, j int) bool {
 		left := strings.ToLower(records[i].Hostname) + "|" + records[i].IP
@@ -135,6 +146,9 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 	// value must not write defaults through its Listen or Sources slice storage.
 	spec.Listen = slices.Clone(spec.Listen)
 	spec.Sources = slices.Clone(spec.Sources)
+	if strings.TrimSpace(spec.RequestTimeout) == "" {
+		spec.RequestTimeout = DefaultRequestTimeout.String()
+	}
 	if len(spec.Listen) == 0 {
 		spec.Listen = []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}}
 	}
@@ -188,6 +202,9 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 
 func Validate(spec api.DNSResolverSpec) error {
 	spec = NormalizeSpec(spec)
+	if _, err := RequestTimeout(spec); err != nil {
+		return err
+	}
 	if spec.Cache.MaxEntries < 0 {
 		return fmt.Errorf("cache.maxEntries must not be negative")
 	}
@@ -271,6 +288,19 @@ func Validate(spec api.DNSResolverSpec) error {
 		}
 	}
 	return nil
+}
+
+// RequestTimeout is prepared at the worker's configuration boundary. It limits
+// a whole request, while each source QueryTimeout still limits one attempt.
+func RequestTimeout(spec api.DNSResolverSpec) (time.Duration, error) {
+	if strings.TrimSpace(spec.RequestTimeout) == "" {
+		return DefaultRequestTimeout, nil
+	}
+	duration, err := time.ParseDuration(spec.RequestTimeout)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("requestTimeout must be a positive duration")
+	}
+	return duration, nil
 }
 
 func parseRetentionDuration(value string) (time.Duration, error) {

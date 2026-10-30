@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -59,7 +60,7 @@ func TestLeaseCallbackWaitsForActualReloadHandoff(t *testing.T) {
 			// A response from the new listener proves actual reload has already
 			// copied the old dynamic records, before its final table selection.
 			assertDNSAnswer(t, address, "router.lab.example.", "192.0.2.1")
-			body := &observedLeaseBody{Reader: strings.NewReader(`{"action":"added","ip":"192.0.2.55","hostname":"client"}`), read: make(chan struct{})}
+			body := &observedLeaseBody{Reader: strings.NewReader(fmt.Sprintf(`{"action":"added","source":"DHCPv4Server/dhcpv4","mac":"02:00:00:00:00:55","ip":"192.0.2.55","hostname":"client","observedAt":%q,"infinite":true}`, time.Now().UTC().Format(time.RFC3339Nano))), read: make(chan struct{})}
 			requestCtx, cancelRequest := context.WithCancel(t.Context())
 			defer cancelRequest()
 			request := httptest.NewRequest(http.MethodPost, "/v1/leases", body).WithContext(requestCtx)
