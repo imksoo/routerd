@@ -46,11 +46,24 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	if info, err := os.Stat(frr); err != nil || info.Mode()&0111 == 0 {
 		t.Skip("independent FRR bfdd is unavailable")
 	}
+	for _, mode := range []string{"multihop", "single-hop"} {
+		t.Run(mode, func(t *testing.T) {
+			runBFDIndependentFRRNativeLifecycle(t, currentNS, hostNS, frr, mode)
+		})
+	}
+}
+
+func runBFDIndependentFRRNativeLifecycle(t *testing.T, currentNS, hostNS, frr, mode string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 65*time.Second)
 	t.Cleanup(cancel)
 	evidence := os.Getenv("ROUTERD_NATIVE_EVIDENCE")
 	if evidence == "" {
 		evidence = t.TempDir()
+	} else {
+		evidence = filepath.Join(evidence, mode)
+		if err := os.MkdirAll(evidence, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run := func(name string, args ...string) []byte {
 		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -128,6 +141,14 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	}
 	run("ip", "link", "set", "lo", "up")
 	run("ip", "link", "add", "name", "bfd-proof", "type", "veth", "peer", "name", "bfd-peer")
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(cleanupCtx, "ip", "link", "delete", "dev", "bfd-proof").CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "Cannot find device") {
+			t.Errorf("remove fixture-owned veth: %v: %s", err, out)
+		}
+	})
 	run("ip", "link", "set", "dev", "bfd-peer", "netns", strconv.Itoa(peer.Process.Pid))
 	run("ip", "address", "add", "198.18.0.1/30", "dev", "bfd-proof")
 	run("ip", "link", "set", "dev", "bfd-proof", "up")
@@ -147,11 +168,49 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localDir, "bfdd.conf"), []byte("log stdout\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(peerDir, "bfdd.conf"), []byte("log stdout\nbfd\n peer 198.18.0.1 multihop local-address 198.18.0.2\n  receive-interval 100\n  transmit-interval 100\n  detect-multiplier 3\n exit\n"), 0600); err != nil {
+	peerHeader, localHeader := "peer 198.18.0.1 multihop local-address 198.18.0.2", "peer 198.18.0.2 multihop local-address 198.18.0.1"
+	bindInterface := ""
+	if mode == "single-hop" {
+		peerHeader, localHeader = "peer 198.18.0.1 interface bfd-peer", "peer 198.18.0.2 interface bfd-proof"
+		bindInterface = "bfd-proof"
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, "bfdd.conf"), []byte("log stdout\nbfd\n "+peerHeader+"\n  receive-interval 100\n  transmit-interval 100\n  detect-multiplier 3\n exit\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	bfddArgs := func(dir string) []string {
 		return []string{"-u", "root", "-g", "root", "-f", filepath.Join(dir, "bfdd.conf"), "-i", filepath.Join(dir, "bfdd.pid"), "--vty_socket", filepath.Join(dir, "vty"), "-z", filepath.Join(dir, "zebra.sock"), "--bfdctl", filepath.Join(dir, "bfdctl.sock"), "--log", "stdout"}
+	}
+	var stopZebra []func()
+	if mode == "single-hop" {
+		zebra := filepath.Join(filepath.Dir(frr), "zebra")
+		if _, err := os.Stat(zebra); err != nil {
+			t.Fatalf("single-hop interface inventory requires zebra: %v", err)
+		}
+		for _, side := range []struct {
+			label, dir string
+			peer       bool
+		}{{"local", localDir, false}, {"peer", peerDir, true}} {
+			config := filepath.Join(side.dir, "zebra.conf")
+			if err := os.WriteFile(config, []byte("log stdout\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"-u", "root", "-g", "root", "-f", config, "-i", filepath.Join(side.dir, "zebra.pid"), "-z", filepath.Join(side.dir, "zebra.sock"), "--vty_socket", filepath.Join(side.dir, "vty"), "--log", "stdout"}
+			command := exec.CommandContext(ctx, zebra, args...)
+			if side.peer {
+				command = peerCommand(zebra, args...)
+			}
+			stopZebra = append(stopZebra, start("bfd-zebra-"+side.label, command))
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if info, err := os.Stat(filepath.Join(side.dir, "zebra.sock")); err == nil && info.Mode()&os.ModeSocket != 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s zebra did not become ready", side.label)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
 	}
 	stopLocal := start("bfd-local", exec.CommandContext(ctx, frr, bfddArgs(localDir)...))
 	stopPeer := start("bfd-peer", peerCommand(frr, bfddArgs(peerDir)...))
@@ -166,7 +225,7 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "198.18.0.1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "peer"}, Spec: api.BFDSpec{Peer: "198.18.0.2", MinRx: "100ms", MinTx: "100ms", DetectMultiplier: 3}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "peer"}, Spec: api.BFDSpec{Peer: "198.18.0.2", Interface: bindInterface, MinRx: "100ms", MinTx: "100ms", DetectMultiplier: 3}},
 	}}}
 	controller := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(base, "runtime"), Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, vtyArgs(localDir, args...)...).CombinedOutput()
@@ -203,9 +262,9 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		}
 		return run("vtysh", vtyArgs(localDir, args...)...)
 	}
-	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "shutdown")
+	localVTY("configure terminal", "bfd", localHeader, "shutdown")
 	waitState("real FRR administrative shutdown", "Down")
-	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "no shutdown")
+	localVTY("configure terminal", "bfd", localHeader, "no shutdown")
 	waitState("administrative shutdown removed", "Up")
 	stopLocal()
 	if err := controller.Reconcile(ctx); err == nil {
@@ -245,5 +304,8 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	t.Log("resource withdrawal acknowledged by real bfdd and SQLite; foreign configured tuple retained")
 	stopPeer()
 	stopLocal()
+	for _, stop := range stopZebra {
+		stop()
+	}
 	stopPeerNS()
 }
