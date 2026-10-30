@@ -235,6 +235,13 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 
 func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Context, receipt *staticAddressReceipt, observed staticAddressSnapshot) error {
 	if receipt.ParentToken == "" {
+		token, err := c.staticNativeParent(ctx, receipt.IfName, observed)
+		if err != nil {
+			return err
+		}
+		if token != "" {
+			return errors.New("static address receipt lacks its native parent token")
+		}
 		return nil
 	}
 	reader := nativeParentReader{Router: c.Router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}

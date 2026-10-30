@@ -342,3 +342,89 @@ func TestDSLiteParentRAProofAndRecordedWithdrawal(t *testing.T) {
 		})
 	}
 }
+
+func TestDSLiteParentRechecksConditionAfterLastNativeRead(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	spec, _ := parent.Router.Spec.Resources[1].DSLiteTunnelSpec()
+	spec.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.role": {Equals: "master"}}}
+	parent.Router.Spec.Resources[1].Spec = spec
+	setRole := func(role string) {
+		if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "gateway", map[string]any{"role": role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRole("master")
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	original, reads := native.command, 0
+	parent.CommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := original(ctx, name, args...)
+		if strings.Join(args, " ") == "-j -d link show" {
+			reads++
+			if reads == 2 {
+				setRole("backup")
+			}
+		}
+		return out, err
+	}
+	reader := nativeParentReader{Router: parent.Router, Store: store, DSLite: &parent}
+	if link, err := reader.observeDeclared(t.Context(), "ds-owned"); err == nil || link.Exists {
+		t.Fatalf("condition changed during final native read admitted child: %+v %v", link, err)
+	}
+}
+
+func TestDSLiteParentRechecksCookieAfterKernelScopeWait(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	original, reads := parent.NativeScope, 0
+	parent.NativeScope = func(ctx context.Context) (string, error) {
+		scope, err := original(ctx)
+		reads++
+		if reads == 3 {
+			link := native.links["ds-owned"]
+			link.Token = "foreign"
+			native.links["ds-owned"] = link
+		}
+		return scope, err
+	}
+	reader := nativeParentReader{Router: parent.Router, Store: store, DSLite: &parent}
+	if link, err := reader.observeDeclared(t.Context(), "ds-owned"); err == nil || link.Exists {
+		t.Fatalf("cookie changed during scope observation admitted child: %+v %v", link, err)
+	}
+}
+
+func TestDSLiteParentMissingChildTokenCannotAuthorizeStaticWithdrawal(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	present := true
+	receipt := &staticAddressReceipt{IfName: "ds-owned", IfIndex: native.links["ds-owned"].Index, Scope: "linux:boot-a:17", Address: "192.0.2.1/24"}
+	child := IPv4StaticAddressController{Router: parent.Router, Store: store, DSLite: &parent, ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+		return staticAddressSnapshot{Index: receipt.IfIndex, Scope: receipt.Scope, Addresses: []netip.Prefix{netip.MustParsePrefix(receipt.Address)}}, nil
+	}, Command: func(context.Context, string, ...string) error { present = false; return nil }}
+	if err := child.withdrawStaticAddress(t.Context(), "child", receipt); err == nil || !present {
+		t.Fatalf("receipt without parent proof authorized deletion: %v", err)
+	}
+}
+
+func TestDSLiteFreeBSDConfiguredNameCannotBypassActualParent(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSFreeBSD)
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	reader := nativeParentReader{Router: parent.Router, Store: store, DSLite: &parent}
+	proof, err := reader.observeDeclared(t.Context(), "ds-owned")
+	if err != nil || !proof.Declared || !proof.Exists || proof.IfName != "gif919" {
+		t.Fatalf("configured alias skipped actual parent: %+v %v", proof, err)
+	}
+	link := native.links["gif919"]
+	link.Token = "foreign"
+	native.links["gif919"] = link
+	if proof, err := reader.observeDeclared(t.Context(), "ds-owned"); err == nil || proof.Exists {
+		t.Fatalf("configured alias admitted foreign parent: %+v %v", proof, err)
+	}
+}

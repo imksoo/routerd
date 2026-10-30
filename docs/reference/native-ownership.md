@@ -61,6 +61,8 @@ and cannot authorize a delete.
 
 DS-Lite child admission reads the actual `Router/dslite-native` receipt, current
 configuration/source inputs, native kind/cookie, kernel scope and interface index.
+Interface-reference resolution uses the same tunnel-name fallback and FreeBSD gif
+unit mapping as the actual native owner.
 Pending parent operations, failed reads, unapplied intent and foreign same-name
 links cannot authorize a child effect. The child stores a `dslite:`-qualified
 cookie to select the concrete owner for later cleanup, including after removing

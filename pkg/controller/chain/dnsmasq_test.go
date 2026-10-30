@@ -3072,10 +3072,10 @@ func TestFirstUsableIfconfigGlobalIPv6PrefersAutoconf(t *testing.T) {
 }
 
 func TestFreeBSDDSLiteRuntimeIfNameKeepsGIFNames(t *testing.T) {
-	if got := freeBSDDSLiteRuntimeIfName("gif40"); got != "gif40" {
+	if got := api.DSLiteRuntimeIfName("gif40", "freebsd"); got != "gif40" {
 		t.Fatalf("runtime ifname = %q, want gif40", got)
 	}
-	if got := freeBSDDSLiteRuntimeIfName("ds-lite-a"); !strings.HasPrefix(got, "gif") || got == "gif40" {
+	if got := api.DSLiteRuntimeIfName("ds-lite-a", "freebsd"); !strings.HasPrefix(got, "gif") || got == "gif40" {
 		t.Fatalf("runtime ifname for ds-lite-a = %q, want generated gif name", got)
 	}
 }

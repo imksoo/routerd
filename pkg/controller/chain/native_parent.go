@@ -56,7 +56,7 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 	}
 	var selected api.Resource
 	for _, resource := range r.Router.Spec.Resources {
-		var name string
+		var name, configuredAlias string
 		var err error
 		switch resource.Kind {
 		case "VXLANSegment", "VXLANTunnel":
@@ -66,13 +66,14 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 			spec, err = resource.DSLiteTunnelSpec()
 			owner := r.dsliteOwner()
 			name = owner.nativeTunnelName(resource.Metadata.Name, spec)
+			configuredAlias = firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
 		default:
 			continue
 		}
 		if err != nil {
 			return nativeParentLink{}, err
 		}
-		if name != ifname {
+		if name != ifname && configuredAlias != ifname {
 			continue
 		}
 		if selected.Kind != "" {

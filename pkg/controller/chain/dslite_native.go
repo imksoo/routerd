@@ -576,7 +576,7 @@ func (c DSLiteTunnelController) cleanupNativeTunnels(ctx context.Context) error 
 		if keep {
 			name := firstNonEmpty(spec.TunnelName, spec.Interface, record.Resource)
 			if c.currentOS() == platform.OSFreeBSD {
-				name = freeBSDDSLiteRuntimeIfName(name)
+				name = api.DSLiteRuntimeIfName(name, "freebsd")
 			}
 			keep = name == record.Plan.Name
 			if spec.LocalAddressSource == "delegatedAddress" {

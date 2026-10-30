@@ -13,10 +13,7 @@ import (
 
 func (c DSLiteTunnelController) nativeTunnelName(name string, spec api.DSLiteTunnelSpec) string {
 	name = firstNonEmpty(spec.TunnelName, spec.Interface, name)
-	if c.currentOS() == platform.OSFreeBSD {
-		name = freeBSDDSLiteRuntimeIfName(name)
-	}
-	return name
+	return api.DSLiteRuntimeIfName(name, string(c.currentOS()))
 }
 
 // Resolve current intent without running the controller or persisting anything.
