@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/controlapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"gopkg.in/yaml.v3"
@@ -665,11 +666,39 @@ func TestActiveSubmittedSAMEnrollmentClaimRequiresSourceClaimName(t *testing.T) 
 	}
 }
 
+func TestSAMEnrollmentFixtureSupportsBothOperatingSystems(t *testing.T) {
+	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
+		t.Run(string(targetOS), func(t *testing.T) {
+			if err := config.ValidateForOS(loadSubmitTestRouter(t), targetOS); err != nil {
+				t.Fatalf("enrollment fixture is invalid for %s: %v", targetOS, err)
+			}
+		})
+	}
+}
+
 func loadSubmitTestRouter(t *testing.T) *api.Router {
 	t.Helper()
 	router, err := config.Load(filepath.Join("..", "..", "examples", "pve-minimal-rr.yaml"))
 	if err != nil {
 		t.Fatalf("load pve-minimal-rr.yaml: %v", err)
+	}
+	// Enrollment tests exercise admission and persistence, not Linux-only UDP
+	// encapsulation. Keep the sample names and references with a transport
+	// supported on both operating systems.
+	for i, resource := range router.Spec.Resources {
+		if resource.APIVersion != api.MobilityAPIVersion || resource.Kind != "SAMTransportProfile" {
+			continue
+		}
+		spec, err := resource.SAMTransportProfileSpec()
+		if err != nil {
+			t.Fatalf("transport profile spec: %v", err)
+		}
+		if spec.Mode == "fou" {
+			spec.Mode = "ipip"
+			spec.EncapSport = 0
+			spec.EncapDport = 0
+			router.Spec.Resources[i].Spec = spec
+		}
 	}
 	if hasSubmitTestResource(router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-a") ||
 		hasSubmitTestResource(router, api.MobilityAPIVersion, "SAMEnrollmentClaim", "pve-leaf-b") {
