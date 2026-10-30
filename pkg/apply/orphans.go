@@ -206,9 +206,7 @@ func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []reso
 	for _, res := range router.Spec.Resources {
 		for _, intent := range resourceArtifactIntents(res, aliases) {
 			switch intent.Artifact.Kind {
-			case "linux.ipv4.fwmarkRule",
-				"linux.ipv4.routeTable",
-				"nft.table",
+			case "nft.table",
 				"systemd.service",
 				"file",
 				"unix.socket",

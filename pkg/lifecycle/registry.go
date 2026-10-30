@@ -224,7 +224,7 @@ var declarations = []Declaration{
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),
 	declare(api.NetAPIVersion, "IPv6StaticRoute", ClassRendererInput, "static IPv6 route rendered by the platform network backend", noHostTeardown("route is rendered into platform network configuration; there is no standalone native IPv6 static-route actor")),
 	declare(api.NetAPIVersion, "HealthCheck", ClassManagedHost, "health check service/socket artifacts", resourceLifecycle()),
-	declare(api.NetAPIVersion, "EgressRoutePolicy", ClassManagedHost, "policy routing and nft mark artifacts", artifacts("nft.table", "linux.ipv4.fwmarkRule", "linux.ipv4.routeTable")),
+	declare(api.NetAPIVersion, "EgressRoutePolicy", ClassManagedHost, "policy routing and nft mark artifacts", artifacts("nft.table")),
 	declare(api.NetAPIVersion, "EventRule", ClassController, "local event derivation rule", noHostTeardown("controller derives daemon events without owning host artifacts")),
 	declare(api.NetAPIVersion, "DerivedEvent", ClassController, "derived event state", noHostTeardown("derived event state does not own host artifacts")),
 	declare(api.NetAPIVersion, "NAT44Rule", ClassManagedHost, "nft NAT44 rule/table artifacts", artifacts("nft.table")),

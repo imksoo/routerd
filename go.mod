@@ -83,3 +83,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// Keep the small GoBGP community-send fix with the exact upstream dependency.
+replace github.com/osrg/gobgp/v4 => ./third_party/gobgp

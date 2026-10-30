@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
-	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
@@ -1195,115 +1193,6 @@ func TestIPv4PolicyRoutePriorityReportsUnsupportedSelection(t *testing.T) {
 	}
 }
 
-func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
-	dir := t.TempDir()
-	ledgerPath := filepath.Join(dir, "artifacts.json")
-	ledger, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ledger.Close()
-	if err := ledger.Remember([]resource.Artifact{
-		{
-			Kind:  "linux.ipv4.fwmarkRule",
-			Name:  "priority=10110,mark=0x110,table=110",
-			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
-			Attributes: map[string]string{
-				"priority": "10110",
-				"mark":     "0x110",
-				"table":    "110",
-			},
-		},
-		{
-			Kind:       "linux.ipv4.routeTable",
-			Name:       "table=110",
-			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
-			Attributes: map[string]string{"table": "110"},
-		},
-		{
-			Kind:  "linux.ipv4.fwmarkRule",
-			Name:  "priority=10111,mark=0x111,table=111",
-			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
-			Attributes: map[string]string{
-				"priority": "10111",
-				"mark":     "0x111",
-				"table":    "111",
-			},
-		},
-		{
-			Kind:       "linux.ipv4.routeTable",
-			Name:       "table=111",
-			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
-			Attributes: map[string]string{"table": "111"},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
-			Mode: "priority",
-			Candidates: []api.EgressRoutePolicyCandidate{{
-				Name: "dslite",
-				Targets: []api.EgressRoutePolicyTarget{{
-					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
-				}},
-			}},
-		}},
-	}}}
-	var commands []string
-	controller := IPv4PolicyRouteController{
-		Router:     router,
-		Store:      mapStore{},
-		LedgerPath: ledgerPath,
-		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			command := name + " " + strings.Join(args, " ")
-			commands = append(commands, command)
-			switch command {
-			case "ip -4 rule show":
-				return []byte("10110: from all fwmark 0x110 lookup 110\n10111: from all fwmark 0x111 lookup 111\n100: from all fwmark 0x999 lookup 999\n"), nil
-			case "ip -4 route show table all":
-				return []byte("default dev old table 110\ndefault dev lo table 111\ndefault dev manual table 999\n"), nil
-			default:
-				return []byte(""), nil
-			}
-		},
-	}
-	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(commands, "\n")
-	for _, want := range []string{
-		"ip -4 rule del priority 10110 fwmark 0x110 table 110",
-		"ip -4 route flush table 110",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("commands =\n%s\nwant %s", joined, want)
-		}
-	}
-	for _, notWant := range []string{
-		"priority 10111",
-		"table 111",
-		"0x999",
-		"table 999",
-	} {
-		if strings.Contains(joined, notWant) {
-			t.Fatalf("commands =\n%s\nshould not contain %s", joined, notWant)
-		}
-	}
-	loaded, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = loaded.Close() }()
-	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}); err != nil || owns {
-		t.Fatalf("stale rule remained in ledger (ownership query error: %v)", err)
-	}
-	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10111,mark=0x111,table=111"}); err != nil || !owns {
-		t.Fatalf("desired rule missing from ledger (ownership query error: %v)", err)
-	}
-}
-
 func drainEvents(ch <-chan daemonapi.DaemonEvent) {
 	for {
 		select {
@@ -1499,91 +1388,6 @@ func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	if _, err := controller.routeGateway(ctx, "wan0", "static", ""); err == nil {
 		t.Fatal("empty static gateway should be rejected")
 	}
-}
-
-// TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs is the controller-level
-// regression test for issue #39. routerd serve drives the cleanup at 30s
-// reconcile, so a leaked *sql.DB per call would accumulate hundreds of
-// fds/day against routerd.db. Linux-only because it inspects /proc/self/fd.
-func TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("/proc/self/fd only available on linux")
-	}
-	dir := t.TempDir()
-	// Use a routerd.db path so LoadLedger picks the SQLite backend (the
-	// JSON backend has no fd lifetime concern).
-	ledgerPath := filepath.Join(dir, "routerd.db")
-	seed, err := resource.LoadLedger(ledgerPath)
-	if err != nil {
-		t.Fatalf("seed open: %v", err)
-	}
-	if err := seed.Close(); err != nil {
-		t.Fatalf("seed close: %v", err)
-	}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
-			Mode: "priority",
-			Candidates: []api.EgressRoutePolicyCandidate{{
-				Name: "dslite",
-				Targets: []api.EgressRoutePolicyTarget{{
-					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
-				}},
-			}},
-		}},
-	}}}
-	controller := IPv4PolicyRouteController{
-		Router:     router,
-		Store:      mapStore{},
-		LedgerPath: ledgerPath,
-		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			switch name + " " + strings.Join(args, " ") {
-			case "ip -4 rule show":
-				return []byte(""), nil
-			case "ip -4 route show table all":
-				return []byte(""), nil
-			default:
-				return []byte(""), nil
-			}
-		},
-	}
-	// Warm up: settle any first-call fd churn (e.g. table creation).
-	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
-		t.Fatalf("warmup cleanup: %v", err)
-	}
-	base := countLedgerFDs(t, ledgerPath)
-	for i := 0; i < 10; i++ {
-		if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
-			t.Fatalf("iter %d cleanup: %v", i, err)
-		}
-	}
-	after := countLedgerFDs(t, ledgerPath)
-	if after > base {
-		t.Fatalf("fd leak across 10 cleanup reconciles: before=%d after=%d", base, after)
-	}
-}
-
-func countLedgerFDs(t *testing.T, path string) int {
-	t.Helper()
-	entries, err := os.ReadDir("/proc/self/fd")
-	if err != nil {
-		t.Fatalf("read /proc/self/fd: %v", err)
-	}
-	suffixes := []string{"", "-journal", "-wal", "-shm"}
-	count := 0
-	for _, entry := range entries {
-		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%s", entry.Name()))
-		if err != nil {
-			continue
-		}
-		for _, suffix := range suffixes {
-			if strings.HasSuffix(target, path+suffix) {
-				count++
-				break
-			}
-		}
-	}
-	return count
 }
 
 // These selection/status tests own their link observations and never execute

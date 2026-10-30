@@ -1,0 +1,7 @@
+pytest
+toml
+pyyaml
+netaddr
+nsenter
+docker
+colored

@@ -1,0 +1,1642 @@
+// Copyright (C) 2014-2021 Nippon Telegraph and Telephone Corporation.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+// implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/netip"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/eapache/channels"
+	"github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/internal/pkg/table"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/config/oc"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/osrg/gobgp/v4/pkg/packet/bmp"
+
+	"github.com/stretchr/testify/assert"
+)
+
+type NotificationChannel struct {
+	C chan any
+}
+
+func NewNotificationChannel() *NotificationChannel {
+	return &NotificationChannel{
+		C: make(chan any, 1),
+	}
+}
+
+func (nc *NotificationChannel) Notify() {
+	select {
+	case nc.C <- struct{}{}:
+	default:
+	}
+}
+
+func (nc *NotificationChannel) Clear() {
+	select {
+	case <-nc.C:
+	default:
+	}
+}
+
+type MockConnection struct {
+	net.Conn
+	remote net.Conn
+
+	lock        sync.Mutex
+	bufReady    *NotificationChannel
+	lastBuf     []byte
+	lastErr     error
+	allMessages [][]byte
+	remoteAddr  net.Addr
+	localAddr   net.Addr
+}
+
+func NewMockConnection() *MockConnection {
+	l, r := net.Pipe()
+	m := &MockConnection{
+		Conn:        l,
+		remote:      r,
+		bufReady:    NewNotificationChannel(),
+		lastBuf:     make([]byte, bgp.BGP_MAX_MESSAGE_LENGTH),
+		allMessages: make([][]byte, 0),
+	}
+
+	go func() {
+		buf := make([]byte, bgp.BGP_MAX_MESSAGE_LENGTH)
+		for {
+			n, err := m.remote.Read(buf)
+			if n == 0 && errors.Is(err, io.EOF) {
+				return
+			}
+			m.lock.Lock()
+			copy(m.lastBuf, buf[:n])
+			m.lastBuf = m.lastBuf[:n]
+			m.lastErr = err
+			msg := make([]byte, n)
+			copy(msg, buf[:n])
+			m.allMessages = append(m.allMessages, msg)
+			m.lock.Unlock()
+			m.bufReady.Notify()
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	return m
+}
+
+func (m *MockConnection) GetLastestBuf() ([]byte, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	buf := make([]byte, len(m.lastBuf))
+	err := m.lastErr
+	copy(buf, m.lastBuf)
+	return buf, err
+}
+
+// Additional MockConnection helpers used by server_test.go:
+//   - SetRemoteAddr configures deterministic local/remote TCP addresses so tests
+//     can validate BGP server behavior that depends on peer addressing.
+//   - RemoteAddr and LocalAddr honor any test-specified addresses while
+//     falling back to the underlying net.Conn when none are set.
+func (m *MockConnection) SetRemoteAddr(addr string) {
+	ip := netip.MustParseAddr(addr)
+	m.lock.Lock()
+	m.remoteAddr = net.TCPAddrFromAddrPort(netip.AddrPortFrom(ip, 10179))
+	m.localAddr = &net.TCPAddr{IP: net.ParseIP("127.0.0.201"), Port: 10179}
+	m.lock.Unlock()
+}
+
+func (m *MockConnection) RemoteAddr() net.Addr {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	if m.remoteAddr != nil {
+		return m.remoteAddr
+	}
+	return m.Conn.RemoteAddr()
+}
+
+func (m *MockConnection) LocalAddr() net.Addr {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	if m.localAddr != nil {
+		return m.localAddr
+	}
+	return m.Conn.LocalAddr()
+}
+
+func (m *MockConnection) PushBgpMessage(msg *bgp.BGPMessage) {
+	buf, _ := msg.Serialize()
+	m.remote.Write(buf)
+}
+
+func (m *MockConnection) GetSentMessages() [][]byte {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	// Return collected messages
+	result := make([][]byte, len(m.allMessages))
+	copy(result, m.allMessages)
+	return result
+}
+
+func TestReadAll(t *testing.T) {
+	assert := assert.New(t)
+	m := NewMockConnection()
+	msg := open()
+	expected1, _ := msg.Header.Serialize()
+	expected2, _ := msg.Body.Serialize()
+
+	pushBytes := func() {
+		t.Log("push 5 bytes")
+		m.remote.Write(expected1[:5])
+		t.Log("push rest")
+		m.remote.Write(expected1[5:])
+		t.Log("push bytes at once")
+		m.remote.Write(expected2)
+	}
+
+	go pushBytes()
+
+	var actual1 []byte
+	actual1, _ = readAll(m, bgp.BGP_HEADER_LENGTH)
+	assert.Equal(expected1, actual1)
+
+	var actual2 []byte
+	actual2, _ = readAll(m, len(expected2))
+	assert.Equal(expected2, actual2)
+}
+
+func TestFSMHandlerOpensent_HoldTimerExpired(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	// set holdtime
+	p.fsm.opensentHoldTime = 2
+	p.fsm.gConf.Config.RouterId = netip.MustParseAddr("1.1.1.1")
+
+	state, reason := h.opensent(t.Context())
+
+	assert.Equal(bgp.BGP_FSM_IDLE, state)
+	assert.Equal(fsmHoldTimerExpired, reason.Type)
+
+	<-m.bufReady.C
+
+	// hold timer expired, so a notification message should be sent
+	lastMsg, err := m.GetLastestBuf()
+	assert.True(err == nil || errors.Is(err, io.EOF))
+
+	sent, _ := bgp.ParseBGPMessage(lastMsg)
+	assert.Equal(uint8(bgp.BGP_MSG_NOTIFICATION), sent.Header.Type)
+	assert.Equal(uint8(bgp.BGP_ERROR_HOLD_TIMER_EXPIRED), sent.Body.(*bgp.BGPNotification).ErrorCode)
+}
+
+func TestFSMHandlerOpenconfirm_HoldTimerExpired(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	// set keepalive ticker
+	p.fsm.lock.Lock()
+	conf := p.fsm.pConf.ReadCopy()
+	conf.Timers.State.KeepaliveInterval = 3
+
+	// set holdtime
+	conf.Timers.State.NegotiatedHoldTime = 2
+	p.fsm.pConf.Update(&conf)
+	p.fsm.lock.Unlock()
+
+	state, reason := h.openconfirm(t.Context())
+
+	assert.Equal(bgp.BGP_FSM_IDLE, state)
+	assert.Equal(fsmHoldTimerExpired, reason.Type)
+
+	<-m.bufReady.C
+
+	lastMsg, err := m.GetLastestBuf()
+	assert.True(err == nil || errors.Is(err, io.EOF))
+
+	sent, _ := bgp.ParseBGPMessage(lastMsg)
+	assert.Equal(uint8(bgp.BGP_MSG_NOTIFICATION), sent.Header.Type)
+	assert.Equal(uint8(bgp.BGP_ERROR_HOLD_TIMER_EXPIRED), sent.Body.(*bgp.BGPNotification).ErrorCode)
+}
+
+func TestFSMHandlerEstablish_HoldTimerExpired(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	p.fsm.lock.Lock()
+	conf := p.fsm.pConf.ReadCopy()
+	// set keepalive ticker
+	conf.Timers.State.KeepaliveInterval = 3
+
+	// set holdtime
+	conf.Timers.State.NegotiatedHoldTime = 2
+	p.fsm.pConf.Update(&conf)
+	p.fsm.lock.Unlock()
+
+	state, reason := h.established(t.Context())
+	assert.Equal(bgp.BGP_FSM_IDLE, state)
+	assert.Equal(fsmHoldTimerExpired, reason.Type)
+
+	// force send pending messages
+	<-m.bufReady.C
+
+	lastMsg, err := m.GetLastestBuf()
+	assert.True(err == nil || errors.Is(err, io.EOF))
+
+	sent, _ := bgp.ParseBGPMessage(lastMsg)
+	assert.Equal(uint8(bgp.BGP_MSG_NOTIFICATION), sent.Header.Type)
+	assert.Equal(uint8(bgp.BGP_ERROR_HOLD_TIMER_EXPIRED), sent.Body.(*bgp.BGPNotification).ErrorCode)
+}
+
+func TestFSMHandlerEstablish_HoldTimerExpired_GR_Enabled(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	p.fsm.lock.Lock()
+	conf := p.fsm.pConf.ReadCopy()
+	// set keepalive ticker
+	conf.Timers.State.KeepaliveInterval = 3
+
+	// set holdtime
+	conf.Timers.State.NegotiatedHoldTime = 2
+
+	// Enable graceful restart
+	conf.GracefulRestart.State.Enabled = true
+	p.fsm.pConf.Update(&conf)
+	p.fsm.lock.Unlock()
+
+	state, reason := h.established(t.Context())
+	assert.Equal(bgp.BGP_FSM_IDLE, state)
+	assert.Equal(fsmGracefulRestart, reason.Type)
+
+	<-m.bufReady.C
+
+	lastMsg, err := m.GetLastestBuf()
+	assert.True(err == nil || errors.Is(err, io.EOF))
+
+	sent, _ := bgp.ParseBGPMessage(lastMsg)
+	assert.Equal(uint8(bgp.BGP_MSG_NOTIFICATION), sent.Header.Type)
+	assert.Equal(uint8(bgp.BGP_ERROR_HOLD_TIMER_EXPIRED), sent.Body.(*bgp.BGPNotification).ErrorCode)
+}
+
+func TestFSMHandlerOpenconfirm_HoldtimeZero(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	p.fsm.lock.Lock()
+	conf := p.fsm.pConf.ReadCopy()
+	// set up keepalive ticker
+	conf.Timers.Config.KeepaliveInterval = 1
+	// set holdtime
+	conf.Timers.State.NegotiatedHoldTime = 0
+	p.fsm.pConf.Update(&conf)
+	p.fsm.lock.Unlock()
+
+	go h.openconfirm(t.Context())
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+	case <-m.bufReady.C:
+		lastMsg, err := m.GetLastestBuf()
+		assert.NoError(err)
+		sent, err := bgp.ParseBGPMessage(lastMsg)
+		assert.NoError(err)
+		t.Fatalf("Expected no messages to be sent, but got one: %v", sent.Body)
+	}
+}
+
+func TestFSMHandlerEstablished_HoldtimeZero(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	p.fsm.lock.Lock()
+	conf := p.fsm.pConf.ReadCopy()
+	// set holdtime
+	conf.Timers.State.NegotiatedHoldTime = 0
+	p.fsm.pConf.Update(&conf)
+	p.fsm.lock.Unlock()
+
+	go h.established(t.Context())
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+	case <-m.bufReady.C:
+		lastMsg, err := m.GetLastestBuf()
+		assert.NoError(err)
+		sent, err := bgp.ParseBGPMessage(lastMsg)
+		assert.NoError(err)
+		t.Fatalf("Expected no messages to be sent, but got one: %v", sent.Body)
+	}
+}
+
+func TestCheckOwnASLoop(t *testing.T) {
+	assert := assert.New(t)
+	aspathParam := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65100})}
+	aspath := bgp.NewPathAttributeAsPath(aspathParam)
+
+	// Test without confederation (existing tests)
+	assert.False(hasOwnASLoop(65100, 10, aspath, 0, false))
+	assert.True(hasOwnASLoop(65100, 0, aspath, 0, false))
+	assert.False(hasOwnASLoop(65200, 0, aspath, 0, false))
+}
+
+// Test for issue #3311: Confederation ID loop detection (RFC 5065 Section 4)
+func TestCheckOwnASLoopWithConfederation(t *testing.T) {
+	assert := assert.New(t)
+
+	// Test case 1: AS_PATH contains Confederation ID
+	// AS_PATH: [65100, 65250]
+	// Local AS: 65100
+	// Confederation ID: 65250
+	aspathParam1 := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65100, 65250})}
+	aspath1 := bgp.NewPathAttributeAsPath(aspathParam1)
+
+	// Should detect loop when Confederation ID (65250) is in AS_PATH
+	assert.True(hasOwnASLoop(65100, 0, aspath1, 65250, true),
+		"Should detect AS loop when Confederation ID is in AS_PATH")
+
+	// Should detect loop with allowOwnAs=1 (ownAS appears once + confedID appears once = 2 > limit 1)
+	assert.True(hasOwnASLoop(65100, 1, aspath1, 65250, true),
+		"Should detect AS loop when total count exceeds limit")
+
+	// Should allow with allowOwnAs=2 (ownAS appears once + confedID appears once = 2 <= limit 2)
+	assert.False(hasOwnASLoop(65100, 2, aspath1, 65250, true),
+		"Should allow when count equals limit")
+
+	// Should not detect loop when confederation is disabled
+	assert.True(hasOwnASLoop(65100, 0, aspath1, 65250, false),
+		"Should still detect ownAS loop even when confederation disabled")
+
+	// Test case 2: AS_PATH contains only Confederation ID
+	// AS_PATH: [65200, 65250]
+	// Local AS: 65100
+	// Confederation ID: 65250
+	aspathParam2 := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65200, 65250})}
+	aspath2 := bgp.NewPathAttributeAsPath(aspathParam2)
+
+	// Should detect loop when only Confederation ID is in AS_PATH (not ownAS)
+	assert.True(hasOwnASLoop(65100, 0, aspath2, 65250, true),
+		"Should detect AS loop when only Confederation ID is in AS_PATH")
+
+	// Should not detect loop when confederation is disabled
+	assert.False(hasOwnASLoop(65100, 0, aspath2, 65250, false),
+		"Should not detect loop when confederation is disabled")
+
+	// Test case 3: AS_PATH contains multiple occurrences of Confederation ID
+	// AS_PATH: [65250, 65200, 65250]
+	// Local AS: 65100
+	// Confederation ID: 65250
+	aspathParam3 := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65250, 65200, 65250})}
+	aspath3 := bgp.NewPathAttributeAsPath(aspathParam3)
+
+	// Should detect loop (2 occurrences > limit 0)
+	assert.True(hasOwnASLoop(65100, 0, aspath3, 65250, true),
+		"Should detect AS loop with multiple Confederation ID occurrences")
+
+	// Should detect loop (2 occurrences > limit 1)
+	assert.True(hasOwnASLoop(65100, 1, aspath3, 65250, true),
+		"Should detect AS loop when count exceeds limit")
+
+	// Should allow with limit 2
+	assert.False(hasOwnASLoop(65100, 2, aspath3, 65250, true),
+		"Should allow when count equals limit")
+
+	// Test case 4: Confederation ID same as own AS
+	// AS_PATH: [65250]
+	// Local AS: 65250
+	// Confederation ID: 65250
+	aspathParam4 := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65250})}
+	aspath4 := bgp.NewPathAttributeAsPath(aspathParam4)
+
+	// Should count only once (not double count when confedID == ownAS)
+	assert.True(hasOwnASLoop(65250, 0, aspath4, 65250, true),
+		"Should detect AS loop when ownAS == Confederation ID")
+
+	// Test case 5: No loop - different AS
+	// AS_PATH: [65200, 65300]
+	// Local AS: 65100
+	// Confederation ID: 65250
+	aspathParam5 := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{65200, 65300})}
+	aspath5 := bgp.NewPathAttributeAsPath(aspathParam5)
+
+	// Should not detect loop
+	assert.False(hasOwnASLoop(65100, 0, aspath5, 65250, true),
+		"Should not detect loop when neither ownAS nor Confederation ID is in AS_PATH")
+}
+
+func TestBadBGPIdentifier(t *testing.T) {
+	assert := assert.New(t)
+	msg1 := openWithBadBGPIdentifierZero()
+	msg2 := openWithBadBGPIdentifierSame()
+	body1 := msg1.Body.(*bgp.BGPOpen)
+	body2 := msg2.Body.(*bgp.BGPOpen)
+
+	// Test if Bad BGP Identifier notification is sent if remote router-id is 0.0.0.0.
+	peerAs, err := bgp.ValidateOpenMsg(body1, 65000, 65001, netip.MustParseAddr("192.168.1.1"))
+	assert.Equal(int(peerAs), 0)
+	assert.Equal(uint8(bgp.BGP_ERROR_SUB_BAD_BGP_IDENTIFIER), err.(*bgp.MessageError).SubTypeCode)
+
+	// Test if Bad BGP Identifier notification is sent if remote router-id is the same for iBGP.
+	peerAs, err = bgp.ValidateOpenMsg(body2, 65000, 65000, netip.MustParseAddr("192.168.1.1"))
+	assert.Equal(int(peerAs), 0)
+	assert.Equal(uint8(bgp.BGP_ERROR_SUB_BAD_BGP_IDENTIFIER), err.(*bgp.MessageError).SubTypeCode)
+}
+
+func makePeerAndHandler(m net.Conn) (*peer, *fsmHandler) {
+	fsm := newFSM(&oc.Global{}, &oc.Neighbor{}, bgp.BGP_FSM_IDLE, slog.Default())
+	fsm.conn = m
+
+	p := &peer{fsm: fsm}
+
+	h := &fsmHandler{
+		fsm:      fsm,
+		outgoing: channels.NewInfiniteChannel(),
+		callback: func(*fsmMsg) {},
+	}
+
+	fsm.h = h
+	return p, h
+}
+
+func cleanPeerAndHandler(p *peer, h *fsmHandler) {
+	h.outgoing.Close()
+
+	p.fsm.outgoingCh.Close()
+
+	p.fsm.conn.Close()
+}
+
+func open() *bgp.BGPMessage {
+	p1 := bgp.NewOptionParameterCapability(
+		[]bgp.ParameterCapabilityInterface{bgp.NewCapRouteRefresh()})
+	p2 := bgp.NewOptionParameterCapability(
+		[]bgp.ParameterCapabilityInterface{bgp.NewCapMultiProtocol(bgp.RF_IPv4_UC)})
+	g := &bgp.CapGracefulRestartTuple{AFI: 4, SAFI: 2, Flags: 3}
+	p3 := bgp.NewOptionParameterCapability(
+		[]bgp.ParameterCapabilityInterface{bgp.NewCapGracefulRestart(true, true, 100,
+			[]*bgp.CapGracefulRestartTuple{g})})
+	p4 := bgp.NewOptionParameterCapability(
+		[]bgp.ParameterCapabilityInterface{bgp.NewCapFourOctetASNumber(100000)})
+	msg, _ := bgp.NewBGPOpenMessage(11033, 303, netip.MustParseAddr("100.4.10.3"),
+		[]bgp.OptionParameterInterface{p1, p2, p3, p4})
+	return msg
+}
+
+func openWithBadBGPIdentifierZero() *bgp.BGPMessage {
+	msg, _ := bgp.NewBGPOpenMessage(65000, 303, netip.MustParseAddr("0.0.0.0"),
+		[]bgp.OptionParameterInterface{})
+	return msg
+}
+
+func openWithBadBGPIdentifierSame() *bgp.BGPMessage {
+	msg, _ := bgp.NewBGPOpenMessage(65000, 303, netip.MustParseAddr("192.168.1.1"),
+		[]bgp.OptionParameterInterface{})
+	return msg
+}
+
+func TestFsmPeerConfigAccess(t *testing.T) {
+	a := oc.Neighbor{
+		Config: oc.NeighborConfig{
+			NeighborAddress: netip.MustParseAddr("10.0.0.1"),
+			PeerAs:          65001,
+		},
+		AfiSafis: []oc.AfiSafi{
+			{
+				Config: oc.AfiSafiConfig{
+					AfiSafiName: oc.AFI_SAFI_TYPE_RTC,
+					Enabled:     true,
+				},
+			},
+		},
+	}
+
+	peer := newPeer(nil, &a, bgp.BGP_FSM_ESTABLISHED, nil, nil, slog.Default())
+	b := peer.fsm.pConf.ReadCopy()
+
+	assert.True(t, a.Equal(&b))
+	b.Config.NeighborAddress = netip.MustParseAddr("10.0.0.2")
+	assert.False(t, a.Equal(&b))
+	a.Config.NeighborAddress = netip.MustParseAddr("10.0.0.2")
+	assert.True(t, a.Equal(&b))
+
+	a.AfiSafis[0].Config.Enabled = false
+	peer.fsm.pConf.Update(&a)
+	assert.False(t, a.Equal(&b))
+	b.AfiSafis[0].Config.Enabled = false
+	assert.True(t, a.Equal(&b))
+}
+
+// TestRace_UpdatePrefixLimitConfig tests that updatePrefixLimitConfig is race-free
+// when called concurrently with capabilitiesFromConfig (which writes to AfiSafis).
+//
+// The implementation uses pConf.Load() for deep copy protection.
+// The race detector detects races at struct element level, not field level,
+// so any concurrent access to the same AfiSafi element is a race even if
+// reading/writing different fields.
+//
+// Run with: go test -race -count=1 ./pkg/server/... -run TestRace_UpdatePrefixLimitConfig
+func TestRace_UpdatePrefixLimitConfig(t *testing.T) {
+	s, _, peerAddrIP := newTestBgpServerWithPeer(t)
+	defer s.StopBgp(context.Background(), &api.StopBgpRequest{})
+
+	var testPeer *peer
+	err := s.mgmtOperation(func() error {
+		testPeer = s.neighborMap[peerAddrIP]
+		return nil
+	}, true)
+	if err != nil {
+		t.Fatalf("mgmtOperation failed: %v", err)
+	}
+
+	if testPeer == nil {
+		t.Fatal("Could not get internal peer object")
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Writer goroutine: repeatedly call newWatchEventPeer which triggers
+	// capabilitiesFromConfig -> writes to AfiSafis[i].MpGracefulRestart.State.Advertised
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = newWatchEventPeer(testPeer, nil, bgp.BGP_FSM_IDLE, bgp.BGP_FSM_IDLE, apiutil.PEER_EVENT_STATE)
+			}
+		}
+	}()
+
+	// Reader goroutine: repeatedly call updatePrefixLimitConfig.
+	// In production, this receives a fresh config from API each time.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// Get fresh config like production API calls would provide.
+				testPeer.fsm.lock.Lock()
+				conf := testPeer.fsm.pConf.ReadCopy()
+				freshConfig := conf.AfiSafis
+				_, _ = testPeer.updatePrefixLimitConfig(&conf, freshConfig)
+				testPeer.fsm.pConf.Update(&conf)
+				testPeer.fsm.lock.Unlock()
+			}
+		}
+	}()
+
+	// Run for 2 seconds
+	time.Sleep(2 * time.Second)
+	close(stop)
+	wg.Wait()
+}
+
+// TestRace_HandleUpdatePrefixLimit tests that the handleUpdate function's
+// prefix limit checking loop is race-free when using pConf.Load().
+//
+// Run with: go test -race -count=1 ./pkg/server/... -run TestRace_HandleUpdatePrefixLimit
+func TestRace_HandleUpdatePrefixLimit(t *testing.T) {
+	s, _, peerAddrIP := newTestBgpServerWithPeer(t)
+	defer s.StopBgp(context.Background(), &api.StopBgpRequest{})
+
+	var testPeer *peer
+	err := s.mgmtOperation(func() error {
+		testPeer = s.neighborMap[peerAddrIP]
+		return nil
+	}, true)
+	if err != nil {
+		t.Fatalf("mgmtOperation failed: %v", err)
+	}
+
+	if testPeer == nil {
+		t.Fatal("Could not get internal peer object")
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Writer goroutine: repeatedly call newWatchEventPeer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = newWatchEventPeer(testPeer, nil, bgp.BGP_FSM_IDLE, bgp.BGP_FSM_IDLE, apiutil.PEER_EVENT_STATE)
+			}
+		}
+	}()
+
+	// Reader goroutine: simulate reading AfiSafis like handleUpdate does.
+	// Uses pConf.Load() for deep copy - should be race-free.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// This is the pattern used in handleUpdate - deep copy via pConf.Load().
+				afiSafis := testPeer.fsm.pConf.ReadOnly().AfiSafis
+				// Iterate and read from elements - safe because we have a deep copy
+				for _, af := range afiSafis {
+					_ = af.State.Family
+					_ = af.PrefixLimit.Config
+				}
+			}
+		}
+	}()
+
+	// Run for 2 seconds
+	time.Sleep(2 * time.Second)
+	close(stop)
+	wg.Wait()
+}
+
+// TestRace_HandleFSMMessageEOR tests that handleFSMMessage's EOR processing
+// is race-free when using pConf.Load().
+//
+// Run with: go test -race -count=1 ./pkg/server/... -run TestRace_HandleFSMMessageEOR
+func TestRace_HandleFSMMessageEOR(t *testing.T) {
+	s, _, peerAddrIP := newTestBgpServerWithPeer(t)
+	defer s.StopBgp(context.Background(), &api.StopBgpRequest{})
+
+	var testPeer *peer
+	err := s.mgmtOperation(func() error {
+		testPeer = s.neighborMap[peerAddrIP]
+		return nil
+	}, true)
+	if err != nil {
+		t.Fatalf("mgmtOperation failed: %v", err)
+	}
+
+	if testPeer == nil {
+		t.Fatal("Could not get internal peer object")
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Writer goroutine: repeatedly call newWatchEventPeer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = newWatchEventPeer(testPeer, nil, bgp.BGP_FSM_IDLE, bgp.BGP_FSM_IDLE, apiutil.PEER_EVENT_STATE)
+			}
+		}
+	}()
+
+	// Reader goroutine: simulate the EOR processing pattern in handleFSMMessage.
+	// Uses pConf.Load() for deep copy - should be race-free.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// This is the pattern used in handleFSMMessage EOR processing - deep copy.
+				peerAfiSafis := testPeer.fsm.pConf.ReadOnly().AfiSafis
+
+				// Iterate over AfiSafis looking for matching families - safe with deep copy
+				for i, a := range peerAfiSafis {
+					_ = a.State.Family
+					_ = i
+				}
+			}
+		}
+	}()
+
+	// Run for 2 seconds
+	time.Sleep(2 * time.Second)
+	close(stop)
+	wg.Wait()
+}
+
+// newTestBgpServerWithPeer creates a minimal BgpServer with one peer added.
+// Returns the server and peer address (both as string for API use and netip.Addr for internal map access).
+func newTestBgpServerWithPeer(t *testing.T) (*BgpServer, string, netip.Addr) {
+	t.Helper()
+
+	s := NewBgpServer()
+	go s.Serve()
+
+	// Start BGP with minimal config: no TCP listener (ListenPort: -1)
+	err := s.StartBgp(context.Background(), &api.StartBgpRequest{
+		Global: &api.Global{
+			Asn:        65001,
+			RouterId:   "1.1.1.1",
+			ListenPort: -1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartBgp failed: %v", err)
+	}
+
+	// Add a peer with GracefulRestart enabled to exercise the race condition.
+	// The race involves capabilitiesFromConfig writing to:
+	//   pConf.Load().AfiSafis[i].MpGracefulRestart.State.Advertised
+	peerAddr := "2.2.2.2"
+	peer := &api.Peer{
+		Conf: &api.PeerConf{
+			NeighborAddress: peerAddr,
+			PeerAsn:         65002,
+		},
+		GracefulRestart: &api.GracefulRestart{
+			Enabled:     true,
+			RestartTime: 120,
+		},
+		AfiSafis: []*api.AfiSafi{
+			{
+				Config: &api.AfiSafiConfig{
+					Family: &api.Family{
+						Afi:  api.Family_AFI_IP,
+						Safi: api.Family_SAFI_UNICAST,
+					},
+				},
+				MpGracefulRestart: &api.MpGracefulRestart{
+					Config: &api.MpGracefulRestartConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+
+	err = s.AddPeer(context.Background(), &api.AddPeerRequest{Peer: peer})
+	if err != nil {
+		t.Fatalf("AddPeer failed: %v", err)
+	}
+
+	return s, peerAddr, netip.MustParseAddr(peerAddr)
+}
+
+// TestRace_SoftResetPeerAndWatch reproduces a data race reported by the Go race detector
+// in production, involving concurrent access to peer configuration data.
+//
+// Race details from production logs:
+//
+// Write goroutine stack:
+//
+//	capabilitiesFromConfig()        <- pkg/server/fsm.go:788
+//	  (writes pConf.Load().AfiSafis[i].MpGracefulRestart.State.Advertised = true)
+//	buildopen()                     <- pkg/server/fsm.go:826
+//	newWatchEventPeer()             <- pkg/server/server.go:957
+//	broadcastPeerState()            <- pkg/server/server.go:992
+//
+// The race occurs in toConfig() (server.go:837-870) which:
+//  1. Acquires RLock (line 839)
+//  2. Copies AfiSafis slice header: peerAfiSafis := peer.fsm.pConf.Load().AfiSafis (line 841)
+//  3. Releases RLock (line 843)
+//  4. Iterates over peerAfiSafis (line 846): for i, af := range peerAfiSafis
+//     This reads from the original slice elements WITHOUT holding any lock!
+//  5. Later acquires Lock (line 868) and calls capabilitiesFromConfig
+//     which WRITES to AfiSafis[i].MpGracefulRestart.State.Advertised
+//
+// The bug is that step 4 reads from shared memory after releasing the lock,
+// while another goroutine (in step 5) can be writing to the same memory.
+//
+// To run this test:
+//
+//	go test -race -count=1 ./pkg/server/... -run TestRace_SoftResetPeerAndWatch
+//
+// This test was originally added to reproduce a data race in the unfixed code,
+// which caused "race detected during execution of test" when run with -race.
+// With the race fixed, this test is now expected to PASS (even under -race) and
+// serves as a regression test to ensure the race does not reappear.
+func TestRace_SoftResetPeerAndWatch(t *testing.T) {
+	s, peerAddr, peerAddrIP := newTestBgpServerWithPeer(t)
+	defer s.StopBgp(context.Background(), &api.StopBgpRequest{})
+
+	// Get the internal peer object for direct access to internal functions
+	var testPeer *peer
+	err := s.mgmtOperation(func() error {
+		testPeer = s.neighborMap[peerAddrIP]
+		return nil
+	}, true)
+	if err != nil {
+		t.Fatalf("mgmtOperation failed: %v", err)
+	}
+
+	if testPeer == nil {
+		t.Fatal("Could not get internal peer object")
+	}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Writer goroutine: repeatedly call newWatchEventPeer
+	// This triggers: buildopen -> capabilitiesFromConfig which WRITES to
+	// pConf.Load().AfiSafis[i].MpGracefulRestart.State.Advertised while holding Lock
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// This is the write path from the production stack trace:
+				// newWatchEventPeer -> buildopen -> capabilitiesFromConfig
+				_ = newWatchEventPeer(testPeer, nil, bgp.BGP_FSM_IDLE, bgp.BGP_FSM_IDLE, apiutil.PEER_EVENT_STATE)
+			}
+		}
+	}()
+
+	// Reader goroutine: repeatedly call toConfig directly
+	// toConfig reads from pConf.Load().AfiSafis after releasing RLock (the race!)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// toConfig: the buggy pattern is:
+				// 1. Copy slice header under lock
+				// 2. Release lock
+				// 3. Iterate over slice elements WITHOUT lock (race!)
+				_ = s.toConfig(testPeer, true)
+			}
+		}
+	}()
+
+	// Additional goroutine: trigger peer state changes via API
+	// This exercises the broadcastPeerState -> newWatchEventPeer path
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ctx := context.Background()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = s.DisablePeer(ctx, &api.DisablePeerRequest{Address: peerAddr})
+				_ = s.EnablePeer(ctx, &api.EnablePeerRequest{Address: peerAddr})
+			}
+		}
+	}()
+
+	// Additional goroutine: ListPeer API which calls toConfig internally
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ctx := context.Background()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = s.ListPeer(ctx, &api.ListPeerRequest{
+					Address:          peerAddr,
+					EnableAdvertised: true, // Triggers capabilitiesFromConfig call
+				}, func(*api.Peer) {})
+			}
+		}
+	}()
+
+	// Let the goroutines run to trigger the race
+	time.Sleep(2 * time.Second)
+
+	close(stop)
+	wg.Wait()
+}
+
+// TestAtomicMessageCounters verifies that atomic message counters exposed via toConfig
+// accurately match the messages processed through bgpMessageStateUpdate.
+func TestAtomicMessageCounters(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	// Create a mock server to use toConfig
+	s := NewBgpServer()
+
+	// Simulate processing various BGP messages
+	testCases := []struct {
+		msgType uint8
+		isIn    bool
+		count   int
+	}{
+		{bgp.BGP_MSG_OPEN, true, 1},
+		{bgp.BGP_MSG_OPEN, false, 1},
+		{bgp.BGP_MSG_KEEPALIVE, true, 5},
+		{bgp.BGP_MSG_KEEPALIVE, false, 5},
+		{bgp.BGP_MSG_UPDATE, true, 10},
+		{bgp.BGP_MSG_UPDATE, false, 8},
+		{bgp.BGP_MSG_NOTIFICATION, true, 2},
+		{bgp.BGP_MSG_NOTIFICATION, false, 1},
+		{bgp.BGP_MSG_ROUTE_REFRESH, true, 3},
+		{bgp.BGP_MSG_ROUTE_REFRESH, false, 2},
+	}
+
+	// Track expected counts
+	expectedReceived := make(map[uint8]uint64)
+	expectedSent := make(map[uint8]uint64)
+	var expectedReceivedTotal, expectedSentTotal uint64
+
+	// Process messages and track expectations
+	for _, tc := range testCases {
+		for range tc.count {
+			p.fsm.bgpMessageStateUpdate(tc.msgType, tc.isIn)
+			if tc.isIn {
+				expectedReceived[tc.msgType]++
+				expectedReceivedTotal++
+			} else {
+				expectedSent[tc.msgType]++
+				expectedSentTotal++
+			}
+		}
+	}
+
+	// Get config using toConfig
+	config := s.toConfig(p, false)
+
+	// Verify received message counts match
+	assert.Equal(expectedReceivedTotal, config.State.Messages.Received.Total,
+		"Received total count should match")
+	assert.Equal(expectedReceived[bgp.BGP_MSG_OPEN], config.State.Messages.Received.Open,
+		"Received OPEN count should match")
+	assert.Equal(expectedReceived[bgp.BGP_MSG_KEEPALIVE], config.State.Messages.Received.Keepalive,
+		"Received KEEPALIVE count should match")
+	assert.Equal(expectedReceived[bgp.BGP_MSG_UPDATE], config.State.Messages.Received.Update,
+		"Received UPDATE count should match")
+	assert.Equal(expectedReceived[bgp.BGP_MSG_NOTIFICATION], config.State.Messages.Received.Notification,
+		"Received NOTIFICATION count should match")
+	assert.Equal(expectedReceived[bgp.BGP_MSG_ROUTE_REFRESH], config.State.Messages.Received.Refresh,
+		"Received ROUTE_REFRESH count should match")
+
+	// Verify sent message counts match
+	assert.Equal(expectedSentTotal, config.State.Messages.Sent.Total,
+		"Sent total count should match")
+	assert.Equal(expectedSent[bgp.BGP_MSG_OPEN], config.State.Messages.Sent.Open,
+		"Sent OPEN count should match")
+	assert.Equal(expectedSent[bgp.BGP_MSG_KEEPALIVE], config.State.Messages.Sent.Keepalive,
+		"Sent KEEPALIVE count should match")
+	assert.Equal(expectedSent[bgp.BGP_MSG_UPDATE], config.State.Messages.Sent.Update,
+		"Sent UPDATE count should match")
+	assert.Equal(expectedSent[bgp.BGP_MSG_NOTIFICATION], config.State.Messages.Sent.Notification,
+		"Sent NOTIFICATION count should match")
+	assert.Equal(expectedSent[bgp.BGP_MSG_ROUTE_REFRESH], config.State.Messages.Sent.Refresh,
+		"Sent ROUTE_REFRESH count should match")
+}
+
+// TestAtomicTimerState verifies that UpdateRecvTime is correctly updated when
+// UPDATE messages are received and exposed via toConfig.
+func TestAtomicTimerState(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	s := NewBgpServer()
+
+	// Initially, UpdateRecvTime should be 0
+	config := s.toConfig(p, false)
+	assert.Equal(int64(0), config.Timers.State.UpdateRecvTime,
+		"UpdateRecvTime should be 0 initially")
+
+	// Record time before sending UPDATE
+	timeBefore := time.Now().Unix()
+
+	// Process an UPDATE message (received)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, true)
+
+	// Record time after sending UPDATE
+	timeAfter := time.Now().Unix()
+
+	// Get config and verify UpdateRecvTime is set
+	config = s.toConfig(p, false)
+	updateTime := config.Timers.State.UpdateRecvTime
+
+	assert.True(updateTime >= timeBefore && updateTime <= timeAfter,
+		"UpdateRecvTime should be set to current time when UPDATE received")
+
+	// Sleep briefly to ensure time difference
+	time.Sleep(10 * time.Millisecond)
+
+	// Process another UPDATE message
+	timeBeforeSecond := time.Now().Unix()
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, true)
+	timeAfterSecond := time.Now().Unix()
+
+	// Verify UpdateRecvTime is updated
+	config = s.toConfig(p, false)
+	updateTimeSecond := config.Timers.State.UpdateRecvTime
+
+	assert.True(updateTimeSecond >= timeBeforeSecond && updateTimeSecond <= timeAfterSecond,
+		"UpdateRecvTime should be updated on subsequent UPDATE")
+	assert.True(updateTimeSecond >= updateTime,
+		"UpdateRecvTime should not go backwards")
+
+	// Verify that sending UPDATE (not receiving) does NOT update UpdateRecvTime
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, false)
+	config = s.toConfig(p, false)
+	assert.Equal(updateTimeSecond, config.Timers.State.UpdateRecvTime,
+		"UpdateRecvTime should not change when UPDATE is sent (only when received)")
+
+	// Verify other message types do NOT update UpdateRecvTime
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_KEEPALIVE, true)
+	config = s.toConfig(p, false)
+	assert.Equal(updateTimeSecond, config.Timers.State.UpdateRecvTime,
+		"UpdateRecvTime should not change for non-UPDATE messages")
+}
+
+// TestAtomicCounterReset verifies that message counters and timer state
+// are correctly reset to zero when bgpMessageResetStats is called.
+func TestAtomicCounterReset(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	s := NewBgpServer()
+
+	// Process various messages to populate counters
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_OPEN, true)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_OPEN, false)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_KEEPALIVE, true)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_KEEPALIVE, false)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, true)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, false)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_NOTIFICATION, true)
+	p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_ROUTE_REFRESH, true)
+
+	// Verify counters are non-zero
+	config := s.toConfig(p, false)
+	assert.Greater(config.State.Messages.Received.Total, uint64(0),
+		"Received total should be non-zero before reset")
+	assert.Greater(config.State.Messages.Sent.Total, uint64(0),
+		"Sent total should be non-zero before reset")
+	assert.Greater(config.Timers.State.UpdateRecvTime, int64(0),
+		"UpdateRecvTime should be non-zero before reset")
+
+	// Reset stats
+	p.fsm.bgpMessageResetStats()
+
+	// Verify all counters are zero after reset
+	config = s.toConfig(p, false)
+
+	// Check received counters
+	assert.Equal(uint64(0), config.State.Messages.Received.Total,
+		"Received total should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Open,
+		"Received OPEN should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Keepalive,
+		"Received KEEPALIVE should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Update,
+		"Received UPDATE should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Notification,
+		"Received NOTIFICATION should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Refresh,
+		"Received REFRESH should be 0 after reset")
+	assert.Equal(uint32(0), config.State.Messages.Received.WithdrawUpdate,
+		"Received WithdrawUpdate should be 0 after reset")
+	assert.Equal(uint32(0), config.State.Messages.Received.WithdrawPrefix,
+		"Received WithdrawPrefix should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Received.Discarded,
+		"Received Discarded should be 0 after reset")
+
+	// Check sent counters
+	assert.Equal(uint64(0), config.State.Messages.Sent.Total,
+		"Sent total should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Open,
+		"Sent OPEN should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Keepalive,
+		"Sent KEEPALIVE should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Update,
+		"Sent UPDATE should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Notification,
+		"Sent NOTIFICATION should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Refresh,
+		"Sent REFRESH should be 0 after reset")
+	assert.Equal(uint32(0), config.State.Messages.Sent.WithdrawUpdate,
+		"Sent WithdrawUpdate should be 0 after reset")
+	assert.Equal(uint32(0), config.State.Messages.Sent.WithdrawPrefix,
+		"Sent WithdrawPrefix should be 0 after reset")
+	assert.Equal(uint64(0), config.State.Messages.Sent.Discarded,
+		"Sent Discarded should be 0 after reset")
+
+	// Check timer state
+	assert.Equal(int64(0), config.Timers.State.UpdateRecvTime,
+		"UpdateRecvTime should be 0 after reset")
+}
+
+// TestAtomicCountersConcurrentAccess verifies that atomic counters can be
+// safely updated and read concurrently from multiple goroutines.
+func TestAtomicCountersConcurrentAccess(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	s := NewBgpServer()
+
+	const numGoroutines = 10
+	const updatesPerGoroutine = 100
+
+	var wg sync.WaitGroup
+
+	// Launch multiple goroutines to update counters concurrently
+	for range numGoroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range updatesPerGoroutine {
+				p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_UPDATE, true)
+				p.fsm.bgpMessageStateUpdate(bgp.BGP_MSG_KEEPALIVE, false)
+			}
+		}()
+	}
+
+	// Launch goroutines to read counters concurrently via toConfig
+	readDone := make(chan struct{})
+	var readWg sync.WaitGroup
+	for range numGoroutines {
+		readWg.Add(1)
+		go func() {
+			defer readWg.Done()
+			for {
+				select {
+				case <-readDone:
+					return
+				default:
+					// Read config without causing panic or race
+					_ = s.toConfig(p, false)
+				}
+			}
+		}()
+	}
+
+	// Wait for all writers to complete
+	wg.Wait()
+	close(readDone)
+	readWg.Wait()
+
+	// Verify final counts
+	config := s.toConfig(p, false)
+	expectedUpdates := uint64(numGoroutines * updatesPerGoroutine)
+	expectedKeepalives := uint64(numGoroutines * updatesPerGoroutine)
+
+	assert.Equal(expectedUpdates, config.State.Messages.Received.Update,
+		"Concurrent UPDATE counter updates should be accurate")
+	assert.Equal(expectedKeepalives, config.State.Messages.Sent.Keepalive,
+		"Concurrent KEEPALIVE counter updates should be accurate")
+	assert.Equal(expectedUpdates+expectedKeepalives, config.State.Messages.Received.Total+config.State.Messages.Sent.Total,
+		"Total message count should be sum of all messages")
+}
+
+// TestRecvMessageWithError_MalformedNextHop verifies that recvMessageWithError
+// handles a malformed NEXT_HOP attribute (length < 4) without panicking.
+// This is a regression test for https://github.com/osrg/gobgp/issues/3305.
+func TestRecvMessageWithError_MalformedNextHop(t *testing.T) {
+	// Malformed BGP UPDATE from issue #3305:
+	// NEXT_HOP attribute with length 2 instead of 4.
+	raw := []byte{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // marker
+		0x00, 0x28, // length: 40
+		0x02,       // type: UPDATE
+		0x00, 0x00, // withdrawn routes length: 0
+		0x00, 0x0d, // total path attribute length: 13
+		0x40, 0x01, 0x01, 0x02, // ORIGIN: INCOMPLETE
+		0x40, 0x02, 0x00, // AS_PATH: empty
+		0x40, 0x03, 0x02, 0x01, 0x02, // NEXT_HOP: length 2 (invalid, should be 4)
+		0x01, 0x18, 0xc0, 0xa8, 0x01, // NLRI: 192.168.1.0/24 (truncated but enough to trigger the bug)
+	}
+
+	t.Run("TreatAsWithdraw", func(t *testing.T) {
+		assert := assert.New(t)
+
+		m := NewMockConnection()
+		_, h := makePeerAndHandler(m)
+		t.Cleanup(func() {
+			h.outgoing.Close()
+			h.fsm.outgoingCh.Close()
+			h.fsm.conn.Close()
+		})
+
+		// Enable RFC 7606 revised error handling (treat-as-withdraw).
+		// Without this, malformed attributes cause SESSION_RESET which is
+		// handled inside recvMessageWithError. The panic only occurs when
+		// treat-as-withdraw is enabled and the malformed attribute survives
+		// into ValidateUpdateMsg.
+		h.fsm.isTreatAsWithdraw = true
+
+		go m.remote.Write(raw)
+
+		stateReasonCh := make(chan fsmStateReason, 2)
+		fmsg, err := h.recvMessageWithError(m.Conn, stateReasonCh)
+
+		assert.NoError(err)
+		assert.NotNil(fmsg)
+		assert.Equal(bgp.ERROR_HANDLING_TREAT_AS_WITHDRAW, fmsg.handling)
+	})
+
+	t.Run("SessionReset", func(t *testing.T) {
+		assert := assert.New(t)
+
+		m := NewMockConnection()
+		_, h := makePeerAndHandler(m)
+		t.Cleanup(func() {
+			h.outgoing.Close()
+			h.fsm.outgoingCh.Close()
+			h.fsm.conn.Close()
+		})
+
+		// Without RFC 7606, the error should cause a session reset.
+		h.fsm.isTreatAsWithdraw = false
+
+		go m.remote.Write(raw)
+
+		stateReasonCh := make(chan fsmStateReason, 2)
+		fmsg, err := h.recvMessageWithError(m.Conn, stateReasonCh)
+
+		assert.Error(err)
+		assert.NotNil(fmsg)
+		assert.Equal(bgp.ERROR_HANDLING_SESSION_RESET, fmsg.handling)
+	})
+}
+
+// TestRecvMessageWithError_UnknownMessageType verifies that recvMessageWithError
+// handles an unknown BGP message type without panicking on nil dereference.
+// This is a regression test for https://github.com/osrg/gobgp/issues/3325.
+func TestRecvMessageWithError_UnknownMessageType(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	_, h := makePeerAndHandler(m)
+	t.Cleanup(func() {
+		h.outgoing.Close()
+		h.fsm.outgoingCh.Close()
+		h.fsm.conn.Close()
+	})
+
+	// BGP message with unknown type 0xFF.
+	// ParseBGPBody returns (nil, error) for unknown types.
+	raw := []byte{
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // marker
+		0x00, 0x13, // length: 19 (header only, no body)
+		0xff, // type: unknown
+	}
+
+	go m.remote.Write(raw)
+
+	stateReasonCh := make(chan fsmStateReason, 2)
+	fmsg, err := h.recvMessageWithError(m.Conn, stateReasonCh)
+
+	assert.Error(err)
+	assert.NotNil(fmsg)
+	assert.Equal(bgp.ERROR_HANDLING_SESSION_RESET, fmsg.handling)
+}
+
+// TestBMPStatsUpdate verifies that BMP stats are correctly updated via
+// atomic operations and exposed via toConfig.
+func TestBMPStatsUpdate(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	p, h := makePeerAndHandler(m)
+	t.Cleanup(func() { cleanPeerAndHandler(p, h) })
+
+	s := NewBgpServer()
+
+	// Update BMP withdraw stats
+	p.fsm.bmpStatsUpdate(bmp.BMP_STAT_TYPE_WITHDRAW_UPDATE, 5)
+	p.fsm.bmpStatsUpdate(bmp.BMP_STAT_TYPE_WITHDRAW_PREFIX, 10)
+
+	// Get config and verify BMP stats
+	config := s.toConfig(p, false)
+	assert.Equal(uint32(5), config.State.Messages.Received.WithdrawUpdate,
+		"WithdrawUpdate count should match BMP stats")
+	assert.Equal(uint32(10), config.State.Messages.Received.WithdrawPrefix,
+		"WithdrawPrefix count should match BMP stats")
+
+	// Update again with different increments
+	p.fsm.bmpStatsUpdate(bmp.BMP_STAT_TYPE_WITHDRAW_UPDATE, 3)
+	p.fsm.bmpStatsUpdate(bmp.BMP_STAT_TYPE_WITHDRAW_PREFIX, 7)
+
+	config = s.toConfig(p, false)
+	assert.Equal(uint32(8), config.State.Messages.Received.WithdrawUpdate,
+		"WithdrawUpdate should accumulate correctly")
+	assert.Equal(uint32(17), config.State.Messages.Received.WithdrawPrefix,
+		"WithdrawPrefix should accumulate correctly")
+
+	// Verify reset clears BMP stats
+	p.fsm.bgpMessageResetStats()
+	config = s.toConfig(p, false)
+	assert.Equal(uint32(0), config.State.Messages.Received.WithdrawUpdate,
+		"WithdrawUpdate should be 0 after reset")
+	assert.Equal(uint32(0), config.State.Messages.Received.WithdrawPrefix,
+		"WithdrawPrefix should be 0 after reset")
+}
+
+// makePath creates a table.Path with the given IPv4 prefix, nexthop, and
+// community.  All three attributes influence whether paths can be packed into
+// the same UPDATE by CreateUpdateMsgFromPaths.
+func makePath(t *testing.T, prefix string, nexthop string, community uint32) *table.Path {
+	t.Helper()
+	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix(prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nh, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr(nexthop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(0),
+		bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{
+			bgp.NewAs4PathParam(2, []uint32{65001}),
+		}),
+		nh,
+	}
+	if community != 0 {
+		attrs = append(attrs, bgp.NewPathAttributeCommunities([]uint32{community}))
+	}
+	return table.NewPath(bgp.RF_IPv4_UC, nil, bgp.PathNLRI{NLRI: nlri}, false, attrs, time.Now(), false)
+}
+
+// parseBGPUpdates deserializes raw bytes captured by MockConnection into
+// individual BGP messages.
+func parseBGPUpdates(t *testing.T, raw [][]byte) []*bgp.BGPMessage {
+	t.Helper()
+	msgs := make([]*bgp.BGPMessage, 0, len(raw))
+	for _, buf := range raw {
+		for len(buf) > 0 {
+			msg, err := bgp.ParseBGPMessage(buf)
+			if err != nil {
+				t.Fatalf("ParseBGPMessage: %v (buflen=%d)", err, len(buf))
+			}
+			msgs = append(msgs, msg)
+			n := int(msg.Header.Len)
+			if n <= 0 || n > len(buf) {
+				t.Fatalf("invalid message length %d (buflen=%d)", n, len(buf))
+			}
+			buf = buf[n:]
+		}
+	}
+	return msgs
+}
+
+func countNLRIs(msgs []*bgp.BGPMessage) int {
+	total := 0
+	for _, msg := range msgs {
+		if msg.Header.Type != bgp.BGP_MSG_UPDATE {
+			continue
+		}
+		u := msg.Body.(*bgp.BGPUpdate)
+		total += len(u.NLRI)
+		for _, attr := range u.PathAttributes {
+			if mp, ok := attr.(*bgp.PathAttributeMpReachNLRI); ok {
+				total += len(mp.Value)
+			}
+			if mp, ok := attr.(*bgp.PathAttributeMpUnreachNLRI); ok {
+				total += len(mp.Value)
+			}
+		}
+	}
+	return total
+}
+
+// TestSendMessageloop_SingleMessage verifies that a single queued message
+// passes through sendMessageloop without artificial delay.
+func TestSendMessageloop_SingleMessage(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	_, h := makePeerAndHandler(m)
+	t.Cleanup(func() { h.outgoing.Close(); m.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stateReasonCh := make(chan fsmStateReason, 3)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	go h.sendMessageloop(ctx, m, stateReasonCh, wg)
+
+	// Enqueue a single path.
+	path := makePath(t, "10.0.0.0/24", "192.168.1.1", 0)
+	h.outgoing.In() <- &fsmOutgoingMsg{Paths: []*table.Path{path}}
+
+	// Wait for the message to arrive at the mock connection.
+	select {
+	case <-m.bufReady.C:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for message")
+	}
+
+	cancel()
+	wg.Wait()
+
+	msgs := parseBGPUpdates(t, m.GetSentMessages())
+	updates := 0
+	nlris := 0
+	for _, msg := range msgs {
+		if msg.Header.Type == bgp.BGP_MSG_UPDATE {
+			updates++
+			nlris += len(msg.Body.(*bgp.BGPUpdate).NLRI)
+		}
+	}
+	assert.Equal(1, updates, "single path should produce exactly one UPDATE")
+	assert.Equal(1, nlris, "single path should carry exactly one NLRI")
+}
+
+// TestSendMessageloop_CoalesceMultipleMessages verifies that multiple queued
+// fsmOutgoingMsg are all delivered — every NLRI injected into the outgoing
+// channel appears in the wire output. The coalescing drain is opportunistic
+// (it depends on goroutine scheduling), so this test validates correctness
+// rather than asserting a specific UPDATE count.
+func TestSendMessageloop_CoalesceMultipleMessages(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	_, h := makePeerAndHandler(m)
+	t.Cleanup(func() { h.outgoing.Close(); m.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stateReasonCh := make(chan fsmStateReason, 3)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	const numPaths = 200
+	for i := range numPaths {
+		path := makePath(t, fmt.Sprintf("10.%d.%d.0/24", i/256, i%256), "192.168.1.1", 0)
+		h.outgoing.In() <- &fsmOutgoingMsg{Paths: []*table.Path{path}}
+	}
+
+	go h.sendMessageloop(ctx, m, stateReasonCh, wg)
+
+	assert.Eventually(func() bool {
+		return countNLRIs(parseBGPUpdates(t, m.GetSentMessages())) >= numPaths
+	}, 5*time.Second, 10*time.Millisecond, "timed out waiting for all NLRIs")
+
+	cancel()
+	wg.Wait()
+
+	msgs := parseBGPUpdates(t, m.GetSentMessages())
+	nlris := countNLRIs(msgs)
+	updates := 0
+	for _, msg := range msgs {
+		if msg.Header.Type == bgp.BGP_MSG_UPDATE {
+			updates++
+		}
+	}
+
+	assert.Equal(numPaths, nlris, "all NLRIs must be present")
+	t.Logf("coalesced %d paths into %d UPDATEs (%.1fx)", numPaths, updates, float64(numPaths)/float64(updates))
+}
+
+// TestSendMessageloop_CoalesceMultipleAttributeGroups verifies that paths
+// with different attribute sets are correctly separated into different
+// UPDATEs, while all NLRIs are preserved.
+func TestSendMessageloop_CoalesceMultipleAttributeGroups(t *testing.T) {
+	assert := assert.New(t)
+
+	m := NewMockConnection()
+	_, h := makePeerAndHandler(m)
+	t.Cleanup(func() { h.outgoing.Close(); m.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stateReasonCh := make(chan fsmStateReason, 3)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	// Create 3 groups of 30 paths, each with a different community.
+	const groupSize = 30
+	const numGroups = 3
+	for g := range numGroups {
+		for i := range groupSize {
+			prefix := fmt.Sprintf("10.%d.%d.0/24", g, i)
+			community := uint32((g + 1) * 1000)
+			path := makePath(t, prefix, "192.168.1.1", community)
+			h.outgoing.In() <- &fsmOutgoingMsg{Paths: []*table.Path{path}}
+		}
+	}
+
+	go h.sendMessageloop(ctx, m, stateReasonCh, wg)
+
+	total := groupSize * numGroups
+	assert.Eventually(func() bool {
+		return countNLRIs(parseBGPUpdates(t, m.GetSentMessages())) >= total
+	}, 5*time.Second, 10*time.Millisecond, "timed out waiting for all NLRIs")
+
+	cancel()
+	wg.Wait()
+
+	msgs := parseBGPUpdates(t, m.GetSentMessages())
+	nlris := countNLRIs(msgs)
+	updates := 0
+	for _, msg := range msgs {
+		if msg.Header.Type == bgp.BGP_MSG_UPDATE {
+			updates++
+		}
+	}
+
+	assert.Equal(total, nlris, "all NLRIs must be present")
+	t.Logf("coalesced %d paths (%d groups) into %d UPDATEs", total, numGroups, updates)
+}
+
+// TestSendMessageloop_KillSignal verifies that a non-path message causes
+// sendMessageloop to exit promptly. This test checks timely termination,
+// not preservation or forwarding of the non-path payload.
+func TestSendMessageloop_KillSignal(t *testing.T) {
+	m := NewMockConnection()
+	_, h := makePeerAndHandler(m)
+	t.Cleanup(func() { h.outgoing.Close(); m.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stateReasonCh := make(chan fsmStateReason, 3)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	// Enqueue some paths followed by a non-path message (fsmStateReason).
+	for i := range 5 {
+		path := makePath(t, fmt.Sprintf("10.0.%d.0/24", i), "192.168.1.1", 0)
+		h.outgoing.In() <- &fsmOutgoingMsg{Paths: []*table.Path{path}}
+	}
+	// A non-fsmOutgoingMsg acts as a kill signal and should cause the loop
+	// to return promptly.
+	h.outgoing.In() <- *newfsmStateReason(fsmAdminDown, nil, nil)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- h.sendMessageloop(ctx, m, stateReasonCh, wg)
+	}()
+
+	// sendMessageloop should return (not hang) when it encounters the
+	// non-path message during drain or on the next outer select iteration.
+	select {
+	case <-errCh:
+		// success — the loop exited
+	case <-time.After(2 * time.Second):
+		t.Fatal("sendMessageloop did not exit after non-path message")
+	}
+}

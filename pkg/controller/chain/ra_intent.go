@@ -261,12 +261,14 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 		if err != nil {
 			return nil, nil, err
 		}
+		selfDNSSelected := len(intent.SelfDNS) == 0
 		if len(intent.SelfDNS) > 0 {
 			selected, err := selectRASelfDNS(ctx, store, plan, intent.SelfDNS, now)
 			if err != nil {
 				return nil, nil, err
 			}
 			if selected.Address.IsValid() {
+				selfDNSSelected = true
 				dns[selected.Address] = max(dns[selected.Address], selected.Valid)
 				status.RDNSS = append(status.RDNSS, selected.Address.String())
 			}
@@ -278,6 +280,9 @@ func buildRAAdvertisement(ctx context.Context, router *api.Router, store Store, 
 			}
 			dns[address] = math.MaxUint32
 			status.RDNSS = append(status.RDNSS, address.String())
+		}
+		if !selfDNSSelected && len(status.RDNSS) == 0 {
+			status.Pending = "SelfDNSNotReady"
 		}
 		search, _, err := expandDomainValues(router, store, intent.Spec.DNSSL, intent.Spec.DNSSLFrom, "DNSSLFrom")
 		if err != nil {

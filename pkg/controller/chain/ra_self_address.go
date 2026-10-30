@@ -18,6 +18,8 @@ type raSelfDNSCandidate struct {
 	Spec      api.SelfAddressPolicyCandidate
 	IfName    string
 	Delegated *api.IPv6DelegatedAddressSpec
+	Static    netip.Addr
+	Suffix    netip.Addr
 }
 
 type raSelfDNSAddress struct {
@@ -66,15 +68,18 @@ func prepareRASelfDNS(router *api.Router, server api.DHCPv6ServerSpec, intent ra
 			if err != nil || !usableRASelfAddress(address) {
 				return nil, fmt.Errorf("invalid static self DNS address %q", candidate.Address)
 			}
+			value.Static = address
 		case "interfaceAddress":
 			if candidate.Interface == "" || candidate.Ordinal < 0 {
 				return nil, fmt.Errorf("invalid interface self DNS candidate")
 			}
 			value.IfName = api.ResolveInterfaceIfName(router, candidate.Interface)
 			if candidate.MatchSuffix != "" {
-				if suffix, err := netip.ParseAddr(candidate.MatchSuffix); err != nil || !suffix.Is6() || suffix.Is4In6() {
+				suffix, err := netip.ParseAddr(candidate.MatchSuffix)
+				if err != nil || !suffix.Is6() || suffix.Is4In6() {
 					return nil, fmt.Errorf("invalid self DNS suffix %q", candidate.MatchSuffix)
 				}
+				value.Suffix = suffix
 			}
 		case "delegatedAddress":
 			for _, resource := range router.Spec.Resources {
@@ -109,7 +114,7 @@ func selectRASelfDNS(ctx context.Context, store Store, plan raInterfacePlan, can
 		var err error
 		switch candidate.Spec.Source {
 		case "static":
-			selected.Address, _ = netip.ParseAddr(candidate.Spec.Address)
+			selected.Address = candidate.Static
 			selected.Valid = math.MaxUint32
 		case "delegatedAddress":
 			selected, err = currentDelegatedRASelfDNS(ctx, store, plan, candidate, now)
@@ -208,13 +213,13 @@ func currentNativeRASelfDNS(ctx context.Context, candidate raSelfDNSCandidate) (
 	})
 	ordinal := max(candidate.Spec.Ordinal, 1)
 	for _, address := range addresses {
-		if candidate.Spec.MatchSuffix != "" && !raAddressMatchesSuffix(address.Address.Addr(), candidate.Spec.MatchSuffix) {
+		if candidate.Suffix.IsValid() && !raAddressMatchesSuffix(address.Address.Addr(), candidate.Suffix) {
 			continue
 		}
 		if !address.LifetimeKnown {
 			return raSelfDNSAddress{}, fmt.Errorf("self DNS native lifetime is unknown")
 		}
-		if candidate.Spec.MatchSuffix != "" || ordinal == 1 {
+		if candidate.Suffix.IsValid() || ordinal == 1 {
 			return raSelfDNSAddress{Address: address.Address.Addr(), Valid: address.Valid}, nil
 		}
 		ordinal--
@@ -223,11 +228,10 @@ func currentNativeRASelfDNS(ctx context.Context, candidate raSelfDNSCandidate) (
 }
 
 func usableRASelfAddress(address netip.Addr) bool {
-	return address.Is6() && !address.Is4In6() && address.IsGlobalUnicast()
+	return address.Is6() && !address.Is4In6() && !address.IsMulticast() && !address.IsUnspecified()
 }
 
-func raAddressMatchesSuffix(address netip.Addr, text string) bool {
-	suffix, _ := netip.ParseAddr(text)
+func raAddressMatchesSuffix(address, suffix netip.Addr) bool {
 	left, right := address.As16(), suffix.As16()
 	for i, value := range right {
 		if value != 0 && value != left[i] {

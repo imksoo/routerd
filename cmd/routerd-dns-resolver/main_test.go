@@ -616,6 +616,7 @@ func newTestDaemon(t *testing.T, configPath string, config resolvercfg.RuntimeCo
 	}
 	d.startQueryHistory(context.Background())
 	t.Cleanup(d.closeQueryLog)
+	t.Cleanup(d.shutdownDNSServers)
 	return d
 }
 
