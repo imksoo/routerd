@@ -72,7 +72,7 @@ resource 對應的 artifact map 與 teardown contract 請參閱
 
 routerd 及專屬常駐程式會將狀態變化記錄為事件。
 事件保存在 SQLite 的 `events` 表格，以及各常駐程式的 `events.jsonl` 中。
-EventRule 和 DerivedEvent 會利用這些事件和狀態，產生虛擬的狀態變化。
+`EventRule` 以這些歷史記錄為輸入產生事件。`DerivedEvent` 評估所參照物件的目前 status，並記錄 asserted/retracted 狀態轉換。
 
 ## 套用世代
 

@@ -66,7 +66,7 @@ GC の計画は、所有する成果物の削除、リソースの解体、台�
 
 routerd と専用デーモンは、状態の変化をイベントとして記録します。
 イベントは、SQLite の `events` テーブルやデーモンごとの `events.jsonl` に残ります。
-EventRule と DerivedEvent は、このイベントや状態を使って仮想的な状態変化を作り出します。
+`EventRule` はその履歴を入力にしてイベントを生成します。`DerivedEvent` は参照先の現在の status を評価し、asserted/retracted への遷移を記録します。
 
 ## 適用世代
 
