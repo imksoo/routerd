@@ -395,8 +395,14 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 					return fmt.Errorf("%s delegatedAddress interface %q must be listed in spec.listenInterfaces", res.ID(), idx.DelegatedAddressInterfaces[spec.DelegatedAddress])
 				}
 			}
-			if spec.SelfAddressPolicy != "" && !idx.SelfAddressPolicies[spec.SelfAddressPolicy] {
-				return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
+			if spec.SelfAddressPolicy != "" {
+				family := idx.SelfAddressPolicies[spec.SelfAddressPolicy]
+				if family == "" {
+					return fmt.Errorf("%s references missing SelfAddressPolicy %q", res.ID(), spec.SelfAddressPolicy)
+				}
+				if defaultString(spec.DNSSource, "self") == "self" && family != "ipv6" {
+					return fmt.Errorf("%s selfAddressPolicy %q must use addressFamily ipv6", res.ID(), spec.SelfAddressPolicy)
+				}
 			}
 		}
 		if res.Kind == "DHCPv4Reservation" {

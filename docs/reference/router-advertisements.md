@@ -45,7 +45,31 @@ M/O/MTU/router lifetime, solicitation scheduling, source failures and stop/join.
 Independent clients and native Linux/FreeBSD forwarding are not qualified here.
 The current ndp receive API does not expose fragmented-RS provenance required
 for complete RFC 6980 handling; that receive boundary remains an implementation
-item. Custom DHCPv6 `SelfAddressPolicy` live resolution also remains open.
+item. The receive API returns ICMPv6 payload/control data, without the IPv6
+fragment header or reassembly provenance; a decoded solicitation is not proof
+that its original packet was unfragmented.
+
+DHCPv6 `dnsSource: self` can select a custom IPv6 `SelfAddressPolicy` for its
+implicit advertisement. Candidates are tried in declaration order. Static
+candidates use the configured address; interface candidates read current usable,
+non-temporary global/ULA addresses and their native valid lifetimes; delegated
+candidates require a current canonical PD association and an acknowledged native
+address receipt for the exact derived address. A different delegated interface
+also requires a current matching interface index, kernel scope and virtual-parent
+cookie. An unresolved DAD/native ownership result cannot authorize self DNS.
+A candidate's absence or expiry permits the next candidate; a failed required
+observation stops that transmission instead of treating the failed read as absence.
+
+Each selected DNS address is advertised for at most its own remaining validity
+and the advertisement's DNS lifetime. Selection changes and exhausted candidates
+withdraw the previous DNS address without withdrawing unrelated usable prefixes.
+If no candidate is available the DHCPv6 RA-only status reports `SelfDNSNotReady`.
+Without a custom policy the delegated self address uses this same source/receipt
+path. Interface ordinals retain the existing one-based lexical address ordering;
+`matchSuffix` retains the existing selector's nonzero-byte matching semantics.
+This controls the RA service; dnsmasq's separately rendered DHCP DNS selection is
+not qualified by these RA wire tests.
+
 Some FreeBSD 14.3 ifconfig builds report zero for an individual infinite lifetime;
 the owner retains uncertainty instead of guessing infinity from that output.
 That native lifetime observation still requires closure and target qualification.
