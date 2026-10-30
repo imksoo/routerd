@@ -46,11 +46,24 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	if info, err := os.Stat(frr); err != nil || info.Mode()&0111 == 0 {
 		t.Skip("independent FRR bfdd is unavailable")
 	}
+	for _, mode := range []string{"multihop", "single-hop"} {
+		t.Run(mode, func(t *testing.T) {
+			runBFDIndependentFRRNativeLifecycle(t, currentNS, hostNS, frr, mode)
+		})
+	}
+}
+
+func runBFDIndependentFRRNativeLifecycle(t *testing.T, currentNS, hostNS, frr, mode string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 65*time.Second)
 	t.Cleanup(cancel)
 	evidence := os.Getenv("ROUTERD_NATIVE_EVIDENCE")
 	if evidence == "" {
 		evidence = t.TempDir()
+	} else {
+		evidence = filepath.Join(evidence, mode)
+		if err := os.MkdirAll(evidence, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run := func(name string, args ...string) []byte {
 		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -147,7 +160,13 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localDir, "bfdd.conf"), []byte("log stdout\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(peerDir, "bfdd.conf"), []byte("log stdout\nbfd\n peer 198.18.0.1 multihop local-address 198.18.0.2\n  receive-interval 100\n  transmit-interval 100\n  detect-multiplier 3\n exit\n"), 0600); err != nil {
+	peerHeader, localHeader := "peer 198.18.0.1 multihop local-address 198.18.0.2", "peer 198.18.0.2 multihop local-address 198.18.0.1"
+	bindInterface := ""
+	if mode == "single-hop" {
+		peerHeader, localHeader = "peer 198.18.0.1 interface bfd-peer", "peer 198.18.0.2 interface bfd-proof"
+		bindInterface = "bfd-proof"
+	}
+	if err := os.WriteFile(filepath.Join(peerDir, "bfdd.conf"), []byte("log stdout\nbfd\n "+peerHeader+"\n  receive-interval 100\n  transmit-interval 100\n  detect-multiplier 3\n exit\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	bfddArgs := func(dir string) []string {
@@ -166,7 +185,7 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BGPRouter"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.BGPRouterSpec{ASN: 64512, RouterID: "198.18.0.1"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "peer"}, Spec: api.BFDSpec{Peer: "198.18.0.2", MinRx: "100ms", MinTx: "100ms", DetectMultiplier: 3}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "BFD"}, Metadata: api.ObjectMeta{Name: "peer"}, Spec: api.BFDSpec{Peer: "198.18.0.2", Interface: bindInterface, MinRx: "100ms", MinTx: "100ms", DetectMultiplier: 3}},
 	}}}
 	controller := Controller{Router: router, Store: store, RuntimeDir: filepath.Join(base, "runtime"), Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, vtyArgs(localDir, args...)...).CombinedOutput()
@@ -203,9 +222,9 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		}
 		return run("vtysh", vtyArgs(localDir, args...)...)
 	}
-	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "shutdown")
+	localVTY("configure terminal", "bfd", localHeader, "shutdown")
 	waitState("real FRR administrative shutdown", "Down")
-	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "no shutdown")
+	localVTY("configure terminal", "bfd", localHeader, "no shutdown")
 	waitState("administrative shutdown removed", "Up")
 	stopLocal()
 	if err := controller.Reconcile(ctx); err == nil {

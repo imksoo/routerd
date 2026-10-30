@@ -13,10 +13,10 @@ for tool in "$go_bin" ip ping unshare nsenter mount timeout readlink stat vtysh;
 done
 [ -x "$bfdd" ] || { echo "independent FRR bfdd is unavailable: $bfdd" >&2; exit 1; }
 [ -x "$bgpd" ] || { echo "independent FRR bgpd is unavailable: $bgpd" >&2; exit 1; }
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 evidence=$(mktemp -d "${TMPDIR:-/tmp}/routerd15-bfd-frr.XXXXXX")
-evidence=$(CDPATH= cd -- "$evidence" && pwd)
+evidence=$(CDPATH='' cd -- "$evidence" && pwd)
 printf 'BFD evidence: %s\n' "$evidence"
 git rev-parse HEAD > "$evidence/revision"
 "$go_bin" version > "$evidence/go-version"
@@ -42,10 +42,12 @@ printf '0\n' > "$evidence/bgp-compile.exit"
 host_netns=$(readlink /proc/self/ns/net)
 host_run_device=$(stat -c %d /run)
 set +e
+# Variables in the script below belong to the isolated child shell.
+# shellcheck disable=SC2016
 ROUTERD_RUN_NETNS=1 ROUTERD_HOST_NETNS="$host_netns" ROUTERD_FRR_BFDD="$bfdd" \
 ROUTERD_FRR_BGPD="$bgpd" \
 ROUTERD_HOST_RUN_DEVICE="$host_run_device" ROUTERD_BGP_BIN="$evidence/routerd-bgp" \
-ROUTERD_NATIVE_EVIDENCE="$evidence" timeout 150s unshare -Urnm sh -c '
+ROUTERD_NATIVE_EVIDENCE="$evidence" timeout 270s unshare -Urnm sh -c '
     set -eu
     mount --make-rprivate /
     mount -t sysfs sysfs /sys
@@ -56,7 +58,7 @@ ROUTERD_NATIVE_EVIDENCE="$evidence" timeout 150s unshare -Urnm sh -c '
     # resolving its VTY group to the only mapped GID in this private mount view.
     printf "root:x:0:\nfrrvty:x:0:root\n" > "$1/group"
     mount --bind "$1/group" /etc/group
-    "$1/bfd.test" -test.run "^TestBFDIndependentFRRNativeLinuxLifecycle$" -test.count=1 -test.v -test.timeout=80s
+    "$1/bfd.test" -test.run "^TestBFDIndependentFRRNativeLinuxLifecycle$" -test.count=1 -test.v -test.timeout=140s
     ROUTERD_BFD_INTEROP=1 "$1/bgp.test" -test.run "^TestBGPIndependentFRRNativeLinuxLifecycle$" -test.count=1 -test.v -test.timeout=110s
 ' sh "$evidence" > "$evidence/native.log" 2>&1
 status=$?
@@ -72,4 +74,10 @@ if ! grep -Fq -- '--- PASS: TestBGPIndependentFRRNativeLinuxLifecycle' "$evidenc
     echo "BFD/BGP native acceptance did not execute successfully" >&2
     exit 1
 fi
+for mode in multihop single-hop; do
+    if ! grep -Fq -- "--- PASS: TestBFDIndependentFRRNativeLinuxLifecycle/$mode" "$evidence/native.log"; then
+        echo "BFD $mode acceptance did not execute successfully" >&2
+        exit 1
+    fi
+done
 printf '1\n' > "$evidence/executed-pass"
