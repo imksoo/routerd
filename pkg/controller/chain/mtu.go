@@ -119,8 +119,8 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 		return c.savePathMTUError("ForceFragmentRenderFailed", err)
 	}
 	path := firstNonEmpty(c.Path, "/run/routerd/mss.nft")
-	// Keep an implicit L2 artifact beside the regular MSS artifact. This keeps
-	// both outputs in the caller-selected dry-run directory while preserving the
+	// Keep implicit artifacts beside the regular MSS artifact. This keeps
+	// all outputs in the caller-selected dry-run directory while preserving the
 	// usual /run/routerd paths for a live controller.
 	l2Path := firstNonEmpty(c.L2Path, filepath.Join(filepath.Dir(path), "l2-mss.nft"))
 	forceFragmentPath := firstNonEmpty(c.ForceFragmentPath, filepath.Join(filepath.Dir(path), "forcefrag.nft"))

@@ -120,7 +120,7 @@ spec:
   - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata: {name: lan}
-    spec: {ifname: vtnet0, managed: false, role: trust}
+    spec: {ifname: vtnet0, managed: false}
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv4StaticAddress
     metadata: {name: lan-v4}
