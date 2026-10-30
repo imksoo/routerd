@@ -1154,7 +1154,7 @@ func newTunnelUnitController(t *testing.T, router *api.Router) (TunnelInterfaceC
 	}
 	controller.ApplyNative = func(_ context.Context, record tunnelNativeReceipt) error {
 		link := native.links[record.Plan.Name]
-		if !link.Exists || link.Index != record.Index || link.Token != record.Token || link.Scope != record.Scope {
+		if !link.Exists || link.Index != record.Index || link.Kind != tunnelNativeKind(record.Plan.Mode) || link.Token != record.Token || link.Scope != record.Scope {
 			return errors.New("native apply target changed")
 		}
 		native.applies = append(native.applies, record)
