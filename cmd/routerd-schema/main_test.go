@@ -153,10 +153,21 @@ func TestMetadataSchemaMatchesTypedConfigurationBoundary(t *testing.T) {
 }
 
 func TestDNSZoneSchemaRejectsUnsupportedLocalSigning(t *testing.T) {
+	changeToRepositoryRoot(t)
 	schema := resourceSchema(api.NetAPIVersion, "DNSZone", api.DNSZoneSpec{})
 	properties := schema["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
 	enabled := properties["dnssec"].(map[string]any)["properties"].(map[string]any)["enabled"].(map[string]any)
 	if enabled["const"] != false {
 		t.Fatalf("unsupported signing remains admissible: %#v", enabled)
+	}
+}
+
+func TestEventRuleSchemaRejectsUnimplementedRate(t *testing.T) {
+	changeToRepositoryRoot(t)
+	schema := resourceSchema(api.NetAPIVersion, "EventRule", api.EventRuleSpec{})
+	properties := schema["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
+	rate := properties["pattern"].(map[string]any)["properties"].(map[string]any)["rate"].(map[string]any)
+	if rate["maximum"] != float64(0) || rate["minimum"] != float64(0) {
+		t.Fatalf("unimplemented rate remains admissible: %#v", rate)
 	}
 }

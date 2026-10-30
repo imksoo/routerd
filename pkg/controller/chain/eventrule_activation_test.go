@@ -82,7 +82,7 @@ func TestAuxiliaryPublishersWaitForSelectedGenerationAndRetainBootstrapInput(t *
 				t.Fatalf("candidate published as active: %+v", got)
 			}
 			var cursors int
-			if err := inspection.QueryRow(`SELECT count(*) FROM event_consumer_cursors WHERE consumer='eventrule/engine'`).Scan(&cursors); err != nil || cursors != 0 {
+			if err := inspection.QueryRow(`SELECT count(*) FROM event_consumer_cursors WHERE consumer='eventrule/rule/rule'`).Scan(&cursors); err != nil || cursors != 0 {
 				t.Fatalf("candidate created durable consumption state: cursors=%d error=%v", cursors, err)
 			}
 			for _, topic := range []string{"routerd.test.output", "routerd.test.derived.asserted"} {
@@ -159,7 +159,7 @@ func TestEventRuleActivationFailureReturnsBeforeReady(t *testing.T) {
 			return nil, status, lifetimes, err
 		}
 		controllers = append(controllers, framework.FuncController{ControllerName: "inject activation failure", ReconcileFunc: func(context.Context, daemonapi.DaemonEvent) error {
-			_, err := faultDB.Exec(`CREATE TRIGGER fail_eventrule_activation BEFORE INSERT ON event_consumer_cursors WHEN NEW.consumer='eventrule/engine' BEGIN SELECT RAISE(FAIL,'eventrule activation failed'); END`)
+			_, err := faultDB.Exec(`CREATE TRIGGER fail_eventrule_activation BEFORE INSERT ON event_consumer_cursors WHEN NEW.consumer='eventrule/rule/rule' BEGIN SELECT RAISE(FAIL,'eventrule activation failed'); END`)
 			return err
 		}})
 		return controllers, status, lifetimes, nil

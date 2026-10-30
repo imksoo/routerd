@@ -75,7 +75,7 @@ Polling periods exclude execution time, database outages, and a stalled process.
 | --- | --- | --- |
 | Route and other notification controllers | Current configuration, dynamic parts, and object status | Reread current inputs on an event or periodic reconcile. The IPv4 route controller's maximum normal period is 30 seconds. Duplicate or stale event payloads do not replace its desired state. Other controllers have their own periods. |
 | DerivedEvent | Current referenced status | Reevaluate periodically (five seconds by default); intermediate historical transitions cannot be reconstructed. |
-| EventRule | Committed event journal | Count, sequence, and window patterns require recorded history. A new consumer starts at the current journal cursor; it does not replay all older history. Rule correlation state is process-local. |
+| EventRule | Committed event journal and durable per-rule checkpoint | A new or changed rule starts at the journal position captured during configuration preparation. An unchanged rule resumes its count, sequence, window, throttle and pending timers after restart. Missing retained input history stops that rule with an error; it cannot establish an absence. |
 | ObservabilityPipeline | Committed event journal | Retry stored events; sampling and sink severity filters still apply. This is not a complete audit log of every attempted status change. |
 | Provider action executor | ActionExecution journal and stable idempotency key | A durably succeeded action is skipped after retry/restart. A remote success before local outcome recording still requires executor idempotency or observation of provider state. |
 
@@ -102,10 +102,24 @@ recover by rescanning; a log exporter cannot recover an event that never reached
 the journal. The transaction guarantee above applies specifically to status
 transition events, not every daemon or derived-event producer.
 
-Journal consumption is at least once. If processing succeeds but cursor saving
-fails, the callback runs again for the same event ID. EventRule emissions and
-log sinks may therefore repeat. Successful delivery to multiple sinks is not
-atomic, and a cursor is not an exactly-once guarantee for an external API.
+Each EventRule commits its correlation state, input cursor, public status and
+resulting local events in one SQLite transaction. A failed transaction advances
+none of them. After a lost acknowledgement, rereading the checkpoint prevents
+repeating an already committed result. Bus notification follows the commit;
+journal consumers can recover a missed notification. This guarantee applies to
+the local journal, not an external API or log sink. A log sink can repeat an
+event when delivery succeeds before its cursor is saved, and delivery to
+multiple sinks is not atomic.
+
+EventRule supports `all_of`, `any_of`, `sequence`, `window`, `absence`,
+`throttle`, `debounce` and `count`. Use `interval` for the throttle duration;
+nonzero `rate` is rejected because it has no implemented semantics. Correlations
+are bounded to 4096 keys and an 8 MiB serialized checkpoint per rule. When either
+bound is exceeded, the oldest keys by last-seen time are evicted until the
+checkpoint fits, and `status.warningCount` increases in that same transaction.
+Patterns spanning an evicted key cannot be completed. Configuration
+selection initializes the active rules and retires removed checkpoints; preparing
+an unselected candidate does not change consumption state.
 The separate [event federation protocol](../reference/event-federation.md) has
 its own delivery records and does not use the local status notification queue
 as its durable source of truth.

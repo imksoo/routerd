@@ -23,6 +23,9 @@ routerd 将状态与事件持久化至 SQLite。每个守护进程除此之外�
 ## events 数据表
 
 事件总线会将事件持久化至 SQLite。`EventRule` 与 `DerivedEvent` 以此流作为输入。
+
+EventRule 的关联 checkpoint 和每条规则唯一的输入 cursor 也会持久化。匹配结果、公开 status 和本地输出事件与 checkpoint 在同一事务中提交；失败时均不推进。未修改的规则在重启后继续处理，新规则或已修改的规则从配置准备时记录的输入位置开始。如果保留策略已删除未读输入，则报告历史缺口，不能推断事件不存在。每条规则最多保留4096个关联键，序列化后的 checkpoint 上限为8 MiB。超过任一上限时，按最后匹配输入的时间从旧到新淘汰关联键，直到满足上限；并在同一事务中增加 `status.warningCount`。
+
 日常运维请使用 `routerctl get events`，而非直接操作 `sqlite3`：
 
 ```sh
@@ -60,7 +63,7 @@ provider capture 生效的时间。两者共同度量从接受到生效的区间
 意图的正本是 YAML 配置文件，请以 git 管理。
 重建主机时，比起还原 SQLite，应用配置文件并让 routerd 进行调和（reconcile）更为可靠。
 
-若出于取证目的需要保留操作事件历史，请定期为 `events.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` 创建快照。这些文件为仅追加模式，不需要像 `routerd.db` 那样进行特定时间点的备份。
+若出于取证目的需要保留操作事件历史，请将 `routerd.db`、`dns-queries.db`、`traffic-flows.db`、`firewall-logs.db` 备份至外部存储或定期创建快照。控制器的事件历史目前存储在 `routerd.db` 中；需要时请保全整个数据库，以便一同保留 EventRule checkpoint 和输入 cursor。
 
 ## 相关说明
 

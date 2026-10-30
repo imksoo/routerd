@@ -23,6 +23,10 @@ type StatusEventBuilder func(current, next map[string]any) (write bool, event *d
 // bounded journal entries are admitted in the same transaction.
 type StatusEventsBuilder func(current, next map[string]any) (write bool, events []daemonapi.DaemonEvent)
 
+// EventJournal identifies the concrete journal behind status decorators so
+// transactional producers and bus delivery use the same committed events.
+func (s *SQLiteStore) EventJournal() *SQLiteStore { return s }
+
 func (s *SQLiteStore) SaveObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder) ([]daemonapi.DaemonEvent, error) {
 	return s.writeObjectStatusAndEvents(apiVersion, kind, name, status, build, false, nil, 2)
 }
