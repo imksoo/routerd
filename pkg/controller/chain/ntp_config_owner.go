@@ -314,12 +314,25 @@ func (o ntpConfigOwner) withdraw(ctx context.Context, r ntpConfigRecord, dryRun 
 		if err := o.require(r); err != nil {
 			return false, err
 		}
+		fresh, err := ntpConfigFile(r.Path)
+		if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(fresh, data) || !r.matches(fresh) {
+			return false, errors.New("NTP config changed before withdrawal")
+		}
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		if err := os.Remove(r.Path); err != nil {
 			return false, err
 		}
+	}
+	if err := o.require(r); err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(r.Path); !errors.Is(err, os.ErrNotExist) {
+		return false, errors.New("NTP config absence is not confirmed before provider reload")
 	}
 	if err := reload(ctx, r.Provider); err != nil {
 		return false, err
