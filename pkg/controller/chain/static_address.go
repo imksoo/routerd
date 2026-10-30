@@ -45,7 +45,7 @@ func (c IPv4StaticAddressController) parentReader() nativeParentReader {
 	if router == nil {
 		router = c.Router
 	}
-	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite, Bridges: c.Bridges, WireGuard: c.WireGuard}
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite, Bridges: c.Bridges, WireGuard: c.WireGuard, VRFs: c.VRFs}
 }
 
 // The declaration's native name alone cannot authorize a child effect.

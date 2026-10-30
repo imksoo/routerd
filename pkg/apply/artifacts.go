@@ -310,14 +310,6 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		return intents
 	case "IPsecConnection":
 		return []resource.Intent{artifact("ipsec.vici.connection", "routerd-"+res.Metadata.Name, resource.ActionEnsure, "vici", nil)}
-	case "VRF":
-		spec, err := res.VRFSpec()
-		if err != nil {
-			return nil
-		}
-		ifname := defaultString(spec.IfName, res.Metadata.Name)
-		return []resource.Intent{artifact("net.vrf", ifname, resource.ActionEnsure, "ip-link", map[string]string{"routeTable": fmt.Sprintf("%d", spec.RouteTable)})}
-
 	case "DHCPv4Server", "DHCPv6Server":
 		if res.Kind == "DHCPv6Server" {
 			spec, err := res.DHCPv6ServerSpec()
