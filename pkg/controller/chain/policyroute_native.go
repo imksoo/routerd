@@ -195,7 +195,7 @@ func (c IPv4PolicyRouteController) verifyPolicyRouteEffect(ctx context.Context, 
 			return err
 		}
 		if !present || index != r.Effect.IfIndex {
-			return errors.New("native policy native interface identity changed")
+			return errors.New("native policy interface identity changed")
 		}
 	}
 	return nil
@@ -424,7 +424,7 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 			return err
 		}
 		if collision {
-			return errors.New("native policy native tuple changed before exclusive acquisition")
+			return errors.New("native policy tuple changed before exclusive acquisition")
 		}
 		if err := c.mutatePolicyRouteEffect(ctx, e, "add"); err != nil {
 			return err
@@ -529,6 +529,9 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 			valid := true
 			for i := 1; i < len(f); i++ {
 				key := f[i]
+				if key == "linkdown" {
+					continue
+				} // Observed device state is not a route selector.
 				if i+1 >= len(f) {
 					valid = false
 					break
@@ -647,6 +650,7 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 				}
 			}
 			collision = true
+			candidates++
 			exactSelector := e.Family == 4 && mark != "" && int(n) == e.Mark && mask == 0xffffffff && from == "all" && inputIf == ""
 			if e.Family == 6 {
 				expectedSource := "all"
@@ -656,7 +660,6 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 				exactSelector = mark == "" && strings.TrimSuffix(from, "/128") == expectedSource && inputIf == e.InputIf
 			}
 			if exactSelector && table == strconv.Itoa(e.Table) && (protocol == "static" || protocol == "4") {
-				candidates++
 				if valid {
 					matching = true
 				}
@@ -664,7 +667,7 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 		}
 	}
 	if candidates > 1 {
-		return false, false, errors.New("native policy native deletion identity is ambiguous")
+		return false, false, errors.New("native policy selectors or route slot are ambiguous")
 	}
 	return matching, collision, nil
 }
@@ -674,7 +677,7 @@ func sortedPolicyRouteEffects(input []policyRouteEffect) ([]policyRouteEffect, e
 	var out []policyRouteEffect
 	for _, e := range input {
 		if !validPolicyRouteEffect(e) {
-			return nil, errors.New("invalid native policy native effect")
+			return nil, errors.New("invalid native policy effect")
 		}
 		if !seen[e] {
 			seen[e] = true
