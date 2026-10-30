@@ -109,10 +109,11 @@ func (c LANAddressController) segmentParentOwner() VXLANSegmentController {
 	if router == nil {
 		router = c.Router
 	}
-	owner := VXLANSegmentController{Router: router}
+	owner := VXLANSegmentController{Router: router, Store: c.Store}
 	if c.Segments != nil {
 		owner = *c.Segments
 		owner.Router = router
+		owner.Store = c.Store
 	}
 	return owner
 }

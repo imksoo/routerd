@@ -52,10 +52,11 @@ func (c IPv4StaticAddressController) staticSegmentParent(ctx context.Context, re
 		if resource.Metadata.Name != reference && plan != interfaceIfName(c.Router, reference) {
 			continue
 		}
-		owner := VXLANSegmentController{Router: c.Router}
+		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
 		if c.Segments != nil {
 			owner = *c.Segments
 			owner.Router = c.Router
+			owner.Store = c.Store
 		}
 		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
 		if err != nil {
@@ -257,7 +258,7 @@ func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Con
 	if receipt.ParentToken == "" {
 		return nil
 	}
-	owner := VXLANSegmentController{Router: c.Router}
+	owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
 	if c.Segments != nil {
 		owner = *c.Segments
 	}

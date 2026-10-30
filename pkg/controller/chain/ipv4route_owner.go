@@ -98,6 +98,7 @@ func (c IPv4RouteController) ordinaryRouteSegmentParent(ctx context.Context, dev
 		if c.Segments != nil {
 			owner = *c.Segments
 			owner.Router = c.Router
+			owner.Store = c.Store
 		}
 		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
 		if err != nil {

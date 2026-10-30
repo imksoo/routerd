@@ -176,7 +176,7 @@ var declarations = []Declaration{
 	declare(api.NetAPIVersion, "TailscaleNode", ClassManagedHost, "tailscale node configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "IPsecConnection", ClassManagedHost, "IPsec connection configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "VRF", ClassManagedHost, "VRF link and routing table intent", resourceLifecycle()),
-	declare(api.NetAPIVersion, "VXLANTunnel", ClassManagedHost, "VXLAN tunnel link", resourceLifecycle()),
+	declare(api.NetAPIVersion, "VXLANTunnel", ClassManagedHost, "Native VXLAN acquisition, flood entries, bridge attachment and withdrawal use the shared kernel-scope VXLAN journal", resourceLifecycle()),
 	declare(api.NetAPIVersion, "VXLANSegment", ClassManagedHost, "Linux and FreeBSD native link, flood entries and bridge port are recovered and withdrawn through the kernel-scope VXLAN actor journal; L2 filtering remains a firewall artifact", resourceLifecycle(), artifacts("nft.table")),
 	declare(api.NetAPIVersion, "IPv4StaticAddress", ClassManagedHost, "IPv4 address on an interface", resourceLifecycle()),
 	declare(api.NetAPIVersion, "VirtualAddress", ClassManagedHost, "VRRP/CARP virtual address", resourceLifecycle()),

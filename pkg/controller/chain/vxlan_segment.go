@@ -36,6 +36,7 @@ type VXLANSegmentController struct {
 	StateDir      string
 	DryRun        bool
 	StartedAt     time.Time
+	GateStore     resourcequery.StateStore
 	gateRevisions map[string]string
 	// scope is captured once by this operation, never an independent authority.
 	scope string
@@ -301,24 +302,13 @@ func (c VXLANSegmentController) reconcileSegment(ctx context.Context, name strin
 			return err
 		}
 	}
+	if err := c.confirm(ctx, name, plan); err != nil {
+		return c.failedAdmission(ctx, owner, err)
+	}
 	return c.saveStatus(name, plan, "Healthy", nil)
 }
 
 func (c VXLANSegmentController) confirm(ctx context.Context, name string, plan vxlan.SegmentConfig) error {
-	if revision, guarded := c.gateRevisions[name]; guarded {
-		for _, resource := range c.Router.Spec.Resources {
-			if resource.ID() != name {
-				continue
-			}
-			reader := vxlanGateReader{Store: c.Store, StartedAt: c.StartedAt}
-			if err := reader.requireCurrentGate(resource, revision, true); err != nil {
-				if errors.Is(err, errVXLANGateRevisionChanged) {
-					return errSegmentIntentChanged
-				}
-				return err
-			}
-		}
-	}
 	matches, err := c.Admit(ctx, name, plan)
 	if err != nil {
 		return err
@@ -326,7 +316,34 @@ func (c VXLANSegmentController) confirm(ctx context.Context, name string, plan v
 	if !matches {
 		return errSegmentIntentChanged
 	}
-	return nil
+	// The admission source may block; re-read the gate after it returns.
+	return c.confirmGate(name)
+}
+func (c VXLANSegmentController) confirmGate(name string) error {
+	revision, guarded := c.gateRevisions[name]
+	if !guarded {
+		return nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.ID() != name {
+			continue
+		}
+		if err := c.gateReader().requireCurrentGate(resource, revision, true); err != nil {
+			if errors.Is(err, errVXLANGateRevisionChanged) {
+				return errSegmentIntentChanged
+			}
+			return err
+		}
+		return nil
+	}
+	return errSegmentIntentChanged
+}
+func (c VXLANSegmentController) gateReader() vxlanGateReader {
+	reader := c.GateStore
+	if reader == nil {
+		reader, _ = c.Store.(resourcequery.StateStore)
+	}
+	return vxlanGateReader{Store: reader, StartedAt: c.StartedAt}
 }
 
 func (c VXLANSegmentController) failedAdmission(ctx context.Context, owner vxlanSegmentOwner, err error) error {
@@ -394,6 +411,7 @@ func sameSegmentPlan(a, b vxlan.SegmentConfig) bool {
 
 func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
 	plans := map[string]vxlan.SegmentConfig{}
+	ifnames := map[string]string{}
 	aliases := bridgeInterfaceAliases(router)
 	for _, resource := range router.Spec.Resources {
 		var plan vxlan.SegmentConfig
@@ -458,6 +476,10 @@ func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
 		}
 		slices.Sort(plan.Remotes)
 		plan.Remotes = slices.Compact(plan.Remotes)
+		if owner := ifnames[plan.IfName]; owner != "" && owner != resource.ID() {
+			return nil, fmt.Errorf("VXLAN interface %s is claimed by %s and %s", plan.IfName, owner, resource.ID())
+		}
+		ifnames[plan.IfName] = resource.ID()
 		plans[resource.ID()] = plan
 	}
 	return plans, nil
@@ -595,6 +617,9 @@ func (c VXLANSegmentController) ObserveOwnedInterface(ctx context.Context, resou
 		if err := vxlan.CheckSegmentReadback(plan, owner.Identity, observed); err != nil {
 			return absent, err
 		}
+		if err := c.confirmGate(resource); err != nil {
+			return absent, err
+		}
 		return observed, ctx.Err()
 	}
 	observed, err := c.Native.Observe(ctx, plan.IfName)
@@ -706,7 +731,7 @@ func (c *VXLANSegmentController) currentPlans() (map[string]vxlan.SegmentConfig,
 		return nil, err
 	}
 	c.gateRevisions = map[string]string{}
-	reader := vxlanGateReader{Store: c.Store, StartedAt: c.StartedAt}
+	reader := c.gateReader()
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "VXLANTunnel" {
 			continue

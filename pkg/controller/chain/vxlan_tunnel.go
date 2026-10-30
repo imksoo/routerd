@@ -17,7 +17,7 @@ import (
 
 type vxlanGateReader struct {
 	DeclaredRouter *api.Router
-	Store          Store
+	Store          resourcequery.StateStore
 	StartedAt      time.Time
 }
 
@@ -88,9 +88,6 @@ func vxlanWhenAcceptsUnknown(when api.ResourceWhenSpec) bool {
 }
 
 func (c vxlanGateReader) whenFreshThisBoot(when api.ResourceWhenSpec, state resourcequery.StateStore) (bool, error) {
-	if c.StartedAt.IsZero() {
-		return true, nil
-	}
 	for name, match := range when.State {
 		fresh, err := stateReferenceFresh(name, match, state, c.StartedAt)
 		if err != nil || !fresh {
@@ -257,14 +254,6 @@ func (c vxlanGateReader) dependencyRevision(resource api.Resource) (string, bool
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), true, nil
-}
-
-func (c vxlanGateReader) gateRevision(resource api.Resource) (string, bool, error) {
-	gate, err := c.gateState(resource)
-	if err != nil || gate != vxlanGateEnabled {
-		return "", false, err
-	}
-	return c.dependencyRevision(resource)
 }
 
 func (c vxlanGateReader) requireCurrentGate(resource api.Resource, revision string, guarded bool) error {

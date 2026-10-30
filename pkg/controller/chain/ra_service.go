@@ -294,7 +294,7 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 }
 
 func (s *RouterAdvertisementService) advertisementParent(ctx context.Context, ifname string, active bool, recordedToken string) (vxlan.SegmentLink, error) {
-	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Segments: s.segments}
+	child := LANAddressController{Router: s.declared, DeclaredRouter: s.declared, Store: s.store, Segments: s.segments}
 	if !active && recordedToken != "" {
 		owner := child.segmentParentOwner()
 		return owner.ObserveRecordedInterface(ctx, ifname, recordedToken)

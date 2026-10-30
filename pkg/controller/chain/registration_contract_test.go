@@ -28,7 +28,7 @@ func TestContractFrameworkRegistrationAndScheduledSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Fields(`observability-pipeline daemon-status dhcp-lease-sync nat44-session-sync
-		package kernel-module sysctl network-adoption bridge vxlan-tunnel vxlan-segment service-unit log-retention
+		package kernel-module sysctl network-adoption bridge vxlan-segment service-unit log-retention
 		ntp-client ntp-server link sam-enrollment-client sam-transport tunnel wireguard ipv4-static-address
 		dhcpv6-information lan-address dslite ipv4-policy-route ipv4-route hybrid-route sam path-mtu
 		dhcpv6-server dhcpv4-lease pppoe-session dns-resolver event-federation event-subscription
@@ -49,16 +49,16 @@ func TestContractFrameworkRegistrationAndScheduledSelection(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("registered controllers=%v, want %v", got, want)
 	}
-	// bridge and vxlan-tunnel intentionally remain in the scheduled pass. The
+	// bridge intentionally remains in the scheduled pass. The
 	// other registered controllers use their event-loop cadence instead.
 	for _, controller := range controllers {
-		wantSkip := controller.Name() != "bridge" && controller.Name() != "vxlan-tunnel"
+		wantSkip := controller.Name() != "bridge"
 		if got := scheduledReconcileSkipsController(controller.Name()); got != wantSkip {
 			t.Errorf("scheduled skip %s=%t, want %t", controller.Name(), got, wantSkip)
 		}
 	}
 	filtered := filterScheduledReconcileControllers(controllers)
-	if len(filtered) != 2 || filtered[0].Name() != "bridge" || filtered[1].Name() != "vxlan-tunnel" {
+	if len(filtered) != 1 || filtered[0].Name() != "bridge" {
 		t.Fatalf("scheduled controllers=%v", filtered)
 	}
 

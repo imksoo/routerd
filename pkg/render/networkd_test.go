@@ -165,7 +165,7 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 	}
 
 	for _, file := range files {
-		if strings.Contains(file.Path, "vxlan100") || strings.Contains(string(file.Data), "BridgeFDB") || strings.Contains(string(file.Data), "Kind=vxlan") {
+		if strings.HasSuffix(file.Path, ".netdev") || strings.Contains(file.Path, "vxlan100.network.d/88-") || strings.Contains(string(file.Data), "BridgeFDB") || strings.Contains(string(file.Data), "Kind=vxlan") {
 			t.Fatalf("native Segment ownership has a competing networkd writer: %s\n%s", file.Path, file.Data)
 		}
 	}
@@ -190,7 +190,7 @@ func TestNetworkdDropinsRenderVXLANTunnelOuterDF(t *testing.T) {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
 	for _, file := range files {
-		if strings.Contains(file.Path, "vx-l2") || strings.Contains(string(file.Data), "Kind=vxlan") {
+		if strings.HasSuffix(file.Path, ".netdev") || strings.Contains(string(file.Data), "Kind=vxlan") {
 			t.Fatalf("native tunnel has competing networkd creator: %s", file.Path)
 		}
 	}

@@ -32,7 +32,7 @@ func planApply(ctx context.Context, router *api.Router, opts applyOptions) (*app
 	if err != nil {
 		return nil, err
 	}
-	result, err := applyEngine(ctx, view.RouteRouter).PlanEffective(view.RouteRouter, view.DeclaredRouter)
+	result, err := applyEngine(ctx, view.RouteRouter, store).PlanEffective(view.RouteRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}

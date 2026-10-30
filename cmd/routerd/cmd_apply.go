@@ -606,7 +606,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 		return nil, err
 	}
 	effectiveRouter := view.RouteRouter
-	result, err := applyEngine(ctx, effectiveRouter).PlanEffective(effectiveRouter, view.DeclaredRouter)
+	result, err := applyEngine(ctx, effectiveRouter, stateStore).PlanEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}
@@ -674,7 +674,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 	}
 	applyWarnings := append([]string{}, result.Warnings...)
 	outcome.Stage = "observe"
-	result, err = applyEngine(ctx, effectiveRouter).ObserveEffective(effectiveRouter, view.DeclaredRouter)
+	result, err = applyEngine(ctx, effectiveRouter, stateStore).ObserveEffective(effectiveRouter, view.DeclaredRouter)
 	if err != nil {
 		return nil, err
 	}

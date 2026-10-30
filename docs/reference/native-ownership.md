@@ -53,7 +53,7 @@ have been replaced by another writer; it is not automatically reclaimed. Recover
 does not extend prefix validity. Interface replacement and reboot invalidate the
 old native identity rather than authorizing mutation of its replacement.
 
-Child address and route receipts on a VXLAN Segment also retain the parent's
+Child address and route receipts on either VXLAN kind also retain the parent's
 native token. Removing the parent declaration does not remove the proof needed
 for cleanup: the recorded parent must still match its cookie, scope and interface
 index. An unrecorded or foreign replacement retains an uncertain child receipt
@@ -63,3 +63,32 @@ This contract describes these concrete owners. Mobility, BGP kernel FIB, tunnel
 cookies and policy-routing effects have separate recovery boundaries; their
 implementation and qualification status is tracked in the
 [open findings](../design/routerd15-open-findings.md).
+
+## Shared native VXLAN owner
+
+`VXLANTunnel` and `VXLANSegment` use the same kernel-scope receipt owner for link
+creation, flood destinations, bridge attachment, activation and withdrawal. The
+private journal format is 2 and records the complete API version/kind/name; older
+receipts are rejected. This revision does not adopt links or migrate networkd
+ownership markers. Resolve old native links and generated boot creators before
+cutover rather than clearing receipts for possibly live effects.
+
+Linux tunnels require `nolearning` and the selected `outerDF` mode (default
+`inherit`); both are read back from native attributes. FreeBSD supports its
+native single unicast remote or multicast mode and verifies the driver's learning
+flag. An explicitly requested `outerDF` mode on FreeBSD is rejected because its
+current VXLAN boundary does not expose that control; omission retains the native
+FreeBSD behavior. FreeBSD does not silently discard additional unicast peers.
+
+Networkd renders no VXLAN `.netdev`, flood entries, bridge attachment or admin-up
+operation. Its `.network` file has manual activation and retains native
+configuration so separately declared NTP/static-route inputs can be consumed.
+FreeBSD has no separate VXLAN rc boot creator. The native actor is selected as
+`vxlan-segment` for either resource kind.
+
+Tunnel `when` input is checked again after persistence, current-selection reads
+and native parent observation. Missing/expired/unknown input cannot authorize
+activation or child acquisition, and the daemon also requires observations from
+its current lifetime. Gate changes retain exact native ownership for withdrawal;
+read failures preserve uncertainty. Local SQLite/fault and native-message tests
+do not qualify Linux/FreeBSD kernel forwarding or independent peers.

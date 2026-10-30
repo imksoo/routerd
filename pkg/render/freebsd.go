@@ -70,6 +70,17 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 	}
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "VXLANTunnel" {
+			continue
+		}
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+
+	for _, res := range router.Spec.Resources {
 		if res.Kind != "WireGuardInterface" {
 			continue
 		}
