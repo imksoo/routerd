@@ -628,6 +628,114 @@
         "Physical or separate-OS-host failure domains; peers use distinct VNET kernel stacks",
         "All firewall actions, IPv6 PF, port forwarding or complete baseline NAT/policy functions"
       ]
+    },
+    "linux-bfd-bgp-native-d1cfff8a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d1cfff8aa036487c822dac2db5a82c4245a350a6",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "reproduction": "make check-routerd15-bfd-native-linux",
+      "environment": "Isolated Linux user/network/mount namespaces with actual FRR 8.4.4 bfdd and bgpd peers.",
+      "checks": [
+        "BFD Up/Down/return, administrative stop/return, local bfdd restart, SQLite reopen, foreign-peer preservation and acknowledged withdrawal passed",
+        "BFD Down drove actual IPv4 BGP hard reset, RIB/FIB withdrawal and traffic failure while IPv6 session/routes/traffic remained usable; recovery and full existing BGP lifecycle passed",
+        "Independent actual Controller/SQLite regressions cover unequal JSON/CLI peer sets, unavailable observation, receipt changes, pre-dispatch abort, failed rollback persistence and unacknowledged-effect retry/removal fencing",
+        "All fixture peer/daemon/namespace children exited and were reaped"
+      ],
+      "excludes": [
+        "Single-hop BFD, IPv6 BFD and cross-vendor BFD peers",
+        "FreeBSD BFD interoperability",
+        "Complete BGP/BFD baseline parity"
+      ]
+    },
+    "freebsd-normal-go-0aa10541": {
+      "level": "code-passed",
+      "outcome": "fail",
+      "revision": "0aa10541626e7ae7f01151412a5dc7779cd1d0e5",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "environment": "Native FreeBSD 14.3/amd64, native Go 1.25.9, prerequisite tools, shallow Git checkout, CGO disabled, local module proxy.",
+      "checks": [
+        "118 packages passed, one failed, nine had no tests",
+        "3,526 top-level tests passed, 34 failed and 139 skipped",
+        "The chain package panicked in an MSS fixture; its later tests did not run and these counts do not enumerate every remaining failure"
+      ],
+      "excludes": [
+        "Complete native FreeBSD normal-suite pass",
+        "Dismissing all failures as environmental",
+        "Propagating later narrow repairs to this failed historical run"
+      ]
+    },
+    "freebsd-mss-preview-d78a676b": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "d78a676be541119ab641ff41c3999ee6f3b4be58",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "binary_sha256": "9dcb23d19734f6c07470d3881ac7b90c7ed5017fd0203f84b2b6949b4b6d04ae",
+      "checks": [
+        "A corrupt journal reproduced an unnecessary preview rejection on Linux before the product repair",
+        "Linux MSS/interface/IPv4-route related tests passed after the repair",
+        "Actual FreeBSD execution passed 20 MSS tests and explicitly skipped three requiring real Linux boot/network identity",
+        "Preview does not change the private live journal; live ownership/recovery remains guarded"
+      ],
+      "excludes": [
+        "Native Linux nftables MSS forwarding qualification",
+        "FreeBSD full chain or full normal-suite pass"
+      ]
+    },
+    "freebsd-dslite-fixtures-857f7953": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "857f79531f47935a23f5d9e137a9fee7d3e94583",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "binary_sha256": "2cd6a0e98f128fed9b24f6dd48f112a4d390eedb7863fb00e38847ece7bbf939",
+      "checks": [
+        "Actual FreeBSD TestDSLite group passed with existing opt-in/OS-specific skips explicit",
+        "Parent and child fixtures use the same current OS, actual runtime name, receipt scope and finite-lifetime observation",
+        "Foreign refusal, owned acquisition, unknown acknowledgement and recorded withdrawal assertions are retained; Linux complete chain passed"
+      ],
+      "excludes": [
+        "Real FreeBSD DS-Lite encapsulated traffic or packaged service qualification",
+        "Complete FreeBSD normal-suite pass"
+      ]
+    },
+    "freebsd-dns-drill-0aa10541": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0aa10541626e7ae7f01151412a5dc7779cd1d0e5",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "binary_sha256": "f383f33f67a8a651a6effa18992a22c16b87c416f495cd48a391a254a516209f",
+      "helper_sha256": "ca127a26bdc6a3155e0f4dcb5ae1634e736e99494fc69df20278d484870f27d5",
+      "environment": "Actual FreeBSD 14.3 VM, drill client, private loopback UDP/TCP endpoints, native owner helper.",
+      "checks": [
+        "Initial local-zone answers, changed answer after reload, and restored answer after restart passed over UDP and TCP",
+        "Owned process, IPC socket and UDP/TCP listeners disappeared after withdrawal"
+      ],
+      "excludes": [
+        "Upstream forwarding, DNSSEC, TLS, IPv6 transport or DHCP-derived records",
+        "Separate-host traffic and complete DNS baseline parity"
+      ]
+    },
+    "freebsd-pppoe-shutdown-ee305683": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ee305683342033706ed3b9d234acd13b65ddd748",
+      "fixture_revision": "77a0f7e350a8d9545c4d7fbf2b10ec053c5400b7",
+      "reference": "docs/design/routerd15-audit.md#bfd-interoperability-pppoe-shutdown-and-remaining-native-freebsd-gate",
+      "binary_sha256": "22dca768e4debc5a1e3b1d0bb33fae39a214cf0662087c19cab96649b10cd3ba",
+      "environment": "Actual FreeBSD 14.3 VM, independent mpd5 5.9_19 in VNET, PAP authentication and IPv4 IPCP. Prepared ng_ether/ng_socket/ng_pppoe/ng_iface modules pre-existed the final run.",
+      "checks": [
+        "Native acquire, bidirectional ICMP, stop/start, repeat traffic and final interface withdrawal passed",
+        "Same-name foreign interface refused and remained unchanged",
+        "A third connected session received daemon SIGTERM, exited 0 in two seconds and removed its native interface",
+        "Private child-process tests on Linux and FreeBSD retain authority and return failure for unconfirmed interface cleanup",
+        "Runner exit 0 and final success marker followed child reaping, no private process/Unix socket, no trial jail/interface, and restoration of newly loaded modules"
+      ],
+      "excludes": [
+        "CHAP, Linux PPPoE and arbitrary carrier interoperability",
+        "Packaged routerd supervisor/controller/reboot qualification and LAN transit",
+        "Unloading prepared ng_ether while the management Ethernet interface remains",
+        "Complete PPPoE baseline parity"
+      ]
     }
   },
   "features": [
@@ -1371,7 +1479,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-bfd-bgp-native-d1cfff8a"
         ]
       },
       "freebsd": {
@@ -1412,7 +1521,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-bfd-bgp-native-d1cfff8a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1748,7 +1859,8 @@
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "freebsd-dns-drill-binary-323c8e24"
+          "freebsd-dns-drill-binary-323c8e24",
+          "freebsd-dns-drill-0aa10541"
         ]
       },
       "required_remaining_checks": [
@@ -1789,7 +1901,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-dslite-fixtures-857f7953"
+        ]
       },
       "required_remaining_checks": [
         "Independent AFTR and inside IPv4 through-traffic",
@@ -2274,7 +2388,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-mss-preview-d78a676b"
+        ]
       },
       "required_remaining_checks": [
         "All baseline validate/plan/apply/delete/rollback outcomes",
@@ -2705,7 +2821,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-pppoe-shutdown-ee305683"
+        ]
       },
       "required_remaining_checks": [
         "Independent PPPoE access concentrator exchange and IPv4/IPv6 traffic",

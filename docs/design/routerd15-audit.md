@@ -1713,3 +1713,82 @@ found no trial jail/interface, restored forwarding=0, empty rules/states and
 PF returned to its previously unloaded state. This qualifies rendered PF
 source-affinity/NAT traffic in VNET, not controller-owned reconciliation,
 IPv6, physical failover or complete firewall parity.
+
+
+### BFD interoperability, PPPoE shutdown and remaining native FreeBSD gate
+
+At clean integration `d1cfff8a`, the new
+`make check-routerd15-bfd-native-linux` gate passed the independent FRR 8.4.4
+BFD lifecycle and the existing dual-stack BGP lifecycle with a BFD failure
+stage. Stopping only the remote bfdd first left BGP Established; the observed
+BFD Down then drove the production IPv4 hard reset, RIB/FIB withdrawal and
+failed IPv4 traffic. Unrelated IPv6 BGP/routes/traffic remained usable. BFD
+return restored communication, followed by the original withdrawal, peer and
+routerd-bgp restart, SQLite reopen and declaration-removal stages.
+
+The actual FRR JSON omits Peer Type. The adapter now joins actual JSON and
+ordinary CLI observations by the complete peer tuple and local timers, and
+rejects unequal peer sets or unknown observations. Independent Controller and
+SQLite regressions caught foreign adoption after a pre-dispatch abort. Only a
+pending effect with a persisted successful command acknowledgement and matching
+readback may recover ownership; an unacknowledged pending effect remains fenced
+across retry and declaration removal. Receipt compare failures retain authority.
+These checks do not qualify single-hop/IPv6 BFD, cross-vendor peers or every BGP
+policy/BFD combination.
+
+The initial complete native FreeBSD normal suite was rerun at clean
+`0aa10541`, with native Go 1.25.9, prerequisite tools, Git metadata and the local
+module proxy. It still failed: 118 packages passed, one failed and nine had no
+tests; 3,526 top-level tests passed, 34 failed and 139 skipped. All observed
+failures were in chain. Its MSS create-race fixture then panicked, so tests after
+that point were not observed by this run. These counts are not a complete list
+of remaining failures. After repairing the panic, a cross-built chain test
+binary ran to the end and exposed further platform-fixture failures; that
+invocation lacked native Go PATH/GOROOT for helper-building tests and is not
+substituted for a complete native-Go verdict.
+
+At `d78a676b`, an MSS preview no longer reads a live ownership journal or Linux
+boot/network identity. A corrupt private journal reproduced the preview failure
+on Linux before the fix, and remains byte-for-byte unchanged after preview.
+Live application still takes its existing ownership lock, identity checks and
+journal recovery path. Pure journal fixtures use explicit fixture identities;
+three tests requiring actual Linux boot/network identity remain explicitly
+Linux-only. Actual FreeBSD execution passed 20 MSS tests and skipped those
+three. The interface-name fixture now uses a configured gif unit valid on both
+OS targets. At `857f7953`, the DS-Lite parent/child fixture uses one consistent
+OS, runtime name, scope and finite lifetime representation. Its complete
+TestDSLite group passed on the actual FreeBSD VM without removing foreign-parent,
+lost-confirmation or withdrawal assertions. Linux chain plus DHCPv4-controller
+tests also passed at `8a51b1ee`.
+
+A clean-source resolver built at `0aa10541` now separately passed the drill
+UDP/TCP initial/reload/restart/withdrawal gate. This closes the earlier binary's
+unknown-source limitation for the new scoped result; it does not rewrite the
+older binary-only evidence.
+
+The real FreeBSD PPPoE trial with independent mpd5 5.9_19 established IPCP and
+bidirectional traffic, but its one-second IPC timeout ended before the existing
+three-second native stop grace and five-second interface barrier. The fixture
+now permits the actual bounded stop contract. Requiring the outer daemon's
+exit status then reproduced a product bug: normal cancellation returned
+context canceled/exit 1. Product fix `ee305683` returns success only after
+confirmed native cleanup, while unresolved cleanup retains the native identity
+and returns its concrete error. The existing SIGINT/WaitDelay child-lifetime
+contract is unchanged. Actual private-process tests passed both confirmed and
+unconfirmed cleanup on Linux and FreeBSD; three related Linux packages passed.
+
+Fixture `77a0f7e3` with that exact product binary passed acquire, bidirectional
+ICMP, stop/start, repeat traffic, final withdrawal, same-name foreign-interface
+preservation, and a third connected session terminated by SIGTERM. The connected
+daemon exited 0 in two seconds and its native interface disappeared. The runner
+then reaped its children and checked no private process/socket, jail or trial
+interface remained before publishing success. Independent post-inspection
+confirmed only the original vtnet0/lo0 and no jail. Runtime files now stay in the
+fixture's private directory. This test used a prepared disposable VM: ng_ether
+was already loaded, because its upstream unload contract requires removal of
+all Ethernet interfaces. The runner preserves pre-existing modules and restores
+only its newly loaded modules; it does not detach the management interface.
+See [FreeBSD ng_ether source](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netgraph/ng_ether.c).
+PAP/IPv4 helper lifecycle is qualified here, not CHAP, Linux PPPoE, packaged
+routerd reconciliation, LAN transit, arbitrary carrier interoperability or the
+complete 1.0 PPPoE function set.
