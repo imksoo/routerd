@@ -125,6 +125,22 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 				if msg := read(); msg.Header.Type != gobgp.BGP_MSG_KEEPALIVE {
 					t.Fatalf("handshake message=%d body=%v", msg.Header.Type, msg.Body)
 				}
+				for {
+					established := false
+					if err := server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(p *gobgpapi.Peer) {
+						established = p.GetState().GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ESTABLISHED
+					}); err != nil {
+						t.Fatal(err)
+					}
+					if established {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-time.After(time.Millisecond):
+					}
+				}
 				path, err := bgpdaemon.PathFromAppliedPath(bgpdaemon.AppliedPath{Source: bgpdaemon.AppliedPathSourceStatic, Prefix: "10.77.60.11/32", Attrs: bgpdaemon.AppliedPathAttrs{Communities: []string{"64512:7"}}})
 				if err != nil {
 					t.Fatal(err)
@@ -168,8 +184,10 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 				if observed != mode.mask {
 					t.Fatalf("peer observed send=%d want=%d", observed, mode.mask)
 				}
+				var localPaths int
 				if err := server.ListPath(gobgpapiutil.ListPathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Family: gobgp.RF_IPv4_UC}, func(_ gobgp.NLRI, paths []*gobgpapiutil.Path) {
 					for _, p := range paths {
+						localPaths++
 						attrs := map[gobgp.BGPAttrType]bool{}
 						for _, a := range p.Attrs {
 							attrs[a.GetType()] = true
@@ -183,6 +201,9 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 				}); err != nil {
 					t.Fatal(err)
 				}
+				if localPaths != 1 {
+					t.Fatalf("local RIB paths=%d want=1", localPaths)
+				}
 				if err := (&localPathServer{BgpServer: server}).DeletePath(ctx, &gobgpapi.DeletePathRequest{TableType: gobgpapi.TableType_TABLE_TYPE_GLOBAL, Path: path}); err != nil {
 					t.Fatal(err)
 				}
@@ -193,7 +214,7 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 						t.Fatalf("expected withdrawal, received %T", msg.Body)
 					}
 					if len(update.WithdrawnRoutes) > 0 {
-						if update.WithdrawnRoutes[0].String() != "10.77.60.11/32" {
+						if update.WithdrawnRoutes[0].NLRI.String() != "10.77.60.11/32" {
 							t.Fatalf("withdrawn=%v", update.WithdrawnRoutes)
 						}
 						break
@@ -201,5 +222,16 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestGoBGPRejectsUnknownCommunityMasks(t *testing.T) {
+	server := realDynamicPathServer(t)
+	ctx := context.Background()
+	if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: &gobgpapi.Peer{Conf: &gobgpapi.PeerConf{NeighborAddress: "127.0.0.2", PeerAsn: 64513, SendCommunity: 4}}}); err == nil {
+		t.Fatal("unsupported peer mask accepted")
+	}
+	if err := server.AddPeerGroup(ctx, &gobgpapi.AddPeerGroupRequest{PeerGroup: &gobgpapi.PeerGroup{Conf: &gobgpapi.PeerGroupConf{PeerGroupName: "invalid", PeerAsn: 64513, SendCommunity: 4}}}); err == nil {
+		t.Fatal("unsupported peer-group mask accepted")
 	}
 }

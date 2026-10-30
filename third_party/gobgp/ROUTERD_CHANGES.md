@@ -4,6 +4,15 @@ Source: github.com/osrg/gobgp/v4 v4.7.0 (Apache-2.0; see LICENSE).
 This local module retains the upstream Go source required by routerd; upstream
 commands, documentation, generators and test assets are omitted.
 
+The latest upstream release checked on 2026-10-30 was
+[v4.10.0](https://github.com/osrg/gobgp/releases/tag/v4.10.0). Its
+[`grpc_server.go`](https://github.com/osrg/gobgp/blob/v4.10.0/pkg/server/grpc_server.go),
+[`server.go`](https://github.com/osrg/gobgp/blob/v4.10.0/pkg/server/server.go), and
+[`oc/util.go`](https://github.com/osrg/gobgp/blob/v4.10.0/pkg/config/oc/util.go)
+still omit this send-community conversion/filter. Merely upgrading the dependency
+does not supply the missing path. This patch retains the already integrated
+v4.7.0 API rather than coupling this repair to unrelated upstream changes.
+
 Four files differ from v4.7.0:
 
 - `pkg/server/grpc_server.go`: decode the public peer/peer-group send-community
