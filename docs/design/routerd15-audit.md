@@ -2013,7 +2013,7 @@ the unchanged product. No product behavior or lifetime was relaxed.
 
 The executed fixture SHA-256 is recorded separately from the product archive.
 Its public export adds a license and argument-usage message; the gate body is
-unchanged. See [the procedure and acceptance criteria](../operations/development.md#linux-wan-raslaac-lifecycle-gate)
+unchanged. See [the procedure and acceptance criteria](https://routerd.net/docs/operations/development#linux-wan-raslaac-lifecycle-gate)
 and `scripts/linux-wan-ra-lifecycle-smoke.sh`. This does not qualify RDNSS/DNSSL,
 IA_NA, LAN forwarding, restart/crash recovery, other platforms or all 1.0 features.
 
