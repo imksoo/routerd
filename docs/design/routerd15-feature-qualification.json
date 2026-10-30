@@ -871,13 +871,36 @@
       "reproduction": "TestTunnelNativeLinuxPeerLifecycle/gue",
       "checks": [
         "Controller acquisition failed with ERANGE while peer iproute2 GUE listener setup succeeded",
-        "Candidate FouAdd serializes IPPROTO=0 instead of omitting it; corrected native gate remains open"
+        "Candidate FouAdd serializes IPPROTO=0 instead of omitting it; corrected candidate result is separately bound to fedafe49"
       ],
       "excludes": [
         "Candidate is separate from shared proposal integration",
         "Real DHCP expiry and different-device/platform interoperability",
         "Complete TunnelInterface preservation or qualification"
       ]
+    },
+    "linux-fou-gue-candidate-fedafe49": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "fedafe49fc05f5e6fd61823572e7d7f87e1c8edf",
+      "reference": "docs/design/routerd15-audit.md#corrected-gue-candidate",
+      "binary_sha256": "8f94b420932a5aa0de5b4f23c61099c8f5e40b1599167db0e847b98fac659cb5",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; Go1.25.9 CGO_ENABLED=0 test harness; guest-root network/mount namespaces with fresh sysfs, separate iproute2-configured kernel peer.",
+      "reproduction": "TestTunnelNativeLinuxPeerLifecycle/(fou|gue), exact wrapper and prerequisites in the audit",
+      "checks": [
+        "FOU and corrected GUE acquisition, echo traffic and independent peer RX increment",
+        "Actual parent/child receipts; unchanged reconcile does not apply again",
+        "Injected canonical source expiry withdraws children and tunnel; fresh-token reacquisition restores traffic",
+        "Final receipt withdrawal, peer reap and no leaked trial namespace/listener/link",
+        "Local TestTunnelInterface* and TestTunnelNativeReview* fixtures passed before native run"
+      ],
+      "excludes": [
+        "Candidate is separate from shared proposal integration",
+        "Real DHCP expiry and different-device/platform interoperability",
+        "Complete TunnelInterface preservation or qualification",
+        "Installed daemon upgrade or full daemon integration at this candidate revision"
+      ],
+      "provided_binary_sha256": "b9801292e8c8b0563d44716003a8fc23fa508b61d469841452161046708eb281"
     }
   },
   "features": [
@@ -2094,7 +2117,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-fou-candidate-5be3b91e",
-          "linux-gue-candidate-5be3b91e"
+          "linux-gue-candidate-5be3b91e",
+          "linux-fou-gue-candidate-fedafe49"
         ]
       },
       "freebsd": {

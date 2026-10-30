@@ -1930,8 +1930,8 @@ candidate's `addTunnelNativeFOU` calls netlink v1.3.1 `FouAdd`, which serializes
 `Protocol=0` as an explicit `FOU_ATTR_IPPROTO` attribute. The kernel's
 [FOU attribute policy](https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux.git/+/0506158ac7363a70f0deb49f71d26ccb57e55990/net/ipv4/fou_nl.c)
 requires a supplied IPPROTO value to be at least one. GUE ADD must omit that
-attribute while direct FOU retains protocol 4. The corrected product gate
-has not yet been run; the failure remains open.
+attribute while direct FOU retains protocol 4. The corrected candidate result
+is recorded below; the original failure remains bound to its tested revision.
 
 Environment certification must precede the test: load guest `ipip`, `ip_gre`
 and `fou` modules, verify an isolated kernel listener/link create-read-delete,
@@ -1944,3 +1944,41 @@ exit and was reaped after both the failed setup and actual gate. No trial link,
 named namespace or FOU listener remained in the guest root namespace. Default
 module-created tunnel devices remained down. This candidate gate is not a claim
 that the pending TunnelInterface implementation is integrated or fully qualified.
+
+
+#### Corrected GUE candidate
+
+At clean candidate `fedafe49fc05f5e6fd61823572e7d7f87e1c8edf`,
+`addTunnelNativeFOU` uses context-bounded `ip -4 fou add port <port> gue`
+for GUE, leaving direct FOU on its protocol-4 netlink path. The pinned Linux
+Go 1.25.9, CGO-disabled test harness passed both FOU and GUE lifecycle subtests
+on the same certified Ubuntu 24.04.4 / Linux 6.8.0-124-generic VM (2.75 seconds).
+Each independent kernel peer received the two encapsulated test packets.
+Acquisition, unchanged reconciliation, injected source revocation, child/parent
+withdrawal, fresh-token reacquisition with traffic, final receipt removal and
+peer exit/reap all passed. The local `TestTunnelInterface*` and
+`TestTunnelNativeReview*` controller fixtures also passed before the native run.
+The owner's separately supplied test binary at the same revision also passed
+both native subtests (2.70 seconds); both binary hashes are in the ledger.
+
+Reproduce from the pinned candidate source after environment certification:
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o chain.test ./pkg/controller/chain
+# Copy this test harness to the dedicated VM and verify its SHA-256.
+# Run as guest root; keep the guest host network namespace untouched.
+export ROUTERD_RUN_NETNS=1
+export ROUTERD_HOST_NETNS=$(readlink /proc/self/ns/net)
+unshare -nm sh -c 'mount --make-rprivate / && mount -t sysfs sysfs /sys && exec "$@"' sh \
+  /absolute/path/chain.test \
+  -test.run '^TestTunnelNativeLinuxPeerLifecycle$/(fou|gue)$' \
+  -test.count=1 -test.v -test.timeout=150s
+```
+
+This is a controller test harness, not an installed product upgrade. The
+installed `31d5f4d4` router remained Healthy with no controller errors; no trial
+namespace, listener or tunnel remained outside the isolated test. The source
+revocation is still injected and both peers share a Linux kernel. Full daemon
+integration, actual DHCP expiry for this tunnel, other platforms and all
+TunnelInterface functionality remain separate gates. Successful binaries and
+raw logs can be removed after recording the source, hash and verdict.
