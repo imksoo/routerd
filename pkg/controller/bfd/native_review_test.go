@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -33,7 +34,7 @@ func TestBFDReviewCLIOnlyWantedPeerCannotAuthorizeApply(t *testing.T) {
 			}
 			defer store.Close()
 			reads, writes := 0, 0
-			controller := Controller{Router: bfdRouter(), Store: store, RuntimeDir: t.TempDir()}
+			controller := Controller{Router: bfdRouter(), Store: store, OS: platform.OSLinux, RuntimeDir: t.TempDir()}
 			controller.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				if args[0] == "-f" {
 					writes++
@@ -69,7 +70,7 @@ func TestBFDReviewUnreadableCLIWithEmptyJSONRetainsReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	controller := Controller{Router: &api.Router{}, Store: store, RuntimeDir: t.TempDir()}
+	controller := Controller{Router: &api.Router{}, Store: store, OS: platform.OSLinux, RuntimeDir: t.TempDir()}
 	sessions, _, err := (Controller{Router: bfdRouter()}).sessions()
 	if err != nil {
 		t.Fatal(err)
