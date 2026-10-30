@@ -16,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/vrf"
 )
 
 const vrfNativeStatusName = "vrf-native"
@@ -369,6 +370,7 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VRF", name, map[string]any{"phase": "Planned", "ifname": plan.Name, "routeTable": plan.Table}); err != nil {
 				return err
 			}
+			vrf.RecordMetrics(ctx, vrf.Config{Name: name, IfName: plan.Name, RouteTable: plan.Table, Members: plan.Members})
 			continue
 		}
 		record, owned := current[name]
@@ -398,6 +400,7 @@ func (c VRFController) Reconcile(ctx context.Context) error {
 		if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "VRF", name, map[string]any{"phase": "Up", "ifname": plan.Name, "index": record.Index, "routeTable": plan.Table, "members": append([]string(nil), plan.Members...)}); err != nil {
 			return err
 		}
+		vrf.RecordMetrics(ctx, vrf.Config{Name: name, IfName: plan.Name, RouteTable: plan.Table, Members: plan.Members})
 	}
 	return nil
 }
