@@ -6,8 +6,13 @@ change the policy of main until the proposal is accepted.
 
 ## Goal and scope
 
-Deliver the existing router functions with smaller, understandable code and real
-interoperability. KISS and robustness are the highest engineering priorities.
+Preserve all existing routerd 1.0 functions while delivering routerd 1.5 with
+smaller, understandable code and real interoperability. The baseline is the
+pre-1.5 implementation, not the set of functions currently present on this branch.
+A home/site main-router trial (DHCP/DNS, NAT and IPv6) is the first live-use
+milestone, not a reduction of the final scope. Keep other features, platforms
+and their regressions in the completion criteria; do not silently drop or defer
+them to declare the whole task complete. KISS and robustness are the highest engineering priorities.
 Judge completion by forwarding, peer/client results, withdrawal, failure handling,
 and recovery. Code volume, coverage, reports, and passing unit tests are supporting
 evidence, not proof that a router function works.

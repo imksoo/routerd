@@ -12,6 +12,42 @@ are explicitly not required. Cutover uses rewritten config and a fresh chosen DB
 there is no old-format migration project. Existing features are not implicitly
 removed. A new package/process/framework is justified only by the feature's needs.
 
+## Completion and first live-use milestone
+
+The final goal is preservation of **all existing routerd 1.0 functions**, with
+routerd 1.5 ready for actual use. Compare against the pre-1.5 implementation at
+the baseline above, including resource kinds, caller behavior, commands,
+platform support, examples, tests and operational procedures. A renamed or
+replaced implementation must demonstrate the same useful function. Configuration
+and database format changes remain allowed; functional removal is not.
+
+The first live-use configuration is a home/site main router with DHCP/DNS,
+IPv4 NAT and IPv6. Its admission checks are:
+
+- Clean package installation and startup through the actual service manager,
+  with management access independent of the tested WAN/LAN.
+- Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
+  IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
+  upstream mode selected for the actual deployment.
+- Upstream loss/return, lease renewal/expiry and prefix changes, process restart,
+  host reboot and interrupted configuration changes without manual repair of
+  the product's state. Check withdrawal and absence of traffic leaks as well as
+  successful traffic.
+- Configuration rejection, replacement and withdrawal; an exercised return to
+  the previous working router. Because 1.5 changes configuration/database formats,
+  binary-only rollback must not be assumed to restore 1.0 service.
+- The complete local regression gate remains passing. Newly discovered failures
+  stay open until reproduced, repaired and rechecked; a limited trial cannot
+  reclassify other features as unnecessary.
+
+Passing these checks permits a proposal for a bounded real-use trial, not a
+claim that the whole revision is complete. Continue the full 1.0 feature audit,
+implementation and qualification after that milestone. Production cutover,
+release and main merge remain separate authorization boundaries. Work through
+routine repairs and authorized isolated-VM checks without requesting a new task
+for each failure. Preserve small checkpoints remotely, and keep reproducible
+procedures and verdicts rather than permanent raw-log bundles.
+
 ## Work sequence
 
 1. **Health to PBR (initial implementation).** Decode current status at its
