@@ -4,11 +4,14 @@
 
 package main
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 type packetSocket struct{}
 
-func openPacketSocket(ifname string) (*packetSocket, error) {
+func openPacketSocket(_ context.Context, ifname string) (*packetSocket, error) {
 	return nil, fmt.Errorf("RA observer is only implemented on Linux; interface %s cannot be observed", ifname)
 }
 

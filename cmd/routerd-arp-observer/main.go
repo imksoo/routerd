@@ -310,7 +310,7 @@ func daemonCommand(args []string) error {
 
 func (d *daemon) observe(ctx context.Context) {
 	for ctx.Err() == nil {
-		socket, err := openPacketSocket(d.opts.ifname)
+		socket, err := openPacketSocket(ctx, d.opts.ifname)
 		if err != nil {
 			d.setObserverError(err)
 			select {
