@@ -101,6 +101,13 @@ func TestPolicySourceReadFailureCannotChooseFallbackOrCleanUp(t *testing.T) {
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.EgressRoutePolicySpec{Mode: "mark", Candidates: []api.EgressRoutePolicyCandidate{candidate}}},
 			}}}
+			if field == "health" {
+				router.Spec.Resources = append(router.Spec.Resources, api.Resource{
+					TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
+					Metadata: api.ObjectMeta{Name: "health"},
+					Spec:     api.HealthCheckSpec{Target: "192.0.2.1"},
+				})
+			}
 			store := unavailableSourceStore{mapStore: mapStore{}, failure: failure, healthFailure: field == "health"}
 			var commands []string
 			controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux, PolicyPath: filepath.Join(t.TempDir(), "policy.nft"), DefaultRoutePath: filepath.Join(t.TempDir(), "default.nft"), CommandOutput: func(_ context.Context, command string, args ...string) ([]byte, error) {
