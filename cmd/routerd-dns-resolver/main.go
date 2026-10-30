@@ -457,8 +457,8 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
 	}
 	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
-		// EDNS is negotiated on this hop. Without it the UDP limit is512;
-		// smaller advertisements are also interpreted as512 (RFC6891§6.2.3).
+		// EDNS is negotiated on this hop. Without it the UDP limit is 512;
+		// smaller advertisements also mean 512 (RFC 6891, section 6.2.3).
 		const maxUDPPayload = 65507 // IPv4's largest usable UDP payload.
 		limit := dns.MinMsgSize
 		if opt := req.IsEdns0(); opt != nil {

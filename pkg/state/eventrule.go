@@ -22,6 +22,10 @@ var ErrEventRuleHistoryGap = errors.New("EventRule input history is no longer av
 
 const maxEventRuleCheckpointBytes = 8 << 20
 
+// EventRuleJournal exposes the concrete journal behind status decorators. It
+// establishes bus identity without introducing a second event-store registry.
+func (s *SQLiteStore) EventRuleJournal() *SQLiteStore { return s }
+
 type EventRuleDefinition struct{ Name, Digest string }
 type EventRuleTimer struct {
 	Due   time.Time             `json:"due"`
@@ -264,7 +268,7 @@ func writeEventRuleObject(ctx context.Context, tx *sql.Tx, generation int64, now
 // CommitEventRule owns the checkpoint, sole cursor, public result and both
 // required output/status journal entries in one SQLite transaction. The builder
 // is the existing pure status-notification collaborator; it cannot call Store.
-func (s *SQLiteStore) CommitEventRule(ctx context.Context, expected EventRuleCheckpoint, next EventRuleCheckpoint, output *daemonapi.DaemonEvent, atTip bool, build StatusEventBuilder) (EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
+func (s *SQLiteStore) CommitEventRule(ctx context.Context, expected EventRuleCheckpoint, next EventRuleCheckpoint, output *daemonapi.DaemonEvent, atTip bool, metadata map[string]any, build StatusEventBuilder) (EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -303,7 +307,11 @@ func (s *SQLiteStore) CommitEventRule(ctx context.Context, expected EventRuleChe
 	if _, err := decodeEventRuleCheckpoint(string(data)); err != nil {
 		return next, nil, err
 	}
-	status := map[string]any{"phase": "Active", "fireCount": next.FireCount, "warningCount": next.WarningCount}
+	status := make(map[string]any, len(metadata)+4)
+	for key, value := range metadata {
+		status[key] = value
+	}
+	status["phase"], status["fireCount"], status["warningCount"] = "Active", next.FireCount, next.WarningCount
 	if !next.LastFiredAt.IsZero() {
 		status["lastFiredAt"] = next.LastFiredAt.UTC().Format(time.RFC3339Nano)
 	}

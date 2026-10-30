@@ -96,8 +96,8 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 	if err != nil {
 		return err
 	}
-	acknowledged := true
-	defer func() { result = errors.Join(result, owner.finish(acknowledged)) }()
+	nativeStarted := false
+	defer func() { result = errors.Join(result, owner.finish(!nativeStarted)) }()
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
 		return fmt.Errorf("create socket directory: %w", err)
 	}
@@ -108,7 +108,11 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 	_ = os.Remove(controlSocketPath)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	acknowledged = false
+	// GoBGP starts its private gRPC listener goroutine in the constructor,
+	// without exposing a join. Once started, keep singleton ownership until
+	// OS exit even after normal Stop; an unobserved listener cannot authorize
+	// another instance in this process.
+	nativeStarted = true
 	server := gobgpserver.NewBgpServer(gobgpserver.GrpcListenAddress("unix://" + socketPath))
 	coreDone := make(chan struct{})
 	go func() {
@@ -117,7 +121,7 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 	}()
 	var control *http.Server
 	defer func() {
-		acknowledged = stopBGPDaemon(control, func() {
+		acknowledged := stopBGPDaemon(control, func() {
 			// The management round trip also handles cancellation before Serve
 			// was scheduled: Stop alone would return "not running" too early.
 			_, _ = server.GetBgp(context.Background(), &gobgpapi.GetBgpRequest{})

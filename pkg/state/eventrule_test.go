@@ -53,7 +53,7 @@ func TestEventRuleCheckpointCursorStatusAndOutputCommitTogether(t *testing.T) {
 	next := cp
 	next.Cursor = first
 	next.Correlations = map[string]EventRuleCorrelation{"key": {Count: 1, LastSeen: time.Now().UTC()}}
-	cp, events, err := store.CommitEventRule(ctx, cp, next, nil, false, nil)
+	cp, events, err := store.CommitEventRule(ctx, cp, next, nil, false, nil, nil)
 	if err != nil || len(events) != 0 {
 		t.Fatalf("partial count commit: %+v %v", events, err)
 	}
@@ -83,7 +83,7 @@ func TestEventRuleCheckpointCursorStatusAndOutputCommitTogether(t *testing.T) {
 	if _, err := fault.Exec(`CREATE TRIGGER fail_rule_output BEFORE INSERT ON events WHEN NEW.topic='routerd.rule.output' BEGIN SELECT RAISE(FAIL,'output fault'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CommitEventRule(ctx, cp, next, &output, false, nil); err == nil {
+	if _, _, err := store.CommitEventRule(ctx, cp, next, &output, false, nil, nil); err == nil {
 		t.Fatal("output failure was swallowed")
 	}
 	current, err := store.ReadEventRule(ctx, "count")
@@ -97,11 +97,11 @@ func TestEventRuleCheckpointCursorStatusAndOutputCommitTogether(t *testing.T) {
 	if _, err := fault.Exec(`DROP TRIGGER fail_rule_output`); err != nil {
 		t.Fatal(err)
 	}
-	committed, events, err := store.CommitEventRule(ctx, cp, next, &output, false, nil)
+	committed, events, err := store.CommitEventRule(ctx, cp, next, &output, false, nil, nil)
 	if err != nil || len(events) != 1 || events[0].Cursor == "" {
 		t.Fatalf("retry result: %+v %v", events, err)
 	}
-	if _, _, err := store.CommitEventRule(ctx, cp, next, &output, false, nil); !errors.Is(err, ErrEventRuleConflict) {
+	if _, _, err := store.CommitEventRule(ctx, cp, next, &output, false, nil, nil); !errors.Is(err, ErrEventRuleConflict) {
 		t.Fatalf("lost-ACK replay was accepted: %v", err)
 	}
 	current, err = store.ReadEventRule(ctx, "count")
@@ -133,7 +133,7 @@ func TestEventRuleTimerRequiresInputTipAndRetentionIsNotAbsence(t *testing.T) {
 	next := cp
 	next.FireCount = 1
 	out := eventRuleOutput("absence")
-	if _, _, err := s.CommitEventRule(ctx, cp, next, &out, true, nil); !errors.Is(err, ErrEventRuleConflict) {
+	if _, _, err := s.CommitEventRule(ctx, cp, next, &out, true, nil, nil); !errors.Is(err, ErrEventRuleConflict) {
 		t.Fatalf("timer skipped unread expected input: %v", err)
 	}
 	if _, err := s.db.Exec(`DELETE FROM events WHERE id=?`, input); err != nil {

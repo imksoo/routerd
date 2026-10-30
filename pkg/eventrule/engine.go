@@ -4,10 +4,10 @@ package eventrule
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,704 +15,373 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/eventconsumer"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
-	OperatorAllOf    = "all_of"
-	OperatorAnyOf    = "any_of"
-	OperatorSequence = "sequence"
-	OperatorWindow   = "window"
-	OperatorAbsence  = "absence"
-	OperatorThrottle = "throttle"
-	OperatorDebounce = "debounce"
-	OperatorCount    = "count"
-
-	PhaseActive = "Active"
-
+	OperatorAllOf          = "all_of"
+	OperatorAnyOf          = "any_of"
+	OperatorSequence       = "sequence"
+	OperatorWindow         = "window"
+	OperatorAbsence        = "absence"
+	OperatorThrottle       = "throttle"
+	OperatorDebounce       = "debounce"
+	OperatorCount          = "count"
+	PhaseActive            = "Active"
 	maxRuleCorrelationKeys = 4096
 )
 
+// Store is the actual public-status owner around one concrete SQLite journal.
+// Its commit binds declared ownership metadata to checkpoint/result publication.
 type Store interface {
-	SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error
-	ObjectStatus(apiVersion, kind, name string) map[string]any
+	EventRuleJournal() *routerstate.SQLiteStore
+	CommitRule(context.Context, routerstate.EventRuleCheckpoint, routerstate.EventRuleCheckpoint, *daemonapi.DaemonEvent, bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error)
 }
 
 type Controller struct {
-	Router *api.Router
-	Bus    *bus.Bus
-	Store  Store
-	Events eventconsumer.Store
-	Now    func() time.Time
-	Logger *slog.Logger
-	Poll   time.Duration
-
+	Router        *api.Router
+	Bus           *bus.Bus
+	Store         Store
+	Now           func() time.Time
+	Logger        *slog.Logger
+	Poll          time.Duration
 	mu            sync.Mutex
-	state         map[string]*ruleState
 	prepared      bool
-	hasRules      bool
+	rules         []preparedRule
 	initialCursor int64
+	nextWake      time.Time
 }
 
-type preparedEventStore interface {
-	eventconsumer.Store
-	EventJournalTip(context.Context) (int64, error)
-	InitializeEventConsumerCursor(context.Context, string, int64) error
+type preparedRule struct {
+	resource                          api.Resource
+	spec                              api.EventRuleSpec
+	definition                        routerstate.EventRuleDefinition
+	topics                            []string
+	duration, window, quiet, interval time.Duration
 }
 
-// Prepare captures the input boundary before generation bootstrap. It neither
-// creates a cursor nor starts a rule which could publish candidate effects.
+// Prepare validates static work and captures input position without creating
+// consumption state. The selected generation alone calls Start.
 func (c *Controller) Prepare(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.prepared {
 		return ctx.Err()
 	}
-	if c.Router == nil {
-		c.prepared = true
-		return nil
+	var rules []preparedRule
+	if c.Router != nil {
+		for _, resource := range c.Router.Spec.Resources {
+			if resource.Kind != "EventRule" {
+				continue
+			}
+			spec, err := resource.EventRuleSpec()
+			if err != nil {
+				return err
+			}
+			r, err := prepareRule(resource, spec)
+			if err != nil {
+				return err
+			}
+			rules = append(rules, r)
+		}
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "EventRule" {
-			continue
+	if c.Store == nil || c.Store.EventRuleJournal() == nil {
+		if len(rules) > 0 {
+			return fmt.Errorf("EventRule requires its transactional journal")
 		}
-		c.hasRules = true
-		journal, ok := c.Events.(preparedEventStore)
-		if !ok {
-			return fmt.Errorf("EventRule requires a preparable event journal")
-		}
-		tip, err := journal.EventJournalTip(ctx)
-		if err != nil {
-			return err
-		}
-		c.initialCursor = tip
 		c.prepared = true
-		return nil
+		return ctx.Err()
 	}
-	c.prepared = true
+	if len(rules) > 0 && (c.Bus == nil || !c.Bus.PersistsTo(c.Store.EventRuleJournal())) {
+		return fmt.Errorf("EventRule status and bus must share the same journal")
+	}
+	tip, err := c.Store.EventRuleJournal().EventJournalTip(ctx)
+	if err != nil {
+		return err
+	}
+	c.rules, c.initialCursor, c.prepared = rules, tip, true
 	return ctx.Err()
 }
 
-type ruleState struct {
-	latest       map[string]daemonapi.DaemonEvent
-	sequence     map[string]int
-	windows      map[string][]time.Time
-	lastEmit     map[string]time.Time
-	counts       map[string]int
-	absence      map[string]*time.Timer
-	debounce     map[string]*time.Timer
-	lastSeen     map[string]time.Time
-	fireCount    int
-	lastFiredAt  time.Time
-	warningCount int
+func prepareRule(resource api.Resource, spec api.EventRuleSpec) (preparedRule, error) {
+	r := preparedRule{resource: resource, spec: spec}
+	switch spec.Pattern.Operator {
+	case OperatorAllOf, OperatorAnyOf, OperatorSequence, OperatorWindow, OperatorAbsence, OperatorThrottle, OperatorDebounce, OperatorCount:
+	default:
+		return r, fmt.Errorf("%s: unsupported EventRule operator", resource.ID())
+	}
+	if spec.Pattern.Rate != 0 {
+		return r, fmt.Errorf("%s: EventRule rate is not implemented; use interval", resource.ID())
+	}
+	if spec.Emit.Topic == "" || spec.Pattern.Threshold < 0 {
+		return r, fmt.Errorf("%s: invalid EventRule output/threshold", resource.ID())
+	}
+	for _, value := range []string{spec.Pattern.Duration, spec.Pattern.Window, spec.Pattern.Quiet, spec.Pattern.Interval} {
+		if value != "" {
+			d, err := time.ParseDuration(value)
+			if err != nil || d < 0 {
+				return r, fmt.Errorf("%s: invalid EventRule duration %q", resource.ID(), value)
+			}
+		}
+	}
+	r.topics = append(r.topics, spec.Pattern.Topics...)
+	if spec.Pattern.Topic != "" {
+		r.topics = append(r.topics, spec.Pattern.Topic)
+	}
+	if spec.Pattern.Trigger != "" {
+		r.topics = append(r.topics, spec.Pattern.Trigger)
+	}
+	if len(r.topics) == 0 {
+		return r, fmt.Errorf("%s: EventRule requires an input or absence trigger", resource.ID())
+	}
+	if spec.Pattern.CorrelateBy != "" {
+		_, valid := correlationKey(daemonapi.DaemonEvent{Attributes: map[string]string{}, Resource: &daemonapi.ResourceRef{}}, api.EventRulePatternSpec{CorrelateBy: spec.Pattern.CorrelateBy, AllowMissingCorrelation: true})
+		if !valid {
+			return r, fmt.Errorf("%s: invalid EventRule correlation", resource.ID())
+		}
+	}
+	duration := func(value string, fallback time.Duration) time.Duration {
+		if value == "" {
+			return fallback
+		}
+		d, _ := time.ParseDuration(value)
+		return d
+	}
+	r.duration = duration(spec.Pattern.Duration, time.Minute)
+	r.window = duration(spec.Pattern.Window, r.duration)
+	r.interval = duration(spec.Pattern.Interval, r.duration)
+	r.quiet = duration(spec.Pattern.Quiet, duration(spec.Pattern.Duration, time.Second))
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return r, err
+	}
+	r.definition = routerstate.EventRuleDefinition{Name: resource.Metadata.Name, Digest: fmt.Sprintf("%x", sha256.Sum256(data))}
+	return r, nil
 }
 
-type Engine interface {
-	Reconcile(ctx context.Context, rule api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error)
-}
-
-type pendingEvent struct {
-	resource api.Resource
-	event    daemonapi.DaemonEvent
-}
-
-// Start returns an acknowledgement that the consumer and its owned timers have
-// stopped. The generation owner waits for it before publishing a replacement.
+// Start initializes or resumes the selected rules, then owns exactly one loop
+// and timer. Cancellation acknowledgement means no rule callback remains live.
 func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 	done := make(chan struct{})
 	if err := c.Prepare(ctx); err != nil {
 		close(done)
 		return done, err
 	}
-	if c.Bus == nil || c.Store == nil || c.Events == nil {
+	if c.Store == nil || c.Store.EventRuleJournal() == nil {
 		close(done)
-		if !c.hasRules {
-			return done, nil
-		}
-		return done, fmt.Errorf("EventRule requires an event bus and status store")
+		return done, nil
 	}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "EventRule" {
-			continue
-		}
-		journal := c.Events.(preparedEventStore) // Prepare verified the actual boundary.
-		if err := journal.InitializeEventConsumerCursor(ctx, "eventrule/engine", c.initialCursor); err != nil {
+	var definitions []routerstate.EventRuleDefinition
+	for _, r := range c.rules {
+		definitions = append(definitions, r.definition)
+	}
+	if err := c.Store.EventRuleJournal().InitializeEventRules(ctx, definitions, c.initialCursor); err != nil {
+		close(done)
+		return done, err
+	}
+	for _, r := range c.rules {
+		cp, err := c.Store.EventRuleJournal().ReadEventRule(ctx, r.definition.Name)
+		if err != nil {
 			close(done)
 			return done, err
 		}
-		break
+		if err := validateCheckpoint(r, cp); err != nil {
+			close(done)
+			return done, err
+		}
 	}
-	c.init()
-	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
-	poll := c.Poll
-	if poll <= 0 {
-		poll = time.Second
+	if len(c.rules) == 0 {
+		close(done)
+		return done, nil
 	}
+	ch, unsubscribe := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
 	go func() {
 		defer close(done)
-		defer c.StopTimers()
-		ticker := time.NewTicker(poll)
-		defer ticker.Stop()
-		wake := make(chan struct{}, 1)
+		defer unsubscribe()
+		timer := time.NewTimer(0)
+		defer timer.Stop()
 		var retry eventconsumer.Backoff
-		wake <- struct{}{}
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case _, ok := <-ch:
 				if !ok {
 					return
 				}
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
-			case <-ticker.C:
-				select {
-				case wake <- struct{}{}:
-				default:
-				}
-			case <-wake:
-				if !retry.Ready() {
-					continue
-				}
+			case <-timer.C:
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if retry.Ready() {
 				if err := c.drainStoredEvents(ctx); err != nil {
 					retry.Failure()
 					if ctx.Err() == nil && c.Logger != nil {
-						c.Logger.Warn("event rule reconcile failed", "error", err)
+						c.Logger.Warn("event rule checkpoint failed", "error", err)
 					}
 				} else {
 					retry.Success()
 				}
-			case <-ctx.Done():
-				return
 			}
+			poll := c.Poll
+			if poll <= 0 {
+				poll = time.Second
+			}
+			c.mu.Lock()
+			next := c.nextWake
+			c.mu.Unlock()
+			if !next.IsZero() {
+				poll = min(poll, max(time.Millisecond, next.Sub(c.now())))
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(poll)
 		}
 	}()
 	return done, nil
 }
 
-func (c *Controller) drainStoredEvents(ctx context.Context) error {
-	return eventconsumer.Drain(ctx, c.Events, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
-		if event.Daemon.Kind == "routerd-eventrule" {
-			return nil
-		}
-		return c.Reconcile(ctx, event)
-	})
-}
-
-func (c *Controller) Reconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	c.init()
-	c.pruneRemovedRules()
-	var pending []pendingEvent
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "EventRule" {
-			continue
-		}
-		events, err := c.reconcileRule(ctx, resource, event)
-		if err != nil {
-			if c.Logger != nil {
-				c.Logger.Warn("event rule configuration is invalid; skipping rule", "rule", resource.Metadata.Name, "error", err)
-			}
-			continue
-		}
-		for _, emitted := range events {
-			pending = append(pending, pendingEvent{resource: resource, event: emitted})
-		}
-	}
-	for _, item := range pending {
-		if err := c.publish(ctx, item.resource, item.event); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Controller) reconcileRule(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
-	_ = ctx
-	spec, err := resource.EventRuleSpec()
-	if err != nil {
-		return nil, err
-	}
-	key, ok := correlationKey(event, spec.Pattern)
-	if !ok {
-		c.warn(resource.Metadata.Name)
-		return nil, nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	state := c.ruleStateLocked(resource.Metadata.Name)
-	now := c.eventTime(event)
-	c.noteCorrelationLocked(state, key, now)
-	var out []daemonapi.DaemonEvent
-	switch spec.Pattern.Operator {
-	case OperatorAllOf:
-		out = c.evalAllOf(resource, spec, state, key, event)
-	case OperatorAnyOf:
-		if eventMatchesAny(spec.Pattern, event.Type) {
-			out = []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
-		}
-	case OperatorSequence:
-		out = c.evalSequence(resource, spec, state, key, event)
-	case OperatorWindow:
-		out = c.evalWindow(resource, spec, state, key, event, now)
-	case OperatorAbsence:
-		c.evalAbsence(ctx, resource, spec, state, key, event)
-	case OperatorThrottle:
-		out = c.evalThrottle(resource, spec, state, key, event, now)
-	case OperatorDebounce:
-		c.evalDebounce(ctx, resource, spec, state, key, event)
-	case OperatorCount:
-		out = c.evalCount(resource, spec, state, key, event)
-	}
-	return out, nil
-}
-
-func (c *Controller) evalAllOf(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) []daemonapi.DaemonEvent {
-	topics := inputTopics(spec.Pattern)
-	if !topicInList(event.Type, topics) {
-		return nil
-	}
-	slot := key + "\x00" + event.Type
-	state.latest[slot] = event
-	for _, topic := range topics {
-		if _, ok := state.latest[key+"\x00"+topic]; !ok {
-			return nil
-		}
-	}
-	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
-}
-
-func (c *Controller) evalSequence(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) []daemonapi.DaemonEvent {
-	topics := inputTopics(spec.Pattern)
-	if len(topics) == 0 {
-		return nil
-	}
-	idx := state.sequence[key]
-	if event.Type == topics[idx] {
-		idx++
-		if idx == len(topics) {
-			state.sequence[key] = 0
-			return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
-		}
-		state.sequence[key] = idx
-		return nil
-	}
-	if spec.Pattern.Strict && topicInList(event.Type, topics) {
-		state.sequence[key] = 0
-	}
-	return nil
-}
-
-func (c *Controller) evalWindow(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent, now time.Time) []daemonapi.DaemonEvent {
-	if !eventMatchesAny(spec.Pattern, event.Type) {
-		return nil
-	}
-	window := durationOr(spec.Pattern.Window, durationOr(spec.Pattern.Duration, time.Minute))
-	threshold := spec.Pattern.Threshold
-	if threshold == 0 {
-		threshold = 1
-	}
-	cutoff := now.Add(-window)
-	events := append(state.windows[key], now)
-	kept := events[:0]
-	for _, at := range events {
-		if !at.Before(cutoff) {
-			kept = append(kept, at)
-		}
-	}
-	state.windows[key] = kept
-	if len(kept) < threshold {
-		return nil
-	}
-	delete(state.windows, key)
-	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, len(kept))}
-}
-
-func (c *Controller) evalAbsence(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
-	if spec.Pattern.Expected != "" && bus.MatchTopic(spec.Pattern.Expected, event.Type) {
-		if timer := state.absence[key]; timer != nil {
-			timer.Stop()
-			delete(state.absence, key)
-		}
-		return
-	}
-	trigger := spec.Pattern.Trigger
-	if trigger == "" {
-		trigger = spec.Pattern.Topic
-	}
-	if trigger == "" || !bus.MatchTopic(trigger, event.Type) {
-		return
-	}
-	if timer := state.absence[key]; timer != nil {
-		timer.Stop()
-	}
-	delay := durationOr(spec.Pattern.Duration, time.Minute)
-	var timer *time.Timer
-	timer = time.AfterFunc(delay, func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		current := c.ruleStateLocked(resource.Metadata.Name)
-		if current.absence[key] != timer || ctx.Err() != nil {
-			return
-		}
-		delete(current.absence, key)
-		emitted := c.emitEvent(resource, spec, event, key, 0)
-		if err := c.publishLocked(ctx, resource, emitted); err != nil && ctx.Err() == nil && c.Logger != nil {
-			c.Logger.Warn("event rule absence publication failed", "rule", resource.Metadata.Name, "error", err)
-		}
-	})
-	state.absence[key] = timer
-}
-
-func (c *Controller) evalThrottle(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent, now time.Time) []daemonapi.DaemonEvent {
-	if !eventMatchesAny(spec.Pattern, event.Type) {
-		return nil
-	}
-	interval := durationOr(spec.Pattern.Interval, durationOr(spec.Pattern.Duration, time.Minute))
-	last := state.lastEmit[key]
-	if !last.IsZero() && now.Sub(last) < interval {
-		return nil
-	}
-	state.lastEmit[key] = now
-	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, 0)}
-}
-
-func (c *Controller) evalDebounce(ctx context.Context, resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) {
-	if !eventMatchesAny(spec.Pattern, event.Type) {
-		return
-	}
-	if timer := state.debounce[key]; timer != nil {
-		timer.Stop()
-	}
-	quiet := durationOr(spec.Pattern.Quiet, durationOr(spec.Pattern.Duration, time.Second))
-	var timer *time.Timer
-	timer = time.AfterFunc(quiet, func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		current := c.ruleStateLocked(resource.Metadata.Name)
-		if current.debounce[key] != timer || ctx.Err() != nil {
-			return
-		}
-		delete(current.debounce, key)
-		emitted := c.emitEvent(resource, spec, event, key, 0)
-		if err := c.publishLocked(ctx, resource, emitted); err != nil && ctx.Err() == nil && c.Logger != nil {
-			c.Logger.Warn("event rule debounce publication failed", "rule", resource.Metadata.Name, "error", err)
-		}
-	})
-	state.debounce[key] = timer
-}
-
-func (c *Controller) evalCount(resource api.Resource, spec api.EventRuleSpec, state *ruleState, key string, event daemonapi.DaemonEvent) []daemonapi.DaemonEvent {
-	if !eventMatchesAny(spec.Pattern, event.Type) {
-		return nil
-	}
-	state.counts[key]++
-	threshold := spec.Pattern.Threshold
-	if threshold == 0 {
-		threshold = 1
-	}
-	if state.counts[key] < threshold {
-		return nil
-	}
-	count := state.counts[key]
-	delete(state.counts, key)
-	return []daemonapi.DaemonEvent{c.emitEvent(resource, spec, event, key, count)}
-}
-
-func (c *Controller) emitEvent(resource api.Resource, spec api.EventRuleSpec, input daemonapi.DaemonEvent, correlation string, count int) daemonapi.DaemonEvent {
-	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-eventrule", Kind: "routerd-eventrule", Instance: resource.Metadata.Name}, spec.Emit.Topic, daemonapi.SeverityInfo)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EventRule", Name: resource.Metadata.Name}
-	event.Reason = "EventRuleFired"
-	event.Message = "event rule fired"
-	event.Attributes = renderAttributes(spec.Emit.Attributes, input, correlation, count)
-	if correlation != "" {
-		event.Attributes["correlation"] = correlation
-	}
-	return event
-}
-
-func (c *Controller) publish(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.publishLocked(ctx, resource, event)
-}
-
-// The caller holds mu through effects so StopTimers acknowledges any callback
-// that already fired, rather than only stopping a timer that has left the map.
-func (c *Controller) publishLocked(ctx context.Context, resource api.Resource, event daemonapi.DaemonEvent) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	state := c.ruleStateLocked(resource.Metadata.Name)
-	state.fireCount++
-	state.lastFiredAt = c.eventTime(event)
-	status := map[string]any{
-		"phase":       PhaseActive,
-		"lastFiredAt": state.lastFiredAt.UTC().Format(time.RFC3339Nano),
-		"fireCount":   state.fireCount,
-	}
-	if state.warningCount > 0 {
-		status["warningCount"] = state.warningCount
-	}
-	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", resource.Metadata.Name, status); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return c.Bus.Publish(ctx, event)
-}
-
-func (c *Controller) warn(name string) {
-	c.mu.Lock()
-	state := c.ruleStateLocked(name)
-	state.warningCount++
-	status := map[string]any{"phase": PhaseActive, "warningCount": state.warningCount}
-	c.mu.Unlock()
-	_ = c.Store.SaveObjectStatus(api.NetAPIVersion, "EventRule", name, status)
-}
-
-func (c *Controller) ruleState(name string) *ruleState {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.ruleStateLocked(name)
-}
-
-func (c *Controller) ruleStateLocked(name string) *ruleState {
-	if c.state == nil {
-		c.state = map[string]*ruleState{}
-	}
-	state := c.state[name]
-	if state == nil {
-		state = &ruleState{
-			latest:   map[string]daemonapi.DaemonEvent{},
-			sequence: map[string]int{},
-			windows:  map[string][]time.Time{},
-			lastEmit: map[string]time.Time{},
-			counts:   map[string]int{},
-			absence:  map[string]*time.Timer{},
-			debounce: map[string]*time.Timer{},
-			lastSeen: map[string]time.Time{},
-		}
-		c.state[name] = state
-	}
-	return state
-}
-
-func (c *Controller) init() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.state == nil {
-		c.state = map[string]*ruleState{}
-	}
-}
-
-func (c *Controller) pruneRemovedRules() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.state) == 0 || c.Router == nil {
-		return
-	}
-	present := map[string]struct{}{}
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind == "EventRule" {
-			present[resource.Metadata.Name] = struct{}{}
-		}
-	}
-	for name, state := range c.state {
-		if _, ok := present[name]; ok {
-			continue
-		}
-		stopRuleTimers(state)
-		delete(c.state, name)
-	}
-}
-
-func (c *Controller) eventTime(event daemonapi.DaemonEvent) time.Time {
-	if !event.Time.IsZero() {
-		return event.Time
-	}
+func (c *Controller) now() time.Time {
 	if c.Now != nil {
-		return c.Now()
+		return c.Now().UTC()
 	}
 	return time.Now().UTC()
 }
 
-func eventMatchesAny(pattern api.EventRulePatternSpec, topic string) bool {
-	for _, candidate := range inputTopics(pattern) {
-		if bus.MatchTopic(candidate, topic) {
-			return true
-		}
-	}
-	return false
-}
-
-func inputTopics(pattern api.EventRulePatternSpec) []string {
-	var topics []string
-	topics = append(topics, pattern.Topics...)
-	if pattern.Topic != "" {
-		topics = append(topics, pattern.Topic)
-	}
-	if pattern.Trigger != "" {
-		topics = append(topics, pattern.Trigger)
-	}
-	return topics
-}
-
-func topicInList(topic string, topics []string) bool {
-	for _, candidate := range topics {
-		if candidate == topic {
-			return true
-		}
-	}
-	return false
-}
-
-func correlationKey(event daemonapi.DaemonEvent, pattern api.EventRulePatternSpec) (string, bool) {
-	path := strings.TrimSpace(pattern.CorrelateBy)
-	if path == "" {
-		return "default", true
-	}
-	switch {
-	case strings.HasPrefix(path, "attributes."):
-		key := strings.TrimPrefix(path, "attributes.")
-		value := event.Attributes[key]
-		if value == "" && !pattern.AllowMissingCorrelation {
-			return "", false
-		}
-		return value, true
-	case path == "resource.name":
-		if event.Resource == nil {
-			return "", pattern.AllowMissingCorrelation
-		}
-		return event.Resource.Name, true
-	case path == "resource.kind":
-		if event.Resource == nil {
-			return "", pattern.AllowMissingCorrelation
-		}
-		return event.Resource.Kind, true
-	case path == "resource.apiVersion":
-		if event.Resource == nil {
-			return "", pattern.AllowMissingCorrelation
-		}
-		return event.Resource.APIVersion, true
-	case path == "daemon.instance":
-		if event.Daemon.Instance == "" && !pattern.AllowMissingCorrelation {
-			return "", false
-		}
-		return event.Daemon.Instance, true
-	case path == "daemon.kind":
-		if event.Daemon.Kind == "" && !pattern.AllowMissingCorrelation {
-			return "", false
-		}
-		return event.Daemon.Kind, true
-	default:
-		return "", false
-	}
-}
-
-func renderAttributes(template map[string]string, input daemonapi.DaemonEvent, correlation string, count int) map[string]string {
-	out := map[string]string{}
-	for key, value := range template {
-		out[key] = renderValue(value, input, correlation, count)
-	}
-	if count > 0 {
-		out["count"] = strconv.Itoa(count)
-	}
-	return out
-}
-
-func renderValue(value string, input daemonapi.DaemonEvent, correlation string, count int) string {
-	replacements := map[string]string{
-		"${event.type}":  input.Type,
-		"${correlation}": correlation,
-		"${count}":       strconv.Itoa(count),
-	}
-	if input.Resource != nil {
-		replacements["${resource.name}"] = input.Resource.Name
-		replacements["${resource.kind}"] = input.Resource.Kind
-		replacements["${resource.apiVersion}"] = input.Resource.APIVersion
-	}
-	for key, attr := range input.Attributes {
-		replacements["${attributes."+key+"}"] = attr
-	}
-	for old, replacement := range replacements {
-		value = strings.ReplaceAll(value, old, replacement)
-	}
-	return value
-}
-
-func durationOr(value string, fallback time.Duration) time.Duration {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func (c *Controller) StopTimers() {
+func (c *Controller) drainStoredEvents(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, state := range c.state {
-		stopRuleTimers(state)
-	}
-}
-
-func stopRuleTimers(state *ruleState) {
-	for _, timer := range state.absence {
-		timer.Stop()
-	}
-	clear(state.absence)
-	for _, timer := range state.debounce {
-		timer.Stop()
-	}
-	clear(state.debounce)
-}
-
-func (c *Controller) noteCorrelationLocked(state *ruleState, key string, seen time.Time) {
-	if state.lastSeen == nil {
-		state.lastSeen = map[string]time.Time{}
-	}
-	state.lastSeen[key] = seen
-	for len(state.lastSeen) > maxRuleCorrelationKeys {
-		oldestKey := ""
-		var oldest time.Time
-		for candidate, at := range state.lastSeen {
-			if oldestKey == "" || at.Before(oldest) {
-				oldestKey = candidate
-				oldest = at
+	c.nextWake = time.Time{}
+	for _, r := range c.rules {
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			cp, err := c.Store.EventRuleJournal().ReadEventRule(ctx, r.definition.Name)
+			if err != nil {
+				return err
+			}
+			if err := validateCheckpoint(r, cp); err != nil {
+				return err
+			}
+			inputs, _, err := c.Store.EventRuleJournal().EventRuleInputs(ctx, cp.Cursor)
+			if err != nil {
+				return err
+			}
+			if len(inputs) > 0 {
+				for _, input := range inputs {
+					next := copyCheckpoint(cp)
+					var output *daemonapi.DaemonEvent
+					if input.SourceKind != "routerd-eventrule" {
+						output, err = evaluate(r, &next, eventconsumer.Event(input))
+						if err != nil {
+							return err
+						}
+					}
+					next.Cursor = input.ID
+					cp, err = c.commit(ctx, cp, next, output, false)
+					if err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			now := c.now()
+			key := ""
+			var due time.Time
+			for k, state := range cp.Correlations {
+				if state.Timer != nil && (due.IsZero() || state.Timer.Due.Before(due)) {
+					key, due = k, state.Timer.Due
+				}
+			}
+			if due.IsZero() {
+				break
+			}
+			if due.After(now) {
+				if c.nextWake.IsZero() || due.Before(c.nextWake) {
+					c.nextWake = due
+				}
+				break
+			}
+			next := copyCheckpoint(cp)
+			correlation := next.Correlations[key]
+			input := correlation.Timer.Input
+			correlation.Timer = nil
+			next.Correlations[key] = correlation
+			output := emitEvent(r, input, key, 0)
+			next.FireCount++
+			next.LastFiredAt = now
+			if _, err := c.commit(ctx, cp, next, &output, true); err != nil {
+				return err
 			}
 		}
-		if oldestKey == "" {
-			return
-		}
-		removeCorrelationLocked(state, oldestKey)
 	}
+	return nil
 }
 
-func removeCorrelationLocked(state *ruleState, key string) {
-	delete(state.sequence, key)
-	delete(state.windows, key)
-	delete(state.lastEmit, key)
-	delete(state.counts, key)
-	if timer := state.absence[key]; timer != nil {
-		timer.Stop()
-		delete(state.absence, key)
+func (c *Controller) commit(ctx context.Context, expected, next routerstate.EventRuleCheckpoint, output *daemonapi.DaemonEvent, atTip bool) (routerstate.EventRuleCheckpoint, error) {
+	committed, events, err := c.Store.CommitRule(ctx, expected, next, output, atTip)
+	if err != nil {
+		return expected, err
 	}
-	if timer := state.debounce[key]; timer != nil {
-		timer.Stop()
-		delete(state.debounce, key)
-	}
-	delete(state.lastSeen, key)
-	prefix := key + "\x00"
-	for slot := range state.latest {
-		if strings.HasPrefix(slot, prefix) {
-			delete(state.latest, slot)
+	for _, event := range events {
+		if err := ctx.Err(); err != nil {
+			return committed, err
+		}
+		if err := c.Bus.PublishRecorded(ctx, event); err != nil {
+			return committed, err
 		}
 	}
+	return committed, nil
+}
+
+func copyCheckpoint(cp routerstate.EventRuleCheckpoint) routerstate.EventRuleCheckpoint {
+	next := cp
+	next.Correlations = make(map[string]routerstate.EventRuleCorrelation, len(cp.Correlations))
+	for key, state := range cp.Correlations {
+		copy := state
+		copy.Latest = make(map[string]bool, len(state.Latest))
+		for topic, seen := range state.Latest {
+			copy.Latest[topic] = seen
+		}
+		copy.Window = append([]time.Time(nil), state.Window...)
+		if state.Timer != nil {
+			timer := *state.Timer
+			copy.Timer = &timer
+		}
+		next.Correlations[key] = copy
+	}
+	return next
+}
+
+func validateCheckpoint(r preparedRule, cp routerstate.EventRuleCheckpoint) error {
+	if cp.Definition != r.definition.Digest {
+		return fmt.Errorf("EventRule definition differs from its selected checkpoint")
+	}
+	for _, state := range cp.Correlations {
+		if r.spec.Pattern.Operator == OperatorSequence && state.Sequence >= len(r.topics) {
+			return fmt.Errorf("EventRule sequence checkpoint is out of range")
+		}
+		if state.Timer != nil && r.spec.Pattern.Operator != OperatorAbsence && r.spec.Pattern.Operator != OperatorDebounce {
+			return fmt.Errorf("EventRule has a timer for a non-timer operator")
+		}
+	}
+	return nil
+}
+
+func emitEvent(r preparedRule, input daemonapi.DaemonEvent, correlation string, count int) daemonapi.DaemonEvent {
+	event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd-eventrule", Kind: "routerd-eventrule", Instance: r.resource.Metadata.Name}, r.spec.Emit.Topic, daemonapi.SeverityInfo)
+	event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "EventRule", Name: r.resource.Metadata.Name}
+	event.Reason = "EventRuleFired"
+	event.Message = "event rule fired"
+	event.Attributes = renderAttributes(r.spec.Emit.Attributes, input, correlation, count)
+	if correlation != "" {
+		event.Attributes["correlation"] = correlation
+	}
+	return event
 }

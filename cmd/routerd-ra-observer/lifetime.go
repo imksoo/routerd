@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -21,7 +22,11 @@ func (d *daemon) run(ctx context.Context) (result error) {
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, listener.Close()) }()
+	defer func() {
+		if err := listener.Close(); !errors.Is(err, net.ErrClosed) {
+			result = errors.Join(result, err)
+		}
+	}()
 	defer os.Remove(d.opts.socketPath)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
