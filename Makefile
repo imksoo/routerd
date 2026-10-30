@@ -440,3 +440,7 @@ check-routerd15-policy-native:
 	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1
 	go test ./pkg/apply ./pkg/lifecycle -count=1
 	go vet ./pkg/controller/chain ./pkg/apply ./pkg/lifecycle
+
+.PHONY: check-routerd15-proxy-lifetime
+check-routerd15-proxy-lifetime:
+	python3 -B -m unittest discover -s tools/release-qa-labs/tests -p test_egress_proxy.py -v

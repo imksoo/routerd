@@ -863,6 +863,35 @@ with bounded individual attempts and service-manager backoff for as long as
 necessary; stopping recovery at the admission estimate could leave a much
 larger leak. Review the final bill only after exhaustive zero cleanup.
 
+## Egress proxy lifetime and admission
+
+The run-confined IPv4 CONNECT proxy admits at most 16 active connections. That
+limit includes incomplete headers, DNS, TCP connection setup and established
+tunnels. An excess connection closes immediately; it creates neither a handler
+thread nor a resolver process. A slot becomes available only after its handler
+and any resolver child have exited.
+
+Headers have one 10-second deadline. DNS and all candidate TCP connections share
+a separate 10-second setup budget; tunnel writes have a 10-second bound and
+idle tunnels close after 60 seconds. OS name resolution runs in one owned Python
+child per admitted handler because `getaddrinfo` itself has no cancellation API.
+The resolver returns at most 32 public IPv4 addresses. Timeout or shutdown kills
+and waits for the resolver; it does not leave an uncancellable resolver thread.
+The child inherits the same systemd unit confinement and control group.
+
+Shutdown closes admission, cancels DNS/TCP setup, shuts down both sides of active
+tunnels and joins the non-daemon handlers. Only then does the executable publish
+`stopped`. Repeated stop signals share one shutdown worker. The tracked service's
+10-second stop limit and control-group kill remain the outer supervisor contract.
+Actual systemd confinement and target-host staging still require their existing
+isolated qualification; local socket/process tests do not establish those gates.
+
+Run the focused host-safe regressions with:
+
+```sh
+make check-routerd15-proxy-lifetime
+```
+
 ## Exact pre-paid staging procedure on the selected coordinator
 
 Use a fresh canonical run root and prove exhaustive baseline zero before
