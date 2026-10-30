@@ -19,6 +19,14 @@ import (
 
 const tunnelNativeStatusName = "tunnel-native"
 
+// Listener operations are a per-controller OS boundary. Production uses the
+// IPv4 generic-netlink implementation; unit fixtures never need a host socket.
+type tunnelNativeListenerIO interface {
+	Observe(context.Context, fouListener) (bool, bool, error)
+	Add(context.Context, fouListener) error
+	Delete(context.Context, fouListener) error
+}
+
 // This is the Linux TunnelInterface owner's recovery record. Display status
 // grants no native authority. A pending listener without an ACK remains unknown.
 type tunnelNativeReceipt struct {

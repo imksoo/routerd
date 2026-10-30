@@ -35,6 +35,7 @@ type TunnelInterfaceController struct {
 	SetAliasByIndex func(context.Context, int, string, string, string, string) error
 	DeleteByIndex   func(context.Context, int, string, string, string, string) error
 	ApplyNative     func(context.Context, tunnelNativeReceipt) error
+	NativeListeners tunnelNativeListenerIO
 }
 
 type tunnelDesired struct {

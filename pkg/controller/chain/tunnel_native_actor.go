@@ -360,6 +360,9 @@ func (c TunnelInterfaceController) retireTunnelOldKernel(ctx context.Context, re
 }
 
 func (c TunnelInterfaceController) observeTunnelNativeListener(ctx context.Context, listener fouListener) (bool, bool, error) {
+	if c.NativeListeners != nil {
+		return c.NativeListeners.Observe(ctx, listener)
+	}
 	return observeTunnelNativeFOU(ctx, listener)
 }
 
@@ -389,8 +392,14 @@ func (c TunnelInterfaceController) ensureTunnelNativeListener(ctx context.Contex
 	if err := c.requireTunnelNativeInputs(ctx, *record); err != nil {
 		return err
 	}
-	if err := addTunnelNativeFOU(ctx, listener); err != nil {
-		return err
+	var addErr error
+	if c.NativeListeners != nil {
+		addErr = c.NativeListeners.Add(ctx, listener)
+	} else {
+		addErr = addTunnelNativeFOU(ctx, listener)
+	}
+	if addErr != nil {
+		return addErr
 	}
 	present, matching, err = c.observeTunnelNativeListener(ctx, listener)
 	if err != nil || !present || !matching {
@@ -465,8 +474,14 @@ func (c TunnelInterfaceController) retireTunnelNativeListener(ctx context.Contex
 			return err
 		}
 		if present {
-			if err := deleteTunnelNativeFOU(ctx, record.Listener); err != nil {
-				return err
+			var deleteErr error
+			if c.NativeListeners != nil {
+				deleteErr = c.NativeListeners.Delete(ctx, record.Listener)
+			} else {
+				deleteErr = deleteTunnelNativeFOU(ctx, record.Listener)
+			}
+			if deleteErr != nil {
+				return deleteErr
 			}
 		}
 	}
