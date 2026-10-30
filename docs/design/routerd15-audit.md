@@ -1147,3 +1147,77 @@ Userspace identity rechecks do not establish atomic native compare-and-change.
 The full semantic audit and the other implementation gaps in
 [open findings](routerd15-open-findings.md) remain incomplete. This is not a
 release or whole-product qualification.
+
+## On-prem Linux Bridge and process identity checkpoint, 2026-10-30
+
+The implementation checkpoint is public
+`ba054d2fd30653b01a8bc63b2c12c57a3af74e5a`, based on public `1630f2a5`.
+The Bridge Go checkpoint is `aa9f3cac`; every Go source blob is unchanged in
+`ba054d2f`. Later audit updates are documentation only. Checks used Go 1.25.9,
+Linux 6.8.0-136-generic, iproute2 6.1.0, `GOMAXPROCS=2` and
+`GOFLAGS="-p=2 -buildvcs=false"`. Normal tests ran as an unprivileged user.
+
+Concrete body/caller review followed `bridge.go`, `bridge_ownership.go`,
+`bridge_link_linux.go`, `native_parent.go`, the static address/route/delegated LAN
+readers, RA transmission and the actual Runner dependency wiring. The initial
+regression reproduced one address write on a foreign same-name Bridge. Children
+now consume the existing concrete Bridge receipt and native identity. Active
+admission requires the current acknowledged/healthy plan; recorded cleanup
+retains its exact scope/index/cookie after declaration removal, during recovery
+and during parent withdrawal. Receipt and source changes after observation waits
+cannot authorize a child. The private receipt is format 2 with a required kernel
+scope; old receipts are preserved and rejected without migration or data reset.
+FreeBSD's existing boot backend is unchanged and its Bridge child proof is open.
+
+Actual isolated-kernel execution then reproduced a creation bug hidden by the
+command fixture: Linux 6.8 did not install the alias supplied to `RTM_NEWLINK`.
+The owner now binds an exclusive create acknowledgement to a requested native
+index, checks its current pending receipt/scope, installs the cookie on the exact
+index/name/kind with an empty prior alias, and acknowledges native readback.
+Cookieless present pending effects are neither adopted nor replayed. Removal
+and changed plans preserve that uncertainty instead of deleting its receipt.
+This sequence does not establish atomic CAS against unrelated native writers.
+
+The opt-in native test uses new user/network/mount namespaces and a new sysfs
+mount. Actual Bridge creation, native cookie/address observation, SQLite reopen,
+unchanged ownership and exact child/parent withdrawal passed. Only `networkctl`
+is excluded. This exercises actual controllers and kernel effects, not the
+complete `serve` process, systemd, forwarding or independent peers.
+
+Independent normal-suite work repaired the BGP runtime-directory fixture under
+umask 0002, supplied the current typed HealthCheck/probe identity, preserved the
+dedicated PPPoE projection owner, and made subscription-expiry scheduling
+deterministic. No assertion was weakened to hide a denied product operation.
+
+The full QA rerun exposed a separate process-census boundary: selecting the
+innermost `NSpid` could address an unrelated thread instead of the intended
+procfs entry and produce `pidfd_open` EINVAL. The supervisor now selects the
+current caller's namespace column while retaining pidfd/procfs identity checks.
+Unknown identities and EINVAL for the selected native process remain errors.
+Boundary regressions first failed and then passed; the complete offline suite
+was rerun after the repair.
+
+| Check | Observed result |
+| --- | --- |
+| Bridge ownership target and related race checks | Pass; native opt-in remains separate from the normal target |
+| Isolated Linux native Bridge/address/reopen/withdrawal | Pass; systemd and peer traffic excluded |
+| Whole-repository vet and generated/website schemas | Pass at the unchanged Go checkpoint |
+| Linux release/static checks | Pass; 20 binaries, CGO disabled |
+| FreeBSD release/test compilation | Pass; 20 binaries and 128 packages, compile-only |
+| Whole normal Go suite | 4070 top-level pass, 32 fail, seven skip; 117 packages pass, three fail, nine without tests |
+| Release-QA offline | 499 cases: 492 pass, seven existing skips, no failures |
+| Installer regressions | Pass after the process-census repair |
+| Secret scans, formatting and source cleanliness | Pass at the implementation checkpoints |
+
+The complete normal gate remains unqualified. Thirty-one failed tests report
+actual permission denial, including the native-operation lock, production
+`/run/routerd` or `/var/lib/routerd` paths and raw ICMP. The remaining failure,
+`TestSystemdUnitControllerReportsHealthCheckRestartFailureAfterReady`, reports a
+missing synchronous restart and is not classified as a permission failure.
+Earlier fixed-source runs also failed the EventRule subcase of
+`TestEventConsumerChangesReloadActualGeneration`; the final run passed without
+an EventRule implementation change. That variation is not claimed as repaired.
+Required assertions were not passed by running as root or modifying production
+directories. These normal-suite failures and native/peer/platform qualification
+remain separate follow-up work. No production deployment or cloud mutation was
+executed.
