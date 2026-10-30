@@ -243,6 +243,30 @@ func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNS
 		return config, zones, fmt.Errorf("read dnsmasq hosts sidecar: %w", hostReadErr)
 	}
 	scopes := dnsresolver.DHCPScopes(c.Router)
+	var leaseObservations []daemonapi.DHCPLeaseUpdate
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "DNSZone" {
+			continue
+		}
+		zoneSpec, err := resource.DNSZoneSpec()
+		if err != nil {
+			return config, zones, err
+		}
+		if len(zoneSpec.DHCPDerived.Sources) == 0 {
+			continue
+		}
+		reader, ok := c.Store.(interface {
+			ReadDHCPLeaseObservations(context.Context) ([]daemonapi.DHCPLeaseUpdate, error)
+		})
+		if !ok {
+			return config, zones, fmt.Errorf("DHCP-derived DNS requires durable lease observations")
+		}
+		leaseObservations, err = reader.ReadDHCPLeaseObservations(ctx)
+		if err != nil {
+			return config, zones, fmt.Errorf("read named DHCP lease observations: %w", err)
+		}
+		break
+	}
 	dhcpHostRecords, err := c.namedDHCPAssignments(ctx, dnsresolver.ParseDNSMasqHostRecords(hostData), scopes)
 	if err != nil {
 		return config, zones, err
@@ -266,6 +290,11 @@ func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNS
 		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec, DHCPScopes: scopes}
 		if len(zoneSpec.DHCPDerived.Sources) > 0 {
 			runtimeZone.DHCPHostRecords = assignmentsForSources(dhcpHostRecords, zoneSpec.DHCPDerived.Sources)
+			for _, observation := range leaseObservations {
+				if slices.Contains(zoneSpec.DHCPDerived.Sources, observation.Source) {
+					runtimeZone.LeaseObservations = append(runtimeZone.LeaseObservations, observation)
+				}
+			}
 		}
 		config.Zones = append(config.Zones, runtimeZone)
 	}

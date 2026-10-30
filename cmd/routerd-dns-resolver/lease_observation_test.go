@@ -163,3 +163,56 @@ func TestRequiredLeaseFileFailureIsObservable(t *testing.T) {
 		t.Fatal("required lease read failure became absence")
 	}
 }
+
+func TestAcknowledgedRemovalCannotReviveFromUnchangedLeaseFile(t *testing.T) {
+	config := testResolverConfig(nil)
+	path := filepath.Join(t.TempDir(), "dnsmasq.leases")
+	if err := os.WriteFile(path, []byte("0 client-a 192.0.2.55 client *\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	config.Zones[0].Spec.DHCPDerived.LeaseFile = path
+	table := newZoneTable(config.Zones)
+	assertZoneARecord(t, table, "client.lab.example.", "192.0.2.55")
+	removal := observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionRemoved, MAC: "client-a", Hostname: "client", IP: "192.0.2.55"})
+	if err := table.ApplyLease(removal); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := newZoneTable(config.Zones)
+	reloaded.CopyDynamicFrom(table)
+	query := new(dns.Msg)
+	query.SetQuestion("client.lab.example.", dns.TypeA)
+	answer, _ := reloaded.Answer(query, []string{"DNSZone/lan-zone"})
+	if len(answer.Answer) != 0 {
+		t.Fatal("unchanged old file revived acknowledged removal")
+	}
+	assertZoneNoPTRRecord(t, reloaded, "55.2.0.192.in-addr.arpa.")
+	added := removal
+	added.Action = daemonapi.DHCPLeaseActionAdded
+	added.ObservedAt = time.Now().UTC()
+	if err := reloaded.ApplyLease(added); err != nil {
+		t.Fatal(err)
+	}
+	assertZoneARecord(t, reloaded, "client.lab.example.", "192.0.2.55")
+}
+
+func TestRenewalRemovingHostnameWithdrawsDynamicForwardAndPTR(t *testing.T) {
+	table := newZoneTable(testResolverConfig(nil).Zones)
+	lease := observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, Hostname: "old", IP: "192.0.2.55"})
+	if err := table.ApplyLease(lease); err != nil {
+		t.Fatal(err)
+	}
+	assertZoneARecord(t, table, "old.lab.example.", lease.IP)
+	lease.Action = daemonapi.DHCPLeaseActionRenewed
+	lease.Hostname = ""
+	lease.ObservedAt = time.Now().UTC()
+	if err := table.ApplyLease(lease); err != nil {
+		t.Fatal(err)
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("old.lab.example.", dns.TypeA)
+	answer, _ := table.Answer(query, []string{"DNSZone/lan-zone"})
+	if len(answer.Answer) != 0 {
+		t.Fatal("removed hostname still served")
+	}
+	assertZoneNoPTRRecord(t, table, "55.2.0.192.in-addr.arpa.")
+}

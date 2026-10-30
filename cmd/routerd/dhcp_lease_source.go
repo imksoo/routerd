@@ -38,7 +38,7 @@ func prepareDHCPLeaseSource(router *api.Router, lease *controlapi.DHCPLeaseEvent
 		if lease.Source != "" && lease.Source != identity {
 			continue
 		}
-		if lease.Source == "" && !slices.Contains(lease.Tags, dhcpServerTag(resource.Metadata.Name)) && !(len(lease.Tags) == 0 && scopeSource == identity) {
+		if lease.Source == "" && !dhcpResourceTagged(resource, lease.Tags) && !(len(lease.Tags) == 0 && scopeSource == identity) {
 			continue
 		}
 		if source != "" && source != identity {
@@ -66,4 +66,22 @@ func dhcpServerTag(name string) string {
 		}
 	}
 	return tag.String()
+}
+
+func dhcpResourceTagged(resource api.Resource, tags []string) bool {
+	if slices.Contains(tags, dhcpServerTag(resource.Metadata.Name)) {
+		return true
+	}
+	if resource.Kind == "DHCPv4Server" {
+		spec, err := resource.DHCPv4ServerSpec()
+		if err != nil {
+			return false
+		}
+		for _, scope := range spec.Scopes {
+			if slices.Contains(tags, dhcpServerTag(resource.Metadata.Name+"-"+scope.Name)) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -82,3 +82,23 @@ func TestLeaseEventCanonicalizesAddressWithoutRequiringEthernetIdentity(t *testi
 		t.Fatal("invalid address was accepted for durable queue")
 	}
 }
+
+func TestCallbackCarriesActualLeaseDeadlineAndRangeTags(t *testing.T) {
+	event, err := eventFromArgs([]string{"old", "client", "192.0.2.55", "host"}, []string{"DNSMASQ_TAGS=lan lan-iot", "DNSMASQ_LEASE_EXPIRES=2000000000"})
+	if err != nil || event.Infinite || event.ExpiresAt.Unix() != 2000000000 || len(event.Tags) != 2 {
+		t.Fatalf("lease metadata lost: %+v %v", event, err)
+	}
+	event, err = eventFromArgs([]string{"old", "client", "192.0.2.55", "host"}, []string{"DNSMASQ_LEASE_EXPIRES=0"})
+	if err != nil || !event.Infinite || !event.ExpiresAt.IsZero() {
+		t.Fatalf("explicit infinite deadline lost: %+v %v", event, err)
+	}
+	before := time.Now().UTC()
+	event, err = eventFromArgs([]string{"old", "client", "192.0.2.55", "host"}, []string{"DNSMASQ_TIME_REMAINING=60"})
+	if err != nil || event.Infinite || event.ExpiresAt.Before(before.Add(60*time.Second)) || event.ExpiresAt.After(time.Now().Add(60*time.Second)) {
+		t.Fatalf("relative authoritative deadline lost: %+v %v", event, err)
+	}
+	event, err = eventFromArgs([]string{"old", "client", "192.0.2.55", "host"}, []string{"DNSMASQ_TIME_REMAINING=0"})
+	if err != nil || event.Infinite || event.ExpiresAt.IsZero() || event.ExpiresAt.After(time.Now()) {
+		t.Fatalf("zero remaining time became infinite: %+v %v", event, err)
+	}
+}

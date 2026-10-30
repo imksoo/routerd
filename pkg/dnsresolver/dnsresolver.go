@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 const DaemonKind = "routerd-dns-resolver"
@@ -44,10 +45,11 @@ type ReloadResult struct {
 }
 
 type RuntimeZone struct {
-	Name            string                  `json:"name"`
-	Spec            api.DNSZoneSpec         `json:"spec"`
-	DHCPHostRecords []RuntimeDHCPHostRecord `json:"dhcpHostRecords,omitempty"`
-	DHCPScopes      []DHCPAddressScope      `json:"dhcpScopes,omitempty"`
+	Name              string                      `json:"name"`
+	Spec              api.DNSZoneSpec             `json:"spec"`
+	DHCPHostRecords   []RuntimeDHCPHostRecord     `json:"dhcpHostRecords,omitempty"`
+	DHCPScopes        []DHCPAddressScope          `json:"dhcpScopes,omitempty"`
+	LeaseObservations []daemonapi.DHCPLeaseUpdate `json:"leaseObservations,omitempty"`
 }
 
 // RuntimeDHCPHostRecord represents configured assignment intent, not evidence of
