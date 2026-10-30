@@ -306,6 +306,14 @@ func (c LANAddressController) Reconcile(ctx context.Context) error {
 	if declared == nil {
 		declared = c.Router
 	}
+	addresses := map[string]bool{}
+	if declared != nil {
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind == "IPv6DelegatedAddress" {
+				addresses[resource.Metadata.Name] = true
+			}
+		}
+	}
 	for _, name := range declaredPrefixDelegationNames(c.Router, declared) {
 		names[name] = true
 	}
@@ -319,6 +327,18 @@ func (c LANAddressController) Reconcile(ctx context.Context) error {
 		}
 		if receipt != nil {
 			names[receipt.PrefixDelegation] = true
+		} else if declared != nil && !addresses[object.Name] && !c.DryRun {
+			// Expiry may already have withdrawn every native address and
+			// cleared its receipt before the declaration is removed. This
+			// display row has no remaining native effect to recover. Receipts,
+			// including pending/ambiguous operations, still use cleanup below.
+			deleter, ok := c.Store.(state.ObjectDeleteStore)
+			if !ok {
+				return fmt.Errorf("delegated status deletion unavailable")
+			}
+			if err := deleter.DeleteObject(object.APIVersion, object.Kind, object.Name); err != nil {
+				return err
+			}
 		}
 	}
 	for name := range names {
