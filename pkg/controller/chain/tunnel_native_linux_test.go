@@ -43,6 +43,14 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 	run("link", "set", "dev", "tnl-underlay", "up")
 	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired"} {
 		t.Run(scenario, func(t *testing.T) {
+			run := func(args ...string) []byte {
+				out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
+				if err != nil {
+					t.Fatalf("ip %v: %v: %s", args, err, out)
+				}
+				return out
+			}
+			defer func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tnl-owned").CombinedOutput() }()
 			store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -63,7 +71,6 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 				if err := parent.Reconcile(ctx); err != nil {
 					t.Fatal(err)
 				}
-				defer func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tnl-owned").CombinedOutput() }()
 				// The DHCPv4 publisher clears currentAddress on real lease expiry.
 				if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Expired", "currentAddress": ""}); err != nil {
 					t.Fatal(err)
@@ -84,7 +91,6 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 			}
 			// This object has no routerd cookie, and was created independently.
 			run("link", "add", "name", "tnl-owned", "type", "ipip", "local", "198.18.0.1", "remote", "198.18.0.2")
-			defer func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tnl-owned").CombinedOutput() }()
 			if scenario == "replacement-cleanup" {
 				parent.Router = &api.Router{}
 				err := parent.Reconcile(ctx)

@@ -7,6 +7,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"syscall"
@@ -59,7 +60,7 @@ func observeTunnelNativeLink(ctx context.Context, name string) (tunnelNativeLink
 	if err != nil {
 		return result, err
 	}
-	if fresh.Attrs() == nil || link.Attrs() == nil || fresh.Attrs().Index != link.Attrs().Index || fresh.Type() != link.Type() || fresh.Attrs().Alias != link.Attrs().Alias {
+	if fresh.Attrs() == nil || link.Attrs() == nil || fresh.Attrs().Name != name || fresh.Attrs().Index != link.Attrs().Index || fresh.Type() != link.Type() || fresh.Attrs().Alias != link.Attrs().Alias {
 		return result, errors.New("TunnelInterface identity changed during address observation")
 	}
 	current, err := platform.KernelNetworkScope(ctx)
@@ -166,10 +167,12 @@ func applyTunnelNativePlan(ctx context.Context, record tunnelNativeReceipt) erro
 	if err != nil {
 		return err
 	}
-	attrs := *link.Attrs()
+	// A readback LinkAttrs also contains read-only address/queue attributes.
+	// Send only the exact index and name when changing tunnel parameters.
+	attrs := netlink.LinkAttrs{Index: link.Attrs().Index, Name: link.Attrs().Name}
 	var configured netlink.Link
 	if record.Plan.Mode == "gre" {
-		configured = &netlink.Gretun{LinkAttrs: attrs, Local: net.ParseIP(record.Plan.Local), Remote: net.ParseIP(record.Plan.Remote), Ttl: uint8(record.Plan.TTL), IKey: uint32(record.Plan.Key), OKey: uint32(record.Plan.Key)}
+		configured = &netlink.Gretun{LinkAttrs: attrs, Local: net.ParseIP(record.Plan.Local), Remote: net.ParseIP(record.Plan.Remote), Ttl: uint8(record.Plan.TTL), PMtuDisc: 1, IKey: uint32(record.Plan.Key), OKey: uint32(record.Plan.Key)}
 	} else {
 		encap := netlink.None
 		if record.Plan.Mode == "fou" {
@@ -177,10 +180,10 @@ func applyTunnelNativePlan(ctx context.Context, record tunnelNativeReceipt) erro
 		} else if record.Plan.Mode == "gue" {
 			encap = netlink.GUE
 		}
-		configured = &netlink.Iptun{LinkAttrs: attrs, Local: net.ParseIP(record.Plan.Local), Remote: net.ParseIP(record.Plan.Remote), Ttl: uint8(record.Plan.TTL), EncapType: uint16(encap), EncapSport: uint16(record.Plan.EncapSport), EncapDport: uint16(record.Plan.EncapDport)}
+		configured = &netlink.Iptun{LinkAttrs: attrs, Local: net.ParseIP(record.Plan.Local), Remote: net.ParseIP(record.Plan.Remote), Ttl: uint8(record.Plan.TTL), PMtuDisc: 1, EncapType: uint16(encap), EncapSport: uint16(record.Plan.EncapSport), EncapDport: uint16(record.Plan.EncapDport)}
 	}
 	if err := handle.LinkModify(configured); err != nil {
-		return err
+		return fmt.Errorf("configure native TunnelInterface %s: %w", record.Plan.Name, err)
 	}
 	if record.PreviousAddress != "" && record.PreviousAddress != record.Plan.Address {
 		if link, err = check(); err != nil {
@@ -203,7 +206,7 @@ func applyTunnelNativePlan(ctx context.Context, record tunnelNativeReceipt) erro
 			return err
 		}
 		if err := handle.AddrReplace(link, address); err != nil {
-			return err
+			return fmt.Errorf("configure native TunnelInterface address: %w", err)
 		}
 	}
 	if link, err = check(); err != nil {
@@ -211,11 +214,78 @@ func applyTunnelNativePlan(ctx context.Context, record tunnelNativeReceipt) erro
 	}
 	if record.Plan.MTU > 0 {
 		if err := handle.LinkSetMTU(link, record.Plan.MTU); err != nil {
-			return err
+			return fmt.Errorf("configure native TunnelInterface MTU: %w", err)
 		}
 	}
 	if link, err = check(); err != nil {
 		return err
 	}
-	return handle.LinkSetUp(link)
+	if err := handle.LinkSetUp(link); err != nil {
+		return fmt.Errorf("raise native TunnelInterface: %w", err)
+	}
+	return nil
+}
+
+func tunnelFOUHandle() (*netlink.Handle, error) {
+	handle, err := netlink.NewHandle(syscall.NETLINK_GENERIC)
+	if err != nil {
+		return nil, err
+	}
+	if err := handle.SetSocketTimeout(2 * time.Second); err != nil {
+		handle.Close()
+		return nil, err
+	}
+	return handle, nil
+}
+
+func observeTunnelNativeFOU(ctx context.Context, listener fouListener) (bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, false, err
+	}
+	handle, err := tunnelFOUHandle()
+	if err != nil {
+		return false, false, err
+	}
+	defer handle.Close()
+	listeners, err := handle.FouList(netlink.FAMILY_V4)
+	if err != nil {
+		return false, false, err
+	}
+	for _, current := range listeners {
+		if current.Family != netlink.FAMILY_V4 || current.Port != listener.Port {
+			continue
+		}
+		matching := current.PeerPort == 0 && current.IfIndex == 0 && (current.Local == nil || current.Local.IsUnspecified()) && (current.Peer == nil || current.Peer.IsUnspecified())
+		matching = matching && (listener.Mode == "fou" && current.EncapType == netlink.FOU_ENCAP_DIRECT && current.Protocol == 4 || listener.Mode == "gue" && current.EncapType == netlink.FOU_ENCAP_GUE && current.Protocol == 0)
+		return true, matching, ctx.Err()
+	}
+	return false, false, ctx.Err()
+}
+
+func addTunnelNativeFOU(ctx context.Context, listener fouListener) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	handle, err := tunnelFOUHandle()
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	value := netlink.Fou{Family: netlink.FAMILY_V4, Port: listener.Port, EncapType: netlink.FOU_ENCAP_DIRECT, Protocol: 4}
+	if listener.Mode == "gue" {
+		value.EncapType, value.Protocol = netlink.FOU_ENCAP_GUE, 0
+	}
+	return handle.FouAdd(value)
+}
+
+func deleteTunnelNativeFOU(ctx context.Context, listener fouListener) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	handle, err := tunnelFOUHandle()
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	return handle.FouDel(netlink.Fou{Family: netlink.FAMILY_V4, Port: listener.Port})
 }
