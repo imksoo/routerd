@@ -1358,6 +1358,7 @@ type Runner struct {
 	runtimeDone            chan struct{}
 	runtimeExitErr         error
 	runtimeCleanupDone     <-chan struct{}
+	runtimeRetainedLeases  []*ha.AcquiredLease
 	reloadCancelGrace      time.Duration
 	startedMu              sync.Mutex
 	processStartedAt       time.Time
@@ -1849,6 +1850,7 @@ type controllerGeneration struct {
 	controllers      []framework.Controller
 	daemonStatusSync DaemonStatusController
 	heartbeatStarted bool
+	activated        bool
 	lifetimes        controllerLifetimes
 }
 
@@ -1971,6 +1973,10 @@ func (r *Runner) prepareControllerGenerationWithGate(ctx context.Context, logger
 }
 
 func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex) (*controllerGeneration, error) {
+	return r.prepareControllerGenerationOwned(ctx, requestCtx, logger, store, gate, nil, false)
+}
+
+func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Context, logger *slog.Logger, store eventedStore, gate *sync.RWMutex, admitted *ha.Decision, strict bool) (*controllerGeneration, error) {
 	if err := r.RuntimeMutationError(); err != nil {
 		return nil, err
 	}
@@ -1985,7 +1991,17 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	defer stopRequestCancel()
 	router := r.currentRouter()
-	decision, err := acquireClusterLease(generationCtx, router, store)
+	var decision ha.Decision
+	var err error
+	if admitted != nil {
+		decision = *admitted
+	} else {
+		decision, err = acquireClusterLease(generationCtx, router, store)
+	}
+	releaseLease := generationLeaseRelease(decision)
+	if admitted != nil {
+		releaseLease = nil
+	}
 	if err != nil {
 		cancel()
 		return nil, err
@@ -2000,7 +2016,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	if err != nil {
 		cancel()
-		if stopErr := r.closeControllerLifetimes(lifetimes, generationLeaseRelease(decision)); stopErr != nil {
+		if stopErr := r.closeControllerLifetimes(lifetimes, releaseLease); stopErr != nil {
 			r.fenceRuntime(true)
 			err = errors.Join(err, stopErr)
 		}
@@ -2015,7 +2031,12 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		})
 	}
 	bootstrap := framework.Runner{Bus: r.Bus, MutationGate: gate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver}
-	err = bootstrap.Bootstrap(generationCtx, controllers...)
+	var reconcileErr error
+	if strict {
+		reconcileErr = bootstrap.RunOnce(generationCtx, controllers...)
+	} else {
+		err = bootstrap.Bootstrap(generationCtx, controllers...)
+	}
 	if !stopRequestCancel() {
 		<-requestCanceled
 	}
@@ -2032,7 +2053,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 	}
 	if err != nil {
 		cancel()
-		if stopErr := r.closeControllerLifetimes(lifetimes, generationLeaseRelease(decision)); stopErr != nil {
+		if stopErr := r.closeControllerLifetimes(lifetimes, releaseLease); stopErr != nil {
 			r.fenceRuntime(true)
 			err = errors.Join(err, stopErr)
 		}
@@ -2047,7 +2068,7 @@ func (r *Runner) prepareControllerGenerationForRequest(ctx, requestCtx context.C
 		daemonStatusSync: daemonStatusSync,
 		heartbeatStarted: heartbeatStarted,
 		lifetimes:        lifetimes,
-	}, nil
+	}, reconcileErr
 }
 
 func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logger, store eventedStore, generation *controllerGeneration) (err error) {
@@ -2082,6 +2103,11 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		if generation == nil {
 			select {
 			case request := <-reloads:
+				if request.apply {
+					r.acknowledgeRuntimeReload(request, false, errors.New("selected runtime is temporarily unavailable"))
+					continue
+				}
+
 				pending = &request
 				generation, restored, reloadErr = r.prepareRuntimeReload(ctx, logger, store, request)
 				if generation == nil {
@@ -2130,17 +2156,21 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			}
 			return failure
 		}
-		if err := generation.lifetimes.activate(generation.ctx); err != nil {
-			r.clearRuntimeGeneration(false)
-			generation.cancel()
-			stopErr := stopCurrentGeneration()
-			r.fenceRuntime(true)
-			return errors.Join(err, stopErr)
+		if !generation.activated {
+			if err := generation.lifetimes.activate(generation.ctx); err != nil {
+				r.clearRuntimeGeneration(false)
+				generation.cancel()
+				stopErr := stopCurrentGeneration()
+				r.fenceRuntime(true)
+				return errors.Join(err, stopErr)
+			}
+			generation.activated = true
 		}
 		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
 		loopDone := make(chan error, 1)
+		loopCtx, stopLoop := context.WithCancel(generation.ctx)
 		go func(current *controllerGeneration) {
-			loopDone <- loop.Run(current.ctx, current.controllers...)
+			loopDone <- loop.Run(loopCtx, current.controllers...)
 		}(generation)
 		r.markRuntimeReady()
 		if pending != nil {
@@ -2168,6 +2198,31 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			if request.ctx != nil && request.ctx.Err() != nil {
 				r.acknowledgeRuntimeReload(request, false, request.ctx.Err())
 				goto waitForGeneration
+			}
+			if request.apply {
+				admission, standby, admitErr := r.admitRuntimeApply(request.ctx, generation, request.router, store)
+				if admitErr == nil && !standby {
+					admitErr = request.ctx.Err()
+					if admitErr == nil {
+						admitErr = generation.ctx.Err()
+					}
+					if admitErr == nil {
+						admitErr = request.commit()
+					}
+				}
+				if admitErr != nil || standby {
+					admission.closeNew()
+					request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot(), Accepted: true, OperationID: request.id, Standby: standby}, err: admitErr}
+					goto waitForGeneration
+				}
+				stopLoop()
+				<-loopDone
+				pending = &request
+				generation, restored, reloadErr = r.applyAdmittedRuntime(ctx, logger, store, generation, request, admission)
+				if generation == nil {
+					return runtimeStoppedError(reloadErr)
+				}
+				continue
 			}
 			pending = &request
 			r.clearRuntimeGeneration(false)

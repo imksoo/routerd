@@ -407,7 +407,7 @@ check-routerd15-focused: check-spec
 	go vet ./...
 
 .PHONY: check-routerd15-recovery
-check-routerd15-recovery:
+check-routerd15-recovery: check-routerd15-activation
 	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
 	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
 	go test ./pkg/controller/mobility
@@ -440,3 +440,7 @@ check-routerd15-policy-native:
 	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1
 	go test ./pkg/apply ./pkg/lifecycle -count=1
 	go vet ./pkg/controller/chain ./pkg/apply ./pkg/lifecycle
+
+.PHONY: check-routerd15-activation
+check-routerd15-activation:
+	go test ./cmd/routerd -run '^(TestCanonicalBarrier|TestHTTPMutation|TestMutation|TestFault|TestServeConfigMutator|TestLifecycleLiveApply|TestConfigMutation|TestRunApplyChainOnce|TestRollback)' -count=1

@@ -171,8 +171,9 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	console, _, err := webConsoleFromRouter(canonical, store)
-	if err != nil || console.Title != "updated console" || current.Load().Spec.Resources[0].Metadata.Name != "control" {
-		t.Fatalf("failed preparation changed canonical state: %+v %v", console, err)
+	activeConsole, _, activeErr := webConsoleFromRouter(current.Load(), store)
+	if err != nil || activeErr != nil || console.Title != "after recovery" || activeConsole.Title != "updated console" {
+		t.Fatalf("failed activation confused desired and active HTTP configuration: desired=%+v active=%+v errors=%v/%v", console, activeConsole, err, activeErr)
 	}
 	if _, err := client.Status(t.Context()); err != nil {
 		t.Fatalf("failed bind stopped prior listener: %v", err)
@@ -202,8 +203,17 @@ func TestHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T) {
 		}
 	}
 	rows, err := store.ListGenerations(10)
-	if err != nil || len(rows) != 3 {
-		t.Fatalf("successful and failed mutation generations: %+v %v", rows, err)
+	failed, committed := 0, 0
+	for _, row := range rows {
+		if row.Phase == "Errored" {
+			failed++
+		}
+		if row.Phase == "Committed" {
+			committed++
+		}
+	}
+	if err != nil || len(rows) != 4 || failed != 1 || committed != 3 {
+		t.Fatalf("failed postcommit activation and its durable retry lost generation evidence: %+v %v", rows, err)
 	}
 }
 

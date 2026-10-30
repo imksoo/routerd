@@ -305,17 +305,15 @@ func (m serveConfigMutator) reconcileWithOutcome(router *api.Router, configYAML 
 		return outcome, err
 	}
 	if m.baseOpts.Sandbox {
-		committed, err := m.commitOnlyWithOutcome(router, configYAML)
-		if err != nil {
-			return committed, err
-		}
-		// The caller owns the exclusive mutation gate for the whole live-apply
-		// transaction. Avoid recursively taking it in the sandbox plan runner.
 		planner := m
 		planner.baseOpts.MutationGate = nil
 		result, err := planner.planRouter(router, configYAML)
 		if err != nil {
-			committed.Stage = "sandbox-plan"
+			outcome.Stage = "sandbox-plan"
+			return outcome, err
+		}
+		committed, err := m.commitOnlyWithOutcome(router, configYAML)
+		if err != nil {
 			return committed, err
 		}
 		result.Generation = committed.Generation
@@ -416,6 +414,13 @@ func (m serveConfigMutator) commitOnlyWithOutcome(router *api.Router, configYAML
 	opts.ConfigPath, opts.DryRun, opts.SkipConfigCommit = m.configPath, false, false
 	if err := outcome.commit(opts, configYAML); err != nil {
 		return outcome, err
+	}
+	if opts.activateCommittedRuntime != nil {
+		outcome.Stage = "runtime-activation"
+		outcome.Runtime, err = opts.activateCommittedRuntime(context.Background())
+		if err != nil {
+			return outcome, err
+		}
 	}
 	outcome.Stage = "record-applied-path"
 	if err := recordLastAppliedPath(router, store, m.configPath); err != nil {

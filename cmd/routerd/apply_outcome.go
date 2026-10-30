@@ -20,7 +20,6 @@ const (
 	canonicalNotRequested canonicalWriteState = "not-requested"
 	canonicalNotReplaced  canonicalWriteState = "not-replaced"
 	canonicalReplaced     canonicalWriteState = "replaced"
-	canonicalUnknown      canonicalWriteState = "unknown"
 )
 
 // applyAttemptOutcome records independent facts, including partial progress.
@@ -95,10 +94,13 @@ func (o *applyAttemptOutcome) wrapError(err *error, logger *eventlog.Logger) {
 }
 
 func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error {
-	if opts.DryRun || opts.SkipConfigCommit || strings.TrimSpace(opts.ConfigPath) == "" {
+	if opts.DryRun || opts.SkipConfigCommit {
 		return nil
 	}
 	o.Stage = "canonical-write"
+	if strings.TrimSpace(opts.ConfigPath) == "" {
+		return errors.New("canonical configuration path is required before applying effects")
+	}
 	o.Canonical = canonicalNotReplaced
 	write := config.AtomicWriteFileWithOutcome
 	if opts.attemptHooks != nil && opts.attemptHooks.writeCanonical != nil {
@@ -109,5 +111,8 @@ func (o *applyAttemptOutcome) commit(opts applyOptions, configYAML string) error
 		o.Canonical = canonicalReplaced
 	}
 	o.DurabilityConfirmed = written.DurabilityConfirmed
+	if err == nil && (!written.Replaced || !written.DurabilityConfirmed) {
+		return errors.New("canonical configuration replacement was not durably acknowledged")
+	}
 	return err
 }
