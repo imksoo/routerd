@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/sam"
 )
@@ -72,8 +73,8 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 				if err != nil {
 					return nil, err
 				}
-				if spec.FromZone == "self" || spec.ToZone != "self" {
-					return nil, fmt.Errorf("%s FreeBSD PF supports only input rules to self; forwarding/output zone selectors cannot be enforced by this backend", res.ID())
+				if err := config.ValidatePFFirewallRule(res.ID(), spec); err != nil {
+					return nil, err
 				}
 				rules = append(rules, res)
 			}
@@ -107,6 +108,9 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 
 	zoneMap, err := nftFirewallZones(aliases, zones)
 	if err != nil {
+		return nil, err
+	}
+	if err := validatePFZoneRules(zoneMap, rules, nat44Rules, ingressRules, aliases); err != nil {
 		return nil, err
 	}
 	pfClientPolicies, err := pfClientPolicies(router, aliases, clientPolicies)
@@ -667,7 +671,9 @@ func pfClientPolicyReservation(res api.Resource, name string, reservations map[s
 func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api.Resource, holes []FirewallHole, clientPolicies []pfClientPolicy, policy firewallPolicy, logging firewallLogging, routeToRules []pfEgressRouteToRule, allLocal string) error {
 	buf.WriteString("block drop all\n")
 	buf.WriteString("pass quick on lo0 all\n")
-	buf.WriteString("pass out quick all keep state\n")
+	if len(routeToRules) > 0 {
+		buf.WriteString("pass out quick all keep state\n")
+	}
 	for _, zone := range sortedFirewallZones(zones) {
 		for _, clientPolicy := range clientPolicies {
 			for _, expr := range pfClientPolicyIPv6DenyExprs(zone, clientPolicy, logging) {
@@ -692,7 +698,7 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 		// inbound hook. Confine self rules to local destinations before testing
 		// their own destination selectors. Link-local control destinations also
 		// reach this anchor (DHCP, VRRP and IPv6 multicast cannot be routed).
-		buf.WriteString("anchor " + pfQuote("routerd_input_"+zone.Name) + " in on $" + pfZoneMacro(zone) + " to { self, 255.255.255.255, 224.0.0.0/24, ff02::/16 } {\n")
+		buf.WriteString("anchor " + pfQuote("routerd_input_"+zone.Name) + " in on $" + pfZoneMacro(zone) + " to { (self), 255.255.255.255, 224.0.0.0/24, ff02::/16 } {\n")
 		selfAccepted := implicitFirewallAction(zone.Role, "self", policy) == "accept"
 		for _, clientPolicy := range clientPolicies {
 			for _, expr := range pfClientPolicyInputExprs(zone, clientPolicy, logging) {
@@ -724,6 +730,9 @@ func writePFFilter(buf *bytes.Buffer, zones map[string]firewallZone, rules []api
 			buf.WriteString("block drop in quick on $" + pfZoneMacro(zone) + " all\n")
 		}
 		buf.WriteString("}\n")
+	}
+	if len(routeToRules) == 0 {
+		return writePFZoneForwards(buf, zones, rules, holes, clientPolicies, policy, logging)
 	}
 	routeToEmitted := false
 	for _, from := range sortedFirewallZones(zones) {
@@ -1010,6 +1019,9 @@ func pfFirewallRuleExprOn(onExpr, name string, spec api.FirewallRuleSpec, loggin
 }
 
 func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
+	return pfFirewallRuleExprDirection("in", onExpr, selfExpr, name, spec, logging)
+}
+func pfFirewallRuleExprDirection(direction, onExpr, selfExpr, name string, spec api.FirewallRuleSpec, logging firewallLogging) string {
 	action := "block drop"
 	if spec.Action == "accept" {
 		action = "pass"
@@ -1017,7 +1029,7 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 		action = "block return"
 	}
 	var parts []string
-	parts = append(parts, action, "in")
+	parts = append(parts, action, direction)
 	if spec.Log {
 		parts = append(parts, pfLogExpr(logging))
 	}
@@ -1037,7 +1049,7 @@ func pfFirewallRuleExprOnSelf(onExpr, selfExpr, name string, spec api.FirewallRu
 	}
 	if len(spec.DestinationCIDRs) > 0 {
 		parts = append(parts, "to", pfCIDRSet(spec.DestinationCIDRs))
-	} else if spec.ToZone == "self" {
+	} else {
 		parts = append(parts, "to", selfExpr)
 	}
 	if ports := pfFirewallDestinationPorts(spec); len(ports) > 0 {
