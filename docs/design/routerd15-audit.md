@@ -1982,3 +1982,46 @@ revocation is still injected and both peers share a Linux kernel. Full daemon
 integration, actual DHCP expiry for this tunnel, other platforms and all
 TunnelInterface functionality remain separate gates. Successful binaries and
 raw logs can be removed after recording the source, hash and verdict.
+
+
+### Linux WAN RA/SLAAC product lifecycle
+
+The formal `make dist` package at `a00a4826d5028319e9fafc5dbd523ea2f5bf690f`
+passed an installed-daemon WAN RA gate on an isolated Ubuntu 24.04.4 VM,
+Linux 6.8.0-124-generic, with independent dnsmasq 2.91 RA-only and HTTP peers.
+The fixture created a networkd-managed WAN with RA initially disabled. Fresh
+`managed: false` intent left acceptance at zero and created no adoption drop-in.
+Changing it to true enabled acceptance, kernel SLAAC and a `proto ra` default;
+the off-link HTTP peer observed the learned SLAAC source. No WAN global address
+or default route was manually assigned.
+
+SIGSTOP froze the independent RA sender without a zero-lifetime shutdown RA.
+The 15-second router lifetime expired: route lookup and HTTP failed. The actual
+120-second prefix lifetime then removed the SLAAC address. Resuming only the
+peer restored address, default route and HTTP with the same routerd process
+and no controller errors. Empty apply and explicit fixture cleanup followed.
+That cleanup is not a managed-to-observe-only rollback qualification.
+
+The first attempt incorrectly required the expired default-route row to vanish
+from `ip route show` within 25 seconds. It remained with `expires -12sec`.
+An unprivileged local veth/nexthop reproduction showed the same negative-lifetime
+row while `ip -6 route get` returned `Network is unreachable`.
+[Linux v6.8 route selection](https://github.com/torvalds/linux/blob/v6.8/net/ipv6/route.c)
+explicitly skips expired entries. Correcting the test to require unusable routing
+and failed HTTP, while still requiring natural SLAAC address removal, passed on
+the unchanged product. No product behavior or lifetime was relaxed.
+
+The executed fixture SHA-256 is recorded separately from the product archive.
+Its public export adds a license and argument-usage message; the gate body is
+unchanged. See [the procedure and acceptance criteria](../operations/development.md#linux-wan-raslaac-lifecycle-gate)
+and `scripts/linux-wan-ra-lifecycle-smoke.sh`. This does not qualify RDNSS/DNSSL,
+IA_NA, LAN forwarding, restart/crash recovery, other platforms or all 1.0 features.
+
+The preceding environment-certification helper had a cleanup defect: killing a
+background shell-function wrapper did not kill its dnsmasq/Python children.
+The three leftover peer processes were identified by exact command line and
+namespace and terminated. A local shell reproduction confirmed the cause.
+The helper now launches `nsenter` directly as the background process, so kill
+and wait address the actual daemon. The product gate already uses direct
+`ip netns exec` processes. Named-namespace absence alone is not a cleanup proof;
+verify that the identified peer processes have exited as well.

@@ -901,6 +901,29 @@
         "Installed daemon upgrade or full daemon integration at this candidate revision"
       ],
       "provided_binary_sha256": "b9801292e8c8b0563d44716003a8fc23fa508b61d469841452161046708eb281"
+    },
+    "linux-wan-ra-lifecycle-a00a4826": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "a00a4826d5028319e9fafc5dbd523ea2f5bf690f",
+      "reference": "docs/design/routerd15-audit.md#linux-wan-raslaac-product-lifecycle",
+      "archive_sha256": "cc9a6990255dc9b6f74b267ac07ff20d49c3ad64692ea12597303b5a646877dc",
+      "executed_fixture_sha256": "4917cb7c335839eca8b86d2dadb4eeabcb72cffde5f96fea2783a9b3696b0398",
+      "environment": "Installed static make dist package, isolated Ubuntu 24.04.4 VM/Linux 6.8.0-124-generic, actual systemd-networkd-managed WAN; dnsmasq 2.91 RA-only and Python HTTP in a separate network namespace; rdisc6 packet decoder.",
+      "reproduction": "scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm; public export adds only license and argument-usage message",
+      "checks": [
+        "Fresh managed:false leaves RA acceptance disabled and creates no networkd adoption",
+        "Managed intent enables kernel SLAAC/default route and off-link HTTP with peer-observed SLAAC source",
+        "Independent sender SIGSTOP: 15-second route lifetime stops route selection and HTTP; actual 120-second lifetime removes SLAAC address",
+        "Peer-only resume restores address/default route and HTTP, same routerd PID and no controller errors",
+        "Empty apply and explicit fixture/process cleanup; cleanup is not ownership rollback proof"
+      ],
+      "excludes": [
+        "RDNSS/DNSSL consumption and DHCPv6 IA_NA",
+        "LAN forwarding, service restart/crash recovery, other platforms",
+        "Automatic host-setting restoration when managed intent is removed",
+        "Complete 1.0 feature preservation or release qualification"
+      ]
     }
   },
   "features": [
@@ -1827,7 +1850,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "ra-observe-only-603a815e",
-          "persistent-controller-fixtures-593cb42b"
+          "persistent-controller-fixtures-593cb42b",
+          "linux-wan-ra-lifecycle-a00a4826"
         ]
       },
       "freebsd": {

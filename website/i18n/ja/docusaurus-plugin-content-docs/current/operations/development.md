@@ -338,3 +338,36 @@ probe はローカル・転送 DNS UDP/TCP、HTTP 対向が観測した NAT 送�
 空設定、firewall・管理アドレスの撤去を確認してから fixture の port・unit・namespace を
 削除します。一時出力は削除されます。残すのは手順・revision・判定です。
 電源断の永続性、全中断位置、IPv6 再起動、異なる版への切戻しは別の試験です。
+
+
+## Linux WAN RA/SLAAC ライフサイクル試験
+
+`scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm` は、独立した管理経路があり、
+`make dist` パッケージを導入済みの空の専用 Linux VM だけで実行します。
+正規設定は resources が空の Router JSON とします。dnsmasq、Python 3、curl、jq、
+iproute2、systemd-networkd を事前認証し、独立した RA デコーダー rdisc6 を
+`/opt/routerd15-fixtures/kea/usr/bin/rdisc6` に用意します。試験中に環境を修復しません。
+既存の rd15-ra、rd15-ra-upstream、同名 networkd/sysctl 成果物があれば開始しません。
+
+networkd が管理する WAN の RA 受信を無効にした状態から、別 namespace の dnsmasq
+RA-only peer を使います。router lifetime は15秒、prefix の preferred/valid lifetime は
+120秒。別サブネットの HTTP サーバーへの到達には、RA で取得した default route が必要です。
+製品 apply 前に rdisc6 で RA を復号し、peer 内から HTTP が使えることを確認します。
+
+合格条件:
+
+- 新規 managed:false 宣言で RA 受信設定や networkd adoption を変更せず、default route を取得しない。
+- managed:true に変更すると、手動の WAN アドレス・default route 追加なしで SLAAC を取得し、
+  proto ra の経路を使って HTTP に到達する。peer が観測した送信元を照合する。
+- RA 送信プロセスだけを SIGSTOP で停止し、shutdown RA を送らせない。
+  router lifetime 後は経路検索と HTTP が失敗し、valid lifetime 後は SLAAC アドレスも消える。
+  Linux は GC 前の期限切れ行を expires -Nsec として一覧に残すことがあるため、
+  行の存在と転送への利用を混同しない。
+  [Linux v6.8 の経路選択](https://github.com/torvalds/linux/blob/v6.8/net/ipv6/route.c)も期限切れを除外する。
+- peer だけを再開すると取得・通信が復帰し、routerd PID は不変、controller error はゼロ。
+
+最後に空設定を適用し、fixture 自身の networkd/sysctl ファイルと interface を削除します。
+この明示的な後片付けは、管理解除時の自動ロールバックの証明ではありません。
+失敗時は製品と peer を停止して診断用出力を保持し、原因をローカルで再現してから再試験します。
+成功ログは削除し、リビジョン・手順・合否基準を残します。RDNSS/DNSSL、DHCPv6 IA_NA、
+LAN 転送、再起動・クラッシュ復旧、他 OS はこの試験の対象外であり、全体の残件として扱います。
