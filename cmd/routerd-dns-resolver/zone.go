@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -275,6 +276,9 @@ func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) error {
 	if err := lease.Validate(time.Now().UTC()); err != nil {
 		return err
 	}
+	// The journal and the worker must use the same address identity, not the
+	// spelling selected by a callback or a lease-file producer.
+	lease.IP = netip.MustParseAddr(lease.IP).String()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, zone := range t.zones {
@@ -449,6 +453,11 @@ func (z *zoneData) addLeaseWithPriority(lease dhcpLeaseEvent, source, priority z
 	if ttl == 0 {
 		ttl = 60
 	}
+	address, err := netip.ParseAddr(lease.IP)
+	if err != nil {
+		return
+	}
+	lease.IP = address.String()
 	ip := net.ParseIP(lease.IP)
 	if ip == nil {
 		return
@@ -473,6 +482,11 @@ func (z *zoneData) addRecoveredLease(record dnsresolver.RuntimeDHCPHostRecord) {
 	if record.Hostname == "" || record.MAC == "" || !slices.Contains(z.DHCP.Sources, record.Source) {
 		return
 	}
+	address, err := netip.ParseAddr(record.IP)
+	if err != nil {
+		return
+	}
+	record.IP = address.String()
 	ip := net.ParseIP(record.IP)
 	if ip == nil || !dnsresolver.DHCPSourceKind(record.Source, ip.To4() == nil) {
 		return
