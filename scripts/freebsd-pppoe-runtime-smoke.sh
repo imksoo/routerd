@@ -23,12 +23,21 @@ command -v mpd5 >/dev/null
 command -v jq >/dev/null
 command -v curl >/dev/null
 ipc_curl() {
-  curl --connect-timeout 1 --max-time 1 --fail --silent --show-error "$@" || {
+  # Native stop allows three seconds for the child plus five for its interface.
+  curl --connect-timeout 1 --max-time 12 --fail --silent --show-error "$@" || {
     echo 'INCONCLUSIVE: IPC request failed or exceeded its deadline' >&2
     return 3
   }
 }
 command -v tcpdump >/dev/null
+# ng_ether attaches persistent nodes to every Ethernet interface. Its upstream
+# unload contract requires all such interfaces to be removed, so prepare it
+# before this fixture rather than claiming it can be restored at fixture exit.
+# https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netgraph/ng_ether.c
+kldstat -q -m ng_ether || {
+  echo 'INCONCLUSIVE: prepare ng_ether before the disposable-VM fixture' >&2
+  exit 3
+}
 
 mkdir -p "$evidence_dir"
 work=$(mktemp -d /var/tmp/routerd-pppoe-runtime.XXXXXX)
@@ -41,6 +50,12 @@ client_pid=
 discovery_capture_pid=
 session_capture_pid=
 foreign_ppp_ifname=
+restore_modules=
+# Record only modules absent before this exclusive disposable-VM fixture.
+# Leave every pre-existing module loaded, including the client's prerequisites.
+for module in ng_vjc ng_tee ng_mppc rc4 ng_ppp ng_socket ng_iface ng_pppoe netgraph; do
+  if ! kldstat -q -m "$module"; then restore_modules="$restore_modules $module"; fi
+done
 
 cleanup() {
   rc=$?
@@ -77,6 +92,12 @@ cleanup() {
   if [ -n "$foreign_ppp_ifname" ] && ifconfig "$foreign_ppp_ifname" >/dev/null 2>&1; then
     ifconfig "$foreign_ppp_ifname" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1
   fi
+  for module in $restore_modules; do
+    if kldstat -q -m "$module"; then
+      kldunload "$module" >>"$evidence_dir/module-cleanup.log" 2>&1 || rc=1
+    fi
+    if kldstat -q -m "$module"; then rc=1; fi
+  done
   rm -rf "$work"
   exit "$rc"
 }
