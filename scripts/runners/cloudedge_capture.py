@@ -226,7 +226,7 @@ def stop(capture, path, timeout=10.0):
     receipt = load(path, capture)
     if receipt.get('phase') == 'stopped':
         return
-    if receipt.get('phase') not in ('running', 'stopping'):
+    if receipt.get('phase') not in ('starting', 'running', 'stopping'):
         raise CaptureError('capture launch outcome is not confirmed')
     fd = None
     try:

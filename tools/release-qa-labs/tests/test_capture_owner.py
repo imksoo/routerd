@@ -96,6 +96,15 @@ class CaptureOwnerTests(unittest.TestCase):
         owner.stop(self.capture, self.receipt, timeout=2)
         self.assertEqual(json.loads(self.receipt.read_text())['phase'], 'stopped')
 
+    def test_lost_running_ack_can_stop_the_exact_admitted_capture(self):
+        receipt = self.start()
+        # The admission receipt was durable before exec; the running reply
+        # can be lost while that exact child continues to write this file.
+        receipt['phase'] = 'starting'
+        owner.save(self.receipt, receipt)
+        owner.stop(self.capture, self.receipt, timeout=2)
+        self.assertEqual(json.loads(self.receipt.read_text())['phase'], 'stopped')
+
     def test_foreign_birth_and_file_replacement_are_not_signaled(self):
         original = self.start()
         changed = json.loads(self.receipt.read_text())

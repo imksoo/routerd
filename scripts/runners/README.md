@@ -109,9 +109,10 @@ allowing tcpdump to execute; its `.pid` path now contains a private JSON receipt
 not an unqualified PID. The receipt binds boot/PID namespace, process birth,
 command, executable and output inode. Start requires an actual pcap header;
 stop signals the verified pidfd and waits for exit. Copy requires an acknowledged
-stop and the same regular file. An interrupted stop can recover an observed
-exit without signaling a replacement PID. Unexpected exit and unknown launch
-remain errors; their receipts/captures are retained. Repeated start never
+stop and the same regular file. A lost running acknowledgement can still stop
+the exact admitted native child. An interrupted stop can recover an observed
+exit without signaling a replacement PID. An unproven launch or unexpected exit
+remains an error; receipts/captures are retained. Repeated start never
 overwrites an existing capture: select a fresh test identity after inspection.
 Offline process-boundary tests use a real admitted child, not a raw network
 capture; native packet/remote-SSH qualification is separate.
