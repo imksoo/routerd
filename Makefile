@@ -453,6 +453,10 @@ check-routerd15-dslite-parent:
 check-routerd15-bgp-native-linux:
 	sh scripts/linux-bgp-frr-smoke.sh
 
+.PHONY: check-routerd15-bfd-native-linux
+check-routerd15-bfd-native-linux:
+	sh scripts/linux-bfd-frr-smoke.sh
+
 # Explicit opt-in: both the network and sysfs view belong to a new namespace.
 # Requires Linux user namespaces, iproute2, WireGuard tools, tcpdump and
 # VRF/VXLAN/IPv6 tunnel support.
