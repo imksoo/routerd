@@ -36,7 +36,6 @@ type HealthCheckDaemonUnitOptions struct {
 	Resource    string
 	Spec        api.HealthCheckSpec
 	Router      *api.Router
-	Aliases     map[string]string
 	Environment []string
 	RuntimeRoot string
 	StateRoot   string
@@ -45,14 +44,14 @@ type HealthCheckDaemonUnitOptions struct {
 
 func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) (api.SystemdUnitSpec, error) {
 	resource := options.Resource
-	spec := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
+	spec, err := healthcheck.ResolveSpecForResource(options.Router, resource, options.Spec)
+	if err != nil {
+		return api.SystemdUnitSpec{}, err
+	}
 	runtimeRoot := defaultString(options.RuntimeRoot, "/run")
 	stateRoot := defaultString(options.StateRoot, "/var/lib")
 	logRoot := defaultString(options.LogRoot, "/var/log")
 	sourceInterface := strings.TrimSpace(spec.SourceInterface)
-	if options.Aliases != nil && options.Aliases[sourceInterface] != "" {
-		sourceInterface = options.Aliases[sourceInterface]
-	}
 	sourceAddress := strings.TrimSpace(spec.SourceAddress)
 	if sourceAddress == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
 		value, err := renderAddressFromResource(options.Router, spec.SourceAddressFrom)

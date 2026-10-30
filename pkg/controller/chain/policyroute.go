@@ -725,7 +725,8 @@ func (c IPv4PolicyRouteController) healthCheckUsesFwMark(name string, mark int) 
 		if err != nil || healthCheckDisabled(spec) {
 			return false
 		}
-		return healthcheck.ResolveSpecForResource(c.Router, name, spec).FwMark == mark
+		resolved, err := healthcheck.ResolveSpecForResource(c.Router, name, spec)
+		return err == nil && resolved.FwMark == mark
 	}
 	return false
 }

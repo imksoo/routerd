@@ -115,3 +115,24 @@ func TestHealthCheckStaticRenderDoesNotDropRequiredSource(t *testing.T) {
 		t.Fatalf("required missing source generated an unbound native probe: %v", err)
 	}
 }
+
+func TestFreeBSDHealthBindingResolvesDeclarationNameOnce(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		netResource("Interface", "wan", api.InterfaceSpec{IfName: "em0"}),
+		netResource("Interface", "em0", api.InterfaceSpec{IfName: "em1"}),
+		netResource("HealthCheck", "check", api.HealthCheckSpec{Interface: "wan", Target: "192.0.2.1"}),
+	}}}
+	scripts, err := freeBSDRCDScripts(router)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for name, data := range scripts {
+		if strings.Contains(name, "healthcheck") {
+			script = string(data)
+		}
+	}
+	if !strings.Contains(script, "--source-interface") || !strings.Contains(script, "em0") || strings.Contains(script, "em1") {
+		t.Fatalf("public Interface was ignored or native name was reinterpreted as an alias:\n%s", script)
+	}
+}

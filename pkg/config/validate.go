@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/mobilityconfig"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/samenrollment"
@@ -525,6 +526,9 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 		if res.Kind == "HealthCheck" {
 			spec, err := res.HealthCheckSpec()
 			if err != nil {
+				return err
+			}
+			if _, err := healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec); err != nil {
 				return err
 			}
 			if spec.Interface != "" && !idx.Interfaces[spec.Interface] && !idx.DSLiteTunnels[spec.Interface] {

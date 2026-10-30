@@ -14,7 +14,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dnsresolver"
-	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 )
@@ -993,35 +992,6 @@ func validateDNSUpstream(resourceID string, spec api.DNSUpstreamSpec) error {
 	}
 	if strings.EqualFold(spec.Protocol, "doh") && strings.TrimSpace(spec.Path) != "" && !strings.HasPrefix(strings.TrimSpace(spec.Path), "/") {
 		return fmt.Errorf("%s spec.path must start with /", resourceID)
-	}
-	return nil
-}
-
-func validateHealthCheckDerivedFwMark(router *api.Router, res api.Resource, spec api.HealthCheckSpec) error {
-	refs := healthcheck.DerivedFwMarkRefs(router, res.Metadata.Name)
-	if len(refs) == 0 {
-		return nil
-	}
-	var mark int
-	var first healthcheck.FwMarkRef
-	for _, ref := range refs {
-		if ref.Mark == 0 {
-			continue
-		}
-		if mark == 0 {
-			mark = ref.Mark
-			first = ref
-			continue
-		}
-		if mark != ref.Mark {
-			return fmt.Errorf("%s is referenced by routing targets with conflicting marks: %s/%s=0x%x and %s/%s=0x%x", res.ID(), first.Resource, first.Name, mark, ref.Resource, ref.Name, ref.Mark)
-		}
-	}
-	if mark == 0 {
-		return nil
-	}
-	if spec.FwMark != 0 && spec.FwMark != mark {
-		return fmt.Errorf("%s spec.fwmark 0x%x conflicts with routing target mark 0x%x; omit spec.fwmark to derive it from the referenced route target", res.ID(), spec.FwMark, mark)
 	}
 	return nil
 }

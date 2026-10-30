@@ -85,62 +85,71 @@ func TestProbeTCPInvalidSourceAddress(t *testing.T) {
 
 func TestResolveSpecSourceInterfaceResourceNames(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
-			Metadata: api.ObjectMeta{Name: "lan"},
-			Spec:     api.InterfaceSpec{IfName: "ens19"},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
-			Metadata: api.ObjectMeta{Name: "ds-lite"},
-			Spec:     api.DSLiteTunnelSpec{TunnelName: "ds-routerd"},
-		},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "em0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "em0"}, Spec: api.InterfaceSpec{IfName: "em1"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "ds-routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "WireGuardInterface"}, Metadata: api.ObjectMeta{Name: "wg"}, Spec: api.WireGuardInterfaceSpec{IfName: "wg-native"}},
 	}}}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "lan"}).SourceInterface; got != "ens19" {
-		t.Fatalf("Interface sourceInterface resolved to %q", got)
-	}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "ds-lite"}).SourceInterface; got != "ds-routerd" {
-		t.Fatalf("DSLite sourceInterface resolved to %q", got)
-	}
-	if got := ResolveSpec(router, api.HealthCheckSpec{SourceInterface: "eth-test"}).SourceInterface; got != "eth-test" {
-		t.Fatalf("raw sourceInterface resolved to %q", got)
+	for _, tc := range []struct {
+		spec api.HealthCheckSpec
+		want string
+	}{
+		{api.HealthCheckSpec{Interface: "wan"}, "em0"},
+		{api.HealthCheckSpec{SourceInterface: "wan"}, "em0"},
+		{api.HealthCheckSpec{Interface: "ds-lite"}, "ds-routerd"},
+		{api.HealthCheckSpec{Interface: "wg"}, "wg-native"},
+		{api.HealthCheckSpec{SourceInterface: "eth-test"}, "eth-test"},
+		{api.HealthCheckSpec{}, ""},
+	} {
+		got, err := ResolveSpecForResource(router, "check", tc.spec)
+		if err != nil || got.SourceInterface != tc.want || got.FwMark != 0 {
+			t.Fatalf("source binding %+v => %+v, %v; want %q", tc.spec, got, err, tc.want)
+		}
 	}
 }
 
 func TestResolveSpecDerivesFwMarkFromRoutingHealthCheckReferences(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "balanced"},
-			Spec: api.EgressRoutePolicySpec{Mode: "hash", Candidates: []api.EgressRoutePolicyCandidate{{
-				Name: "balanced",
-				Targets: []api.EgressRoutePolicyTarget{
-					{Name: "a", Interface: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-a"},
-				},
-			}}},
-		},
-		{
-			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
-			Metadata: api.ObjectMeta{Name: "default"},
-			Spec: api.EgressRoutePolicySpec{Mode: "priority", Candidates: []api.EgressRoutePolicyCandidate{
-				{Name: "hgw", Interface: "wan", Mark: 0x116, HealthCheck: "internet-hgw"},
-			}},
-		},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "balanced"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Targets: []api.EgressRoutePolicyTarget{{Interface: "ds-lite-a", Mark: 0x110, HealthCheck: "internet-a"}}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{{Interface: "wan", Mark: 0x116, HealthCheck: "internet-hgw"}}}},
 	}}}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).FwMark; got != 0x110 {
-		t.Fatalf("route set target fwmark = 0x%x, want 0x110", got)
+	for _, tc := range []struct {
+		name, source string
+		mark         int
+	}{
+		{"internet-a", "ds-lite-a", 0x110},
+		{"internet-hgw", "wan", 0x116},
+	} {
+		got, err := ResolveSpecForResource(router, tc.name, api.HealthCheckSpec{})
+		if err != nil || got.FwMark != tc.mark || got.SourceInterface != tc.source {
+			t.Fatalf("%s binding = %+v, %v", tc.name, got, err)
+		}
 	}
-	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).FwMark; got != 0x116 {
-		t.Fatalf("default route candidate fwmark = 0x%x, want 0x116", got)
+	if _, err := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}); err == nil {
+		t.Fatal("configured mark silently overrode actual referenced path")
 	}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{}).SourceInterface; got != "ds-lite-a" {
-		t.Fatalf("route set target sourceInterface = %q, want ds-lite-a", got)
-	}
-	if got := ResolveSpecForResource(router, "internet-hgw", api.HealthCheckSpec{}).SourceInterface; got != "wan" {
-		t.Fatalf("default route candidate sourceInterface = %q, want wan", got)
-	}
-	if got := ResolveSpecForResource(router, "internet-a", api.HealthCheckSpec{FwMark: 0x999}).FwMark; got != 0x999 {
-		t.Fatalf("explicit fwmark = 0x%x, want 0x999", got)
+}
+
+func TestResolveSpecRejectsConflictingReferencedProbePaths(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+		mark         int
+	}{
+		{"different interfaces", "wan-b", 0x110},
+		{"different marks", "wan-a", 0x111},
+		{"marked and unmarked paths", "wan-a", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "paths"}, Spec: api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{
+					{Interface: "wan-a", Mark: 0x110, HealthCheck: "check"},
+					{Interface: tc.source, Mark: tc.mark, HealthCheck: "check"},
+				}}},
+			}}}
+			if _, err := ResolveSpecWithStoreForResource(router, nil, "check", api.HealthCheckSpec{}); err == nil {
+				t.Fatal("incompatible paths produced an unbound management probe")
+			}
+		})
 	}
 }
 

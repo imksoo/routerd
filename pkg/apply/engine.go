@@ -1480,7 +1480,12 @@ func (e *Engine) observeHealthCheck(router *api.Router, res api.Resource, aliase
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	spec = healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec)
+	spec, err = healthcheck.ResolveSpecForResource(router, res.Metadata.Name, spec)
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
+	}
 	checkType := defaultString(spec.Type, "ping")
 	role := defaultString(spec.Role, "next-hop")
 	targetSource := defaultString(spec.TargetSource, "auto")
