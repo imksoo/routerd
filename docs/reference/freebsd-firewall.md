@@ -32,6 +32,9 @@ on its destination zone. Such a combination fails rendering explicitly.
 Unrelated egress-zone NAT, provably disjoint or fully NAT-excluded destination
 CIDRs, and IPv6-only rules with NAT44 remain supported. Partly excluded
 destinations still fail because some matching packets would be translated.
+Hairpin checks cover every possible failover backend, including unresolved
+backups that may later translate on the configured hairpin interfaces. These
+checks preserve the runtime controller's current backend selection.
 Destination predicates see the destination after ingress DNAT, as in the Linux
 forward path. Managed ingress translations retain their existing narrow
 `rdr pass` behavior and precedence.

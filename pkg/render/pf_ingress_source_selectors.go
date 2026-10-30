@@ -45,9 +45,10 @@ func pfIngressSourceSelectorRules(router *api.Router, aliases map[string]string,
 				possible = append(possible, candidate)
 				continue
 			}
-			// A runtime-resolved backend is not evidence that hairpin translation is
-			// impossible. Preserve unknown destination overlap on its possible native
-			// interfaces; the existing zone validator rejects only affected rules.
+			// An unresolved backend, or another endpoint preparation error, cannot
+			// prove hairpin translation impossible. Preserve unknown destination
+			// overlap conservatively for capability rejection only; the normal
+			// rendering path still reports its own endpoint errors.
 			candidate = ingressNATRule{ResourceID: resource.ID(), ResourceKind: resource.Kind, Name: resource.Metadata.Name}
 			mode := strings.TrimSpace(spec.Hairpin.Mode)
 			if mode == "off" {
@@ -55,9 +56,6 @@ func pfIngressSourceSelectorRules(router *api.Router, aliases map[string]string,
 			}
 			if mode == "" {
 				mode = "auto"
-				if spec.Hairpin.Enabled {
-					mode = "manual"
-				}
 			}
 			if mode == "auto" && (spec.Listen.Address != "" || spec.Listen.AddressFrom.Resource != "") {
 				if ifname := aliases[spec.Listen.Interface]; ifname != "" {

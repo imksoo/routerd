@@ -3,9 +3,10 @@
 package render
 
 import (
-	"github.com/imksoo/routerd/pkg/api"
 	"strings"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestPFRejectsOriginalSourceRuleForEveryFailoverHairpinBackend(t *testing.T) {
@@ -50,5 +51,37 @@ func TestPFRejectsOriginalSourceRuleForEveryFailoverHairpinBackend(t *testing.T)
 	}
 	if !strings.Contains(string(selected), "-> 192.0.2.10 port 443") || strings.Contains(string(selected), "-> 192.0.2.20 port 443") {
 		t.Fatalf("guard changed actual first-backend failover: %s", selected)
+	}
+}
+
+func TestPFUnknownBackupRetainsBlankModeAutomaticHairpinOnListenInterface(t *testing.T) {
+	router := pfForwardRouter()
+	rule := router.Spec.Resources[6]
+	spec, _ := rule.FirewallRuleSpec()
+	spec.FromZone = "wan"
+	spec.ToZone = "wan"
+	spec.SourceCIDRs = []string{"198.51.100.42/32"}
+	spec.DestinationCIDRs = []string{"198.51.100.20/32"}
+	rule.Spec = spec
+	router.Spec.Resources[6] = rule
+	router.Spec.Resources = append(router.Spec.Resources,
+		netResource("IPv4StaticAddress", "wan-address", api.IPv4StaticAddressSpec{Interface: "wan", Address: "198.51.100.1/24"}),
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "automatic"}, Spec: api.IngressServiceSpec{
+			Listen:   api.IngressListenSpec{Interface: "wan", Address: "198.51.100.10", Protocol: "tcp", Port: 443},
+			Hairpin:  api.IngressHairpinSpec{Enabled: true},
+			Backends: []api.IngressBackendSpec{{Name: "first", Address: "192.0.2.10", Port: 443}, {Name: "later", AddressFrom: api.StatusValueSourceSpec{Resource: "VirtualAddress/later", Field: "address", Optional: true}, Port: 443}},
+		}},
+	)
+	// Actual runtime selection can resolve the backup onto the listener subnet.
+	// Blank mode stays automatic for IngressService even with Enabled=true.
+	nat, err := PFNAT44RulesForRouter(router, nil, IngressServiceState{Name: "automatic", Selection: "failover", Backends: []api.IngressBackendSpec{{Name: "later", Address: "198.51.100.20", Port: 443}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(nat), "nat on em1 inet proto tcp from (em1:network) to 198.51.100.20 port 443 -> (em1)") {
+		t.Fatalf("actual automatic runtime hairpin missing: %s", nat)
+	}
+	if _, err := PFRuntimeFirewall(router, nil, nil); err == nil || !strings.Contains(err.Error(), "original srcCIDRs/sourcePorts") {
+		t.Fatalf("unknown backup's possible automatic listen-interface SNAT was missed: %v", err)
 	}
 }
