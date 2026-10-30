@@ -82,12 +82,16 @@ for side in lan wan admin; do
  systemd-run --unit="rd15-http-$side" --property=Type=exec ip netns exec "rd15-$side-peer" python3 "$work/peer_http.py" "$work/$side-http.log"
 done
 systemd-run --unit=rd15-upstream-dns --property=Type=exec ip netns exec rd15-wan-peer dnsmasq --keep-in-foreground --conf-file=/dev/null --user=root --no-resolv --bind-interfaces --interface=peer0 --listen-address=198.18.16.1 --address=/peer.test/198.18.16.1
-for _ in {1..10}; do
- if ip netns exec rd15-wan-peer curl --noproxy '*' --fail --silent --max-time 1 http://198.18.16.1:8080/fixture >/dev/null; then break; fi
- sleep 1
-done
 for side in lan wan admin; do
+ for _ in {1..10}; do
+  if ip netns exec "rd15-$side-peer" curl --noproxy '*' --fail --silent --max-time 1 http://127.0.0.1:8080/fixture >/dev/null; then break; fi
+  sleep 1
+ done
  ip netns exec "rd15-$side-peer" curl --noproxy '*' --fail --silent --max-time 2 http://127.0.0.1:8080/fixture >/dev/null
+done
+for _ in {1..10}; do
+ if [ "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1 ]; then break; fi
+ sleep 1
 done
 test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1
 systemctl start routerd
