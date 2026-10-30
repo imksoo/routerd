@@ -1059,3 +1059,84 @@ restart, provider mutations and image boot remain unexecuted. The repository-wid
 semantic audit and the implementation findings still listed in
 [open findings](routerd15-open-findings.md) remain incomplete. This checkpoint is
 not a release or a whole-product qualification.
+
+## Canonical activation, probes and native parent checkpoint, 2026-10-30
+
+The resumed branch was read and verified at public `921d6f61`. Completed changes
+were published separately; intermediate combined work was also preserved on an
+explicit WIP branch. The final checked checkpoint is public
+`a7c4dd7a085eaa7354586b4d30763c8b81a15a81`, tree
+`27882457c2a3b2622703c0b6eee48ee727bf6f3b`; the equivalent local commit is
+`1d4235dd8e15405464177bb63ccd8afb1f35e4ee`. All 2669 tracked blobs matched that
+tree during and after the final whole-suite/build checks. Later changes are
+audit documentation only. Checks used Go 1.25.9, ShellCheck 0.10.0,
+`GOMAXPROCS=2` and `GOFLAGS="-p=2 -buildvcs=false"`; GitHub Actions was not awaited.
+
+Implemented and independently reviewed production paths:
+
+- Canonical durable replacement precedes candidate activation. The selected live
+  Runner owns HA admission, consumes the existing apply attempt's commit callback
+  and runs required controller effects. Generation replacement transfers the
+  actual locked lease descriptor; adding HA acquires only once. Rejected writes,
+  unconfirmed durability and standby admission cannot activate the candidate.
+  Postcommit failures retain new desired intent and report actual active state.
+  One control-http owner prepares and publishes listeners before success history.
+- Lease/path identity is rechecked after canonical and status persistence waits.
+  Lost selected authority fences its generation; loss confined to a new candidate
+  preserves the still-owned old generation. Actual admitted HA observations are
+  published before When selection; failed status writes suppress effects. Real
+  SQLite, LogRetention, file-lock and TCP listener regressions cover these paths,
+  including retry gaps, self-mutation, bind failure, retry and self-disable.
+- Doctor performs bounded DNS UDP/TCP, configured egress and LAN probes. Current
+  SQL/configuration conditions are checked before and after communication, and
+  unavailable observations remain explicit. Local static questions use RD=0;
+  actual UDP/TCP resolver regressions prove same-revision workers do not export
+  nonrecursive misses. Native-local endpoint observation precedes private wire
+  traffic. This does not authenticate unrelated/older DNS listeners or qualify
+  router forwarding. The raw-ICMP fixture reports its capability limitation.
+- Child static IPv4, route, delegated LAN and RA effects consume actual DS-Lite
+  receipts/native cookies in addition to VXLAN proof. Pending/foreign parents,
+  changed sources and masked declarations cannot authorize effects; recorded
+  cleanup survives declaration removal. FreeBSD aliases share the native naming
+  rule. Bridge, WireGuardInterface, VRF and TunnelInterface proof remains open.
+- FreeBSD PF ordinary zone forwarding matches actual ingress and egress, keeps
+  explicit decisions ahead of role defaults and separates local output. Native
+  name bounds and every possible failover hairpin backend are checked. Unsupported
+  translated-source conjunctions and unimplemented advanced selectors fail
+  explicitly. Native PF parsing/packets and restricted route-to parity are unrun.
+- QA proxy DNS runs in an owned, canceled/reaped child; admitted handlers are
+  bounded and joined on shutdown. The four-point capture runner uses durable
+  gated launch, Linux pidfd/birth/output identity and acknowledged exit before
+  evidence copy. Actual child-process/fault regressions cover lost start/stop
+  acknowledgements; no real remote packet capture was executed.
+
+| Check | Observed result |
+| --- | --- |
+| Whole-repository vet and generated/website schemas | Pass |
+| Linux release binaries and static-link checks | Pass; 20 binaries, CGO disabled; routerd/routerctl version output confirms the public checked commit |
+| FreeBSD release build and complete test compilation | Pass; 20 binaries and 128 packages, compile-only |
+| Complete normal Go suite | 129 packages: 104 pass, 16 fail, nine without tests; 4023 top-level pass, 57 fail, seven skip |
+| Related race, persistence-fault and actual loopback checks | Pass; includes final combined canonical/HA/HTTP, DNS privacy/source freshness, DS-Lite and PF regressions |
+| Release-QA offline suite | 495 cases: 486 pass, nine existing skips, no failures |
+
+All 57 failed Go tests contain an observed permission denial: 48 direct AF_UNIX,
+six Unix-readiness failures with the denied listener reported, and three
+Netlink/interface failures. There were no additional product assertion failures
+in the final run. These observations do not qualify blocked assertions, and the
+full normal gate did not pass. Required positive assertions remain intact.
+
+The first whole-suite run found eight stale FreeBSD PF snapshots and a missing
+ShellCheck executable on its PATH. The snapshots were independently reviewed:
+seven change only the intended PF filtering, and the rate-limit example now
+records the documented unsupported-capability error. Their assertions were not
+weakened. The final complete suite used the real ShellCheck executable. Supporting
+race/vet/schema and QA checks ran on identical production/QA source before this
+snapshot-only follow-up; final normal/build checks and blob verification used
+the exact published checkpoint above.
+
+Native Linux/FreeBSD forwarding, independent router peers/clients, target-storage
+crash durability, PVE/systemd, cloud mutations and image boot remain unexecuted.
+Userspace identity rechecks do not establish atomic native compare-and-change.
+The full semantic audit and the other implementation gaps in
+[open findings](routerd15-open-findings.md) remain incomplete. This is not a
+release or whole-product qualification.
