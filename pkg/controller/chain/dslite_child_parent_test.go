@@ -41,8 +41,9 @@ func TestDSLiteParentStaticAddressProofAndRecordedCleanup(t *testing.T) {
 			db := &staticAddressFaultStore{SQLiteStore: store.SQLiteStore}
 			if scenario == "pending" {
 				records, _ := parent.nativeTunnelReceipts()
+				previous := records[0]
 				records[0].Pending = true
-				if err := parent.saveNativeTunnel(records[0], false); err != nil {
+				if err := parent.saveNativeTunnel(&previous, records[0], false); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -92,7 +93,7 @@ func TestDSLiteParentStaticAddressProofAndRecordedCleanup(t *testing.T) {
 			}
 			if scenario == "removed-missing-receipt" {
 				records, _ := parent.nativeTunnelReceipts()
-				if err := parent.saveNativeTunnel(records[0], true); err != nil {
+				if err := parent.saveNativeTunnel(&records[0], records[0], true); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -473,8 +474,9 @@ func TestDSLiteParentRechecksReceiptAfterLastNativeRead(t *testing.T) {
 				if readErr != nil {
 					t.Fatal(readErr)
 				}
+				previous := records[0]
 				records[0].Pending = true
-				if saveErr := parent.saveNativeTunnel(records[0], false); saveErr != nil {
+				if saveErr := parent.saveNativeTunnel(&previous, records[0], false); saveErr != nil {
 					t.Fatal(saveErr)
 				}
 			}

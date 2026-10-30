@@ -98,15 +98,18 @@ func (c DSLiteTunnelController) recheckTunnelLease(spec api.DSLiteTunnelSpec, pr
 	return nil
 }
 
-func (c DSLiteTunnelController) requireTunnelInputs(ctx context.Context, name string, spec api.DSLiteTunnelSpec, plan dsliteTunnelPlan) error {
-	err := c.checkTunnelInputs(ctx, name, spec, plan)
+func (c DSLiteTunnelController) requireTunnelInputs(ctx context.Context, record dsliteTunnelReceipt, spec api.DSLiteTunnelSpec) error {
+	err := c.checkTunnelInputs(ctx, record.Resource, spec, record.Plan)
 	if errors.Is(err, errDSLiteInputsChanged) {
-		if withdrawErr := c.withdrawNativeTunnelResource(ctx, name); withdrawErr != nil {
+		if withdrawErr := c.withdrawNativeTunnel(ctx, record); withdrawErr != nil {
 			return fmt.Errorf("withdraw DS-Lite after source change: %w", withdrawErr)
 		}
 		return err
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return c.checkTunnelReceipt(ctx, record)
 }
 
 // The tunnel owns its inner addresses. The source /128 has its separate finite
@@ -256,22 +259,51 @@ func (c DSLiteTunnelController) nativeTunnelReceipts() ([]dsliteTunnelReceipt, e
 	return records, nil
 }
 
-func (c DSLiteTunnelController) saveNativeTunnel(record dsliteTunnelReceipt, remove bool) error {
+func (c DSLiteTunnelController) saveNativeTunnel(previous *dsliteTunnelReceipt, record dsliteTunnelReceipt, remove bool) error {
 	records, err := c.nativeTunnelReceipts()
 	if err != nil {
 		return err
 	}
 	next := make([]dsliteTunnelReceipt, 0, len(records)+1)
+	found := false
 	for _, existing := range records {
 		if existing.Resource != record.Resource {
 			next = append(next, existing)
+			continue
 		}
+		if previous == nil || existing != *previous {
+			return errors.New("DS-Lite ownership receipt changed before persistence")
+		}
+		found = true
+	}
+	if previous != nil && (!found || previous.Resource != record.Resource) {
+		return errors.New("DS-Lite ownership receipt disappeared before persistence")
 	}
 	if !remove {
 		next = append(next, record)
 	}
 	sort.Slice(next, func(i, j int) bool { return next[i].Resource < next[j].Resource })
 	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", dsliteNativeStatusName, map[string]any{"tunnels": next})
+}
+
+func (c DSLiteTunnelController) checkTunnelReceipt(ctx context.Context, record dsliteTunnelReceipt) error {
+	scope, err := c.tunnelScope(ctx)
+	if err != nil {
+		return err
+	}
+	if scope != record.Scope {
+		return errors.New("DS-Lite kernel scope changed while observing ownership")
+	}
+	records, err := c.nativeTunnelReceipts()
+	if err != nil {
+		return err
+	}
+	for _, current := range records {
+		if current == record {
+			return nil
+		}
+	}
+	return errors.New("DS-Lite ownership receipt changed while observing")
 }
 
 func dsliteNativeToken(alias string) string {
@@ -471,8 +503,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 		return err
 	}
 	if observed.Exists || record.OwnDefault {
+		previous := record
 		record.Pending = true
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&previous, record, false); err != nil {
 			return err
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)
@@ -480,6 +513,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 			return err
 		}
 		if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
+			return err
+		}
+		if err := c.checkTunnelReceipt(ctx, record); err != nil {
 			return err
 		}
 	}
@@ -490,8 +526,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 	}
 
 	if observed.Exists {
+		previous := record
 		record.Pending = true
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&previous, record, false); err != nil {
 			return err
 		}
 		observed, err = c.observeNativeTunnel(ctx, record.Plan.Name)
@@ -499,6 +536,9 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 			return err
 		}
 		if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
+			return err
+		}
+		if err := c.checkTunnelReceipt(ctx, record); err != nil {
 			return err
 		}
 		if observed.Exists {
@@ -521,7 +561,7 @@ func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", record.Resource, map[string]any{"phase": PhaseDisabled, "reason": "Withdrawn", "interface": record.Plan.Name, "dryRun": false}); err != nil {
 		return err
 	}
-	return c.saveNativeTunnel(record, true)
+	return c.saveNativeTunnel(&record, record, true)
 }
 
 func (c DSLiteTunnelController) withdrawNativeTunnelResource(ctx context.Context, name string) error {
@@ -582,7 +622,7 @@ func (c DSLiteTunnelController) cleanupNativeTunnels(ctx context.Context) error 
 			if !oldOK || !newOK || oldKernel == newKernel {
 				return errors.New("DS-Lite receipt belongs to another namespace or jail")
 			}
-			if err := c.saveNativeTunnel(record, true); err != nil {
+			if err := c.saveNativeTunnel(&record, record, true); err != nil {
 				return err
 			}
 			continue
@@ -670,11 +710,21 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 	if err := c.verifyNativeTunnel(ctx, record, observed); err != nil {
 		return err
 	}
+	var previous *dsliteTunnelReceipt
+	if record.IfIndex > 0 || record.Pending {
+		for _, current := range records {
+			if current == record {
+				prior := current
+				previous = &prior
+				break
+			}
+		}
+	}
 	record.Pending = true
 	if !observed.Exists {
 		record.IfIndex = 0
 	}
-	if err := c.saveNativeTunnel(record, false); err != nil {
+	if err := c.saveNativeTunnel(previous, record, false); err != nil {
 		return err
 	}
 	// SQLite writes may wait: recheck native identity after the pending fence.
@@ -689,7 +739,7 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		return errors.New("DS-Lite creation premise changed after pending write")
 	}
 	observed = current
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
 	if !observed.Exists {
@@ -707,25 +757,7 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 			}
 			// Only the exclusive create ACK authorizes installing a cookie.
 			// A resumed pending record cannot grant this authority to a bare link.
-			pending, err := c.nativeTunnelReceipts()
-			if err != nil {
-				return err
-			}
-			found := false
-			for _, current := range pending {
-				found = found || current == record
-			}
-			if !found {
-				return errors.New("DS-Lite pending receipt changed before cookie installation")
-			}
-			scope, err := c.tunnelScope(ctx)
-			if err != nil {
-				return err
-			}
-			if scope != record.Scope {
-				return errors.New("DS-Lite kernel scope changed before cookie installation")
-			}
-			if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+			if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 				return err
 			}
 			install := c.SetAliasByIndex
@@ -735,7 +767,6 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 			if err := install(index, plan.Name, "routerd-dslite:"+record.Token); err != nil {
 				return err
 			}
-			record.IfIndex = index
 		} else {
 			_, createErr = c.endpointCommand(ctx, "ifconfig", "gif", "create", "name", plan.Name, "description", "routerd-dslite:"+record.Token)
 		}
@@ -749,8 +780,9 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		if !observed.Exists {
 			return errors.Join(createErr, errors.New("DS-Lite interface absent after creation"))
 		}
+		prior := record
 		record.IfIndex = observed.Index
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&prior, record, false); err != nil {
 			return errors.Join(createErr, err)
 		}
 		if createErr != nil {
@@ -758,12 +790,13 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 		}
 	}
 	if record.IfIndex == 0 {
+		prior := record
 		record.IfIndex = observed.Index
-		if err := c.saveNativeTunnel(record, false); err != nil {
+		if err := c.saveNativeTunnel(&prior, record, false); err != nil {
 			return err
 		}
 	}
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
 	if record.OS == platform.OSFreeBSD {
@@ -811,11 +844,12 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 			return err
 		}
 	}
-	if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+	if err := c.requireTunnelInputs(ctx, record, spec); err != nil {
 		return err
 	}
+	prior := record
 	record.Pending = false
-	return c.saveNativeTunnel(record, false)
+	return c.saveNativeTunnel(&prior, record, false)
 }
 
 func (c DSLiteTunnelController) observeTunnelDefault(ctx context.Context, record dsliteTunnelReceipt) (bool, bool, error) {
@@ -875,8 +909,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 	if matching {
 		return nil
 	}
+	previous := *record
 	record.OwnDefault = true
-	if err := c.saveNativeTunnel(*record, false); err != nil {
+	if err := c.saveNativeTunnel(&previous, *record, false); err != nil {
 		return err
 	}
 	matching, collision, err = c.observeTunnelDefault(ctx, *record)
@@ -885,6 +920,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 	}
 	if collision {
 		return errors.New("DS-Lite default route premise changed after pending write")
+	}
+	if err := c.checkTunnelReceipt(ctx, *record); err != nil {
+		return err
 	}
 	var applyErr error
 	if record.OS == platform.OSFreeBSD {
@@ -902,6 +940,9 @@ func (c DSLiteTunnelController) ensureTunnelDefault(ctx context.Context, record 
 func (c DSLiteTunnelController) withdrawTunnelDefault(ctx context.Context, record dsliteTunnelReceipt) error {
 	matching, _, err := c.observeTunnelDefault(ctx, record)
 	if err != nil || !matching {
+		return err
+	}
+	if err := c.checkTunnelReceipt(ctx, record); err != nil {
 		return err
 	}
 	if record.OS == platform.OSFreeBSD {
