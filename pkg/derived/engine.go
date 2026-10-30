@@ -132,10 +132,10 @@ func (c *Controller) reconcileResource(ctx context.Context, resource api.Resourc
 	if err != nil {
 		return err
 	}
-	target := c.target(spec)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	state := c.resourceStateLocked(resource.Metadata.Name)
+	target := c.target(spec, state.asserted)
 	if !state.initialized {
 		state.initialized = true
 		state.asserted = target
@@ -183,7 +183,7 @@ func (c *Controller) schedule(ctx context.Context, resource api.Resource, spec a
 		if state.timer != timer || ctx.Err() != nil {
 			return
 		}
-		stillTarget := c.target(spec) == target
+		stillTarget := c.target(spec, state.asserted) == target
 		if !stillTarget {
 			c.cancelPending(state)
 			if err := c.saveStatus(resource, state); err != nil {
@@ -242,7 +242,9 @@ func (c *Controller) publish(ctx context.Context, resource api.Resource, spec ap
 	return c.Bus.Publish(ctx, event)
 }
 
-func (c *Controller) target(spec api.DerivedEventSpec) bool {
+// target applies both independent guards to one input snapshot. Neither guard
+// matching retains the committed latch; assertion takes precedence if both do.
+func (c *Controller) target(spec api.DerivedEventSpec, asserted bool) bool {
 	values := make([]bool, 0, len(spec.Inputs))
 	for _, input := range spec.Inputs {
 		values = append(values, c.eval(input))
@@ -250,22 +252,26 @@ func (c *Controller) target(spec api.DerivedEventSpec) bool {
 	if len(values) == 0 {
 		return false
 	}
-	switch defaultString(spec.EmitWhen, EmitAllTrue) {
-	case EmitAnyTrue:
-		for _, value := range values {
-			if value {
-				return true
-			}
-		}
-		return false
-	default:
-		for _, value := range values {
-			if !value {
-				return false
-			}
-		}
+	allTrue, anyTrue := true, false
+	for _, value := range values {
+		allTrue = allTrue && value
+		anyTrue = anyTrue || value
+	}
+	emit := allTrue
+	if defaultString(spec.EmitWhen, EmitAllTrue) == EmitAnyTrue {
+		emit = anyTrue
+	}
+	if emit {
 		return true
 	}
+	retract := !allTrue
+	if defaultString(spec.RetractWhen, RetractAnyFalse) == RetractAllFalse {
+		retract = !anyTrue
+	}
+	if retract {
+		return false
+	}
+	return asserted
 }
 
 func (c *Controller) eval(input api.ReadyWhenSpec) bool {
