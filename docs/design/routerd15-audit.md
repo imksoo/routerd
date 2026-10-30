@@ -1536,3 +1536,36 @@ VIP before and after takeover, with three replies and no loss in each phase.
 Post-run inspection found no fixture jail/interface/socket; the CARP module was
 returned to its previously unloaded state. This is a VNET/kernel lifecycle check,
 not a three-machine failure-domain or physical-network qualification.
+
+## Linux PD renumbering and recovery after expiry
+
+Product `b4965652`, formally packaged, passed the extended
+`linux-pd-ra-lifecycle-smoke.sh` gate at fixture `bcc27b34` on Ubuntu 24.04.4 /
+Linux 6.8.0-124-generic with independent Kea 2.4.1 and Linux SLAAC namespaces.
+Kea reloaded a pool change from `2001:db8:1500::/60` to
+`2001:db8:1501::/60` while routerd and Kea retained their PIDs. An actual Renew
+selected the replacement. The new PIO, client source, local/upstream DNS UDP/TCP,
+and routed HTTP passed; the old router address disappeared, the old DNS endpoint
+stopped responding, and any retained old client address was deprecated.
+
+After product service restart, stopping Kea exhausted the actual lease. The
+router address and client default route disappeared and HTTP failed. Restarting
+only Kea then restored PD, usable client addressing, DNS and forwarding without
+product-state repair. Final empty apply and fixture cleanup passed; independent
+inspection found Healthy/zero resources/no errors, no trial namespaces, ports
+or peer processes. The original IPv6 forwarding setting was restored.
+
+The first extended run failed its recovery HTTP check after waiting for Bound
+and a default route without checking client DAD. A local isolated-kernel
+reproduction demonstrated that a route can exist before its usable source.
+The fixture now waits for a non-tentative, non-failed, preferred client address;
+the entire gate passed on rerun. Failure snapshots are captured before stopping
+participants. Successful raw output is removed; the English/Japanese procedure
+and fixture retain the regression criteria. Relevant PD/RA/daemon tests, shell
+checks and four website locales passed.
+
+The failed-run cleanup separately exposed stale undeclared Pending/Expired
+resource rows affecting overall status after empty apply. That existing
+aggregation issue remains open; the successful run does not fix it. This gate
+does not qualify overlapping multi-prefix lifetimes, WAN RA/IA_NA, IPv6 reboot,
+FreeBSD forwarding or the full routerd 1.0 feature inventory.

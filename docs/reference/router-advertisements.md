@@ -48,7 +48,8 @@ provenance or all native client paths.
 Local wire/owner tests cover finite deadlines, previous-prefix withdrawal,
 M/O/MTU/router lifetime, solicitation scheduling, source failures and stop/join.
 The isolated Linux Kea/SLAAC client gate now covers delegated-prefix forwarding,
-renewal, service restart and expiry; see the reproducible
+renewal, independent-server pool replacement, service restart, expiry and
+recovery when the upstream returns; see the reproducible
 [VM procedure](../operations/development.md#linux-pdra-lifecycle-vm-gate).
 FreeBSD client forwarding remains a separate unqualified gate.
 The current ndp receive API does not expose fragmented-RS provenance required

@@ -291,6 +291,17 @@ forwarding; SAM tests do not establish independent RR/leaf interoperability.
   address before our add. This is a native API limitation, not established
   foreign-safe acquisition. See [native ownership](../reference/native-ownership.md).
 
+- Empty apply after expired PD can leave stale undeclared Pending/Expired rows
+  for DHCPv6PrefixDelegation, IPv6DelegatedAddress, DNSResolver and DNSZone in
+  `status.resourcePhaseIssues`, making overall status Pending despite zero
+  declared resources, no controller errors and withdrawn native effects.
+  `cmd/routerd/cmd_serve.go` aggregates every stored object status; the 1.0
+  baseline uses the same unrestricted aggregation. Native reproduction used
+  product `b4965652`. Fix removal/status lifetime at its owner and preserve
+  failures or receipts needed for unfinished withdrawal; filtering all
+  undeclared rows would hide real cleanup failures. The PD recovery gate passes
+  after correcting client DAD readiness, but this status issue is unresolved.
+
 Native qualification is limited to the paths and revisions recorded in the
 [executed audit](routerd15-audit.md); remaining peer/platform paths and real
 provider effects are still separate gates. No production
