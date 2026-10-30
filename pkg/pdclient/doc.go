@@ -5,6 +5,7 @@
 //
 // The package intentionally does not know how packets reach the network.
 // Linux, FreeBSD, and test transports all implement Transport, while this
-// package owns only DHCPv6 payload encoding/decoding and the prefix
-// delegation state machine.
+// package owns DHCPv6 payload encoding/decoding and the prefix delegation
+// state machine. The wire model also retains IA_NA address associations; wire
+// support alone does not acquire or configure an address on an interface.
 package pdclient
