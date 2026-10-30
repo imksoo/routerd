@@ -58,6 +58,7 @@ type daemon struct {
 	queryMu       sync.RWMutex
 	querySlots    chan struct{}
 	queryRejected atomic.Uint64
+	requestTimeout time.Duration
 	zones         *zoneTable
 	sources       []runtimeSource
 	listeners     map[string]*boundListener
@@ -259,6 +260,8 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 	if err := validateLocalZones(config); err != nil {
 		return nil, err
 	}
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil { return nil, err }
 	d := &daemon{
 		opts:       opts,
 		config:     config,
@@ -268,6 +271,7 @@ func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) 
 		cache:      map[string]cacheEntry{},
 		listeners:  map[string]*boundListener{},
 		querySlots: make(chan struct{}, maxDNSQueries),
+		requestTimeout: requestTimeout,
 	}
 	d.sourceCtx, d.sourceCancel = context.WithCancel(context.Background())
 	d.cond = sync.NewCond(&d.mu)
@@ -512,14 +516,21 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	defer d.queryMu.RUnlock()
 	d.stateMu.RLock()
 	ctx := d.sourceCtx
+	requestTimeout, generation := d.requestTimeout, d.generation
 	d.stateMu.RUnlock()
 	if ctx.Err() != nil {
 		_ = w.Close()
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	started := time.Now()
 	result, err := d.resolveContext(ctx, w.LocalAddr().String(), req)
-	if ctx.Err() != nil {
+	d.stateMu.RLock()
+	currentGeneration := d.generation
+	owner := d.sourceCtx
+	d.stateMu.RUnlock()
+	if owner.Err() != nil || generation != currentGeneration {
 		_ = w.Close()
 		return
 	}
@@ -868,6 +879,12 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	d.stateMu.Lock()
+	d.generation++
+	d.stateMu.Unlock()
+	d.mu.Lock()
+	clear(d.cache)
+	d.mu.Unlock()
 	d.publish(topic, daemonapi.SeverityInfo, "LeaseUpdated", lease.Hostname, map[string]string{"mac": lease.MAC, "ip": lease.IP, "hostname": lease.Hostname})
 	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true})
 }
@@ -894,6 +911,8 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 	if expectedDigest != "" && digest != expectedDigest {
 		return reloadSummary{}, &reloadError{status: http.StatusConflict, err: fmt.Errorf("desired configuration changed before reload")}
 	}
+	requestTimeout, err := dnsresolver.RequestTimeout(config.Spec)
+	if err != nil { return reloadSummary{}, &reloadError{status: http.StatusBadRequest, err: err} }
 	d.stateMu.RLock()
 	unchanged := expectedDigest != "" && d.configDigest == digest
 	summary := reloadSummary{ConfigDigest: d.configDigest, Listeners: len(d.listeners), Sources: len(d.sources)}
@@ -1014,6 +1033,7 @@ func (d *daemon) reloadConfig(ctx context.Context, expectedDigest string) (reloa
 		mergedListeners[addr] = listener
 	}
 	d.config = config
+	d.requestTimeout = requestTimeout
 	d.configDigest = digest
 	d.sources = sources
 	d.zones = zones

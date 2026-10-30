@@ -190,9 +190,6 @@ func currentDelegatedRASelfDNS(ctx context.Context, store Store, plan raInterfac
 			if observed.Address != prefix {
 				continue
 			}
-			if !observed.LifetimeKnown {
-				return raSelfDNSAddress{}, fmt.Errorf("self DNS native lifetime is unknown")
-			}
 			valid, found = min(valid, observed.Valid), true
 			break
 		}
@@ -215,9 +212,6 @@ func currentNativeRASelfDNS(ctx context.Context, candidate raSelfDNSCandidate) (
 	for _, address := range addresses {
 		if candidate.Suffix.IsValid() && !raAddressMatchesSuffix(address.Address.Addr(), candidate.Suffix) {
 			continue
-		}
-		if !address.LifetimeKnown {
-			return raSelfDNSAddress{}, fmt.Errorf("self DNS native lifetime is unknown")
 		}
 		if candidate.Suffix.IsValid() || ordinal == 1 {
 			return raSelfDNSAddress{Address: address.Address.Addr(), Valid: address.Valid}, nil

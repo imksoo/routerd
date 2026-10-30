@@ -216,13 +216,16 @@ func TestRASelfNativeAddressObservationKeepsHostAddressAndLifetime(t *testing.T)
 	if err != nil || len(addresses) != 2 || addresses[0].Address.String() != "2001:db8::53/128" || addresses[0].Valid != 23 || addresses[1].Valid != math.MaxUint32 {
 		t.Fatalf("native address/lifetime lost: %+v %v", addresses, err)
 	}
-	prefixes, err := parseNativeRAPrefixes(input, "lan0", platform.OSLinux)
-	if err != nil || len(prefixes) != 1 || prefixes[0].Prefix.String() != "2001:db8::/64" {
-		t.Fatalf("host /128 became a PIO: %+v %v", prefixes, err)
+	prefixes := nativeRAPrefixValues(addresses)
+	if len(prefixes) != 1 || prefixes[0].Prefix.String() != "2001:db8::/64" {
+		t.Fatalf("host /128 became a PIO: %+v", prefixes)
 	}
 	bsd, err := parseNativeRAAddresses([]byte("em0: flags=\n\tinet6 2001:db8::53 prefixlen 128 pltime infty vltime infty\n"), "em0", platform.OSFreeBSD)
-	if err != nil || len(bsd) != 1 || !bsd[0].LifetimeKnown || bsd[0].Valid != math.MaxUint32 {
+	if err != nil || len(bsd) != 1 || bsd[0].Valid != math.MaxUint32 {
 		t.Fatalf("explicit infinite native lifetime lost: %+v %v", bsd, err)
+	}
+	if _, err := parseNativeRAAddresses([]byte("em0: flags=\n\tinet6 2001:db8::53 prefixlen 128\n"), "em0", platform.OSFreeBSD); err == nil {
+		t.Fatal("missing FreeBSD lifetime was guessed to be infinite")
 	}
 }
 

@@ -39,12 +39,6 @@ func nativeRAPrefixes(ctx context.Context, ifname string) ([]raPrefixValue, erro
 type raNativeAddress struct {
 	Address          netip.Prefix
 	Preferred, Valid uint32
-	LifetimeKnown    bool
-}
-
-func parseNativeRAPrefixes(out []byte, ifname string, osName platform.OS) ([]raPrefixValue, error) {
-	addresses, err := parseNativeRAAddresses(out, ifname, osName)
-	return nativeRAPrefixValues(addresses), err
 }
 
 func nativeRAPrefixValues(addresses []raNativeAddress) []raPrefixValue {
@@ -85,7 +79,10 @@ func parseNativeRAAddresses(out []byte, ifname string, osName platform.OS) ([]ra
 		if bits < 0 || bits > 128 {
 			return fmt.Errorf("native RA address has invalid prefix length")
 		}
-		result = append(result, raNativeAddress{Address: netip.PrefixFrom(local, bits), Preferred: min(preferred, valid), Valid: valid, LifetimeKnown: known})
+		if !known {
+			return fmt.Errorf("native RA address has no lifetime observation")
+		}
+		result = append(result, raNativeAddress{Address: netip.PrefixFrom(local, bits), Preferred: min(preferred, valid), Valid: valid})
 		return nil
 	}
 	if osName == platform.OSLinux {

@@ -239,7 +239,7 @@ func TestReloadPreservesDynamicLeaseRecords(t *testing.T) {
 	initial := testResolverConfig([]int{5053})
 	writeRuntimeConfig(t, configPath, initial)
 	d := newTestDaemon(t, configPath, initial, true)
-	d.zones.ApplyLease(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, MAC: "02:00:00:00:00:01", IP: "192.0.2.55", Hostname: "leasehost"})
+	d.zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, MAC: "02:00:00:00:00:01", IP: "192.0.2.55", Hostname: "leasehost"}))
 
 	writeRuntimeConfig(t, configPath, initial)
 	if _, err := d.reload(context.Background()); err != nil {
@@ -268,12 +268,12 @@ func TestReloadActiveLeaseEventTakesPrecedenceOverNewStickySnapshot(t *testing.T
 	}}
 	writeRuntimeConfig(t, configPath, initial)
 	d := newTestDaemon(t, configPath, initial, true)
-	d.zones.ApplyLease(dhcpLeaseEvent{
+	d.zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{
 		Action:   daemonapi.DHCPLeaseActionAdded,
 		MAC:      "02:00:00:00:00:01",
 		IP:       "192.0.2.128",
 		Hostname: "client",
-	})
+	}))
 
 	writeRuntimeConfig(t, configPath, initial)
 	if _, err := d.reload(context.Background()); err != nil {
@@ -325,12 +325,12 @@ func TestReloadStaticAndLeaseFileTakePrecedenceOverOldActiveEvent(t *testing.T) 
 			initial := testResolverConfig([]int{5053})
 			writeRuntimeConfig(t, configPath, initial)
 			d := newTestDaemon(t, configPath, initial, true)
-			d.zones.ApplyLease(dhcpLeaseEvent{
+			d.zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{
 				Action:   daemonapi.DHCPLeaseActionAdded,
 				MAC:      "02:00:00:00:00:01",
 				IP:       "192.0.2.128",
 				Hostname: "client",
-			})
+			}))
 
 			updated := testResolverConfig([]int{5053})
 			tt.configure(t, &updated)
@@ -360,12 +360,12 @@ func TestActiveLeaseEventUpdatesLoadedLeaseFileBeforeReload(t *testing.T) {
 	config := testResolverConfig(nil)
 	config.Zones[0].Spec.DHCPDerived.LeaseFile = leaseFile
 	zones := newZoneTable(config.Zones)
-	zones.ApplyLease(dhcpLeaseEvent{
+	zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{
 		Action:   daemonapi.DHCPLeaseActionAdded,
 		MAC:      "02:00:00:00:00:02",
 		IP:       "192.0.2.128",
 		Hostname: "client",
-	})
+	}))
 
 	assertZoneARecord(t, zones, "client.lab.example.", "192.0.2.128")
 	assertZonePTRRecord(t, zones, "128.2.0.192.in-addr.arpa.", "client.lab.example.")
@@ -577,7 +577,7 @@ func testResolverConfig(ports []int) resolvercfg.RuntimeConfig {
 			Name: "lan-zone",
 			Spec: api.DNSZoneSpec{
 				Zone:        "lab.example",
-				DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"dhcpv4"}},
+				DHCPDerived: api.DNSZoneDHCPDerivedSpec{Sources: []string{"DHCPv4Server/dhcpv4"}},
 				Records: []api.DNSZoneRecordSpec{{
 					Hostname: "router",
 					IPv4:     "192.0.2.1",

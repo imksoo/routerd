@@ -19,6 +19,7 @@ import (
 
 const DaemonKind = "routerd-dns-resolver"
 const ConfigDigestHeader = "X-Routerd-Config-Digest"
+const DefaultRequestTimeout = 30 * time.Second
 
 type RuntimeConfig struct {
 	Resource string              `json:"resource"`
@@ -135,6 +136,9 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 	// value must not write defaults through its Listen or Sources slice storage.
 	spec.Listen = slices.Clone(spec.Listen)
 	spec.Sources = slices.Clone(spec.Sources)
+	if strings.TrimSpace(spec.RequestTimeout) == "" {
+		spec.RequestTimeout = DefaultRequestTimeout.String()
+	}
 	if len(spec.Listen) == 0 {
 		spec.Listen = []api.DNSResolverListenSpec{{Addresses: []string{"127.0.0.1"}, Port: 5053}}
 	}
@@ -188,6 +192,7 @@ func NormalizeSpec(spec api.DNSResolverSpec) api.DNSResolverSpec {
 
 func Validate(spec api.DNSResolverSpec) error {
 	spec = NormalizeSpec(spec)
+	if _, err := RequestTimeout(spec); err != nil { return err }
 	if spec.Cache.MaxEntries < 0 {
 		return fmt.Errorf("cache.maxEntries must not be negative")
 	}
@@ -271,6 +276,15 @@ func Validate(spec api.DNSResolverSpec) error {
 		}
 	}
 	return nil
+}
+
+// RequestTimeout is prepared at the worker's configuration boundary. It limits
+// a whole request, while each source QueryTimeout still limits one attempt.
+func RequestTimeout(spec api.DNSResolverSpec) (time.Duration, error) {
+	if strings.TrimSpace(spec.RequestTimeout) == "" { return DefaultRequestTimeout, nil }
+	duration, err := time.ParseDuration(spec.RequestTimeout)
+	if err != nil || duration <= 0 { return 0, fmt.Errorf("requestTimeout must be a positive duration") }
+	return duration, nil
 }
 
 func parseRetentionDuration(value string) (time.Duration, error) {
