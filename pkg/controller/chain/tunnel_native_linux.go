@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -266,15 +268,20 @@ func addTunnelNativeFOU(ctx context.Context, listener fouListener) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if listener.Mode == "gue" {
+		// GUE omits IPPROTO; netlink v1.3.1 sends zero, which Linux rejects.
+		out, err := exec.CommandContext(ctx, "ip", "-4", "fou", "add", "port", strconv.Itoa(listener.Port), "gue").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("create native GUE listener: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
 	handle, err := tunnelFOUHandle()
 	if err != nil {
 		return err
 	}
 	defer handle.Close()
 	value := netlink.Fou{Family: netlink.FAMILY_V4, Port: listener.Port, EncapType: netlink.FOU_ENCAP_DIRECT, Protocol: 4}
-	if listener.Mode == "gue" {
-		value.EncapType, value.Protocol = netlink.FOU_ENCAP_GUE, 0
-	}
 	return handle.FouAdd(value)
 }
 
