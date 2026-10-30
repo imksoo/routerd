@@ -51,7 +51,7 @@ func (n *nativeRouteFixture) command(_ context.Context, name string, args ...str
 		}
 		return json.Marshal([]ordinaryIPv4RouteObservation{*n.route})
 	}
-	if len(args) > 2 && args[0] == "route" && args[1] == "replace" {
+	if len(args) > 2 && args[0] == "route" && args[1] == "add" {
 		route := ordinaryIPv4RouteObservation{Type: "unicast", Destination: args[2], Protocol: "boot"}
 		for i := 3; i+1 < len(args); i += 2 {
 			switch args[i] {
@@ -118,7 +118,7 @@ func TestMobilityNativeRoutePendingSurvivesFailureAndRestart(t *testing.T) {
 	failure := errors.New("final ledger save rejected")
 	faults := &nativeJournalStore{SQLiteStore: store, failField: "appliedMobilityRoutes", failure: failure}
 	native := &nativeRouteFixture{}
-	controller := IPv4RouteController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
+	controller := IPv4RouteController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil }, NativeScope: ordinaryFixtureScope, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
 	if err := controller.reconcileMobilityRoutes(context.Background()); !errors.Is(err, failure) {
 		t.Fatalf("final save error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestMobilityNativePendingSaveFailurePreventsKernelWrite(t *testing.T) {
 	failure := errors.New("pending journal failed")
 	faults := &nativeJournalStore{SQLiteStore: store, failField: "pendingMobilityRoutes", failure: failure}
 	native := &nativeRouteFixture{}
-	controller := IPv4RouteController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
+	controller := IPv4RouteController{Router: &api.Router{}, Store: faults, DevicePresent: func(context.Context, string) bool { return true }, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil }, NativeScope: ordinaryFixtureScope, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
 	if err := controller.reconcileMobilityRoutes(context.Background()); !errors.Is(err, failure) {
 		t.Fatalf("pending failure hidden: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestMobilityNativeRouteReplacesItsOwnedDevice(t *testing.T) {
 	}
 	defer store.Close()
 	native := &nativeRouteFixture{}
-	controller := IPv4RouteController{Router: &api.Router{}, Store: store, DevicePresent: func(context.Context, string) bool { return true }, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
+	controller := IPv4RouteController{Router: &api.Router{}, Store: store, DevicePresent: func(context.Context, string) bool { return true }, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil }, NativeScope: ordinaryFixtureScope, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
 	if err := controller.reconcileMobilityRoutes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestMobilityNativeRouteReplacesItsOwnedDevice(t *testing.T) {
 	if err := controller.reconcileMobilityRoutes(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if native.route == nil || native.route.Device != "wg0" || native.writes != 2 {
+	if native.route == nil || native.route.Device != "wg0" || native.writes != 3 {
 		t.Fatalf("owned egress replacement was blocked or deleted: %+v writes=%d", native.route, native.writes)
 	}
 	routes, err := controller.appliedMobilityRoutes()
@@ -277,7 +277,7 @@ func TestMobilityNativePreferredSourceReadFailureRetainsOwnedRoute(t *testing.T)
 			}
 			defer store.Close()
 			native := &nativeRouteFixture{}
-			controller := IPv4RouteController{Router: &api.Router{}, Store: store, DevicePresent: func(context.Context, string) bool { return true }, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
+			controller := IPv4RouteController{Router: &api.Router{}, Store: store, DevicePresent: func(context.Context, string) bool { return true }, DeviceLookup: func(context.Context, string) (int, bool, error) { return 17, true, nil }, NativeScope: ordinaryFixtureScope, Command: native.command, MobilityDataplane: dynamicconfig.MobilityDataplanePlan{Routes: []dynamicconfig.MobilityIPv4RouteIntent{{ID: "owned", PoolRef: "cloudedge", PoolPrefix: "10.88.60.0/24", Purpose: dynamicconfig.MobilityIPv4RoutePurposeLocalInventory, Destination: "10.88.60.10/32", Device: "lan0"}}}}
 			if err := controller.reconcileMobilityRoutes(context.Background()); err != nil {
 				t.Fatal(err)
 			}

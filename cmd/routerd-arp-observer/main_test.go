@@ -126,17 +126,6 @@ func TestSetIgnoredSenderMACsCommandReplacesAndNormalizes(t *testing.T) {
 	d.cond = sync.NewCond(&d.mu)
 	errc := make(chan error, 1)
 	go func() { errc <- d.serve(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-errc:
-			if err != nil {
-				t.Errorf("ARP command server: %v", err)
-			}
-		case <-time.After(2 * time.Second):
-			t.Error("ARP command server did not stop")
-		}
-	})
 	waitForSocket(t, socket)
 
 	result := postCommandForTest(t, socket, daemonapi.CommandRequest{
@@ -205,6 +194,10 @@ func TestSetIgnoredSenderMACsCommandReplacesAndNormalizes(t *testing.T) {
 		t.Fatalf("ignoredSenderMACsConfigured after empty replacement = %q, want true", got)
 	}
 
+	cancel()
+	if err := <-errc; err != nil {
+		t.Fatalf("serve: %v", err)
+	}
 }
 
 func TestParseARPTableKeepsCompleteIPv4Entries(t *testing.T) {

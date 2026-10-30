@@ -17,6 +17,8 @@ type ArtifactTeardownExecutor interface {
 	Run(name string, args ...string) error
 	Remove(path string) error
 	RemoveAll(path string) error
+	DeleteIPv4FwmarkRule(priority, mark, table int) error
+	FlushIPv4RouteTable(table int) error
 }
 
 type ArtifactTeardown struct {
@@ -81,6 +83,22 @@ var artifactTeardowns = []ArtifactTeardown{
 			return "delete ipip6 tunnel " + artifact.Name
 		},
 		Teardown: cleanupIPIP6TunnelArtifact,
+	},
+	{
+		Kind:     "linux.ipv4.fwmarkRule",
+		Priority: 0,
+		Remediation: func(artifact resource.Artifact) string {
+			return "delete ip rule " + artifact.Name
+		},
+		Teardown: cleanupIPv4FwmarkRuleArtifact,
+	},
+	{
+		Kind:     "linux.ipv4.routeTable",
+		Priority: 5,
+		Remediation: func(artifact resource.Artifact) string {
+			return "flush ip route table " + artifact.Attributes["table"]
+		},
+		Teardown: cleanupIPv4RouteTableArtifact,
 	},
 	{
 		Kind:     "nft.table",
@@ -164,6 +182,40 @@ func cleanupIPIP6TunnelArtifact(exec ArtifactTeardownExecutor, artifact resource
 		return artifact.Kind + "/" + artifact.Name, nil
 	}
 	return "", nil
+}
+
+func cleanupIPv4FwmarkRuleArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
+	if exec == nil {
+		return "", nil
+	}
+	if !exec.Features().HasIproute2 {
+		return "", nil
+	}
+	rule, ok := IPv4FwmarkRuleFromArtifact(artifact)
+	if !ok {
+		return "", nil
+	}
+	if err := exec.DeleteIPv4FwmarkRule(rule.Priority, rule.Mark, rule.Table); err != nil {
+		return "", err
+	}
+	return artifact.Kind + "/" + artifact.Name, nil
+}
+
+func cleanupIPv4RouteTableArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {
+	if exec == nil {
+		return "", nil
+	}
+	if !exec.Features().HasIproute2 {
+		return "", nil
+	}
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	if err != nil || table == 0 {
+		return "", nil
+	}
+	if err := exec.FlushIPv4RouteTable(table); err != nil {
+		return "", err
+	}
+	return artifact.Kind + "/" + artifact.Name, nil
 }
 
 func cleanupNftTableArtifact(exec ArtifactTeardownExecutor, artifact resource.Artifact) (string, error) {

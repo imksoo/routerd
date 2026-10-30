@@ -47,13 +47,9 @@ Implemented in the daemon policy/path checkpoint:
 - Required Mobility/FIB and native address reads return errors rather than empty
   inputs. Watch cancellation owns its RPC subscription; it cannot close a shared
   connection. Startup waits for daemon restoration before controller BGP calls.
-- Standard/extended community send modes now survive the GoBGP peer/group
-  API conversion and filter cloned outbound paths after export policy. The
-  pinned local v4.7.0 source correction covers both extended attribute forms;
-  large communities retain their independent always-advertised behavior. Raw
-  TCP BGP UPDATE and withdrawal regressions cover static/dynamic peers and
-  verify original local RIB attributes remain intact. Independent-device
-  interoperability remains unqualified.
+- Community send modes are parsed, but the pinned GoBGP RPC does not enforce
+  every requested outbound mask. Standard, extended and large-community wire
+  filtering remains open; accepting the setting is not proof of its effect.
   Unsupported `communities.accept` and `communities.set.in` are rejected;
   prefix-length bounds require an allowlist.
   Control requests and acknowledgements use complete, bounded typed decoding.
@@ -207,11 +203,8 @@ establish independent RR/leaf interoperability.
   cleanup. Standalone certification reuses the same supervisor. Token revocation
   resolves lost replies through authoritative absence; unknown recovery is
   retained. Offline subprocess/fault checks pass; boot-enabled systemd/PVE/cloud
-  lifecycle qualification remains unexecuted. The proxy now has one header
-  deadline, bounded tunnel writes and a shared TCP-connect budget; bytes received
-  with CONNECT are retained, and established tunnels never receive an injected
-  HTTP error. Real socket regressions pass. Synchronous OS name resolution and
-  concurrent handler admission still need lifetime/resource-bound review.
+  lifecycle qualification remains unexecuted. Proxy I/O bounds remain a separate
+  review item.
 - Unimplemented labctl live operations now fail and preserve manifests. Required
   protocol evidence cannot be promoted to PASS by a result override. Remaining
   collectors still need complete parse/measurement identity; capture

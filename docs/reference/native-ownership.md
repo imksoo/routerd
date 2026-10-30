@@ -63,32 +63,3 @@ This contract describes these concrete owners. Mobility, BGP kernel FIB, tunnel
 cookies and policy-routing effects have separate recovery boundaries; their
 implementation and qualification status is tracked in the
 [open findings](../design/routerd15-open-findings.md).
-
-## IPv4 policy routing
-
-The policy controller owns exact IPv4 default-route and fwmark-rule receipts in
-`Router/ipv4-policy-native`. Each receipt records the kernel scope, complete
-selector or route tuple, interface index for routes, and pending add/delete.
-Routes acquire with `ip route add`; rules never delete a priority wholesale.
-Withdrawal removes selectors before routes, matches full selectors including
-protocol, and never flushes a shared route table. Numbered table/mark ranges do
-not establish ownership and are no longer offered for generic artifact adoption
-or cleanup.
-
-A pending effect that is still present is uncertain, including after a lost
-response or failed acknowledgement write. Reopening the database does not adopt
-or replay it. An exact absence observation releases the pending fence; required
-read failures preserve it. Native scope and current intent/source are checked
-again after pending persistence and before mutation. Foreign same-priority rules
-with different selectors remain untouched. A same-selector foreign rule or
-same-slot route blocks acquisition before any route or rule is changed.
-
-These checks coordinate routerd's durable intent; they do not establish atomic
-compare-and-delete against an unrelated kernel writer. Linux rules permit
-concurrent insertion, so ambiguous duplicate readback retains pending uncertainty.
-The executed checks use actual SQLite files and native-command boundary fixtures,
-including a SQLite trigger that rejects the pending write, reopen after a lost
-acknowledgement, changed source authority during persistence, and exact teardown.
-Native Netlink/forwarding qualification remains unexecuted. IPv6 host-policy
-ownership remains a separate open finding until its former post-effect file
-state is replaced.

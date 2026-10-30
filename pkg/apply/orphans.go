@@ -4,6 +4,7 @@ package apply
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,8 +13,16 @@ import (
 	"github.com/imksoo/routerd/pkg/resource"
 )
 
+type ipv4FwmarkRuleArtifact struct {
+	Priority int
+	Mark     int
+	Table    int
+}
+
 func (e *Engine) observeManagedOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
 	var orphans []OrphanedArtifact
+	orphans = append(orphans, e.observeIPv4FwmarkRuleOrphans(router)...)
+	orphans = append(orphans, e.observeIPv4RouteTableOrphans(router, aliases)...)
 	orphans = append(orphans, e.observeNftTableOrphans(router, aliases)...)
 	return orphans
 }
@@ -197,7 +206,9 @@ func DesiredOwnedArtifacts(router *api.Router, aliases map[string]string) []reso
 	for _, res := range router.Spec.Resources {
 		for _, intent := range resourceArtifactIntents(res, aliases) {
 			switch intent.Artifact.Kind {
-			case "nft.table",
+			case "linux.ipv4.fwmarkRule",
+				"linux.ipv4.routeTable",
+				"nft.table",
 				"systemd.service",
 				"file",
 				"unix.socket",
@@ -232,6 +243,12 @@ func mergeArtifactAttributes(desired, actual resource.Artifact) resource.Artifac
 
 func (e *Engine) actualInventoryBackedArtifacts() []resource.Artifact {
 	var actual []resource.Artifact
+	if out, err := e.Command("ip", "-4", "rule", "show"); err == nil {
+		actual = append(actual, parseIPv4FwmarkRuleArtifacts(string(out))...)
+	}
+	if out, err := e.Command("ip", "-4", "route", "show", "table", "all"); err == nil {
+		actual = append(actual, parseIPv4RouteTableArtifacts(string(out))...)
+	}
 	if out, err := e.Command("nft", "list", "tables"); err == nil {
 		actual = append(actual, parseNftTableArtifacts(string(out))...)
 	}
@@ -445,6 +462,56 @@ func (e *Engine) actualIPIP6TunnelArtifacts() []resource.Artifact {
 	return artifacts
 }
 
+func (e *Engine) observeIPv4FwmarkRuleOrphans(router *api.Router) []OrphanedArtifact {
+	desired := desiredIPv4FwmarkRuleArtifacts(router)
+	out, err := e.Command("ip", "-4", "rule", "show")
+	if err != nil {
+		return nil
+	}
+	var orphans []OrphanedArtifact
+	actual := parseIPv4FwmarkRuleArtifacts(string(out))
+	for _, artifact := range resource.Orphans(desired, actual, managedIPv4FwmarkRuleArtifact) {
+		rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+		if !ok {
+			continue
+		}
+		orphans = append(orphans, OrphanedArtifact{
+			Kind:        "IPv4FwmarkRule",
+			Name:        fmt.Sprintf("priority=%d,mark=0x%x,table=%d", rule.Priority, rule.Mark, rule.Table),
+			Reason:      "no current resource owns this routerd-managed fwmark rule",
+			Remediation: fmt.Sprintf("delete ip rule priority %d fwmark 0x%x table %d; flush table %d if unused", rule.Priority, rule.Mark, rule.Table, rule.Table),
+			Observed: map[string]string{
+				"priority": fmt.Sprintf("%d", rule.Priority),
+				"mark":     fmt.Sprintf("0x%x", rule.Mark),
+				"table":    fmt.Sprintf("%d", rule.Table),
+			},
+		})
+	}
+	return orphans
+}
+
+func (e *Engine) observeIPv4RouteTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
+	desired := desiredArtifactsByKind(router, aliases, "linux.ipv4.routeTable")
+	out, err := e.Command("ip", "-4", "route", "show", "table", "all")
+	if err != nil {
+		return nil
+	}
+	var orphans []OrphanedArtifact
+	for _, artifact := range resource.Orphans(desired, parseIPv4RouteTableArtifacts(string(out)), managedIPv4RouteTableArtifact) {
+		table := artifact.Attributes["table"]
+		orphans = append(orphans, OrphanedArtifact{
+			Kind:        "IPv4RouteTable",
+			Name:        artifact.Name,
+			Reason:      "no current resource owns this routerd-managed IPv4 route table",
+			Remediation: "flush ip route table " + table,
+			Observed: map[string]string{
+				"table": table,
+			},
+		})
+	}
+	return orphans
+}
+
 func (e *Engine) observeNftTableOrphans(router *api.Router, aliases map[string]string) []OrphanedArtifact {
 	desired := desiredArtifactsByKind(router, aliases, "nft.table")
 	out, err := e.Command("nft", "list", "tables")
@@ -484,6 +551,146 @@ func desiredArtifactsByKind(router *api.Router, aliases map[string]string, kind 
 		}
 	}
 	return desired
+}
+
+func desiredIPv4FwmarkRuleArtifacts(router *api.Router) []resource.Artifact {
+	var desired []resource.Artifact
+	add := func(owner string, priority, mark, table int) {
+		if priority == 0 || mark == 0 || table == 0 {
+			return
+		}
+		desired = append(desired, newIPv4FwmarkRuleArtifact(owner, priority, mark, table))
+	}
+	for _, res := range router.Spec.Resources {
+		switch res.Kind {
+		case "EgressRoutePolicy":
+			spec, err := res.EgressRoutePolicySpec()
+			if err != nil {
+				continue
+			}
+			if defaultString(spec.Mode, "") == "priority" && defaultString(spec.Selection, "highest-weight-ready") != "highest-weight-ready" {
+				continue
+			}
+			for _, candidate := range spec.Candidates {
+				if !api.BoolDefault(candidate.Enabled, true) {
+					continue
+				}
+				if len(candidate.Targets) > 0 {
+					for _, target := range candidate.Targets {
+						add(res.ID(), target.Priority, target.Mark, target.EffectiveTable())
+					}
+					continue
+				}
+				add(res.ID(), candidate.Priority, candidate.Mark, candidate.EffectiveTable())
+			}
+		}
+	}
+	return desired
+}
+
+func parseIPv4FwmarkRuleArtifacts(output string) []resource.Artifact {
+	var rules []resource.Artifact
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rule := ipv4FwmarkRuleArtifact{}
+		priority, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+		if err != nil {
+			continue
+		}
+		rule.Priority = priority
+		for i, field := range fields {
+			switch field {
+			case "fwmark":
+				if i+1 >= len(fields) {
+					continue
+				}
+				mark, err := strconv.ParseInt(strings.SplitN(fields[i+1], "/", 2)[0], 0, 64)
+				if err != nil {
+					continue
+				}
+				rule.Mark = int(mark)
+			case "lookup":
+				if i+1 >= len(fields) {
+					continue
+				}
+				table, err := strconv.Atoi(fields[i+1])
+				if err != nil {
+					continue
+				}
+				rule.Table = table
+			}
+		}
+		if rule.Mark != 0 && rule.Table != 0 {
+			rules = append(rules, newIPv4FwmarkRuleArtifact("", rule.Priority, rule.Mark, rule.Table))
+		}
+	}
+	return rules
+}
+
+func parseIPv4RouteTableArtifacts(output string) []resource.Artifact {
+	type tableObservation struct {
+		Table       int
+		IfName      string
+		HasDefault  bool
+		HasAnyRoute bool
+	}
+	byTable := map[int]tableObservation{}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		table, ok := routeLineTable(fields)
+		if !ok {
+			continue
+		}
+		observation := byTable[table]
+		observation.Table = table
+		observation.HasAnyRoute = true
+		ifname := routeLineDev(fields)
+		isDefault := len(fields) > 0 && fields[0] == "default"
+		if ifname != "" && (observation.IfName == "" || isDefault || !observation.HasDefault) {
+			observation.IfName = ifname
+		}
+		if isDefault {
+			observation.HasDefault = true
+		}
+		byTable[table] = observation
+	}
+	var tables []int
+	for table := range byTable {
+		tables = append(tables, table)
+	}
+	sort.Ints(tables)
+	var artifacts []resource.Artifact
+	for _, table := range tables {
+		observation := byTable[table]
+		artifacts = append(artifacts, newIPv4RouteTableArtifactWithIfName("", table, observation.IfName))
+	}
+	return artifacts
+}
+
+func routeLineTable(fields []string) (int, bool) {
+	for i, field := range fields {
+		if field != "table" || i+1 >= len(fields) {
+			continue
+		}
+		table, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			return 0, false
+		}
+		return table, true
+	}
+	return 0, false
+}
+
+func routeLineDev(fields []string) string {
+	for i, field := range fields {
+		if field == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 func parseNftTableArtifacts(output string) []resource.Artifact {
@@ -636,6 +843,38 @@ func newSimpleArtifact(kind, name, source string) resource.Artifact {
 	}
 }
 
+func newIPv4FwmarkRuleArtifact(owner string, priority, mark, table int) resource.Artifact {
+	return resource.Artifact{
+		Kind:  "linux.ipv4.fwmarkRule",
+		Name:  fmt.Sprintf("priority=%d,mark=0x%x,table=%d", priority, mark, table),
+		Owner: owner,
+		Attributes: map[string]string{
+			"priority": fmt.Sprintf("%d", priority),
+			"mark":     fmt.Sprintf("0x%x", mark),
+			"table":    fmt.Sprintf("%d", table),
+		},
+	}
+}
+
+func newIPv4RouteTableArtifact(owner string, table int) resource.Artifact {
+	return newIPv4RouteTableArtifactWithIfName(owner, table, "")
+}
+
+func newIPv4RouteTableArtifactWithIfName(owner string, table int, ifname string) resource.Artifact {
+	attrs := map[string]string{
+		"table": fmt.Sprintf("%d", table),
+	}
+	if ifname != "" {
+		attrs["ifname"] = ifname
+	}
+	return resource.Artifact{
+		Kind:       "linux.ipv4.routeTable",
+		Name:       fmt.Sprintf("table=%d", table),
+		Owner:      owner,
+		Attributes: attrs,
+	}
+}
+
 func newNftTableArtifact(owner, family, name string) resource.Artifact {
 	return resource.Artifact{
 		Kind:  "nft.table",
@@ -646,6 +885,36 @@ func newNftTableArtifact(owner, family, name string) resource.Artifact {
 			"name":   name,
 		},
 	}
+}
+
+func ipv4FwmarkRuleFromArtifact(artifact resource.Artifact) (ipv4FwmarkRuleArtifact, bool) {
+	priority, err := strconv.Atoi(artifact.Attributes["priority"])
+	if err != nil {
+		return ipv4FwmarkRuleArtifact{}, false
+	}
+	mark, err := strconv.ParseInt(artifact.Attributes["mark"], 0, 64)
+	if err != nil {
+		return ipv4FwmarkRuleArtifact{}, false
+	}
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	if err != nil {
+		return ipv4FwmarkRuleArtifact{}, false
+	}
+	return ipv4FwmarkRuleArtifact{Priority: priority, Mark: int(mark), Table: table}, true
+}
+
+func managedIPv4FwmarkRuleArtifact(artifact resource.Artifact) bool {
+	rule, ok := ipv4FwmarkRuleFromArtifact(artifact)
+	return ok && routerdManagedFwmark(rule.Mark)
+}
+
+func routerdManagedFwmark(mark int) bool {
+	return mark >= 0x100 && mark <= 0x1ff
+}
+
+func managedIPv4RouteTableArtifact(artifact resource.Artifact) bool {
+	table, err := strconv.Atoi(artifact.Attributes["table"])
+	return err == nil && table >= 100 && table <= 199
 }
 
 func managedNftTableArtifact(artifact resource.Artifact) bool {

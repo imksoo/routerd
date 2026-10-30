@@ -38,6 +38,9 @@ func pendingMobilityAddresses(status map[string]any) ([]mobilityAppliedIPv4Addre
 		if err := validateAppliedMobilityStaticAddress(address); err != nil {
 			return nil, err
 		}
+		if address.Operation == "" {
+			return nil, fmt.Errorf("pending mobility address has no operation")
+		}
 	}
 	return pending, nil
 }
@@ -153,20 +156,17 @@ func (c IPv4StaticAddressController) beginMobilityAddresses(ctx context.Context)
 	if err := merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{dynamicconfig.MobilityAddressWithdrawalAcks: []dynamicconfig.MobilityWithdrawalRequest{}}); err != nil {
 		return err
 	}
-	for _, address := range pending {
-		if mobilityStaticAddressDesiredByUser(c.Router, address.Interface, address.Address) {
-			return fmt.Errorf("pending mobility address %s is also desired by a user resource", address.Address)
-		}
-		present, err := c.mobilityAddressPresent(ctx, address.Interface, address.Address)
+	for _, a := range pending {
+		observed, err := c.verifyMobilityAddressIdentity(ctx, a)
 		if err != nil {
-			return fmt.Errorf("observe pending mobility address %s: %w", address.ID, err)
+			return err
 		}
-		if present {
-			return fmt.Errorf("pending mobility address %s is present without acknowledged ownership; inspect and remove it before retrying", address.ID)
+		if observed.has(a.Address) {
+			return fmt.Errorf("pending mobility address %s is present without acknowledged ownership; inspect and remove it before retrying", a.ID)
 		}
-	}
-	if len(pending) != 0 {
-		return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingMobilityStaticAddresses": []mobilityAppliedIPv4Address{}})
+		if err := c.confirmMobilityAddress(a, false, true); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -191,17 +191,4 @@ func (c IPv4StaticAddressController) stageMobilityAddress(address mobilityApplie
 		return fmt.Errorf("mobility address ownership merger unavailable")
 	}
 	return merger.MergeObjectStatus(api.RouterAPIVersion, "Router", samDataplaneStatusName, map[string]any{"pendingMobilityStaticAddresses": pending, dynamicconfig.MobilityAddressWithdrawalAcks: []dynamicconfig.MobilityWithdrawalRequest{}})
-}
-
-func (c IPv4StaticAddressController) mobilityAddressOwned(wanted mobilityAppliedIPv4Address) (bool, error) {
-	previous, err := c.appliedMobilityStaticAddresses()
-	if err != nil {
-		return false, err
-	}
-	for _, address := range previous {
-		if address == wanted {
-			return true, nil
-		}
-	}
-	return false, nil
 }

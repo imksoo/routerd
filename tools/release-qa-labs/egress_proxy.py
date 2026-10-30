@@ -14,7 +14,6 @@ import socket
 import socketserver
 import sys
 import threading
-import time
 from typing import Any
 
 
@@ -76,13 +75,9 @@ def resolve_public_ipv4(host: str) -> list[str]:
 
 def connect_ipv4(host: str) -> socket.socket:
     last_error: OSError | None = None
-    deadline = time.monotonic() + CONNECT_TIMEOUT
     for address in resolve_public_ipv4(host):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("upstream connection deadline expired")
         upstream = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        upstream.settimeout(remaining)
+        upstream.settimeout(CONNECT_TIMEOUT)
         try:
             upstream.connect((address, 443))
             upstream.settimeout(None)
@@ -95,13 +90,7 @@ def connect_ipv4(host: str) -> socket.socket:
     raise OSError("target has no public IPv4 address")
 
 
-def relay(left: socket.socket, right: socket.socket, initial: bytes = b"") -> None:
-    # Read readiness does not imply that the other endpoint will accept bytes.
-    # Bound the complete sendall, including a stalled reader's backpressure.
-    left.settimeout(CONNECT_TIMEOUT)
-    right.settimeout(CONNECT_TIMEOUT)
-    if initial:
-        right.sendall(initial)
+def relay(left: socket.socket, right: socket.socket) -> None:
     selector = selectors.DefaultSelector()
     selector.register(left, selectors.EVENT_READ, right)
     selector.register(right, selectors.EVENT_READ, left)
@@ -121,27 +110,16 @@ def relay(left: socket.socket, right: socket.socket, initial: bytes = b"") -> No
 
 class ConnectHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
-        deadline = time.monotonic() + CONNECT_TIMEOUT
-        header = bytearray()
-        try:
-            while b"\r\n\r\n" not in header and len(header) < MAX_HEADER:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return
-                self.request.settimeout(remaining)
-                chunk = self.request.recv(4096)
-                if not chunk:
-                    return
-                header.extend(chunk)
-        except TimeoutError:
-            return
         self.request.settimeout(CONNECT_TIMEOUT)
-        boundary = header.find(b"\r\n\r\n")
-        if boundary < 0 or boundary + 4 > MAX_HEADER:
+        header = bytearray()
+        while b"\r\n\r\n" not in header and len(header) < MAX_HEADER:
+            chunk = self.request.recv(4096)
+            if not chunk:
+                return
+            header.extend(chunk)
+        if b"\r\n\r\n" not in header or len(header) >= MAX_HEADER:
             self.request.sendall(b"HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n")
             return
-        initial = bytes(header[boundary + 4:])
-        header = header[:boundary + 4]
         try:
             request_line = bytes(header).split(b"\r\n", 1)[0].decode("ascii")
             method, authority, version = request_line.split(" ")
@@ -153,15 +131,13 @@ class ConnectHandler(socketserver.BaseRequestHandler):
         except (UnicodeDecodeError, ValueError):
             self.request.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
             return
-        established = False
         try:
             with connect_ipv4(host) as upstream:
                 self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
-                established = True
-                relay(self.request, upstream, initial)
+                self.request.settimeout(None)
+                relay(self.request, upstream)
         except OSError:
-            if not established:
-                self.request.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+            self.request.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
 
 
 class IPv4ThreadingServer(socketserver.ThreadingTCPServer):

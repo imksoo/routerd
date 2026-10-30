@@ -262,17 +262,22 @@ func gcRoundTripCases() []gcRoundTripCase {
 			},
 		},
 		{
-			name:      "IPv4Route native owner status dispatch",
-			features:  platform.Features{HasIproute2: true},
-			artifacts: []resource.Artifact{},
+			name:     "IPv4Route #185 route table and policy artifacts",
+			features: platform.Features{HasIproute2: true},
+			artifacts: []resource.Artifact{
+				{Kind: "linux.ipv4.fwmarkRule", Name: "priority=100,mark=0x100,table=100", Owner: api.NetAPIVersion + "/IPv4Route/old-route", Attributes: map[string]string{"priority": "100", "mark": "0x100", "table": "100"}},
+				{Kind: "linux.ipv4.routeTable", Name: "table=100", Owner: api.NetAPIVersion + "/IPv4Route/old-route", Attributes: map[string]string{"table": "100"}},
+			},
 			statuses: []routerstate.ObjectStatus{
 				{APIVersion: api.NetAPIVersion, Kind: "IPv4Route", Name: "old-route", Status: map[string]any{"phase": "Applied"}},
 			},
 		},
 		{
-			name:     "EgressRoutePolicy nft artifacts",
+			name:     "EgressRoutePolicy policy route artifacts",
 			features: platform.Features{HasIproute2: true, HasNftables: true},
 			artifacts: []resource.Artifact{
+				{Kind: "linux.ipv4.fwmarkRule", Name: "priority=101,mark=0x101,table=101", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"priority": "101", "mark": "0x101", "table": "101"}},
+				{Kind: "linux.ipv4.routeTable", Name: "table=101", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"table": "101"}},
 				{Kind: "nft.table", Name: "ip/routerd_policy", Owner: api.NetAPIVersion + "/EgressRoutePolicy/wan", Attributes: map[string]string{"family": "ip", "name": "routerd_policy"}},
 			},
 			statuses: []routerstate.ObjectStatus{

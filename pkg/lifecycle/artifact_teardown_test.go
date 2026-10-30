@@ -258,6 +258,8 @@ func TestArtifactTeardownRegistryEligibility(t *testing.T) {
 
 func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 	artifacts := []resource.Artifact{
+		{Kind: "linux.ipv4.routeTable"},
+		{Kind: "linux.ipv4.fwmarkRule"},
 		{Kind: "directory"},
 		{Kind: "systemd.service"},
 		{Kind: "unix.socket"},
@@ -267,16 +269,8 @@ func TestArtifactTeardownRegistryCleanupPriority(t *testing.T) {
 	for _, artifact := range artifacts {
 		got = append(got, ArtifactCleanupPriority(artifact))
 	}
-	want := []int{40, 10, 30, 20}
+	want := []int{5, 0, 40, 10, 30, 20}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("priorities = %#v, want %#v", got, want)
-	}
-}
-
-func TestPolicyNativeEffectsAreNotGenericTeardownArtifacts(t *testing.T) {
-	for _, kind := range []string{"linux.ipv4.fwmarkRule", "linux.ipv4.routeTable"} {
-		if ArtifactCleanupEligible(resource.Artifact{Kind: kind}) {
-			t.Fatalf("%s bypasses its native receipt owner", kind)
-		}
 	}
 }

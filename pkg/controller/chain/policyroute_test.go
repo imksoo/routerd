@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/nftstate"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
+	"github.com/imksoo/routerd/pkg/resource"
 )
 
 func TestIPv6HostPolicyUsesStateAndNeverMarksNft(t *testing.T) {
@@ -807,30 +810,85 @@ func TestEffectivePolicyRouteExcludesWhenFalseDSLiteTargetWithoutMutatingSpec(t 
 }
 
 func TestIPv4PolicyRouteInstallsFwmarkBootstrapRouteForHealthCheck(t *testing.T) {
-	for _, enabled := range []bool{true, false} {
-		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
-			c, store, native, _ := newPolicyNativeFixture(t)
-			spec := c.Router.Spec.Resources[1].Spec.(api.EgressRoutePolicySpec)
-			spec.Candidates[0].HealthCheck = "internet-via-hgw"
-			c.Router.Spec.Resources[1].Spec = spec
-			c.Router.Spec.Resources = append(c.Router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{Target: "1.1.1.1", Enabled: &enabled}})
-			if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "internet-via-hgw", map[string]any{"phase": "Unhealthy", "lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
-				t.Fatal(err)
-			}
-			if err := c.applyRouteTables(t.Context(), c.aliases()); err != nil {
-				t.Fatal(err)
-			}
-			if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "wan"); len(status) != 0 {
-				t.Fatalf("route target created phantom policy status: %#v", status)
-			}
-			if enabled && len(native.mutations()) != 2 {
-				t.Fatalf("bootstrap mutations=%v", native.mutations())
-			}
-			if !enabled && len(native.mutations()) != 0 {
-				t.Fatalf("disabled probe mutations=%v", native.mutations())
-			}
-		})
+	store := mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
+			"phase":         "Unhealthy",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
 	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet-via-hgw"}, Spec: api.HealthCheckSpec{
+			Target: "1.1.1.1",
+		}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name:          "hgw",
+				Interface:     "wan",
+				GatewaySource: "static",
+				Gateway:       "192.168.1.1",
+				Table:         116,
+				Priority:      40,
+				Mark:          0x116,
+				HealthCheck:   "internet-via-hgw",
+			}},
+		}},
+	}}}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	commandLog := filepath.Join(dir, "mutations")
+	// All reads and writes hit this fixture, never the host network.
+	ipScript := fmt.Sprintf("#!/bin/sh\ncase \"$1 $2 $3\" in\n 'link show dev'|'-4 route show'|'-4 rule show') exit 0 ;;\n '-4 route replace'|'-4 rule add'|'-4 rule del'|'-4 route flush') printf '%%s\\n' \"$*\" >> %q; exit 0 ;;\n *) exit 99 ;;\nesac\n", commandLog)
+	if err := os.WriteFile(filepath.Join(binDir, "ip"), []byte(ipScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	controller := IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
+	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
+		t.Fatalf("route target should not create phantom EgressRoutePolicy status: %#v", status)
+	}
+
+	data, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-4 route replace default via 192.168.1.1 dev lo table 116 metric 50", "-4 rule add priority 40 fwmark 0x116 table 116"}
+	if got := strings.Split(strings.TrimSpace(string(data)), "\n"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("enabled bootstrap operations = %#v, want %#v", got, want)
+	}
+	if err := os.WriteFile(commandLog, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled := false
+	router.Spec.Resources[0].Spec = api.HealthCheckSpec{Target: "1.1.1.1", Enabled: &enabled}
+	store = mapStore{
+		api.NetAPIVersion + "/HealthCheck/internet-via-hgw": {
+			"phase":         "Disabled",
+			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	}
+	controller = IPv4PolicyRouteController{Router: router, Store: store, OperatingSystem: platform.OSLinux}
+	if err := controller.applyRouteTables(t.Context(), map[string]string{"wan": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	if status := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "hgw"); len(status) != 0 {
+		t.Fatalf("disabled healthcheck should not bootstrap route: %#v", status)
+	}
+	data, err = os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("disabled healthcheck mutated routes/rules: %q", data)
+	}
+
 }
 
 func TestEgressRoutePolicyTargetCandidateRendersOnlyWhenActive(t *testing.T) {
@@ -1137,6 +1195,115 @@ func TestIPv4PolicyRoutePriorityReportsUnsupportedSelection(t *testing.T) {
 	}
 }
 
+func TestIPv4PolicyRouteCleansOnlyLedgerOwnedStaleRulesAndTables(t *testing.T) {
+	dir := t.TempDir()
+	ledgerPath := filepath.Join(dir, "artifacts.json")
+	ledger, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ledger.Close()
+	if err := ledger.Remember([]resource.Artifact{
+		{
+			Kind:  "linux.ipv4.fwmarkRule",
+			Name:  "priority=10110,mark=0x110,table=110",
+			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{
+				"priority": "10110",
+				"mark":     "0x110",
+				"table":    "110",
+			},
+		},
+		{
+			Kind:       "linux.ipv4.routeTable",
+			Name:       "table=110",
+			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{"table": "110"},
+		},
+		{
+			Kind:  "linux.ipv4.fwmarkRule",
+			Name:  "priority=10111,mark=0x111,table=111",
+			Owner: api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{
+				"priority": "10111",
+				"mark":     "0x111",
+				"table":    "111",
+			},
+		},
+		{
+			Kind:       "linux.ipv4.routeTable",
+			Name:       "table=111",
+			Owner:      api.NetAPIVersion + "/EgressRoutePolicy/ipv4-default",
+			Attributes: map[string]string{"table": "111"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite",
+				Targets: []api.EgressRoutePolicyTarget{{
+					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
+				}},
+			}},
+		}},
+	}}}
+	var commands []string
+	controller := IPv4PolicyRouteController{
+		Router:     router,
+		Store:      mapStore{},
+		LedgerPath: ledgerPath,
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			command := name + " " + strings.Join(args, " ")
+			commands = append(commands, command)
+			switch command {
+			case "ip -4 rule show":
+				return []byte("10110: from all fwmark 0x110 lookup 110\n10111: from all fwmark 0x111 lookup 111\n100: from all fwmark 0x999 lookup 999\n"), nil
+			case "ip -4 route show table all":
+				return []byte("default dev old table 110\ndefault dev lo table 111\ndefault dev manual table 999\n"), nil
+			default:
+				return []byte(""), nil
+			}
+		},
+	}
+	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(commands, "\n")
+	for _, want := range []string{
+		"ip -4 rule del priority 10110 fwmark 0x110 table 110",
+		"ip -4 route flush table 110",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("commands =\n%s\nwant %s", joined, want)
+		}
+	}
+	for _, notWant := range []string{
+		"priority 10111",
+		"table 111",
+		"0x999",
+		"table 999",
+	} {
+		if strings.Contains(joined, notWant) {
+			t.Fatalf("commands =\n%s\nshould not contain %s", joined, notWant)
+		}
+	}
+	loaded, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = loaded.Close() }()
+	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10110,mark=0x110,table=110"}); err != nil || owns {
+		t.Fatalf("stale rule remained in ledger (ownership query error: %v)", err)
+	}
+	if owns, err := loaded.Owns(resource.Artifact{Kind: "linux.ipv4.fwmarkRule", Name: "priority=10111,mark=0x111,table=111"}); err != nil || !owns {
+		t.Fatalf("desired rule missing from ledger (ownership query error: %v)", err)
+	}
+}
+
 func drainEvents(ch <-chan daemonapi.DaemonEvent) {
 	for {
 		select {
@@ -1332,6 +1499,91 @@ func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	if _, err := controller.routeGateway(ctx, "wan0", "static", ""); err == nil {
 		t.Fatal("empty static gateway should be rejected")
 	}
+}
+
+// TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs is the controller-level
+// regression test for issue #39. routerd serve drives the cleanup at 30s
+// reconcile, so a leaked *sql.DB per call would accumulate hundreds of
+// fds/day against routerd.db. Linux-only because it inspects /proc/self/fd.
+func TestCleanupLedgerOwnedPolicyRoutesDoesNotLeakFDs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc/self/fd only available on linux")
+	}
+	dir := t.TempDir()
+	// Use a routerd.db path so LoadLedger picks the SQLite backend (the
+	// JSON backend has no fd lifetime concern).
+	ledgerPath := filepath.Join(dir, "routerd.db")
+	seed, err := resource.LoadLedger(ledgerPath)
+	if err != nil {
+		t.Fatalf("seed open: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("seed close: %v", err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-b"}, Spec: api.InterfaceSpec{IfName: "lo"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"}, Metadata: api.ObjectMeta{Name: "ipv4-default"}, Spec: api.EgressRoutePolicySpec{
+			Mode: "priority",
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "dslite",
+				Targets: []api.EgressRoutePolicyTarget{{
+					Name: "ds-lite-b", Interface: "wan-b", Priority: 10111, Mark: 0x111, Table: 111,
+				}},
+			}},
+		}},
+	}}}
+	controller := IPv4PolicyRouteController{
+		Router:     router,
+		Store:      mapStore{},
+		LedgerPath: ledgerPath,
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch name + " " + strings.Join(args, " ") {
+			case "ip -4 rule show":
+				return []byte(""), nil
+			case "ip -4 route show table all":
+				return []byte(""), nil
+			default:
+				return []byte(""), nil
+			}
+		},
+	}
+	// Warm up: settle any first-call fd churn (e.g. table creation).
+	if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+		t.Fatalf("warmup cleanup: %v", err)
+	}
+	base := countLedgerFDs(t, ledgerPath)
+	for i := 0; i < 10; i++ {
+		if err := controller.cleanupLedgerOwnedPolicyRoutes(t.Context(), map[string]string{"wan-b": "lo"}); err != nil {
+			t.Fatalf("iter %d cleanup: %v", i, err)
+		}
+	}
+	after := countLedgerFDs(t, ledgerPath)
+	if after > base {
+		t.Fatalf("fd leak across 10 cleanup reconciles: before=%d after=%d", base, after)
+	}
+}
+
+func countLedgerFDs(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatalf("read /proc/self/fd: %v", err)
+	}
+	suffixes := []string{"", "-journal", "-wal", "-shm"}
+	count := 0
+	for _, entry := range entries {
+		target, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%s", entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, suffix := range suffixes {
+			if strings.HasSuffix(target, path+suffix) {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
 
 // These selection/status tests own their link observations and never execute
