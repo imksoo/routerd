@@ -200,7 +200,7 @@ func TestNTPClientControllerCleansWhenFalseChronyConfigAndRecreatesWhenTrue(t *t
 }
 
 func TestRenderNTPDConfig(t *testing.T) {
-	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"})
+	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp", "ntp.nict.jp"}, nil, nil)
 	if got, want := string(data), "server ntp.jst.mfeed.ad.jp iburst\n"; !strings.Contains(got, want) {
 		t.Fatalf("config missing %q:\n%s", want, got)
 	}
@@ -210,7 +210,7 @@ func TestRenderNTPDConfig(t *testing.T) {
 }
 
 func TestRenderNTPDConfigWithListenAddresses(t *testing.T) {
-	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp"}, []string{"192.168.160.4", "2409:10:3d60:1250::4/64"})
+	data := renderNTPDConfig([]string{"ntp.jst.mfeed.ad.jp"}, []string{"192.168.160.4", "2409:10:3d60:1250::4/64"}, nil)
 	for _, want := range []string{
 		"interface ignore all\n",
 		"interface listen 127.0.0.1\n",
