@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+
+	"google.golang.org/protobuf/proto"
 )
 
 type canonicalDefinedSet struct {
@@ -28,17 +30,9 @@ type canonicalPolicy struct {
 }
 
 type canonicalStatement struct {
-	Name             string
-	PrefixSetName    string
-	PrefixSetType    int32
-	NeighborSetName  string
-	NeighborSetType  int32
-	CommunitySetName string
-	CommunitySetType int32
-	RouteType        int32
-	RouteAction      int32
-	NextHop          string
-	LocalPreference  *uint32
+	Name       string
+	Conditions *gobgpapi.Conditions
+	Actions    *gobgpapi.Actions
 }
 
 type canonicalPolicyAssignment struct {
@@ -80,45 +74,23 @@ func canonicalizePolicy(policy *gobgpapi.Policy) canonicalPolicy {
 	}
 	out := canonicalPolicy{Name: strings.TrimSpace(policy.GetName())}
 	for _, statement := range policy.GetStatements() {
-		prefixSet := statement.GetConditions().GetPrefixSet()
-		neighborSet := statement.GetConditions().GetNeighborSet()
-		communitySet := statement.GetConditions().GetCommunitySet()
+		conditions, actions := statement.GetConditions(), statement.GetActions()
+		// GoBGP may allocate an empty top-level message when there is no
+		// condition/action. Preserve every populated native field, including
+		// fields routerd does not currently generate.
+		if proto.Equal(conditions, &gobgpapi.Conditions{}) {
+			conditions = nil
+		}
+		if proto.Equal(actions, &gobgpapi.Actions{}) {
+			actions = nil
+		}
 		out.Statements = append(out.Statements, canonicalStatement{
-			Name:             strings.TrimSpace(statement.GetName()),
-			PrefixSetName:    strings.TrimSpace(prefixSet.GetName()),
-			PrefixSetType:    int32(prefixSet.GetType()),
-			NeighborSetName:  strings.TrimSpace(neighborSet.GetName()),
-			NeighborSetType:  int32(neighborSet.GetType()),
-			CommunitySetName: strings.TrimSpace(communitySet.GetName()),
-			CommunitySetType: int32(communitySet.GetType()),
-			RouteType:        int32(statement.GetConditions().GetRouteType()),
-			RouteAction:      int32(statement.GetActions().GetRouteAction()),
-			NextHop:          canonicalNextHopAction(statement.GetActions().GetNexthop()),
-			LocalPreference:  canonicalLocalPreferenceAction(statement.GetActions().GetLocalPref()),
+			Name:       strings.TrimSpace(statement.GetName()),
+			Conditions: conditions,
+			Actions:    actions,
 		})
 	}
 	return out
-}
-
-func canonicalNextHopAction(action *gobgpapi.NexthopAction) string {
-	switch {
-	case action == nil:
-		return ""
-	case action.GetPeerAddress():
-		return "peer-address"
-	case action.GetUnchanged():
-		return "unchanged"
-	default:
-		return ""
-	}
-}
-
-func canonicalLocalPreferenceAction(action *gobgpapi.LocalPrefAction) *uint32 {
-	if action == nil {
-		return nil
-	}
-	value := action.GetValue()
-	return &value
 }
 
 func canonicalizePolicyAssignment(assignment *gobgpapi.PolicyAssignment) canonicalPolicyAssignment {
@@ -139,7 +111,17 @@ func canonicalizePolicyAssignment(assignment *gobgpapi.PolicyAssignment) canonic
 }
 
 func EqualPolicy(a, b *gobgpapi.Policy) bool {
-	return reflect.DeepEqual(canonicalizePolicy(a), canonicalizePolicy(b))
+	x, y := canonicalizePolicy(a), canonicalizePolicy(b)
+	if x.Name != y.Name || len(x.Statements) != len(y.Statements) {
+		return false
+	}
+	for i, statement := range x.Statements {
+		other := y.Statements[i]
+		if statement.Name != other.Name || !proto.Equal(statement.Conditions, other.Conditions) || !proto.Equal(statement.Actions, other.Actions) {
+			return false
+		}
+	}
+	return true
 }
 func EqualDefinedSet(a, b *gobgpapi.DefinedSet) bool {
 	return reflect.DeepEqual(canonicalizeDefinedSet(a), canonicalizeDefinedSet(b))

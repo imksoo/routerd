@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -13,8 +12,8 @@ import (
 )
 
 func historyDaemon(now *time.Time) *daemon {
-	d := &daemon{opts: options{resource: "monitor", ifname: "test0"}, clock: func() time.Time { return *now }, routers: map[string]raobserver.RouterObservation{}}
-	d.cond = sync.NewCond(&d.mu)
+	d := newDaemon(options{resource: "monitor", ifname: "test0"})
+	d.clock = func() time.Time { return *now }
 	return d
 }
 

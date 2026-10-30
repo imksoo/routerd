@@ -1230,7 +1230,7 @@ func bgpStatusSubscriptions(router *api.Router) []bus.Subscription {
 	// SAMTransportProfile status is written only after its DynamicConfigPart is
 	// durable.  Waking BGP here applies a newly agreed direct peer group without
 	// waiting for its ordinary polling interval.
-	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile")))
+	return withDynamicConfigPartSubscriptions(withMobilityPlanSubscriptions(statusSubscriptionsWithWhen(router, []string{"BGPRouter", "BGPPeer", "BGPDynamicPeer"}, "BFD", "BGPRouter", "BGPPeer", "SAMTransportProfile")))
 }
 
 func samTransportStatusSubscriptions() []bus.Subscription {
@@ -1575,6 +1575,13 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			"reason":     "WhenFalse",
 			"observedAt": now.Format(time.RFC3339Nano),
 		}
+		if res.Kind == "HealthCheck" {
+			for _, key := range []string{"routing", "observed"} {
+				if value, ok := current[key]; ok {
+					status[key] = value
+				}
+			}
+		}
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(declared, res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
@@ -1715,6 +1722,12 @@ func (r *Runner) clearWhenFalseStatus(apiVersion, kind, name string, store event
 		return store.SaveObjectStatus(apiVersion, kind, name, next)
 	}
 
+	if kind == "HealthCheck" {
+		// A condition becoming true permits a new probe. Retained history
+		// cannot establish current reachability or the current probe path.
+		return nil
+	}
+
 	observed := statusValueMap(current["observed"])
 	if len(observed) == 0 || strings.TrimSpace(fmt.Sprint(observed["phase"])) == "" {
 		return nil
@@ -1732,55 +1745,21 @@ func (r *Runner) preserveFreshDaemonStatusWhenFalse(res api.Resource, apiVersion
 	if res.Kind != "HealthCheck" {
 		return false, nil
 	}
-	status := store.ObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
-	observed := statusValueMap(status["observed"])
-	evidence := status
-	evidenceFromObserved := false
-	if healthCheckStatusHasDaemonEvidence(observed) {
-		evidence = observed
-		evidenceFromObserved = true
-	} else if !healthCheckStatusHasDaemonEvidence(status) {
+	status, err := store.ReadObjectStatus(apiVersion, res.Kind, res.Metadata.Name)
+	if err != nil {
+		return false, err
+	}
+	switch statusvalue.Field(status, "phase") {
+	case healthcheck.PhaseHealthy, healthcheck.PhasePassing, healthcheck.PhaseFailing, healthcheck.PhaseUnhealthy:
+	default:
 		return false, nil
 	}
-	lastCheckedAt, ok := parseStatusTimestamp(evidence["lastCheckedAt"])
-	if !ok {
-		return false, nil
+	observation, err := store.HealthObservation(res.Metadata.Name)
+	if err != nil {
+		return false, err
 	}
-	if now.After(lastCheckedAt.Add(healthCheckStatusFreshness(res))) {
-		return false, nil
-	}
-	if evidenceFromObserved && strings.TrimSpace(fmt.Sprint(evidence["phase"])) != "" {
-		next := copyStatusMap(status)
-		for key, value := range evidence {
-			next[key] = value
-		}
-		delete(next, "reason")
-		next["observed"] = observed
-		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-func healthCheckStatusHasDaemonEvidence(status map[string]any) bool {
-	if len(status) == 0 {
-		return false
-	}
-	switch fmt.Sprint(status["phase"]) {
-	case healthcheck.PhaseHealthy, healthcheck.PhaseFailing, healthcheck.PhaseUnhealthy:
-		return true
-	}
-	if strings.TrimSpace(fmt.Sprint(status["lastResult"])) != "" {
-		return true
-	}
-	if _, ok := status["consecutiveFailed"]; ok {
-		return true
-	}
-	if _, ok := status["consecutivePassed"]; ok {
-		return true
-	}
-	return false
+	return observation.Phase == statusvalue.Field(status, "phase") && !observation.CheckedAt.IsZero() &&
+		!now.Before(observation.CheckedAt) && !now.After(observation.CheckedAt.Add(healthCheckStatusFreshness(res))), nil
 }
 
 func statusIsWhenFalse(status map[string]any) bool {
@@ -1913,12 +1892,33 @@ type controllerGeneration struct {
 // These auxiliary consumers have timer callbacks that can publish
 // effects. A replacement generation waits for their actual exit after cancel.
 type controllerLifetimes struct {
+	eventRule         *eventrule.Controller
+	derivedEvent      *derived.Controller
 	eventRuleDone     <-chan struct{}
 	derivedDone       <-chan struct{}
 	eventSubscription *eventsubscriptioncontroller.Controller
 	pipeline          *observabilitypipeline.Controller
 	bgp               *bgpcontroller.Controller
 	advertisements    *RouterAdvertisementService
+}
+
+// Activate only after the generation is the selected runtime. Preparation and
+// bootstrap must not let a candidate auxiliary publisher emit its own effects.
+func (l *controllerLifetimes) activate(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if l.eventRule != nil {
+		var err error
+		l.eventRuleDone, err = l.eventRule.Start(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	if l.derivedEvent != nil {
+		l.derivedDone = l.derivedEvent.Start(ctx)
+	}
+	return ctx.Err()
 }
 
 // RuntimeShutdownGrace includes the required RA multicast spacing and final
@@ -2155,20 +2155,26 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 		} else if generation.decision.Enabled && !generation.decision.Leader {
 			time.AfterFunc(clusterRetryInterval(r.currentRouter()), generation.cancel)
 		}
-		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
-		loopDone := make(chan error, 1)
-		go func(current *controllerGeneration) {
-			loopDone <- loop.Run(current.ctx, current.controllers...)
-		}(generation)
 		if !r.publishRuntimeGeneration(generation) {
 			generation.cancel()
-			<-loopDone
 			failure := runtimeStoppedError(ctx.Err())
 			if stopErr := stopCurrentGeneration(); stopErr != nil {
 				return errors.Join(failure, stopErr)
 			}
 			return failure
 		}
+		if err := generation.lifetimes.activate(generation.ctx); err != nil {
+			r.clearRuntimeGeneration(false)
+			generation.cancel()
+			stopErr := stopCurrentGeneration()
+			r.fenceRuntime(true)
+			return errors.Join(err, stopErr)
+		}
+		loop := framework.Runner{Bus: r.Bus, MutationGate: r.Opts.MutationGate, Logger: logger, Interval: 30 * time.Second, Observer: r.Opts.ControllerObserver, SkipBootstrap: true}
+		loopDone := make(chan error, 1)
+		go func(current *controllerGeneration) {
+			loopDone <- loop.Run(current.ctx, current.controllers...)
+		}(generation)
 		r.markRuntimeReady()
 		if pending != nil {
 			r.acknowledgeRuntimeReload(*pending, restored, reloadErr)
@@ -2625,10 +2631,13 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	if startAuxiliary {
 		if r.controllerEnabled("event-rule") {
-			lifetimes.eventRuleDone = rules.Start(ctx)
+			if err := rules.Prepare(ctx); err != nil {
+				return nil, DaemonStatusController{}, lifetimes, err
+			}
+			lifetimes.eventRule = &rules
 		}
 		if r.controllerEnabled("derived-event") {
-			lifetimes.derivedDone = derivedEvents.Start(ctx)
+			lifetimes.derivedEvent = &derivedEvents
 		}
 		if r.controllerEnabled("observability-pipeline") {
 			observation, err := effectiveForReconcile()

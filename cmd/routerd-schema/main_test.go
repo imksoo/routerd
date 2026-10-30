@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestConfigSchemaDescribesTunnelInterfacePeerAddress(t *testing.T) {
@@ -147,5 +149,14 @@ func TestMetadataSchemaMatchesTypedConfigurationBoundary(t *testing.T) {
 	}
 	if schema["additionalProperties"] != false {
 		t.Fatal("metadata unknown fields must remain closed")
+	}
+}
+
+func TestDNSZoneSchemaRejectsUnsupportedLocalSigning(t *testing.T) {
+	schema := resourceSchema(api.NetAPIVersion, "DNSZone", api.DNSZoneSpec{})
+	properties := schema["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)
+	enabled := properties["dnssec"].(map[string]any)["properties"].(map[string]any)["enabled"].(map[string]any)
+	if enabled["const"] != false {
+		t.Fatalf("unsupported signing remains admissible: %#v", enabled)
 	}
 }

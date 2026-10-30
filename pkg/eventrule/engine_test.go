@@ -173,7 +173,10 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 		Poll:   20 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	controller.Start(ctx)
+	done, err := controller.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-blockedEvents.entered:
 	case <-time.After(time.Second):
@@ -196,7 +199,7 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 	waitForDrain(t, blockedEvents.drained)
 	waitForRecent(t, b, "routerd.out", 1)
 	cancel()
-	controller.StopTimers()
+	<-done
 
 	tip, err := store.ListEvents(routerstate.EventQuery{Limit: 1})
 	if err != nil || len(tip) != 1 {
@@ -213,7 +216,11 @@ func TestStoredEventsRecoverMissedWakeupAndCursorPreventsRestartDuplicates(t *te
 	}
 	restartCtx, restartCancel := context.WithCancel(context.Background())
 	defer restartCancel()
-	restarted.Start(restartCtx)
+	restartDone, err := restarted.Start(restartCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { restartCancel(); <-restartDone }()
 	waitForDrain(t, restartEvents.drained)
 	if got := len(b.Recent("routerd.out")); got != 1 {
 		t.Fatalf("restart replayed processed events: outputs = %d, want 1", got)

@@ -446,6 +446,14 @@ func resourceUnionSchema() map[string]any {
 }
 
 func resourceSchema(apiVersion, kind string, spec any) map[string]any {
+	specSchema := reflectedSchema(spec)
+	if kind == "DNSZone" {
+		// The published boundary must reject unavailable local signing too.
+		// The pinned reflector does not emit const tags for bool fields.
+		properties := specSchema["properties"].(map[string]any)
+		dnssec := properties["dnssec"].(map[string]any)["properties"].(map[string]any)
+		dnssec["enabled"].(map[string]any)["const"] = false
+	}
 	return map[string]any{
 		"type": "object",
 		"required": []string{
@@ -459,7 +467,7 @@ func resourceSchema(apiVersion, kind string, spec any) map[string]any {
 			"apiVersion": constString(apiVersion),
 			"kind":       constString(kind),
 			"metadata":   metadataSchema(),
-			"spec":       reflectedSchema(spec),
+			"spec":       specSchema,
 			"status": map[string]any{
 				"type":                 "object",
 				"additionalProperties": true,

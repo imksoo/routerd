@@ -33,8 +33,10 @@ func (s *SQLiteStore) HealthObservation(name string) (api.HealthObservation, err
 		return api.HealthObservation{}, err
 	}
 	switch status.Phase {
-	case "Disabled", "Standby", "NotApplicable":
-		return api.HealthObservation{}, nil
+	case "Healthy", "Passing", "Failing", "Unhealthy":
+		if status.Phase == status.Routing.Phase {
+			return status.Routing, nil
+		}
 	}
-	return status.Routing, nil
+	return api.HealthObservation{}, nil
 }
