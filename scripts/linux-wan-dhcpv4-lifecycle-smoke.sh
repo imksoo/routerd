@@ -107,7 +107,7 @@ printf 'Environment certified: empty product, independent Kea/DNS/HTTP peers and
 stage=acquisition
 lease=/var/lib/routerd/dhcpv4-client/wan/lease.json
 /usr/local/sbin/routerctl apply -f "$candidate" --replace > "$work/apply.txt"
-bound() { jq -e '.state == "bound" and .currentAddress == "198.18.46.100"' "$lease" >/dev/null 2>&1; }
+bound() { jq -e '.state == "Bound" and .currentAddress == "198.18.46.100"' "$lease" >/dev/null 2>&1; }
 for _ in {1..45}; do bound && break; sleep 1; done
 bound
 native_ready() {
@@ -134,28 +134,28 @@ router_pid=$(systemctl show -p MainPID --value routerd)
 stage=renew
 first=$(jq -r .acquiredAt "$lease")
 for _ in {1..35}; do
- if jq -e --arg first "$first" '.state == "bound" and .acquiredAt > $first' "$lease" >/dev/null; then break; fi
+ if jq -e --arg first "$first" '.state == "Bound" and .acquiredAt > $first' "$lease" >/dev/null; then break; fi
  sleep 1
 done
-jq -e --arg first "$first" '.state == "bound" and .acquiredAt > $first' "$lease" >/dev/null
+jq -e --arg first "$first" '.state == "Bound" and .acquiredAt > $first' "$lease" >/dev/null
 probe
 printf 'PASS: T1 renewal advances acknowledged lease epoch\n'
 stage=rebind
 before_rebind=$(jq -r .acquiredAt "$lease")
 systemctl stop rd15-peer-kea4
 for _ in {1..35}; do
- if jq -e '.state == "renewing"' "$lease" >/dev/null; then break; fi
+ if jq -e '.state == "Renewing"' "$lease" >/dev/null; then break; fi
  sleep 1
 done
-jq -e '.state == "renewing"' "$lease" >/dev/null
+jq -e '.state == "Renewing"' "$lease" >/dev/null
 # T1 was unanswered. Restore the server before T2; the client's next exchange
 # must be broadcast Rebind (renew retries have a minimum 60-second interval).
 start_kea
 for _ in {1..35}; do
- if jq -e --arg first "$before_rebind" '.state == "bound" and .acquiredAt > $first' "$lease" >/dev/null; then break; fi
+ if jq -e --arg first "$before_rebind" '.state == "Bound" and .acquiredAt > $first' "$lease" >/dev/null; then break; fi
  sleep 1
 done
-jq -e --arg first "$before_rebind" '.state == "bound" and .acquiredAt > $first' "$lease" >/dev/null
+jq -e --arg first "$before_rebind" '.state == "Bound" and .acquiredAt > $first' "$lease" >/dev/null
 systemctl stop rd15-wan4-capture
 python3 "$verifier" "$work/wan.pcap" 198.18.46.100 198.18.46.1
 probe

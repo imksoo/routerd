@@ -3,6 +3,10 @@ package dhcpv4client
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +32,25 @@ func TestLiveFirstLeaseWaitsForSupervisedDaemonWithoutFailingApply(t *testing.T)
 			t.Fatalf("missing daemon was not honestly pending: %+v %v", s, err)
 		}
 	}
+	listener, err := net.Listen("unix", c.DaemonSockets["wan"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(daemonapi.DaemonStatus{Resources: []daemonapi.ResourceStatus{{
+			Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Client", Name: "wan"},
+			Phase:    daemonapi.ResourcePhasePending, Observed: map[string]string{"interface": "eth0"},
+		}}})
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+	if err := c.ReconcileAll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := c.Store.ReadObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
+	if mapString(s, "reason") == "DaemonUnavailable" || mapString(s, "error") != "" || s["interface"] != "eth0" {
+		t.Fatalf("available worker did not replace initial dependency wait: %+v", s)
+	}
 }
 
 func TestMissingDaemonWithLeaseAuthorityStillFailsAndPreservesOwnership(t *testing.T) {
@@ -37,6 +60,7 @@ func TestMissingDaemonWithLeaseAuthorityStillFailsAndPreservesOwnership(t *testi
 		{"pendingGateway": "192.0.2.1", "pendingRouteInterface": "eth0"},
 		{"appliedDNSServers": "192.0.2.53", "appliedDNSInterface": "eth0"},
 	} {
+		before := maps.Clone(current)
 		c := effectController(func(context.Context, string, ...string) ([]byte, error) {
 			t.Fatal("unavailable unexpired daemon performed native effects")
 			return nil, nil
@@ -48,8 +72,8 @@ func TestMissingDaemonWithLeaseAuthorityStillFailsAndPreservesOwnership(t *testi
 			t.Fatalf("lost existing worker was treated as first startup: %+v", current)
 		}
 		after, _ := c.Store.ReadObjectStatus(api.NetAPIVersion, "DHCPv4Client", "wan")
-		if !reflect.DeepEqual(current, after) {
-			t.Fatalf("unavailable worker lost ownership: before=%+v after=%+v", current, after)
+		if !reflect.DeepEqual(before, after) {
+			t.Fatalf("unavailable worker lost ownership: before=%+v after=%+v", before, after)
 		}
 	}
 }

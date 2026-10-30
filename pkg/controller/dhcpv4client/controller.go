@@ -303,12 +303,27 @@ func (c *Controller) reconcile(ctx context.Context, name string) error {
 			saveErr := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", name, next)
 			return errors.Join(err, applyErr, saveErr)
 		}
-		if c.DryRun {
+		// The first reconcile precedes supervisor startup. A missing socket
+		// with no lease authority is a dependency wait, not an apply failure.
+		// Existing effects/deadlines and other I/O errors remain failures.
+		if c.DryRun || errors.Is(err, os.ErrNotExist) && !hasLeaseAuthority(current) {
 			return c.savePendingDaemonStatus(name, socket, err)
 		}
 		return err
 	}
 	return c.applyDaemonStatus(ctx, name, status)
+}
+
+func hasLeaseAuthority(status map[string]any) bool {
+	if mapString(status, "phase") == daemonapi.ResourcePhaseBound {
+		return true
+	}
+	for _, key := range []string{"currentAddress", "expiresAt", "appliedAddress", "appliedDefaultGateway", "appliedDNSServers", "pendingAddress", "pendingGateway", "pendingDNSServers"} {
+		if mapString(status, key) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) applyDaemonStatus(ctx context.Context, name string, status daemonapi.DaemonStatus) error {
@@ -423,7 +438,7 @@ func (c *Controller) savePendingDaemonStatus(name, socket string, cause error) e
 		"socket":    socket,
 		"message":   fmt.Sprintf("waiting for DHCPv4 client socket %s", socket),
 		"error":     cause.Error(),
-		"dryRun":    true,
+		"dryRun":    c.DryRun,
 		"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	preserveLeaseEffects(current, status)
