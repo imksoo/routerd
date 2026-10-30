@@ -173,11 +173,12 @@ func TestReconcileLowersVRRPPriorityAfterTrackHysteresis(t *testing.T) {
 	}
 	var calls []string
 	controller := Controller{
-		Router:     vrrpRouter("vrrp"),
-		Store:      store,
-		DryRun:     false,
-		ConfigPath: t.TempDir() + "/keepalived.conf",
-		Systemctl:  "systemctl",
+		OperatingSystem: platform.OSLinux,
+		Router:          vrrpRouter("vrrp"),
+		Store:           store,
+		DryRun:          false,
+		ConfigPath:      t.TempDir() + "/keepalived.conf",
+		Systemctl:       "systemctl",
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			calls = append(calls, name+" "+strings.Join(args, " "))
 			return []byte("ok"), nil
@@ -1251,6 +1252,7 @@ func TestReconcileStopsKeepalivedWhenVRRPRemoved(t *testing.T) {
 	}
 	var calls []string
 	controller := Controller{
+		OperatingSystem: platform.OSLinux,
 		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 			{
 				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"},
