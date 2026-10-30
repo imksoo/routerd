@@ -25,12 +25,14 @@ func TestHealthObservationReadsTypedCurrentState(t *testing.T) {
 	if err != nil || !got.Usable(now, api.HealthCheckSpec{}) {
 		t.Fatalf("typed observation: %#v %v", got, err)
 	}
-	if err := s.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "wan", map[string]any{"phase": "Disabled", "routing": wanted}); err != nil {
-		t.Fatal(err)
-	}
-	got, err = s.HealthObservation("wan")
-	if err != nil || got.Usable(now, api.HealthCheckSpec{}) {
-		t.Fatalf("disabled observation: %#v %v", got, err)
+	for _, phase := range []string{"Disabled", "Standby", "NotApplicable", "Pending", "Unknown", "Unhealthy"} {
+		if err := s.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "wan", map[string]any{"phase": phase, "routing": wanted, "observed": map[string]any{"phase": "Healthy"}}); err != nil {
+			t.Fatal(err)
+		}
+		got, err = s.HealthObservation("wan")
+		if err != nil || got != (api.HealthObservation{}) {
+			t.Fatalf("neutral or mismatched %s promoted history: %#v %v", phase, got, err)
+		}
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

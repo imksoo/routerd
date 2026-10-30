@@ -111,3 +111,19 @@ Update affected schemas and operator documentation together with contract change
 do not maintain discarded formats. Keep this policy in English and explain work
 in Japanese. Report the executed revision, relevant setup, observed result, and
 unverified scope concisely.
+
+## Checkpoint publication and progress reporting
+
+- Finish each small coherent change with relevant local checks, a commit, a push
+  through the authorized GitHub connection, and verification of the remote SHA.
+  Do not hold all changes until broad testing or GitHub Actions completes.
+- While changes exist, preserve a checkpoint on a clearly marked WIP branch at
+  least every ten minutes. Record which checks are pending. A local commit alone
+  is not a remote backup. If publication fails, report it immediately and pause
+  new implementation until the current changes are preserved remotely.
+- During sustained work, report progress about once a minute: the concrete change,
+  executed checks, published commit, next task and any blocker. Never label a
+  checkpoint complete merely because it was committed or compiled.
+- On resume, read these rules and verify the repository, branch, remote SHA and
+  working tree before editing. Do not infer an environment's retention guarantees
+  or the cause of a disconnection without evidence.

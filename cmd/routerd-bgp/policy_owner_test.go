@@ -182,3 +182,76 @@ func TestPendingPolicyFailureKeepsNativeRejectGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPolicyOwnerRepairsUnexpectedNativeNextHopAction(t *testing.T) {
+	server := realDynamicPathServer(t)
+	statePath, applied := dynamicJournal(t)
+	intent := bgpdaemon.PolicyIntent{RouterName: "drift", Scopes: []bgpdaemon.PolicyScope{{
+		Name: "routerd-drift-peer", Neighbors: []string{"192.0.2.2/32"},
+		Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24"}}, ExportPolicyName: "routerd-drift-export",
+	}}}
+	ctx := context.Background()
+	applied, err := reconcilePolicyConfig(ctx, server, statePath, applied, intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := bgpdaemon.BuildPolicyPlan(intent, nil)
+	var changedPolicy, changedStatement string
+	if matches, err := policyPlanMatches(ctx, server, plan); err != nil || !matches {
+		reportNativePolicyDifferences(t, server, plan)
+		t.Fatalf("initial native policy does not match: matches=%v err=%v", matches, err)
+	}
+	for _, policy := range plan.SetPolicies.Policies {
+		if policy.Name != plan.GlobalImportAssignment.Policies[0].Name {
+			continue
+		}
+		for _, statement := range policy.Statements {
+			if statement.GetActions().GetRouteAction() == gobgpapi.RouteAction_ROUTE_ACTION_ACCEPT && statement.GetActions().GetNexthop() == nil {
+				statement.Actions.Nexthop = &gobgpapi.NexthopAction{Address: "192.0.2.99"}
+				changedPolicy, changedStatement = policy.Name, statement.Name
+				break
+			}
+		}
+	}
+	if changedStatement == "" {
+		t.Fatal("fixture has no native import allow action")
+	}
+	if err := server.SetPolicies(ctx, plan.SetPolicies); err != nil {
+		t.Fatal(err)
+	}
+	for _, assignment := range []*gobgpapi.PolicyAssignment{plan.GlobalImportAssignment, plan.GlobalExportAssignment} {
+		if err := server.SetPolicyAssignment(ctx, &gobgpapi.SetPolicyAssignmentRequest{Assignment: assignment}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertAddress := func(want string) {
+		t.Helper()
+		found := false
+		if err := server.ListPolicy(ctx, &gobgpapi.ListPolicyRequest{Name: changedPolicy}, func(policy *gobgpapi.Policy) {
+			for _, statement := range policy.Statements {
+				if statement.Name == changedStatement {
+					found = true
+					if got := statement.GetActions().GetNexthop().GetAddress(); got != want {
+						t.Errorf("actual native next hop=%q want=%q", got, want)
+					}
+				}
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatal("actual native changed statement is missing")
+		}
+	}
+	assertAddress("192.0.2.99")
+	if matches, err := policyPlanMatches(ctx, server, bgpdaemon.BuildPolicyPlan(intent, nil)); err != nil || matches {
+		t.Fatalf("unexpected native action accepted as applied: matches=%v err=%v", matches, err)
+	}
+	if _, err := reconcilePolicyConfig(ctx, server, statePath, applied, intent); err != nil {
+		t.Fatal(err)
+	}
+	assertAddress("")
+	if matches, err := policyPlanMatches(ctx, server, bgpdaemon.BuildPolicyPlan(intent, nil)); err != nil || !matches {
+		t.Fatalf("native action drift was not repaired: matches=%v err=%v", matches, err)
+	}
+}

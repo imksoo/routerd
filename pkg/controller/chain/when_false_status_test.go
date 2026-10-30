@@ -37,7 +37,7 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonStatus(t *testing.T
 	}
 }
 
-func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonEvidenceAfterOldWhenFalse(t *testing.T) {
+func TestSaveWhenFalseStatusesDoesNotPromoteHealthCheckDaemonHistory(t *testing.T) {
 	resource := whenFalseHealthCheck("internet")
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
 	checkedAt := time.Now().UTC().Add(-10 * time.Second)
@@ -60,14 +60,11 @@ func TestSaveWhenFalseStatusesPreservesFreshHealthCheckDaemonEvidenceAfterOldWhe
 	}
 
 	status := store.ObjectStatus(api.NetAPIVersion, "HealthCheck", "internet")
-	if got := status["phase"]; got != healthcheck.PhaseHealthy {
-		t.Fatalf("phase = %v, want %s", got, healthcheck.PhaseHealthy)
+	if status["phase"] != "Pending" || status["reason"] != "WhenFalse" {
+		t.Fatalf("history promoted to current status: %#v", status)
 	}
-	if got := status["lastResult"]; got != "passed" {
-		t.Fatalf("lastResult = %v, want passed", got)
-	}
-	if got := status["reason"]; got == "WhenFalse" {
-		t.Fatalf("reason = %v, want observed daemon status promoted", got)
+	if status["lastResult"] != nil || status["observed"] == nil {
+		t.Fatalf("history was lost or published as current: %#v", status)
 	}
 }
 

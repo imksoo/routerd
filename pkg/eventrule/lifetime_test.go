@@ -38,7 +38,10 @@ func TestRuleLifetimeWaitsForFiredTimerAndSuppressesCanceledPublication(t *testi
 			controller.Store, controller.Events = store, db
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			done := controller.Start(ctx)
+			done, err := controller.Start(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := controller.Reconcile(ctx, testEvent("routerd.trigger")); err != nil {
 				t.Fatal(err)
 			}

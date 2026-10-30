@@ -91,6 +91,9 @@ func ResourceWhen(res api.Resource) api.ResourceWhenSpec {
 	case "BGPPeer":
 		spec, _ := res.BGPPeerSpec()
 		return spec.When
+	case "BGPDynamicPeer":
+		spec, _ := res.BGPDynamicPeerSpec()
+		return spec.When
 	case "BFD":
 		spec, _ := res.BFDSpec()
 		return spec.When

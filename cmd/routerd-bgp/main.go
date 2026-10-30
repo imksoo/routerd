@@ -892,7 +892,7 @@ func withoutAppliedPath(paths []bgpdaemon.AppliedPath, key string) []bgpdaemon.A
 
 func validateNativePathOwners(applied bgpdaemon.AppliedConfig) error {
 	owners := map[string]string{}
-	for _, group := range [][]bgpdaemon.AppliedPath{applied.Paths, applied.PendingPathAdds} {
+	for _, group := range [][]bgpdaemon.AppliedPath{applied.Paths, applied.PendingPathAdds, applied.PendingPathRemovals} {
 		for _, path := range group {
 			key := fmt.Sprintf("%s/%d", path.Prefix, bgpdaemon.NativePathIdentifier(path.Source))
 			if owner := owners[key]; owner != "" && owner != path.Source {

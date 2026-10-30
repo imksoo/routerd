@@ -27,7 +27,6 @@ type zoneData struct {
 	Name         string
 	TTL          uint32
 	DHCP         api.DNSZoneDHCPDerivedSpec
-	DNSSEC       api.DNSZoneDNSSECSpec
 	Records      map[string]zoneRecord
 	PTR          map[string]string
 	ReverseZone  map[string]bool
@@ -79,7 +78,6 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 			Name:         name,
 			TTL:          ttl,
 			DHCP:         spec.DHCPDerived,
-			DNSSEC:       spec.DNSSEC,
 			Records:      map[string]zoneRecord{},
 			PTR:          map[string]string{},
 			ReverseZone:  map[string]bool{},
@@ -247,9 +245,6 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 			}
 		}
 		if len(msg.Answer) > 0 {
-			if z.DNSSEC.Enabled {
-				msg.AuthenticatedData = true
-			}
 			return msg, true
 		}
 		if !ok {
@@ -260,9 +255,6 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 		// (NODATA): keep NOERROR with an empty answer so a dual-stack client
 		// does not treat the whole name as nonexistent (e.g. an AAAA query for
 		// an A-only record must not poison the A lookup via negative caching).
-		if z.DNSSEC.Enabled {
-			msg.AuthenticatedData = true
-		}
 		return msg, true
 	}
 	if strings.HasSuffix(name, "in-addr.arpa.") || strings.HasSuffix(name, "ip6.arpa.") {
@@ -273,9 +265,6 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 		msg := new(dns.Msg)
 		msg.SetReply(req)
 		msg.Answer = append(msg.Answer, &dns.PTR{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: z.TTL}, Ptr: target})
-		if z.DNSSEC.Enabled {
-			msg.AuthenticatedData = true
-		}
 		return msg, true
 	}
 	return nil, false

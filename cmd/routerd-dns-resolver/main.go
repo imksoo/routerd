@@ -238,11 +238,17 @@ func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
 	if config.Resource == "" {
 		config.Resource = opts.resource
 	}
+	if err := validateLocalZones(config); err != nil {
+		return config, err
+	}
 	config.Spec = dnsresolver.NormalizeSpec(config.Spec)
 	return config, dnsresolver.Validate(config.Spec)
 }
 
 func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) {
+	if err := validateLocalZones(config); err != nil {
+		return nil, err
+	}
 	d := &daemon{
 		opts:      opts,
 		config:    config,

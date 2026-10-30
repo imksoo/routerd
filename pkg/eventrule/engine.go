@@ -4,6 +4,7 @@ package eventrule
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -45,8 +46,50 @@ type Controller struct {
 	Logger *slog.Logger
 	Poll   time.Duration
 
-	mu    sync.Mutex
-	state map[string]*ruleState
+	mu            sync.Mutex
+	state         map[string]*ruleState
+	prepared      bool
+	hasRules      bool
+	initialCursor int64
+}
+
+type preparedEventStore interface {
+	eventconsumer.Store
+	EventJournalTip(context.Context) (int64, error)
+	InitializeEventConsumerCursor(context.Context, string, int64) error
+}
+
+// Prepare captures the input boundary before generation bootstrap. It neither
+// creates a cursor nor starts a rule which could publish candidate effects.
+func (c *Controller) Prepare(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.prepared {
+		return ctx.Err()
+	}
+	if c.Router == nil {
+		c.prepared = true
+		return nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "EventRule" {
+			continue
+		}
+		c.hasRules = true
+		journal, ok := c.Events.(preparedEventStore)
+		if !ok {
+			return fmt.Errorf("EventRule requires a preparable event journal")
+		}
+		tip, err := journal.EventJournalTip(ctx)
+		if err != nil {
+			return err
+		}
+		c.initialCursor = tip
+		c.prepared = true
+		return nil
+	}
+	c.prepared = true
+	return ctx.Err()
 }
 
 type ruleState struct {
@@ -74,11 +117,29 @@ type pendingEvent struct {
 
 // Start returns an acknowledgement that the consumer and its owned timers have
 // stopped. The generation owner waits for it before publishing a replacement.
-func (c *Controller) Start(ctx context.Context) <-chan struct{} {
+func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 	done := make(chan struct{})
-	if c.Router == nil || c.Bus == nil || c.Store == nil || c.Events == nil {
+	if err := c.Prepare(ctx); err != nil {
 		close(done)
-		return done
+		return done, err
+	}
+	if c.Bus == nil || c.Store == nil || c.Events == nil {
+		close(done)
+		if !c.hasRules {
+			return done, nil
+		}
+		return done, fmt.Errorf("EventRule requires an event bus and status store")
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.Kind != "EventRule" {
+			continue
+		}
+		journal := c.Events.(preparedEventStore) // Prepare verified the actual boundary.
+		if err := journal.InitializeEventConsumerCursor(ctx, "eventrule/engine", c.initialCursor); err != nil {
+			close(done)
+			return done, err
+		}
+		break
 	}
 	c.init()
 	ch, _ := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 128)
@@ -126,7 +187,7 @@ func (c *Controller) Start(ctx context.Context) <-chan struct{} {
 			}
 		}
 	}()
-	return done
+	return done, nil
 }
 
 func (c *Controller) drainStoredEvents(ctx context.Context) error {
