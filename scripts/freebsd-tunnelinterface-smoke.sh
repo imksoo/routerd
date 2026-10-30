@@ -6,6 +6,10 @@
 # one epair. Reciprocal GIF endpoints in one kernel stack are not a valid
 # dataplane oracle because inner and outer routes collide locally.
 set -eu
+# Keep diagnostics visible even if a failing compound command redirected output.
+exec 3>&1
+stage=prepare-native
+operation=preflight
 
 routerd=
 while [ "$#" -gt 0 ]; do
@@ -40,8 +44,15 @@ own_epair_module=0
 own_gre_module=0
 capture_pid=
 
+set_stage() {
+  stage=$1
+  operation=enter
+  printf 'freebsd-tunnelinterface-stage=%s=begin\n' "$stage" >&3
+}
+
 emit_initial_failure() {
 	for evidence in \
+		failure-native.log failure-config.yaml failure-objects.json \
 		underlay.ping \
 		apply-initial.log gif0.add gif0.initial.status gif.ping gif.proto4 gif.outer.before gif.outer.after gre0.add gre0.initial.status gre.ping gre.proto47 \
 		apply-second.log gif0.second.status gre0.second.status \
@@ -68,7 +79,26 @@ cleanup() {
 		wait "$capture_pid" >/dev/null 2>&1 || true
 	fi
 	if [ "$rc" -ne 0 ]; then
-		emit_initial_failure
+    printf 'freebsd-tunnelinterface-failure stage=%s exit=%s operation=%s\n' "$stage" "$rc" "$operation" >&3
+    # Use direct commands so the failed operation remains identifiable.
+    {
+      jls
+      for failed_jail in "$r1" "$r2"; do
+        if jls -j "$failed_jail" >/dev/null 2>&1; then
+          printf '\n--- %s interfaces\n' "$failed_jail"
+          jexec "$failed_jail" ifconfig -a
+          printf '\n--- %s routes\n' "$failed_jail"
+          jexec "$failed_jail" netstat -rn -f inet
+        fi
+      done
+    } >"$work/failure-native.log" 2>&1 || true
+    if [ -f "$work/router.yaml" ]; then
+      cp "$work/router.yaml" "$work/failure-config.yaml" || true
+    fi
+    if [ -f "$state" ]; then
+      sqlite3 -json "$state" 'SELECT api_version,kind,name,status FROM objects;' >"$work/failure-objects.json" 2>&1 || true
+    fi
+    emit_initial_failure >&3 2>&3 || true
 	fi
 	if jls -j "$r1" >/dev/null 2>&1; then
 		jail -r "$r1" >/dev/null 2>&1 || true
@@ -85,13 +115,17 @@ cleanup() {
 	if [ "$own_gre_module" -eq 1 ]; then
 		kldunload if_gre >/dev/null 2>&1 || true
 	fi
-  rm -rf "$work"
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$work"
+  else
+    printf 'freebsd-tunnelinterface-failure-evidence=%s\n' "$work" >&3
+  fi
   exit "$rc"
 }
 trap cleanup EXIT HUP INT TERM
 
-r1cmd() { jexec "$r1" "$@"; }
-r2cmd() { jexec "$r2" "$@"; }
+r1cmd() { operation="r1: $*"; jexec "$r1" "$@"; }
+r2cmd() { operation="r2: $*"; jexec "$r2" "$@"; }
 
 if ! kldstat -q -m if_epair; then
 	kldload if_epair
@@ -172,6 +206,7 @@ status_row() {
 	[ -s "$target" ]
 }
 
+set_stage initial
 write_config 1400
 apply_once initial
 r1cmd ifconfig gif0 >"$work/gif0.add"
@@ -230,6 +265,7 @@ echo 'freebsd-tunnelinterface-stage=initial-dataplane=ok'
 
 # A new serve --once process using the persisted state is a controller restart;
 # it must be a no-op, not an adoption of a different kernel object.
+set_stage second-noop
 apply_once second
 status_row gif0 "$work/gif0.second.status"
 status_row gre0 "$work/gre0.second.status"
@@ -239,12 +275,13 @@ echo 'freebsd-tunnelinterface-stage=second-noop=ok'
 
 # Acquire separate child aliases and routes through the production controllers.
 # r2 owns independent destinations and explicit return routes for those aliases.
-{
-  r2cmd ifconfig lo0 inet 192.0.2.2/32 alias
-  r2cmd ifconfig lo0 inet 192.0.2.10/32 alias
-  r2cmd route -n add -host 192.0.2.1 10.253.89.1
-  r2cmd route -n add -host 192.0.2.9 10.253.90.1
-} >"$work/child-peer-setup.log" 2>&1
+set_stage child-peer-setup
+r2cmd ifconfig lo0 inet 192.0.2.2/32 alias >"$work/child-peer-setup.log" 2>&1
+# Keep redirects scoped to each command, separate from EXIT-trap diagnostics.
+# shellcheck disable=SC2129
+r2cmd ifconfig lo0 inet 192.0.2.10/32 alias >>"$work/child-peer-setup.log" 2>&1
+r2cmd route -n add -host 192.0.2.1 10.253.89.1 >>"$work/child-peer-setup.log" 2>&1
+r2cmd route -n add -host 192.0.2.9 10.253.90.1 >>"$work/child-peer-setup.log" 2>&1
 cat >>"$work/router.yaml" <<'EOF'
   - apiVersion: net.routerd.net/v1alpha1
     kind: IPv4StaticAddress
@@ -265,12 +302,14 @@ cat >>"$work/router.yaml" <<'EOF'
 EOF
 
 child_receipts() {
+  operation="read $1 child ownership receipts from SQLite"
   sqlite3 "$state" "SELECT json_group_array(json_object('kind',kind,'name',name,'status',json(status))) FROM objects WHERE api_version='net.routerd.net/v1alpha1' AND name IN ('gif-child-address','gre-child-address','gif-child-route','gre-child-route');" >"$work/$1.receipts.json"
 }
 
 check_child_dataplane() {
   child_label=$1
   child_receipts "$child_label"
+  operation="verify $child_label acknowledged child receipts"
   jq -e 'length == 4 and all(.[]; (.status.nativeReceipt // .status.routeOwner) as $receipt | $receipt.pending == false and $receipt.ifIndex > 0 and ($receipt.scope | length) > 0) and ([.[] | select(.kind == "IPv4StaticAddress" and .status.phase == "Applied")] | length) == 2 and ([.[] | select(.kind == "IPv4Route" and .status.phase == "Installed")] | length) == 2' "$work/$child_label.receipts.json" >/dev/null
   for child_mode in gif gre; do
     case "$child_mode" in
@@ -278,24 +317,30 @@ check_child_dataplane() {
       gre) child_if=gre0; child_local=192.0.2.9; child_remote=192.0.2.10; child_gateway=10.253.90.2 ;;
     esac
     r1cmd ifconfig "$child_if" >"$work/$child_if.$child_label.ifconfig"
+    operation="verify $child_label $child_if child alias $child_local/32"
     awk -v address="$child_local" '$1 == "inet" && $2 == address && /netmask 0xffffffff/ { found=1 } END { exit !found }' "$work/$child_if.$child_label.ifconfig"
     r1cmd route -n get -host "$child_remote" >"$work/$child_mode.$child_label.route" 2>&1
+    operation="verify $child_label $child_remote route via $child_gateway dev $child_if"
     awk -v destination="$child_remote" -v gateway="$child_gateway" -v device="$child_if" '$1 == "destination:" && $2 == destination { d=1 } $1 == "gateway:" && $2 == gateway { g=1 } $1 == "interface:" && $2 == device { i=1 } /flags:.*STATIC/ { s=1 } END { exit !(d && g && i && s) }' "$work/$child_mode.$child_label.route"
     r1cmd ping -n -c 3 -S "$child_local" "$child_remote" >"$work/$child_mode.$child_label.ping" 2>&1
+    operation="verify $child_label $child_mode 3/3 ping replies"
     grep -F '3 packets transmitted, 3 packets received' "$work/$child_mode.$child_label.ping"
   done
 }
 
+set_stage child-acquire
 apply_once child-acquire tunnel,ipv4-static-address,ipv4-route
 check_child_dataplane child-acquire
 echo 'freebsd-tunnelinterface-stage=child-acquire=ok'
 
 # Reconcile only the parent owner. Existing child effects must survive unchanged.
+set_stage child-parent-noop
 apply_once child-parent-noop
 check_child_dataplane child-parent-noop
 echo 'freebsd-tunnelinterface-stage=child-parent-preservation=ok'
 
 # Keep both parents declared and run only the child owners to withdraw children.
+set_stage child-remove
 write_config 1400
 apply_once child-remove ipv4-route,ipv4-static-address
 child_receipts child-remove
@@ -321,6 +366,7 @@ for child_mode in gif gre; do
 done
 echo 'freebsd-tunnelinterface-stage=child-owned-withdrawal=ok'
 
+set_stage change
 write_config 1300
 apply_once change
 r1cmd ifconfig gif0 >"$work/gif0.change"
@@ -332,6 +378,7 @@ echo 'freebsd-tunnelinterface-stage=change=ok'
 # FreeBSD gre(4) defines key zero as disabling the outgoing key option. The
 # releng/14.3 receive path does not enforce incoming keys, so verify the
 # emitted r1 GRE header instead of treating peer reply delivery as a reject.
+set_stage gre-key-zero
 write_config 1300 0
 apply_once gre-key-zero
 status_row gre0 "$work/gre0.key-zero.status"
@@ -352,6 +399,7 @@ echo 'freebsd-tunnelinterface-stage=gre-key-zero=ok'
 
 # Re-key after the supported clear. This is expected to be Applied rather than
 # a no-op; the second stage above is the same-key restart/idempotence oracle.
+set_stage restart
 write_config 1300 42
 apply_once restart
 status_row gif0 "$work/gif0.restart.status"
@@ -373,6 +421,7 @@ grep -F "$outer_a > $outer_b: GREv0" "$work/gre.rekey.proto47"
 grep -F 'key=0x2a' "$work/gre.rekey.proto47"
 echo 'freebsd-tunnelinterface-stage=restart=ok'
 
+set_stage remove
 cat >"$work/router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
 kind: Router
@@ -390,6 +439,7 @@ echo 'freebsd-tunnelinterface-stage=owned-cleanup=ok'
 
 # A pre-existing administrator gif must be rejected and remain unchanged; the
 # fixture alone destroys this disposable foreign interface afterward.
+set_stage foreign-preservation
 r1cmd ifconfig gif0 create
 r1cmd ifconfig gif0 mtu 1401
 r1cmd ifconfig gif0 >"$work/gif0.foreign.before"
@@ -401,6 +451,7 @@ r1cmd ifconfig gif0 >"$work/gif0.foreign.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.after"
 echo 'freebsd-tunnelinterface-stage=foreign-preservation=ok'
 
+set_stage foreign-stale-preservation
 cat >"$work/router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
 kind: Router
