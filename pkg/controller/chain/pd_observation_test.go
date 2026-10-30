@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,24 +38,17 @@ func TestTypedPDObservationDrivesLANAndReleaseWithdrawal(t *testing.T) {
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "lan", map[string]any{"phase": "Up", "ifname": "lo"}); err != nil {
 		t.Fatal(err)
 	}
-	present := map[string]bool{}
 	failure := errors.New("injected address delete failure")
 	failDelete := false
 	controller := LANAddressController{Router: router, DeclaredRouter: router, Store: store, Now: func() time.Time { return now },
-		ObserveAddress: lanProbeFixture(func(_ context.Context, _ string, address string) bool { return present[address] }, nil, nil),
-		Command: func(_ context.Context, name string, args ...string) error {
-			if len(args) > 3 && args[1] == "addr" {
-				if args[2] == "del" {
-					if failDelete {
-						return failure
-					}
-					delete(present, args[3])
-				} else {
-					present[args[3]] = true
-				}
+		Command: func(_ context.Context, _ string, args ...string) error {
+			line := strings.Join(args, " ")
+			if failDelete && (strings.Contains(line, "del") || strings.Contains(line, "-alias")) {
+				return failure
 			}
 			return nil
 		}}
+	present := installLANIOFixture(&controller)
 	if err := controller.reconcile(context.Background(), "wan-pd"); err != nil {
 		t.Fatal(err)
 	}
