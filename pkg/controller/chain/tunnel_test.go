@@ -5,7 +5,11 @@ package chain
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,33 +31,19 @@ func TestTunnelInterfaceControllerAddsIPIP(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
-	store := mapStore{}
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, append([]string{name}, args...))
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
-				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	controller, native, store := newTunnelUnitController(t, router)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
-		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64"},
-		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1480", "up"},
+	if len(native.creates) != 1 || native.creates[0].Mode != "ipip" || native.creates[0].Local != "192.0.2.10" || native.creates[0].Remote != "192.0.2.20" || native.creates[0].TTL != 64 || native.aliases != 1 || len(native.applies) != 1 {
+		t.Fatalf("native acquisition: creates=%+v aliases=%d applies=%+v", native.creates, native.aliases, native.applies)
 	}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
+	records, err := controller.tunnelNativeReceipts()
+	if err != nil || len(records) != 1 || records[0].Pending || records[0].Index < 1 || native.links["tun-ipip"].Token != records[0].Token {
+		t.Fatalf("native receipt not acknowledged: %+v %v", records, err)
 	}
-	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
-	if status["phase"] != "Up" || status["mode"] != "ipip" || status["mtu"] != 1480 || !statusBoolOrFalse(status["interfaceOwned"]) {
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["mode"] != "ipip" || status["mtu"] != float64(1480) || !statusBoolOrFalse(status["interfaceOwned"]) {
 		t.Fatalf("status = %#v", status)
 	}
 }
@@ -84,6 +74,21 @@ func TestTunnelInterfaceControllerRefusesForeignExistingInterfaceOnBothOS(t *tes
 				Metadata: api.ObjectMeta{Name: tt.ifname},
 				Spec:     api.TunnelInterfaceSpec{Mode: "ipip", Local: "192.0.2.10", Remote: "192.0.2.20", TrustedUnderlay: true},
 			}}}}
+			if tt.os == platform.OSLinux {
+				controller, native, store := newTunnelUnitController(t, router)
+				native.links[tt.ifname] = tunnelNativeLink{Exists: true, Scope: "linux:fixture:1", Index: 7, Kind: "ipip", Observed: tunnelObserved{Exists: true, Mode: "ipip", MTU: 1480, Local: "192.0.2.10", Remote: "192.0.2.20", TTL: 64, Up: true}}
+				if err := controller.Reconcile(t.Context()); err == nil {
+					t.Fatal("foreign native interface was accepted")
+				}
+				if len(native.creates) != 0 || len(native.applies) != 0 || native.aliases != 0 || len(native.deletes) != 0 {
+					t.Fatalf("foreign native interface was mutated: %+v", native)
+				}
+				status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", tt.ifname)
+				if status["phase"] != "Unknown" || statusBoolOrFalse(status["interfaceOwned"]) {
+					t.Fatalf("foreign ownership status = %#v", status)
+				}
+				return
+			}
 			var calls [][]string
 			store := mapStore{}
 			controller := TunnelInterfaceController{
@@ -119,33 +124,23 @@ func TestTunnelInterfaceControllerChangesExistingIPIPRemoteWithoutAdd(t *testing
 			TrustedUnderlay: true,
 		},
 	}}}}
-	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, append([]string{name}, args...))
-			return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64`), nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
+	spec.Remote = "192.0.2.20"
+	router.Spec.Resources[0].Spec = spec
+	controller, native, store := newTunnelUnitController(t, router)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
-		{"ip", "link", "set", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.30", "ttl", "64"},
+	index := native.links["tun-ipip"].Index
+	spec.Remote = "192.0.2.30"
+	router.Spec.Resources[0].Spec = spec
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
+	if len(native.creates) != 1 || len(native.applies) != 2 || native.links["tun-ipip"].Index != index || native.applies[1].Plan.Remote != "192.0.2.30" || native.links["tun-ipip"].Observed.Remote != "192.0.2.30" {
+		t.Fatalf("owned native endpoint update = %+v", native)
 	}
-	for _, call := range calls {
-		if strings.Join(call, " ") == "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.30 ttl 64" {
-			t.Fatalf("existing tunnel must not be added again: %#v", calls)
-		}
-	}
-	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Up" || status["remote"] != "192.0.2.30" {
 		t.Fatalf("status = %#v", status)
 	}
@@ -169,35 +164,17 @@ func TestTunnelInterfaceControllerResolvesEndpointSources(t *testing.T) {
 			},
 		},
 	}}}
-	store := mapStore{}
+	controller, native, store := newTunnelUnitController(t, router)
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"currentAddress": "192.0.2.10/24"}); err != nil {
 		t.Fatal(err)
 	}
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, append([]string{name}, args...))
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
-				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
-		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64"},
-		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1480", "up"},
+	if len(native.creates) != 1 || native.creates[0].Local != "192.0.2.10" || native.links["tun-ipip"].Observed.Local != "192.0.2.10" {
+		t.Fatalf("native source endpoint = %+v", native.creates)
 	}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Up" || status["local"] != "192.0.2.10" {
 		t.Fatalf("status = %#v", status)
 	}
@@ -259,33 +236,15 @@ func TestTunnelInterfaceControllerDerivesIPIPMTUFromUnderlay(t *testing.T) {
 			},
 		},
 	}}}
-	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, append([]string{name}, args...))
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
-				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	controller, native, store := newTunnelUnitController(t, router)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
-		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "10.99.0.1", "remote", "10.99.0.2", "ttl", "64"},
-		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1400", "up"},
+	if len(native.applies) != 1 || native.applies[0].Plan.MTU != 1400 || native.links["tun-ipip"].Observed.MTU != 1400 {
+		t.Fatalf("native MTU plan = %+v", native.applies)
 	}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
-	if status["phase"] != "Up" || status["mtu"] != 1400 || status["underlayInterface"] != "wg-underlay" || status["underlayMTU"] != 1420 || status["tunnelOverhead"] != 20 {
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	if status["phase"] != "Up" || status["underlayInterface"] != "wg-underlay" || status["underlayMTU"] != float64(1420) || status["tunnelOverhead"] != float64(20) {
 		t.Fatalf("status = %#v", status)
 	}
 }
@@ -302,34 +261,14 @@ func TestTunnelInterfaceControllerAppliesTunnelAddress(t *testing.T) {
 			TrustedUnderlay: true,
 		},
 	}}}}
-	store := mapStore{api.HybridAPIVersion + "/TunnelInterface/tun-ipip": {"interfaceOwned": true}}
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			calls = append(calls, append([]string{name}, args...))
-			if reflect.DeepEqual(append([]string{name}, args...), []string{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"}) {
-				return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
-			}
-			return nil, nil
-		},
-	}
-	if err := controller.Reconcile(context.Background()); err != nil {
+	controller, native, store := newTunnelUnitController(t, router)
+	if err := controller.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"ip", "-d", "-o", "link", "show", "dev", "tun-ipip"},
-		{"ip", "link", "add", "dev", "tun-ipip", "type", "ipip", "local", "192.0.2.10", "remote", "192.0.2.20", "ttl", "64"},
-		{"ip", "link", "set", "dev", "tun-ipip", "mtu", "1480", "up"},
-		{"ip", "-o", "-4", "addr", "show", "dev", "tun-ipip"},
-		{"ip", "addr", "replace", "10.255.1.0/31", "dev", "tun-ipip"},
+	if len(native.applies) != 1 || native.applies[0].Plan.Address != "10.255.1.0/31" || !slices.Equal(native.links["tun-ipip"].Addresses, []string{"10.255.1.0/31"}) {
+		t.Fatalf("native address application = %+v", native)
 	}
-	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %#v, want %#v", calls, want)
-	}
-	status := controller.Store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
+	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Up" || status["address"] != "10.255.1.0/31" {
 		t.Fatalf("status = %#v", status)
 	}
@@ -347,57 +286,26 @@ func TestTunnelInterfaceControllerRepairsOwnedTunnelAfterAddressApplyFailure(t *
 			TrustedUnderlay: true,
 		},
 	}}}}
-	store := mapStore{}
-	exists := false
-	failAddress := true
-	var calls [][]string
-	controller := TunnelInterfaceController{
-		Router: router,
-		Store:  store,
-		OS:     platform.OSLinux,
-		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
-			call := append([]string{name}, args...)
-			calls = append(calls, call)
-			switch strings.Join(call, " ") {
-			case "ip -d -o link show dev tun-ipip":
-				if !exists {
-					return []byte("Cannot find device \"tun-ipip\""), errors.New("missing")
-				}
-				return []byte(`7: tun-ipip@NONE: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1480 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000 link/ipip 192.0.2.10 peer 192.0.2.20 ttl 64`), nil
-			case "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64":
-				exists = true
-			case "ip -o -4 addr show dev tun-ipip":
-				return nil, nil
-			case "ip addr replace 10.255.1.0/31 dev tun-ipip":
-				if failAddress {
-					return []byte("RTNETLINK answers: invalid argument"), errors.New("exit status 2")
-				}
-			}
-			return nil, nil
-		},
+	controller, native, store := newTunnelUnitController(t, router)
+	native.applyErr = errors.New("native address application failed")
+	if err := controller.Reconcile(t.Context()); err == nil {
+		t.Fatal("native address failure was accepted")
 	}
-
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("first Reconcile error = %v, want persisted apply error", err)
+	records, err := controller.tunnelNativeReceipts()
+	if err != nil || len(records) != 1 || !records[0].Pending || records[0].Index < 1 || records[0].Token != native.links["tun-ipip"].Token {
+		t.Fatalf("failed application lost native acquisition: %+v %v", records, err)
+	}
+	index, token := records[0].Index, records[0].Token
+	native.applyErr = nil
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatalf("repair: %v", err)
+	}
+	if len(native.creates) != 1 || len(native.applies) != 2 || native.links["tun-ipip"].Index != index || native.links["tun-ipip"].Token != token || !slices.Contains(native.links["tun-ipip"].Addresses, "10.255.1.0/31") {
+		t.Fatalf("repair recreated or failed to repair the owned link: %+v", native)
 	}
 	status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
-	if status["phase"] != "Error" || status["reason"] != "ApplyFailed" || !statusBoolOrFalse(status["interfaceOwned"]) {
-		t.Fatalf("first status = %#v, want owned ApplyFailed", status)
-	}
-
-	failAddress = false
-	calls = nil
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("repair Reconcile error = %v", err)
-	}
-	status = store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "tun-ipip")
 	if status["phase"] != "Up" || !statusBoolOrFalse(status["interfaceOwned"]) {
-		t.Fatalf("repair status = %#v, want owned Up", status)
-	}
-	for _, call := range calls {
-		if strings.Join(call, " ") == "ip link add dev tun-ipip type ipip local 192.0.2.10 remote 192.0.2.20 ttl 64" {
-			t.Fatalf("repair unexpectedly recreated owned interface; calls = %#v", calls)
-		}
+		t.Fatalf("repair status = %#v", status)
 	}
 }
 
@@ -1348,3 +1256,145 @@ func TestTunnelInterfaceControllerLinuxStaleCleanup(t *testing.T) {
 
 var _ routerstate.ObjectStatusLister = mapStore{}
 var _ routerstate.ObjectDeleteStore = mapStore{}
+
+// The fixture owns only Linux OS input/output. Reconcile owns plans, receipts,
+// source checks and recovery; no host networking or global hook is involved.
+type tunnelUnitIO struct {
+	links                         map[string]tunnelNativeLink
+	listeners                     map[int]fouListener
+	creates                       []tunnelDesired
+	applies                       []tunnelNativeReceipt
+	aliases                       int
+	deletes                       []int
+	listenerAdds, listenerDeletes []fouListener
+	applyErr                      error
+	beforeDelete                  func()
+}
+
+func newTunnelUnitController(t *testing.T, router *api.Router) (TunnelInterfaceController, *tunnelUnitIO, *routerstate.SQLiteStore) {
+	t.Helper()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "tunnel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	native := &tunnelUnitIO{links: map[string]tunnelNativeLink{}, listeners: map[int]fouListener{}}
+	controller := TunnelInterfaceController{Router: router, Store: store, OS: platform.OSLinux, NativeListeners: native}
+	controller.NativeScope = func(ctx context.Context) (string, error) { return "linux:fixture:1", ctx.Err() }
+	controller.ObserveNative = func(ctx context.Context, name string) (tunnelNativeLink, error) {
+		link := native.links[name]
+		link.Scope = "linux:fixture:1"
+		link.Addresses = append([]string(nil), link.Addresses...)
+		return link, ctx.Err()
+	}
+	controller.Command = func(_ context.Context, command string, args ...string) ([]byte, error) {
+		if command != "ip" || len(args) < 6 || !slices.Equal(args[:3], []string{"link", "add", "dev"}) {
+			return nil, fmt.Errorf("unexpected tunnel OS command %s %v", command, args)
+		}
+		value := func(flag string) string {
+			at := slices.Index(args, flag)
+			if at >= 0 && at+1 < len(args) {
+				return args[at+1]
+			}
+			return ""
+		}
+		number := func(flag string) int {
+			value := value(flag)
+			if value == "" {
+				return 0
+			}
+			n, err := strconv.Atoi(value)
+			if err != nil {
+				t.Fatalf("invalid numeric OS argument %s: %v", flag, err)
+			}
+			return n
+		}
+		name := args[3]
+		if native.links[name].Exists {
+			return nil, errors.New("native name already exists")
+		}
+		mode := value("encap")
+		if mode == "" {
+			mode = value("type")
+		}
+		created := tunnelDesired{Name: name, Mode: mode, Local: value("local"), Remote: value("remote"), TTL: number("ttl"), Key: number("key"), EncapSport: number("encap-sport"), EncapDport: number("encap-dport")}
+		native.creates = append(native.creates, created)
+		native.links[name] = tunnelNativeLink{Exists: true, Scope: "linux:fixture:1", Index: number("index"), Kind: value("type"), Observed: tunnelObserved{Exists: true, Mode: mode, Local: created.Local, Remote: created.Remote, TTL: created.TTL, Key: created.Key, EncapSport: created.EncapSport, EncapDport: created.EncapDport, MTU: 1480}}
+		return nil, nil
+	}
+	controller.SetAliasByIndex = func(_ context.Context, index int, name, kind, proof, scope string) error {
+		link := native.links[name]
+		if !link.Exists || link.Index != index || link.Kind != kind || link.Token != "" || link.Scope != scope {
+			return errors.New("native alias target changed")
+		}
+		var ok bool
+		link.Token, ok = strings.CutPrefix(proof, "routerd-tunnel:")
+		if !ok {
+			return errors.New("invalid native alias")
+		}
+		native.aliases++
+		native.links[name] = link
+		return nil
+	}
+	controller.ApplyNative = func(_ context.Context, record tunnelNativeReceipt) error {
+		link := native.links[record.Plan.Name]
+		if !link.Exists || link.Index != record.Index || link.Token != record.Token || link.Scope != record.Scope {
+			return errors.New("native apply target changed")
+		}
+		native.applies = append(native.applies, record)
+		if native.applyErr != nil {
+			return native.applyErr
+		}
+		plan := record.Plan
+		link.Observed = tunnelObserved{Exists: true, Mode: plan.Mode, Local: plan.Local, Remote: plan.Remote, MTU: plan.MTU, TTL: plan.TTL, Key: plan.Key, EncapSport: plan.EncapSport, EncapDport: plan.EncapDport, Up: true}
+		if record.PreviousAddress != "" && record.PreviousAddress != plan.Address {
+			link.Addresses = slices.DeleteFunc(link.Addresses, func(address string) bool { return address == record.PreviousAddress })
+		}
+		if plan.Address != "" && !slices.Contains(link.Addresses, plan.Address) {
+			link.Addresses = append(link.Addresses, plan.Address)
+		}
+		native.links[plan.Name] = link
+		return nil
+	}
+	controller.DeleteByIndex = func(_ context.Context, index int, name, kind, proof, scope string) error {
+		link := native.links[name]
+		if !link.Exists {
+			return nil
+		}
+		alias := ""
+		if link.Token != "" {
+			alias = "routerd-tunnel:" + link.Token
+		}
+		if link.Index != index || link.Kind != kind || link.Scope != scope || alias != proof {
+			return errors.New("native deletion target changed")
+		}
+		if native.beforeDelete != nil {
+			native.beforeDelete()
+		}
+		native.deletes = append(native.deletes, index)
+		delete(native.links, name)
+		return nil
+	}
+	return controller, native, store
+}
+
+func (n *tunnelUnitIO) Observe(_ context.Context, listener fouListener) (bool, bool, error) {
+	actual, exists := n.listeners[listener.Port]
+	return exists, exists && actual == listener, nil
+}
+func (n *tunnelUnitIO) Add(_ context.Context, listener fouListener) error {
+	if _, exists := n.listeners[listener.Port]; exists {
+		return errors.New("native listener exists")
+	}
+	n.listenerAdds = append(n.listenerAdds, listener)
+	n.listeners[listener.Port] = listener
+	return nil
+}
+func (n *tunnelUnitIO) Delete(_ context.Context, listener fouListener) error {
+	if actual, exists := n.listeners[listener.Port]; exists && actual != listener {
+		return errors.New("native listener changed")
+	}
+	n.listenerDeletes = append(n.listenerDeletes, listener)
+	delete(n.listeners, listener.Port)
+	return nil
+}
