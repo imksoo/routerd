@@ -230,6 +230,54 @@ failure is resolved. WAN transit and its return route are fixture scaffolding:
 this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, overlapping multi-prefix renumbering,
 reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
 
+## Linux WAN RA/SLAAC lifecycle gate
+
+Use `scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm` only in a dedicated,
+empty Linux VM with an installed `make dist` package and independent management
+access. The canonical config must contain an empty Router resource list in JSON.
+Certify dnsmasq, Python 3, curl, jq, iproute2 and systemd-networkd first; the
+independent `rdisc6` decoder must exist at
+`/opt/routerd15-fixtures/kea/usr/bin/rdisc6`. No package installation or repair
+occurs during this gate. An existing `rd15-ra` interface, `rd15-ra-upstream`
+namespace or matching networkd/sysctl artifact is a collision and aborts setup.
+
+The fixture gives networkd a matching WAN `.network` file with RA disabled.
+A separate namespace advertises a /64 using dnsmasq RA-only mode, a 15-second
+router lifetime and 120-second preferred/valid prefix lifetimes. The HTTP peer
+lives on a different subnet, requiring the learned default route. Before the
+product apply, decode the RA and verify the independent HTTP service locally.
+
+Pass requires all of the following:
+
+- Fresh `IPv6RAAddress.managed: false` leaves acceptance disabled and creates no
+  networkd adoption; no default route is acquired.
+- Switching to managed mode enables reception without manually assigning a
+  WAN global address/default route. Require kernel SLAAC, a `proto ra` default,
+  and an HTTP peer observing the SLAAC source.
+- Restart the service, then separately SIGKILL its main process. Require a new
+  Healthy daemon with the same two declared resources, unchanged canonical
+  configuration and peer processes, and successful HTTP after each recovery.
+  The SIGKILL path must recover through exactly one systemd automatic restart;
+  do not manually start the service or reapply its configuration.
+- Freeze only the RA sender using SIGSTOP so it cannot send a shutdown RA.
+  After the router lifetime, route lookup and HTTP must fail. Linux can retain
+  an expired row until garbage collection: an `expires -Nsec` row alone is not
+  forwarding authority. The kernel's
+  [IPv6 route selection](https://github.com/torvalds/linux/blob/v6.8/net/ipv6/route.c)
+  rejects expired entries. Require natural SLAAC address removal after its
+  valid lifetime as well.
+- Resume only the peer. Require address/default-route acquisition and HTTP
+  recovery with the same routerd PID and no controller errors.
+
+The script finally reapplies empty intent and removes its own networkd/sysctl
+fixtures and interfaces. That explicit fixture teardown is not evidence of
+automatic rollback when managed intent is removed. Failed gates stop routerd
+and peers and preserve diagnostic files; investigate and reproduce locally
+before retrying. Successful raw output is deleted. Retain the tested revisions,
+procedure and criteria. This gate excludes RDNSS/DNSSL consumption, DHCPv6 IA_NA,
+LAN forwarding, host reboot, loss of kernel state, storage failure and other
+platforms. Service restart/SIGKILL checks retain the kernel network state.
+
 ## Linux DHCP and firewall withdrawal gate
 
 Run the packaged service in an empty disposable VM with independent management
