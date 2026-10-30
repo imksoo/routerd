@@ -4,9 +4,10 @@ package render
 import (
 	"bytes"
 	"fmt"
-	"github.com/imksoo/routerd/pkg/api"
 	"net/netip"
 	"slices"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func pfIngressTag(ifname string) string { return "routerd_ingress_" + ifname }
@@ -53,7 +54,11 @@ func writePFZoneForwards(buf *bytes.Buffer, zones map[string]firewallZone, rules
 					}
 				}
 				if implicitFirewallAction(from.Role, to.Role, policy) == "accept" {
-					buf.WriteString("pass out quick on $" + pfZoneMacro(to) + " all keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
+					log := ""
+					if logging.Enabled && logging.AcceptSampleRate > 0 {
+						log = " log"
+					}
+					buf.WriteString("pass out" + log + " quick on $" + pfZoneMacro(to) + " all keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
 				} else {
 					log := ""
 					if policy.LogDeny {
@@ -120,12 +125,31 @@ func validatePFZoneRules(zones map[string]firewallZone, rules []api.Resource, na
 			if err != nil {
 				return err
 			}
+			// Legacy outboundInterface NAT has no destination predicate. The
+			// native/runtime form can be disjoint from this firewall rule.
+			if nat.OutboundInterface == "" && len(nat.SourceCIDRs) == 0 && nat.Translation.Type == "" {
+				if len(nat.DestinationSetRefs) == 0 && !pfCIDRSetsMayOverlap(spec.DestinationCIDRs, nat.DestinationCIDRs) {
+					continue
+				}
+				if pfCIDRsCoveredBy(spec.DestinationCIDRs, nat.ExcludeDestinationCIDRs) {
+					continue
+				}
+			}
 			ref := defaultString(nat.OutboundInterface, nat.EgressInterface)
 			if nat.EgressPolicyRef != "" || slices.Contains(to.IfNames, aliases[ref]) {
 				translated = true
 			}
 		}
 		for _, rule := range ingress {
+			var destinations []string
+			for _, target := range rule.Targets {
+				if address, err := netip.ParseAddr(target.Address); err == nil {
+					destinations = append(destinations, netip.PrefixFrom(address, address.BitLen()).String())
+				}
+			}
+			if !pfCIDRSetsMayOverlap(spec.DestinationCIDRs, destinations) {
+				continue
+			}
 			for _, ifname := range rule.HairpinInterfaces {
 				if slices.Contains(to.IfNames, ifname) {
 					translated = true
@@ -138,6 +162,52 @@ func validatePFZoneRules(zones map[string]firewallZone, rules []api.Resource, na
 	}
 	return nil
 }
+
+// Empty positive selectors match every address. Invalid prefixes are left for
+// their owning validator; they cannot prove that translation is irrelevant.
+func pfCIDRSetsMayOverlap(a, b []string) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	for _, left := range a {
+		p, err := netip.ParsePrefix(left)
+		if err != nil {
+			return true
+		}
+		for _, right := range b {
+			q, err := netip.ParsePrefix(right)
+			if err != nil || p.Overlaps(q) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pfCIDRsCoveredBy(values, excluded []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			return false
+		}
+		covered := false
+		for _, exclude := range excluded {
+			p, err := netip.ParsePrefix(exclude)
+			if err == nil && p.Bits() <= prefix.Bits() && p.Contains(prefix.Masked().Addr()) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
 func pfRuleHasIPv4(spec api.FirewallRuleSpec) bool {
 	if spec.Protocol == "icmpv6" || spec.Protocol == "ipv6-icmp" || spec.Protocol == "ipip" {
 		return false

@@ -26,7 +26,9 @@ types, logging and accept/drop/reject retain their native meanings. PF outbound
 filtering sees the source after SNAT. A rule with an original source CIDR or
 source port therefore cannot be expressed by this path when IPv4 SNAT may apply
 on its destination zone. Such a combination fails rendering explicitly.
-Unrelated egress-zone NAT and IPv6-only rules with NAT44 remain supported.
+Unrelated egress-zone NAT, provably disjoint or fully NAT-excluded destination
+CIDRs, and IPv6-only rules with NAT44 remain supported. Partly excluded
+destinations still fail because some matching packets would be translated.
 Destination predicates see the destination after ingress DNAT, as in the Linux
 forward path. Managed ingress translations retain their existing narrow
 `rdr pass` behavior and precedence.

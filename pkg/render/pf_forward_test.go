@@ -2,9 +2,10 @@
 package render
 
 import (
-	"github.com/imksoo/routerd/pkg/api"
 	"strings"
 	"testing"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func pfForwardRouter() *api.Router {
@@ -150,5 +151,46 @@ func TestPFSameRoleForwardingUsesRealEgressInterfaces(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Fatalf("same-role policy lost actual egress: %s", s)
 		}
+	}
+}
+
+func TestPFForwardPreservesImplicitAcceptLogging(t *testing.T) {
+	r := pfForwardRouter()
+	r.Spec.Resources = append(r.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallEventLog"}, Metadata: api.ObjectMeta{Name: "events"}, Spec: api.FirewallEventLogSpec{Enabled: true, Log: api.FirewallLogPolicySpec{AcceptSampleRate: 1}}})
+	data, err := PF(r, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `pass out log quick on $wan_if all keep state label "routerd:lan-to-wan"`) {
+		t.Fatalf("implicit accept logging lost: %s", data)
+	}
+}
+
+func TestPFSourceRuleAllowsProvablyDisjointNATDestinations(t *testing.T) {
+	r := pfForwardRouter()
+	rule := r.Spec.Resources[6]
+	spec, _ := rule.FirewallRuleSpec()
+	spec.SourceCIDRs = []string{"192.0.2.0/24"}
+	spec.DestinationCIDRs = []string{"198.51.100.0/24"}
+	rule.Spec = spec
+	r.Spec.Resources[6] = rule
+	nat := netResource("NAT44Rule", "nat", api.NAT44RuleSpec{Type: "masquerade", EgressInterface: "wan", SourceRanges: []string{"192.0.2.0/24"}, DestinationCIDRs: []string{"203.0.113.0/24"}})
+	r.Spec.Resources = append(r.Spec.Resources, nat)
+	if _, err := PF(r, nil); err != nil {
+		t.Fatalf("disjoint NAT destination rejected: %v", err)
+	}
+	natSpec, _ := nat.NAT44RuleSpec()
+	natSpec.DestinationCIDRs = nil
+	natSpec.ExcludeDestinationCIDRs = []string{"198.51.100.0/24"}
+	nat.Spec = natSpec
+	r.Spec.Resources[7] = nat
+	if _, err := PF(r, nil); err != nil {
+		t.Fatalf("fully NAT-excluded destination rejected: %v", err)
+	}
+	natSpec.ExcludeDestinationCIDRs = []string{"198.51.100.0/25"}
+	nat.Spec = natSpec
+	r.Spec.Resources[7] = nat
+	if _, err := PF(r, nil); err == nil {
+		t.Fatal("partially translated destination accepted")
 	}
 }
