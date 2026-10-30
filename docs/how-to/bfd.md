@@ -46,6 +46,13 @@ error. Removal withdraws only the acknowledged tuples and leaves unrelated
 configured peers in place. Other configuration writers must be coordinated;
 the FRR CLI does not provide an atomic compare-and-swap operation.
 
+A pending tuple can authorize restart recovery only after routerd durably
+records a successful `vtysh` acknowledgement and matching native readback.
+An attempt aborted before dispatch retracts its own unchanged pending receipt.
+If that save fails, or command completion remains uncertain, a matching live
+tuple is retained as an unacknowledged attempt. Tuple/timer equality alone
+cannot promote it to held ownership or authorize its withdrawal.
+
 Run the explicit Linux acceptance from the repository root:
 
 ```sh

@@ -5,6 +5,7 @@ package bfd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/netip"
@@ -36,8 +37,9 @@ type frrPeer struct {
 }
 
 type nativeReceipt struct {
-	Held    []session
-	Pending []session
+	Held         []session
+	Pending      []session
+	Acknowledged bool
 }
 
 func sessionKey(s session) string {
@@ -213,7 +215,27 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 		wanted[sessionKey(s)] = s
 	}
 	owned := map[string][]session{}
-	for _, sessions := range [][]session{receipt.Held, receipt.Pending} {
+	candidates := [][]session{receipt.Held}
+	if receipt.Acknowledged {
+		candidates = append(candidates, receipt.Pending)
+	} else {
+		// An intent whose command ACK/readback was never recorded cannot prove
+		// an independently created peer belongs to us. Preserve the fence.
+		for _, attempted := range receipt.Pending {
+			peer, exists := observed[sessionKey(attempted)]
+			if !exists {
+				continue
+			}
+			held := false
+			for _, previous := range receipt.Held {
+				held = held || peer.matches(previous)
+			}
+			if !held {
+				return nil, fmt.Errorf("BFD peer %s has an unacknowledged native attempt", peer.Address)
+			}
+		}
+	}
+	for _, sessions := range candidates {
 		for _, s := range sessions {
 			owned[sessionKey(s)] = append(owned[sessionKey(s)], s)
 		}
@@ -251,6 +273,7 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 		needsApply = needsApply || !exists || !peer.matches(s)
 	}
 	if needsApply {
+		previous := receipt
 		// Keep both the previous and attempted configuration until the native
 		// operation and its final receipt are acknowledged. A failed/partial
 		// vtysh operation can then be retried or withdrawn after restart.
@@ -279,16 +302,16 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 		// A missing/changed observation is not permission to update or remove it.
 		current, err := observeFRRBFD(ctx, run, c.vtysh())
 		if err != nil {
-			return nil, err
+			return nil, c.abandonUnsentNativeAttempt(receipt, previous, err)
 		}
 		for key := range wanted {
 			if !sameObservedSession(observed, current, key) {
-				return nativeStates(current), fmt.Errorf("FRR BFD peer changed before apply")
+				return nil, c.abandonUnsentNativeAttempt(receipt, previous, fmt.Errorf("FRR BFD peer changed before apply"))
 			}
 		}
 		for _, s := range removals {
 			if !sameObservedSession(observed, current, sessionKey(s)) {
-				return nativeStates(current), fmt.Errorf("FRR BFD peer changed before withdrawal")
+				return nil, c.abandonUnsentNativeAttempt(receipt, previous, fmt.Errorf("FRR BFD peer changed before withdrawal"))
 			}
 		}
 		if err := c.checkNativeReceipt(receipt); err != nil {
@@ -310,6 +333,17 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 			if peer, exists := observed[key]; !exists || !peer.matches(s) {
 				return nativeStates(observed), fmt.Errorf("FRR BFD peer %s does not match acknowledged configuration", s.Address)
 			}
+		}
+		if len(receipt.Pending) != 0 {
+			if err := c.checkNativeReceipt(receipt); err != nil {
+				return nil, err
+			}
+			acknowledged := receipt
+			acknowledged.Acknowledged = true
+			if err := c.saveNativeReceipt(acknowledged); err != nil {
+				return nil, err
+			}
+			receipt = acknowledged
 		}
 	}
 	if err := c.checkNativeReceipt(receipt); err != nil {
@@ -334,10 +368,17 @@ func (c Controller) checkNativeReceipt(want nativeReceipt) error {
 	if err != nil {
 		return err
 	}
-	if !slices.Equal(actual.Held, want.Held) || !slices.Equal(actual.Pending, want.Pending) {
+	if actual.Acknowledged != want.Acknowledged || !slices.Equal(actual.Held, want.Held) || !slices.Equal(actual.Pending, want.Pending) {
 		return fmt.Errorf("BFD native receipt changed during observation")
 	}
 	return nil
+}
+
+func (c Controller) abandonUnsentNativeAttempt(attempt, previous nativeReceipt, cause error) error {
+	if err := c.checkNativeReceipt(attempt); err != nil {
+		return errors.Join(cause, err)
+	}
+	return errors.Join(cause, c.saveNativeReceipt(previous))
 }
 
 func sameSessionConfig(a, b session) bool {
@@ -393,7 +434,7 @@ func (c Controller) saveNativeReceipt(receipt nativeReceipt) error {
 	if receipt.Pending == nil {
 		receipt.Pending = []session{}
 	}
-	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", nativeStatusName, map[string]any{"held": receipt.Held, "pending": receipt.Pending})
+	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", nativeStatusName, map[string]any{"held": receipt.Held, "pending": receipt.Pending, "acknowledged": receipt.Acknowledged})
 }
 
 func (c Controller) readNativeReceipt() (nativeReceipt, error) {
@@ -404,12 +445,16 @@ func (c Controller) readNativeReceipt() (nativeReceipt, error) {
 	if status == nil {
 		return nativeReceipt{}, nil
 	}
+	acknowledged, ok := status["acknowledged"].(bool)
+	if !ok {
+		return nativeReceipt{}, fmt.Errorf("invalid BFD native acknowledgement receipt")
+	}
 	held, err := decodeNativeSessions(status["held"])
 	if err != nil {
 		return nativeReceipt{}, err
 	}
 	pending, err := decodeNativeSessions(status["pending"])
-	return nativeReceipt{Held: held, Pending: pending}, err
+	return nativeReceipt{Held: held, Pending: pending, Acknowledged: acknowledged}, err
 }
 
 func decodeNativeSessions(value any) ([]session, error) {
