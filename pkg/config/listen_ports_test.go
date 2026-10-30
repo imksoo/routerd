@@ -114,7 +114,7 @@ func TestValidateAllowsInformationOnSameManagedPDClient(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsIndependentDHCPv6ClientSocketOwners(t *testing.T) {
+func TestValidateSharedDHCPv6ClientSocketOwnership(t *testing.T) {
 	for _, aliasIfName := range []string{"ens18", "ens19"} {
 		router := routerWithResources(
 			testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "ens18"}),
@@ -123,11 +123,8 @@ func TestValidateRejectsIndependentDHCPv6ClientSocketOwners(t *testing.T) {
 			testResource(api.NetAPIVersion, "DHCPv6Address", "address", api.DHCPv6AddressSpec{Interface: "alias"}),
 		)
 		err := Validate(router)
-		if aliasIfName == "ens18" && (err == nil || !strings.Contains(err.Error(), "UDP port 546")) {
-			t.Fatalf("two actors on one kernel interface admitted: %v", err)
-		}
-		if aliasIfName != "ens18" && err != nil {
-			t.Fatalf("clients on separate kernel interfaces rejected: %v", err)
+		if err != nil {
+			t.Fatalf("managed address and prefix associations should share one worker per interface: %v", err)
 		}
 	}
 	router := routerWithResources(
@@ -183,5 +180,17 @@ func routerWithResources(resources ...api.Resource) *api.Router {
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
 		Spec:     api.RouterSpec{Resources: resources},
+	}
+}
+
+func TestValidateRejectsDuplicateDHCPv6AddressOwners(t *testing.T) {
+	router := routerWithResources(
+		testResource(api.NetAPIVersion, "Interface", "wan", api.InterfaceSpec{IfName: "wan0"}),
+		testResource(api.NetAPIVersion, "Interface", "alias", api.InterfaceSpec{IfName: "wan0"}),
+		testResource(api.NetAPIVersion, "DHCPv6Address", "a", api.DHCPv6AddressSpec{Interface: "wan"}),
+		testResource(api.NetAPIVersion, "DHCPv6Address", "b", api.DHCPv6AddressSpec{Interface: "alias"}),
+	)
+	if err := Validate(router); err == nil {
+		t.Fatal("duplicate IA_NA ownership admitted through interface alias")
 	}
 }

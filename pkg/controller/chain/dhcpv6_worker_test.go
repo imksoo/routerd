@@ -32,7 +32,7 @@ func TestDHCPv6DeclarationsShareOneWorkerAndEventSource(t *testing.T) {
 		}
 	}
 	sources := runner.daemonEventSourceSpecs(router, nil)
-	sockets, err := (DaemonStatusController{Router: router}).daemonSockets()
+	sockets, err := (DaemonStatusController{Router: router, Store: mapStore{}}).daemonSockets()
 	if err != nil || len(sockets) != 1 || len(sources) != 1 {
 		t.Fatalf("one worker needs one source and socket: %v %v %v", sources, sockets, err)
 	}
@@ -66,7 +66,7 @@ func TestDHCPv6AddressWorkerIdentityDoesNotCollideWithPDName(t *testing.T) {
 		}
 	}
 	sources := runner.daemonEventSourceSpecs(router, nil)
-	sockets, err := (DaemonStatusController{Router: router}).daemonSockets()
+	sockets, err := (DaemonStatusController{Router: router, Store: mapStore{}}).daemonSockets()
 	if err != nil || len(sockets) != 2 || sockets[0] == sockets[1] || len(sources) != 2 {
 		t.Fatalf("independent workers lost: sources=%v sockets=%v err=%v", sources, sockets, err)
 	}
