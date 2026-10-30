@@ -42,6 +42,7 @@ func TestFirewallNativeWithdrawal(t *testing.T) {
 		t.Run(check, func(t *testing.T) {
 			t.Cleanup(func() { _ = exec.Command("nft", "delete", "table", "inet", "routerd_filter").Run() })
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lo"}, Spec: api.InterfaceSpec{IfName: "lo"}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lo"}}},
 			}}}
 			c := Controller{Router: router, Store: firewallMapStore{}, NftablesPath: filepath.Join(t.TempDir(), "firewall.nft")}
