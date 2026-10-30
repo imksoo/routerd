@@ -2728,7 +2728,7 @@ func TestLANAddressControllerDeprecatesOnlyDSLiteDelegatedSource(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan-vmac"}, Spec: api.InterfaceSpec{IfName: "wan-vmac"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan-vmac"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6DelegatedAddress"}, Metadata: api.ObjectMeta{Name: "ds-source"}, Spec: api.IPv6DelegatedAddressSpec{PrefixDelegation: "wan-pd", Interface: "wan-vmac", SubnetID: "1", AddressSuffix: "::23", PrefixLength: 128}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{Interface: "wan-vmac", TunnelName: "ds-lite", LocalAddressSource: "delegatedAddress", LocalDelegatedAddress: "ds-source"}},
 	}}}
 	store := statefulDHCPMapStore{mapStore: mapStore{}}
 	store.SaveObjectStatus(api.NetAPIVersion, "Interface", "wan-vmac", map[string]any{"phase": "Up"})
