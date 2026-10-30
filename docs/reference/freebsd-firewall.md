@@ -67,6 +67,10 @@ The implementation follows FreeBSD 14.3 primary sources:
 - [pfctl grammar](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sbin/pfctl/parse.y)
   accepts `tag`/`tagged` and dynamic interface expressions; it has no
   `received-on` selector.
+- [PF native field sizes](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netpfil/pf/pf.h)
+  allocate 64 bytes for anchor components, tags and labels, including their
+  terminator. [PF ruleset creation](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netpfil/pf/pf_ruleset.c)
+  rejects an anchor component of 64 bytes or more.
 - [PF kernel filtering](https://github.com/freebsd/freebsd-src/blob/releng/14.3/sys/netpfil/pf/pf.c#L4850)
   applies translation before outbound rule matching and carries packet tags
   between hooks. An authorized outbound pass is therefore necessary before

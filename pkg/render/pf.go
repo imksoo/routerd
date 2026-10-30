@@ -112,7 +112,11 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePFZoneRules(zoneMap, rules, nat44Rules, ingressRules, aliases); err != nil {
+	sourceSelectorIngress, err := pfIngressSourceSelectorRules(router, aliases, ingressRules, rules)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePFZoneRules(zoneMap, rules, nat44Rules, sourceSelectorIngress, aliases); err != nil {
 		return nil, err
 	}
 	pfClientPolicies, err := pfClientPolicies(router, aliases, clientPolicies)
