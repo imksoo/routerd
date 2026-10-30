@@ -5,6 +5,7 @@ package vxlan
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"slices"
 )
 
@@ -42,6 +43,9 @@ type SegmentLink struct {
 	Token  string
 	Kind   string
 	Config SegmentConfig
+	// Linux omits the source attribute when the driver selects it per packet.
+	// Keep that positive native observation distinct from an unreadable source.
+	LocalWildcard bool
 	// The public port controls both receive and transmit ports.
 	LocalPort int
 	// These indexes are independent of the display names in Config.
@@ -78,7 +82,12 @@ func CheckSegmentIdentity(config SegmentConfig, owner SegmentIdentity, link Segm
 	}
 	// A removed underlay may leave the owned tunnel detached. It can still be
 	// withdrawn by token/index, but cannot pass activation readback below.
-	if !owner.Pending && (link.Config.VNI != config.VNI || link.Config.Local != config.Local || link.Config.Group != config.Group || link.Config.Port != config.Port || link.LocalPort != config.Port || link.UnderlayIndex != 0 && link.UnderlayIndex != owner.UnderlayIndex) {
+	localMatches := link.Config.Local == config.Local
+	if link.LocalWildcard {
+		local, err := netip.ParseAddr(config.Local)
+		localMatches = err == nil && local.IsUnspecified()
+	}
+	if !owner.Pending && (link.Config.VNI != config.VNI || !localMatches || link.Config.Group != config.Group || link.Config.Port != config.Port || link.LocalPort != config.Port || link.UnderlayIndex != 0 && link.UnderlayIndex != owner.UnderlayIndex) {
 		return fmt.Errorf("VXLAN %s native tunnel tuple changed", config.IfName)
 	}
 	return nil

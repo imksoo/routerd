@@ -117,25 +117,11 @@ func (n linuxSegmentNative) Observe(ctx context.Context, name string) (SegmentLi
 }
 
 func linuxSegmentObservation(ctx context.Context, handle *netlink.Handle, scope string, link netlink.Link) (SegmentLink, error) {
-	attrs := link.Attrs()
-	if attrs == nil || attrs.Index <= 0 || attrs.Name == "" {
-		return SegmentLink{}, errors.New("VXLAN link observation lacks native identity")
+	observed, err := linuxSegmentAttributes(scope, link)
+	if err != nil || observed.Kind != "vxlan" {
+		return observed, err
 	}
-	token, _ := strings.CutPrefix(attrs.Alias, "routerd.vxlan:")
-	if !strings.HasPrefix(attrs.Alias, "routerd.vxlan:") {
-		token = ""
-	}
-	observed := SegmentLink{Exists: true, Scope: scope, Index: attrs.Index, Token: token, Kind: link.Type(), BridgeIndex: attrs.MasterIndex, Up: attrs.Flags&net.FlagUp != 0, Running: attrs.Flags&net.FlagRunning != 0, Config: SegmentConfig{IfName: attrs.Name, MTU: attrs.MTU}}
-	vx, ok := link.(*netlink.Vxlan)
-	if !ok {
-		return observed, nil
-	}
-	observed.Config.VNI, observed.Config.Port = vx.VxlanId, vx.Port
-	observed.LocalPort = vx.Port
-	observed.Config.Local = segmentIP(vx.SrcAddr)
-	observed.Config.Group = segmentIP(vx.Group)
-	observed.UnderlayIndex = vx.VtepDevIndex
-	neighbors, err := handle.NeighList(attrs.Index, syscall.AF_BRIDGE)
+	neighbors, err := handle.NeighList(observed.Index, syscall.AF_BRIDGE)
 	if err != nil {
 		return SegmentLink{}, err
 	}
@@ -155,6 +141,29 @@ func linuxSegmentObservation(ctx context.Context, handle *netlink.Handle, scope 
 		observed.Flood = append(observed.Flood, remote)
 	}
 	return observed, ctx.Err()
+}
+
+func linuxSegmentAttributes(scope string, link netlink.Link) (SegmentLink, error) {
+	attrs := link.Attrs()
+	if attrs == nil || attrs.Index <= 0 || attrs.Name == "" {
+		return SegmentLink{}, errors.New("VXLAN link observation lacks native identity")
+	}
+	token, _ := strings.CutPrefix(attrs.Alias, "routerd.vxlan:")
+	if !strings.HasPrefix(attrs.Alias, "routerd.vxlan:") {
+		token = ""
+	}
+	observed := SegmentLink{Exists: true, Scope: scope, Index: attrs.Index, Token: token, Kind: link.Type(), BridgeIndex: attrs.MasterIndex, Up: attrs.Flags&net.FlagUp != 0, Running: attrs.Flags&net.FlagRunning != 0, Config: SegmentConfig{IfName: attrs.Name, MTU: attrs.MTU}}
+	vx, ok := link.(*netlink.Vxlan)
+	if !ok {
+		return observed, nil
+	}
+	observed.Config.VNI, observed.Config.Port = vx.VxlanId, vx.Port
+	observed.LocalPort = vx.Port
+	observed.Config.Local = segmentIP(vx.SrcAddr)
+	observed.LocalWildcard = len(vx.SrcAddr) == 0 || vx.SrcAddr.IsUnspecified()
+	observed.Config.Group = segmentIP(vx.Group)
+	observed.UnderlayIndex = vx.VtepDevIndex
+	return observed, nil
 }
 
 func segmentIP(ip net.IP) string {
