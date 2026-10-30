@@ -694,8 +694,12 @@ func (c IPv4RouteController) removeOrdinaryRoute(ctx context.Context, route ipv4
 func (c IPv4RouteController) observeFreeBSDOrdinaryRoute(ctx context.Context, wanted ipv4RouteRemoval) (bool, bool, error) {
 	args := append([]string{"-n", "get"}, freeBSDRouteDestinationArgs(wanted.Destination)...)
 	out, err := c.run(ctx, "route", args...)
+	// FreeBSD route get can report an absent route while exiting successfully.
+	if freeBSDRouteNeedsAdd(out) {
+		return false, false, nil
+	}
 	if err != nil {
-		if freeBSDRouteNeedsAdd(out) || missingIPv4RouteDelete(err, out) {
+		if missingIPv4RouteDelete(err, out) {
 			return false, false, nil
 		}
 		return false, false, fmt.Errorf("observe FreeBSD IPv4Route: %w: %s", err, strings.TrimSpace(string(out)))

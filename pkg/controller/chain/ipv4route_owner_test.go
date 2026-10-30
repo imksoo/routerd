@@ -520,6 +520,8 @@ func TestFreeBSDOrdinaryRouteObservationPreservesForeignReplacement(t *testing.T
 		{"BGP", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC,PROTO1>\n", false, true, false},
 		{"reject", "destination: 192.0.2.0\nmask: 255.255.255.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC,REJECT>\n", false, true, false},
 		{"fallback default", "destination: default\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC>\n", false, false, false},
+		{"absent with successful exit", "route: route has not been found: No error: 0\n", false, false, false},
+		{"unknown empty output", "", false, false, true},
 		{"missing mask", "destination: 192.0.2.0\ngateway: 198.51.100.1\ninterface: em0\nflags: <UP,GATEWAY,DONE,STATIC>\n", false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
