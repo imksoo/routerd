@@ -1651,3 +1651,45 @@ Relevant source/caller review: `cmd/routerd/cmd_serve.go`,
 `pkg/state/pdlease.go` and `pkg/state/sqlite.go`, with their focused regression
 tests. Native FreeBSD removal, WAN RA/IA_NA, overlapping prefixes and the remaining
 1.0 function/platform inventory are not qualified by this Linux result.
+
+
+### Combined native routing and FreeBSD portability follow-up
+
+At clean integration `3e58c93a`, all nine related Linux Go packages passed:
+chain, BGP controller/daemon/library, routerd-bgp, routerd, routerctl, config and
+installer. The native-parent gate passed Bridge, WireGuard, VRF, VXLAN and
+DS-Lite in isolated namespaces. The separate AFTR captured the actual IPv6
+encapsulation and inner IPv4 ICMP traffic. Independent FRR 8.4.4 passed both
+address families through the production daemon/RPC/controller/SQLite/kernel
+path, including forwarding, withdrawal/readvertisement, peer and daemon restart,
+SQLite reopen and declaration removal. Related vet passed. This combined check
+does not qualify every policy, ECMP/BFD/GR mode, LAN transit or FreeBSD routing.
+
+The real FreeBSD 14.3 VM also passed the corrected BGP import-policy fixture at
+`a2ba1bfa`: configured IPv4/IPv6 loopbacks replace unconfigured 127/8 aliases.
+Direct-peer preference and IPv4 FIB selection remain tested. Prefixless import
+rejection requires a newly received UPDATE and corresponding RR Adj-RIB-In
+entry, followed by the expected direct-only global RIB. The fixture now tests
+two peers in stages rather than three simultaneous peers; this is not a native
+FreeBSD FIB forwarding qualification.
+
+At `4f9015bc`, the complete observe package passed 24 top-level tests on the VM,
+without skips. WebConsole passed 117, skipped two and failed none. The fixes
+supply test-owned pfctl as well as conntrack, and OS-appropriate empty/failing
+neighbor commands. They retain cancellation, output limits, confidential-data
+exclusion and fresh/empty/failed metric distinctions; production behavior was
+not loosened. Both packages also passed on Linux.
+
+SAM submit fixture `46865adb` passed all 17 selected cases on FreeBSD, retaining
+SQL, authorization and signature checks with an existing supported IPIP
+transport. Live-ISO fixture `e234bbc3` passed all 29 package tests on the VM;
+the Linux mount-information file is supplied at the existing observation
+boundary. No live ISO was booted, and no SAM data-plane parity is inferred.
+VRRP fixture `8ab6ed09` also passed its complete package on the VM after two
+keepalived-specific tests explicitly selected their existing Linux OS boundary.
+Diagnostic fixture `8d2c0485` passed its HTTP check on the VM, distinguishing
+unknown link-local scope from an actual private UDP/TCP DNS SERVFAIL and SQL
+failure. Production classification was retained. The complete normal FreeBSD
+gate remains open, including the remaining chain failures. Exact test-binary hashes and scoped
+exclusions are retained in the feature-qualification ledger. Whole-function
+and whole-platform verdicts remain unknown.

@@ -510,6 +510,84 @@
         "A remote-LAN client, management-network changes, packaged service operation or whole FreeBSD parity",
         "A clean-source claim for f54ceecb, 9651257e, a0aca109 or any other commit based on this working-tree binary"
       ]
+    },
+    "linux-combined-native-3e58c93a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3e58c93ad632a7f1df5956a5be7fe42dad07678c",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "environment": "Isolated Linux user/network/mount namespaces, real kernel links; separate WireGuard, VRF and DS-Lite AFTR peers and separate FRR 8.4.4 namespace. GOMAXPROCS=2, Go 1.25.9.",
+      "reproduction": "make check-routerd15-native-parent-linux; make check-routerd15-bgp-native-linux (see Makefile for required tools and namespace setup).",
+      "checks": [
+        "Bridge, WireGuard, VXLAN, VRF and DS-Lite native parent/child lifecycle gate exited 0",
+        "DS-Lite AFTR capture received IPv6 next-header 4 with the actual inner IPv4 ICMP request; communication and withdrawal/reacquisition passed",
+        "FRR IPv4/IPv6 sessions, production routerd-bgp daemon/RPC/controller/SQLite FIB path, kernel readback, traffic, route withdrawal/readvertisement, peer restart, routerd-bgp restart, SQLite reopen and declaration removal passed",
+        "Nine related Go packages and related go vet exited 0 at the same clean source revision"
+      ],
+      "excludes": [
+        "Complete routerd 1.0 parity or all BGP policy/ECMP/BFD/GR combinations",
+        "LAN transit or packaged-service qualification from these namespace checks",
+        "FreeBSD routing qualification"
+      ]
+    },
+    "freebsd-portability-a2ba1bfa": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "a2ba1bfa42eb12039ecee1274e9efb2e998c9105",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "environment": "Actual FreeBSD 14.3/amd64 VM; existing configured loopbacks 127.0.0.1 and ::1, without adding interface aliases. Cross-built CGO-disabled Go test binary.",
+      "binary_sha256": "74e31bc64bb1ef15573fecd67ca02e5eab500d7b0c4027afe3e7863043e611a3",
+      "checks": [
+        "Real GoBGP LP200/LP100 competition selects direct 127.0.0.1 peer and IPv4 FIB entry",
+        "Subsequent prefixless RejectImportAll phase checks UPDATE receive counter, RR Adj-RIB-In MED1 arrival, direct-only global RIB and connected sessions"
+      ],
+      "excludes": [
+        "Three simultaneous peer coverage: this portable fixture uses two peers in stages",
+        "Native FreeBSD FIB installation or forwarding",
+        "All baseline BGP functions"
+      ]
+    },
+    "freebsd-observation-fixtures-4f9015bc": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "4f9015bccf1391bfc1db90119996a4ac972546e4",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "environment": "Actual FreeBSD 14.3/amd64 VM, OS-selected connection and neighbor observation commands replaced only through the existing PATH boundary with test-owned commands.",
+      "binary_sha256": {
+        "observe": "10eb2946fb92d8be57c7572f240e9139b7429e2d5112ebb1eae767ab35f2fb78",
+        "webconsole": "427ba97dcedda5dfa56b40df3c8849b51bbcc888aa77ed6b9659f8ee47eed12f"
+      },
+      "checks": [
+        "All observe package tests: 24 top-level pass, zero skip/fail",
+        "WebConsole package: 117 top-level pass, two skips, zero fail",
+        "Both packages also passed on Linux",
+        "Cancellation, bounded output, private-state exclusion, and distinction between skipped/empty/failed metrics are retained"
+      ],
+      "excludes": [
+        "FreeBSD full normal-suite pass",
+        "Browser execution on FreeBSD",
+        "Real connection-table or neighbor traffic qualification from fake-command tests"
+      ]
+    },
+    "freebsd-fixtures-sam-liveiso-20261031": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "reference": "docs/design/routerd15-audit.md#combined-native-routing-and-freebsd-portability-follow-up",
+      "source_revisions": {
+        "sam": "46865adb2dd630d31dd24dc298e47b35ecc12799",
+        "liveiso": "e234bbc3c6d41ef1172f6708cce65ed76c822838"
+      },
+      "environment": "Actual FreeBSD 14.3/amd64 VM; test binaries built with Go 1.25.9 and CGO disabled. Existing source checkout supplied relative fixtures and Git metadata.",
+      "checks": [
+        "All 17 selected SAM enrollment submit cases passed; fixture uses existing IPIP transport valid on both OS targets",
+        "All 29 liveiso package top-level tests passed without skips; unowned-workdir test receives its Linux mountinfo fixture at the existing file-input boundary",
+        "Live-ISO production mount traversal/ownership checks and their ordering are unchanged"
+      ],
+      "excludes": [
+        "Booting a live ISO",
+        "Real SAM data-plane mobility or enrollment against remote peers",
+        "FreeBSD whole normal-suite pass"
+      ]
     }
   },
   "features": [
@@ -752,7 +830,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-observation-fixtures-4f9015bc"
+        ]
       },
       "required_remaining_checks": [
         "Browser operation against packaged running daemon",
@@ -874,7 +954,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-bridge-aa9f3cac",
-          "linux-bridge-vxlan-native-f54ceecb"
+          "linux-bridge-vxlan-native-f54ceecb",
+          "linux-combined-native-3e58c93a"
         ]
       },
       "freebsd": {
@@ -918,7 +999,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-wireguard-peer-f54ceecb"
+          "linux-wireguard-peer-f54ceecb",
+          "linux-combined-native-3e58c93a"
         ]
       },
       "freebsd": {
@@ -1035,7 +1117,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-vrf-withdraw-review-9735f25e",
-          "linux-vrf-peer-9735f25e"
+          "linux-vrf-peer-9735f25e",
+          "linux-combined-native-3e58c93a"
         ]
       },
       "freebsd": {
@@ -1079,7 +1162,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-bridge-vxlan-native-f54ceecb"
+          "linux-bridge-vxlan-native-f54ceecb",
+          "linux-combined-native-3e58c93a"
         ]
       },
       "freebsd": {
@@ -1246,11 +1330,15 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-combined-native-3e58c93a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-portability-a2ba1bfa"
+        ]
       },
       "required_remaining_checks": [
         "Independent router BGP sessions, communities, policy and dynamic peers",
@@ -1655,7 +1743,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-combined-native-3e58c93a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1835,7 +1925,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-fixtures-sam-liveiso-20261031"
+        ]
       },
       "required_remaining_checks": [
         "Independent RR/leaf enrollment, ownership and real mobility traffic",
@@ -2260,7 +2352,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-observation-fixtures-4f9015bc"
+        ]
       },
       "required_remaining_checks": [
         "All baseline diagnose/get/describe/log/ledger/action commands",
@@ -2373,7 +2467,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-fixtures-sam-liveiso-20261031"
+        ]
       },
       "required_remaining_checks": [
         "Actual image build, modes, boot and firstboot on independent VM",
