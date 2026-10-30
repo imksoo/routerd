@@ -18,10 +18,15 @@ observation is not a replacement for the daemon's desired-path journal.
 
 ## Configuration and cutover
 
-`communities.send` currently accepts `both` (the default), `standard`, and
-`extended`, but the pinned GoBGP gRPC conversion drops this setting. The
-nondefault export masks are not enforced yet. Earlier claims of working send
-modes were incorrect; actual export actions and wire regressions remain required.
+`communities.send` accepts `both` (the default), `standard`, and `extended`.
+The pinned local GoBGP v4.7.0 correction preserves this selection through the
+peer/group API boundary and filters each neighbor's outbound path after export
+policy. `standard` omits both extended-community attribute forms; `extended`
+omits standard communities. Large communities are independent and remain
+advertised in all three modes. Filtering uses a cloned path and leaves the local
+RIB and other peers intact. See `third_party/gobgp/ROUTERD_CHANGES.md` for the
+source provenance and four changed upstream files. Raw TCP BGP peer regressions
+check actual UPDATE attributes and withdrawals for static and dynamic peers.
 `communities.accept` and `communities.set.in` are unsupported and rejected.
 Standard community values accept decimal integers, `high:low`, `internet`,
 `no-export`, and `no-advertise`; initial application and restoration use the same
