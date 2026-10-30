@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +14,84 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controlapi"
 )
+
+func TestDoctorRollbackRequiresStoredConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		saveConfig    bool
+		newerAttempts int
+		wantStatus    string
+	}{
+		{name: "failed attempt without config", newerAttempts: 1, wantStatus: doctorWarn},
+		{name: "older saved config", saveConfig: true, newerAttempts: 2, wantStatus: doctorPass},
+		{name: "config outside default history window", saveConfig: true, newerAttempts: 100, wantStatus: doctorWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath, statePath := writeDoctorFixture(t)
+			store := openDoctorState(t, statePath)
+			var savedGeneration int64
+			if tc.saveConfig {
+				var err error
+				savedGeneration, err = store.BeginGeneration("saved")
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.RecordGenerationConfig(savedGeneration, string(data)); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.FinishGeneration(savedGeneration, "Applied", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var latest int64
+			for range tc.newerAttempts {
+				var err error
+				latest, err = store.BeginGeneration("failed")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.FinishGeneration(latest, "Failed", nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			closeDoctorState(t, store)
+			if _, err := rollbackGenerationConfig(statePath, latest); err == nil || !strings.Contains(err.Error(), "has no saved config") {
+				t.Fatalf("failed attempt unexpectedly provides a rollback config: %v", err)
+			}
+			var output bytes.Buffer
+			if err := run([]string{"doctor", "rollback", "--config", configPath, "--state-file", statePath, "--no-host", "-o", "json"}, &output, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			var report doctorReport
+			if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+			if len(report.Checks) != 1 || report.Checks[0].Status != tc.wantStatus {
+				t.Fatalf("rollback diagnostic = %+v, want %s", report.Checks, tc.wantStatus)
+			}
+			if tc.wantStatus == doctorPass && !strings.Contains(report.Checks[0].Detail, fmt.Sprintf("generation %d", savedGeneration)) {
+				t.Fatalf("diagnostic did not identify the saved generation: %+v", report.Checks[0])
+			}
+			if tc.wantStatus == doctorWarn && !strings.Contains(report.Checks[0].Detail, "checked") {
+				t.Fatalf("diagnostic did not bound its unsuccessful search: %+v", report.Checks[0])
+			}
+		})
+	}
+}
+
+func TestDoctorRollbackRetainsHistoryReadFailure(t *testing.T) {
+	_, statePath := writeDoctorFixture(t)
+	store := openDoctorState(t, statePath)
+	closeDoctorState(t, store)
+	checks := (doctorRunner{store: store}).doctorRollback()
+	if len(checks) != 1 || checks[0].Status != doctorWarn || !strings.Contains(checks[0].Detail, "connection") {
+		t.Fatalf("closed history became rollback availability: %+v", checks)
+	}
+}
 
 func TestDoctorFailsOnCorruptStatusRatherThanReportingMissingObservation(t *testing.T) {
 	configPath, statePath := writeDoctorFixture(t)

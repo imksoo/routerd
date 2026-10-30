@@ -2712,14 +2712,28 @@ func (r doctorRunner) doctorRollback() []doctorCheck {
 	if !ok {
 		return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorSkip, Detail: "state store does not expose generation history"}}
 	}
-	records, err := history.ListGenerations(1)
+	// Use the history reader's bounded default window. A newer failed attempt
+	// can have no configuration while an older generation remains restorable.
+	records, err := history.ListGenerations(0)
 	if err != nil {
 		return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorWarn, Detail: err.Error(), Remedy: "check routerd state database permissions"}}
 	}
 	if len(records) == 0 {
 		return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorWarn, Detail: "no saved generations found", Remedy: "run a successful routerd apply before relying on rollback"}}
 	}
-	return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorPass, Detail: fmt.Sprintf("latest generation %d", records[0].Generation)}}
+	for _, record := range records {
+		if !record.HasYAML {
+			continue
+		}
+		configYAML, found, err := history.GenerationConfig(record.Generation)
+		if err != nil {
+			return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorWarn, Detail: err.Error(), Remedy: "check routerd state database permissions"}}
+		}
+		if found && strings.TrimSpace(configYAML) != "" {
+			return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorPass, Detail: fmt.Sprintf("saved configuration for generation %d (phase %s); re-apply still requires validation", record.Generation, record.Phase)}}
+		}
+	}
+	return []doctorCheck{{Area: "rollback", Name: "generations", Status: doctorWarn, Detail: fmt.Sprintf("no saved configuration in %d checked generations", len(records)), Remedy: "inspect older history or run a successful routerd apply before relying on rollback"}}
 }
 
 func (r doctorRunner) doctorDisk() []doctorCheck {
