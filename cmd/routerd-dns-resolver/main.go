@@ -520,7 +520,6 @@ func shutdownBoundListeners(listeners map[string]*boundListener) {
 func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 	select {
 	case d.querySlots <- struct{}{}:
-		defer func() { <-d.querySlots }()
 	default:
 		// No waiting query queue: UDP drops and TCP closes on saturation.
 		d.queryRejected.Add(1)
@@ -528,7 +527,10 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		return
 	}
 	d.queryMu.RLock()
-	defer d.queryMu.RUnlock()
+	defer func() {
+		<-d.querySlots
+		d.queryMu.RUnlock()
+	}()
 	d.stateMu.RLock()
 	ctx := d.sourceCtx
 	requestTimeout, generation := d.requestTimeout, d.generation
