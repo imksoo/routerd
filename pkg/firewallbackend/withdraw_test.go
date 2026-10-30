@@ -73,3 +73,23 @@ func TestNftablesWithdrawalRequiresNativeOwnershipAndAcknowledgement(t *testing.
 		})
 	}
 }
+
+func TestNftablesWithdrawalDryRunAndUnusedFirewallAreInert(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	b := Nftables{Run: func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("unexpected native command")
+		return nil, nil
+	}}
+	if changed, err := b.Apply(t.Context(), Ruleset{Path: path}, false); err != nil || changed {
+		t.Fatalf("unused firewall: changed=%v err=%v", changed, err)
+	}
+	if err := os.WriteFile(path, []byte("active rules"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := b.Apply(t.Context(), Ruleset{Path: path}, true); err != nil || !changed {
+		t.Fatalf("dry run: changed=%v err=%v", changed, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "active rules" {
+		t.Fatalf("dry run changed rules: %q %v", data, err)
+	}
+}

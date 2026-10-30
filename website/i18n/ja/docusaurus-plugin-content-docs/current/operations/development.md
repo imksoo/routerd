@@ -159,3 +159,41 @@ DNSForwarder は設定順に評価するため、ローカル zone を default u
 製品の失敗はローカルで再現・修正してから再検証し、解消後は一時出力を削除します。
 WAN の transit と戻り経路は試験用の事前設定です。WAN RA、DHCPv6 IA_NA、prefix 変更、
 reboot/crash recovery、firewall、FreeBSD、routerd 1.0 全機能の合格とは区別します。
+
+## Linux の DHCP・firewall 撤去試験
+
+空設定と独立した管理経路を持つ専用 VM に正式パッケージを導入して実行します。
+systemd、conntrack、dnsmasq、nftables、iproute2、udhcpc を含む BusyBox、
+Python 3、curl、jq、dig を事前確認してください。router 設定を置換します。
+最後の引数はゲストの管理インターフェースです。
+
+```sh
+sudo scripts/linux-dhcp-firewall-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcp-firewall-lifecycle.json" eth0
+```
+
+LAN・WAN・管理 zone の独立した peer で、最初に HTTP の正常到達を確認します。
+DHCP の gateway/DNS option、2分 lease のタイマー更新、ローカル・転送 DNS の
+UDP/TCP、NAT 送信元、service 再起動後の維持が合格条件です。
+zone 適用後は WAN→LAN、LAN→管理、WAN→router DNS を遮断します。
+HTTP の遮断はクライアントの失敗だけでなく、対向ログに届いていないことと
+nft chain counter で判定します。管理→LAN の正常通信も必要です。
+明示的な許可ルールで LAN→管理が通り、ルール撤去で再び遮断されること、
+firewall 全撤去で `inet routerd_filter` が消え、元の正常通信に戻ることを検査します。
+最後に空設定で管理アドレスを撤去します。成功時の生出力は削除し、失敗時だけ
+ローカル再現・修正まで保持します。VM 再起動、WAN DHCP client、rebind・expiry、
+実 WAN の挙動は別の試験です。
+
+ローカルの撤去回帰テストは通常の `go test` で skip し、明示的な隔離 netns で実行します。
+
+```sh
+go test -c -o /tmp/firewall.test ./pkg/controller/firewall
+sudo unshare --net env ROUTERD_RUN_NETNS=1 /tmp/firewall.test \
+  -test.run '^TestFirewallNativeWithdrawal$' -test.v
+rm /tmp/firewall.test
+```
+
+nft の所有 comment は最初のテーブル作成時に指定します。後から table block に
+書いてもカーネルの comment は更新されません。撤去時は実マーカーと handle を確認し、
+読み取り・削除失敗時は再試行用の状態を保持します。旧ビルドのマーカーなしテーブルは
+自動削除しません。隔離環境の準備段階で明示的に処理し、手動撤去を製品の合格結果に含めません。

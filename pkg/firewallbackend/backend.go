@@ -66,6 +66,9 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if err := validateRuleset(ruleset); err != nil {
 		return false, err
 	}
+	if len(ruleset.Data) == 0 {
+		return b.withdraw(ctx, ruleset, dryRun)
+	}
 	changed, err := b.Diff(ruleset)
 	if err != nil {
 		return false, err

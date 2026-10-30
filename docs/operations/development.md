@@ -175,3 +175,46 @@ failure locally before another native run, and remove retained output after the
 failure is resolved. WAN transit and its return route are fixture scaffolding:
 this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, prefix renumbering,
 reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
+
+## Linux DHCP and firewall withdrawal gate
+
+Run the packaged service in an empty disposable VM with independent management
+access. Certify systemd and install `conntrack`, dnsmasq, nftables, iproute2,
+BusyBox (with udhcpc), Python 3, curl, jq and dig first. The test replaces the
+router configuration; the final argument is the guest's management interface.
+
+```sh
+sudo scripts/linux-dhcp-firewall-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcp-firewall-lifecycle.json" eth0
+```
+
+Independent LAN, WAN and management-zone peers first establish positive HTTP
+controls. Pass requires DHCP acquisition with the expected gateway/DNS options,
+a timer-driven renewal of its two-minute lease, local/upstream DNS over UDP/TCP,
+NAT source observation and preservation across service restart. Applying zones
+must block WAN-to-LAN, LAN-to-management and WAN-to-router DNS. The HTTP negative
+checks require both client failure and absence from the destination log, with
+matching nft chain counters. A management-to-LAN positive control must continue.
+An explicit LAN-to-management exception must work and stop working after removal.
+Removing all firewall resources must remove `inet routerd_filter` and restore
+the original positive controls. Empty apply must withdraw managed addresses.
+Successful output is deleted; failed output is retained only until the failure
+is reproduced locally and resolved. A VM reboot, DHCP WAN client, rebind/expiry
+and production WAN behavior are separate gates.
+
+The focused native withdrawal regression runs locally in a separate network
+namespace and is skipped by ordinary `go test`:
+
+```sh
+go test -c -o /tmp/firewall.test ./pkg/controller/firewall
+sudo unshare --net env ROUTERD_RUN_NETNS=1 /tmp/firewall.test \
+  -test.run '^TestFirewallNativeWithdrawal$' -test.v
+rm /tmp/firewall.test
+```
+
+nft ownership comments must be set by the first table creation; a later table
+block does not update the kernel comment. Withdrawal checks that native marker
+and deletes the observed handle, retaining retry input on read/delete failure.
+An unmarked table from an older build is not automatically adopted for deletion.
+Resolve such a table explicitly during isolated-environment preparation; a manual
+cleanup is not a passing product withdrawal result.
