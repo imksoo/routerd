@@ -42,7 +42,11 @@ func TestSummaryCollectionAndMetricsDistinguishEmptySkippedAndFailed(t *testing.
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "wan", map[string]any{"phase": "Healthy"}); err != nil {
+	probe := api.HealthCheckSpec{Target: "192.0.2.1"}.Probe()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "HealthCheck", "wan", map[string]any{
+		"phase":   "Healthy",
+		"routing": api.HealthObservation{Probe: probe, Phase: "Healthy", CheckedAt: time.Now().UTC()},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", statePath)

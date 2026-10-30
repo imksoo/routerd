@@ -122,7 +122,10 @@ source during handover; use a fresh ID after rollback. See the
 
 ## Events table
 
-The bus persists events into SQLite. `EventRule` and `DerivedEvent` consume this stream as input. For day-to-day operations, prefer `routerctl get events` over running `sqlite3` against the database directly:
+The bus persists events into SQLite. `EventRule` consumes that history, while
+`DerivedEvent` evaluates current referenced status and records its transitions.
+For day-to-day operations, prefer `routerctl get events` over running `sqlite3`
+against the database directly:
 
 ```sh
 routerctl get events --limit 20

@@ -47,8 +47,11 @@ Implemented in the daemon policy/path checkpoint:
 - Required Mobility/FIB and native address reads return errors rather than empty
   inputs. Watch cancellation owns its RPC subscription; it cannot close a shared
   connection. Startup waits for daemon restoration before controller BGP calls.
-- Community send modes have consumers. Unsupported `communities.accept` and
-  `communities.set.in` are rejected; prefix-length bounds require an allowlist.
+- Community send modes are parsed, but the pinned GoBGP RPC does not enforce
+  every requested outbound mask. Standard, extended and large-community wire
+  filtering remains open; accepting the setting is not proof of its effect.
+  Unsupported `communities.accept` and `communities.set.in` are rejected;
+  prefix-length bounds require an allowlist.
   Control requests and acknowledgements use complete, bounded typed decoding.
 
 Loopback GoBGP export, edit/withdraw and exact-source recovery regressions pass.
@@ -125,6 +128,39 @@ Linux signals bind to pidfds, including ancestor-procfs PID mapping. FreeBSD's
 bounded birth/jail/executable/argv observation still has second-resolution birth
 and a check-to-PID-signal race; it is not a pidfd-equivalent atomic guarantee.
 Actual systemd/FreeBSD DHCP/RA communication remains unqualified.
+
+## Current Health and event decisions
+
+Health samples now carry the normalized configured probe identity. Worker
+threshold state resets after a changed probe or expired sample; importer,
+advisory selection and policy routing require that identity and current
+freshness. SQLite reads project stale or identityless reachability to Unknown
+without writing display repairs. Native route/source lifetime authority and
+independent two-WAN failover qualification remain open.
+
+EventRule commits its typed correlation checkpoint, sole per-rule cursor,
+public status and local output together. It resumes unchanged rules, retires
+removed ones and reports missing retained history rather than inferring absence.
+Bounded fair input pages prevent starvation; correlation key/byte limits evict
+oldest partial state with a visible warning. Start republishes the selected
+checkpoint's status; processing errors preserve the cursor and report Error
+when storage remains writable.
+
+DerivedEvent uses its existing object status as the durable latch/deadline
+owner. The status/output transaction rechecks input versions and time-dependent
+Health/PD values. Failed writes, lost replies, restart and removal/readdition
+have actual SQLite regressions. One loop owns and joins timer work. The deadline
+does not prove continuous observation across downtime. Auxiliary engine
+activation follows selected runtime generation; the separate canonical
+configuration/external-effect commit barrier remains open.
+
+DNS workers reject another resource's runtime configuration and use exact zone
+resource references and DNS label boundaries, including escaped dots and
+separate resources sharing an apex. Reload preserves DHCP observations only
+within the same zone resource, apex and declared source namespace, with the
+current TTL. Lease POST acknowledgement is serialized with table handover.
+Named lease provenance/expiry, old query/probe quiescence and bounded response
+writes remain open.
 
 ## Command/control plane
 

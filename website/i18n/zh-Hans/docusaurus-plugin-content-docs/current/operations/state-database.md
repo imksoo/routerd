@@ -22,7 +22,7 @@ routerd 将状态与事件持久化至 SQLite。每个守护进程除此之外�
 
 ## events 数据表
 
-事件总线会将事件持久化至 SQLite。`EventRule` 与 `DerivedEvent` 以此流作为输入。
+事件总线会将事件持久化至 SQLite。`EventRule` 以这些历史记录为输入；`DerivedEvent` 则评估所引用对象的当前 status，并记录 asserted/retracted 状态转换。
 
 EventRule 的关联 checkpoint 和每条规则唯一的输入 cursor 也会持久化。匹配结果、公开 status 和本地输出事件与 checkpoint 在同一事务中提交；失败时均不推进。未修改的规则在重启后继续处理，新规则或已修改的规则从配置准备时记录的输入位置开始。如果保留策略已删除未读输入，则报告历史缺口，不能推断事件不存在。每条规则最多保留4096个关联键，序列化后的 checkpoint 上限为8 MiB。超过任一上限时，按最后匹配输入的时间从旧到新淘汰关联键，直到满足上限；并在同一事务中增加 `status.warningCount`。
 

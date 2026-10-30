@@ -22,7 +22,7 @@ routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外�
 
 ## events 資料表
 
-事件匯流排會將事件持久化至 SQLite。`EventRule` 與 `DerivedEvent` 以此串流作為輸入。
+事件匯流排會將事件持久化至 SQLite。`EventRule` 以這些歷史記錄為輸入；`DerivedEvent` 則評估所參照物件的目前 status，並記錄 asserted/retracted 狀態轉換。
 
 EventRule 的關聯 checkpoint 和每條規則唯一的輸入 cursor 也會持久化。匹配結果、公開 status 和本機輸出事件與 checkpoint 在同一交易中提交；失敗時均不推進。未修改的規則在重啟後繼續處理，新規則或已修改的規則從設定準備時記錄的輸入位置開始。如果保留原則已刪除未讀輸入，則回報歷史缺口，不能推斷事件不存在。每條規則最多保留4096個關聯鍵，序列化後的 checkpoint 上限為8 MiB。超過任一上限時，按最後匹配輸入的時間由舊至新淘汰關聯鍵，直到滿足上限；並在同一交易中增加 `status.warningCount`。
 
