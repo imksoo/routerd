@@ -71,7 +71,13 @@ func TestLiveBuildUnownedWorkdirSurvives(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("preserve"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runLiveShell(t, "workdir="+shellLiteral(work)+"\n"+liveFunction(t, "refuse_live_mounts")+"\n"+liveFunction(t, "prepare_live_workdir")+"\nprepare_live_workdir\n")
+	// This guard consumes Linux mountinfo, independently of the test host OS.
+	mountinfo := filepath.Join(t.TempDir(), "mountinfo")
+	if err := os.WriteFile(mountinfo, []byte("10 1 0:2 / / rw - tmpfs tmpfs rw\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	observe := strings.ReplaceAll(liveFunction(t, "refuse_live_mounts"), "'/proc/self/mountinfo'", strconv.Quote(mountinfo))
+	out, err := runLiveShell(t, "workdir="+shellLiteral(work)+"\n"+observe+"\n"+liveFunction(t, "prepare_live_workdir")+"\nprepare_live_workdir\n")
 	if err == nil || !strings.Contains(out, "unowned live build workdir") {
 		t.Fatalf("unowned workdir admitted: %v %s", err, out)
 	}
