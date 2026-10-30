@@ -141,23 +141,7 @@ func (c DSLiteTunnelController) observeChildParent(ctx context.Context, resource
 			return absent, errors.New("DS-Lite parent intent changed while observing")
 		}
 	}
-	// Required journal reads may wait. A parent beginning withdrawal during the
-	// native snapshot cannot authorize a new child or its deletion.
-	current, err := c.nativeTunnelReceipts()
-	if err != nil {
-		return absent, err
-	}
-	found := false
-	for _, candidate := range current {
-		if candidate == record {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return absent, errors.New("DS-Lite parent receipt changed while observing")
-	}
-	// The inner-address, scope and journal reads can wait. Observe the actual
+	// The inner-address and scope reads can wait. Observe the actual
 	// native cookie after those waits, without a later scope lookup on a cached link.
 	scope, err = c.tunnelScope(ctx)
 	if err != nil {
@@ -184,6 +168,22 @@ func (c DSLiteTunnelController) observeChildParent(ctx context.Context, resource
 		if current != desired {
 			return absent, errors.New("DS-Lite parent source changed after native observation")
 		}
+	}
+	// Required journal reads may wait. A parent beginning withdrawal during the
+	// final native/source snapshots cannot authorize a new child or its deletion.
+	current, err := c.nativeTunnelReceipts()
+	if err != nil {
+		return absent, err
+	}
+	found := false
+	for _, candidate := range current {
+		if candidate == record {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return absent, errors.New("DS-Lite parent receipt changed while observing")
 	}
 	return nativeParentLink{Exists: true, IfName: ifname, Index: observed.Index, Scope: scope, Token: "dslite:" + record.Token}, ctx.Err()
 }

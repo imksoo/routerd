@@ -457,3 +457,32 @@ func TestDSLiteWhenMaskedParentCannotBecomeBareNativeDevice(t *testing.T) {
 		t.Fatalf("masked parent admitted bare address device: token=%q", token)
 	}
 }
+
+func TestDSLiteParentRechecksReceiptAfterLastNativeRead(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.OSLinux)
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	original, reads := native.command, 0
+	parent.CommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := original(ctx, name, args...)
+		if strings.Join(args, " ") == "-j -d link show" {
+			reads++
+			if reads == 2 {
+				records, readErr := parent.nativeTunnelReceipts()
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				records[0].Pending = true
+				if saveErr := parent.saveNativeTunnel(records[0], false); saveErr != nil {
+					t.Fatal(saveErr)
+				}
+			}
+		}
+		return out, err
+	}
+	reader := nativeParentReader{Router: parent.Router, Store: store, DSLite: &parent}
+	if link, err := reader.observeDeclared(t.Context(), "ds-owned"); err == nil || link.Exists {
+		t.Fatalf("parent began withdrawal during final native read but admitted child: %+v %v", link, err)
+	}
+}
