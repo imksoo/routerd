@@ -4576,8 +4576,13 @@ func listFreeBSDSupervisedDaemonProcesses(marker supervisedDaemonMarker) ([]supe
 			return nil, errors.New("supervised process observation has incomplete command")
 		}
 		pid, err := strconv.Atoi(fields[0])
-		if err != nil || pid <= 0 {
+		if err != nil || pid < 0 {
 			return nil, fmt.Errorf("invalid supervised process PID %q", fields[0])
+		}
+		// FreeBSD ps includes PID 0 for the kernel. It cannot be a managed
+		// daemon, and must not make every userspace process unobservable.
+		if pid == 0 {
+			continue
 		}
 		if marker.PID > 0 && pid != marker.PID {
 			continue
