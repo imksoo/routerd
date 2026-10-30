@@ -18,7 +18,7 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-func tunnelNativeReviewFixture(t *testing.T, fromSource bool) (TunnelInterfaceController, *routerstate.SQLiteStore, func(...string) []byte) {
+func tunnelNativeReviewFixture(t *testing.T, fromSource, acquire bool) (TunnelInterfaceController, *routerstate.SQLiteStore, func(...string) []byte) {
 	t.Helper()
 	if os.Getenv("ROUTERD_RUN_NETNS") != "1" {
 		t.Skip("requires ROUTERD_RUN_NETNS=1 in an isolated network namespace")
@@ -66,14 +66,16 @@ func tunnelNativeReviewFixture(t *testing.T, fromSource bool) (TunnelInterfaceCo
 	}}}}
 	parent := TunnelInterfaceController{Router: router, Store: eventedStore{Store: store, Router: router}}
 	t.Cleanup(func() { _, _ = exec.CommandContext(ctx, "ip", "link", "delete", "dev", "tn-review").CombinedOutput() })
-	if err := parent.Reconcile(ctx); err != nil {
-		t.Fatal(err)
+	if acquire {
+		if err := parent.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return parent, store, run
 }
 
 func TestTunnelNativeReviewKeepsReplacementAfterAddressObservation(t *testing.T) {
-	parent, _, run := tunnelNativeReviewFixture(t, false)
+	parent, _, run := tunnelNativeReviewFixture(t, false, true)
 	original, err := net.InterfaceByName("tn-review")
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +118,7 @@ func TestTunnelNativeReviewKeepsReplacementAfterAddressObservation(t *testing.T)
 }
 
 func TestTunnelNativeReviewDoesNotOverwriteReplacementReceipt(t *testing.T) {
-	parent, _, run := tunnelNativeReviewFixture(t, false)
+	parent, _, run := tunnelNativeReviewFixture(t, false, true)
 	spec := parent.Router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
 	spec.Address = "192.0.2.2/32"
 	parent.Router.Spec.Resources[0].Spec = spec
@@ -162,7 +164,7 @@ func TestTunnelNativeReviewDoesNotOverwriteReplacementReceipt(t *testing.T) {
 }
 
 func TestTunnelNativeReviewWithdrawsSourceExpiredDuringObservation(t *testing.T) {
-	parent, store, _ := tunnelNativeReviewFixture(t, true)
+	parent, store, _ := tunnelNativeReviewFixture(t, true, true)
 	spec := parent.Router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
 	spec.Address = "192.0.2.2/32"
 	parent.Router.Spec.Resources[0].Spec = spec
@@ -192,7 +194,7 @@ func TestTunnelNativeReviewWithdrawsSourceExpiredDuringObservation(t *testing.T)
 }
 
 func TestTunnelNativeReviewRefusesChildBeforeSourceWithdrawal(t *testing.T) {
-	parent, store, run := tunnelNativeReviewFixture(t, true)
+	parent, store, run := tunnelNativeReviewFixture(t, true, true)
 	original, err := net.InterfaceByName("tn-review")
 	if err != nil {
 		t.Fatal(err)
@@ -212,5 +214,28 @@ func TestTunnelNativeReviewRefusesChildBeforeSourceWithdrawal(t *testing.T) {
 	}
 	if addresses := run("-j", "-4", "address", "show", "dev", "tn-review"); strings.Contains(string(addresses), "192.0.2.99") {
 		t.Fatalf("child acquired parent whose source expired before parent withdrawal: child=%v native=%s", childErr, addresses)
+	}
+}
+
+func TestTunnelNativeReviewWithdrawsSourceExpiredAfterCreateACK(t *testing.T) {
+	parent, store, _ := tunnelNativeReviewFixture(t, true, false)
+	created := false
+	parent.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+		if err == nil && name == "ip" && strings.HasPrefix(strings.Join(args, " "), "link add dev tn-review ") {
+			created = true
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Expired", "currentAddress": ""}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out, err
+	}
+	reconcileErr := parent.Reconcile(t.Context())
+	if !created {
+		t.Fatalf("actual exclusive creation ACK boundary was not exercised: %v", reconcileErr)
+	}
+	link, err := observeTunnelNativeLink(t.Context(), "tn-review")
+	if err != nil || link.Exists {
+		t.Fatalf("known creation ACK plus expired source retained a bare native tunnel: %+v reconcile=%v read=%v", link, reconcileErr, err)
 	}
 }
