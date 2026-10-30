@@ -47,11 +47,6 @@ git config --global --add safe.directory "$(pwd)"
 # helper binaries, so suppress VCS stamping there without narrowing the gate.
 export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 
-# This is the native package gate. Do not narrow it to selected packages: a
-# FreeBSD-only build or runtime dependency failure must be visible in CI.
-go test ./...
-go test -tags routerd_native ./pkg/routeradvertisement -run '^TestSolicitationWildcardReceiverOnActualSocket$' -count=1
-
 work=$(mktemp -d /tmp/routerd-freebsd-native-smoke.XXXXXX)
 root="$work/root"
 render="$work/render"
@@ -59,6 +54,106 @@ config="$work/fixture.yaml"
 routerd="$work/routerd"
 routerctl="$work/routerctl"
 own_pf=0
+native_fd_dir=/dev/fd
+lifecycle_relay_parent=/usr/local/libexec
+lifecycle_relay_dir=$lifecycle_relay_parent/routerd
+lifecycle_relay=$lifecycle_relay_dir/dhcp-event-relay
+native_own_fdescfs=0
+lifecycle_own_relay_parent=0
+lifecycle_own_relay_dir=0
+lifecycle_relay_stage=
+
+prepare_native_descriptors() {
+  mount_table=$(mount -p) || return 1
+  descriptor_mount=$(printf '%s\n' "$mount_table" | awk -v target="$native_fd_dir" '$2 == target { print $3 }')
+  case "$descriptor_mount" in
+    ''|fdescfs) ;;
+    *) echo "refusing native runtime with a different filesystem on $native_fd_dir: $descriptor_mount" >&2; return 1 ;;
+  esac
+  [ -d "$native_fd_dir" ] && [ ! -L "$native_fd_dir" ] || return 1
+  if [ -z "$descriptor_mount" ]; then
+    mount -t fdescfs fdesc "$native_fd_dir" || return 1
+    native_own_fdescfs=1
+  fi
+  (exec 9</dev/null; [ -e "$native_fd_dir/9" ]) || {
+    echo "native runtime requires a complete descriptor view at $native_fd_dir" >&2
+    return 1
+  }
+}
+
+prepare_lifecycle_relay() {
+  relay_binary=$1
+  # Inspect every existing canonical path before creating the relay file.
+  for directory in "$lifecycle_relay_parent" "$lifecycle_relay_dir"; do
+    if [ -e "$directory" ] || [ -L "$directory" ]; then
+      if [ ! -d "$directory" ] || [ -L "$directory" ]; then
+        echo "refusing lifecycle runtime with a non-directory relay parent: $directory" >&2
+        return 1
+      fi
+    fi
+  done
+  if [ -e "$lifecycle_relay" ] || [ -L "$lifecycle_relay" ]; then
+    if [ ! -f "$lifecycle_relay" ] || [ -L "$lifecycle_relay" ] || [ ! -x "$lifecycle_relay" ] || ! cmp -s "$relay_binary" "$lifecycle_relay"; then
+      echo "refusing to replace an existing DHCP event relay: $lifecycle_relay" >&2
+      return 1
+    fi
+  fi
+  if [ ! -e "$lifecycle_relay" ]; then
+    if [ ! -d "$lifecycle_relay_parent" ]; then
+      mkdir "$lifecycle_relay_parent" || return 1
+      lifecycle_own_relay_parent=1
+    fi
+    if [ ! -d "$lifecycle_relay_dir" ]; then
+      mkdir "$lifecycle_relay_dir" || return 1
+      lifecycle_own_relay_dir=1
+    fi
+    lifecycle_relay_stage=$(mktemp "$lifecycle_relay_dir/.dhcp-event-relay.native.XXXXXX") || return 1
+    install -m 0755 "$relay_binary" "$lifecycle_relay_stage" || return 1
+    # A hard link publishes the completed binary without replacing a collision.
+    ln "$lifecycle_relay_stage" "$lifecycle_relay" || return 1
+  fi
+}
+
+restore_lifecycle_relay() {
+  restore_rc=0
+  if [ -n "$lifecycle_relay_stage" ]; then
+    # FreeBSD sh supports -ef; compare the published file with its private link.
+    # shellcheck disable=SC3013
+    if [ -e "$lifecycle_relay" ] && [ ! -L "$lifecycle_relay" ] && [ "$lifecycle_relay" -ef "$lifecycle_relay_stage" ] && cmp -s "$relay_binary" "$lifecycle_relay"; then
+      rm "$lifecycle_relay" || restore_rc=1
+    elif [ -e "$lifecycle_relay" ] || [ -L "$lifecycle_relay" ]; then
+      echo "preserving a changed DHCP event relay: $lifecycle_relay" >&2
+      restore_rc=1
+    fi
+    rm "$lifecycle_relay_stage" || restore_rc=1
+    lifecycle_relay_stage=
+  fi
+  if [ "$lifecycle_own_relay_dir" -eq 1 ]; then
+    rmdir "$lifecycle_relay_dir" || restore_rc=1
+    lifecycle_own_relay_dir=0
+  fi
+  if [ "$lifecycle_own_relay_parent" -eq 1 ]; then
+    rmdir "$lifecycle_relay_parent" || restore_rc=1
+    lifecycle_own_relay_parent=0
+  fi
+  return "$restore_rc"
+}
+
+restore_native_descriptors() {
+  restore_rc=0
+  if [ "$native_own_fdescfs" -eq 1 ]; then
+    current_mounts=$(mount -p) || return 1
+    current_descriptor_mount=$(printf '%s\n' "$current_mounts" | awk -v target="$native_fd_dir" '$2 == target { print $3 }')
+    if [ "$current_descriptor_mount" = fdescfs ]; then
+      umount "$native_fd_dir" || restore_rc=1
+    else
+      echo "preserving a changed descriptor mount: $native_fd_dir" >&2
+      restore_rc=1
+    fi
+    native_own_fdescfs=0
+  fi
+  return "$restore_rc"
+}
 
 cleanup_started=0
 cleanup() {
@@ -67,6 +162,7 @@ cleanup() {
   cleanup_started=1
   set +e
   cleanup_rc=0
+  restore_lifecycle_relay >>"$work/cleanup.log" 2>&1 || cleanup_rc=2
   if [ -s "$work/routerd.pid" ]; then
     owned_pid=$(cat "$work/routerd.pid")
     if kill -0 "$owned_pid" 2>/dev/null; then
@@ -84,6 +180,7 @@ cleanup() {
     printf 'pf_unload_exit=%s\n' "$unload_rc" >>"$work/cleanup.log"
     [ "$unload_rc" -eq 0 ] || cleanup_rc=2
   fi
+  restore_native_descriptors >>"$work/cleanup.log" 2>&1 || cleanup_rc=2
   printf 'test_exit=%s\ncleanup_exit=%s\n' "$test_rc" "$cleanup_rc" >>"$work/cleanup.log"
   # Save child JSON/logs and cleanup evidence, without archiving helper binaries
   # or fixture credential/config files. The existing CI console artifact collects it.
@@ -110,6 +207,12 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
+
+prepare_native_descriptors
+# This is the native package gate. Do not narrow it to selected packages: a
+# FreeBSD-only build or runtime dependency failure must be visible in CI.
+go test ./...
+go test -tags routerd_native ./pkg/routeradvertisement -run '^TestSolicitationWildcardReceiverOnActualSocket$' -count=1
 
 cat >"$config" <<'EOF'
 apiVersion: routerd.net/v1alpha1
@@ -239,16 +342,23 @@ if [ "${ROUTERD_FREEBSD_LIFECYCLE_RUNTIME:-false}" = true ]; then
   dhcpv6_client="$work/routerd-dhcpv6-client"
   dns_resolver="$work/routerd-dns-resolver"
   lifecycle_helper="$work/freebsd-lifecycle-runtime"
+  dhcp_event_relay="$work/routerd-dhcp-event-relay"
   go build -o "$dhcpv4_client" ./cmd/routerd-dhcpv4-client
   go build -o "$dhcpv6_client" ./cmd/routerd-dhcpv6-client
   go build -o "$dns_resolver" ./cmd/routerd-dns-resolver
   go build -o "$lifecycle_helper" ./tools/freebsd-lifecycle-runtime
+  go build -o "$dhcp_event_relay" ./cmd/routerd-dhcp-event-relay
+  prepare_lifecycle_relay "$dhcp_event_relay"
   sh scripts/freebsd-lifecycle-runtime-smoke.sh \
     --dhcpv4-client "$dhcpv4_client" --dhcpv6-client "$dhcpv6_client" --dns-resolver "$dns_resolver" \
     --routerd "$routerd" --lifecycle-helper "$lifecycle_helper" \
     --evidence-dir "$lifecycle_evidence"
   cat "$lifecycle_evidence/summary.log"
   cat "$lifecycle_evidence/result"
+  sh scripts/freebsd-dns-resolver-smoke.sh --dns-resolver "$dns_resolver" \
+    --lifecycle-helper "$lifecycle_helper" --evidence-dir "$work/dns-resolver-peer"
+  cat "$work/dns-resolver-peer/result"
+  restore_lifecycle_relay
 fi
 
 if [ "${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}" = true ]; then
