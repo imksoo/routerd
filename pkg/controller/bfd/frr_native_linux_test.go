@@ -47,7 +47,7 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		t.Skip("independent FRR bfdd is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 65*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	evidence := os.Getenv("ROUTERD_NATIVE_EVIDENCE")
 	if evidence == "" {
 		evidence = t.TempDir()
@@ -189,10 +189,35 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		}
 	}
 	waitState("actual peer reception", "Up")
+	t.Logf("actual local BFD peer JSON: %s", run("vtysh", vtyArgs(localDir, "-c", "show bfd peers json")...))
+	t.Logf("actual independent BFD peer JSON: %s", peerRun("vtysh", vtyArgs(peerDir, "-c", "show bfd peers json")...))
 	stopPeer()
 	waitState("peer process stopped", "Down")
 	stopPeer = start("bfd-peer-restarted", peerCommand(frr, bfddArgs(peerDir)...))
 	waitState("peer process restarted", "Up")
+	localVTY := func(commands ...string) []byte {
+		args := []string{}
+		for _, command := range commands {
+			args = append(args, "-c", command)
+		}
+		return run("vtysh", vtyArgs(localDir, args...)...)
+	}
+	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "shutdown")
+	waitState("real FRR administrative shutdown", "Down")
+	localVTY("configure terminal", "bfd", "peer 198.18.0.2 multihop local-address 198.18.0.1", "no shutdown")
+	waitState("administrative shutdown removed", "Up")
+	stopLocal()
+	if err := controller.Reconcile(ctx); err == nil {
+		t.Fatal("unavailable local bfdd accepted as a successful observation")
+	}
+	failed, err := store.ReadObjectStatus(api.NetAPIVersion, "BFD", "peer")
+	if err != nil || failed["phase"] != "Degraded" {
+		t.Fatalf("local bfdd outage did not publish degradation: %+v err=%v", failed, err)
+	}
+	stopLocal = start("bfd-local-restarted", exec.CommandContext(ctx, frr, bfddArgs(localDir)...))
+	waitState("local bfdd restarted from durable ownership", "Up")
+	// A second configured tuple belongs to the operator, not this controller.
+	localVTY("configure terminal", "bfd", "peer 198.18.1.2 multihop local-address 198.18.0.1")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -207,14 +232,15 @@ func TestBFDIndependentFRRNativeLinuxLifecycle(t *testing.T) {
 		t.Fatalf("withdraw configured BFD: %v", err)
 	}
 	peers, err := observeFRRBFD(ctx, controller.runner(), controller.vtysh())
-	if err != nil || len(peers) != 0 {
-		t.Fatalf("BFD remains after withdrawal: peers=%+v err=%v", peers, err)
+	foreignKey := sessionKey(session{Address: "198.18.1.2", LocalAddr: "198.18.0.1"})
+	if err != nil || len(peers) != 1 || peers[foreignKey].Type != "configured" {
+		t.Fatalf("withdrawal did not preserve only the foreign tuple: peers=%+v err=%v", peers, err)
 	}
 	receipt, err := controller.readNativeReceipt()
 	if err != nil || len(receipt.Held)+len(receipt.Pending) != 0 {
 		t.Fatalf("BFD receipt remains after withdrawal: %+v err=%v", receipt, err)
 	}
-	t.Log("resource withdrawal acknowledged by real bfdd and SQLite")
+	t.Log("resource withdrawal acknowledged by real bfdd and SQLite; foreign configured tuple retained")
 	stopPeer()
 	stopLocal()
 	stopPeerNS()

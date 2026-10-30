@@ -176,9 +176,12 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 		Now:        func() time.Time { return time.Unix(100, 0) },
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			if len(args) == 2 && args[1] == "show bfd peers" {
+				return []byte(nativePeersText), nil
+			}
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
 				reads++
-				if reads == 1 {
+				if reads <= 2 {
 					return []byte(`[]`), nil
 				}
 				return []byte(`[{"peer":"10.99.0.2","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3},{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"down","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}]`), nil
@@ -189,7 +192,7 @@ func TestReconcileAppliesFRRAndSavesPeerStates(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 3 || !strings.Contains(commands[0], "show bfd peers json") || !strings.Contains(commands[1], "-f ") || !strings.Contains(commands[2], "show bfd peers json") {
+	if len(commands) != 5 || !strings.Contains(commands[0], "show bfd peers json") || !strings.Contains(commands[2], "-f ") || !strings.Contains(commands[3], "show bfd peers json") || !strings.HasSuffix(commands[4], "show bfd peers") {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")
@@ -213,9 +216,12 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 		RuntimeDir: t.TempDir(),
 		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			commands = append(commands, name+" "+strings.Join(args, " "))
+			if len(args) == 2 && args[1] == "show bfd peers" {
+				return []byte(nativePeersText), nil
+			}
 			if len(args) == 2 && args[0] == "-c" && args[1] == "show bfd peers json" {
 				reads++
-				if reads == 1 {
+				if reads <= 2 {
 					return []byte(`[]`), nil
 				}
 				return []byte(`[{"peer":"10.99.0.2","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3},{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}]`), nil
@@ -226,7 +232,7 @@ func TestReconcileFreeBSDAppliesFRRWithFreeBSDVtysh(t *testing.T) {
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(commands) != 3 || !strings.HasPrefix(commands[1], "/usr/local/bin/vtysh -f ") || commands[2] != "/usr/local/bin/vtysh -c show bfd peers json" {
+	if len(commands) != 5 || !strings.HasPrefix(commands[2], "/usr/local/bin/vtysh -f ") || commands[3] != "/usr/local/bin/vtysh -c show bfd peers json" || commands[4] != "/usr/local/bin/vtysh -c show bfd peers" {
 		t.Fatalf("commands = %#v", commands)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "BFD", "fabric")

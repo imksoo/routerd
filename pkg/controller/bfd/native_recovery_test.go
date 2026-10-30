@@ -19,6 +19,15 @@ const nativePeerA = `{"peer":"10.99.0.2","vrf":"default","interface":"wg0","stat
 const nativePeerB = `{"peer":"10.99.0.3","vrf":"default","interface":"wg0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}`
 const foreignPeer = `{"peer":"10.99.0.2","vrf":"default","interface":"operator0","status":"up","type":"configured","receive-interval":300,"transmit-interval":300,"detect-multiplier":3}`
 
+const nativePeersText = `BFD Peers:
+ peer 10.99.0.2 vrf default interface wg0
+  Peer Type: configured
+ peer 10.99.0.3 vrf default interface wg0
+  Peer Type: configured
+ peer 10.99.0.2 vrf default interface operator0
+  Peer Type: configured
+`
+
 type receiptFaultStore struct {
 	*routerstate.SQLiteStore
 	failFinal bool
@@ -50,6 +59,9 @@ func TestBFDRecoversUncertainAddAndWithdrawsOnlyOwnedPeers(t *testing.T) {
 	failedDelete := true
 	controller := Controller{Router: bfdRouter(), Store: fault, OS: platform.OSLinux, RuntimeDir: dir}
 	controller.Command = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[0] == "-c" && args[1] == "show bfd peers" {
+			return []byte(nativePeersText), nil
+		}
 		if args[0] == "-c" {
 			if installed {
 				return []byte("[" + nativePeerA + "," + nativePeerB + "," + foreignPeer + "]"), nil

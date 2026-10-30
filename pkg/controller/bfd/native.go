@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,7 +28,7 @@ type frrPeer struct {
 	VRF        string `json:"vrf"`
 	Interface  string `json:"interface"`
 	Status     string `json:"status"`
-	Type       string `json:"type"`
+	Type       string `json:"-"`
 	MinRxMS    int    `json:"receive-interval"`
 	MinTxMS    int    `json:"transmit-interval"`
 	Multiplier int    `json:"detect-multiplier"`
@@ -74,7 +75,7 @@ func parseFRRBFDPeers(data []byte) (map[string]frrPeer, error) {
 	out := make(map[string]frrPeer, len(peers))
 	for _, peer := range peers {
 		address, err := netip.ParseAddr(peer.Address)
-		if err != nil || peer.Status == "" || peer.VRF == "" || peer.Type == "" {
+		if err != nil || peer.Status == "" || peer.VRF == "" {
 			return nil, fmt.Errorf("incomplete FRR BFD peer %q", peer.Address)
 		}
 		peer.Address = address.String()
@@ -98,7 +99,53 @@ func observeFRRBFD(ctx context.Context, run CommandRunner, vtysh string) (map[st
 	if err != nil {
 		return nil, fmt.Errorf("observe FRR BFD peers: %w", err)
 	}
-	return parseFRRBFDPeers(out)
+	peers, err := parseFRRBFDPeers(out)
+	if err != nil || len(peers) == 0 {
+		return peers, err
+	}
+	// FRR 8.4 exposes configured/dynamic only in its text display, not JSON.
+	// Match the complete native header; never infer ownership from Up or timers.
+	out, err = run(ctx, vtysh, "-c", "show bfd peers")
+	if err != nil {
+		return nil, fmt.Errorf("observe FRR BFD peer types: %w", err)
+	}
+	headers := make(map[string]string, len(peers))
+	for key, peer := range peers {
+		header := "peer " + peer.Address
+		if peer.Multihop {
+			header += " multihop"
+		}
+		if peer.LocalAddr != "" {
+			header += " local-address " + peer.LocalAddr
+		}
+		header += " vrf " + peer.VRF
+		if peer.Interface != "" {
+			header += " interface " + peer.Interface
+		}
+		headers[header] = key
+	}
+	key := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "peer ") {
+			key = headers[line]
+		}
+		if key == "" || !strings.HasPrefix(line, "Peer Type:") {
+			continue
+		}
+		peer := peers[key]
+		if peer.Type != "" {
+			return nil, fmt.Errorf("duplicate FRR BFD peer type for %s", peer.Address)
+		}
+		peer.Type = strings.TrimSpace(strings.TrimPrefix(line, "Peer Type:"))
+		peers[key] = peer
+	}
+	for _, peer := range peers {
+		if peer.Type != "configured" && peer.Type != "dynamic" {
+			return nil, fmt.Errorf("incomplete FRR BFD peer type for %s", peer.Address)
+		}
+	}
+	return peers, nil
 }
 
 func nativeStates(peers map[string]frrPeer) map[string]string {
@@ -187,8 +234,32 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 				}
 			}
 		}
-		if err := c.saveNativeReceipt(nativeReceipt{Held: uniqueSessions(held), Pending: uniqueSessions(desired)}); err != nil {
+		pending := nativeReceipt{Held: uniqueSessions(held), Pending: uniqueSessions(desired)}
+		if err := c.checkNativeReceipt(receipt); err != nil {
 			return nativeStates(observed), err
+		}
+		if err := c.saveNativeReceipt(pending); err != nil {
+			return nativeStates(observed), err
+		}
+		receipt = pending
+		// Recheck the actual tuples after journaling and before configuration.
+		// A missing/changed observation is not permission to update or remove it.
+		current, err := observeFRRBFD(ctx, run, c.vtysh())
+		if err != nil {
+			return nil, err
+		}
+		for key := range wanted {
+			if !sameObservedSession(observed, current, key) {
+				return nativeStates(current), fmt.Errorf("FRR BFD peer changed before apply")
+			}
+		}
+		for _, s := range removals {
+			if !sameObservedSession(observed, current, sessionKey(s)) {
+				return nativeStates(current), fmt.Errorf("FRR BFD peer changed before withdrawal")
+			}
+		}
+		if err := c.checkNativeReceipt(receipt); err != nil {
+			return nativeStates(current), err
 		}
 		if err := c.applyNativeConfig(ctx, desired, removals); err != nil {
 			return nativeStates(observed), err
@@ -208,10 +279,32 @@ func (c Controller) reconcileNative(ctx context.Context, desired []session) (map
 			}
 		}
 	}
+	if err := c.checkNativeReceipt(receipt); err != nil {
+		return nativeStates(observed), err
+	}
 	if err := c.saveNativeReceipt(nativeReceipt{Held: uniqueSessions(desired), Pending: []session{}}); err != nil {
 		return nativeStates(observed), err
 	}
 	return nativeStates(observed), nil
+}
+
+func sameObservedSession(a, b map[string]frrPeer, key string) bool {
+	left, leftOK := a[key]
+	right, rightOK := b[key]
+	return leftOK == rightOK && (!leftOK || left.Type == right.Type && left.Multihop == right.Multihop &&
+		left.Address == right.Address && left.LocalAddr == right.LocalAddr && left.VRF == right.VRF && left.Interface == right.Interface &&
+		left.MinRxMS == right.MinRxMS && left.MinTxMS == right.MinTxMS && left.Multiplier == right.Multiplier)
+}
+
+func (c Controller) checkNativeReceipt(want nativeReceipt) error {
+	actual, err := c.readNativeReceipt()
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(actual.Held, want.Held) || !slices.Equal(actual.Pending, want.Pending) {
+		return fmt.Errorf("BFD native receipt changed during observation")
+	}
+	return nil
 }
 
 func sameSessionConfig(a, b session) bool {

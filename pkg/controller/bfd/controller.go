@@ -390,7 +390,7 @@ func normalizeBFDState(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "up", "established":
 		return "Up"
-	case "down", "admin_down", "admindown":
+	case "down", "shutdown", "admin-down", "admin_down", "admindown":
 		return "Down"
 	default:
 		return "Unknown"
