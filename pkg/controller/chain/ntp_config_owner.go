@@ -232,6 +232,9 @@ func (o ntpConfigOwner) write(ctx context.Context, name, provider, path string, 
 		if err := o.require(desired); err != nil {
 			return false, nil, err
 		}
+		if err := ctx.Err(); err != nil {
+			return false, nil, err
+		}
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 		if err != nil {
 			return false, nil, err
