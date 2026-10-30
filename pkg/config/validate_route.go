@@ -468,6 +468,9 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 				return true, fmt.Errorf("%s spec.pattern.topic, spec.pattern.topics, spec.pattern.trigger, or spec.pattern.expected is required", res.ID())
 			}
 		}
+		if spec.Pattern.Operator == "absence" && spec.Pattern.Trigger == "" && spec.Pattern.Topic == "" {
+			return true, fmt.Errorf("%s absence requires spec.pattern.trigger or topic", res.ID())
+		}
 		for field, value := range map[string]string{
 			"duration": spec.Pattern.Duration,
 			"window":   spec.Pattern.Window,
@@ -475,16 +478,20 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			"interval": spec.Pattern.Interval,
 		} {
 			if value != "" {
-				if _, err := time.ParseDuration(value); err != nil {
+				parsed, err := time.ParseDuration(value)
+				if err != nil {
 					return true, fmt.Errorf("%s spec.pattern.%s is invalid: %w", res.ID(), field, err)
+				}
+				if parsed < 0 {
+					return true, fmt.Errorf("%s spec.pattern.%s must be non-negative", res.ID(), field)
 				}
 			}
 		}
 		if spec.Pattern.Threshold < 0 {
 			return true, fmt.Errorf("%s spec.pattern.threshold must be non-negative", res.ID())
 		}
-		if spec.Pattern.Rate < 0 {
-			return true, fmt.Errorf("%s spec.pattern.rate must be non-negative", res.ID())
+		if spec.Pattern.Rate != 0 {
+			return true, fmt.Errorf("%s spec.pattern.rate is not implemented; use interval", res.ID())
 		}
 		if spec.Pattern.CorrelateBy != "" && !validEventRuleCorrelation(spec.Pattern.CorrelateBy) {
 			return true, fmt.Errorf("%s spec.pattern.correlate_by must be attributes.<key>, resource.{name,kind,apiVersion}, or daemon.{instance,kind}", res.ID())

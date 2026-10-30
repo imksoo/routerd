@@ -3,7 +3,6 @@
 package egressroute
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"testing"
@@ -59,7 +58,10 @@ func TestSelectionReadFailurePreservesPreviousDecision(t *testing.T) {
 				store.failKind = "EgressRoutePolicy"
 			}
 			controller := Controller{Router: routerWithPolicy(api.EgressRoutePolicySpec{Candidates: []api.EgressRoutePolicyCandidate{candidate}}), Store: store, Bus: bus.New()}
-			if err := controller.Reconcile(context.Background()); err == nil {
+			if candidate.HealthCheck != "" {
+				controller.Router.Spec.Resources = append(controller.Router.Spec.Resources, healthCheckResource(candidate.HealthCheck, api.HealthCheckSpec{TargetSource: "static", Target: "192.0.2.1", Protocol: "tcp"}))
+			}
+			if err := controller.Reconcile(t.Context()); err == nil {
 				t.Fatal("read failure was accepted as a new selection")
 			}
 			if got := store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "ipv4-default"); !reflect.DeepEqual(got, previous) {

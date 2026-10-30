@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -25,9 +26,13 @@ type packetSocket struct {
 	closeErr  error
 }
 
-func openPacketSocket(ifname string) (*packetSocket, error) {
-	capture, err := freebsdpcap.Open(ifname)
+func openPacketSocket(ctx context.Context, ifname string) (*packetSocket, error) {
+	capture, err := freebsdpcap.Open(ctx, ifname)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		capture.Close()
 		return nil, err
 	}
 	fd, err := openObserverBPF(unix.O_RDWR)

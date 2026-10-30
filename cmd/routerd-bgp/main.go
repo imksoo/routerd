@@ -98,6 +98,9 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 	}
 	nativeStarted := false
 	defer func() { result = errors.Join(result, owner.finish(!nativeStarted)) }()
+	if err := owner.validatePaths(socketPath, controlSocketPath, statePath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
 		return fmt.Errorf("create socket directory: %w", err)
 	}

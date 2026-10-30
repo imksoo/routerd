@@ -524,7 +524,7 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 	if d.state.Phase == healthcheck.PhaseUnhealthy {
 		health = daemonapi.HealthFailed
 	}
-	if d.state.Phase == healthcheck.PhaseFailing || d.state.Phase == healthcheck.PhaseUnknown {
+	if d.state.Phase == healthcheck.PhasePassing || d.state.Phase == healthcheck.PhaseFailing || d.state.Phase == healthcheck.PhaseUnknown {
 		health = daemonapi.HealthDegraded
 	}
 	observed := map[string]string{
@@ -580,7 +580,7 @@ func (d *daemon) statusLocked() daemonapi.DaemonStatus {
 		}
 	}
 	resourceStatus := daemonapi.ResourceStatus{
-		Routing:  &api.HealthObservation{Phase: d.state.Phase, CheckedAt: d.state.LastCheckedAt, ConsecutiveFailed: d.state.ConsecutiveFailed},
+		Routing:  &api.HealthObservation{Probe: d.state.Probe, Phase: d.state.Phase, CheckedAt: d.state.LastCheckedAt, ConsecutiveFailed: d.state.ConsecutiveFailed},
 		Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: d.opts.resource},
 		Phase:    d.state.Phase,
 		Health:   health,

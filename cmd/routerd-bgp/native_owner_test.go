@@ -188,3 +188,72 @@ func TestBGPProcessOwnerRejectsUnprotectedRuntimeDirectory(t *testing.T) {
 		})
 	}
 }
+
+func TestBGPProcessOwnerRejectsPublicPathReplacingItsLock(t *testing.T) {
+	for _, field := range []string{"rpc", "control", "state"} {
+		for _, alias := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/alias=%v", field, alias), func(t *testing.T) {
+				root := t.TempDir()
+				directory := filepath.Join(root, "runtime")
+				owner, err := acquireBGPProcessOwner(context.Background(), directory)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := owner.path
+				if err := owner.finish(true); err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidate := path
+				if alias {
+					candidate = directory + "/unused/../" + filepath.Base(path)
+				}
+				rpc, control, state := filepath.Join(root, "rpc", "api.sock"), filepath.Join(root, "control", "api.sock"), filepath.Join(root, "state", "applied.json")
+				switch field {
+				case "rpc":
+					rpc = candidate
+				case "control":
+					control = candidate
+				case "state":
+					state = candidate
+				}
+				if err := runBGPDaemon(context.Background(), directory, rpc, control, state); err == nil || !strings.Contains(err.Error(), "conflicts with") {
+					t.Fatalf("actual daemon admitted a public path replacing its lock: %v", err)
+				}
+				after, err := os.Stat(path)
+				if err != nil || !os.SameFile(before, after) {
+					t.Fatalf("lock inode was replaced: %v", err)
+				}
+				for _, name := range []string{"rpc", "control", "state"} {
+					if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+						t.Fatalf("rejected path caused %s side effects: %v", name, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestBGPProcessOwnerRejectsSameInodeAlias(t *testing.T) {
+	root := t.TempDir()
+	owner, err := acquireBGPProcessOwner(context.Background(), filepath.Join(root, "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.finish(true)
+	for _, link := range []func(string, string) error{os.Symlink, os.Link} {
+		alias := filepath.Join(root, "alias")
+		if err := link(owner.path, alias); err != nil {
+			t.Fatal(err)
+		}
+		if err := owner.validatePaths(alias); err == nil {
+			t.Fatal("actual same-inode alias was admitted")
+		}
+		if err := os.Remove(alias); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

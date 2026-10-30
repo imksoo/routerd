@@ -68,9 +68,6 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 			}()
 			before := runner.ActiveRuntimeSnapshot()
 			if kind == "EventRule" {
-				if _, err := store.LoadOrInitializeEventConsumerCursor("eventrule/engine"); err != nil {
-					t.Fatal(err)
-				}
 				trigger := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "test"}, "routerd.test.trigger", daemonapi.SeverityInfo)
 				cursor, err := store.RecordBusEvent(ctx, trigger)
 				if err != nil {
@@ -82,8 +79,8 @@ func TestEventConsumerChangesReloadActualGeneration(t *testing.T) {
 					t.Fatal(err)
 				}
 				waitEventGeneration(t, func() bool {
-					current, err := store.LoadOrInitializeEventConsumerCursor("eventrule/engine")
-					return err == nil && current >= id
+					current, err := store.ReadEventRule(ctx, "selection")
+					return err == nil && current.Cursor >= id
 				})
 			} else if kind == "DerivedEvent" {
 				waitEventGeneration(t, func() bool { return len(events.Recent("routerd.test.old.asserted")) != 0 })

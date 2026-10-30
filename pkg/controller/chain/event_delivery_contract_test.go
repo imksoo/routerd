@@ -18,7 +18,6 @@ import (
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
-	"github.com/imksoo/routerd/pkg/eventconsumer"
 	"github.com/imksoo/routerd/pkg/eventrule"
 	"github.com/imksoo/routerd/pkg/ha"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -33,12 +32,17 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 				t.Fatal(err)
 			}
 			defer store.Close()
-			if _, err := store.LoadOrInitializeEventConsumerCursor("eventrule/engine"); err != nil {
-				t.Fatal(err)
-			}
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EventRule"}, Metadata: api.ObjectMeta{Name: "status-count"}, Spec: api.EventRuleSpec{Pattern: api.EventRulePatternSpec{Operator: eventrule.OperatorCount, Topic: "routerd.resource.status.changed", Threshold: 1}, Emit: api.EventRuleEmitSpec{Topic: "routerd.test.transition"}}}}}}
 			events := bus.NewWithStore(store)
 			observed := eventedStore{Store: store, Bus: events, Router: router}
+			controller := eventrule.Controller{Router: router, Bus: events, Store: eventRuleStore{observed}, Poll: time.Millisecond}
+			ctx, cancel := context.WithCancel(t.Context())
+			done, err := controller.Start(ctx)
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			defer func() { cancel(); <-done }()
 			faultDB, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
@@ -69,7 +73,7 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if err := save(); err != nil {
 				t.Fatal(err)
 			}
-			persisted, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed"})
+			persisted, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.resource.status.changed", Kind: "DHCPv4Client", Name: "uplink"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,15 +83,11 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if got := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "uplink")["gateway"]; got != "192.0.2.1" {
 				t.Fatalf("retry status=%v", got)
 			}
-			controller := eventrule.Controller{Router: router, Bus: events, Store: observed, Events: store}
-			if err := eventconsumer.Drain(t.Context(), store, "eventrule/engine", func(ctx context.Context, event daemonapi.DaemonEvent) error {
-				if event.Daemon.Kind == "routerd-eventrule" {
-					return nil
-				}
-				return controller.Reconcile(ctx, event)
-			}); err != nil {
-				t.Fatal(err)
+			deadline := time.Now().Add(3 * time.Second)
+			for len(events.Recent("routerd.test.transition")) == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
 			}
+
 			if got := len(events.Recent("routerd.test.transition")); got != 1 {
 				t.Fatalf("EventRule lost committed status transition after retry: emitted=%d, want 1", got)
 			}

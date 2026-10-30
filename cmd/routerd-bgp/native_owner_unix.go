@@ -48,3 +48,37 @@ func lockBGPProcess(path string) (int, error) {
 }
 
 func closeBGPProcess(descriptor int) error { return unix.Close(descriptor) }
+
+func checkBGPProcessPaths(descriptor int, path string, candidates ...string) error {
+	var lock unix.Stat_t
+	if err := unix.Fstat(descriptor, &lock); err != nil {
+		return err
+	}
+	if lock.Nlink != 1 {
+		return errors.New("BGP process lock inode changed during admission")
+	}
+	name, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			return err
+		}
+		if absolute == name {
+			return fmt.Errorf("path %q conflicts with the BGP process lock", candidate)
+		}
+		var info unix.Stat_t
+		if err := unix.Stat(candidate, &info); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return fmt.Errorf("inspect BGP path %q: %w", candidate, err)
+		}
+		if info.Dev == lock.Dev && info.Ino == lock.Ino {
+			return fmt.Errorf("path %q aliases the BGP process lock inode", candidate)
+		}
+	}
+	return nil
+}

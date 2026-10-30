@@ -168,3 +168,38 @@ func TestEventRuleTimerRequiresInputTipAndRetentionIsNotAbsence(t *testing.T) {
 		t.Fatalf("canceled read=%v", err)
 	}
 }
+
+func TestEventRuleMalformedCheckpointOrMissingCursorDoesNotBecomeFreshState(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := t.Context()
+	defs := []EventRuleDefinition{{Name: "rule", Digest: "definition"}}
+	if err := s.InitializeEventRules(ctx, defs, 0); err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := s.db.QueryRow(`SELECT status FROM objects WHERE api_version=? AND kind='Router' AND name=?`, api.RouterAPIVersion, eventRuleObject("rule")).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE objects SET status='null' WHERE api_version=? AND kind='Router' AND name=?`, api.RouterAPIVersion, eventRuleObject("rule")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReadEventRule(ctx, "rule"); err == nil {
+		t.Fatal("corrupt checkpoint became missing/fresh state")
+	}
+	if err := s.InitializeEventRules(ctx, defs, 0); err == nil {
+		t.Fatal("selected start replaced a corrupt checkpoint")
+	}
+	if _, err := s.db.Exec(`UPDATE objects SET status=? WHERE api_version=? AND kind='Router' AND name=?`, raw, api.RouterAPIVersion, eventRuleObject("rule")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM event_consumer_cursors WHERE consumer=?`, EventRuleConsumer("rule")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InitializeEventRules(ctx, defs, 0); err == nil {
+		t.Fatal("selected start reset a lost cursor beside a retained checkpoint")
+	}
+}

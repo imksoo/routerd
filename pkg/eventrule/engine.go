@@ -134,6 +134,9 @@ func prepareRule(resource api.Resource, spec api.EventRuleSpec) (preparedRule, e
 	if len(r.topics) == 0 {
 		return r, fmt.Errorf("%s: EventRule requires an input or absence trigger", resource.ID())
 	}
+	if spec.Pattern.Operator == OperatorAbsence && spec.Pattern.Trigger == "" && spec.Pattern.Topic == "" {
+		return r, fmt.Errorf("%s: absence requires trigger or topic", resource.ID())
+	}
 	if spec.Pattern.CorrelateBy != "" {
 		_, valid := correlationKey(daemonapi.DaemonEvent{Attributes: map[string]string{}, Resource: &daemonapi.ResourceRef{}}, api.EventRulePatternSpec{CorrelateBy: spec.Pattern.CorrelateBy, AllowMissingCorrelation: true})
 		if !valid {
@@ -186,6 +189,10 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 			return done, err
 		}
 		if err := validateCheckpoint(r, cp); err != nil {
+			close(done)
+			return done, err
+		}
+		if _, _, err := c.Store.EventRuleJournal().EventRuleInputs(ctx, cp.Cursor); err != nil {
 			close(done)
 			return done, err
 		}

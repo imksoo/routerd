@@ -12,3 +12,7 @@ func lockBGPProcess(string) (int, error) {
 func closeBGPProcess(int) error {
 	return errors.New("BGP process ownership is unsupported on this platform")
 }
+
+func checkBGPProcessPaths(int, string, ...string) error {
+	return errors.New("BGP process ownership is unsupported on this platform")
+}

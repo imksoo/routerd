@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -14,7 +15,10 @@ type packetSocket struct {
 	file *os.File
 }
 
-func openPacketSocket(ifname string) (*packetSocket, error) {
+func openPacketSocket(ctx context.Context, ifname string) (*packetSocket, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	iface, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return nil, err

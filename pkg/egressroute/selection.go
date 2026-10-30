@@ -14,6 +14,7 @@ import (
 
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/healthcheck"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/resourcequery"
@@ -325,24 +326,28 @@ func (c Controller) ready(candidate api.EgressRoutePolicyCandidate, resolved boo
 }
 
 func (c Controller) healthCheckReady(name string) (bool, error) {
-	var spec api.HealthCheckSpec
-	if c.Router != nil {
-		for _, resource := range c.Router.Spec.Resources {
-			if resource.Kind == "HealthCheck" && resource.Metadata.Name == name {
-				var err error
-				spec, err = resource.HealthCheckSpec()
-				if err != nil {
-					return false, err
-				}
-				break
-			}
+	if c.Router == nil {
+		return false, nil
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "HealthCheck" || resource.Metadata.Name != name {
+			continue
 		}
+		spec, err := resource.HealthCheckSpec()
+		if err != nil {
+			return false, err
+		}
+		resolved, err := healthcheck.ResolveSpecWithStoreForResource(c.Router, c.Store, name, spec)
+		if err != nil {
+			return false, err
+		}
+		observation, err := c.Store.HealthObservation(name)
+		if err != nil {
+			return false, fmt.Errorf("read Health observation %s: %w", name, err)
+		}
+		return observation.Usable(c.now(), resolved), nil
 	}
-	observation, err := c.Store.HealthObservation(name)
-	if err != nil {
-		return false, fmt.Errorf("read Health observation %s: %w", name, err)
-	}
-	return observation.Usable(c.now(), spec), nil
+	return false, nil
 }
 
 func (c Controller) sourceDisabled(source string) bool {

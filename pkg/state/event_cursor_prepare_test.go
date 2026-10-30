@@ -40,20 +40,24 @@ func TestPreparedEventCursorIncludesBootstrapHistoryAndPreservesRecovery(t *test
 		t.Fatalf("preparation created cursor: count=%d error=%v", count, err)
 	}
 	bootstrap := appendEvent("routerd.bootstrap")
-	if err := store.InitializeEventConsumerCursor(t.Context(), "eventrule/engine", tip); err != nil {
+	if err := store.InitializeEventRules(t.Context(), []EventRuleDefinition{{Name: "rule", Digest: "definition"}}, tip); err != nil {
 		t.Fatal(err)
 	}
-	cursor, err := store.LoadOrInitializeEventConsumerCursor("eventrule/engine")
+	checkpoint, err := store.ReadEventRule(t.Context(), "rule")
+	cursor := checkpoint.Cursor
 	if err != nil || cursor != prior {
 		t.Fatalf("activation skipped bootstrap: cursor=%d error=%v", cursor, err)
 	}
-	if err := store.SaveEventConsumerCursor("eventrule/engine", bootstrap); err != nil {
+	next := checkpoint
+	next.Cursor = bootstrap
+	if _, _, err := store.CommitEventRule(t.Context(), checkpoint, next, nil, false, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.InitializeEventConsumerCursor(t.Context(), "eventrule/engine", tip); err != nil {
+	if err := store.InitializeEventRules(t.Context(), []EventRuleDefinition{{Name: "rule", Digest: "definition"}}, tip); err != nil {
 		t.Fatal(err)
 	}
-	cursor, err = store.LoadOrInitializeEventConsumerCursor("eventrule/engine")
+	checkpoint, err = store.ReadEventRule(t.Context(), "rule")
+	cursor = checkpoint.Cursor
 	if err != nil || cursor != bootstrap {
 		t.Fatalf("initialization reset recovery progress: cursor=%d error=%v", cursor, err)
 	}
@@ -70,7 +74,7 @@ func TestPreparedEventCursorIncludesBootstrapHistoryAndPreservesRecovery(t *test
 	if _, err := store.EventJournalTip(t.Context()); !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("closed tip read=%v", err)
 	}
-	if err := store.InitializeEventConsumerCursor(t.Context(), "eventrule/engine", 0); !errors.Is(err, sql.ErrConnDone) {
+	if err := store.InitializeEventRules(t.Context(), nil, 0); !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("closed initialization=%v", err)
 	}
 }

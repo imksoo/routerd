@@ -54,6 +54,7 @@ type ProbeResult struct {
 }
 
 type State struct {
+	Probe             api.HealthProbe `json:"probe"`
 	Phase             string    `json:"phase"`
 	LastResult        string    `json:"lastResult,omitempty"`
 	LastMessage       string    `json:"message,omitempty"`
@@ -438,6 +439,16 @@ func resultFromError(ctx context.Context, err error) ProbeResult {
 }
 
 func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, result ProbeResult, now time.Time) Evaluation {
+	probe := spec.Probe()
+	if state.Probe != probe {
+		state.Phase = PhaseUnknown
+		state.LastTransitionAt = now
+		state.ConsecutivePassed, state.ConsecutiveFailed = 0, 0
+		state.FailureCount = 0
+		state.FirstFailureTime = time.Time{}
+	}
+	state.Probe = probe
+
 	if state.Phase == "" {
 		state.Phase = PhaseUnknown
 		state.LastTransitionAt = now

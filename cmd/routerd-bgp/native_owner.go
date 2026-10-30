@@ -13,7 +13,10 @@ import (
 
 // A raw CLOEXEC descriptor has no finalizer. If native shutdown is not
 // acknowledged, its lock survives garbage collection until actual process exit.
-type bgpProcessOwner struct{ descriptor int }
+type bgpProcessOwner struct {
+	descriptor int
+	path       string
+}
 
 func acquireBGPProcessOwner(ctx context.Context, runtimeDir string) (*bgpProcessOwner, error) {
 	scope, err := platform.KernelNetworkScope(ctx)
@@ -26,7 +29,11 @@ func acquireBGPProcessOwner(ctx context.Context, runtimeDir string) (*bgpProcess
 	if err != nil {
 		return nil, err
 	}
-	return &bgpProcessOwner{descriptor: descriptor}, nil
+	return &bgpProcessOwner{descriptor: descriptor, path: path}, nil
+}
+
+func (owner *bgpProcessOwner) validatePaths(paths ...string) error {
+	return checkBGPProcessPaths(owner.descriptor, owner.path, paths...)
 }
 
 func (owner *bgpProcessOwner) finish(acknowledged bool) error {
