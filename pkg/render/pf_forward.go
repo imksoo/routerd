@@ -10,7 +10,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-func pfIngressTag(ifname string) string { return "routerd_ingress_" + ifname }
+func pfIngressTag(ifname string) string { return pfInternalName("routerd_ingress_" + ifname) }
 
 // FreeBSD 14.3 has no received-on selector. A stateless ingress pass records
 // the actual interface; only an egress-zone decision creates forwarding state.
@@ -33,7 +33,7 @@ func writePFZoneForwards(buf *bytes.Buffer, zones map[string]firewallZone, rules
 				if len(to.IfNames) == 0 {
 					continue
 				}
-				buf.WriteString("anchor " + pfQuote("routerd_forward_"+from.Name+"_"+to.Name+"_"+ifname) + " out on $" + pfZoneMacro(to) + " tagged " + tag + " {\n")
+				buf.WriteString("anchor " + pfQuote(pfInternalName("routerd_forward_"+from.Name+"_"+to.Name+"_"+ifname)) + " out on $" + pfZoneMacro(to) + " tagged " + tag + " {\n")
 				for _, hole := range holes {
 					if hole.FromZone == from.Name && hole.ToZone == to.Name && (len(hole.IfNames) == 0 || slices.Contains(hole.IfNames, ifname)) {
 						name := hole.Name
@@ -58,18 +58,18 @@ func writePFZoneForwards(buf *bytes.Buffer, zones map[string]firewallZone, rules
 					if logging.Enabled && logging.AcceptSampleRate > 0 {
 						log = " log"
 					}
-					buf.WriteString("pass out" + log + " quick on $" + pfZoneMacro(to) + " all keep state label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name) + "\n")
+					buf.WriteString("pass out" + log + " quick on $" + pfZoneMacro(to) + " all keep state label " + pfRuleLabel("routerd:"+from.Name+"-to-"+to.Name) + "\n")
 				} else {
 					log := ""
 					if policy.LogDeny {
 						log = " " + pfLogExpr(logging)
 					}
-					buf.WriteString("block drop out" + log + " quick on $" + pfZoneMacro(to) + " all label " + pfQuote("routerd:"+from.Name+"-to-"+to.Name+"-deny") + "\n")
+					buf.WriteString("block drop out" + log + " quick on $" + pfZoneMacro(to) + " all label " + pfRuleLabel("routerd:"+from.Name+"-to-"+to.Name+"-deny") + "\n")
 				}
 				buf.WriteString("}\n")
 			}
 			// An ingress-tagged packet must never fall into the local-output default.
-			buf.WriteString("block drop out quick tagged " + tag + " label " + pfQuote("routerd:"+from.Name+":unmatched-forward") + "\n")
+			buf.WriteString("block drop out quick tagged " + tag + " label " + pfRuleLabel("routerd:"+from.Name+":unmatched-forward") + "\n")
 		}
 	}
 	for _, resource := range rules {
