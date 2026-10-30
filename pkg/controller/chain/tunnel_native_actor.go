@@ -128,6 +128,28 @@ func (c TunnelInterfaceController) reconcileTunnelNative(ctx context.Context, na
 		if err := verifyTunnelNative(record, link); err != nil {
 			return err
 		}
+		if !record.Pending && record.Plan == desired && tunnelNativeApplied(record, link) {
+			listenerReady := true
+			if listener, uses := fouListenerForDesired(desired); uses {
+				present, matching, err := c.observeTunnelNativeListener(ctx, listener)
+				if err != nil {
+					return err
+				}
+				listenerReady = present && matching
+			}
+			if listenerReady {
+				if err := c.requireTunnelNativeInputs(ctx, record); err != nil {
+					return err
+				}
+				fresh, err := c.checkedOwnedTunnel(ctx, record)
+				if err != nil {
+					return err
+				}
+				if tunnelNativeApplied(record, fresh) {
+					return nil
+				}
+			}
+		}
 	}
 	var previous *tunnelNativeReceipt
 	if record.Resource == "" {
@@ -294,33 +316,7 @@ func (c TunnelInterfaceController) retireTunnelOldKernel(ctx context.Context, re
 }
 
 func (c TunnelInterfaceController) observeTunnelNativeListener(ctx context.Context, listener fouListener) (bool, bool, error) {
-	out, err := c.run(ctx, "ip", "fou", "show")
-	if err != nil {
-		return false, false, err
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		port, protocol, gue := 0, 0, false
-		for i, field := range fields {
-			if field == "port" && i+1 < len(fields) {
-				port, err = strconv.Atoi(fields[i+1])
-				if err != nil {
-					return false, false, err
-				}
-			} else if field == "ipproto" && i+1 < len(fields) {
-				protocol, err = strconv.Atoi(fields[i+1])
-				if err != nil {
-					return false, false, err
-				}
-			} else if field == "gue" {
-				gue = true
-			}
-		}
-		if port == listener.Port {
-			return true, listener.Mode == "gue" && gue || listener.Mode == "fou" && !gue && protocol == 4, nil
-		}
-	}
-	return false, false, nil
+	return observeTunnelNativeFOU(ctx, listener)
 }
 
 func (c TunnelInterfaceController) ensureTunnelNativeListener(ctx context.Context, record *tunnelNativeReceipt) error {
@@ -349,13 +345,7 @@ func (c TunnelInterfaceController) ensureTunnelNativeListener(ctx context.Contex
 	if err := c.requireTunnelNativeInputs(ctx, *record); err != nil {
 		return err
 	}
-	args := []string{"fou", "add", "port", strconv.Itoa(listener.Port)}
-	if listener.Mode == "gue" {
-		args = append(args, "gue")
-	} else {
-		args = append(args, "ipproto", "4")
-	}
-	if _, err := c.run(ctx, "ip", args...); err != nil {
+	if err := addTunnelNativeFOU(ctx, listener); err != nil {
 		return err
 	}
 	present, matching, err = c.observeTunnelNativeListener(ctx, listener)
@@ -418,8 +408,22 @@ func (c TunnelInterfaceController) retireTunnelNativeListener(ctx context.Contex
 			}
 			return errors.New("TunnelInterface listener owner changed before transfer")
 		}
-		if err := c.deleteFOUListener(ctx, record.Listener); err != nil {
+		prior := *record
+		record.ListenerPending = true
+		if err := c.saveTunnelNative(&prior, *record, false); err != nil {
 			return err
+		}
+		present, matching, err = c.observeTunnelNativeListener(ctx, record.Listener)
+		if err != nil || present && !matching {
+			return errors.Join(err, errors.New("TunnelInterface listener changed before withdrawal"))
+		}
+		if err := c.checkTunnelNativeReceipt(ctx, *record); err != nil {
+			return err
+		}
+		if present {
+			if err := deleteTunnelNativeFOU(ctx, record.Listener); err != nil {
+				return err
+			}
 		}
 	}
 	prior := *record

@@ -24,3 +24,15 @@ func deleteTunnelNativeLink(context.Context, int, string, string, string, string
 func applyTunnelNativePlan(context.Context, tunnelNativeReceipt) error {
 	return errors.New("TunnelInterface indexed configuration is only available on Linux")
 }
+
+func observeTunnelNativeFOU(context.Context, fouListener) (bool, bool, error) {
+	return false, false, errors.New("TunnelInterface FOU/GUE ownership is only available on Linux")
+}
+
+func addTunnelNativeFOU(context.Context, fouListener) error {
+	return errors.New("TunnelInterface FOU/GUE ownership is only available on Linux")
+}
+
+func deleteTunnelNativeFOU(context.Context, fouListener) error {
+	return errors.New("TunnelInterface FOU/GUE ownership is only available on Linux")
+}

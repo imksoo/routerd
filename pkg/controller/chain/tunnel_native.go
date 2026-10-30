@@ -97,6 +97,9 @@ func (c TunnelInterfaceController) tunnelNativeReceipts() ([]tunnelNativeReceipt
 		default:
 			return nil, errors.New("invalid TunnelInterface native mode")
 		}
+		if !record.Pending && (record.Withdrawing || record.ListenerPending || record.PreviousAddress != "") {
+			return nil, errors.New("invalid TunnelInterface pending recovery state")
+		}
 		if record.ListenerOwned || record.ListenerPending {
 			if record.Listener.Mode != "fou" && record.Listener.Mode != "gue" || record.Listener.Port < 1 || record.Listener.Port > 65535 {
 				return nil, errors.New("invalid TunnelInterface listener receipt")
