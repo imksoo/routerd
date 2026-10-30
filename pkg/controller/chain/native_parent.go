@@ -21,6 +21,7 @@ type nativeParentReader struct {
 	DSLite    *DSLiteTunnelController
 	Bridges   *BridgeController
 	WireGuard *WireGuardController
+	VRFs      *VRFController
 }
 type nativeParentLink struct {
 	Exists, Declared     bool
@@ -35,6 +36,8 @@ func validNativeParentToken(token string) bool {
 	} else if raw, ok := strings.CutPrefix(token, "bridge:"); ok {
 		token, size = raw, 24
 	} else if raw, ok := strings.CutPrefix(token, "wireguard:"); ok {
+		token = raw
+	} else if raw, ok := strings.CutPrefix(token, "vrf:"); ok {
 		token = raw
 	}
 	decoded, err := hex.DecodeString(token)
@@ -77,6 +80,14 @@ func (r nativeParentReader) wireGuardOwner() (WireGuardController, error) {
 	owner.Router, owner.Store = r.Router, store
 	return owner, nil
 }
+func (r nativeParentReader) vrfOwner() VRFController {
+	owner := VRFController{}
+	if r.VRFs != nil {
+		owner = *r.VRFs
+	}
+	owner.Router, owner.Store = r.Router, r.Store
+	return owner
+}
 func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) (nativeParentLink, error) {
 	if r.Router == nil {
 		return nativeParentLink{}, errors.New("child parent router is unavailable")
@@ -86,6 +97,13 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var name, configuredAlias string
 		var err error
 		switch resource.Kind {
+		case "VRF":
+			if r.vrfOwner().currentOS() != platform.OSLinux {
+				continue
+			}
+			var spec api.VRFSpec
+			spec, err = resource.VRFSpec()
+			name = firstNonEmpty(spec.IfName, resource.Metadata.Name)
 		case "WireGuardInterface":
 			if r.WireGuard != nil && r.WireGuard.currentOS() != platform.OSLinux || r.WireGuard == nil && platform.CurrentOS() != platform.OSLinux {
 				continue
@@ -125,6 +143,9 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		selected = resource
 	}
 	switch selected.Kind {
+	case "VRF":
+		owner := r.vrfOwner()
+		return owner.observeChildParent(ctx, selected, "", "")
 	case "WireGuardInterface":
 		owner, err := r.wireGuardOwner()
 		if err != nil {
@@ -166,6 +187,10 @@ func (r nativeParentReader) observeRecorded(ctx context.Context, ifname, token s
 		if err != nil {
 			return nativeParentLink{}, err
 		}
+		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
+	}
+	if raw, ok := strings.CutPrefix(token, "vrf:"); ok {
+		owner := r.vrfOwner()
 		return owner.observeChildParent(ctx, api.Resource{}, ifname, raw)
 	}
 	owner := r.segmentOwner()
