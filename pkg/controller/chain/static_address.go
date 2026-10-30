@@ -24,12 +24,15 @@ type staticAddressReceipt struct {
 	Address     string `json:"address"`
 	Pending     bool   `json:"pending"`
 	ParentToken string `json:"parentToken,omitempty"`
+	PeerAddress string `json:"peerAddress,omitempty"`
 }
 
 type staticAddressSnapshot struct {
 	Index     int
 	Scope     string
 	Addresses []netip.Prefix
+	Peer      netip.Addr
+	Peers     []staticAddressPeer
 }
 
 var errStaticParentNotReady = errors.New("native parent is not acquired")
@@ -91,6 +94,9 @@ func (c IPv4StaticAddressController) staticAddresses(ctx context.Context, ifname
 		if iface.Name != ifname {
 			continue
 		}
+		if platform.CurrentOS() == platform.OSFreeBSD && iface.Flags&net.FlagPointToPoint != 0 {
+			return observeFreeBSDStaticPeers(ctx, iface)
+		}
 		addresses, err := iface.Addrs()
 		if err != nil {
 			return staticAddressSnapshot{}, err
@@ -124,16 +130,23 @@ func staticReceipt(status map[string]any) (*staticAddressReceipt, error) {
 	case staticAddressReceipt:
 		receipt = value
 	case map[string]any:
-		if len(value) != 5 && len(value) != 6 {
-			return nil, errors.New("invalid IPv4StaticAddress native receipt shape")
-		}
+		expected := 5
 		var ok bool
 		if parent, exists := value["parentToken"]; exists {
+			expected++
 			receipt.ParentToken, ok = parent.(string)
 			if !ok || receipt.ParentToken == "" {
 				return nil, errors.New("invalid static address parent token")
 			}
-		} else if len(value) != 5 {
+		}
+		if peer, exists := value["peerAddress"]; exists {
+			expected++
+			receipt.PeerAddress, ok = peer.(string)
+			if !ok || receipt.PeerAddress == "" {
+				return nil, errors.New("invalid static address peer")
+			}
+		}
+		if len(value) != expected {
 			return nil, errors.New("invalid static address receipt field")
 		}
 		receipt.IfName, ok = value["ifname"].(string)
@@ -169,6 +182,12 @@ func staticReceipt(status map[string]any) (*staticAddressReceipt, error) {
 			return nil, errors.New("invalid static address parent token")
 		}
 	}
+	if receipt.PeerAddress != "" {
+		peer, err := netip.ParseAddr(receipt.PeerAddress)
+		if err != nil || !peer.Is4() || peer.IsUnspecified() || peer.String() != receipt.PeerAddress {
+			return nil, errors.New("invalid static address peer identity")
+		}
+	}
 	return &receipt, nil
 }
 
@@ -189,7 +208,7 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	}
 	// An interface that disappeared or was replaced no longer carries our
 	// acquired identity. Its replacement's addresses must survive.
-	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.has(receipt.Address) {
+	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
 		return nil
 	}
 	if receipt.Pending {
@@ -223,7 +242,7 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err != nil {
 		return abortBeforeDelete(err)
 	}
-	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.has(receipt.Address) {
+	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
 		return nil
 	}
 	if err := c.checkStaticWithdrawalParent(ctx, receipt, observed); err != nil {
@@ -241,7 +260,7 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	if observed.Scope == receipt.Scope && observed.Index == receipt.IfIndex && observed.has(receipt.Address) {
+	if observed.Scope == receipt.Scope && observed.Index == receipt.IfIndex && observed.owns(*receipt) {
 		return errors.New("static address remains after withdrawal")
 	}
 	return c.staticAddressEvent(ctx, name, receipt.IfName, receipt.Address, "removed")
@@ -427,7 +446,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 	if observed.Index != 0 && observed.Scope == "" {
 		return errors.New("static address observation has no kernel identity")
 	}
-	if receipt != nil && (receipt.IfName != ifname || receipt.Address != spec.Address || receipt.IfIndex != observed.Index || receipt.Scope != observed.Scope) {
+	if receipt != nil && (receipt.IfName != ifname || receipt.Address != spec.Address || receipt.IfIndex != observed.Index || receipt.Scope != observed.Scope || receipt.PeerAddress != observed.peerAddress()) {
 		if err := c.withdrawStaticAddress(ctx, resource.Metadata.Name, receipt); err != nil {
 			return err
 		}
@@ -454,12 +473,15 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 	if receipt == nil && observed.has(spec.Address) {
 		return errors.New("declared address already exists without a native ownership receipt")
 	}
+	if receipt != nil && observed.has(spec.Address) && !observed.owns(*receipt) {
+		return errors.New("static address native peer differs from its ownership receipt")
+	}
 	if receipt != nil && receipt.Pending && observed.has(spec.Address) {
 		return errors.New("static address operation outcome is unknown; matching presence does not prove ownership")
 	}
 	changed := receipt == nil || receipt.Pending || !observed.has(spec.Address)
 	if !observed.has(spec.Address) {
-		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, Pending: true, ParentToken: parentToken}
+		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, Pending: true, ParentToken: parentToken, PeerAddress: observed.peerAddress()}
 		status["phase"] = "Pending"
 		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
 			return err
@@ -484,7 +506,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if err != nil {
 			return abortBeforeCommand(err)
 		}
-		if current.Scope != receipt.Scope || current.Index != receipt.IfIndex || current.has(spec.Address) {
+		if current.Scope != receipt.Scope || current.Index != receipt.IfIndex || current.has(spec.Address) || current.peerAddress() != receipt.PeerAddress {
 			return abortBeforeCommand(errors.New("native interface or address changed while recording acquisition intent"))
 		}
 		currentParent, err := c.staticNativeParent(ctx, spec.Interface, current)
@@ -498,7 +520,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if command == nil {
 			command = runCommandContext
 		}
-		cmd, args := ipv4StaticAddressApplyCommand(platform.CurrentOS(), ifname, spec.Address)
+		cmd, args := staticAddressAddCommand(platform.CurrentOS(), *receipt)
 		if platform.CurrentOS() == platform.OSLinux {
 			// Acquire without overwriting an address installed after our read.
 			args[2] = "add"
@@ -510,7 +532,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if err != nil {
 			return err
 		}
-		if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.has(spec.Address) {
+		if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
 			return errors.New("static address acquisition was not confirmed on the same interface")
 		}
 		currentParent, err = c.staticNativeParent(ctx, spec.Interface, observed)
@@ -535,6 +557,15 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		status["phase"], status["reason"] = "Pending", "WhenFalse"
 		delete(status, "nativeReceipt")
 		return c.saveStaticAddress(resource.Metadata.Name, status, nil)
+	}
+	if receipt.PeerAddress != "" {
+		fresh, err := c.staticAddresses(ctx, ifname)
+		if err != nil {
+			return err
+		}
+		if fresh.Scope != receipt.Scope || fresh.Index != receipt.IfIndex || !fresh.owns(*receipt) {
+			return errors.New("static address P2P identity changed before publication")
+		}
 	}
 	receipt.Pending = false
 	status["phase"] = "Applied"
