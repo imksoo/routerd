@@ -25,8 +25,8 @@ func TestRealPluginStopFailureAndDurableRestart(t *testing.T) {
 	pluginPath := filepath.Join(dir, "plugin.sh")
 	if err := os.WriteFile(pluginPath, []byte(`#!/bin/sh
 set -eu
-echo $$ >"$PLUGIN_PID"
 echo invoked >>"$PLUGIN_CALLS"
+echo $$ >"$PLUGIN_PID"
 case "$(cat "$PLUGIN_MODE")" in
 block) exec sleep 30 ;;
 fail) echo 'independent plugin failure' >&2; exit 7 ;;
