@@ -803,15 +803,12 @@ func (c Controller) forwardLeaseEvent(ctx context.Context, event daemonapi.Daemo
 	if c.DryRun || c.Router == nil {
 		return nil
 	}
-	action, ok := daemonapi.DHCPLeaseActionFromEventType(event.Type)
-	if !ok {
-		return nil
+	payload, err := daemonapi.DHCPLeaseFromEvent(event)
+	if err != nil {
+		return err
 	}
-	payload := map[string]string{
-		"action":   action,
-		"mac":      event.Attributes["mac"],
-		"ip":       event.Attributes["ip"],
-		"hostname": event.Attributes["hostname"],
+	if err := payload.Validate(time.Now().UTC()); err != nil {
+		return err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -54,6 +54,10 @@ type upstreamPool struct {
 	upstreams []*dnsUpstream
 	config    upstreamPoolConfig
 	owner     context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	retired   bool
+	queries   sync.WaitGroup
 }
 
 type dnsUpstream struct {
@@ -108,7 +112,8 @@ func newUpstreamPool(raw []string, cfg upstreamPoolConfig) (*upstreamPool, error
 	if len(upstreams) == 0 {
 		return nil, fmt.Errorf("no DNS upstream configured")
 	}
-	return &upstreamPool{upstreams: upstreams, config: cfg}, nil
+	owner, cancel := context.WithCancel(context.Background())
+	return &upstreamPool{upstreams: upstreams, config: cfg, owner: owner, cancel: cancel}, nil
 }
 
 func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
@@ -162,17 +167,52 @@ func parseDNSUpstream(index int, raw string) (*dnsUpstream, error) {
 
 func (p *upstreamPool) Start(ctx context.Context, publish func(string, string, string, string, map[string]string)) {
 	p.mu.Lock()
+	if p.done != nil || p.retired {
+		p.mu.Unlock()
+		return
+	}
+	p.cancel()
+	ctx, p.cancel = context.WithCancel(ctx)
 	p.owner = ctx
+	p.done = make(chan struct{})
+	done := p.done
+	upstreams := append([]*dnsUpstream(nil), p.upstreams...)
 	p.mu.Unlock()
-	context.AfterFunc(ctx, func() {
-		for _, upstream := range p.snapshotPointers() {
-			if upstream.client != nil {
-				upstream.client.CloseIdleConnections()
-			}
+	go func() {
+		defer close(done)
+		var probes sync.WaitGroup
+		for _, upstream := range upstreams {
+			probes.Add(1)
+			go func() {
+				defer probes.Done()
+				p.probeLoop(ctx, upstream, publish)
+			}()
 		}
-	})
+		probes.Wait()
+		p.closeIdleConnections()
+	}()
+}
+
+// Stop first closes admission, then cancels and joins both real query and probe
+// work. No retired probe callback or exchange may publish after it returns.
+func (p *upstreamPool) Stop() {
+	p.mu.Lock()
+	p.retired = true
+	cancel, done := p.cancel, p.done
+	p.mu.Unlock()
+	cancel()
+	if done != nil {
+		<-done
+	}
+	p.queries.Wait()
+	p.closeIdleConnections()
+}
+
+func (p *upstreamPool) closeIdleConnections() {
 	for _, upstream := range p.snapshotPointers() {
-		go p.probeLoop(ctx, upstream, publish)
+		if upstream.client != nil {
+			upstream.client.CloseIdleConnections()
+		}
 	}
 }
 
@@ -212,8 +252,14 @@ func (p *upstreamPool) probe(ctx context.Context, upstream *dnsUpstream, publish
 
 func (p *upstreamPool) Exchange(ctx context.Context, query []byte, publish func(string, string, string, string, map[string]string)) ([]byte, error) {
 	p.mu.Lock()
+	if p.retired {
+		p.mu.Unlock()
+		return nil, context.Canceled
+	}
+	p.queries.Add(1)
 	owner := p.owner
 	p.mu.Unlock()
+	defer p.queries.Done()
 	if owner != nil {
 		if err := owner.Err(); err != nil {
 			return nil, err

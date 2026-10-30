@@ -182,7 +182,7 @@ func TestReloadRetainsDHCPObservationsOnlyInTheirDeclaredNamespace(t *testing.T)
 			initial.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/old"}
 			writeRuntimeConfig(t, path, initial)
 			d := newTestDaemon(t, path, initial, true)
-			d.zones.ApplyLease(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, IP: "192.0.2.55", Hostname: "client"})
+			d.zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{Source: "DHCPv4Server/old", Action: daemonapi.DHCPLeaseActionAdded, IP: "192.0.2.55", Hostname: "client"}))
 			address := failoverDualDNSServer(t, dns.HandlerFunc(d.handleDNS))
 			if answer := namespaceQuery(t, address, "client.lab.example."); len(answer.Answer) != 1 {
 				t.Fatalf("initial DHCP observation was not served: %v", answer)
@@ -223,7 +223,7 @@ func TestReloadRetainedDHCPObservationUsesCurrentTTL(t *testing.T) {
 	initial := testResolverConfig(nil)
 	initial.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/one", "DHCPv4Server/two"}
 	d := newTestDaemon(t, path, initial, true)
-	d.zones.ApplyLease(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, IP: "192.0.2.55", Hostname: "client"})
+	d.zones.ApplyLease(observedLeaseForTest(dhcpLeaseEvent{Source: "DHCPv4Server/one", Action: daemonapi.DHCPLeaseActionAdded, IP: "192.0.2.55", Hostname: "client"}))
 	updated := testResolverConfig(nil)
 	updated.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/two", "DHCPv4Server/one"}
 	updated.Zones[0].Spec.DHCPDerived.TTL = 7

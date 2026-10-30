@@ -1348,12 +1348,14 @@ type DNSZoneReverseSpec struct {
 }
 
 type DNSResolverSpec struct {
-	Listen   []DNSResolverListenSpec `yaml:"listen" json:"listen"`
-	Sources  []DNSResolverSourceSpec `yaml:"-" json:"sources,omitempty" jsonschema:"-"`
-	Cache    DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
-	Metrics  DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
-	QueryLog DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
-	When     ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
+	// RequestTimeout bounds the complete lookup, independently of each upstream attempt.
+	RequestTimeout string                  `yaml:"requestTimeout,omitempty" json:"requestTimeout,omitempty"`
+	Listen         []DNSResolverListenSpec `yaml:"listen" json:"listen"`
+	Sources        []DNSResolverSourceSpec `yaml:"-" json:"sources,omitempty" jsonschema:"-"`
+	Cache          DNSResolverCacheSpec    `yaml:"cache,omitempty" json:"cache,omitempty"`
+	Metrics        DNSResolverMetricsSpec  `yaml:"metrics,omitempty" json:"metrics,omitempty"`
+	QueryLog       DNSResolverQueryLogSpec `yaml:"queryLog,omitempty" json:"queryLog,omitempty"`
+	When           ResourceWhenSpec        `yaml:"when,omitempty" json:"when,omitempty"`
 }
 
 type DNSResolverListenSpec struct {

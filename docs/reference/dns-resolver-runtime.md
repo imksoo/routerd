@@ -13,3 +13,23 @@ waits for the request FIN; this is separate from independent-provider qualificat
 Normalization does not mutate the declaration's shared slices. Negative cache
 entry limits and invalid or negative TTLs are rejected rather than silently
 removing the cache bounds.
+
+`DNSResolver.spec.requestTimeout` bounds a complete lookup, including all
+sequential upstream attempts. It defaults to `30s` and must be a positive Go
+duration. `DNSForwarder.spec.queryTimeout` continues to limit each individual
+attempt. At most 128 queries enter a worker at once; excess UDP requests are
+dropped and excess TCP requests close their connection. The current rejected
+count is exposed as `queryRejected`.
+
+DNS responses use a two-second write deadline on the actual TCP connection or
+UDP socket. UDP response writes have one nonwaiting socket owner so concurrent
+replies cannot extend a blocked write's shared deadline. A busy UDP writer drops
+the reply; clients can retry. Transport errors are recorded as `WRITE_FAILED`
+when query history is enabled.
+
+Reload retires and joins the old upstream probes and admitted requests before
+acknowledging the new table. Removed listeners stop and join their handlers;
+unchanged listener addresses retain their sockets. An interrupted retirement
+clears the applied digest, so a same-digest retry must restore a live owner.
+Stopped pools cannot accept a later query. These local loopback/process contracts
+do not establish native resolver deployment or independent-provider behavior.
