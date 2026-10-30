@@ -4944,6 +4944,15 @@ func (c DaemonStatusController) daemonSockets() ([]string, error) {
 	}
 	for _, resource := range c.Router.Spec.Resources {
 		switch resource.Kind {
+		case "DHCPv6PrefixDelegation":
+			// A disabled PD worker can still have a valid recovery snapshot.
+			// Keep its unavailable-socket path reachable for source validation
+			// and standby LAN staging; observing it never starts a UDP owner.
+			socket := c.DaemonSockets[resource.Metadata.Name]
+			if socket == "" {
+				socket = defaultClientSocket("routerd-dhcpv6-client", resource.Metadata.Name)
+			}
+			add(socket)
 		case "DHCPv4Client":
 			socket := c.DaemonSockets[resource.Metadata.Name]
 			if socket == "" {
