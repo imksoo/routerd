@@ -157,9 +157,18 @@ The test uses separate upstream and client namespaces. Kea delegates a /60 with
 real RA packets to create its SLAAC address and default route; `rdisc6` separately
 checks the PIO. Pass requires local and forwarded AAAA answers over UDP/TCP,
 an HTTP peer observing the client's delegated source, actual Renew/Reply with
-an advanced lease timestamp, service restart, and upstream-stop expiry removing
-the router address and client default route. Traffic must then fail while the
-product service remains active. Final empty apply, peer shutdown, namespace
+an advanced lease timestamp, and an independent server pool change from
+`2001:db8:1500::/60` to `2001:db8:1501::/60`. Kea reloads on SIGHUP; the product
+configuration remains unchanged. Require the same router and Kea PIDs, a new
+client source and AAAA answer, the new PIO, removal of the revoked router
+address, and failure of DNS queries to the old endpoint. Any remaining old
+SLAAC client address must be deprecated; its short original valid lifetime can
+remain under RFC 4862's two-hour rule.
+
+Then require service restart and upstream-stop expiry removing the router
+address and client default route. Traffic must fail while the product service
+remains active. Restart the independent server and require automatic PD,
+SLAAC/default-route, DNS and forwarding recovery. Final empty apply, peer shutdown, namespace
 removal and restoration of the original forwarding setting are also required.
 
 DAD is asynchronous: a newly installed delegated address holds RA in Pending
@@ -173,7 +182,7 @@ this procedure, its fixture and the regression tests. Failures stop the product
 and peers and retain the exact fixture path for diagnosis. Reproduce a product
 failure locally before another native run, and remove retained output after the
 failure is resolved. WAN transit and its return route are fixture scaffolding:
-this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, prefix renumbering,
+this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, overlapping multi-prefix renumbering,
 reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
 
 ## Linux DHCP and firewall withdrawal gate

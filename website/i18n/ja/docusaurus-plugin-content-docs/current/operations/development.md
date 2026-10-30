@@ -145,10 +145,17 @@ sudo scripts/linux-pd-ra-lifecycle-smoke.sh --disposable-vm \
 
 独立した上流・クライアント netns を使い、Kea の /60 委譲、Linux の SLAAC と
 RA default route、ローカル・転送 AAAA の UDP/TCP 応答、対向が観測した IPv6 送信元、
-実 Renew/Reply による lease timestamp 更新、service 再起動を確認します。
-T1/T2 は20/40秒、preferred/valid lifetime は60/90秒です。上流停止後に期限切れで
+実 Renew/Reply による lease timestamp 更新を確認します。Kea の pool を
+`2001:db8:1500::/60` から `2001:db8:1501::/60` に変更し、SIGHUPで再読込みします。
+製品設定は変更せず、router・Kea PIDの維持、新しいPIO・client送信元・AAAA応答、
+旧routerアドレスの撤去、旧DNS endpointの応答停止を必須とします。
+旧SLAACアドレスがclientに残る場合はdeprecatedであることを確認します。
+RFC 4862の2時間ルールにより、短い元のvalid lifetimeが残る場合があります。
+
+続いてservice再起動を確認します。T1/T2 は20/40秒、preferred/valid lifetime は60/90秒です。上流停止後に期限切れで
 router のアドレスと client の default route が撤去され、製品は動いたまま通信が
-失敗することも必須です。最後に空設定の適用、peer・netns 撤去、forwarding 復元を行います。
+失敗することも必須です。独立serverを起動し、PD・SLAAC/default route・DNS・通信が
+自動回復することを確認します。最後に空設定の適用、peer・netns 撤去、forwarding 復元を行います。
 
 アドレス追加直後の DAD 待ちは RA の Pending とし、設定適用を失敗させません。
 DAD 完了後に広告を開始します。DAD 失敗・所有権不明は引き続きエラーです。
@@ -157,7 +164,7 @@ DNSForwarder は設定順に評価するため、ローカル zone を default u
 成功時の生出力は自動削除します。残すのは revision・判定、手順・fixture・回帰テストです。
 失敗時は製品と peer を停止し、表示した fixture パスを診断用に保持します。
 製品の失敗はローカルで再現・修正してから再検証し、解消後は一時出力を削除します。
-WAN の transit と戻り経路は試験用の事前設定です。WAN RA、DHCPv6 IA_NA、prefix 変更、
+WAN の transit と戻り経路は試験用の事前設定です。WAN RA、DHCPv6 IA_NA、複数prefixの重複期間を伴う変更、
 reboot/crash recovery、firewall、FreeBSD、routerd 1.0 全機能の合格とは区別します。
 
 ## Linux の DHCP・firewall 撤去試験

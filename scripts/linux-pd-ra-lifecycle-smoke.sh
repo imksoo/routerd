@@ -39,6 +39,13 @@ sysctl -n net.ipv6.conf.all.forwarding > "$work/forward.before"
 finish() {
  rc=$?
  trap - EXIT
+ if [ "$rc" -ne 0 ]; then
+   # Capture the actual failure state before stopping any participant.
+   ip -6 -j addr show dev rd15-lan > "$work/failure-router-addresses.json" 2>&1 || true
+   ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 > "$work/failure-client-addresses.json" 2>&1 || true
+   ip netns exec "$lan_ns" ip -6 route show > "$work/failure-client-routes.txt" 2>&1 || true
+   timeout 5 /usr/local/sbin/routerctl get status -o json > "$work/failure-status.json" 2>&1 || true
+ fi
  systemctl stop rd15-peer-kea.service rd15-peer-http6.service rd15-peer-dns6.service >/dev/null 2>&1 || true
  if [ "$rc" -ne 0 ]; then
    systemctl stop routerd.service
@@ -109,6 +116,10 @@ printf 'Environment fixtures ready: Kea listener, independent HTTP peer, WAN tra
 systemctl start routerd.service
 /usr/local/sbin/routerctl apply -f "$candidate" --replace > "$work/apply.txt"
 pdstatus() { curl --fail --silent --max-time 2 --unix-socket /run/routerd/dhcpv6-client/wan-pd.sock http://localhost/v1/status; }
+client_ready() {
+ ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e --arg prefix "$active_prefix:" 'any(.[0].addr_info[]; (.local | startswith($prefix)) and .preferred_life_time>0 and .tentative!=true and .dadfailed!=true and ((.flags // []) | index("tentative") | not))' >/dev/null &&
+ ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'
+}
 for _ in {1..45}; do
  if pdstatus > "$work/pd.json" && jq -e '.resources[0].phase == "Bound"' "$work/pd.json" >/dev/null && ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then break; fi
  sleep 1
@@ -116,7 +127,7 @@ done
 jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1500::/60"' "$work/pd.json" >/dev/null
 ip -6 addr show dev rd15-lan | grep '2001:db8:1500::1/64'
 for _ in {1..30}; do
- if ip netns exec "$lan_ns" ip -6 addr show dev peer0 scope global | grep -v tentative | grep -q 'inet6 2001:db8:1500:' && ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
+ if client_ready; then break; fi
  sleep 1
 done
 # rdisc6 is an independent RS/RA decoder, Linux kernel handles SLAAC itself.
@@ -161,7 +172,7 @@ done
 jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-renumber.json" >/dev/null
 active_prefix=2001:db8:1501
 for _ in {1..30}; do
- if ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e 'any(.[0].addr_info[]; (.local | startswith("2001:db8:1501:")) and .tentative!=true and .dadfailed!=true and ((.flags // []) | index("tentative") | not))' >/dev/null && ! ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then break; fi
+ if client_ready && ! ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then break; fi
  sleep 1
 done
 test "$(systemctl show -p MainPID --value routerd)" = "$router_pid"
@@ -200,10 +211,11 @@ systemctl is-active --quiet routerd
 printf 'PASS: expired PD withdrawn from router address, client default route and traffic\n'
 systemd-run --unit=rd15-peer-kea --property=Type=exec --property=RuntimeDirectory=kea --setenv="LD_LIBRARY_PATH=$LD_LIBRARY_PATH" ip netns exec "$wan_ns" "$kea" -d -c "$work/kea.json"
 for _ in {1..90}; do
- if pdstatus > "$work/pd-return.json" && jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null && ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
+ if pdstatus > "$work/pd-return.json" && jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null && client_ready; then break; fi
  sleep 1
 done
 jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null
+client_ready
 probe
 printf 'PASS: expired upstream returned and forwarding/DNS recovered automatically\n'
 cat > "$work/empty.json" <<'JSON'
