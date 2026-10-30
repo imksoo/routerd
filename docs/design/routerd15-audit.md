@@ -223,11 +223,11 @@ surfaces still need semantic review and corresponding implementation.
   withdraw, and Solicit carries the configured prefix-length hint.
 - Discard an unusable IA/prefix at its option boundary while retaining independent
   DNS data. The relevant rules are RFC 9915 sections 14.2, 16 and 21.21–21.22:
-  <https://www.rfc-editor.org/rfc/rfc9915.html>.
+  [RFC 9915](https://www.rfc-editor.org/rfc/rfc9915.html).
 - RA parsing now obeys declared IPv6 length, source/hop/code/checksum and option
   framing requirements. Ethernet padding is excluded; an invalid independent PIO
   does not erase valid route/DNS options. See RFC 4861 section 6.1.2:
-  <https://www.rfc-editor.org/rfc/rfc4861.html#section-6.1.2>.
+  [RFC 4861 §6.1.2](https://www.rfc-editor.org/rfc/rfc4861.html#section-6.1.2).
 - Share DHCPv4 Ethernet/IP/UDP framing checks between Linux packet capture and
   FreeBSD BPF. Reject short/truncated/fragmented lengths rather than replacing an
   invalid IP total length with capture length or slicing past it.
