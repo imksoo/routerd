@@ -173,7 +173,10 @@ func (o ntpConfigOwner) require(r ntpConfigRecord) error {
 	return nil
 }
 
-func (o ntpConfigOwner) write(name, provider, path string, data []byte, dryRun bool) (bool, *ntpConfigRecord, error) {
+func (o ntpConfigOwner) write(ctx context.Context, name, provider, path string, data []byte, dryRun bool) (bool, *ntpConfigRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
 	r, err := o.get(name)
 	if err != nil {
 		return false, nil, err
@@ -219,6 +222,9 @@ func (o ntpConfigOwner) write(name, provider, path string, data []byte, dryRun b
 	if err := o.save(name, original, &desired); err != nil {
 		return false, nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return false, nil, err
 	}
@@ -260,6 +266,9 @@ func (o ntpConfigOwner) write(name, provider, path string, data []byte, dryRun b
 		if !bytes.Equal(fresh, current) {
 			return false, nil, errors.New("NTP config changed before replacement")
 		}
+		if err := ctx.Err(); err != nil {
+			return false, nil, err
+		}
 		if err := os.Rename(temporary, path); err != nil {
 			return false, nil, err
 		}
@@ -280,6 +289,9 @@ func (o ntpConfigOwner) write(name, provider, path string, data []byte, dryRun b
 }
 
 func (o ntpConfigOwner) withdraw(ctx context.Context, r ntpConfigRecord, dryRun bool, reload func(context.Context, string) error) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if dryRun {
 		return true, nil
 	}
@@ -300,6 +312,9 @@ func (o ntpConfigOwner) withdraw(ctx context.Context, r ntpConfigRecord, dryRun 
 			return false, errors.New("NTP config withdrawal found a foreign replacement")
 		}
 		if err := o.require(r); err != nil {
+			return false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return false, err
 		}
 		if err := os.Remove(r.Path); err != nil {
@@ -332,7 +347,10 @@ func (o ntpConfigOwner) check(r ntpConfigRecord) error {
 	return o.require(r)
 }
 
-func (o ntpConfigOwner) confirm(r ntpConfigRecord) error {
+func (o ntpConfigOwner) confirm(ctx context.Context, r ntpConfigRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := o.check(r); err != nil {
 		return err
 	}
@@ -343,6 +361,9 @@ func (o ntpConfigOwner) confirm(r ntpConfigRecord) error {
 
 func (o ntpConfigOwner) command(r ntpConfigRecord, command outputCommandFunc) outputCommandFunc {
 	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if err := o.check(r); err != nil {
 			return nil, err
 		}

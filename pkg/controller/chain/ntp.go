@@ -119,7 +119,7 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 		configPath := c.ntpConfigPath(provider, defaults)
 		data := renderNTPConfig(provider, servers, compactNTPList(spec.FallbackServers))
 		owner := ntpConfigOwner{store: c.Store, kind: "NTPClient"}
-		changed, receipt, err := owner.write(resource.Metadata.Name, provider, configPath, data, c.DryRun)
+		changed, receipt, err := owner.write(ctx, resource.Metadata.Name, provider, configPath, data, c.DryRun)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, map[string]any{
 				"phase":    "Error",
@@ -142,7 +142,7 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			}
 		}
 		if !c.DryRun {
-			if err := owner.confirm(*receipt); err != nil {
+			if err := owner.confirm(ctx, *receipt); err != nil {
 				return err
 			}
 		}
@@ -563,7 +563,7 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 		}
 		data := renderNTPServerConfig(provider, servers, allowCIDRs, listenAddresses)
 		owner := ntpConfigOwner{store: c.Store, kind: "NTPServer"}
-		changed, receipt, err := owner.write(resource.Metadata.Name, provider, configPath, data, c.DryRun)
+		changed, receipt, err := owner.write(ctx, resource.Metadata.Name, provider, configPath, data, c.DryRun)
 		if err != nil {
 			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPServer", resource.Metadata.Name, map[string]any{
 				"phase":    "Error",
@@ -594,7 +594,7 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			}
 		}
 		if !c.DryRun {
-			if err := owner.confirm(*receipt); err != nil {
+			if err := owner.confirm(ctx, *receipt); err != nil {
 				return err
 			}
 		}
@@ -660,7 +660,7 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 		changed := false
 		if acquired != nil {
 			var receipt *ntpConfigRecord
-			changed, receipt, err = owner.write(resource.Metadata.Name, provider, configPath, renderNTPServerConfig(provider, nil, nil, nil), c.DryRun)
+			changed, receipt, err = owner.write(ctx, resource.Metadata.Name, provider, configPath, renderNTPServerConfig(provider, nil, nil, nil), c.DryRun)
 			if err != nil {
 				return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupWriteFailed", err)
 			}
@@ -670,7 +670,7 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 						return c.saveWhenFalseNTPServerStatus(resource.Metadata.Name, provider, configPath, changed, "CleanupReloadFailed", err)
 					}
 				}
-				if err := owner.confirm(*receipt); err != nil {
+				if err := owner.confirm(ctx, *receipt); err != nil {
 					return err
 				}
 			}
