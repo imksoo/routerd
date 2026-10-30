@@ -9,6 +9,10 @@ import (
 	"syscall"
 )
 
+func checkNativeDnsmasqDescriptorView() error {
+	return errors.New("native dnsmasq requires Linux or FreeBSD")
+}
+
 func readNativeDnsmasqProcess(context.Context, int) (dnsmasqNativeProcess, error) {
 	return dnsmasqNativeProcess{}, errors.New("native dnsmasq process observation requires Linux or FreeBSD")
 }

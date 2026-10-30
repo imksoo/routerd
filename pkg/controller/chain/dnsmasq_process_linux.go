@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func checkNativeDnsmasqDescriptorView() error { return nil }
+
 func dnsmasqLinuxProcLocalPID(base string) (int, error) {
 	ours, err := os.Stat("/proc/self/ns/pid")
 	if err != nil {

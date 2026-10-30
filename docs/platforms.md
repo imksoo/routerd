@@ -177,6 +177,15 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 | Diagnostics | `bind-tools` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
+Native dnsmasq activation also requires `fdescfs` mounted on `/dev/fd`.
+Bare devfs exposes only descriptors 0, 1 and 2. In the native FreeBSD 14.3
+test with dnsmasq 2.91, its DHCP script helper consequently retained sockets
+and its own pipe writer after the main process exited. Mount the descriptor
+filesystem with `mount -t fdescfs fdesc /dev/fd` and arrange the corresponding
+mount at boot before enabling DHCP service. The controller checks descriptor
+visibility before creating its process ownership receipt; it reports the
+missing prerequisite instead of starting a process that cannot be withdrawn.
+
 `routerd render freebsd --out-dir <dir>` produces:
 
 - `rc.conf.d-routerd`

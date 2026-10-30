@@ -289,6 +289,9 @@ func startOwnedDnsmasq(ctx context.Context, spec dnsmasqProcessSpec) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := checkNativeDnsmasqDescriptorView(); err != nil {
+		return err
+	}
 	if err := writeDnsmasqOwner(ctx, dnsmasqProcessOwner{Spec: spec, State: "starting"}); err != nil {
 		return err
 	}

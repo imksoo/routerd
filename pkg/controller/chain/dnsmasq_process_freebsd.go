@@ -19,6 +19,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func checkNativeDnsmasqDescriptorView() error {
+	// dnsmasq's helper enumerates /dev/fd to close the parent's sockets and
+	// pipe writers. Bare devfs exposes only 0/1/2, so the helper can retain its
+	// own writer and never observe EOF after its parent exits.
+	probe, err := os.Open(os.DevNull)
+	if err != nil {
+		return err
+	}
+	defer probe.Close()
+	entries, err := os.ReadDir("/dev/fd")
+	if err == nil {
+		for _, entry := range entries {
+			if entry.Name() == strconv.Itoa(int(probe.Fd())) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("FreeBSD dnsmasq requires a complete /dev/fd view; mount fdescfs on /dev/fd before activation: %w", errors.Join(err, errors.New("open descriptor is absent from /dev/fd")))
+}
+
 func dnsmasqFreeBSDPS(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
