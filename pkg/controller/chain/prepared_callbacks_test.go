@@ -101,12 +101,12 @@ func TestPreparedIngressCallbackRefreshesStatusDerivedResolver(t *testing.T) {
 	if err := config.Validate(router); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "loopback", map[string]any{"addresses": []string{"127.0.0.1"}}); err != nil {
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "loopback", map[string]any{"addresses": []string{"127.0.0.1/8"}}); err != nil {
 		t.Fatal(err)
 	}
 	runner := &Runner{Router: router, Bus: bus.New(), Store: store, Opts: Options{EnabledControllers: []string{"ingress-service"}, DryRunIngress: true}}
 	controller := preparedCallback(t, runner)
-	for _, point := range []struct{ listen, answer string }{{"127.0.0.1", "192.0.2.11"}, {"::1", "192.0.2.22"}} {
+	for _, point := range []struct{ listen, answer string }{{"127.0.0.1/8", "192.0.2.11"}, {"::1/128", "192.0.2.22"}} {
 		if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "loopback", map[string]any{"addresses": []string{point.listen}}); err != nil {
 			t.Fatal(err)
 		}
