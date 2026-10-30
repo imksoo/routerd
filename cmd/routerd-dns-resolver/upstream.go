@@ -434,7 +434,7 @@ func (p *upstreamPool) exchangeUDP(ctx context.Context, upstream *dnsUpstream, q
 	if _, err := conn.Write(query); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, 4096)
+	buf := make([]byte, maxDNSMessageSize)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
