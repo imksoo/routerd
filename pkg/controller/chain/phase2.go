@@ -425,6 +425,7 @@ type IPv4RouteController struct {
 	Bridges           *BridgeController
 	WireGuard         *WireGuardController
 	VRFs              *VRFController
+	Tunnels           *TunnelInterfaceController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan

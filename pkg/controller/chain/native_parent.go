@@ -22,6 +22,7 @@ type nativeParentReader struct {
 	Bridges   *BridgeController
 	WireGuard *WireGuardController
 	VRFs      *VRFController
+	Tunnels   *TunnelInterfaceController
 }
 type nativeParentLink struct {
 	Exists, Declared     bool
@@ -91,7 +92,12 @@ func (r nativeParentReader) vrfOwner() VRFController {
 	return owner
 }
 func (r nativeParentReader) tunnelOwner() TunnelInterfaceController {
-	return TunnelInterfaceController{Router: r.Router, Store: r.Store}
+	owner := TunnelInterfaceController{}
+	if r.Tunnels != nil {
+		owner = *r.Tunnels
+	}
+	owner.Router, owner.Store = r.Router, r.Store
+	return owner
 }
 func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) (nativeParentLink, error) {
 	if r.Router == nil {
@@ -103,7 +109,7 @@ func (r nativeParentReader) observeDeclared(ctx context.Context, ifname string) 
 		var err error
 		switch resource.Kind {
 		case "TunnelInterface":
-			if platform.CurrentOS() != platform.OSLinux {
+			if r.tunnelOwner().targetOS() != platform.OSLinux {
 				continue
 			}
 			name = resource.Metadata.Name

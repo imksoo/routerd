@@ -41,7 +41,7 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 	run("link", "add", "name", "tnl-underlay", "type", "dummy")
 	run("address", "add", "198.18.0.1/30", "dev", "tnl-underlay")
 	run("link", "set", "dev", "tnl-underlay", "up")
-	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired"} {
+	for _, scenario := range []string{"replacement-cleanup", "unacquired-child", "source-expired", "source-expired-noop"} {
 		t.Run(scenario, func(t *testing.T) {
 			run := func(args ...string) []byte {
 				out, err := exec.CommandContext(ctx, "ip", args...).CombinedOutput()
@@ -60,7 +60,7 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 				{TypeMeta: api.TypeMeta{APIVersion: api.HybridAPIVersion, Kind: "TunnelInterface"}, Metadata: api.ObjectMeta{Name: "tnl-owned"}, Spec: api.TunnelInterfaceSpec{Mode: "ipip", Local: "198.18.0.1", Remote: "198.18.0.2", Address: "192.0.2.1/32", MTU: 1400, TrustedUnderlay: true}},
 			}}}
 			parent := TunnelInterfaceController{Router: router, Store: eventedStore{Store: store, Router: router}}
-			if scenario == "source-expired" {
+			if scenario == "source-expired" || scenario == "source-expired-noop" {
 				spec := router.Spec.Resources[0].Spec.(api.TunnelInterfaceSpec)
 				spec.Local = ""
 				spec.LocalFrom = api.StatusValueSourceSpec{Resource: "DHCPv4Client/underlay", Field: "currentAddress"}
@@ -71,12 +71,30 @@ func TestTunnelNativeLinuxOwnershipBoundaries(t *testing.T) {
 				if err := parent.Reconcile(ctx); err != nil {
 					t.Fatal(err)
 				}
-				// The DHCPv4 publisher clears currentAddress on real lease expiry.
-				if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Expired", "currentAddress": ""}); err != nil {
-					t.Fatal(err)
+				expire := func() {
+					// The DHCPv4 publisher clears currentAddress on real lease expiry.
+					if err := store.SaveObjectStatus(api.NetAPIVersion, "DHCPv4Client", "underlay", map[string]any{"phase": "Expired", "currentAddress": ""}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				observations := 0
+				if scenario == "source-expired-noop" {
+					parent.ObserveNative = func(ctx context.Context, name string) (tunnelNativeLink, error) {
+						link, err := observeTunnelNativeLink(ctx, name)
+						observations++
+						if err == nil && link.Exists && observations == 2 {
+							expire()
+						}
+						return link, err
+					}
+				} else {
+					expire()
 				}
 				if err := parent.Reconcile(ctx); err != nil {
 					t.Fatal(err)
+				}
+				if scenario == "source-expired-noop" && observations < 2 {
+					t.Fatal("unchanged reconciliation did not cross its final native observation")
 				}
 				if out, err := exec.CommandContext(ctx, "ip", "-j", "link", "show", "dev", "tnl-owned").CombinedOutput(); err == nil {
 					t.Fatalf("expired source retained its applied tunnel: %s", out)

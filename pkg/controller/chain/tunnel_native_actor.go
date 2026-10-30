@@ -153,7 +153,7 @@ func (c TunnelInterfaceController) reconcileTunnelNative(ctx context.Context, na
 					return err
 				}
 				if tunnelNativeApplied(record, fresh) {
-					return nil
+					return c.requireTunnelNativeInputs(ctx, record)
 				}
 			}
 		}
