@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -182,6 +183,7 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 		close(done)
 		return done, err
 	}
+	var checkpoints []routerstate.EventRuleCheckpoint
 	for _, r := range c.rules {
 		cp, err := c.Store.EventJournal().ReadEventRule(ctx, r.definition.Name)
 		if err != nil {
@@ -190,9 +192,19 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 		}
 		if err := validateCheckpoint(r, cp); err != nil {
 			close(done)
-			return done, err
+			return done, c.reportFailure(ctx, cp, err)
 		}
 		if _, _, err := c.Store.EventJournal().EventRuleInputs(ctx, cp.Cursor); err != nil {
+			close(done)
+			return done, c.reportFailure(ctx, cp, err)
+		}
+		checkpoints = append(checkpoints, cp)
+	}
+	// Definition changes can reset a private checkpoint without any new input.
+	// Publish the selected checkpoint and declaration metadata immediately, so
+	// a preceding definition's fire count cannot remain the current result.
+	for _, cp := range checkpoints {
+		if _, err := c.commit(ctx, cp, copyCheckpoint(cp), nil, false); err != nil {
 			close(done)
 			return done, err
 		}
@@ -264,6 +276,7 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.nextWake = time.Time{}
+rules:
 	for _, r := range c.rules {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -273,11 +286,11 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 			return err
 		}
 		if err := validateCheckpoint(r, cp); err != nil {
-			return err
+			return c.reportFailure(ctx, cp, err)
 		}
 		inputs, _, err := c.Store.EventJournal().EventRuleInputs(ctx, cp.Cursor)
 		if err != nil {
-			return err
+			return c.reportFailure(ctx, cp, err)
 		}
 		if len(inputs) > 0 {
 			// A continuously written journal must not let its first rule
@@ -288,19 +301,34 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 				if input.SourceKind != "routerd-eventrule" {
 					output, err = evaluate(r, &next, eventconsumer.Event(input))
 					if err != nil {
-						return err
+						return c.reportFailure(ctx, cp, err)
 					}
 				}
 				next.Cursor = input.ID
 				cp, err = c.commit(ctx, cp, next, output, false)
 				if err != nil {
-					return err
+					if errors.Is(err, routerstate.ErrEventRuleConflict) {
+						c.wakeAt(c.now())
+						continue rules
+					}
+					return c.reportFailure(ctx, cp, err)
 				}
 			}
 			c.wakeAt(c.now())
 			continue
 		}
 		now := c.now()
+		if cp.LastError != "" {
+			if _, err := c.commit(ctx, cp, copyCheckpoint(cp), nil, true); err != nil {
+				if errors.Is(err, routerstate.ErrEventRuleConflict) {
+					c.wakeAt(now)
+					continue
+				}
+				return c.reportFailure(ctx, cp, err)
+			}
+			c.wakeAt(now)
+			continue
+		}
 		key := ""
 		var due time.Time
 		for k, state := range cp.Correlations {
@@ -324,7 +352,11 @@ func (c *Controller) drainStoredEvents(ctx context.Context) error {
 		next.FireCount++
 		next.LastFiredAt = now
 		if _, err := c.commit(ctx, cp, next, &output, true); err != nil {
-			return err
+			if errors.Is(err, routerstate.ErrEventRuleConflict) {
+				c.wakeAt(now)
+				continue
+			}
+			return c.reportFailure(ctx, cp, err)
 		}
 		c.wakeAt(now)
 	}
@@ -354,8 +386,26 @@ func (c *Controller) commit(ctx context.Context, expected, next routerstate.Even
 	return committed, nil
 }
 
+// Preserve the input position, partial pattern and pending timers while making
+// an observable journal failure visible in the same status owner. If the store
+// itself cannot be written, return both errors; never claim that error was saved.
+func (c *Controller) reportFailure(ctx context.Context, cp routerstate.EventRuleCheckpoint, failure error) error {
+	message := failure.Error()
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	if ctx.Err() != nil || cp.Name == "" || cp.LastError == message {
+		return failure
+	}
+	next := copyCheckpoint(cp)
+	next.LastError = message
+	_, err := c.commit(ctx, cp, next, nil, false)
+	return errors.Join(failure, err)
+}
+
 func copyCheckpoint(cp routerstate.EventRuleCheckpoint) routerstate.EventRuleCheckpoint {
 	next := cp
+	next.LastError = ""
 	next.Correlations = make(map[string]routerstate.EventRuleCorrelation, len(cp.Correlations))
 	for key, state := range cp.Correlations {
 		copy := state

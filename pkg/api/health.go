@@ -32,9 +32,6 @@ func (s HealthCheckSpec) Probe() HealthProbe {
 		protocol = "icmp"
 	}
 	family := strings.ToLower(strings.TrimSpace(s.AddressFamily))
-	if family == "" {
-		family = "ipv4"
-	}
 	port := s.Port
 	if port == 0 {
 		switch protocol {
@@ -105,7 +102,7 @@ func (o HealthObservation) Current(now time.Time) bool {
 	default:
 		return false
 	}
-	if p.AddressFamily != "ipv4" && p.AddressFamily != "ipv6" {
+	if p.AddressFamily != "" && p.AddressFamily != "ipv4" && p.AddressFamily != "ipv6" {
 		return false
 	}
 	switch o.Phase {
@@ -113,7 +110,7 @@ func (o HealthObservation) Current(now time.Time) bool {
 	default:
 		return false
 	}
-	return !o.CheckedAt.IsZero() && !now.Before(o.CheckedAt) && now.Sub(o.CheckedAt) <= p.Freshness()
+	return !o.CheckedAt.IsZero() && !now.Before(o.CheckedAt) && !now.After(o.CheckedAt.Add(p.Freshness()))
 }
 
 func (o HealthObservation) Usable(now time.Time, spec HealthCheckSpec) bool {

@@ -48,6 +48,12 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 				t.Fatal(err)
 			}
 			defer faultDB.Close()
+			// The actual rule owner now commits its initial checkpoint/status
+			// before consuming inputs. Give this independent fault-injection
+			// connection a bounded wait for the same SQLite write lock.
+			if _, err := faultDB.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := faultDB.Exec(`CREATE TRIGGER fail_status_event BEFORE INSERT ON events WHEN NEW.topic = 'routerd.resource.status.changed' BEGIN SELECT RAISE(FAIL, 'injected status event failure'); END`); err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +70,13 @@ func TestFaultStatusEventRuleDoesNotLoseTransitionOnJournalFailure(t *testing.T)
 			if got := store.ObjectStatus(api.NetAPIVersion, "DHCPv4Client", "uplink"); len(got) != 0 {
 				t.Fatalf("required history failed but status committed: %#v", got)
 			}
-			if got := len(events.Recent("routerd.resource.status.changed")); got != 0 {
+			got := 0
+			for _, event := range events.Recent("routerd.resource.status.changed") {
+				if event.Resource != nil && event.Resource.Kind == "DHCPv4Client" && event.Resource.Name == "uplink" {
+					got++
+				}
+			}
+			if got != 0 {
 				t.Fatalf("rolled-back transition delivered locally: %d", got)
 			}
 			if _, err := faultDB.Exec("DROP TRIGGER fail_status_event"); err != nil {

@@ -20,11 +20,14 @@ import (
 var ErrEventRuleConflict = errors.New("EventRule checkpoint changed")
 var ErrEventRuleHistoryGap = errors.New("EventRule input history is no longer available")
 
-const maxEventRuleCheckpointBytes = 8 << 20
-
-// EventJournal exposes the concrete journal behind status decorators. It
-// establishes bus identity without introducing a second event-store registry.
-func (s *SQLiteStore) EventJournal() *SQLiteStore { return s }
+const (
+	maxEventRuleCheckpointBytes = 8 << 20
+	// Reserve room for an error result without evicting functional state
+	// merely because a failed output must be diagnosed. JSON can escape each
+	// error byte to six bytes; this covers the bounded 2 KiB message.
+	eventRuleErrorReserveBytes = 16 << 10
+	eventRuleInputPageSize     = 256
+)
 
 type EventRuleDefinition struct{ Name, Digest string }
 type EventRuleTimer struct {
@@ -53,6 +56,27 @@ type EventRuleCheckpoint struct {
 	FireCount    int                             `json:"fireCount"`
 	WarningCount int                             `json:"warningCount"`
 	LastFiredAt  time.Time                       `json:"lastFiredAt"`
+	LastError    string                          `json:"lastError,omitempty"`
+}
+
+// EvictOldestCorrelation applies the rule's finite-state policy consistently
+// for both key count and encoded storage bounds. Losing partial state is visible
+// in the public warning count, rather than permanently blocking later inputs.
+func (cp *EventRuleCheckpoint) EvictOldestCorrelation() bool {
+	oldest := ""
+	var at time.Time
+	first := true
+	for key, value := range cp.Correlations {
+		if first || value.LastSeen.Before(at) || value.LastSeen.Equal(at) && key < oldest {
+			oldest, at, first = key, value.LastSeen, false
+		}
+	}
+	if first {
+		return false
+	}
+	delete(cp.Correlations, oldest)
+	cp.WarningCount++
+	return true
 }
 
 func EventRuleConsumer(name string) string { return "eventrule/rule/" + name }
@@ -73,7 +97,7 @@ func decodeEventRuleCheckpoint(raw string) (EventRuleCheckpoint, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return cp, fmt.Errorf("EventRule checkpoint requires one object")
 	}
-	if cp.Version != 1 || cp.Name == "" || cp.Definition == "" || cp.Revision < 0 || cp.FireCount < 0 || cp.WarningCount < 0 || cp.Correlations == nil || len(cp.Correlations) > 4096 {
+	if cp.Version != 1 || cp.Name == "" || cp.Definition == "" || cp.Revision < 0 || cp.FireCount < 0 || cp.WarningCount < 0 || cp.Correlations == nil || len(cp.Correlations) > 4096 || len(cp.LastError) > 2048 {
 		return cp, fmt.Errorf("invalid EventRule checkpoint")
 	}
 	for _, c := range cp.Correlations {
@@ -225,7 +249,7 @@ func (s *SQLiteStore) EventRuleInputs(ctx context.Context, cursor int64) ([]Stor
 	if err := tx.QueryRowContext(ctx, `SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='events'),0)`).Scan(&tip); err != nil {
 		return nil, 0, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,created_at,coalesce(nullif(topic,''),type),coalesce(source_kind,''),coalesce(source_instance,''),coalesce(resource_api_version,''),coalesce(resource_kind,''),coalesce(resource_name,''),coalesce(severity,''),reason,message,coalesce(attributes,'{}') FROM events WHERE id>? ORDER BY id LIMIT 256`, cursor)
+	rows, err := tx.QueryContext(ctx, `SELECT id,created_at,coalesce(nullif(topic,''),type),coalesce(source_kind,''),coalesce(source_instance,''),coalesce(resource_api_version,''),coalesce(resource_kind,''),coalesce(resource_name,''),coalesce(severity,''),reason,message,coalesce(attributes,'{}') FROM events WHERE id>? ORDER BY id LIMIT ?`, cursor, eventRuleInputPageSize)
 	if err != nil {
 		return nil, tip, err
 	}
@@ -254,7 +278,7 @@ func (s *SQLiteStore) EventRuleInputs(ctx context.Context, cursor int64) ([]Stor
 	if err := rows.Err(); err != nil {
 		return nil, tip, err
 	}
-	if cursor > tip || len(out) == 0 && cursor < tip {
+	if cursor > tip || len(out) < eventRuleInputPageSize && next-1 < tip {
 		return nil, tip, ErrEventRuleHistoryGap
 	}
 	return out, tip, nil
@@ -300,9 +324,22 @@ func (s *SQLiteStore) CommitEventRule(ctx context.Context, expected EventRuleChe
 	}
 	next.Version = 1
 	next.Revision = current.Revision + 1
-	data, err := json.Marshal(next)
-	if err != nil {
-		return next, nil, err
+	limit := maxEventRuleCheckpointBytes - eventRuleErrorReserveBytes
+	if next.LastError != "" {
+		limit = maxEventRuleCheckpointBytes
+	}
+	var data []byte
+	for {
+		data, err = json.Marshal(next)
+		if err != nil {
+			return next, nil, err
+		}
+		if len(data) <= limit {
+			break
+		}
+		if !next.EvictOldestCorrelation() {
+			return next, nil, fmt.Errorf("EventRule checkpoint exceeds its storage bound")
+		}
 	}
 	if _, err := decodeEventRuleCheckpoint(string(data)); err != nil {
 		return next, nil, err
@@ -312,6 +349,9 @@ func (s *SQLiteStore) CommitEventRule(ctx context.Context, expected EventRuleChe
 		status[key] = value
 	}
 	status["phase"], status["fireCount"], status["warningCount"] = "Active", next.FireCount, next.WarningCount
+	if next.LastError != "" {
+		status["phase"], status["message"] = "Error", next.LastError
+	}
 	if !next.LastFiredAt.IsZero() {
 		status["lastFiredAt"] = next.LastFiredAt.UTC().Format(time.RFC3339Nano)
 	}

@@ -114,8 +114,10 @@ multiple sinks is not atomic.
 EventRule supports `all_of`, `any_of`, `sequence`, `window`, `absence`,
 `throttle`, `debounce` and `count`. Use `interval` for the throttle duration;
 nonzero `rate` is rejected because it has no implemented semantics. Correlations
-are bounded to 4096 keys per rule. Oldest keys are evicted when that bound is
-reached, so patterns spanning an evicted key cannot be completed. Configuration
+are bounded to 4096 keys and an 8 MiB serialized checkpoint per rule. When either
+bound is exceeded, the oldest keys by last-seen time are evicted until the
+checkpoint fits, and `status.warningCount` increases in that same transaction.
+Patterns spanning an evicted key cannot be completed. Configuration
 selection initializes the active rules and retires removed checkpoints; preparing
 an unselected candidate does not change consumption state.
 The separate [event federation protocol](../reference/event-federation.md) has

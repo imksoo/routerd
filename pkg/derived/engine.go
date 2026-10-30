@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -36,7 +37,8 @@ const (
 type Store interface {
 	EventJournal() *routerstate.SQLiteStore
 	ReadObjectStatus(string, string, string) (map[string]any, error)
-	CommitDerived(context.Context, string, routerstate.DerivedCheckpoint, routerstate.DerivedCheckpoint, *daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error)
+	ReadDerivedInputs(context.Context, []routerstate.DerivedInputRef) (routerstate.DerivedInputs, error)
+	CommitDerived(context.Context, string, routerstate.DerivedCheckpoint, routerstate.DerivedCheckpoint, *daemonapi.DaemonEvent, routerstate.DerivedInputs) ([]daemonapi.DaemonEvent, error)
 }
 
 type Controller struct {
@@ -54,6 +56,7 @@ type Controller struct {
 }
 
 type preparedPredicate struct {
+	inputIndex                 int
 	kind, name, field, literal string
 	reference                  bool
 	equals                     string
@@ -61,6 +64,7 @@ type preparedPredicate struct {
 }
 
 type preparedRule struct {
+	references                       []routerstate.DerivedInputRef
 	name, topic, definition          string
 	inputs                           [][][]preparedPredicate
 	emitAny, retractAll, emitInitial bool
@@ -134,6 +138,10 @@ func prepareRule(name string, spec api.DerivedEventSpec) (preparedRule, error) {
 				if err != nil {
 					return r, err
 				}
+				if p.reference {
+					p.inputIndex = len(r.references)
+					r.references = append(r.references, routerstate.DerivedInputRef{Kind: p.kind, Name: p.name, Field: p.field})
+				}
 				predicates = append(predicates, p)
 			}
 			prepared = append(prepared, predicates)
@@ -182,6 +190,10 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 		return done, nil
 	}
 	ch, unsubscribe := c.Bus.Subscribe(ctx, bus.Subscription{Topics: []string{"routerd.**"}}, 64)
+	if err := c.Reconcile(ctx, false); err != nil {
+		unsubscribe()
+		return nil, err
+	}
 	go func() {
 		defer close(done)
 		defer unsubscribe()
@@ -237,12 +249,16 @@ func (c *Controller) Reconcile(ctx context.Context, forceInitial bool) error {
 		return err
 	}
 	c.nextWake = time.Time{}
+	var failures []error
 	for _, r := range c.rules {
-		if err := c.reconcileRule(ctx, r, forceInitial); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := c.reconcileRule(ctx, r, forceInitial); err != nil {
+			failures = append(failures, fmt.Errorf("DerivedEvent/%s: %w", r.name, err))
+		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (c *Controller) reconcileRule(ctx context.Context, r preparedRule, forceInitial bool) error {
@@ -258,10 +274,11 @@ func (c *Controller) reconcileRule(ctx context.Context, r preparedRule, forceIni
 	if next.Definition != r.definition {
 		next = routerstate.DerivedCheckpoint{Definition: r.definition, Revision: expected.Revision}
 	}
-	target, err := c.target(r, next.Asserted)
+	inputs, err := c.Store.ReadDerivedInputs(ctx, r.references)
 	if err != nil {
 		return fmt.Errorf("DerivedEvent/%s inputs: %w", r.name, err)
 	}
+	target := target(r, next.Asserted, inputs.Values)
 	now := c.now()
 	publish := false
 	if !next.Initialized {
@@ -286,15 +303,12 @@ func (c *Controller) reconcileRule(ctx context.Context, r preparedRule, forceIni
 	if !next.PendingDue.IsZero() && (c.nextWake.IsZero() || next.PendingDue.Before(c.nextWake)) {
 		c.nextWake = next.PendingDue
 	}
-	if next == expected {
-		return nil
-	}
 	var output *daemonapi.DaemonEvent
 	if publish {
 		event := transitionEvent(r, next.Asserted, now)
 		output = &event
 	}
-	events, err := c.Store.CommitDerived(ctx, r.name, expected, next, output)
+	events, err := c.Store.CommitDerived(ctx, r.name, expected, next, output, inputs)
 	if err != nil {
 		return err
 	}
@@ -327,10 +341,8 @@ func transitionEvent(r preparedRule, asserted bool, now time.Time) daemonapi.Dae
 	return e
 }
 
-// All predicates referring to the same object use the same error-bearing read.
-// Both independent guards consume the complete collected input snapshot.
-func (c *Controller) target(r preparedRule, asserted bool) (bool, error) {
-	statuses := map[string]map[string]any{}
+// Both independent guards consume the same collected input snapshot.
+func target(r preparedRule, asserted bool, values []string) bool {
 	allTrue, anyTrue := true, false
 	for _, groups := range r.inputs {
 		matched := false
@@ -339,17 +351,7 @@ func (c *Controller) target(r preparedRule, asserted bool) (bool, error) {
 			for _, p := range group {
 				value := p.literal
 				if p.reference {
-					key := p.kind + "/" + p.name
-					status, found := statuses[key]
-					if !found {
-						var err error
-						status, err = c.Store.ReadObjectStatus(api.NetAPIVersion, p.kind, p.name)
-						if err != nil {
-							return false, err
-						}
-						statuses[key] = status
-					}
-					value = statusValue(status[p.field])
+					value = values[p.inputIndex]
 				}
 				if p.notEmpty && strings.TrimSpace(value) == "" || p.equals != "" && value != p.equals || p.reference && !p.notEmpty && p.equals == "" && strings.TrimSpace(value) == "" {
 					groupMatched = false
@@ -364,37 +366,16 @@ func (c *Controller) target(r preparedRule, asserted bool) (bool, error) {
 		emit = anyTrue
 	}
 	if emit {
-		return true, nil
+		return true
 	}
 	retract := !allTrue
 	if r.retractAll {
 		retract = !anyTrue
 	}
 	if retract {
-		return false, nil
+		return false
 	}
-	return asserted, nil
-}
-
-func statusValue(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return typed
-	case []string:
-		data, _ := json.Marshal(typed)
-		return string(data)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, fmt.Sprint(item))
-		}
-		data, _ := json.Marshal(out)
-		return string(data)
-	default:
-		return fmt.Sprint(value)
-	}
+	return asserted
 }
 
 func (c *Controller) now() time.Time {

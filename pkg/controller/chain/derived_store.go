@@ -25,7 +25,7 @@ func (s derivedStore) EventJournal() *routerstate.SQLiteStore {
 	return provider.EventJournal()
 }
 
-func (s derivedStore) CommitDerived(ctx context.Context, name string, expected, next routerstate.DerivedCheckpoint, output *daemonapi.DaemonEvent) ([]daemonapi.DaemonEvent, error) {
+func (s derivedStore) CommitDerived(ctx context.Context, name string, expected, next routerstate.DerivedCheckpoint, output *daemonapi.DaemonEvent, inputs routerstate.DerivedInputs) ([]daemonapi.DaemonEvent, error) {
 	journal := s.EventJournal()
 	if journal == nil {
 		return nil, fmt.Errorf("DerivedEvent journal unavailable")
@@ -33,11 +33,19 @@ func (s derivedStore) CommitDerived(ctx context.Context, name string, expected, 
 	resource, found := s.resourceForStatus(api.NetAPIVersion, "DerivedEvent", name)
 	metadata := statusWithLifecycle(api.NetAPIVersion, "DerivedEvent", name, resource, found, nil)
 	build := statusTransitionEventBuilder(api.NetAPIVersion, "DerivedEvent", name)
-	return journal.CommitDerivedStatus(ctx, name, expected, next, output, metadata, func(current, status map[string]any) (bool, *daemonapi.DaemonEvent) {
+	return journal.CommitDerivedStatus(ctx, name, expected, next, output, inputs, metadata, func(current, status map[string]any) (bool, *daemonapi.DaemonEvent) {
 		write, event := build(current, status)
 		if event != nil {
 			event.Daemon.Kind = "routerd-derived"
 		}
 		return write, event
 	})
+}
+
+func (s derivedStore) ReadDerivedInputs(ctx context.Context, refs []routerstate.DerivedInputRef) (routerstate.DerivedInputs, error) {
+	journal := s.EventJournal()
+	if journal == nil {
+		return routerstate.DerivedInputs{}, fmt.Errorf("DerivedEvent journal unavailable")
+	}
+	return journal.ReadDerivedInputs(ctx, refs)
 }

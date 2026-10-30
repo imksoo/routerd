@@ -657,22 +657,11 @@ func TestIPv4PolicyRouteKeepsCandidateDuringTransientFailing(t *testing.T) {
 	if !policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("single transient failing probe should not remove a policy route candidate")
 	}
-	controller.Store = mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet": {
-			"phase":             "Failing",
-			"consecutiveFailed": 3,
-			"lastCheckedAt":     time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	}
+	controller.Store = mapStore{api.NetAPIVersion + "/HealthCheck/internet": healthProbeStatusForTest(t, router, controller.Store, "internet", "Failing", time.Now().UTC(), 3)}
 	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("failing probe at unhealthy threshold should remove a policy route candidate")
 	}
-	controller.Store = mapStore{
-		api.NetAPIVersion + "/HealthCheck/internet": {
-			"phase":         "Unhealthy",
-			"lastCheckedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		},
-	}
+	controller.Store = mapStore{api.NetAPIVersion + "/HealthCheck/internet": healthProbeStatusForTest(t, router, controller.Store, "internet", "Unhealthy", time.Now().UTC(), 3)}
 	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("unhealthy healthcheck should remove a policy route candidate")
 	}
@@ -1335,6 +1324,7 @@ func TestIPv4PolicyRouteHealthCheckRequiresFreshStatus(t *testing.T) {
 			"lastCheckedAt": time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339Nano),
 		},
 	}}
+	controller.Store = mapStore{api.NetAPIVersion + "/HealthCheck/internet": healthProbeStatusForTest(t, router, controller.Store, "internet", "Healthy", time.Now().UTC().Add(-10*time.Minute), 0)}
 	if policyTargetHealthyForTest(t, controller, "internet") {
 		t.Fatal("stale healthcheck status should not be treated as healthy")
 	}

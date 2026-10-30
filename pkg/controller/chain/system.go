@@ -1615,7 +1615,7 @@ func (c SystemdUnitController) applyHealthCheckSystemdUnit(ctx context.Context, 
 	data := render.HealthCheckSystemdUnit(render.HealthCheckSystemdOptions{
 		Resource:             resourceName,
 		Target:               resolved.Target,
-		Protocol:             resolved.Protocol,
+		Protocol:             resolved.Probe().Protocol,
 		AddressFamily:        resolved.AddressFamily,
 		Via:                  resolved.Via,
 		FwMark:               resolved.FwMark,

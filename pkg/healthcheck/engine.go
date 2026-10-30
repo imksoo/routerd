@@ -440,7 +440,7 @@ func resultFromError(ctx context.Context, err error) ProbeResult {
 
 func ApplyResult(resource api.Resource, spec api.HealthCheckSpec, state State, result ProbeResult, now time.Time) Evaluation {
 	probe := spec.Probe()
-	if state.Probe != probe || state.LastCheckedAt.IsZero() || now.Before(state.LastCheckedAt) || now.Sub(state.LastCheckedAt) > probe.Freshness() {
+	if state.Probe != probe || state.LastCheckedAt.IsZero() || now.Before(state.LastCheckedAt) || now.After(state.LastCheckedAt.Add(probe.Freshness())) {
 		state.Phase = PhaseUnknown
 		state.LastTransitionAt = now
 		state.ConsecutivePassed, state.ConsecutiveFailed = 0, 0

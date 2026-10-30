@@ -874,3 +874,61 @@ point, shell syntax and ShellCheck. The stop regression executes the actual
 remote function with intercepted systemctl/sudo calls; it performs no host service,
 SSH, PVE or cloud mutation. This closes those concrete harness findings, not the
 remaining native process/route/evidence qualification work.
+
+## Recovery validation and incremental publication
+
+The recovered, frozen source tree
+`fa6be9b07fa07c2c196e468048bda8399687a9b9` was published as `c921af2a`.
+Its local validation commit was `5c41e5cc`; all 2474 tracked blobs were verified
+before execution. The checks below apply to that tree, not later commits or
+unpublished work. Go 1.25.9 was used with `GOMAXPROCS=2` and
+`GOFLAGS="-p=2 -buildvcs=false"`.
+
+| Check | Observed result |
+| --- | --- |
+| Whole-repository `go vet ./...` | Pass |
+| Generated schemas and website schema consistency | Pass |
+| Linux daemon/provider builds and static-link checks | Pass; all 20 Linux/amd64 binaries were static, built with CGO disabled |
+| Complete FreeBSD/amd64 test compilation | Pass; `go test -exec /bin/true ./...` compiles but does not execute FreeBSD tests |
+| Complete normal test execution | Failed; 128 packages: 105 passed, 14 failed, nine had no tests. Top-level tests: 3776 passed, 90 failed, six skipped |
+
+Of the original 90 failures, 35 stopped before installer assertions because the
+source export lacked repository metadata. After adding independent Git metadata
+without changing tracked source, and installing ShellCheck 0.10.0, the complete
+installer package rerun had 35 passes and one failure. Its remaining failure
+directly reported AF_UNIX permission denial. This rerun corrects the missing
+fixture evidence; it is not a new passing whole-repository run.
+
+The other failures comprised 46 direct AF_UNIX permission denials, five secondary
+readiness timeouts with that same test's recorded AF_UNIX denial, two direct
+Netlink permission denials, and two timeouts whose syscall error was not observed.
+The last two tests' source requires a Unix listener, but the attempted syscall
+trace was itself denied. They remain unresolved rather than being labeled proven
+environment failures. Required native-positive assertions remain intact.
+
+Subsequent changes are published independently after relevant local checks:
+
+- `e5108018`: resolve declared Health interface bindings once and reject
+  conflicting declarations; preserve an explicit zero mark.
+- `2f41ecc4`: bound RA diagnostic writes and require capture/writer exit
+  acknowledgement. Disk I/O no longer holds the observation mutex.
+- `c4dc3706`: preserve large upstream DNS UDP responses and honor downstream
+  EDNS size/truncation while TCP receives the complete answer. Actual loopback
+  exchanges, focused race tests, vet and FreeBSD compilation pass.
+- `7bd90e46`: reject a second BGP daemon in the same native world before effects;
+  prevent public socket/state paths from replacing its singleton lock. Real
+  child-process rejection, focused race tests, vet and FreeBSD compilation pass.
+- `80fc3af8`: recheck current IPv4 route intent after the pending-withdrawal write;
+  retain the acknowledged native receipt when that intent recovers. Actual SQL
+  reopen/failure/caller regressions, focused race tests, vet and FreeBSD
+  compilation pass; no native route mutation is qualified by those fixtures.
+- `0a4e01fb`: propagate observer cancellation through FreeBSD capture startup,
+  pipe reads and child Wait. Actual Linux child-process normal/race checks,
+  scoped vet and FreeBSD compilation pass. Observer package tests retain seven
+  failures: six direct AF_UNIX denials and one timeout without an observed errno.
+
+The complete gate has not been rerun on these later commits. Native FreeBSD,
+unrestricted Unix/Netlink, PVE and independent forwarding/peer qualification
+remain unexecuted. No GitHub Actions completion was awaited. Ongoing changes
+are preserved on a separate WIP branch, explicitly pending validation; their
+presence there does not establish completion or compliance.

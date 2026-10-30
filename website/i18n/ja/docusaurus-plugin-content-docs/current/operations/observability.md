@@ -57,7 +57,7 @@ OTLP のフィールドは、routerd が管理するユニットの標準的な 
 | --- | --- | --- |
 | route などの再評価通知 consumer | 現在の設定、dynamic part、object status | 通知または周期 reconcile で最新入力を再読込します。IPv4 route controller の通常周期の上限は30秒です。古い通知や重複通知の payload で desired state を上書きしません。他の controller にはそれぞれの周期があります。 |
 | DerivedEvent | 参照先の現在の status | 既定で5秒ごとに再評価します。途中の過去の遷移は復元できません。 |
-| EventRule | commit 済みのイベント履歴 | count、sequence、window には履歴が必要です。新規 consumer は現在の cursor から開始し、それ以前の全履歴を再生しません。相関状態はプロセス内に保持します。 |
+| EventRule | commit 済みのイベント履歴とルールごとの永続 checkpoint | 新規または変更済みのルールは、設定準備時に記録した履歴位置から開始します。変更していないルールは、再起動後も count、sequence、window、throttle と待機中の timer を再開します。未読の入力履歴が保持期限で失われた場合はエラーで停止し、イベントの不在とは判定しません。 |
 | ObservabilityPipeline | commit 済みのイベント履歴 | 保存済みイベントを再試行します。sampling と sink の severity filter は引き続き適用します。全 status 更新試行を欠落なく残す監査ログではありません。 |
 | provider action executor | ActionExecution 履歴と安定した冪等キー | 成功を永続記録済みの操作は再試行・再起動後も再実行しません。外部成功後、ローカル結果記録前の障害には executor 側の冪等性または provider 状態の観測が必要です。 |
 
@@ -67,4 +67,8 @@ OTLP のフィールドは、routerd が管理するユニットの標準的な 
 
 履歴を必要とする該当 EventRule がない場合、status 通知の既存契約を維持します。status 保存後にイベント保存だけ失敗し、エラーを返しながらローカル配送を試みる場合があります。同じ status の再保存では欠落した履歴を補完しません。現在値の consumer は再走査で回復できますが、履歴に一度も保存されなかったイベントを exporter が復元することはできません。上の transaction 保証は status 遷移イベントに限定し、全 daemon や derived-event producer を対象とはしません。
 
-履歴消費は at-least-once です。処理成功後に cursor 保存が失敗すると、同じイベント ID で callback を再実行します。EventRule の出力やログ配送には重複があり得ます。複数 sink への配送は原子的ではなく、cursor は外部 API の exactly-once を保証しません。[Event federation](../reference/event-federation.md) は別の配送履歴を持ち、ローカル status 通知キューを永続的な正本には使いません。
+各 EventRule は、相関状態、唯一のルール別入力 cursor、公開 status と、その結果として生成するローカルイベントを、1つの SQLite transaction で保存します。transaction が失敗した場合は、どれも進めません。commit の応答を失っても checkpoint を再読込し、保存済みの結果を重複生成しません。バス通知は commit 後に行い、通知を逃した consumer は履歴から復旧します。この保証はローカル履歴を対象とします。外部 API やログ sink への配送は別です。ログ sink は配送成功後の cursor 保存に失敗すると同じイベントを再送するため、at-least-once です。複数 sink への配送も原子的ではありません。
+
+EventRule は `all_of`、`any_of`、`sequence`、`window`、`absence`、`throttle`、`debounce`、`count` をサポートします。throttle の時間には `interval` を指定してください。意味が実装されていない非ゼロの `rate` は拒否します。相関状態の上限はルールごとに4096キー、シリアライズ後の checkpoint は8 MiBです。どちらかを超える場合、最後に一致した入力の時刻が古いキーから、上限に収まるまで削除します。削除したキーにまたがるパターンは完了できません。削除ごとに `status.warningCount` を増やし、checkpoint と同じ transaction で公開します。設定の選択時に有効なルールを初期化し、削除したルールの checkpoint を廃止します。選択していない候補設定の準備だけでは消費状態を変更しません。
+
+[Event federation](../reference/event-federation.md) は別の配送履歴を持ち、ローカル status 通知キューを永続的な正本には使いません。

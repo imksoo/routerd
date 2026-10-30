@@ -103,15 +103,7 @@ func evaluate(rule preparedRule, checkpoint *routerstate.EventRuleCheckpoint, ev
 	}
 	checkpoint.Correlations[key] = state
 	for len(checkpoint.Correlations) > maxRuleCorrelationKeys {
-		oldest := ""
-		var at time.Time
-		first := true
-		for candidate, value := range checkpoint.Correlations {
-			if first || value.LastSeen.Before(at) || value.LastSeen.Equal(at) && candidate < oldest {
-				oldest, at, first = candidate, value.LastSeen, false
-			}
-		}
-		delete(checkpoint.Correlations, oldest)
+		checkpoint.EvictOldestCorrelation()
 	}
 	if !fired {
 		return nil, nil

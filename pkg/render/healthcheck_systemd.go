@@ -72,7 +72,7 @@ func HealthCheckDaemonSystemdSpec(options HealthCheckDaemonUnitOptions) (api.Sys
 		}
 	}
 	appendFlag("--target", spec.Target)
-	appendFlag("--protocol", spec.Protocol)
+	appendFlag("--protocol", spec.Probe().Protocol)
 	appendFlag("--address-family", spec.AddressFamily)
 	appendFlag("--via", spec.Via)
 	if spec.FwMark != 0 {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,5 +202,68 @@ func TestEventRuleMalformedCheckpointOrMissingCursorDoesNotBecomeFreshState(t *t
 	}
 	if err := s.InitializeEventRules(ctx, defs, 0); err == nil {
 		t.Fatal("selected start reset a lost cursor beside a retained checkpoint")
+	}
+}
+
+func TestEventRuleCheckpointBytesEvictOldestPartialStateAndKeepProgress(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := t.Context()
+	if err := s.InitializeEventRules(ctx, []EventRuleDefinition{{Name: "rule", Digest: "definition"}}, 0); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := s.ReadEventRule(ctx, "rule")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := cp
+	next.Cursor = appendRuleInput(t, s)
+	next.Correlations = map[string]EventRuleCorrelation{}
+	for i := 0; i < 40; i++ {
+		at := time.Unix(int64(i+1), 0).UTC()
+		next.Correlations[strconv.Itoa(i)] = EventRuleCorrelation{
+			LastSeen: at,
+			Timer: &EventRuleTimer{Due: at.Add(time.Hour), Input: daemonapi.DaemonEvent{
+				Attributes: map[string]string{"payload": strings.Repeat("a", 250000)},
+			}},
+		}
+	}
+	committed, _, err := s.CommitEventRule(ctx, cp, next, nil, false, nil, nil)
+	if err != nil || committed.Cursor != next.Cursor || len(committed.Correlations) >= 40 || committed.WarningCount != 40-len(committed.Correlations) {
+		t.Fatalf("finite checkpoint blocked input or hid lost partial state: keys=%d warnings=%d cursor=%d err=%v", len(committed.Correlations), committed.WarningCount, committed.Cursor, err)
+	}
+	if _, exists := committed.Correlations["0"]; exists {
+		t.Fatal("byte limit kept the oldest correlation")
+	}
+	if _, exists := committed.Correlations["39"]; !exists {
+		t.Fatal("byte limit discarded the newest correlation")
+	}
+	var raw string
+	if err := s.db.QueryRow(`SELECT status FROM objects WHERE api_version=? AND kind='Router' AND name=?`, api.RouterAPIVersion, eventRuleObject("rule")).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) > maxEventRuleCheckpointBytes {
+		t.Fatalf("encoded checkpoint exceeded bound: %d", len(raw))
+	}
+	public, err := s.ReadObjectStatus(api.NetAPIVersion, "EventRule", "rule")
+	if err != nil || public["warningCount"] != float64(committed.WarningCount) {
+		t.Fatalf("eviction warning not public: %+v %v", public, err)
+	}
+	next = committed
+	next.LastError = strings.Repeat("\x00", 2048)
+	diagnosed, _, err := s.CommitEventRule(ctx, committed, next, nil, false, nil, nil)
+	if err != nil || len(diagnosed.Correlations) != len(committed.Correlations) || diagnosed.WarningCount != committed.WarningCount || diagnosed.Cursor != committed.Cursor {
+		t.Fatalf("diagnosing a failure discarded functional state: keys=%d warnings=%d cursor=%d err=%v", len(diagnosed.Correlations), diagnosed.WarningCount, diagnosed.Cursor, err)
+	}
+	// A following event still commits: capacity is a finite-state policy,
+	// not a poison input that freezes this consumer forever.
+	next = diagnosed
+	next.LastError = ""
+	next.Cursor = appendRuleInput(t, s)
+	if _, _, err := s.CommitEventRule(ctx, diagnosed, next, nil, false, nil, nil); err != nil {
+		t.Fatal(err)
 	}
 }

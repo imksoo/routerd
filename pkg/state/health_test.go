@@ -4,10 +4,11 @@ package state
 import (
 	"database/sql"
 	"errors"
-	"github.com/imksoo/routerd/pkg/api"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
 )
 
 func TestHealthObservationReadsTypedCurrentState(t *testing.T) {

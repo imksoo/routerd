@@ -129,7 +129,7 @@ type blockedRuleCommitStore struct {
 }
 
 func (s *blockedRuleCommitStore) CommitRule(ctx context.Context, old, next routerstate.EventRuleCheckpoint, out *daemonapi.DaemonEvent, tip bool) (routerstate.EventRuleCheckpoint, []daemonapi.DaemonEvent, error) {
-	if !s.onlyOutput || out != nil {
+	if !s.onlyOutput && next.Cursor > old.Cursor || out != nil {
 		s.once.Do(func() { close(s.entered); <-s.release })
 	}
 	return s.ruleTestStore.CommitRule(ctx, old, next, out, tip)

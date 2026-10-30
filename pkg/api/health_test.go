@@ -73,7 +73,7 @@ func TestHealthObservationRequiresCurrentConfiguredProbe(t *testing.T) {
 
 func TestHealthProbeNormalizationAndFreshnessOverflow(t *testing.T) {
 	implicit := HealthCheckSpec{Target: " ::ffff:192.0.2.1 ", Protocol: "tcp"}.Probe()
-	explicit := HealthCheckSpec{Target: "192.0.2.1", Protocol: "tcp", AddressFamily: "ipv4", Port: 443, Interval: "30s", Timeout: "3s", HealthyThreshold: 1, UnhealthyThreshold: 3}.Probe()
+	explicit := HealthCheckSpec{Target: "192.0.2.1", Protocol: "tcp", Port: 443, Interval: "30s", Timeout: "3s", HealthyThreshold: 1, UnhealthyThreshold: 3}.Probe()
 	if implicit != explicit {
 		t.Fatalf("different effective probes: %+v %+v", implicit, explicit)
 	}

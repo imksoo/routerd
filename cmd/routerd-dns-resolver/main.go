@@ -235,8 +235,8 @@ func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return dnsresolver.RuntimeConfig{}, err
 	}
-	if config.Resource == "" {
-		config.Resource = opts.resource
+	if config.Resource == "" || config.Resource != opts.resource {
+		return config, fmt.Errorf("resolver config resource %q does not match worker %q", config.Resource, opts.resource)
 	}
 	if err := validateLocalZones(config); err != nil {
 		return config, err
@@ -246,6 +246,9 @@ func loadConfig(opts options) (dnsresolver.RuntimeConfig, error) {
 }
 
 func newDaemon(opts options, config dnsresolver.RuntimeConfig) (*daemon, error) {
+	if config.Resource == "" || config.Resource != opts.resource {
+		return nil, fmt.Errorf("resolver config resource %q does not match worker %q", config.Resource, opts.resource)
+	}
 	if err := validateLocalZones(config); err != nil {
 		return nil, err
 	}

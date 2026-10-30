@@ -23,8 +23,12 @@ type StatusEventBuilder func(current, next map[string]any) (write bool, event *d
 // bounded journal entries are admitted in the same transaction.
 type StatusEventsBuilder func(current, next map[string]any) (write bool, events []daemonapi.DaemonEvent)
 
+// EventJournal identifies the concrete journal behind status decorators so
+// transactional producers and bus delivery use the same committed events.
+func (s *SQLiteStore) EventJournal() *SQLiteStore { return s }
+
 func (s *SQLiteStore) SaveObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder) ([]daemonapi.DaemonEvent, error) {
-	return s.writeObjectStatusAndEvents(apiVersion, kind, name, status, build, false, nil, 2)
+	return s.writeObjectStatusAndEvents(apiVersion, kind, name, status, build, false, nil, 2, nil)
 }
 
 // SaveObjectStatusAndEvent commits a status and its required transition history
@@ -57,14 +61,14 @@ func (s *SQLiteStore) writeObjectStatusAndEvent(apiVersion, kind, name string, s
 			return write, nil
 		}
 		return write, []daemonapi.DaemonEvent{*event}
-	}, merge, update, 1)
+	}, merge, update, 1, nil)
 	if err != nil || len(events) == 0 {
 		return nil, err
 	}
 	return &events[0], nil
 }
 
-func (s *SQLiteStore) writeObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder, merge bool, update *pdObservationUpdate, maximumEvents int) ([]daemonapi.DaemonEvent, error) {
+func (s *SQLiteStore) writeObjectStatusAndEvents(apiVersion, kind, name string, status map[string]any, build StatusEventsBuilder, merge bool, update *pdObservationUpdate, maximumEvents int, derivedInputs *DerivedInputs) ([]daemonapi.DaemonEvent, error) {
 	if build == nil {
 		return nil, fmt.Errorf("status event builder is required")
 	}
@@ -78,6 +82,11 @@ func (s *SQLiteStore) writeObjectStatusAndEvents(apiVersion, kind, name string, 
 		return nil, err
 	}
 	defer tx.Rollback()
+	if derivedInputs != nil {
+		if err := s.validateDerivedInputs(context.Background(), tx, *derivedInputs, s.now().UTC()); err != nil {
+			return nil, err
+		}
+	}
 	var raw string
 	var generation sql.NullInt64
 	err = tx.QueryRow(`SELECT coalesce(status,'{}'), observed_generation FROM objects WHERE api_version = ? AND kind = ? AND name = ?`, apiVersion, kind, name).Scan(&raw, &generation)

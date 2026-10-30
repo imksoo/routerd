@@ -144,6 +144,10 @@ func TestActualOutputFailureAndLostReplyDoNotConsumeOrRepeatPattern(t *testing.T
 	if err != nil || cp.Cursor != first || cp.FireCount != 0 || cp.Correlations["default"].Count != 1 {
 		t.Fatalf("failed output changed durable state: %+v %v", cp, err)
 	}
+	status, err := db.ReadObjectStatus(api.NetAPIVersion, "EventRule", "rule")
+	if err != nil || status["phase"] != "Error" || cp.LastError == "" {
+		t.Fatalf("failed output remained a successful result: %+v %v", status, err)
+	}
 	if len(events.Recent("routerd.recovery.output")) != 0 {
 		t.Fatal("failed output was delivered locally")
 	}
@@ -163,6 +167,10 @@ func TestActualOutputFailureAndLostReplyDoNotConsumeOrRepeatPattern(t *testing.T
 	cp, err = db.ReadEventRule(t.Context(), "rule")
 	if err != nil || cp.FireCount != 1 {
 		t.Fatalf("lost ACK repeated count: %+v %v", cp, err)
+	}
+	status, err = db.ReadObjectStatus(api.NetAPIVersion, "EventRule", "rule")
+	if err != nil || status["phase"] != PhaseActive || cp.LastError != "" {
+		t.Fatalf("successful recovery retained an obsolete failure: %+v %v", status, err)
 	}
 	outputs, err := db.ListEvents(routerstate.EventQuery{Topic: "routerd.recovery.output"})
 	if err != nil || len(outputs) != 1 {
@@ -203,6 +211,71 @@ func TestDueAbsenceDrainsOfflineExpectedInputAndRejectsHistoryGap(t *testing.T) 
 			if readErr != nil || len(outputs) != 0 {
 				t.Fatalf("absence fabricated from unread/missing input: %+v %v", outputs, readErr)
 			}
+			if pruned {
+				status, err := db.ReadObjectStatus(api.NetAPIVersion, "EventRule", "rule")
+				if err != nil || status["phase"] != "Error" || status["message"] != routerstate.ErrEventRuleHistoryGap.Error() {
+					t.Fatalf("missing history retained successful public status: %+v %v", status, err)
+				}
+			}
 		})
+	}
+}
+
+func TestBoundedDrainLetsEveryRuleAdvanceBeforeFollowingTheJournalTip(t *testing.T) {
+	db, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	events := bus.NewWithStore(db)
+	var resources []api.Resource
+	for _, name := range []string{"first", "second"} {
+		resource := testRuleResource(api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 10000})
+		resource.Metadata.Name = name
+		resources = append(resources, resource)
+	}
+	c := Controller{Router: &api.Router{Spec: api.RouterSpec{Resources: resources}}, Bus: events, Store: ruleTestStore{db}}
+	if err := c.Prepare(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var definitions []routerstate.EventRuleDefinition
+	for _, rule := range c.rules {
+		definitions = append(definitions, rule.definition)
+	}
+	if err := db.InitializeEventRules(t.Context(), definitions, c.initialCursor); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 600; i++ {
+		publishRecoveryInput(t, events, "routerd.a")
+	}
+	tip, err := db.EventJournalTip(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.drainStoredEvents(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"first", "second"} {
+		cp, err := db.ReadEventRule(t.Context(), name)
+		if err != nil || cp.Cursor == 0 || cp.Cursor >= tip || cp.Correlations["default"].Count == 0 {
+			t.Fatalf("one pass monopolized the journal or starved %s: %+v %v", name, cp, err)
+		}
+	}
+	if c.nextWake.IsZero() || c.nextWake.After(c.now()) {
+		t.Fatal("bounded pending work did not request an immediate next pass")
+	}
+}
+
+func TestChangedDefinitionPublishesResetCountWithoutNewInput(t *testing.T) {
+	c, events := newTestController(t, api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 1})
+	stop := startTestController(t, c)
+	mustReconcile(t, c, testEvent("routerd.a"))
+	stop()
+	resource := testRuleResource(api.EventRulePatternSpec{Operator: OperatorCount, Topic: "routerd.a", Threshold: 2})
+	replacement := &Controller{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}, Bus: events, Store: c.Store, Poll: time.Millisecond}
+	startTestController(t, replacement)
+	status, err := c.Store.EventJournal().ReadObjectStatus(api.NetAPIVersion, "EventRule", "rule")
+	if err != nil || status["phase"] != PhaseActive || status["fireCount"] != float64(0) {
+		t.Fatalf("new definition retained the preceding public count: %+v %v", status, err)
 	}
 }

@@ -5,6 +5,7 @@ package main
 import (
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,7 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 	table := &zoneTable{zones: map[string]*zoneData{}}
 	for _, runtime := range zones {
 		spec := runtime.Spec
-		name := dns.Fqdn(stringutil.FirstNonEmpty(spec.Zone, runtime.Name))
+		name := strings.ToLower(dns.Fqdn(stringutil.FirstNonEmpty(spec.Zone, runtime.Name)))
 		ttl := uint32(spec.TTL)
 		if ttl == 0 {
 			ttl = 300
@@ -110,35 +111,57 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 	if old == nil {
 		return
 	}
-	type dynamicRecord struct {
-		zoneName string
-		record   zoneRecord
+	type dynamicZone struct {
+		name, resource string
+		dhcp           api.DNSZoneDHCPDerivedSpec
+		records        []zoneRecord
 	}
-	var records []dynamicRecord
+	var retained []dynamicZone
 	old.mu.RLock()
 	for zoneName, zone := range old.zones {
+		item := dynamicZone{name: zoneName, resource: zone.ResourceName, dhcp: zone.DHCP}
 		for _, record := range zone.Records {
 			switch record.Source {
 			case zoneRecordSourceActiveEvent:
-				records = append(records, dynamicRecord{zoneName: zoneName, record: cloneZoneRecord(record)})
+				item.records = append(item.records, cloneZoneRecord(record))
 			case zoneRecordSourceStickySnapshot, zoneRecordSourceOldSticky:
 				cloned := cloneZoneRecord(record)
 				cloned.Source = zoneRecordSourceOldSticky
-				records = append(records, dynamicRecord{zoneName: zoneName, record: cloned})
+				item.records = append(item.records, cloned)
 			}
 		}
+		retained = append(retained, item)
 	}
 	old.mu.RUnlock()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, item := range records {
-		zone := t.zones[item.zoneName]
-		if zone == nil {
+	for _, item := range retained {
+		zone := t.zones[item.name]
+		if zone == nil || zone.ResourceName != item.resource || !sameDHCPNamespace(zone.DHCP, item.dhcp) {
 			continue
 		}
-		zone.mergeRecord(item.record)
+		ttl := uint32(zone.DHCP.TTL)
+		if ttl == 0 {
+			ttl = 60
+		}
+		for _, record := range item.records {
+			record.TTL = ttl
+			zone.mergeRecord(record)
+		}
 	}
+}
+
+// Retained DHCP observations belong to the same declared source and zone,
+// rather than merely to a zone with the same DNS suffix after reconfiguration.
+func sameDHCPNamespace(left, right api.DNSZoneDHCPDerivedSpec) bool {
+	if len(left.Sources) == 0 || len(right.Sources) == 0 || left.LeaseFile != right.LeaseFile || left.HostnameSuffix != right.HostnameSuffix || left.DDNS != right.DDNS {
+		return false
+	}
+	leftSources, rightSources := slices.Clone(left.Sources), slices.Clone(right.Sources)
+	slices.Sort(leftSources)
+	slices.Sort(rightSources)
+	return slices.Equal(slices.Compact(leftSources), slices.Compact(rightSources))
 }
 
 func cloneZoneRecord(record zoneRecord) zoneRecord {
@@ -208,7 +231,7 @@ func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) {
 
 func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 	name := dns.Fqdn(strings.ToLower(q.Name))
-	if strings.HasSuffix(name, z.Name) {
+	if dns.IsSubDomain(z.Name, name) {
 		msg := new(dns.Msg)
 		msg.SetReply(req)
 		record, ok := z.Records[name]
@@ -293,7 +316,7 @@ func (z *zoneData) addRecordWithPriority(hostname, ipv4, ipv6 string, ttl uint32
 
 func (z *zoneData) recordName(hostname string) string {
 	fqdn := dns.Fqdn(hostname)
-	if !strings.HasSuffix(fqdn, z.Name) {
+	if !dns.IsSubDomain(z.Name, fqdn) {
 		fqdn = dns.Fqdn(strings.TrimSuffix(hostname, ".") + "." + strings.TrimSuffix(z.Name, "."))
 	}
 	return fqdn
@@ -457,10 +480,9 @@ func sourceMatches(matches []string, qname string) bool {
 	if len(matches) == 0 {
 		return true
 	}
-	name := strings.TrimSuffix(strings.ToLower(qname), ".")
+	name := dns.Fqdn(qname)
 	for _, match := range matches {
-		m := strings.TrimSuffix(strings.ToLower(match), ".")
-		if m == "" || m == "." || name == m || strings.HasSuffix(name, "."+m) {
+		if match == "" || dns.IsSubDomain(dns.Fqdn(match), name) {
 			return true
 		}
 	}
