@@ -564,9 +564,18 @@ func (c WireGuardController) reconcileNativeWireGuardPorts(ctx context.Context, 
 			}
 		}
 	}
-	record.Ports = []int{}
+	remaining := []int{}
 	if port > 0 {
-		record.Ports = []int{port}
+		remaining = []int{port}
+	}
+	if !slices.Equal(record.Ports, remaining) {
+		if err := c.checkNativeWireGuard(ctx, record); err != nil {
+			return record, err
+		}
+		record.Ports = remaining
+		if err := c.saveNativeWireGuardRecord(record); err != nil {
+			return record, err
+		}
 	}
 	return record, nil
 }
