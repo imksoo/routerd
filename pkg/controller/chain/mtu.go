@@ -682,18 +682,32 @@ func (c PathMTUController) cleanupRetiredL2(ctx context.Context, nft, ownerPath 
 
 func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, ownerPath string, enabled bool) (l2MSSApplyResult, error) {
 	var result l2MSSApplyResult
+	// Preview artifacts have no native authority. Do not consult live ownership
+	// or require the current kernel to match the requested rendering target.
+	if c.DryRun {
+		if !enabled {
+			return result, nil
+		}
+		base, err := render.NftablesL2TCPMSSClamp(c.Router)
+		if err != nil {
+			return result, err
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return result, err
+		}
+		changed, err := writeFileIfChanged(path, base, 0600, false)
+		return l2MSSApplyResult{Changed: changed, Table: "routerd_l2_mss"}, err
+	}
 	if !enabled {
 		if _, err := os.Stat(ownerPath); os.IsNotExist(err) {
 			return result, nil
 		}
 	}
-	if !c.DryRun {
-		lock, err := acquireL2OwnerLock(ownerPath)
-		if err != nil {
-			return result, err
-		}
-		defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }()
+	lock, err := acquireL2OwnerLock(ownerPath)
+	if err != nil {
+		return result, err
 	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); _ = lock.Close() }()
 	bootID, netns, err := currentL2OwnerIdentity()
 	if err != nil {
 		return result, err
@@ -714,8 +728,7 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 	if m == nil {
 		m = &l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns}
 	}
-	base, err := render.NftablesL2TCPMSSClamp(c.Router)
-	if err != nil {
+	if _, err := render.NftablesL2TCPMSSClamp(c.Router); err != nil {
 		return result, err
 	}
 	digest := ""
@@ -724,16 +737,6 @@ func (c PathMTUController) applyL2MSSTable(ctx context.Context, nft, path, owner
 		if err != nil {
 			return result, err
 		}
-	}
-	if c.DryRun {
-		if !enabled {
-			return result, nil
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-			return result, err
-		}
-		changed, err := writeFileIfChanged(path, base, 0600, false)
-		return l2MSSApplyResult{Changed: changed, Table: "routerd_l2_mss"}, err
 	}
 	drifted, err := c.recoverL2Journal(ctx, nft, ownerPath, digest, m)
 	if err != nil {
