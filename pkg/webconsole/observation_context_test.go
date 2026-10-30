@@ -107,7 +107,7 @@ func TestObservationRoutesCancelTheirChildCommands(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			dir := t.TempDir()
 			var pidPaths []string
-			for _, name := range []string{"ip", "arp", "ndp", "wg", "tailscale", "conntrack"} {
+			for _, name := range []string{"ip", "arp", "ndp", "wg", "tailscale", "conntrack", "pfctl"} {
 				pidPaths = append(pidPaths, blockingObservationCommand(t, dir, name, false))
 			}
 			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

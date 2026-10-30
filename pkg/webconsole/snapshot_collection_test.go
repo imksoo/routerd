@@ -32,9 +32,13 @@ func TestSummaryCollectionAndMetricsDistinguishEmptySkippedAndFailed(t *testing.
 		}
 	}
 	// Execute only test-owned observation commands; never read host neighbors.
-	for _, name := range []string{"ip", "arp", "ndp"} {
-		write(filepath.Join(dir, name), "#!/bin/sh\nprintf '[]'\n", 0o755)
+	writeEmptyNeighbors := func() {
+		write(filepath.Join(dir, "ip"), "#!/bin/sh\nprintf '[]'\n", 0o755)
+		for _, name := range []string{"arp", "ndp"} {
+			write(filepath.Join(dir, name), "#!/bin/sh\nexit 0\n", 0o755)
+		}
 	}
+	writeEmptyNeighbors()
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	statePath := filepath.Join(dir, "state.db")
 	store, err := routerstate.OpenSQLite(statePath)
@@ -160,7 +164,9 @@ func TestSummaryCollectionAndMetricsDistinguishEmptySkippedAndFailed(t *testing.
 	if err := os.Mkdir(leasePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	write(filepath.Join(dir, "ip"), "#!/bin/sh\nexit 1\n", 0o755)
+	for _, name := range []string{"ip", "arp", "ndp"} {
+		write(filepath.Join(dir, name), "#!/bin/sh\nexit 1\n", 0o755)
+	}
 	failed := request("resources=1&dhcpLeases=1&clients=1")
 	if len(failed.Errors) == 0 || failed.collected(SectionResources) || failed.collected(SectionDHCPLeases) || failed.collected(SectionNeighbors) || failed.collected(SectionClients) {
 		t.Fatalf("failed reads advertised as fresh: collected=%v errors=%v", failed.Collected, failed.Errors)
@@ -174,7 +180,7 @@ func TestSummaryCollectionAndMetricsDistinguishEmptySkippedAndFailed(t *testing.
 		t.Fatal(err)
 	}
 	write(leasePath, "", 0o600)
-	write(filepath.Join(dir, "ip"), "#!/bin/sh\nprintf '[]'\n", 0o755)
+	writeEmptyNeighbors()
 	if err := sticky.RecordLeaseEvent(ctx, "removed", "02:00:00:00:00:02", "2001:db8::2", "held-client", 0, time.Now()); err != nil {
 		t.Fatal(err)
 	}
