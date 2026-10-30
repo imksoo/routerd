@@ -41,6 +41,15 @@ func TestScheduledSubscriptionDropsExpiredFactsBeforePlugin(t *testing.T) {
 		calls.Add(1)
 		return eventSubscriptionTestResult(initial), routerplugin.RunOutcome{}, nil
 	}, "15ms")
+	// Hold the actual scheduled callback until the input clock has expired.
+	// A wall-clock timer can otherwise fire before Reconcile returns.
+	var fire func()
+	controller.NewTimer = func(_ time.Duration, fn func()) triggerTimer {
+		fire = fn
+		timer := time.NewTimer(time.Hour)
+		timer.Stop()
+		return timer
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	controller.Start(ctx)
@@ -49,21 +58,10 @@ func TestScheduledSubscriptionDropsExpiredFactsBeforePlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.Store(initial.Add(2 * time.Second).UnixNano())
-	deadline := time.NewTimer(time.Second)
-	defer deadline.Stop()
-	for {
-		controller.mu.Lock()
-		idle := len(controller.schedules) == 0 && len(controller.processing) == 0
-		controller.mu.Unlock()
-		if idle {
-			break
-		}
-		select {
-		case <-time.After(time.Millisecond):
-		case <-deadline.C:
-			t.Fatal("scheduled processing did not finish")
-		}
+	if fire == nil {
+		t.Fatal("subscription did not schedule processing")
 	}
+	fire()
 	parts, err := store.ListDynamicConfigParts()
 	if err != nil || calls.Load() != 0 || len(parts) != 0 {
 		t.Fatalf("expired facts invoked plugin or published config: calls=%d parts=%+v err=%v", calls.Load(), parts, err)

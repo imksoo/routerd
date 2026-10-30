@@ -229,6 +229,7 @@ func (s daemonStatusPDStore) SaveObjectStatus(v, k, n string, status map[string]
 
 func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T) {
 	now := time.Now().UTC()
+	healthSpec := api.HealthCheckSpec{Target: "1.1.1.1", Protocol: "icmp"}
 	snapshot := pdclient.Snapshot{Resource: "wan-pd", Interface: "ens18", ClientDUID: "01", ServerDUID: "00010001", IAID: 7, State: pdclient.StateBound, CurrentPrefix: "2001:db8:1::/56", UpdatedAt: now, Prefixes: []pdclient.PrefixSnapshot{{Prefix: "2001:db8:1::/56", AcquiredAt: now, Preferred: 60, Valid: 120}}, DNSServers: []string{"2001:db8::53"}, SNTPServers: []string{"2001:db8::123"}, DomainSearch: []string{"example.test"}}
 	socket := filepath.Join(t.TempDir(), "daemon.sock")
 	listener, err := net.Listen("unix", socket)
@@ -301,7 +302,7 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 			},
 			{
 				Resource: daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "HealthCheck", Name: "internet"},
-				Routing:  &api.HealthObservation{Phase: "Healthy", CheckedAt: now},
+				Routing:  &api.HealthObservation{Probe: healthSpec.Probe(), Phase: "Healthy", CheckedAt: now},
 				Phase:    "Healthy",
 				Health:   daemonapi.HealthOK,
 				Observed: map[string]string{
@@ -362,7 +363,7 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "pppoe"}, Spec: api.PPPoESessionSpec{Interface: "wan"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "ens18", ClientDUID: "01", IAID: "7"}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSResolver"}, Metadata: api.ObjectMeta{Name: "lan-dns"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"}, Metadata: api.ObjectMeta{Name: "internet"}, Spec: healthSpec},
 	}}}
 	controller := DaemonStatusController{
 		Router:        router,
@@ -398,12 +399,9 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 	if pppoe["device"] != "ppp0" || pppoe["dryRun"] != true || pppoe["gateway"] != "198.51.100.1" {
 		t.Fatalf("PPPoESession controller fields were not preserved: %#v", pppoe)
 	}
-	pppoeObserved, ok := pppoe["observed"].(map[string]any)
-	if !ok || pppoeObserved["bytesIn"] != uint64(100) || pppoeObserved["bytesOut"] != uint64(200) {
-		t.Fatalf("PPPoESession normalized observed = %#v", pppoe["observed"])
-	}
-	if got := anyStringSlice(pppoeObserved["dnsServers"]); strings.Join(got, ",") != "203.0.113.53" {
-		t.Fatalf("PPPoESession observed dnsServers = %#v", pppoeObserved["dnsServers"])
+	// The source-bound PPPoE actor alone projects its daemon observation.
+	if _, ok := pppoe["observed"]; ok {
+		t.Fatalf("generic daemon status projected PPPoE actor fields: %#v", pppoe)
 	}
 
 	pd := base.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", "wan-pd")
@@ -437,7 +435,7 @@ func TestDaemonStatusControllerKeepsDedicatedControllerStatusFields(t *testing.T
 		t.Fatalf("HealthCheck controller fields were not preserved: %#v", health)
 	}
 	healthObserved, ok := health["observed"].(map[string]any)
-	if !ok || healthObserved["target"] != "1.1.1.1" {
+	if !ok || healthObserved["target"] != "1.1.1.1" || healthObserved["phase"] != "Healthy" {
 		t.Fatalf("HealthCheck observed = %#v", health["observed"])
 	}
 	canonical, found, err := raw.ReadPDLease("wan-pd")
