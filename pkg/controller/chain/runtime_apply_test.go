@@ -3,6 +3,7 @@ package chain
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net"
@@ -315,5 +316,219 @@ func TestRuntimeApplyNewLeaseReplacementCannotActivateCandidate(t *testing.T) {
 	gate.Unlock()
 	if err == nil || outcome.Active.Router == next && outcome.Active.Available {
 		t.Fatalf("candidate activated after its pre-acquired lease pathname was replaced: %+v %v", outcome, err)
+	}
+}
+
+func TestRuntimeApplyAdmittedHAProjectsLeaderBeforeWhenEffects(t *testing.T) {
+	old := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "old"}}
+	store, err := state.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", "ownership-review", map[string]any{"phase": "Standby"}); err != nil {
+		t.Fatal(err)
+	}
+	gate := &sync.RWMutex{}
+	var selected net.Listener
+	r := &Runner{Router: old, Store: store, Bus: bus.NewWithStore(store), Opts: Options{MutationGate: gate, EnabledControllers: []string{"log-retention"}}}
+	r.Opts.ReconcileHTTPServers = func(_ context.Context, view RuntimeRouterObservation) error {
+		for _, resource := range view.EffectiveRouter.Spec.Resources {
+			if resource.Kind == "Interface" && resource.Metadata.Name == "only-actual-leader" && selected == nil {
+				var err error
+				selected, err = net.Listen("tcp", "127.0.0.1:0")
+				return err
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	if err := r.Start(ctx); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		wait, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		if err := r.Wait(wait); err != nil && !errors.Is(err, context.Canceled) {
+			t.Error(err)
+		}
+		if selected != nil {
+			selected.Close()
+		}
+	}()
+	next := runtimeApplyTestRouter(filepath.Join(t.TempDir(), "lease"), "next")
+	next.Spec.Resources = append(next.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "only-actual-leader"}, Spec: api.InterfaceSpec{IfName: "fixture0", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"RouterdCluster/ownership-review.phase": {Equals: "Leader"}}}}})
+	canonical := filepath.Join(t.TempDir(), "router.yaml")
+	gate.Lock()
+	outcome, err := r.ApplyRuntimeWithOutcome(t.Context(), next, true, func() error {
+		status, err := store.ReadObjectStatus(api.SystemAPIVersion, "RouterdCluster", "ownership-review")
+		if err != nil {
+			return err
+		}
+		if status["phase"] != "Standby" || selected != nil {
+			return errors.New("candidate HA fact or effect published before canonical commit")
+		}
+		_, err = config.AtomicWriteFileWithOutcome(canonical, []byte("next\n"))
+		return err
+	})
+	// The outer mutation gate still prevents background retries from repairing
+	// an incorrect first committed selection before these assertions.
+	if err != nil || outcome.Standby || selected == nil {
+		t.Errorf("admitted actual leader did not select When-dependent effect: %+v %v bound=%t", outcome, err, selected != nil)
+	}
+	status, readErr := store.ReadObjectStatus(api.SystemAPIVersion, "RouterdCluster", "ownership-review")
+	if readErr != nil || status["phase"] != "Leader" || status["identity"] != "router-a" {
+		t.Errorf("HA observation=%+v %v", status, readErr)
+	}
+	gate.Unlock()
+}
+
+func TestRuntimeApplyHALeaderProjectionFailurePreventsEffects(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(map[bool]string{true: "initial", false: "admitted"}[initial], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.db")
+			store, err := state.OpenSQLite(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			old := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "old"}}
+			next := runtimeApplyTestRouter(filepath.Join(t.TempDir(), "lease"), "next")
+			if initial {
+				old = next
+			}
+			gate := &sync.RWMutex{}
+			r := &Runner{Router: old, Store: store, Bus: bus.NewWithStore(store), Opts: Options{MutationGate: gate, EnabledControllers: []string{"log-retention"}}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if !initial {
+				if err := r.Start(ctx); err != nil {
+					t.Fatal(err)
+				}
+				defer func() {
+					cancel()
+					wait, done := context.WithTimeout(context.Background(), 5*time.Second)
+					defer done()
+					if err := r.Wait(wait); err != nil && !errors.Is(err, context.Canceled) {
+						t.Error(err)
+					}
+				}()
+			}
+			fault, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer fault.Close()
+			if _, err := fault.Exec(`CREATE TRIGGER reject_ha_status BEFORE INSERT ON objects WHEN NEW.kind='RouterdCluster' BEGIN SELECT RAISE(FAIL,'actual HA status write failure'); END`); err != nil {
+				t.Fatal(err)
+			}
+			if initial {
+				if err := r.Start(ctx); err == nil {
+					t.Fatal("initial HA acquisition swallowed status write failure")
+				}
+			} else {
+				canonical := filepath.Join(t.TempDir(), "router.yaml")
+				gate.Lock()
+				outcome, err := r.ApplyRuntimeWithOutcome(t.Context(), next, true, func() error { _, err := config.AtomicWriteFileWithOutcome(canonical, []byte("next\n")); return err })
+				gate.Unlock()
+				if err == nil || outcome.Active.Router != old || !outcome.Active.Available {
+					t.Fatalf("HA projection failure activated candidate or lost prior owner: %+v %v", outcome, err)
+				}
+				if data, err := os.ReadFile(canonical); err != nil || string(data) != "next\n" {
+					t.Fatalf("desired commit fact lost: %q %v", data, err)
+				}
+			}
+			if status, err := store.ReadObjectStatus(api.SystemAPIVersion, "RouterdCluster", "ownership-review"); err != nil || len(status) != 0 {
+				t.Fatalf("failed HA publication fabricated status: %+v %v", status, err)
+			}
+			leasePath := next.Spec.Resources[0].Spec.(api.RouterdClusterSpec).LeasePath
+			if decision := runtimeApplyCompetingLease(t, leasePath); !decision.Leader {
+				t.Fatal("failed publication leaked newly acquired HA lease")
+			}
+		})
+	}
+}
+
+type runtimeApplyHAPublishStore struct {
+	*state.SQLiteStore
+	afterLeader func() error
+}
+
+func (s *runtimeApplyHAPublishStore) SaveObjectStatus(version, kind, name string, status map[string]any) error {
+	if err := s.SQLiteStore.SaveObjectStatus(version, kind, name, status); err != nil {
+		return err
+	}
+	if kind == "RouterdCluster" && status["phase"] == "Leader" && s.afterLeader != nil {
+		callback := s.afterLeader
+		s.afterLeader = nil
+		return callback()
+	}
+	return nil
+}
+func TestRuntimeApplyHAStatusWaitCannotAuthorizeLostInPlaceLease(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lease.json")
+	old, next := runtimeApplyTestRouter(path, "old"), runtimeApplyTestRouter(path, "next")
+	next.Spec.Resources = append(next.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "conditional"}, Spec: api.InterfaceSpec{IfName: "fixture0", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"RouterdCluster/ownership-review.phase": {Equals: "Leader"}}}}})
+	db, err := state.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := &runtimeApplyHAPublishStore{SQLiteStore: db}
+	gate := &sync.RWMutex{}
+	var listener net.Listener
+	var mu sync.Mutex
+	runner := &Runner{Router: old, Store: store, Bus: bus.NewWithStore(db), Opts: Options{MutationGate: gate, EnabledControllers: []string{"log-retention"}, ReconcileHTTPServers: func(_ context.Context, view RuntimeRouterObservation) error {
+		for _, res := range view.EffectiveRouter.Spec.Resources {
+			if res.Kind == "Interface" {
+				mu.Lock()
+				defer mu.Unlock()
+				if listener == nil {
+					var err error
+					listener, err = net.Listen("tcp", "127.0.0.1:0")
+					return err
+				}
+			}
+		}
+		return nil
+	}}}
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	if err := runner.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		stop()
+		wait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := runner.Wait(wait); err != nil && !errors.Is(err, context.Canceled) && !(errors.Is(err, ErrRuntimeMutationStopped) && runner.RuntimeMutationError() != nil) {
+			t.Error(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if listener != nil {
+			listener.Close()
+		}
+	}()
+	gate.Lock()
+	store.afterLeader = func() error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.Rename(path, path+".previous"); err != nil {
+			return err
+		}
+		return os.WriteFile(path, data, 0600)
+	}
+	outcome, err := runner.ApplyRuntimeWithOutcome(ctx, next, false, func() error { return nil })
+	gate.Unlock()
+	mu.Lock()
+	bound := listener != nil
+	mu.Unlock()
+	if err == nil || runner.RuntimeMutationError() == nil || outcome.Active.Available || bound {
+		t.Fatalf("HA status persistence wait admitted effects after losing lease: %+v err=%v candidateBound=%t", outcome, err, bound)
 	}
 }

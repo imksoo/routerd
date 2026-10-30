@@ -2006,6 +2006,12 @@ func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Contex
 		cancel()
 		return nil, err
 	}
+	if admitted != nil {
+		if err := recordRuntimeHADecision(router, store, decision); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	builder := r.frameworkControllers
 	if r.generationBuilder != nil {
 		builder = r.generationBuilder
@@ -3476,20 +3482,14 @@ func acquireClusterLease(ctx context.Context, router *api.Router, store Store) (
 		return decision, err
 	}
 	if store != nil {
-		phase := "Standby"
-		if decision.Leader {
-			phase = "Leader"
+		if err := recordRuntimeHADecision(router, store, decision); err != nil {
+			if decision.Lease != nil {
+				err = errors.Join(err, decision.Lease.Close())
+			}
+			return decision, err
 		}
-		_ = store.SaveObjectStatus(api.SystemAPIVersion, "RouterdCluster", resource.Metadata.Name, map[string]any{
-			"phase":      phase,
-			"identity":   decision.Identity,
-			"holder":     decision.Holder,
-			"leasePath":  decision.LeasePath,
-			"expiresAt":  decision.ExpiresAt.Format(time.RFC3339Nano),
-			"reason":     decision.Reason,
-			"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
-		})
 	}
+
 	return decision, nil
 }
 
