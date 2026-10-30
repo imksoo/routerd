@@ -195,8 +195,9 @@ for _ in {1..30}; do
 done
 jq -e '.resources[0].phase == "Bound"' "$work/pd-restart.json" >/dev/null
 probe
-systemctl stop rd15-peer-kea.service
 # Verify expiry removes forwarding authority without changing product state manually.
+wait_expired() {
+systemctl stop rd15-peer-kea.service
 for _ in {1..110}; do
  if ! ip -6 addr show dev rd15-lan | grep -q "$active_prefix::1/64" && ! ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'; then break; fi
  sleep 1
@@ -209,6 +210,8 @@ fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'traffic survived expiry' >&2; exit 1; fi
 systemctl is-active --quiet routerd
 printf 'PASS: expired PD withdrawn from router address, client default route and traffic\n'
+}
+wait_expired
 systemd-run --unit=rd15-peer-kea --property=Type=exec --property=RuntimeDirectory=kea --setenv="LD_LIBRARY_PATH=$LD_LIBRARY_PATH" ip netns exec "$wan_ns" "$kea" -d -c "$work/kea.json"
 for _ in {1..90}; do
  if pdstatus > "$work/pd-return.json" && jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1501::/60"' "$work/pd-return.json" >/dev/null && client_ready; then break; fi
@@ -218,10 +221,20 @@ jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix =
 client_ready
 probe
 printf 'PASS: expired upstream returned and forwarding/DNS recovered automatically\n'
+# Remove the declaration after expiry, when the LAN native receipt is already
+# empty and DNS is waiting for an address. No daemon restart may clear status.
+wait_expired
 cat > "$work/empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"ipv6-readiness"},"spec":{"resources":[]}}
 JSON
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
+for _ in {1..45}; do
+ /usr/local/sbin/routerctl get status -o json > "$work/empty-status.json"
+ if jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null; then break; fi
+ sleep 1
+done
+jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null
+printf 'PASS: empty apply after expiry leaves no stale phase issues or controller errors\n'
 systemctl stop rd15-peer-http6.service rd15-peer-dns6.service
 ip netns del "$lan_ns"
 ip netns del "$wan_ns"

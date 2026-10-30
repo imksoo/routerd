@@ -168,8 +168,13 @@ remain under RFC 4862's two-hour rule.
 Then require service restart and upstream-stop expiry removing the router
 address and client default route. Traffic must fail while the product service
 remains active. Restart the independent server and require automatic PD,
-SLAAC/default-route, DNS and forwarding recovery. Final empty apply, peer shutdown, namespace
-removal and restoration of the original forwarding setting are also required.
+SLAAC/default-route, DNS and forwarding recovery. Stop the upstream again and
+wait for expiry before applying the empty configuration. Without restarting
+routerd, require Healthy with zero resources, no resource phase issues and no
+current controller errors. Removed PD/DNS rows must disappear after the owner
+acknowledges shutdown; failed native withdrawal receipts must remain visible.
+Peer shutdown, namespace removal and restoration of the original forwarding
+setting are also required.
 
 DAD is asynchronous: a newly installed delegated address holds RA in Pending
 without failing configuration apply. Positive advertisement resumes only after

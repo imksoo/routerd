@@ -3100,6 +3100,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -3110,6 +3111,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
+			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
@@ -3619,7 +3621,10 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 	if err != nil {
 		return err
 	}
-	return r.reconcileSupervisedDaemonSpecs(ctx, logger, specs)
+	if err := r.reconcileSupervisedDaemonSpecs(ctx, logger, specs); err != nil {
+		return err
+	}
+	return r.cleanupRemovedDaemonStatuses()
 }
 
 func (r *Runner) daemonSupervisionRouter(store eventedStore) (*api.Router, error) {
