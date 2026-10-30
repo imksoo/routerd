@@ -232,8 +232,11 @@ establish independent RR/leaf interoperability.
   concurrent handler admission still need lifetime/resource-bound review.
 - Unimplemented labctl live operations now fail and preserve manifests. Required
   protocol evidence cannot be promoted to PASS by a result override. Remaining
-  collectors still need complete parse/measurement identity; capture
-  uses bare PIDs; exact address/account/source identities are not always checked.
+  collectors still need complete parse/measurement identity. The four-point
+  pcap runner now uses durable gated admission, exact Linux pidfd/birth/output
+  receipts and acknowledged stop before copy; native process/fault checks pass.
+  Other capture harnesses and exact address/account/source identities still
+  require review; real remote capture remains unqualified.
   The isolated E2E deployment now rejects unconfirmed unit stops, and generated
   secret-bearing YAML is replaced atomically with private permissions; offline
   production-body regressions pass. Native deployment remains unqualified.
