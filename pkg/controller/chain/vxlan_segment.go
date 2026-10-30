@@ -620,6 +620,30 @@ func (c VXLANSegmentController) ObserveOwnedInterface(ctx context.Context, resou
 		if err := c.confirmGate(resource); err != nil {
 			return absent, err
 		}
+		// The native and gate reads can wait while the concrete parent owner
+		// begins withdrawal or replaces its plan. The old native snapshot
+		// cannot authorize a child after that receipt has changed.
+		currentOwners, err := c.readOwners()
+		if err != nil {
+			return absent, err
+		}
+		found := false
+		for _, current := range currentOwners {
+			if current.Resource == owner.Resource && current.Version == owner.Version && current.Identity == owner.Identity && current.Withdrawing == owner.Withdrawing && sameSegmentPlan(current.Plan, owner.Plan) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return absent, errors.New("VXLAN parent ownership receipt changed while observing")
+		}
+		scope, err := c.Native.KernelScope(ctx)
+		if err != nil {
+			return absent, err
+		}
+		if scope != c.scope {
+			return absent, errors.New("VXLAN parent kernel scope changed while observing")
+		}
 		return observed, ctx.Err()
 	}
 	observed, err := c.Native.Observe(ctx, plan.IfName)
