@@ -990,3 +990,48 @@ and inspected, not executed as live router daemons. Actual native FreeBSD/PVE,
 independent client/peer traffic, forwarding and image boot remain unqualified.
 The implementation gaps in [remaining findings](routerd15-open-findings.md)
 remain open; these checks are not whole-repository compliance certification.
+
+## Shared VXLAN native lifecycle follow-up (2026-10-30)
+
+Executed source: local `a89f1f270e8dcd51cdd2e39463fd7f3d78c90cc5`, tree
+`84ad73374d4e047497c9ed2580479efd45c7268c`; the same tree is preserved remotely
+as `56a900c04c5b03996732475cbd29ee7e58842f4c` on
+`wip/routerd15-vxlan-20261030`. Earlier feature checkpoints were published before
+broad validation; none was presented as native qualification.
+
+Both VXLAN kinds now use the actual scope-partitioned native receipt owner.
+Receipts identify the API version/kind/name; separate kinds cannot overwrite each
+other's owner, and two resources claiming one native interface are rejected.
+The old command-only controller, networkd `.netdev`/FDB writer, FreeBSD VXLAN rc
+creator, generic raw-link artifact, and Bridge port ownership are removed.
+Networkd's remaining VXLAN `.network` has manual activation and retains existing
+configuration for separate NTP/static-route consumers.
+
+Independent review reproduced three gate defects in the migration: default child
+constructors omitted the current state reader; a gate could change during native
+parent observation; and a read-only reader with no daemon-start timestamp skipped
+the default freshness limit. Each is corrected. The actual SQLite/native-boundary
+regressions also cover demotion withdrawal, current-lifetime admission, producer
+revision changes during slow admission, foreign replacement, source failure with
+pending ownership, and kind/name collisions. Linux learning/DF native message
+checks and FreeBSD driver-learning readback are exercised. Default FreeBSD tunnel
+intent remains supported without an explicit DF request; explicit unsupported DF
+and excess unicast remotes fail instead of being ignored.
+
+On the executed source, Go 1.25.9 focused `-count=1 -race` checks passed for
+`pkg/vxlan`, `pkg/controller/chain`, `pkg/apply`, `pkg/render`, and `cmd/routerd`
+(the last package compiled but selected no tests). The selection included the
+VXLAN/native gate, BSD boundary, prepared deadline, controller registration,
+networkd, missing-observer and child-parent regressions. Relevant `go vet` passed.
+`GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go test -exec=true` passed for those
+packages and `pkg/lifecycle`; this is compile-only.
+
+A broader normal run on the preceding integration source `9ed5541` passed all of
+`pkg/apply`, `pkg/render`, `pkg/lifecycle`, and `pkg/vxlan`. Its complete chain run
+failed exactly three tests with direct native permission denials:
+`TestLinkControllerPublishesInterfaceStatus` (Netlink), and
+`TestDaemonStatusControllerStoresARPObserverDiagnosticsSeparately` /
+`TestDaemonStatusControllerKeepsDedicatedControllerStatusFields` (Unix sockets).
+No acceptance assertions or skips were weakened. Real Linux/FreeBSD VXLAN
+forwarding, kernel failure recovery and independent peer interoperability remain
+unexecuted; native message/SQLite fixtures do not establish those results.
