@@ -7,8 +7,8 @@ control API's apply/delete path use the same ordering:
 1. Read, merge and validate the candidate, plan without running candidate
    controllers, record the attempted generation, and obtain HA admission.
 2. Replace the canonical file and acknowledge both replacement and durability.
-3. Activate the committed runtime and HTTP listeners, refresh candidate PD state,
-   then run and observe native reconciliation.
+3. Refresh committed candidate PD inputs, activate and reconcile the selected
+   runtime and HTTP listeners, then observe native reconciliation.
 4. Record the actual terminal result and publish a response.
 
 The existing live mutation gate owns the transaction from reading its canonical
