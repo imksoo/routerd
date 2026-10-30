@@ -70,6 +70,17 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 	}
 	for _, res := range router.Spec.Resources {
+		if res.Kind != "VXLANTunnel" {
+			continue
+		}
+		spec, err := res.VXLANTunnelSpec()
+		if err != nil {
+			return FreeBSDConfig{}, err
+		}
+		aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+	}
+
+	for _, res := range router.Spec.Resources {
 		if res.Kind != "WireGuardInterface" {
 			continue
 		}
@@ -122,22 +133,29 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 	}
 	var warnings []string
 	for _, vxlan := range vxlans {
-		if vxlan.Kind == "VXLANSegment" {
-			unique := map[netip.Addr]bool{}
-			for _, remote := range vxlan.Remotes {
-				address, err := netip.ParseAddr(remote)
-				if err != nil {
-					return FreeBSDConfig{}, err
+		if vxlan.Kind == "VXLANTunnel" {
+			for _, resource := range router.Spec.Resources {
+				if resource.Kind == vxlan.Kind && resource.Metadata.Name == vxlan.Name {
+					spec, err := resource.VXLANTunnelSpec()
+					if err != nil {
+						return FreeBSDConfig{}, err
+					}
+					if spec.OuterDF != "" {
+						return FreeBSDConfig{}, fmt.Errorf("%s: FreeBSD VXLAN does not expose an outer DF control", resource.ID())
+					}
 				}
-				unique[address.Unmap()] = true
 			}
-			if len(unique) > 1 {
-				return FreeBSDConfig{}, fmt.Errorf("VXLANSegment %s: FreeBSD vxlan(4) does not support multiple unicast remotes; use multicast or a single peer", vxlan.Name)
-			}
-			continue
 		}
-		if len(vxlan.Remotes) > 1 {
-			warnings = append(warnings, fmt.Sprintf("VXLANSegment %s: FreeBSD vxlan(4) supports a single unicast remote; using %s as the seed and ignoring %v. Reach the other peers via a Linux relay or a multicast underlay.", vxlan.Name, vxlan.Remotes[0], vxlan.Remotes[1:]))
+		unique := map[netip.Addr]bool{}
+		for _, remote := range vxlan.Remotes {
+			address, err := netip.ParseAddr(remote)
+			if err != nil {
+				return FreeBSDConfig{}, err
+			}
+			unique[address.Unmap()] = true
+		}
+		if len(unique) > 1 {
+			return FreeBSDConfig{}, fmt.Errorf("%s %s: FreeBSD vxlan(4) does not support multiple unicast remotes; use multicast or a single peer", vxlan.Kind, vxlan.Name)
 		}
 	}
 	for _, res := range router.Spec.Resources {
@@ -427,32 +445,6 @@ func freeBSDVXLANIfNames(vxlans []vxlanConfig) map[string]bool {
 		out[vxlan.IfName] = true
 	}
 	return out
-}
-
-func writeFreeBSDVXLANS(buf *bytes.Buffer, vxlans []vxlanConfig) {
-	if len(vxlans) == 0 {
-		return
-	}
-	for _, vxlan := range vxlans {
-		var args []string
-		args = append(args, "vxlanid "+strconv.Itoa(vxlan.VNI))
-		args = append(args, "vxlanlocal "+vxlan.LocalAddress)
-		if vxlan.MulticastGroup != "" {
-			args = append(args, "vxlangroup "+vxlan.MulticastGroup)
-		} else if len(vxlan.Remotes) > 0 {
-			args = append(args, "vxlanremote "+vxlan.Remotes[0])
-		}
-		if vxlan.UnderlayIfName != "" {
-			args = append(args, "vxlandev "+vxlan.UnderlayIfName)
-		}
-		args = append(args, "vxlanlocalport "+strconv.Itoa(vxlan.UDPPort))
-		args = append(args, "vxlanremoteport "+strconv.Itoa(vxlan.UDPPort))
-		if vxlan.MTU != 0 {
-			args = append(args, "mtu "+strconv.Itoa(vxlan.MTU))
-		}
-		args = append(args, "up")
-		buf.WriteString(fmt.Sprintf("ifconfig_%s=\"%s\"\n", vxlan.IfName, strings.Join(args, " ")))
-	}
 }
 
 func resourceKind(router *api.Router, name string) string {

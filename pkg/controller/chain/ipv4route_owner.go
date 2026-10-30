@@ -84,22 +84,23 @@ func (c IPv4RouteController) ordinaryRouteSegmentParent(ctx context.Context, dev
 		return "", errors.New("IPv4Route current router is unavailable")
 	}
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" {
+		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
 			continue
 		}
-		spec, err := resource.VXLANSegmentSpec()
+		plan, err := nativeVXLANInterface(resource)
 		if err != nil {
 			return "", err
 		}
-		if firstNonEmpty(spec.IfName, resource.Metadata.Name) != device {
+		if plan != device {
 			continue
 		}
 		owner := VXLANSegmentController{Router: c.Router, Store: c.Store}
 		if c.Segments != nil {
 			owner = *c.Segments
 			owner.Router = c.Router
+			owner.Store = c.Store
 		}
-		link, err := owner.ObserveOwnedInterface(ctx, resource.Metadata.Name)
+		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
 		if err != nil {
 			return "", err
 		}

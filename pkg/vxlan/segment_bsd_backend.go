@@ -21,7 +21,7 @@ import (
 
 type freeBSDSegmentNative struct {
 	scope      func(context.Context) (string, error)
-	command    CommandRunner
+	command    func(context.Context, string, ...string) ([]byte, error)
 	interfaces func() ([]net.Interface, error)
 	readConfig func(context.Context, string, int) (bsdSegmentConfig, error)
 }

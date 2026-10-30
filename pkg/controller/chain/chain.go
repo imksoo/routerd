@@ -1562,7 +1562,6 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 			changed := preserveStaticVirtualAddressCleanupStatus(res, current, next)
 			changed = preserveIPv4StaticAddressCleanupStatus(declared, res, current, next) || changed
 			changed = preserveIPv6DelegatedAddressCleanupStatus(res, current, next) || changed
-			changed = preserveVXLANTunnelCleanupStatus(res, current, next) || changed
 			if changed {
 				if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, next); err != nil {
 					return err
@@ -1585,32 +1584,11 @@ func (r *Runner) saveWhenFalseStatuses(store eventedStore) error {
 		preserveStaticVirtualAddressCleanupStatus(res, current, status)
 		preserveIPv4StaticAddressCleanupStatus(declared, res, current, status)
 		preserveIPv6DelegatedAddressCleanupStatus(res, current, status)
-		preserveVXLANTunnelCleanupStatus(res, current, status)
 		if err := store.SaveObjectStatus(apiVersion, res.Kind, res.Metadata.Name, status); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// preserveVXLANTunnelCleanupStatus retains the ownership proof needed by the
-// operational controller after spec.when filters the tunnel from the effective
-// graph. Without it a safe controller must treat the still-live link as foreign
-// and cannot close forwarding during HA demotion.
-func preserveVXLANTunnelCleanupStatus(res api.Resource, current, status map[string]any) bool {
-	if res.Kind != "VXLANTunnel" {
-		return false
-	}
-	changed := false
-	for _, key := range []string{"managedBy", "ifname", "bridgeIfname", "underlayIfname", "restartPersistent"} {
-		if value, ok := current[key]; ok {
-			if _, exists := status[key]; !exists {
-				status[key] = value
-				changed = true
-			}
-		}
-	}
-	return changed
 }
 
 // preserveStaticVirtualAddressCleanupStatus retains only the ownership data
@@ -2424,7 +2402,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
-	vxlanTunnel := VXLANTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Store: store, DryRun: opts.DryRunVXLANTunnel, StartedAt: r.startedAt(), Mu: &sync.Mutex{}}
 	serviceUnits := SystemdUnitController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunServiceUnit, SynthesizeClientDaemonUnits: !opts.SuperviseClientDaemons && !opts.SkipLegacyClientUnits, BGPSocketPath: opts.BGPSocketPath, BGPControlSocketPath: opts.BGPControlSocketPath, BGPStatePath: opts.BGPStatePath}
 	logRetention := LogRetentionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunLogRetention}
 	ntpClient, ntpServer := ntpControllersForOptions(r.currentRouter(), r.Bus, store, opts)
@@ -2433,10 +2410,11 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	tunnel := TunnelInterfaceController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, OS: platform.CurrentOS(), Logger: logger}
 	wireGuard := WireGuardController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
 	nativeMobilityMu := &sync.Mutex{}
-	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
-	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger}
+	vxlanParent := &VXLANSegmentController{Store: store, StartedAt: r.startedAt()}
+	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent}
+	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Logger: logger}
@@ -2444,6 +2422,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	dhcpv6 := DHCPv6ServerController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDHCPv6, Command: opts.DnsmasqCommand, ConfigPath: opts.DnsmasqConfig, PIDFile: opts.DnsmasqPID, Port: opts.DnsmasqPort, ListenAddresses: opts.DnsmasqListen, Logger: logger}
 	if r.controllerEnabled("dhcpv6-server") {
 		lifetimes.advertisements = NewRouterAdvertisementService(ctx, opts.DryRunDHCPv6)
+		lifetimes.advertisements.segments = vxlanParent
 		dhcpv6.Advertisements = lifetimes.advertisements
 	}
 	dhcp4Client := dhcpv4client.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DaemonSockets: opts.DaemonSockets, DryRun: opts.DryRunDHCPv4Client, Logger: logger}
@@ -2735,28 +2714,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := bridge
 			current.Router = effective
-			current.Store = store.withRouter(effective)
-			return didWorkError(current.Reconcile(ctx))
-		}},
-		framework.FuncController{ControllerName: "vxlan-tunnel", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"VXLANTunnel"}, "Bridge", "WireGuardInterface"), NextAfter: func() time.Duration {
-			prepared, err := r.currentPreparedRouter()
-			if err != nil {
-				return 0
-			}
-			current := vxlanTunnel
-			current.Router = prepared.startup.Router()
-			current.DeclaredRouter = prepared.declared
-			current.Store = store.withRouter(prepared.declared)
-			return current.NextExpiryAfter()
-		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
-			observation, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			effective := observation.EffectiveRouter
-			current := vxlanTunnel
-			current.Router = effective
-			current.DeclaredRouter = observation.DeclaredRouter
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},

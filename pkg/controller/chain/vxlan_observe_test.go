@@ -67,7 +67,7 @@ func TestVXLANSegmentInspectionRequiresCurrentNativeOwnerReadback(t *testing.T) 
 	native.readErr = errors.New("native read failed")
 	inspect("Blocked", "unknown")
 	native.readErr = nil
-	if err := controller.removeOwner("segment"); err != nil {
+	if err := controller.removeOwner(api.NetAPIVersion + "/VXLANSegment/segment"); err != nil {
 		t.Fatal(err)
 	}
 	// Presence without its receipt must not be described as native absence.

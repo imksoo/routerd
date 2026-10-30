@@ -17,15 +17,14 @@ type VXLANSegmentObserver interface {
 }
 
 func (e *Engine) observeVXLANSegment(resource api.Resource, includePlan bool, result *ResourceResult) {
-	spec, err := resource.VXLANSegmentSpec()
+	ifname, vni, err := nativeVXLANDisplay(resource)
 	if err != nil {
 		result.Phase = "Blocked"
 		result.Warnings = append(result.Warnings, err.Error())
 		return
 	}
-	ifname := defaultString(spec.IfName, resource.Metadata.Name)
 	result.Observed["ifname"], result.Observed["present"] = ifname, "unknown"
-	result.Observed["vni"] = strconv.Itoa(spec.VNI)
+	result.Observed["vni"] = strconv.Itoa(vni)
 	if e.Segments == nil {
 		result.Phase = "Blocked"
 		result.Warnings = append(result.Warnings, "VXLAN native ownership observation is unavailable")
@@ -35,7 +34,7 @@ func (e *Engine) observeVXLANSegment(resource api.Resource, includePlan bool, re
 	if ctx == nil {
 		ctx = context.Background() // Explicit observation collaborators own their lifetime.
 	}
-	link, err := e.Segments.ObserveOwnedInterface(ctx, resource.Metadata.Name)
+	link, err := e.Segments.ObserveOwnedInterface(ctx, resource.ID())
 	if err != nil {
 		result.Phase = "Blocked"
 		result.Warnings = append(result.Warnings, err.Error())
@@ -55,4 +54,13 @@ func (e *Engine) observeVXLANSegment(resource api.Resource, includePlan bool, re
 	if includePlan {
 		result.Plan = append(result.Plan, "keep acknowledged native VXLAN segment "+ifname)
 	}
+}
+
+func nativeVXLANDisplay(resource api.Resource) (string, int, error) {
+	if resource.Kind == "VXLANSegment" {
+		spec, err := resource.VXLANSegmentSpec()
+		return defaultString(spec.IfName, resource.Metadata.Name), spec.VNI, err
+	}
+	spec, err := resource.VXLANTunnelSpec()
+	return defaultString(spec.IfName, resource.Metadata.Name), spec.VNI, err
 }

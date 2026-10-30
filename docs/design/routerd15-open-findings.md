@@ -89,9 +89,12 @@ Implemented in the native/runtime follow-up:
   Duplicate FreeBSD boot creators and generic teardown ownership are removed.
 - PF emits the SAM root forward anchor; Linux SAM sysctl paths preserve dotted
   interface names. FreeBSD managed AdminUp uses its native command.
-- VXLANSegment has one native Linux/FreeBSD owner, current admission, durable
-  creation/withdrawal and scope-partitioned receipts. Duplicate networkd/rc
-  creators and Bridge port ownership are removed. Native VM effects are unrun.
+- VXLANTunnel and VXLANSegment share one native Linux/FreeBSD owner, current
+  admission, durable creation/withdrawal and kind-aware scope-partitioned
+  receipts. Tunnel HA gates retain current-lifetime/freshness checks after
+  waits, including child observation. Duplicate networkd/rc creators and Bridge
+  port ownership are removed; read-only inspection requires native proof.
+  Native VM effects and independent-peer forwarding are unrun.
 - One RA service owns finite current/previous PIOs, solicitation handling,
   independent M/O, router lifetime and prefix/DNS withdrawal. dnsmasq no longer
   creates RAs or a DHCPv6 socket for ra-only intent. See
@@ -104,10 +107,9 @@ Still open:
   pending owner rather than priority-only deletion or inferred ownership.
 - Mobility's separate address/route pending paths still have automatic unmarked
   adoption/replace recovery; the ordinary owners' fence does not repair them.
-- Existing VXLANTunnel lifecycle still needs migration to the concrete native
-  owner. Engine VXLANSegment observations can default to Healthy without native
-  proof; wire the actual read-only owner observation instead. Unspecified local
-  source readback and child proof for other virtual parents need closure.
+- Child proof for virtual parents other than the shared native VXLAN owner
+  remains open. VXLAN local wildcard source, nolearning and Linux outer DF
+  use native readback; explicit FreeBSD outer DF remains unsupported.
 - RA custom DHCPv6 SelfAddressPolicy selection now prepares ordered candidates
   and uses current native address validity or canonical PD plus acknowledged
   exact address receipts. Per-address RDNSS deadlines, fallback/withdrawal, failed

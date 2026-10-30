@@ -9,7 +9,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 )
 
-func TestMissingBridgeAndVXLANTunnelAreDriftedNotHealthy(t *testing.T) {
+func TestMissingBridgeAndUnobservedVXLANTunnelCannotBeHealthy(t *testing.T) {
 	router := &api.Router{
 		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
 		Metadata: api.ObjectMeta{Name: "test"},
@@ -28,15 +28,19 @@ func TestMissingBridgeAndVXLANTunnelAreDriftedNotHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
-	if result.Phase != "Drifted" {
-		t.Fatalf("result phase = %s, want Drifted: %#v", result.Phase, result)
+	if result.Phase != "Blocked" {
+		t.Fatalf("result phase = %s, want Blocked: %#v", result.Phase, result)
 	}
 	for _, id := range []string{api.NetAPIVersion + "/Bridge/legacy-l2", api.NetAPIVersion + "/VXLANTunnel/overlay"} {
 		found := false
 		for _, resource := range result.Resources {
 			if resource.ID == id {
 				found = true
-				if resource.Phase != "Drifted" || resource.Observed["present"] != "false" {
+				phase, present := "Drifted", "false"
+				if resource.ID == api.NetAPIVersion+"/VXLANTunnel/overlay" {
+					phase, present = "Blocked", "unknown"
+				}
+				if resource.Phase != phase || resource.Observed["present"] != present {
 					t.Fatalf("%s = %#v", id, resource)
 				}
 			}

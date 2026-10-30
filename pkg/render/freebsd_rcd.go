@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/imksoo/routerd/internal/stringutil"
@@ -184,24 +183,6 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 		out[name] = data
 	}
-	bridges, err := bridgeConfigs(router, aliases)
-	if err != nil {
-		return nil, err
-	}
-	vxlans, err := vxlanConfigs(router, aliases)
-	if err != nil {
-		return nil, err
-	}
-	for _, vxlan := range vxlans {
-		if vxlan.Kind == "VXLANSegment" {
-			continue
-		}
-		name := freeBSDServiceName("routerd-vxlan@" + vxlan.Name + ".service")
-		if explicit[name] {
-			continue
-		}
-		out[name] = FreeBSDVXLANRCDScript(name, vxlan, freeBSDVXLANBridges(bridges, vxlan.IfName))
-	}
 	for _, res := range router.Spec.Resources {
 		if res.Kind != "TailscaleNode" {
 			continue
@@ -244,23 +225,6 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 	return out, nil
 }
 
-func freeBSDVXLANBridges(bridges []bridgeConfig, ifname string) []string {
-	var out []string
-	for _, bridge := range bridges {
-		for _, member := range bridge.Members {
-			if member == ifname {
-				out = append(out, bridge.IfName)
-				break
-			}
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// FreeBSDTailscaleRCDScript records ownership of the shared tailscaled
-// service. A pre-existing service without the marker is foreign and is never
-// started, stopped, or enrolled by routerd.
 func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	name = freeBSDServiceName(name)
 	args := TailscaleUpArgs(spec)
@@ -303,54 +267,6 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	return b.Bytes()
 }
 
-// FreeBSDVXLANRCDScript owns exactly one routerd-created vxlan(4) interface.
-// It refuses an existing interface without its own runtime marker and retains
-// that receipt until cleanup succeeds.
-func FreeBSDVXLANRCDScript(name string, vxlan vxlanConfig, bridges []string) []byte {
-	name = freeBSDServiceName(name)
-	var args []string
-	args = append(args, "vxlanid", strconv.Itoa(vxlan.VNI), "vxlanlocal", vxlan.LocalAddress)
-	if vxlan.MulticastGroup != "" {
-		args = append(args, "vxlangroup", vxlan.MulticastGroup)
-	} else if len(vxlan.Remotes) > 0 {
-		args = append(args, "vxlanremote", vxlan.Remotes[0])
-	}
-	if vxlan.UnderlayIfName != "" {
-		args = append(args, "vxlandev", vxlan.UnderlayIfName)
-	}
-	args = append(args, "vxlanlocalport", strconv.Itoa(vxlan.UDPPort))
-	args = append(args, "vxlanremoteport", strconv.Itoa(vxlan.UDPPort))
-	if vxlan.MTU != 0 {
-		args = append(args, "mtu", strconv.Itoa(vxlan.MTU))
-	}
-	var b bytes.Buffer
-	b.WriteString("#!/bin/sh\n# Managed by routerd.\n")
-	b.WriteString("# PROVIDE: " + name + "\n# REQUIRE: NETWORKING\n# KEYWORD: shutdown\n\n. /etc/rc.subr\n\n")
-	b.WriteString("name=" + shellSingleQuote(name) + "\nrcvar=\"${name}_enable\"\n")
-	b.WriteString("ifname=" + shellSingleQuote(vxlan.IfName) + "\n")
-	b.WriteString("marker_dir=" + shellSingleQuote("/var/run/routerd/vxlan") + "\nmarker=\"${marker_dir}/" + name + ".owner\"\n")
-	b.WriteString("start_cmd=\"${name}_start\"\nstop_cmd=\"${name}_stop\"\nstatus_cmd=\"${name}_status\"\n\n")
-	b.WriteString(freeBSDInterfacePresenceFunction(name, vxlan.IfName))
-	b.WriteString(name + "_rollback() {\n  [ \"${created_here:-0}\" = 1 ] || return 0\n  " + name + "_present; present_rc=$?\n  [ \"${present_rc}\" -ne 2 ] || return 1\n  if [ \"${present_rc}\" = 0 ]; then\n    /sbin/ifconfig \"${ifname}\" destroy || { echo \"VXLAN cleanup failed; retaining ownership marker\" >&2; return 1; }\n  fi\n  rm -f \"${marker}\" \"${marker}.$$\"\n}\n\n")
-	b.WriteString(name + "_start() {\n  created_here=0\n  if [ -r \"${marker}\" ]; then\n    read owned < \"${marker}\" || return 1\n    [ \"${owned}\" = \"${ifname}\" ] || " + name + "_stop || return 1\n  fi\n  " + name + "_present; present_rc=$?\n  [ \"${present_rc}\" -ne 2 ] || return 1\n  if [ \"${present_rc}\" = 0 ]; then\n    [ -r \"${marker}\" ] || { echo \"foreign interface collision: ${ifname}\" >&2; return 1; }\n    read owned < \"${marker}\"\n    [ \"${owned}\" = \"${ifname}\" ] || { echo \"routerd VXLAN ownership marker mismatch\" >&2; return 1; }\n  else\n    if ! mkdir -p \"${marker_dir}\" || ! printf '%s\\n' \"${ifname}\" > \"${marker}.$$\" || ! mv -f \"${marker}.$$\" \"${marker}\"; then\n      echo \"unable to publish routerd VXLAN ownership marker\" >&2\n      return 1\n    fi\n    created_here=1\n    /sbin/ifconfig \"${ifname}\" create || /sbin/ifconfig vxlan create name \"${ifname}\" || { " + name + "_rollback; return 1; }\n  fi\n  if ! /sbin/ifconfig \"${ifname}\"")
-	for _, arg := range args {
-		b.WriteString(" " + shellSingleQuote(arg))
-	}
-	b.WriteString(" up; then\n    " + name + "_rollback; return 1\n  fi\n")
-	for _, bridge := range bridges {
-		b.WriteString("  bridge_state=$(/sbin/ifconfig " + shellSingleQuote(bridge) + ") || { " + name + "_rollback; return 1; }\n")
-		b.WriteString("  if ! printf '%s\\n' \"${bridge_state}\" | grep -Eq " + shellSingleQuote("^[[:space:]]*member: "+regexp.QuoteMeta(vxlan.IfName)+"[[:space:]]") + "; then\n")
-		b.WriteString("    /sbin/ifconfig " + shellSingleQuote(bridge) + " addm \"${ifname}\" || { " + name + "_rollback; return 1; }\n  fi\n")
-	}
-	b.WriteString("}\n\n")
-	b.WriteString(name + "_stop() {\n  [ -r \"${marker}\" ] || return 0\n  read owned < \"${marker}\" || return 1\n  case \"${owned}\" in ''|*[!A-Za-z0-9_.-]*) echo \"invalid routerd interface ownership marker\" >&2; return 1 ;; esac\n")
-	b.WriteString("  " + name + "_present \"${owned}\"; present_rc=$?\n  [ \"${present_rc}\" -ne 2 ] || return 1\n  if [ \"${present_rc}\" = 0 ]; then\n    /sbin/ifconfig \"${owned}\" destroy || return 1\n  fi\n  rm -f \"${marker}\"\n}\n\n")
-	b.WriteString(name + "_status() {\n  [ -r \"${marker}\" ] || return 1\n  read owned < \"${marker}\"\n  [ \"${owned}\" = \"${ifname}\" ] && /sbin/ifconfig \"${ifname}\" >/dev/null 2>&1\n}\n\nload_rc_config $name\n: ${" + name + "_enable:=\"YES\"}\nrun_rc_command \"$1\"\n")
-	return b.Bytes()
-}
-
-// Exit 2 preserves an unknown observation; absence is established only after a
-// successful native interface-list snapshot, never from a failed link query.
 func freeBSDInterfacePresenceFunction(service, ifname string) string {
 	return service + "_present() {\n  target_interface=${1:-" + shellSingleQuote(ifname) + "}\n  native_interfaces=$(/sbin/ifconfig -l) || return 2\n  for native_interface in ${native_interfaces}; do\n    [ \"${native_interface}\" != \"${target_interface}\" ] || return 0\n  done\n  return 1\n}\n\n"
 }

@@ -154,12 +154,17 @@ func vxlanConfigs(router *api.Router, aliases map[string]string) ([]vxlanConfig,
 func nativeVXLANSegmentIfnames(router *api.Router) map[string]bool {
 	names := map[string]bool{}
 	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" {
-			continue
-		}
-		spec, err := resource.VXLANSegmentSpec()
-		if err == nil {
-			names[defaultString(spec.IfName, resource.Metadata.Name)] = true
+		switch resource.Kind {
+		case "VXLANSegment":
+			spec, err := resource.VXLANSegmentSpec()
+			if err == nil {
+				names[defaultString(spec.IfName, resource.Metadata.Name)] = true
+			}
+		case "VXLANTunnel":
+			spec, err := resource.VXLANTunnelSpec()
+			if err == nil {
+				names[defaultString(spec.IfName, resource.Metadata.Name)] = true
+			}
 		}
 	}
 	return names

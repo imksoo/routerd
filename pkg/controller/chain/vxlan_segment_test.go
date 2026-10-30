@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/vxlan"
 )
@@ -348,19 +349,19 @@ func TestVXLANSegmentActualRuntimeOwnsDynamicExpiryAndBridgePort(t *testing.T) {
 
 func TestVXLANSegmentParentProofUsesActualJournalAndNativeCookie(t *testing.T) {
 	c, native, _, _ := segmentOwnerFixture(t)
-	link, err := c.ObserveOwnedInterface(t.Context(), "segment")
+	link, err := c.ObserveOwnedInterface(t.Context(), api.NetAPIVersion+"/VXLANSegment/segment")
 	if err != nil || link.Exists {
 		t.Fatalf("unacquired parent admitted: %+v %v", link, err)
 	}
 	if err := c.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	link, err = c.ObserveOwnedInterface(t.Context(), "segment")
+	link, err = c.ObserveOwnedInterface(t.Context(), api.NetAPIVersion+"/VXLANSegment/segment")
 	if err != nil || !link.Exists || link.Index != native.link.Index || link.Scope != native.scope {
 		t.Fatalf("applied native parent rejected: %+v %v", link, err)
 	}
 	native.link.Token = "foreign"
-	if _, err := c.ObserveOwnedInterface(t.Context(), "segment"); err == nil {
+	if _, err := c.ObserveOwnedInterface(t.Context(), api.NetAPIVersion+"/VXLANSegment/segment"); err == nil {
 		t.Fatal("foreign replacement admitted by file/status alone")
 	}
 	owner := oneSegmentOwner(t, c)
@@ -369,7 +370,7 @@ func TestVXLANSegmentParentProofUsesActualJournalAndNativeCookie(t *testing.T) {
 		t.Fatal(err)
 	}
 	native.link.Token = owner.Identity.Token
-	if _, err := c.ObserveOwnedInterface(t.Context(), "segment"); err == nil {
+	if _, err := c.ObserveOwnedInterface(t.Context(), api.NetAPIVersion+"/VXLANSegment/segment"); err == nil {
 		t.Fatal("unfinished parent acquisition admitted")
 	}
 }
@@ -410,8 +411,8 @@ func TestVXLANSegmentOwnsBridgeMembershipExactlyOnce(t *testing.T) {
 	if err != nil || len(plan.Members) != 0 {
 		t.Fatalf("Bridge claims Segment native port: %+v %v", plan, err)
 	}
-	plans, err := segmentPlans(c.Router)
-	if err != nil || plans["segment"].Bridge != "bridge0" {
+	plans, err := segmentPlans(c.Router, platform.CurrentOS())
+	if err != nil || plans[api.NetAPIVersion+"/VXLANSegment/segment"].Bridge != "bridge0" {
 		t.Fatalf("Segment lost declared Bridge.Members association: %+v %v", plans, err)
 	}
 }

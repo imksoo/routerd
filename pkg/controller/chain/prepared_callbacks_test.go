@@ -36,7 +36,7 @@ func TestPreparedVXLANDeadlineUsesUpdatedDeclaration(t *testing.T) {
 	if err := config.Validate(router); err != nil {
 		t.Fatal(err)
 	}
-	runner := &Runner{Router: router, Bus: bus.New(), Store: store, Opts: Options{EnabledControllers: []string{"vxlan-tunnel"}}}
+	runner := &Runner{Router: router, Bus: bus.New(), Store: store, Opts: Options{EnabledControllers: []string{"vxlan-segment"}}}
 	controller := preparedCallback(t, runner)
 	deadline := controller.(interface{ NextReconcileAfter() time.Duration })
 	if got := deadline.NextReconcileAfter(); got < 59*time.Minute || got > time.Hour {

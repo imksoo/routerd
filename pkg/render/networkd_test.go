@@ -165,7 +165,7 @@ func TestNetworkdDropinsRenderVXLANSegment(t *testing.T) {
 	}
 
 	for _, file := range files {
-		if strings.Contains(file.Path, "vxlan100") || strings.Contains(string(file.Data), "BridgeFDB") || strings.Contains(string(file.Data), "Kind=vxlan") {
+		if strings.HasSuffix(file.Path, ".netdev") || strings.Contains(file.Path, "vxlan100.network.d/88-") || strings.Contains(string(file.Data), "BridgeFDB") || strings.Contains(string(file.Data), "Kind=vxlan") {
 			t.Fatalf("native Segment ownership has a competing networkd writer: %s\n%s", file.Path, file.Data)
 		}
 	}
@@ -189,10 +189,9 @@ func TestNetworkdDropinsRenderVXLANTunnelOuterDF(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render networkd dropins: %v", err)
 	}
-	netdev := string(findNetworkdTestFile(files, "/etc/systemd/network/31-routerd-vx-l2.netdev").Data)
-	for _, want := range []string{"VNI=200001", "DestinationPort=4789", "IPDoNotFragment=no"} {
-		if !strings.Contains(netdev, want) {
-			t.Fatalf("vxlan tunnel netdev missing %q:\n%s", want, netdev)
+	for _, file := range files {
+		if strings.HasSuffix(file.Path, ".netdev") || strings.Contains(string(file.Data), "Kind=vxlan") {
+			t.Fatalf("native tunnel has competing networkd creator: %s", file.Path)
 		}
 	}
 }
