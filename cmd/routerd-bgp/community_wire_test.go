@@ -74,8 +74,28 @@ func TestCommunitySelectionOnBGPUpdate(t *testing.T) {
 					if observed != mode.mask {
 						t.Fatalf("group observed send=%d want=%d", observed, mode.mask)
 					}
-				} else if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: peer}); err != nil {
-					t.Fatal(err)
+				} else {
+					if err := server.AddPeer(ctx, &gobgpapi.AddPeerRequest{Peer: peer}); err != nil {
+						t.Fatal(err)
+					}
+					// AddPeer starts the FSM asynchronously. Idle rejects incoming
+					// connections; wait for the passive peer to accept the raw client.
+					for {
+						ready := false
+						if err := server.ListPeer(ctx, &gobgpapi.ListPeerRequest{}, func(p *gobgpapi.Peer) {
+							ready = p.GetState().GetSessionState() == gobgpapi.PeerState_SESSION_STATE_ACTIVE
+						}); err != nil {
+							t.Fatal(err)
+						}
+						if ready {
+							break
+						}
+						select {
+						case <-ctx.Done():
+							t.Fatal(ctx.Err())
+						case <-time.After(time.Millisecond):
+						}
+					}
 				}
 				dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(peerAddress)}}
 				conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
