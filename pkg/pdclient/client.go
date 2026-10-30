@@ -43,12 +43,23 @@ var ErrSend = errors.New("DHCPv6 transport send failed")
 
 var infiniteDeadline = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
+// RequestMode selects the associations required on one interface. Their
+// exchanges share one transport and client identity.
+type RequestMode uint8
+
+const (
+	RequestPrefixDelegation RequestMode = iota
+	RequestAddresses
+	RequestPrefixAndAddress
+)
+
 type Config struct {
 	Resource    string
 	Interface   string
 	ClientDUID  []byte
 	IAID        uint32
 	WantPrefix  int
+	Mode        RequestMode
 	Now         func() time.Time
 	Transaction func() (uint32, error)
 	Random      func() float64
@@ -66,6 +77,16 @@ type PrefixLease struct {
 func (p PrefixLease) PreferredUntil() time.Time { return lifetimeDeadline(p.AcquiredAt, p.Preferred) }
 func (p PrefixLease) ExpiresAt() time.Time      { return lifetimeDeadline(p.AcquiredAt, p.Valid) }
 
+type AddressLease struct {
+	Address    netip.Addr
+	Preferred  time.Duration
+	Valid      time.Duration
+	AcquiredAt time.Time
+}
+
+func (a AddressLease) PreferredUntil() time.Time { return lifetimeDeadline(a.AcquiredAt, a.Preferred) }
+func (a AddressLease) ExpiresAt() time.Time      { return lifetimeDeadline(a.AcquiredAt, a.Valid) }
+
 type Lease struct {
 	ServerDUID    []byte
 	IAID          uint32
@@ -74,6 +95,7 @@ type Lease struct {
 	AcquiredAt    time.Time
 	Prefixes      []PrefixLease
 	CurrentPrefix netip.Prefix
+	Addresses     []AddressLease
 }
 
 func (l Lease) RenewAt() time.Time  { return lifetimeDeadline(l.AcquiredAt, l.T1) }
