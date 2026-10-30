@@ -111,6 +111,11 @@ Implemented in the native/runtime follow-up:
   validity or canonical PD plus acknowledged exact address receipts. Finite
   per-address RDNSS lifetimes, fallback/withdrawal, DAD and cross-interface proof
   have local regressions.
+- FreeBSD PF ordinary zone forwarding now binds actual ingress and egress,
+  orders explicit rules before implicit role decisions, separates local output,
+  and withdraws rules through the same root owner. Unsupported source/SNAT
+  conjunctions and previously ignored advanced fields fail explicitly. See
+  [PF contracts and limits](../reference/freebsd-firewall.md).
 
 Still open:
 
@@ -118,8 +123,9 @@ Still open:
   remains open. VXLAN local wildcard source, nolearning and Linux outer DF
   use native readback; explicit FreeBSD outer DF remains unsupported.
 - Fragmented-RS provenance remains unavailable through the current ndp API.
-  Separately rendered DHCP DNS selection, FreeBSD forward-zone firewall parity
-  and native independent peers remain unqualified. Native route/address APIs
+  Separately rendered DHCP DNS selection and native independent peers remain
+  unqualified. PF native parsing, peer forwarding and the existing restricted
+  route-to path remain unqualified. Native route/address APIs
   also lack an atomic full-identity CAS against unrelated external writers; a
   final userspace recheck does not establish that stronger property.
 
