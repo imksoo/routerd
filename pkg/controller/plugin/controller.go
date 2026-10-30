@@ -229,8 +229,10 @@ func (c *Controller) reconcile(ctx context.Context, topic string) (bool, error) 
 		worked = true
 		err := c.invoke(ctx, *plan, trigger, now)
 		finished := c.now()
-		for _, j := range due {
-			plan.intervals[j].due = finished.Add(plan.intervals[j].every)
+		for j := range plan.intervals {
+			if plan.intervals[j].due.IsZero() || !plan.intervals[j].due.After(finished) {
+				plan.intervals[j].due = finished.Add(plan.intervals[j].every)
+			}
 		}
 		if err != nil {
 			failures = append(failures, fmt.Errorf("Plugin %s: %w", plan.name, err))
