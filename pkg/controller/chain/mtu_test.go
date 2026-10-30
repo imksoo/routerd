@@ -317,6 +317,7 @@ func TestPathMTUControllerCreateRaceFailsWithoutMutatingReplacement(t *testing.T
 }
 
 func TestPathMTUControllerNeverUsesHandleFromStaleBoot(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	owner := filepath.Join(dir, "owner.json")
 	_, netns, err := currentL2OwnerIdentity()
@@ -361,10 +362,7 @@ func l2OwnerJSON(g l2MSSGeneration, handle uint64) []byte {
 
 func TestPathMTUControllerRecoveryRetiresPriorActiveBeforePromotion(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	digest := emptyL2RulesDigest()
 	a := l2MSSGeneration{Table: "routerd_l2_a", Chain: "forward_a", Token: "a-secret", Digest: digest, Handle: 11, State: "active"}
 	b := l2MSSGeneration{Table: "routerd_l2_b", Chain: "forward_b", Token: "b-secret", Digest: digest, Handle: 22, State: "activating"}
@@ -396,10 +394,7 @@ func TestPathMTUControllerRecoveryRetiresPriorActiveBeforePromotion(t *testing.T
 
 func TestPathMTUControllerLiveRuleDriftRetiresGeneration(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_drift", Chain: "forward_drift", Token: "secret", Digest: "not-empty-rules", Handle: 31, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, g.Handle), nil }}
@@ -414,10 +409,7 @@ func TestPathMTUControllerLiveRuleDriftRetiresGeneration(t *testing.T) {
 
 func TestPathMTUControllerOwnedUnknownDropIsDeletedByExactHandle(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_owned_drop", Chain: "rules_owned_drop", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 37, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	var doc map[string]any
@@ -459,10 +451,7 @@ func TestPathMTUControllerOwnedUnknownDropIsDeletedByExactHandle(t *testing.T) {
 
 func TestPathMTUControllerSameHandleProofLossRemainsOwned(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_proof_loss", Chain: "rules_proof_loss", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 39, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	var doc map[string]any
@@ -506,10 +495,7 @@ func TestPathMTUControllerSameHandleProofLossRemainsOwned(t *testing.T) {
 
 func TestPathMTUControllerDeleteFailurePreservesRetiredJournal(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_delete_fail", Chain: "rules_delete_fail", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 47, State: "retired"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(_ context.Context, args ...string) ([]byte, error) {
@@ -549,10 +535,7 @@ func TestPathMTUControllerCleanupFailureSavesErrorDriftStatus(t *testing.T) {
 
 func TestPathMTUControllerNeverRebindsNonzeroHandle(t *testing.T) {
 	owner := filepath.Join(t.TempDir(), "owner.json")
-	bootID, netns, err := currentL2OwnerIdentity()
-	if err != nil {
-		t.Fatal(err)
-	}
+	bootID, netns := "fixture-boot", uint64(42)
 	g := l2MSSGeneration{Table: "routerd_l2_replay", Chain: "forward_replay", Token: "secret", Digest: emptyL2RulesDigest(), Handle: 41, State: "active"}
 	m := l2MSSOwnerManifest{Version: 3, BootID: bootID, NetNS: netns, ActiveToken: g.Token, Generations: []l2MSSGeneration{g}}
 	c := PathMTUController{RunNFT: func(context.Context, ...string) ([]byte, error) { return l2OwnerJSON(g, 42), nil }}
@@ -566,6 +549,7 @@ func TestPathMTUControllerNeverRebindsNonzeroHandle(t *testing.T) {
 }
 
 func TestPathMTUControllerTransientListErrorPreservesJournal(t *testing.T) {
+	requireLinuxRuntimeFixture(t)
 	dir := t.TempDir()
 	owner := filepath.Join(dir, "owner.json")
 	bootID, netns, err := currentL2OwnerIdentity()
