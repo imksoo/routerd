@@ -1855,3 +1855,25 @@ Successful raw captures are deleted automatically. Resolved failed-run captures,
 outputs and superseded duplicate packages are removed after the final pass.
 The ledger binds the package hash and revisions. FreeBSD WAN DHCP, reboot/NAK,
 server identity changes, multi-WAN failover and complete 1.0 parity remain open.
+
+### Observe-only WAN RA host effects
+
+At `7acdc692`, `IPv6RAAddress.managed: false` still generated an
+`accept_ra=2` runtime write/persistent sysctl file and a networkd adoption
+drop-in/reconfigure. Test-first checkpoint `3469b567` reproduces both effects
+through `SysctlController.Reconcile` and `NetworkAdoptionController.Reconcile`
+with isolated temporary files and injected commands; it does not alter host
+networking. The same missing managed check exists in the 1.0 baseline.
+
+The focused correction gates both derived host settings on the existing
+default-true managed field. The reproducer passes for observe-only, omitted/true
+management, and an independent PD owner on the same interface. Related sysctl
+and network-adoption tests, host dependency tests and schema checks passed.
+The broader render check failed in the existing
+`TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack/tailscale-up` marker
+cleanup assertion, and `make validate-example` failed because its sandbox
+server exited with `context deadline exceeded`. These failures remain under
+investigation; this checkpoint does not claim a complete check pass. Website
+and whole-Go qualification are pending. The change prevents new observe-only
+effects; it does not restore settings from an earlier managed configuration or
+qualify WAN SLAAC/IA_NA interoperability.

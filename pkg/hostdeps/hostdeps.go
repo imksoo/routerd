@@ -476,7 +476,7 @@ func raAcceptInterfaceNames(router *api.Router, aliases map[string]string) []str
 				add(spec.Interface)
 			}
 		case "IPv6RAAddress":
-			if spec, err := res.IPv6RAAddressSpec(); err == nil {
+			if spec, err := res.IPv6RAAddressSpec(); err == nil && api.BoolDefault(spec.Managed, true) {
 				add(spec.Interface)
 			}
 		case "IPv6DelegatedAddress":
@@ -842,6 +842,9 @@ func containsString(values []string, want string) bool {
 func interfaceSpecForRouterAdvertisement(res api.Resource) (string, error) {
 	if res.Kind == "IPv6RAAddress" {
 		spec, err := res.IPv6RAAddressSpec()
+		if err == nil && !api.BoolDefault(spec.Managed, true) {
+			return "", nil
+		}
 		return spec.Interface, err
 	}
 	spec, err := res.IPv6RouterAdvertisementSpec()
