@@ -13,6 +13,7 @@ import (
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/dynamicconfig/codec"
 	routerplugin "github.com/imksoo/routerd/pkg/plugin"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
@@ -174,5 +175,33 @@ func TestEmptyEventTopicDoesNotExpandToNamedNotifications(t *testing.T) {
 		if err := empty.HandleEvent(t.Context(), daemonapi.DaemonEvent{Type: topic}); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestConcurrentPublicationCannotBeOverwrittenByAutomaticRun(t *testing.T) {
+	c, store, now, _ := triggerFixture(t)
+	var accepted routerstate.DynamicConfigPartRecord
+	c.Runner = func(ctx context.Context, _ api.PluginSpec, _ string, _ routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		result := routerplugin.PluginResult{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "PluginResult"}, Status: routerplugin.PluginResultStatus{ObservedAt: *now, TTL: "20m"}}
+		part, err := routerplugin.DynamicConfigPartFromResult("Plugin/inventory", 1, result, *now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		accepted, err = codec.Encode(part)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.PublishPluginResult(ctx, 0, accepted); err != nil {
+			t.Fatal(err)
+		}
+		result.Status.TTL = "1h"
+		return result, routerplugin.RunOutcome{}, nil
+	}
+	if _, err := c.Periodic(t.Context()); err == nil {
+		t.Fatal("automatic run overwrote a newer publication")
+	}
+	parts, err := store.GetDynamicConfigPartsBySource("Plugin/inventory")
+	if err != nil || len(parts) != 1 || parts[0].Generation != accepted.Generation || !parts[0].ExpiresAt.Equal(accepted.ExpiresAt) {
+		t.Fatalf("newer publisher was lost: %+v %v", parts, err)
 	}
 }
