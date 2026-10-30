@@ -1901,7 +1901,11 @@ func (l *controllerLifetimes) activate(ctx context.Context) error {
 		}
 	}
 	if l.derivedEvent != nil {
-		l.derivedDone = l.derivedEvent.Start(ctx)
+		var err error
+		l.derivedDone, err = l.derivedEvent.Start(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	return ctx.Err()
 }
@@ -2560,7 +2564,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	wan := egressroute.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
 	durableEvents, _ := r.Store.(eventconsumer.Store)
 	rules := eventrule.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: eventRuleStore{store}, Logger: logger}
-	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Logger: logger}
+	derivedEvents := derived.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: derivedStore{store}, Logger: logger}
 	observabilityPipeline := observabilitypipeline.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Events: durableEvents}
 	if r.controllerEnabled("observability-pipeline") {
 		lifetimes.pipeline = &observabilityPipeline

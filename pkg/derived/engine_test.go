@@ -4,155 +4,173 @@ package derived
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-type mapStore map[string]map[string]any
-
-func (s mapStore) SaveObjectStatus(apiVersion, kind, name string, status map[string]any) error {
-	s[apiVersion+"/"+kind+"/"+name] = status
-	return nil
+func openStore(t *testing.T) *routerstate.SQLiteStore {
+	t.Helper()
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return store
 }
 
-func (s mapStore) ObjectStatus(apiVersion, kind, name string) map[string]any {
-	if status := s[apiVersion+"/"+kind+"/"+name]; status != nil {
-		return status
+func setInput(t *testing.T, store *routerstate.SQLiteStore, phase, peer string) {
+	t.Helper()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "ds-lite", map[string]any{"phase": phase, "peer": peer}); err != nil {
+		t.Fatal(err)
 	}
-	return map[string]any{}
+}
+
+func testController(store *routerstate.SQLiteStore, hysteresis string, emitInitial bool) *Controller {
+	return &Controller{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DerivedEvent"},
+			Metadata: api.ObjectMeta{Name: "dslite-active"},
+			Spec: api.DerivedEventSpec{
+				Topic:    "routerd.virtual.dslite",
+				Inputs:   []api.ReadyWhenSpec{{Field: "${DSLiteTunnel/ds-lite.status.phase}", Equals: "Up"}},
+				EmitWhen: EmitAllTrue, RetractWhen: RetractAnyFalse,
+				Hysteresis: hysteresis, EmitInitial: emitInitial,
+			},
+		}}}},
+		Bus: bus.NewWithStore(store), Store: store,
+	}
+}
+
+func reconcile(t *testing.T, controller *Controller) {
+	t.Helper()
+	if err := controller.Reconcile(t.Context(), false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func checkpoint(t *testing.T, store *routerstate.SQLiteStore) routerstate.DerivedCheckpoint {
+	t.Helper()
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "DerivedEvent", "dslite-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := routerstate.DecodeDerivedCheckpoint(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cp
 }
 
 func TestAssertAndRetract(t *testing.T) {
-	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+	store := openStore(t)
+	setInput(t, store, "Pending", "")
 	controller := testController(store, "0s", false)
-
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
+	reconcile(t, controller)
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 0 {
 		t.Fatalf("initial asserted events = %d", len(got))
 	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
+	setInput(t, store, "Up", "")
+	reconcile(t, controller)
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 1 {
 		t.Fatalf("asserted events = %d", len(got))
 	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Pending"
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
+	setInput(t, store, "Pending", "")
+	reconcile(t, controller)
 	if got := controller.Bus.Recent("routerd.virtual.dslite.retracted"); len(got) != 1 {
 		t.Fatalf("retracted events = %d", len(got))
 	}
 }
 
 func TestHysteresisFlipBackCancels(t *testing.T) {
-	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+	store := openStore(t)
+	setInput(t, store, "Pending", "")
 	controller := testController(store, "40ms", false)
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
+	now := time.Now().UTC()
+	controller.Now = func() time.Time { return now }
+	reconcile(t, controller)
+	setInput(t, store, "Up", "")
+	reconcile(t, controller)
+	if checkpoint(t, store).PendingDue.IsZero() {
+		t.Fatal("no durable deadline")
 	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Pending"
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(100 * time.Millisecond)
+	setInput(t, store, "Pending", "")
+	reconcile(t, controller)
+	now = now.Add(time.Second)
+	reconcile(t, controller)
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 0 {
 		t.Fatalf("asserted events = %d", len(got))
 	}
-	controller.StopTimers()
+	if !checkpoint(t, store).PendingDue.IsZero() {
+		t.Fatal("retained canceled deadline")
+	}
 }
 
-func TestHysteresisClearsTimerAfterFire(t *testing.T) {
-	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+func TestHysteresisClearsDeadlineAfterFire(t *testing.T) {
+	store := openStore(t)
+	setInput(t, store, "Pending", "")
 	controller := testController(store, "20ms", false)
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for {
-		controller.mu.Lock()
-		state := controller.state["dslite-active"]
-		timerCleared := state != nil && state.timer == nil && state.pendingTransition == PendingNone
-		controller.mu.Unlock()
-		if timerCleared {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("timer was not cleared")
-		}
-		time.Sleep(10 * time.Millisecond)
+	now := time.Now().UTC()
+	controller.Now = func() time.Time { return now }
+	reconcile(t, controller)
+	setInput(t, store, "Up", "")
+	reconcile(t, controller)
+	now = now.Add(time.Second)
+	reconcile(t, controller)
+	cp := checkpoint(t, store)
+	if !cp.PendingDue.IsZero() || !cp.Asserted {
+		t.Fatalf("pending state after fire: %+v", cp)
 	}
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 1 {
 		t.Fatalf("asserted events = %d", len(got))
 	}
-	controller.StopTimers()
 }
 
 func TestEmitInitialFalse(t *testing.T) {
-	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Up"}}
+	store := openStore(t)
+	setInput(t, store, "Up", "")
 	controller := testController(store, "0s", false)
-	if err := controller.Reconcile(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
+	reconcile(t, controller)
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 0 {
 		t.Fatalf("initial asserted events = %d", len(got))
 	}
-	status := store.ObjectStatus(api.NetAPIVersion, "DerivedEvent", "dslite-active")
-	if status["phase"] != PhaseAsserted || status["asserted"] != true {
-		t.Fatalf("status = %#v", status)
-	}
-}
-
-func testController(store mapStore, hysteresis string, emitInitial bool) *Controller {
-	b := bus.New()
-	return &Controller{
-		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-			{
-				TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DerivedEvent"},
-				Metadata: api.ObjectMeta{Name: "dslite-active"},
-				Spec: api.DerivedEventSpec{
-					Topic:       "routerd.virtual.dslite",
-					Inputs:      []api.ReadyWhenSpec{{Field: "${DSLiteTunnel/ds-lite.status.phase}", Equals: "Up"}},
-					EmitWhen:    EmitAllTrue,
-					RetractWhen: RetractAnyFalse,
-					Hysteresis:  hysteresis,
-					EmitInitial: emitInitial,
-				},
-			},
-		}}},
-		Bus:   b,
-		Store: store,
+	if !checkpoint(t, store).Asserted {
+		t.Fatal("initial decision not persisted")
 	}
 }
 
 func TestCanceledOwnerDoesNotPublishDelayedTransition(t *testing.T) {
-	store := mapStore{api.NetAPIVersion + "/DSLiteTunnel/ds-lite": {"phase": "Pending"}}
+	store := openStore(t)
+	setInput(t, store, "Pending", "")
 	controller := testController(store, "20ms", false)
-	defer controller.StopTimers()
+	controller.Interval = time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	if err := controller.Reconcile(ctx, false); err != nil {
+	done, err := controller.Start(ctx)
+	if err != nil {
+		cancel()
 		t.Fatal(err)
 	}
-	store[api.NetAPIVersion+"/DSLiteTunnel/ds-lite"]["phase"] = "Up"
-	if err := controller.Reconcile(ctx, false); err != nil {
-		t.Fatal(err)
+	setInput(t, store, "Up", "")
+	deadline := time.Now().Add(time.Second)
+	for checkpoint(t, store).PendingDue.IsZero() {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("did not schedule transition")
+		}
+		time.Sleep(time.Millisecond)
 	}
 	cancel()
-	time.Sleep(60 * time.Millisecond)
+	<-done
+	before := checkpoint(t, store)
+	time.Sleep(40 * time.Millisecond)
+	if after := checkpoint(t, store); after != before {
+		t.Fatalf("stopped owner changed state: %+v -> %+v", before, after)
+	}
 	if got := controller.Bus.Recent("routerd.virtual.dslite.asserted"); len(got) != 0 {
 		t.Fatal("canceled controller published delayed assertion")
 	}
