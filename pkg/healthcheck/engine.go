@@ -114,84 +114,82 @@ func EnrichEvidence(ctx context.Context, spec api.HealthCheckSpec, ev ProbeEvide
 	return ev
 }
 
-// FwMarkRef describes a routing resource that can supply a socket mark for a
-// HealthCheck probe.
-type FwMarkRef struct {
-	Resource string
-	Name     string
-	Mark     int
-}
-
-// ResolveSpec converts routerd resource names to the OS interface names used
-// by probe runtime calls. Standalone daemon flags still accept raw OS names.
-func ResolveSpec(router *api.Router, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	if strings.TrimSpace(spec.SourceInterface) != "" {
-		spec.SourceInterface = resolveInterfaceName(router, spec.SourceInterface)
-	}
-	return spec
-}
-
-func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) api.HealthCheckSpec {
-	if strings.TrimSpace(spec.SourceInterface) == "" {
-		if ifname, ok := DerivedSourceInterface(router, resourceName); ok {
-			spec.SourceInterface = ifname
-		}
-	}
-	if spec.FwMark == 0 {
-		if mark, ok := DerivedFwMark(router, resourceName); ok {
-			spec.FwMark = mark
-		}
-	}
-	return ResolveSpec(router, spec)
-}
-
-func DerivedSourceInterface(router *api.Router, healthCheckName string) (string, bool) {
-	healthCheckName = strings.TrimSpace(healthCheckName)
-	if router == nil || healthCheckName == "" {
-		return "", false
-	}
+// ResolveSpecForResource prepares one static probe binding. Interface names
+// enter in the declaration namespace and leave as native names; callers must
+// not apply a second alias lookup to the result.
+func ResolveSpecForResource(router *api.Router, resourceName string, spec api.HealthCheckSpec) (api.HealthCheckSpec, error) {
 	var source string
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "EgressRoutePolicy" {
-			continue
+	bindSource := func(value string) error {
+		if strings.TrimSpace(value) == "" {
+			return nil
 		}
-		spec, err := resource.EgressRoutePolicySpec()
+		native, err := resolveInterfaceName(router, value)
 		if err != nil {
-			continue
+			return err
 		}
-		for _, candidate := range spec.Candidates {
-			if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
-				if !sameDerivedSourceInterface(&source, candidate.EffectiveInterface()) {
-					return "", false
-				}
-			}
-			for _, target := range candidate.Targets {
-				if strings.TrimSpace(target.HealthCheck) != healthCheckName {
-					continue
-				}
-				if !sameDerivedSourceInterface(&source, target.EffectiveInterface()) {
-					return "", false
-				}
-			}
+		if source != "" && source != native {
+			return fmt.Errorf("HealthCheck/%s has conflicting source interfaces %q and %q", resourceName, source, native)
+		}
+		source = native
+		return nil
+	}
+	for _, value := range []string{spec.Interface, spec.SourceInterface} {
+		if err := bindSource(value); err != nil {
+			return api.HealthCheckSpec{}, err
 		}
 	}
-	return source, source != ""
-}
-
-func sameDerivedSourceInterface(current *string, next string) bool {
-	next = strings.TrimSpace(next)
-	if next == "" {
-		return true
+	var mark int
+	var markSet bool
+	bindReference := func(value string, nextMark int) error {
+		if err := bindSource(value); err != nil {
+			return err
+		}
+		if markSet && mark != nextMark {
+			return fmt.Errorf("HealthCheck/%s is referenced by routing targets with conflicting marks 0x%x and 0x%x", resourceName, mark, nextMark)
+		}
+		mark, markSet = nextMark, true
+		return nil
 	}
-	if *current == "" {
-		*current = next
-		return true
+	if router != nil && strings.TrimSpace(resourceName) != "" {
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "EgressRoutePolicy" {
+				continue
+			}
+			policy, err := resource.EgressRoutePolicySpec()
+			if err != nil {
+				return api.HealthCheckSpec{}, err
+			}
+			for _, candidate := range policy.Candidates {
+				if strings.TrimSpace(candidate.HealthCheck) == resourceName {
+					if err := bindReference(candidate.EffectiveInterface(), candidate.Mark); err != nil {
+						return api.HealthCheckSpec{}, err
+					}
+				}
+				for _, target := range candidate.Targets {
+					if strings.TrimSpace(target.HealthCheck) == resourceName {
+						if err := bindReference(target.EffectiveInterface(), target.Mark); err != nil {
+							return api.HealthCheckSpec{}, err
+						}
+					}
+				}
+			}
+		}
 	}
-	return *current == next
+	if markSet {
+		if spec.FwMark != 0 && spec.FwMark != mark {
+			return api.HealthCheckSpec{}, fmt.Errorf("HealthCheck/%s configured mark 0x%x conflicts with routing target mark 0x%x", resourceName, spec.FwMark, mark)
+		}
+		spec.FwMark = mark
+	}
+	spec.SourceInterface = source
+	return spec, nil
 }
 
 func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceName string, spec api.HealthCheckSpec) (api.HealthCheckSpec, error) {
-	spec = ResolveSpecForResource(router, resourceName, spec)
+	spec, err := ResolveSpecForResource(router, resourceName, spec)
+	if err != nil {
+		return api.HealthCheckSpec{}, err
+	}
 	if strings.TrimSpace(spec.SourceAddress) == "" && strings.TrimSpace(spec.SourceAddressFrom.Resource) != "" {
 		value, err := resourcequery.ReadValue(store, spec.SourceAddressFrom)
 		if err != nil {
@@ -203,64 +201,6 @@ func ResolveSpecWithStoreForResource(router *api.Router, store Store, resourceNa
 		}
 	}
 	return spec, nil
-}
-
-func DerivedFwMark(router *api.Router, healthCheckName string) (int, bool) {
-	refs := DerivedFwMarkRefs(router, healthCheckName)
-	var mark int
-	for _, ref := range refs {
-		if ref.Mark == 0 {
-			continue
-		}
-		if mark == 0 {
-			mark = ref.Mark
-			continue
-		}
-		if mark != ref.Mark {
-			return 0, false
-		}
-	}
-	return mark, mark != 0
-}
-
-func DerivedFwMarkRefs(router *api.Router, healthCheckName string) []FwMarkRef {
-	healthCheckName = strings.TrimSpace(healthCheckName)
-	if router == nil || healthCheckName == "" {
-		return nil
-	}
-	var refs []FwMarkRef
-	for _, resource := range router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion {
-			continue
-		}
-		switch resource.Kind {
-		case "EgressRoutePolicy":
-			spec, err := resource.EgressRoutePolicySpec()
-			if err != nil {
-				continue
-			}
-			for _, candidate := range spec.Candidates {
-				if strings.TrimSpace(candidate.HealthCheck) == healthCheckName {
-					refs = append(refs, FwMarkRef{
-						Resource: resource.ID(),
-						Name:     strings.TrimSpace(candidate.Name),
-						Mark:     candidate.Mark,
-					})
-				}
-				for _, target := range candidate.Targets {
-					if strings.TrimSpace(target.HealthCheck) != healthCheckName {
-						continue
-					}
-					refs = append(refs, FwMarkRef{
-						Resource: resource.ID(),
-						Name:     strings.TrimSpace(target.Name),
-						Mark:     target.Mark,
-					})
-				}
-			}
-		}
-	}
-	return refs
 }
 
 func Probe(ctx context.Context, spec api.HealthCheckSpec) ProbeResult {
@@ -427,51 +367,62 @@ func dialerForSpec(spec api.HealthCheckSpec, network, address string) (net.Diale
 	return dialer, nil
 }
 
-func resolveInterfaceName(router *api.Router, name string) string {
+func resolveInterfaceName(router *api.Router, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if router == nil || name == "" {
-		return name
+		return name, nil
 	}
 	for _, resource := range router.Spec.Resources {
-		if resource.Metadata.Name != name {
+		if resource.APIVersion != api.NetAPIVersion || resource.Metadata.Name != name {
 			continue
 		}
+		var native string
+		var err error
 		switch resource.Kind {
 		case "Interface":
-			spec, err := resource.InterfaceSpec()
-			if err == nil && strings.TrimSpace(spec.IfName) != "" {
-				return spec.IfName
-			}
+			var spec api.InterfaceSpec
+			spec, err = resource.InterfaceSpec()
+			native = spec.IfName
 		case "DSLiteTunnel":
-			spec, err := resource.DSLiteTunnelSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.TunnelName, resource.Metadata.Name)
-			}
+			var spec api.DSLiteTunnelSpec
+			spec, err = resource.DSLiteTunnelSpec()
+			native = stringutil.FirstNonEmpty(spec.TunnelName, name)
 		case "PPPoESession":
-			spec, err := resource.PPPoESessionSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, "ppp-"+resource.Metadata.Name)
-			}
+			var spec api.PPPoESessionSpec
+			spec, err = resource.PPPoESessionSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, "ppp-"+name)
 		case "Bridge":
-			spec, err := resource.BridgeSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.BridgeSpec
+			spec, err = resource.BridgeSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "VRF":
-			spec, err := resource.VRFSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.VRFSpec
+			spec, err = resource.VRFSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "VXLANTunnel":
-			spec, err := resource.VXLANTunnelSpec()
-			if err == nil {
-				return stringutil.FirstNonEmpty(spec.IfName, resource.Metadata.Name)
-			}
+			var spec api.VXLANTunnelSpec
+			spec, err = resource.VXLANTunnelSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
+		case "VXLANSegment":
+			var spec api.VXLANSegmentSpec
+			spec, err = resource.VXLANSegmentSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
 		case "WireGuardInterface":
-			return resource.Metadata.Name
+			var spec api.WireGuardInterfaceSpec
+			spec, err = resource.WireGuardInterfaceSpec()
+			native = stringutil.FirstNonEmpty(spec.IfName, name)
+		default:
+			continue
 		}
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(native) == "" {
+			return "", fmt.Errorf("%s has no native interface name", resource.ID())
+		}
+		return strings.TrimSpace(native), nil
 	}
-	return name
+	return name, nil
 }
 
 func resultFromError(ctx context.Context, err error) ProbeResult {

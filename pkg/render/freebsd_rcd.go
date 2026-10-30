@@ -131,7 +131,6 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 			Resource:    res.Metadata.Name,
 			Spec:        spec,
 			Router:      router,
-			Aliases:     aliases,
 			Environment: telemetryEnv,
 			RuntimeRoot: "/var/run",
 			StateRoot:   "/var/db",

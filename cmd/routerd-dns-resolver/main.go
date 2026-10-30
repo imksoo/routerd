@@ -415,7 +415,7 @@ func (d *daemon) openBoundListeners(ctx context.Context, addrs map[string]struct
 		}
 		bound := &boundListener{
 			Addr: addr,
-			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", Handler: handler},
+			UDP:  &dns.Server{PacketConn: packetConn, Net: "udp", UDPSize: maxDNSMessageSize, Handler: handler},
 			TCP:  &dns.Server{Listener: listener, Net: "tcp", Handler: handler},
 		}
 		listeners[addr] = bound
@@ -455,6 +455,24 @@ func (d *daemon) handleDNS(w dns.ResponseWriter, req *dns.Msg) {
 		resp.SetRcode(req, dns.RcodeServerFailure)
 		result.Response = resp
 		result.ResponseCode = dns.RcodeToString[resp.Rcode]
+	}
+	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
+		// EDNS is negotiated on this hop. Without it the UDP limit is512;
+		// smaller advertisements are also interpreted as512 (RFC6891§6.2.3).
+		const maxUDPPayload = 65507 // IPv4's largest usable UDP payload.
+		limit := dns.MinMsgSize
+		if opt := req.IsEdns0(); opt != nil {
+			if int(opt.UDPSize()) > limit {
+				limit = int(opt.UDPSize())
+			}
+			if resp.IsEdns0() == nil {
+				resp.SetEdns0(maxUDPPayload, false)
+			}
+		}
+		if limit > maxUDPPayload {
+			limit = maxUDPPayload
+		}
+		resp.Truncate(limit)
 	}
 	_ = w.WriteMsg(resp)
 	if err != nil && len(req.Question) > 0 {

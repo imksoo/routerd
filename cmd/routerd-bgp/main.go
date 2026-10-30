@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -82,35 +83,63 @@ func run(args []string) error {
 	if *statePath == "" {
 		return fmt.Errorf("--state-file is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(*socketPath), 0755); err != nil {
-		return fmt.Errorf("create socket directory: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(*controlSocketPath), 0755); err != nil {
-		return fmt.Errorf("create control socket directory: %w", err)
-	}
-	_ = os.Remove(*socketPath)
-	_ = os.Remove(*controlSocketPath)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	defaults, _ := platform.Current()
+	return runBGPDaemon(ctx, defaults.RuntimeDir, *socketPath, *controlSocketPath, *statePath)
+}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	server := gobgpserver.NewBgpServer(gobgpserver.GrpcListenAddress("unix://" + *socketPath))
-	go server.Serve()
-	paths := &localPathServer{BgpServer: server}
-	if err := restoreApplied(context.Background(), server, paths, *statePath, logger); err != nil {
-		return err
-	}
-	control, err := serveControlSocket(*controlSocketPath, *statePath, paths)
+// runtimeDir comes from platform defaults, independently of all public path
+// flags. One native GoBGP instance owns each actual kernel network world.
+func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath, statePath string) (result error) {
+	owner, err := acquireBGPProcessOwner(ctx, runtimeDir)
 	if err != nil {
 		return err
 	}
-	logger.Info("routerd-bgp daemon started", "socket", *socketPath, "controlSocket", *controlSocketPath, "stateFile", *statePath, "version", version.String())
+	acknowledged := true
+	defer func() { result = errors.Join(result, owner.finish(acknowledged)) }()
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+		return fmt.Errorf("create socket directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(controlSocketPath), 0755); err != nil {
+		return fmt.Errorf("create control socket directory: %w", err)
+	}
+	_ = os.Remove(socketPath)
+	_ = os.Remove(controlSocketPath)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	acknowledged = false
+	server := gobgpserver.NewBgpServer(gobgpserver.GrpcListenAddress("unix://" + socketPath))
+	coreDone := make(chan struct{})
+	go func() {
+		defer close(coreDone)
+		server.Serve()
+	}()
+	var control *http.Server
+	defer func() {
+		acknowledged = stopBGPDaemon(control, func() {
+			// The management round trip also handles cancellation before Serve
+			// was scheduled: Stop alone would return "not running" too early.
+			_, _ = server.GetBgp(context.Background(), &gobgpapi.GetBgpRequest{})
+			server.Stop()
+			<-coreDone
+		}, logger, defaultControlShutdownTimeout, defaultBGPShutdownTimeout)
+		if !acknowledged {
+			result = errors.Join(result, errors.New("BGP shutdown was not acknowledged; process ownership retained until exit"))
+		}
+	}()
+	paths := &localPathServer{BgpServer: server}
+	if err := restoreApplied(ctx, server, paths, statePath, logger); err != nil {
+		return err
+	}
+	control, err = serveControlSocket(controlSocketPath, statePath, paths)
+	if err != nil {
+		return err
+	}
+	logger.Info("routerd-bgp daemon started", "socket", socketPath, "controlSocket", controlSocketPath, "stateFile", statePath, "version", version.String())
+
 	<-ctx.Done()
 	logger.Info("routerd-bgp daemon stopping")
-	stopBGPDaemon(control, server.Stop, logger, defaultControlShutdownTimeout, defaultBGPShutdownTimeout)
-	_ = os.Remove(*socketPath)
-	_ = os.Remove(*controlSocketPath)
 	return nil
 }
 
@@ -122,9 +151,9 @@ type bgpControlShutdowner interface {
 // stopBGPDaemon gives the control HTTP server a brief graceful drain, then
 // gives GoBGP a separate bounded chance to withdraw its sessions.  Both
 // dependencies have historically exposed unbounded stop operations.  Returning
-// after the deadline is safe here: process exit closes the remaining sockets,
-// and the next daemon start removes its owned Unix sockets before listening.
-func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logger, controlTimeout, bgpTimeout time.Duration) {
+// after an unacknowledged deadline retains the process lock until OS exit.
+func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logger, controlTimeout, bgpTimeout time.Duration) bool {
+	acknowledged := true
 	if controlTimeout <= 0 {
 		controlTimeout = defaultControlShutdownTimeout
 	}
@@ -136,6 +165,7 @@ func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logge
 		err := control.Shutdown(controlCtx)
 		cancel()
 		if err != nil {
+			acknowledged = false
 			if logger != nil {
 				logger.Warn("routerd-bgp control socket did not drain before shutdown deadline", "error", err)
 			}
@@ -146,7 +176,7 @@ func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logge
 		}
 	}
 	if stop == nil {
-		return
+		return acknowledged
 	}
 	done := make(chan struct{})
 	go func() {
@@ -158,10 +188,12 @@ func stopBGPDaemon(control bgpControlShutdowner, stop func(), logger *slog.Logge
 	select {
 	case <-done:
 	case <-timer.C:
+		acknowledged = false
 		if logger != nil {
 			logger.Warn("routerd-bgp GoBGP shutdown exceeded deadline; exiting process", "timeout", bgpTimeout)
 		}
 	}
+	return acknowledged
 }
 
 type pathServer interface {
