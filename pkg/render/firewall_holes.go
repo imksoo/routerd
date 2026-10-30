@@ -9,13 +9,14 @@ import (
 
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 // InternalFirewallHoles returns the small service exceptions that routerd-owned
 // resources need for their own control-plane traffic. The filter renderers use
 // this as an input so Linux nftables and FreeBSD pf stay in sync.
-func InternalFirewallHoles(router *api.Router) []FirewallHole {
-	zones := internalFirewallZoneIndex(router)
+func InternalFirewallHoles(router *api.Router, targetOS platform.OS) []FirewallHole {
+	zones := internalFirewallZoneIndexForOS(router, targetOS)
 	var holes []FirewallHole
 	add := func(name, from, to, proto string, port int, comment string, ifnames ...string) {
 		if from == "" || to == "" {
@@ -160,13 +161,13 @@ type internalFirewallZonesByRef struct {
 	zoneIf   map[string][]string
 }
 
-func internalFirewallZoneIndex(router *api.Router) internalFirewallZonesByRef {
+func internalFirewallZoneIndexForOS(router *api.Router, targetOS platform.OS) internalFirewallZonesByRef {
 	out := internalFirewallZonesByRef{resource: map[string]string{}, role: map[string]string{}, ifname: map[string]string{}, zoneIf: map[string][]string{}}
 	if router == nil {
 		return out
 	}
 	for _, resource := range router.Spec.Resources {
-		if ifname := internalFirewallResourceIfName(resource); ifname != "" {
+		if ifname := internalFirewallResourceIfName(resource, targetOS); ifname != "" {
 			out.ifname[resource.Metadata.Name] = ifname
 			out.ifname[resource.Kind+"/"+resource.Metadata.Name] = ifname
 		}
@@ -192,7 +193,7 @@ func internalFirewallZoneIndex(router *api.Router) internalFirewallZonesByRef {
 	return out
 }
 
-func internalFirewallResourceIfName(resource api.Resource) string {
+func internalFirewallResourceIfName(resource api.Resource, targetOS platform.OS) string {
 	switch resource.Kind {
 	case "Interface":
 		spec, err := resource.InterfaceSpec()
@@ -202,7 +203,7 @@ func internalFirewallResourceIfName(resource api.Resource) string {
 	case "DSLiteTunnel":
 		spec, err := resource.DSLiteTunnelSpec()
 		if err == nil && api.BoolDefault(spec.Enabled, true) {
-			return strings.TrimSpace(spec.TunnelName)
+			return api.DSLiteRuntimeIfName(stringutil.FirstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name), string(targetOS))
 		}
 	case "PPPoESession":
 		spec, err := resource.PPPoESessionSpec()

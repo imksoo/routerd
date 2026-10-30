@@ -219,10 +219,16 @@ ledger entries. Topology GET uses a read-only consistent snapshot and mandatory
 current digests; lazy backfill and omitted-field signature compatibility are
 removed. SQL failure, reopen/retry and replay regressions pass.
 
-Remaining implementation: daemon --probe currently reports current communication
-as unobserved rather than executing packet/DNS/neighbor/conntrack probes. IPsec
-control tests do not establish native IKE or packet forwarding; SAM tests do not
-establish independent RR/leaf interoperability.
+Daemon `--probe` now executes bounded DNS UDP/TCP, configured HealthCheck egress
+and LAN ICMP operations, with current configuration/source checks before and
+after exchanges. Declared/reported status remains distinct from communication.
+Local static DNS questions use RD=0; the same-revision resolver refuses upstream
+forwarding on a nonrecursive miss, and unobserved/nonlocal listener addresses
+cannot admit private questions. This does not constrain unrelated/older servers.
+See [doctor operations](../operations/routerctl-doctor.md). Neighbor/conntrack
+packet probing, native forwarding/failover and independent client qualification
+remain unexecuted. IPsec control tests do not establish native IKE or packet
+forwarding; SAM tests do not establish independent RR/leaf interoperability.
 
 ## Build, release and isolated lab tools
 

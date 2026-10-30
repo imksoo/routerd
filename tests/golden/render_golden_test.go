@@ -133,7 +133,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addRenderedFiles(files, "networkd/", networkdFiles)
-	addFirewallHoles(files, router)
+	addFirewallHoles(files, router, platform.OSLinux)
 	addFile(files, "dnsmasq.conf", dnsmasqConfig)
 	aliases := interfaceAliases(router)
 	keepalived, err := render.KeepalivedConfig(router, aliases)
@@ -146,7 +146,7 @@ func renderLinuxSnapshot(router *api.Router) ([]byte, error) {
 		return nil, err
 	}
 	addFile(files, "nftables-nat.nft", nat)
-	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+	firewall, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func renderFreeBSDSnapshot(router *api.Router) ([]byte, error) {
 	for name, content := range fileMap(rcConf) {
 		addFile(files, name, content)
 	}
-	addFirewallHoles(files, router)
+	addFirewallHoles(files, router, platform.OSFreeBSD)
 	dnsmasqConfig, warnings, err := render.DnsmasqConfig(router, render.DnsmasqRuntime{
 		RuntimeDir: "/var/run/routerd",
 		LeaseFile:  (platform.Defaults{StateDir: "/var/db/routerd"}).DnsmasqLeaseFile(),
@@ -221,8 +221,8 @@ func addWarnings(files map[string][]byte, warnings []string) {
 	files["warnings.txt"] = []byte(strings.Join(warnings, "\n") + "\n")
 }
 
-func addFirewallHoles(files map[string][]byte, router *api.Router) {
-	holes := render.InternalFirewallHoles(router)
+func addFirewallHoles(files map[string][]byte, router *api.Router, targetOS platform.OS) {
+	holes := render.InternalFirewallHoles(router, targetOS)
 	if len(holes) == 0 {
 		return
 	}

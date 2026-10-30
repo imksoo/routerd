@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/config"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/sam"
 )
 
@@ -37,7 +38,7 @@ func PFRuntimeFirewall(router *api.Router, holes []FirewallHole, intents []dynam
 }
 
 func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.LocalCaptureIntent, runtimeNAT bool) ([]byte, error) {
-	aliases, err := nftOutboundAliasesWithLocalCaptureIntents(router, intents)
+	aliases, err := outboundAliasesForOS(router, platform.OSFreeBSD, intents)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +430,7 @@ func PFNAT44Rules(rules []NAT44RenderRule) ([]byte, error) {
 func PFNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule, states ...IngressServiceState) ([]byte, error) {
 	var ingressRules []ingressNATRule
 	if router != nil {
-		aliases, err := nftOutboundAliases(router)
+		aliases, err := outboundAliasesForOS(router, platform.OSFreeBSD, nil)
 		if err != nil {
 			return nil, err
 		}

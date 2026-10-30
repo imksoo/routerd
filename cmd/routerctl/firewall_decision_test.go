@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/render"
 )
 
@@ -62,7 +63,7 @@ func renderedFirewallChain(t *testing.T, path, chain string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+	data, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router, platform.OSLinux))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +206,7 @@ func TestFirewallCLIPreservesInputLoopbackException(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		data, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+		data, err := render.NftablesFirewall(router, render.InternalFirewallHoles(router, platform.OSLinux))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -235,7 +236,7 @@ func TestFirewallCLIPreservesInputLoopbackException(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err = render.NftablesFirewall(router, render.InternalFirewallHoles(router))
+			data, err = render.NftablesFirewall(router, render.InternalFirewallHoles(router, platform.OSLinux))
 			if err != nil {
 				t.Fatal(err)
 			}

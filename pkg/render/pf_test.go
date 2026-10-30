@@ -9,6 +9,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 func TestPFRenderFirewallAndNAT(t *testing.T) {
@@ -380,7 +381,7 @@ func TestPFSkipsRedundantSelfHolesWhenZoneAlreadyAcceptsSelf(t *testing.T) {
 			},
 		},
 	}}}
-	data, err := PF(router, InternalFirewallHoles(router))
+	data, err := PF(router, InternalFirewallHoles(router, platform.OSFreeBSD))
 	if err != nil {
 		t.Fatalf("render pf: %v", err)
 	}
@@ -607,7 +608,7 @@ func TestPFInternalWANHolesUseOwningInterface(t *testing.T) {
 			Spec:     api.DHCPv6PrefixDelegationSpec{Interface: "wan"},
 		},
 	}}}
-	data, err := PF(router, InternalFirewallHoles(router))
+	data, err := PF(router, InternalFirewallHoles(router, platform.OSFreeBSD))
 	if err != nil {
 		t.Fatalf("render pf: %v", err)
 	}

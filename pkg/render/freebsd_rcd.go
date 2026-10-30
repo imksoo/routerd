@@ -64,7 +64,7 @@ func freeBSDRCDScripts(router *api.Router) (map[string][]byte, error) {
 		}
 	}
 	synthesizeClientDaemons := !freeBSDRouterdSupervisesClientDaemons(router)
-	aliases, err := nftOutboundAliases(router)
+	aliases, err := outboundAliasesForOS(router, platform.OSFreeBSD, nil)
 	if err != nil {
 		return nil, err
 	}

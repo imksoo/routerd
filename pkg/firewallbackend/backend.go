@@ -45,7 +45,7 @@ type Nftables struct {
 func (b Nftables) Name() string { return "nftables" }
 
 func (b Nftables) Render(router *api.Router, path string, _ []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
 	data, err := render.NftablesFirewall(router, holes)
 	if err != nil {
 		return Ruleset{}, err
@@ -122,7 +122,7 @@ type PF struct {
 func (b PF) Name() string { return "pf" }
 
 func (b PF) Render(router *api.Router, path string, intents []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
-	holes := render.InternalFirewallHoles(router)
+	holes := render.InternalFirewallHoles(router, platform.OSFreeBSD)
 	data, err := render.PFRuntimeFirewall(router, holes, intents)
 	if err != nil {
 		return Ruleset{}, err

@@ -14,6 +14,7 @@ import (
 	"github.com/imksoo/routerd/internal/stringutil"
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/hostdeps"
+	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type FreeBSDConfig struct {
@@ -263,7 +264,7 @@ func FreeBSDWithPPPoEPasswords(router *api.Router, passwordFor func(api.Resource
 		rc.WriteString("mpd_enable=\"YES\"\n")
 		rc.WriteString("mpd_flags=\"-b\"\n")
 	}
-	pf, err := PF(router, InternalFirewallHoles(router))
+	pf, err := PF(router, InternalFirewallHoles(router, platform.OSFreeBSD))
 	if err != nil {
 		return FreeBSDConfig{}, err
 	}
