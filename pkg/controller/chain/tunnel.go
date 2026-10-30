@@ -75,6 +75,9 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
 	}
+	if targetOS == platform.OSLinux && !c.DryRun {
+		return c.reconcileNativeTunnels(ctx)
+	}
 	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 		if err := c.cleanupStaleResources(ctx); err != nil {
 			return err
@@ -428,7 +431,10 @@ func (c TunnelInterfaceController) tunnelEndpointFromSource(source api.StatusVal
 	if field == "" {
 		return "", false, fmt.Errorf("field is required")
 	}
-	status := c.Store.ObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
+	status, err := c.Store.ReadObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
+	if err != nil {
+		return "", false, err
+	}
 	value := statusvalue.Field(status, field)
 	if value == "" {
 		return "", true, nil
