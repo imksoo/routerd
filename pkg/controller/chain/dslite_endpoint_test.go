@@ -155,7 +155,7 @@ func newDSLiteEndpointFixture(t *testing.T, shared bool) (DSLiteTunnelController
 		}
 		return f.native.command(ctx, name, args...)
 	}
-	controller := DSLiteTunnelController{Router: router, Store: f.store, Now: func() time.Time { return f.now }, CommandOutput: command, NativeScope: func(context.Context) (string, error) { return f.scope, nil }}
+	controller := DSLiteTunnelController{Router: router, Store: f.store, Now: func() time.Time { return f.now }, CommandOutput: command, NativeScope: func(context.Context) (string, error) { return f.scope, nil }, SetAliasByIndex: f.native.setAliasByIndex}
 	return controller, f, spec
 }
 

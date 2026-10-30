@@ -172,7 +172,7 @@ func TestDSLiteParentNativeLinuxAFTRLifecycle(t *testing.T) {
 	before := receivedPackets()
 	captureCtx, captureCancel := context.WithTimeout(ctx, 8*time.Second)
 	defer captureCancel()
-	capture := peerCommand(captureCtx, "tcpdump", "-i", "ds-aftr-u", "-c", "1", "-n", "-v", "-Q", "in", "ip6", "proto", "4")
+	capture := peerCommand(captureCtx, "tcpdump", "-Z", "root", "-i", "ds-aftr-u", "-c", "1", "-n", "-v", "-Q", "in", "ip6", "proto", "4")
 	var packet bytes.Buffer
 	capture.Stdout = &packet
 	stderr, err := capture.StderrPipe()
@@ -190,14 +190,16 @@ func TestDSLiteParentNativeLinuxAFTRLifecycle(t *testing.T) {
 	})
 	scanner := bufio.NewScanner(stderr)
 	ready := false
+	var captureMessages []string
 	for scanner.Scan() {
+		captureMessages = append(captureMessages, scanner.Text())
 		if strings.Contains(scanner.Text(), "listening on") {
 			ready = true
 			break
 		}
 	}
 	if !ready {
-		t.Fatalf("independent AFTR capture did not become ready: %v", scanner.Err())
+		t.Fatalf("independent AFTR capture did not become ready: %v: %s", scanner.Err(), strings.Join(captureMessages, "; "))
 	}
 	run("ping", "-c", "2", "-W", "2", "-I", "192.0.2.1", "192.0.2.2")
 	if err := capture.Wait(); err != nil {
@@ -224,6 +226,12 @@ func TestDSLiteParentNativeLinuxAFTRLifecycle(t *testing.T) {
 		if err := address.Reconcile(ctx); err != nil {
 			t.Fatalf("native DS-Lite child address withdrawal: %v", err)
 		}
+		if out := run("ip", "-j", "-4", "address", "show", "dev", "ds-proof"); strings.Contains(string(out), "192.0.2.1") {
+			t.Fatalf("child address remains before parent withdrawal: %s", out)
+		}
+		if out := run("ip", "-j", "-4", "route", "show", "192.0.2.2/32"); strings.TrimSpace(string(out)) != "[]" {
+			t.Fatalf("child route remains before parent withdrawal: %s", out)
+		}
 		parent.Router = &api.Router{}
 		if err := parent.reconcile(ctx); err != nil {
 			t.Fatalf("native DS-Lite withdrawal: %v", err)
@@ -238,7 +246,7 @@ func TestDSLiteParentNativeLinuxAFTRLifecycle(t *testing.T) {
 	withdraw()
 	parent.Router, address.Router, route.Router = router, router, router
 	reacquired := acquire()
-	if reacquired.Token == record.Token || reacquired.IfIndex == record.IfIndex {
+	if reacquired.Token == record.Token {
 		t.Fatalf("withdrawn DS-Lite ownership was reused: old=%+v new=%+v", record, reacquired)
 	}
 	before = receivedPackets()

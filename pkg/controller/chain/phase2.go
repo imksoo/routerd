@@ -146,6 +146,7 @@ type DSLiteTunnelController struct {
 	OS                   platform.OS
 	NativeScope          func(context.Context) (string, error)
 	NativeInterfaceIndex func(string) (int, error)
+	SetAliasByIndex      func(int, string, string) error
 	Router               *api.Router
 	DeclaredRouter       *api.Router
 	Bus                  *bus.Bus

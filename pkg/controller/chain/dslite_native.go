@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -403,12 +405,17 @@ func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name st
 	}
 	var addresses []struct {
 		Addresses []struct {
-			Local, Peer string
-			PrefixLen   *int `json:"prefixlen"`
+			Local     string
+			Peer      string `json:"address"`
+			PrefixLen *int   `json:"prefixlen"`
 		} `json:"addr_info"`
 	}
-	if err := json.Unmarshal(out, &addresses); err != nil || len(addresses) != 1 || addresses[0].Addresses == nil {
+	if err := json.Unmarshal(out, &addresses); err != nil || addresses == nil || len(addresses) > 1 || len(addresses) == 1 && addresses[0].Addresses == nil {
 		return observed, errors.New("invalid DS-Lite inner address observation")
+	}
+	// ip -4 omits a newly created tunnel until it has an IPv4 address.
+	if len(addresses) == 0 {
+		return observed, nil
 	}
 	for _, address := range addresses[0].Addresses {
 		peer := strings.TrimSuffix(address.Peer, "/32")
@@ -441,7 +448,15 @@ func checkNativeTunnelIdentity(osName platform.OS, scope string, record dsliteTu
 	if observed.Kind != kind || observed.Token != record.Token || record.IfIndex != 0 && record.IfIndex != observed.Index {
 		return fmt.Errorf("DS-Lite interface %s is foreign or has been replaced", record.Plan.Name)
 	}
+	if record.OS == platform.OSLinux && record.IfIndex == 0 && observed.Index != dsliteCreationIndex(record.Token) {
+		return errors.New("DS-Lite pending creation index differs from its requested identity")
+	}
 	return nil
+}
+
+func dsliteCreationIndex(token string) int {
+	digest := sha256.Sum256([]byte(token))
+	return int(binary.BigEndian.Uint32(digest[:4])&0x3fffffff) + 1024
 }
 
 func (c DSLiteTunnelController) withdrawNativeTunnel(ctx context.Context, record dsliteTunnelReceipt) error {
@@ -680,12 +695,47 @@ func (c DSLiteTunnelController) ensureNativeTunnel(ctx context.Context, resource
 	if !observed.Exists {
 		var createErr error
 		if record.OS == platform.OSLinux {
-			args := []string{"link", "add", "name", plan.Name, "alias", "routerd-dslite:" + record.Token, "type", "ip6tnl", "mode", "ipip6", "local", plan.Local, "remote", plan.Remote}
+			index := dsliteCreationIndex(record.Token)
+			args := []string{"link", "add", "name", plan.Name, "index", strconv.Itoa(index), "type", "ip6tnl", "mode", "ipip6", "local", plan.Local, "remote", plan.Remote}
 			if plan.Underlay != "" {
 				args = append(args, "dev", plan.Underlay)
 			}
 			args = append(args, "encaplimit", plan.EncapLimit)
 			_, createErr = c.endpointCommand(ctx, "ip", args...)
+			if createErr != nil {
+				return createErr
+			}
+			// Only the exclusive create ACK authorizes installing a cookie.
+			// A resumed pending record cannot grant this authority to a bare link.
+			pending, err := c.nativeTunnelReceipts()
+			if err != nil {
+				return err
+			}
+			found := false
+			for _, current := range pending {
+				found = found || current == record
+			}
+			if !found {
+				return errors.New("DS-Lite pending receipt changed before cookie installation")
+			}
+			scope, err := c.tunnelScope(ctx)
+			if err != nil {
+				return err
+			}
+			if scope != record.Scope {
+				return errors.New("DS-Lite kernel scope changed before cookie installation")
+			}
+			if err := c.requireTunnelInputs(ctx, resource, spec, plan); err != nil {
+				return err
+			}
+			install := c.SetAliasByIndex
+			if install == nil {
+				install = setDSLiteAliasByIndex
+			}
+			if err := install(index, plan.Name, "routerd-dslite:"+record.Token); err != nil {
+				return err
+			}
+			record.IfIndex = index
 		} else {
 			_, createErr = c.endpointCommand(ctx, "ifconfig", "gif", "create", "name", plan.Name, "description", "routerd-dslite:"+record.Token)
 		}
