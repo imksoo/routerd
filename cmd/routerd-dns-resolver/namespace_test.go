@@ -3,9 +3,11 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,6 +63,76 @@ func TestResolverNamespaceUsesDNSLabelsAndSelectedZoneRefsOnWire(t *testing.T) {
 	}
 }
 
+func TestZoneResourceReferenceCannotSelectUnreferencedSameNamedSuffix(t *testing.T) {
+	config := testResolverConfig(nil)
+	config.Spec.Sources[0].Match = []string{"."}
+	config.Spec.Sources[0].ZoneRef = []string{"DNSZone/selected"}
+	config.Zones = []resolvercfg.RuntimeZone{
+		{Name: "selected", Spec: api.DNSZoneSpec{Zone: "public.example", Records: []api.DNSZoneRecordSpec{{Hostname: "router", IPv4: "192.0.2.1"}}}},
+		{Name: "private", Spec: api.DNSZoneSpec{Zone: "selected", Records: []api.DNSZoneRecordSpec{{Hostname: "secret", IPv4: "192.0.2.99"}}}},
+	}
+	d := newTestDaemon(t, "", config, true)
+	address := failoverDualDNSServer(t, dns.HandlerFunc(d.handleDNS))
+	if answer := namespaceQuery(t, address, "router.public.example."); len(answer.Answer) != 1 || answer.Answer[0].(*dns.A).A.String() != "192.0.2.1" {
+		t.Fatalf("referenced zone resource did not serve its own suffix: %v", answer)
+	}
+	if answer := namespaceQuery(t, address, "secret.selected."); answer.Rcode != dns.RcodeNameError || len(answer.Answer) != 0 {
+		t.Fatalf("unselected DNSZone/private answered through DNSZone/selected: %v", answer)
+	}
+}
+
+func TestWildcardTraversalHonorsEscapedDNSLabelOnWire(t *testing.T) {
+	config := testResolverConfig(nil)
+	config.Zones[0].Spec.Records = []api.DNSZoneRecordSpec{{Hostname: "*.child", IPv4: "192.0.2.99"}}
+	d := newTestDaemon(t, "", config, true)
+	address := failoverDualDNSServer(t, dns.HandlerFunc(d.handleDNS))
+	if answer := namespaceQuery(t, address, "x.child.lab.example."); len(answer.Answer) != 1 || answer.Answer[0].(*dns.A).A.String() != "192.0.2.99" {
+		t.Fatalf("wildcard no longer answers its actual child labels: %v", answer)
+	}
+	if answer := namespaceQuery(t, address, `x\.child.lab.example.`); answer.Rcode != dns.RcodeNameError || len(answer.Answer) != 0 {
+		t.Fatalf("escaped single label was split during wildcard traversal: %v", answer)
+	}
+}
+
+func TestListenersSelectDistinctZoneResourcesWithTheSameApex(t *testing.T) {
+	config := testResolverConfig(nil)
+	config.Spec.Sources = []api.DNSResolverSourceSpec{
+		{Name: "view-one", Kind: "zone", Match: []string{"."}, ZoneRef: []string{"DNSZone/one"}},
+		{Name: "view-two", Kind: "zone", Match: []string{"."}, ZoneRef: []string{"DNSZone/two"}},
+	}
+	config.Zones = []resolvercfg.RuntimeZone{
+		{Name: "one", Spec: api.DNSZoneSpec{Zone: "shared.example", Records: []api.DNSZoneRecordSpec{{Hostname: "router", IPv4: "192.0.2.1"}}}},
+		{Name: "two", Spec: api.DNSZoneSpec{Zone: "shared.example", Records: []api.DNSZoneRecordSpec{{Hostname: "router", IPv4: "192.0.2.2"}}}},
+	}
+	d := newTestDaemon(t, "", config, true)
+	addresses := []string{
+		failoverDualDNSServer(t, dns.HandlerFunc(d.handleDNS)),
+		failoverDualDNSServer(t, dns.HandlerFunc(d.handleDNS)),
+	}
+	var listen []api.DNSResolverListenSpec
+	for i, address := range addresses {
+		host, textPort, err := net.SplitHostPort(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, err := strconv.Atoi(textPort)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listen = append(listen, api.DNSResolverListenSpec{Addresses: []string{host}, Port: port, Sources: []string{config.Spec.Sources[i].Name}})
+	}
+	d.stateMu.Lock()
+	d.config.Spec.Listen = listen
+	d.stateMu.Unlock()
+	for i, address := range addresses {
+		answer := namespaceQuery(t, address, "router.shared.example.")
+		want := net.IPv4(192, 0, 2, byte(i+1)).String()
+		if len(answer.Answer) != 1 || answer.Answer[0].(*dns.A).A.String() != want {
+			t.Fatalf("listener %s selected another resource at the same apex: %v, want %s", address, answer, want)
+		}
+	}
+}
+
 func TestWorkerRejectsForeignResourceConfigWithoutAcknowledgingItsDigest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "resolver.json")
 	initial := testResolverConfig(nil)
@@ -102,10 +174,11 @@ func TestWorkerRejectsForeignResourceConfigWithoutAcknowledgingItsDigest(t *test
 }
 
 func TestReloadRetainsDHCPObservationsOnlyInTheirDeclaredNamespace(t *testing.T) {
-	for _, change := range []string{"DHCP source", "zone resource"} {
+	for _, change := range []string{"DHCP source", "zone resource", "zone apex"} {
 		t.Run(change, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "resolver.json")
 			initial := testResolverConfig(nil)
+			initial.Spec.Sources[0].Match = []string{"."}
 			initial.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/old"}
 			writeRuntimeConfig(t, path, initial)
 			d := newTestDaemon(t, path, initial, true)
@@ -115,12 +188,15 @@ func TestReloadRetainsDHCPObservationsOnlyInTheirDeclaredNamespace(t *testing.T)
 				t.Fatalf("initial DHCP observation was not served: %v", answer)
 			}
 			updated := testResolverConfig(nil)
+			updated.Spec.Sources[0].Match = []string{"."}
 			updated.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/old"}
 			if change == "DHCP source" {
 				updated.Zones[0].Spec.DHCPDerived.Sources = []string{"DHCPv4Server/new"}
-			} else {
+			} else if change == "zone resource" {
 				updated.Zones[0].Name = "new-zone"
 				updated.Spec.Sources[0].ZoneRef = []string{"DNSZone/new-zone"}
+			} else {
+				updated.Zones[0].Spec.Zone = "other.example"
 			}
 			writeRuntimeConfig(t, path, updated)
 			if _, err := d.reload(t.Context()); err != nil {
@@ -129,8 +205,14 @@ func TestReloadRetainsDHCPObservationsOnlyInTheirDeclaredNamespace(t *testing.T)
 			if answer := namespaceQuery(t, address, "client.lab.example."); answer.Rcode != dns.RcodeNameError || len(answer.Answer) != 0 {
 				t.Fatalf("DHCP observation crossed %s replacement: %v", change, answer)
 			}
-			if answer := namespaceQuery(t, address, "router.lab.example."); len(answer.Answer) != 1 {
+			if answer := namespaceQuery(t, address, "router."+updated.Zones[0].Spec.Zone+"."); len(answer.Answer) != 1 {
 				t.Fatalf("namespace replacement removed its configured static record: %v", answer)
+			}
+			ptr := new(dns.Msg)
+			ptr.SetQuestion("55.2.0.192.in-addr.arpa.", dns.TypePTR)
+			answer, _, err := (&dns.Client{Net: "udp", Timeout: time.Second}).ExchangeContext(t.Context(), ptr, address)
+			if err != nil || answer == nil || len(answer.Answer) != 0 {
+				t.Fatalf("old DHCP PTR crossed %s replacement: %v, %v", change, answer, err)
 			}
 		})
 	}
