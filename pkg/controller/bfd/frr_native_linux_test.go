@@ -141,6 +141,14 @@ func runBFDIndependentFRRNativeLifecycle(t *testing.T, currentNS, hostNS, frr, m
 	}
 	run("ip", "link", "set", "lo", "up")
 	run("ip", "link", "add", "name", "bfd-proof", "type", "veth", "peer", "name", "bfd-peer")
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(cleanupCtx, "ip", "link", "delete", "dev", "bfd-proof").CombinedOutput()
+		if err != nil && !strings.Contains(string(out), "Cannot find device") {
+			t.Errorf("remove fixture-owned veth: %v: %s", err, out)
+		}
+	})
 	run("ip", "link", "set", "dev", "bfd-peer", "netns", strconv.Itoa(peer.Process.Pid))
 	run("ip", "address", "add", "198.18.0.1/30", "dev", "bfd-proof")
 	run("ip", "link", "set", "dev", "bfd-proof", "up")
@@ -171,6 +179,38 @@ func runBFDIndependentFRRNativeLifecycle(t *testing.T, currentNS, hostNS, frr, m
 	}
 	bfddArgs := func(dir string) []string {
 		return []string{"-u", "root", "-g", "root", "-f", filepath.Join(dir, "bfdd.conf"), "-i", filepath.Join(dir, "bfdd.pid"), "--vty_socket", filepath.Join(dir, "vty"), "-z", filepath.Join(dir, "zebra.sock"), "--bfdctl", filepath.Join(dir, "bfdctl.sock"), "--log", "stdout"}
+	}
+	var stopZebra []func()
+	if mode == "single-hop" {
+		zebra := filepath.Join(filepath.Dir(frr), "zebra")
+		if _, err := os.Stat(zebra); err != nil {
+			t.Fatalf("single-hop interface inventory requires zebra: %v", err)
+		}
+		for _, side := range []struct {
+			label, dir string
+			peer       bool
+		}{{"local", localDir, false}, {"peer", peerDir, true}} {
+			config := filepath.Join(side.dir, "zebra.conf")
+			if err := os.WriteFile(config, []byte("log stdout\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"-u", "root", "-g", "root", "-f", config, "-i", filepath.Join(side.dir, "zebra.pid"), "-z", filepath.Join(side.dir, "zebra.sock"), "--vty_socket", filepath.Join(side.dir, "vty"), "--log", "stdout"}
+			command := exec.CommandContext(ctx, zebra, args...)
+			if side.peer {
+				command = peerCommand(zebra, args...)
+			}
+			stopZebra = append(stopZebra, start("bfd-zebra-"+side.label, command))
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if info, err := os.Stat(filepath.Join(side.dir, "zebra.sock")); err == nil && info.Mode()&os.ModeSocket != 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("%s zebra did not become ready", side.label)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
 	}
 	stopLocal := start("bfd-local", exec.CommandContext(ctx, frr, bfddArgs(localDir)...))
 	stopPeer := start("bfd-peer", peerCommand(frr, bfddArgs(peerDir)...))
@@ -264,5 +304,8 @@ func runBFDIndependentFRRNativeLifecycle(t *testing.T, currentNS, hostNS, frr, m
 	t.Log("resource withdrawal acknowledged by real bfdd and SQLite; foreign configured tuple retained")
 	stopPeer()
 	stopLocal()
+	for _, stop := range stopZebra {
+		stop()
+	}
 	stopPeerNS()
 }
