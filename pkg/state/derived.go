@@ -294,3 +294,49 @@ func derivedInputValue(value any) string {
 		return fmt.Sprint(value)
 	}
 }
+
+// RetireDerivedEvents is called only after a generation is selected. Removing
+// an intent ends that latch/deadline's lifetime; a later re-add starts fresh.
+// Diagnostic event history remains in the journal.
+func (s *SQLiteStore) RetireDerivedEvents(ctx context.Context, names []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return sql.ErrConnDone
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	present := make(map[string]bool, len(names))
+	for _, name := range names {
+		present[name] = true
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM objects WHERE api_version=? AND kind='DerivedEvent'`, api.NetAPIVersion)
+	if err != nil {
+		return err
+	}
+	var removed []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		if !present[name] {
+			removed = append(removed, name)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, name := range removed {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM objects WHERE api_version=? AND kind='DerivedEvent' AND name=?`, api.NetAPIVersion, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

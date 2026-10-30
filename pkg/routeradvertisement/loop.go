@@ -55,37 +55,65 @@ type Loop struct {
 	Report func(error)
 }
 
-// Listen binds an ICMPv6 socket to the interface's link-local source, joins the
-// all-routers group for RS, and asks the kernel to calculate ICMPv6 checksums.
+// Listen owns one wildcard ICMPv6 receiver and an explicit link-local source.
+// Binding the receiver to that unicast source would exclude multicast RS on
+// FreeBSD even after joining the all-routers group. Sends retain the selected
+// source and interface through Endpoint.Write's control message.
 func Listen(ifname string) (Endpoint, error) {
 	ifi, err := net.InterfaceByName(ifname)
 	if err != nil {
 		return Endpoint{}, err
 	}
-	c, source, err := ndp.Listen(ifi, ndp.LinkLocal)
+	addrs, err := ifi.Addrs()
 	if err != nil {
 		return Endpoint{}, err
 	}
-	if !source.IsLinkLocalUnicast() {
-		c.Close()
-		return Endpoint{}, fmt.Errorf("RA source on %s is not link-local", ifname)
+	source, err := linkLocalSource(addrs, ifname)
+	if err != nil {
+		return Endpoint{}, err
+	}
+	c, err := listenSolicitations(ifi)
+	if err != nil {
+		return Endpoint{}, err
+	}
+	return Endpoint{Conn: c, Source: source, Index: ifi.Index, MTU: ifi.MTU, HardwareAddress: ifi.HardwareAddr}, nil
+}
+
+func linkLocalSource(addrs []net.Addr, ifname string) (netip.Addr, error) {
+	for _, address := range addrs {
+		prefix, ok := address.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		source, ok := netip.AddrFromSlice(prefix.IP)
+		if ok && source.Is6() && !source.Is4In6() && source.IsLinkLocalUnicast() {
+			return source.WithZone(ifname), nil
+		}
+	}
+	return netip.Addr{}, fmt.Errorf("RA source on %s is not link-local", ifname)
+}
+
+func listenSolicitations(ifi *net.Interface) (*ndp.Conn, error) {
+	c, _, err := ndp.Listen(ifi, ndp.Unspecified)
+	if err != nil {
+		return nil, err
 	}
 	if err := c.SetControlMessage(ipv6.FlagHopLimit|ipv6.FlagDst|ipv6.FlagInterface, true); err != nil {
 		c.Close()
-		return Endpoint{}, err
+		return nil, err
 	}
 	filter := new(ipv6.ICMPFilter)
 	filter.SetAll(true)
 	filter.Accept(ipv6.ICMPTypeRouterSolicitation)
 	if err := c.SetICMPFilter(filter); err != nil {
 		c.Close()
-		return Endpoint{}, err
+		return nil, err
 	}
 	if err := c.JoinGroup(allRouters); err != nil {
 		c.Close()
-		return Endpoint{}, err
+		return nil, err
 	}
-	return Endpoint{Conn: c, Source: source, Index: ifi.Index, MTU: ifi.MTU, HardwareAddress: ifi.HardwareAddr}, nil
+	return c, nil
 }
 
 func (l Loop) Run(ctx context.Context) error {

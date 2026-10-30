@@ -4,12 +4,13 @@ package state
 
 import (
 	"errors"
-	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/daemonapi"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/daemonapi"
 )
 
 func TestDerivedCheckpointDoesNotReinitializePartialOrOldState(t *testing.T) {

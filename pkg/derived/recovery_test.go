@@ -290,3 +290,82 @@ func TestUnusableInputDoesNotBlockIndependentDerivedEvent(t *testing.T) {
 		t.Fatalf("unrelated input failure blocked valid DerivedEvent: %+v %v", outputs, err)
 	}
 }
+
+func TestRestartPreservesLatchWhenNeitherGuardMatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { store.Close() }()
+	setInput(t, store, "Up", "Up")
+	controller := testController(store, "0s", false)
+	independentGuards(t, controller)
+	reconcile(t, controller)
+	before := checkpoint(t, store)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setInput(t, store, "Pending", "Up")
+	controller = testController(store, "0s", false)
+	independentGuards(t, controller)
+	reconcile(t, controller)
+	if after := checkpoint(t, store); after != before {
+		t.Fatalf("restart lost latch with mixed inputs: %+v -> %+v", before, after)
+	}
+	setInput(t, store, "Pending", "Pending")
+	reconcile(t, controller)
+	if checkpoint(t, store).Asserted {
+		t.Fatal("independent retraction guard no longer applied after restart")
+	}
+	outputs, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.virtual.dslite.retracted"})
+	if err != nil || len(outputs) != 1 {
+		t.Fatalf("recovered latch did not retract exactly once: %+v %v", outputs, err)
+	}
+}
+
+func TestSelectedRemovalRetiresPendingDeadlineBeforeSameRuleReadded(t *testing.T) {
+	store := openStore(t)
+	setInput(t, store, "Pending", "")
+	controller := testController(store, "10s", false)
+	now := time.Now().UTC()
+	controller.Now = func() time.Time { return now }
+	reconcile(t, controller)
+	setInput(t, store, "Up", "")
+	reconcile(t, controller)
+	if checkpoint(t, store).PendingDue.IsZero() {
+		t.Fatal("test has no durable pending deadline")
+	}
+	removed := &Controller{Router: &api.Router{}, Store: store, Bus: bus.NewWithStore(store)}
+	done, err := removed.Start(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "DerivedEvent", "dslite-active")
+	if err != nil || len(status) != 0 {
+		t.Fatalf("removed intent retained authority: %+v %v", status, err)
+	}
+	controller = testController(store, "10s", false)
+	now = now.Add(time.Hour)
+	controller.Now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(t.Context())
+	done, err = controller.Start(ctx)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	<-done
+	if cp := checkpoint(t, store); !cp.Asserted || !cp.PendingDue.IsZero() {
+		t.Fatalf("re-added rule did not initialize from current inputs: %+v", cp)
+	}
+	outputs, err := store.ListEvents(routerstate.EventQuery{Topic: "routerd.virtual.dslite.asserted"})
+	if err != nil || len(outputs) != 0 {
+		t.Fatalf("removed pending timer resurrected: %+v %v", outputs, err)
+	}
+}

@@ -524,8 +524,12 @@ func validateRouteResource(res api.Resource, targetOS platform.OS) (bool, error)
 			return true, fmt.Errorf("%s spec.retractWhen must be any_false or all_false", res.ID())
 		}
 		if spec.Hysteresis != "" {
-			if _, err := time.ParseDuration(spec.Hysteresis); err != nil {
+			hysteresis, err := time.ParseDuration(spec.Hysteresis)
+			if err != nil {
 				return true, fmt.Errorf("%s spec.hysteresis is invalid: %w", res.ID(), err)
+			}
+			if hysteresis < 0 {
+				return true, fmt.Errorf("%s spec.hysteresis must be non-negative", res.ID())
 			}
 		}
 	case "IPv4DefaultRoutePolicy":

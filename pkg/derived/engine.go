@@ -184,6 +184,15 @@ func (c *Controller) Start(ctx context.Context) (<-chan struct{}, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if c.Store != nil && c.Store.EventJournal() != nil {
+		names := make([]string, 0, len(c.rules))
+		for _, r := range c.rules {
+			names = append(names, r.name)
+		}
+		if err := c.Store.EventJournal().RetireDerivedEvents(ctx, names); err != nil {
+			return nil, err
+		}
+	}
 	done := make(chan struct{})
 	if len(c.rules) == 0 {
 		close(done)
