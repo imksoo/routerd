@@ -302,7 +302,7 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 		known := *receipt
 		known.Pending = false
 		if err := c.withdrawOrdinaryReceipt(ctx, resource.Metadata.Name, status, &known); err != nil {
-			return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "WithdrawFailed", err)
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, &known, "WithdrawFailed", err)
 		}
 		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "PremiseChanged", "dryRun": false}, nil)
 	}
@@ -373,6 +373,11 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 	if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
 		return err
 	}
+	previous, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", name)
+	if err != nil {
+		return err
+	}
+	known := *receipt
 	pending := *receipt
 	pending.Pending = true
 	pendingStatus := copyStatusMap(status)
@@ -381,10 +386,46 @@ func (c IPv4RouteController) withdrawOrdinaryReceipt(ctx context.Context, name s
 		return err
 	}
 	*receipt = pending
+	current, err := c.ordinaryRoutePremiseForName(ctx, name)
+	if err != nil {
+		return err
+	}
 	if err := c.verifyOrdinaryRouteIdentity(ctx, pending); err != nil {
 		return err
 	}
+	if current.Active && current.Route == known.Route {
+		// The dependency/source may have recovered while the pending write
+		// waited. No delete has been issued; retain the known native effect.
+		matching, _, err := c.observeOrdinaryRoute(ctx, known.Route)
+		if err != nil || !matching {
+			return errors.Join(err, errors.New("reactivated IPv4Route native presence is unconfirmed"))
+		}
+		if err := c.saveOrdinaryRouteStatus(name, copyStatusMap(previous), &known); err != nil {
+			return err
+		}
+		*receipt = known
+		// An explicit error prevents both inactive reconciliation and removed
+		// resource cleanup from forgetting the restored receipt as withdrawn.
+		return errors.New("IPv4Route current intent became active; no native delete was issued")
+	}
 	return c.removeOrdinaryRoute(ctx, pending.Route)
+}
+
+func (c IPv4RouteController) ordinaryRoutePremiseForName(ctx context.Context, name string) (ordinaryRoutePremise, error) {
+	if c.Router == nil {
+		return ordinaryRoutePremise{}, errors.New("IPv4Route current router is unavailable")
+	}
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "IPv4Route" || resource.Metadata.Name != name {
+			continue
+		}
+		spec, err := resource.IPv4RouteSpec()
+		if err != nil {
+			return ordinaryRoutePremise{}, err
+		}
+		return c.ordinaryRoutePremise(ctx, spec)
+	}
+	return ordinaryRoutePremise{}, nil
 }
 
 func (c IPv4RouteController) saveOrdinaryRouteStatus(name string, status map[string]any, receipt *ipv4RouteReceipt) error {
