@@ -143,11 +143,14 @@ cannot establish that the newly selected source works.
 - DNS probes send both UDP and TCP questions to explicit configured listeners,
   including currently resolved `addressFrom` values. Wildcard listeners are
   reached through the corresponding loopback address. A selected static zone
-  record supplies an exact expected A/AAAA answer. A selected root-forwarding
+  record supplies an exact expected A/AAAA answer with RD=0 (nonrecursive).
+  A selected root-forwarding
   source can instead answer a root NS question. Missing usable listeners or
   questions remain unobserved; private names outside a selected forwarder's
   match are never chosen. SERVFAIL/REFUSED proves a transport reply, not
   successful resolution, and is reported as a failed DNS answer.
+  Non-loopback listener addresses require current native-local assignment;
+  missing or unreadable assignment remains unobserved without sending a query.
 - Egress probes execute the candidate's configured enabled HealthCheck using its
   existing protocol, target, interface and mark binding. They do not reuse an old
   healthy sample. Missing checks, unresolved dynamic targets and unavailable
@@ -176,6 +179,16 @@ separate diagnostic checks; their PASS does not establish current traffic.
 Existing CLI exit behavior is retained: FAIL checks return nonzero, while WARN
 checks may return zero. A warning or a router-originated PASS must not be used as
 independent client/forwarding qualification.
+
+Private-question containment requires the same-revision routerd resolver: it
+answers nonrecursive requests only from its current local zones or cache and
+refuses an upstream source on a miss, preserving configured source precedence.
+The public root question keeps RD=1. RD=0 cannot guarantee that an unrelated or
+older DNS implementation will avoid forwarding. See
+[RFC 1034 section 4.3.1](https://www.rfc-editor.org/rfc/rfc1034.html#section-4.3.1)
+for nonrecursive local-information service and
+[RFC 1035 section 4.1.1](https://www.rfc-editor.org/rfc/rfc1035.html#section-4.1.1)
+for RD header semantics.
 
 These daemon inspection commands reject `--server`, `--name`, and `--no-host`
 instead of silently ignoring them. The ordinary local `doctor AREA` commands

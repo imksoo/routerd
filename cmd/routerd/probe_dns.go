@@ -83,6 +83,15 @@ func daemonDNSProbeWithCurrent(ctx context.Context, router *api.Router, store *r
 					checks = append(checks, unobservedProbe(resource.ID(), "listen address is not a usable literal IP"))
 					continue
 				}
+				local, localErr := daemonDNSProbeEndpointLocal(endpoint)
+				if !local {
+					detail := "listener address is not observed as a native local address"
+					if localErr != nil {
+						detail += ": " + localErr.Error()
+					}
+					checks = append(checks, unobservedProbe(resource.ID(), detail))
+					continue
+				}
 				for _, protocol := range []string{"udp", "tcp"} {
 					name := resource.ID() + " " + protocol + " " + endpoint
 					if attempts >= maxDaemonProbeAttempts || len(checks) >= 24 {
@@ -106,6 +115,9 @@ func daemonDNSProbeWithCurrent(ctx context.Context, router *api.Router, store *r
 					started := time.Now().UTC()
 					request := new(dns.Msg)
 					request.SetQuestion(question.name, question.kind)
+					// A selected static answer is a local-information check. A
+					// same-revision worker must never forward this private name.
+					request.RecursionDesired = !question.expected.IsValid()
 					response, exchangeErr := exchangeDaemonDNSProbe(attemptCtx, protocol, endpoint, request)
 					cancel()
 					if ctx.Err() != nil && ctx.Err() != context.DeadlineExceeded {
@@ -279,7 +291,7 @@ func daemonDNSProbeQuestion(router *api.Router, resolverName string, spec api.DN
 }
 
 func validDaemonDNSReply(request, response *dns.Msg, question daemonDNSQuestion) bool {
-	if response == nil || !response.Response || response.Truncated || response.Id != request.Id || response.Opcode != request.Opcode || response.Rcode != dns.RcodeSuccess || len(response.Question) != 1 {
+	if response == nil || !response.Response || response.Truncated || response.Id != request.Id || response.Opcode != request.Opcode || response.RecursionDesired != request.RecursionDesired || response.Rcode != dns.RcodeSuccess || len(response.Question) != 1 {
 		return false
 	}
 	q := response.Question[0]

@@ -650,6 +650,7 @@ func (d *daemon) resolveContext(ctx context.Context, localAddr string, req *dns.
 			if err := msg.Unpack(cached); err == nil {
 				msg.Id = req.Id
 				msg.Question = append([]dns.Question(nil), req.Question...)
+				msg.RecursionDesired = req.RecursionDesired
 				return resolveResult{Response: &msg, CacheHit: true, Upstream: "cache", ResponseCode: dns.RcodeToString[msg.Rcode]}, nil
 			}
 		}
@@ -666,6 +667,15 @@ func (d *daemon) resolveContext(ctx context.Context, localAddr string, req *dns.
 			}
 		case "forward", "upstream":
 			result := resolveResult{Upstream: sourceName(source.Spec)}
+			// RFC 1034 section 4.3.1 limits nonrecursive queries to local
+			// information. Keep source precedence: refusing this source must
+			// not expose a later authoritative view or export the question.
+			if !req.RecursionDesired {
+				resp := new(dns.Msg)
+				resp.SetRcode(req, dns.RcodeRefused)
+				result.Response, result.ResponseCode = resp, dns.RcodeToString[resp.Rcode]
+				return result, nil
+			}
 			if source.Pool == nil {
 				return result, fmt.Errorf("DNS source %q has no upstream pool", result.Upstream)
 			}
