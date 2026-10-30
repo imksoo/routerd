@@ -407,7 +407,7 @@ check-routerd15-focused: check-spec
 	go vet ./...
 
 .PHONY: check-routerd15-recovery
-check-routerd15-recovery: check-routerd15-activation check-routerd15-bridge-parent
+check-routerd15-recovery: check-routerd15-activation check-routerd15-bridge-parent check-routerd15-wireguard-parent
 	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
 	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
 	go test ./pkg/controller/mobility
@@ -439,6 +439,18 @@ generate-schema: generate-spec
 .PHONY: check-routerd15-bridge-parent
 check-routerd15-bridge-parent:
 	go test ./pkg/controller/chain -run '^TestBridge' -count=1
+
+.PHONY: check-routerd15-wireguard-parent check-routerd15-native-parent-linux
+check-routerd15-wireguard-parent:
+	go test ./pkg/controller/chain -run '^TestWireGuard' -count=1
+
+# Explicit opt-in: both the network and sysfs view belong to a new namespace.
+# Requires Linux user namespaces, iproute2, WireGuard tools and VXLAN support.
+check-routerd15-native-parent-linux:
+	ROUTERD_RUN_NETNS=1 go test ./pkg/vxlan -run '^TestLinuxSegmentNativeCreateInstallsOwnershipCookie$$' -count=1 -v
+	@parent_netns=$$(readlink /proc/self/ns/net); \
+	ROUTERD_HOST_NETNS="$$parent_netns" ROUTERD_RUN_NETNS=1 unshare -Urnm sh -c \
+	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle)$$" -count=1 -v'
 
 check-routerd15-policy-native:
 	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1

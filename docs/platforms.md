@@ -186,7 +186,13 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 - `dnsmasq.conf`
 - `rc.d-*`
 
-`routerctl apply` installs the generated `pf.conf`, validates it with `pfctl -nf`, applies it with `pfctl -f`, validates dnsmasq with `dnsmasq --test`, starts generated rc.d scripts with `service <name> onestart`, and applies dynamic DS-Lite tunnels with `ifconfig gif` when static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review and offline validation before pointing real traffic at a FreeBSD host.
+`routerctl apply` asks the running controller to install the generated `pf.conf`,
+validate it with `pfctl -nf`, apply it with `pfctl -f`, and validate dnsmasq with
+`dnsmasq --test`. The running `routerd serve` process owns dnsmasq startup,
+configuration changes and withdrawal directly; a generated dnsmasq rc.d service
+is not a second process owner. Dynamic DS-Lite tunnels use `ifconfig gif` when
+static `rc.conf` rendering is not enough. Use `routerd render freebsd` for review
+and offline validation before pointing real traffic at a FreeBSD host.
 
 Current release qualification is deliberately narrower than the rendered feature
 list. FreeBSD explicitly rejects an `EgressRoutePolicy` resource whose

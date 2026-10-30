@@ -155,6 +155,25 @@ func TestWireGuardParentNativeLinuxPeerLifecycle(t *testing.T) {
 	if err := route.reconcile(ctx); err != nil {
 		t.Fatalf("native child route: %v", err)
 	}
+	checkChildProof := func() {
+		status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "address")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addressReceipt, err := staticReceipt(status)
+		if err != nil || addressReceipt == nil || addressReceipt.Pending || addressReceipt.IfIndex != record.IfIndex || addressReceipt.Scope != record.Scope || addressReceipt.ParentToken != "wireguard:"+record.Token {
+			t.Fatalf("native address lost its exact parent proof: %v", err)
+		}
+		status, err = store.ReadObjectStatus(api.NetAPIVersion, "IPv4Route", "route")
+		if err != nil {
+			t.Fatal(err)
+		}
+		routeReceipt, err := ipv4RouteReceiptFromStatus(status)
+		if err != nil || routeReceipt == nil || routeReceipt.Pending || routeReceipt.IfIndex != record.IfIndex || routeReceipt.Scope != record.Scope || routeReceipt.ParentToken != "wireguard:"+record.Token {
+			t.Fatalf("native route lost its exact parent proof: %v", err)
+		}
+	}
+	checkChildProof()
 	status, err := parent.interfaceStatus(ctx, "wg-proof")
 	if err != nil || status.ListenPort < 1 {
 		t.Fatalf("native WireGuard has no observed UDP port: %v", err)
@@ -187,6 +206,22 @@ func TestWireGuardParentNativeLinuxPeerLifecycle(t *testing.T) {
 	if err != nil || !recovered.Exists || !recovered.Up || recovered.IfIndex != record.IfIndex || recovered.Token != record.Token {
 		t.Fatalf("native recovery replaced or failed to restore the owned parent: %v", err)
 	}
+	t.Logf("post-down native address: %s", run("ip", "-o", "-4", "address", "show", "dev", "wg-proof"))
+	t.Logf("post-down native route: %s", run("ip", "-4", "route", "show", "192.0.2.2/32"))
+	recoveryStatus, err := parent.interfaceStatus(ctx, "wg-proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("post-down listen port: initial=%d current=%d", status.ListenPort, recoveryStatus.ListenPort)
+	// Reconcile the actual parent -> address -> route chain. Linux may remove
+	// a device route on down; the route owner must observe and reacquire it.
+	if err := address.Reconcile(ctx); err != nil {
+		t.Fatalf("native child address recovery: %v", err)
+	}
+	if err := route.reconcile(ctx); err != nil {
+		t.Fatalf("native child route recovery: %v", err)
+	}
+	checkChildProof()
 	run("ping", "-c", "1", "-W", "3", "-I", "192.0.2.1", "192.0.2.2")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -207,6 +242,7 @@ func TestWireGuardParentNativeLinuxPeerLifecycle(t *testing.T) {
 	if err := route.reconcile(ctx); err != nil {
 		t.Fatalf("native child route reopen: %v", err)
 	}
+	checkChildProof()
 	reopened, err := parent.readNativeWireGuard()
 	if err != nil || len(reopened) != 1 || !sameWireGuardNativeRecord(record, reopened[0]) {
 		t.Fatalf("native parent receipt changed after reopen: %v", err)

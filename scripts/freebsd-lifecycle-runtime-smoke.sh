@@ -382,8 +382,10 @@ process_alive "$dnsmasq_pid"
 # require a real Bound lease in that pool rather than a non-protocol-specific
 # first-address assumption.
 jq -e '.state == "Bound" and (.currentAddress | test("^192\\.0\\.2\\.(1[0-9]|20)$"))' "$evidence_dir/dhcpv4-result.json" >/dev/null
-jq -e 'select(.reason == "DiscoverSent")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
-jq -e 'select(.reason == "LeaseBound")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
+# The current daemon publishes lease-state changes, rather than a separate
+# packet-send event. Check the complete stream, not only its last record.
+jq -se 'any(.[]; .reason == "Discovering" and .attributes.state == "Discovering")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
+jq -se 'any(.[]; .reason == "Bound" and .attributes.state == "Bound")' "$evidence_dir/dhcpv4-events.jsonl" >/dev/null
 
 # #959: routerd owns this long-running DHCPv4 daemon through a runtime marker.
 # A controller SIGKILL must neither duplicate the exact owned child on the same
@@ -724,7 +726,7 @@ while [ "$(date +%s)" -lt "$status_deadline" ]; do
 done
 jq -e 'type == "object"' "$evidence_dir/dhcpv6-status-before.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.phase == "Running" and .resources[0].phase == "Bound" and (.resources[0].observed.currentPrefix | startswith("2001:db8:928:"))' "$evidence_dir/dhcpv6-status-before.json" >/dev/null
-jq -e 'select(.reason == "PrefixBound")' "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6-bound-event.json"
+jq -se '[.[] | select(.reason == "PrefixBound")] | first // empty' "$evidence_dir/dhcpv6-events.jsonl" >"$evidence_dir/dhcpv6-bound-event.json"
 test -s "$evidence_dir/dhcpv6-lease.json"
 stop_owned_process "$dhcpv6_pid"
 dhcpv6_pid=

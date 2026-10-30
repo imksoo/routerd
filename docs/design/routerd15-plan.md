@@ -93,6 +93,22 @@ invitation to finish a new framework before trying actual communication.
 not mutate the host network. Focused command fixtures can establish ordering and
 failure propagation; they cannot establish packet forwarding.
 
+[routerd15-feature-qualification.json](routerd15-feature-qualification.json)
+maps every baseline resource kind and example artifact to its feature scope,
+and tracks commands, control API, WebConsole and distribution separately.
+Inventory presence is not a parity verdict. The pinned historical evidence
+does not qualify later changes or turn an unknown feature into a pass.
+
+`make check-routerd15-wireguard-parent` checks the production WireGuard parent
+and child ownership boundaries with command fixtures. The explicit Linux target
+`make check-routerd15-native-parent-linux` additionally enters fresh user,
+network and mount namespaces. It requires iproute2, WireGuard tools, kernel
+WireGuard/VXLAN support and enabled user namespaces. It exercises native Bridge
+address lifecycle, VXLAN creation/configuration/withdrawal and an independent
+WireGuard peer, including SQLite reopen and owned-interface recovery. These
+checks establish their stated native paths; they do not qualify other protocols,
+FreeBSD, package activation or all WireGuard source integrations.
+
 The VM check needs an isolated Linux VM/netns with CAP_NET_ADMIN/CAP_NET_RAW,
 Unix sockets, two upstreams and an independent TCP/UDP peer. Start the actual
 routerd/Health processes, preserve the management path, send traffic, interrupt
