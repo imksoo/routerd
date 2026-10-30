@@ -1770,8 +1770,9 @@ checks passed. The relevant source review covered `pkg/dhcpv4client/client.go`,
 `startup_supervisor_order_test.go`, `runtime_apply.go`, `pkg/api/specs.go`,
 `pkg/controller/dnsresolver/controller.go` and their focused tests.
 
-Reproduction prerequisites and pass criteria are in the English/Japanese
-[development procedure](../operations/development.md).
+Reproduction prerequisites and pass criteria are in the
+[English](https://routerd.net/docs/operations/development#linux-wan-dhcpv4-lifecycle-vm-gate)
+and [Japanese](https://routerd.net/ja/docs/operations/development) development procedures.
 Successful raw captures are deleted automatically. Resolved failed-run captures,
 outputs and superseded duplicate packages are removed after the final pass.
 The ledger binds the package hash and revisions. FreeBSD WAN DHCP, reboot/NAK,
