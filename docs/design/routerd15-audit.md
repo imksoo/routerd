@@ -932,3 +932,61 @@ unrestricted Unix/Netlink, PVE and independent forwarding/peer qualification
 remain unexecuted. No GitHub Actions completion was awaited. Ongoing changes
 are preserved on a separate WIP branch, explicitly pending validation; their
 presence there does not establish completion or compliance.
+
+## Current implementation validation: 78665041
+
+The final code checkpoint is published as `78665041aaa748a33c2272d7648fb1248b960404`,
+tree `766f18d47def78efb868fdd001ebfde0712c5d54`. Its local validation commit is
+`5b7ca4d16a0dec534785430c237fc6a6984c93f1`; only Git commit metadata differs.
+All 2513 tracked blobs were verified before execution and rehashed afterward,
+with zero mismatches and a clean independent Git worktree. Later documentation
+updates do not change that tested code. Checks used Go 1.25.9, ShellCheck 0.10.0,
+`GOMAXPROCS=2` and `GOFLAGS="-p=2 -buildvcs=false"`.
+
+This checkpoint includes typed current Health identity/freshness, atomic durable
+EventRule and DerivedEvent state/output, bounded fair rule processing, acknowledged
+capture lifetime, IPv4 withdrawal rechecks, wildcard solicitation receive and DNS
+resource/label boundaries. DNS leases arriving during reload wait for table
+handover before acknowledgement; a canceled waiting request cannot mutate the
+new table. Separate zone resources sharing a DNS apex remain independently
+selectable. These changes use their existing production owners and callers.
+
+The complete normal suite was rerun after correcting two Health test fixtures.
+The source-error fixture now declares the HealthCheck that it references; the
+metrics fixture supplies a fresh typed sample. Existing error/no-effect and
+Healthy-gauge assertions were retained, with no production fallback or
+freshness relaxation. This complete run includes the later DNS handover test;
+its counts are measured, not inferred from an earlier run.
+
+| Check | Result on this source tree |
+| --- | --- |
+| Whole-repository vet | Pass |
+| Generated schemas and website consistency | Pass; all three generated schemas and website copies agree |
+| Linux daemon/provider release build and static-link checks | Pass; exactly 20 Linux/amd64 static ELF binaries, CGO disabled |
+| Complete FreeBSD/amd64 test compilation | Pass; 128 packages, including 119 test binaries; compile-only, with no native execution |
+| Complete normal tests | Failed: 129 packages, 104 pass, 16 fail, nine without tests; 3888 top-level tests pass, 57 fail, six skip |
+
+The 57 failed tests are classified from their actual output:
+
+| Classification | Tests |
+| --- | ---: |
+| Direct AF_UNIX permission denial | 47 |
+| Readiness timeout with AF_UNIX denial recorded by that same test | 5 |
+| Direct native interface/Netlink permission denial | 3 |
+| Timeout without an observed target errno | 2 |
+
+The last two are ARP ignored-MAC command readiness and ControlAPI transient Unix
+startup. Their source requires a Unix server, but their actual target syscall
+error was not observed; they remain unresolved. The full gate did not pass.
+No additional product-logic assertion failure was observed in this run, which
+does not qualify the assertions blocked by missing native capabilities. Existing
+required tests and the new actual RA socket/stop tests remain intact.
+
+The installer package records 35 passes and one direct AF_UNIX failure in this
+same complete run. All Health fixture assertions and the actual DNS reload
+handover regression pass. Relevant feature race tests, fault/reopen checks and
+independent source reviews passed before publication. Linux binaries were built
+and inspected, not executed as live router daemons. Actual native FreeBSD/PVE,
+independent client/peer traffic, forwarding and image boot remain unqualified.
+The implementation gaps in [remaining findings](routerd15-open-findings.md)
+remain open; these checks are not whole-repository compliance certification.
