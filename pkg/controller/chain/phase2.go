@@ -4,7 +4,6 @@ package chain
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -17,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -285,7 +283,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 		}
 		ifname := firstNonEmpty(spec.TunnelName, spec.Interface, resource.Metadata.Name)
 		if c.currentOS() == platform.OSFreeBSD {
-			ifname = freeBSDDSLiteRuntimeIfName(ifname)
+			ifname = api.DSLiteRuntimeIfName(ifname, "freebsd")
 		}
 		mtu := spec.MTU
 		if mtu == 0 {
@@ -336,11 +334,7 @@ func (c DSLiteTunnelController) reconcile(ctx context.Context) error {
 					continue
 				}
 			}
-			underlay := interfaceName(c.Router, spec.Interface)
-			if underlay == ifname {
-				underlay = ""
-			}
-			plan := dsliteTunnelPlan{Name: ifname, Underlay: underlay, Local: local, Remote: remote, InnerLocal: innerLocal, EncapLimit: firstNonEmpty(spec.EncapsulationLimit, "none"), MTU: mtu, DefaultRoute: spec.DefaultRoute, RouteMetric: spec.RouteMetric}
+			plan := c.nativeTunnelPlan(resource.Metadata.Name, spec, local, remote, innerLocal)
 			if c.currentOS() == platform.OSFreeBSD && plan.EncapLimit != "none" {
 				return fmt.Errorf("FreeBSD DS-Lite does not support custom encapsulationLimit")
 			}
@@ -424,8 +418,10 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
+	ParentRouter      *api.Router
 	Router            *api.Router
 	Segments          *VXLANSegmentController
+	DSLite            *DSLiteTunnelController
 	Bus               *bus.Bus
 	Store             Store
 	MobilityDataplane dynamicconfig.MobilityDataplanePlan
@@ -1829,16 +1825,4 @@ func addressFromRouterResource(router *api.Router, source api.StatusValueSourceS
 		}
 	}
 	return ""
-}
-
-var freeBSDDSLiteRuntimeGIFNamePattern = regexp.MustCompile(`^gif[0-9]+$`)
-
-func freeBSDDSLiteRuntimeIfName(name string) string {
-	name = strings.TrimSpace(name)
-	if freeBSDDSLiteRuntimeGIFNamePattern.MatchString(name) {
-		return name
-	}
-	sum := sha256.Sum256([]byte(name))
-	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
-	return "gif" + strconv.Itoa(index)
 }

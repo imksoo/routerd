@@ -2,6 +2,14 @@
 
 package api
 
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"runtime"
+	"strconv"
+	"strings"
+)
+
 // ResolveInterfaceIfName returns the kernel interface name for a managed
 // interface resource, or name unchanged when it is already a kernel name or
 // does not name a managed interface. Keeping this API-level mapping shared
@@ -57,12 +65,37 @@ func ResolveInterfaceIfName(router *Router, name string) string {
 		case "DSLiteTunnel":
 			spec, err := resource.DSLiteTunnelSpec()
 			if err == nil {
-				if spec.TunnelName != "" {
-					return spec.TunnelName
+				configured := spec.TunnelName
+				if configured == "" {
+					configured = spec.Interface
 				}
-				return resource.Metadata.Name
+				if configured == "" {
+					configured = resource.Metadata.Name
+				}
+				return DSLiteRuntimeIfName(configured, runtime.GOOS)
 			}
 		}
 	}
 	return name
+}
+
+// DSLiteRuntimeIfName is shared by the native owner and interface-reference
+// resolution. FreeBSD requires a gif unit name at the native tunnel boundary.
+func DSLiteRuntimeIfName(name, osName string) string {
+	if osName != "freebsd" {
+		return name
+	}
+	name = strings.TrimSpace(name)
+	if digits, ok := strings.CutPrefix(name, "gif"); ok && digits != "" {
+		allDigits := true
+		for _, digit := range digits {
+			allDigits = allDigits && digit >= '0' && digit <= '9'
+		}
+		if allDigits {
+			return name
+		}
+	}
+	sum := sha256.Sum256([]byte(name))
+	index := 100 + int(binary.BigEndian.Uint16(sum[:2])%900)
+	return "gif" + strconv.Itoa(index)
 }

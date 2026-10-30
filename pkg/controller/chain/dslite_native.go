@@ -280,7 +280,7 @@ func dsliteNativeToken(alias string) string {
 	return token
 }
 
-func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name string) (dsliteTunnelObservation, error) {
+func (c DSLiteTunnelController) observeNativeTunnelLink(ctx context.Context, name string) (dsliteTunnelObservation, error) {
 	var observed dsliteTunnelObservation
 	if c.currentOS() == platform.OSFreeBSD {
 		list, err := c.endpointCommand(ctx, "ifconfig", "-l")
@@ -389,7 +389,15 @@ func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name st
 	if !observed.Exists {
 		return observed, nil
 	}
-	out, err = c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
+	return observed, nil
+}
+
+func (c DSLiteTunnelController) observeNativeTunnel(ctx context.Context, name string) (dsliteTunnelObservation, error) {
+	observed, err := c.observeNativeTunnelLink(ctx, name)
+	if err != nil || !observed.Exists || c.currentOS() == platform.OSFreeBSD {
+		return observed, err
+	}
+	out, err := c.endpointCommand(ctx, "ip", "-j", "-4", "addr", "show", "dev", name)
 	if err != nil {
 		return observed, err
 	}
@@ -416,7 +424,11 @@ func (c DSLiteTunnelController) verifyNativeTunnel(ctx context.Context, record d
 	if err != nil {
 		return err
 	}
-	if record.OS != c.currentOS() || record.Scope != scope {
+	return checkNativeTunnelIdentity(c.currentOS(), scope, record, observed)
+}
+
+func checkNativeTunnelIdentity(osName platform.OS, scope string, record dsliteTunnelReceipt, observed dsliteTunnelObservation) error {
+	if record.OS != osName || record.Scope != scope {
 		return errors.New("DS-Lite native receipt belongs to another kernel scope")
 	}
 	if !observed.Exists {
@@ -564,7 +576,7 @@ func (c DSLiteTunnelController) cleanupNativeTunnels(ctx context.Context) error 
 		if keep {
 			name := firstNonEmpty(spec.TunnelName, spec.Interface, record.Resource)
 			if c.currentOS() == platform.OSFreeBSD {
-				name = freeBSDDSLiteRuntimeIfName(name)
+				name = api.DSLiteRuntimeIfName(name, "freebsd")
 			}
 			keep = name == record.Plan.Name
 			if spec.LocalAddressSource == "delegatedAddress" {

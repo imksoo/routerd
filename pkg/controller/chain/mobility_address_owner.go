@@ -65,7 +65,7 @@ func (c IPv4StaticAddressController) currentMobilityAddressPremise(ctx context.C
 	if observed.Index <= 0 {
 		return zero, fmt.Errorf("mobility address interface %s is unavailable", intent.Interface)
 	}
-	parent, err := c.staticSegmentParent(ctx, intent.Interface, observed)
+	parent, err := c.staticNativeParent(ctx, intent.Interface, observed)
 	if err != nil {
 		return zero, err
 	}

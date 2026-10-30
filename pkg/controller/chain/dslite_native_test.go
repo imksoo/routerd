@@ -332,7 +332,7 @@ func TestDSLiteNativeNeverAdoptsOrDestroysForeignTunnel(t *testing.T) {
 			name := "ds-owned"
 			kind := "ip6tnl"
 			if osName == platform.OSFreeBSD {
-				name, kind = freeBSDDSLiteRuntimeIfName(name), "gif"
+				name, kind = api.DSLiteRuntimeIfName(name, "freebsd"), "gif"
 			}
 			foreign := dsliteTunnelObservation{Exists: true, Index: 12, Kind: kind, MTU: 1454, Local: "2001:db8::10", Remote: "2001:db8::20", Underlay: "wan0", EncapLimit: "none", InnerLocal: dsliteDefaultInnerLocalIPv4, Up: true}
 			f.links[name] = foreign
@@ -656,7 +656,7 @@ func TestDSLiteNativeTruncatedFreeBSDObservationRetainsReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := len(f.writes)
-	name := freeBSDDSLiteRuntimeIfName("ds-owned")
+	name := api.DSLiteRuntimeIfName("ds-owned", "freebsd")
 	c.CommandOutput = func(ctx context.Context, command string, args ...string) ([]byte, error) {
 		if command == "ifconfig" && reflect.DeepEqual(args, []string{name}) {
 			return []byte(name + ":\n"), nil
@@ -752,7 +752,7 @@ func TestDSLiteNativeChangedInputWithdrawalFailurePropagates(t *testing.T) {
 
 func TestDSLiteNativeFreeBSDInterruptedUntaggedCreateRemainsUnknown(t *testing.T) {
 	c, f, _ := newDSLiteNativeController(t, platform.OSFreeBSD)
-	name := freeBSDDSLiteRuntimeIfName("ds-owned")
+	name := api.DSLiteRuntimeIfName("ds-owned", "freebsd")
 	c.CommandOutput = func(ctx context.Context, command string, args ...string) ([]byte, error) {
 		if command == "ifconfig" && len(args) > 1 && args[1] == "create" {
 			if _, err := f.command(ctx, command, args...); err != nil {

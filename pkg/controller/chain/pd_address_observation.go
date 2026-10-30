@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/platform"
-	"github.com/imksoo/routerd/pkg/vxlan"
 )
 
 type delegatedAddressObservation struct {
@@ -102,20 +101,12 @@ func parseDelegatedAddressObservation(out []byte, address string, osName platfor
 	return observation, nil
 }
 
-// The Segment declaration alone cannot authorize a child native effect. Read
-// the actual parent's journal and cookie before and after the address snapshot.
-func (c LANAddressController) segmentParentOwner() VXLANSegmentController {
+func (c LANAddressController) nativeParentReader() nativeParentReader {
 	router := c.DeclaredRouter
 	if router == nil {
 		router = c.Router
 	}
-	owner := VXLANSegmentController{Router: router, Store: c.Store}
-	if c.Segments != nil {
-		owner = *c.Segments
-		owner.Router = router
-		owner.Store = c.Store
-	}
-	return owner
+	return nativeParentReader{Router: router, Store: c.Store, Segments: c.Segments, DSLite: c.DSLite}
 }
 
 // Withdrawal follows the parent cookie recorded with the confirmed child,
@@ -125,8 +116,8 @@ func (c LANAddressController) observeRecordedDelegatedAddress(ctx context.Contex
 	if receipt.ParentToken == "" {
 		return c.observeCurrentDelegatedAddress(ctx, receipt.IfName, address, false)
 	}
-	owner := c.segmentParentOwner()
-	before, err := owner.ObserveRecordedInterface(ctx, receipt.IfName, receipt.ParentToken)
+	owner := c.nativeParentReader()
+	before, err := owner.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
 	if err != nil {
 		return delegatedAddressObservation{}, err
 	}
@@ -137,7 +128,7 @@ func (c LANAddressController) observeRecordedDelegatedAddress(ctx context.Contex
 	if err != nil {
 		return observed, err
 	}
-	after, err := owner.ObserveRecordedInterface(ctx, receipt.IfName, receipt.ParentToken)
+	after, err := owner.observeRecorded(ctx, receipt.IfName, receipt.ParentToken)
 	if err != nil {
 		return observed, err
 	}
@@ -148,40 +139,19 @@ func (c LANAddressController) observeRecordedDelegatedAddress(ctx context.Contex
 	return observed, nil
 }
 
-func (c LANAddressController) delegatedSegmentParent(ctx context.Context, ifname string) (vxlan.SegmentLink, error) {
-	router := c.DeclaredRouter
-	if router == nil {
-		router = c.Router
+func (c LANAddressController) delegatedNativeParent(ctx context.Context, ifname string) (nativeParentLink, error) {
+	link, err := c.nativeParentReader().observeDeclared(ctx, ifname)
+	if err != nil {
+		return link, err
 	}
-	if router == nil {
-		return vxlan.SegmentLink{}, fmt.Errorf("delegated address router unavailable")
+	if link.Declared && (!link.Exists || link.IfName != ifname) {
+		return link, fmt.Errorf("delegated address native parent is not acquired")
 	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "VXLANSegment" && resource.Kind != "VXLANTunnel" {
-			continue
-		}
-		plan, err := nativeVXLANInterface(resource)
-		if err != nil {
-			return vxlan.SegmentLink{}, err
-		}
-		if plan != ifname {
-			continue
-		}
-		owner := c.segmentParentOwner()
-		link, err := owner.ObserveOwnedInterface(ctx, resource.ID())
-		if err != nil {
-			return link, err
-		}
-		if !link.Exists || link.Config.IfName != ifname {
-			return link, fmt.Errorf("delegated address VXLAN parent is not acquired")
-		}
-		return link, nil
-	}
-	return vxlan.SegmentLink{}, nil
+	return link, nil
 }
 
 func (c LANAddressController) observeCurrentDelegatedAddress(ctx context.Context, ifname, address string, staged bool) (delegatedAddressObservation, error) {
-	before, err := c.delegatedSegmentParent(ctx, ifname)
+	before, err := c.delegatedNativeParent(ctx, ifname)
 	if err != nil {
 		return delegatedAddressObservation{}, err
 	}
@@ -189,16 +159,16 @@ func (c LANAddressController) observeCurrentDelegatedAddress(ctx context.Context
 	if err != nil {
 		return observed, err
 	}
-	after, err := c.delegatedSegmentParent(ctx, ifname)
+	after, err := c.delegatedNativeParent(ctx, ifname)
 	if err != nil {
 		return observed, err
 	}
 	if before.Exists != after.Exists || before.Token != after.Token || before.Index != after.Index || before.Scope != after.Scope {
-		return observed, fmt.Errorf("delegated address VXLAN parent changed while observing")
+		return observed, fmt.Errorf("delegated address native parent changed while observing")
 	}
 	if after.Exists {
 		if observed.ifIndex != after.Index || observed.scope != after.Scope {
-			return observed, fmt.Errorf("delegated address VXLAN parent differs from native interface")
+			return observed, fmt.Errorf("delegated address native parent differs from native interface")
 		}
 		observed.parentToken = after.Token
 	}
