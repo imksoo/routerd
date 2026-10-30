@@ -78,8 +78,11 @@ func TestReconcileAllForRouterRefreshesPreparedInterfaceAndOwnedEffects(t *testi
 	}}
 	// A stopped worker must not prevent the actor from refreshing preparation,
 	// nor make its last successfully applied lease lose ownership.
-	if err := c.ReconcileAllForRouter(t.Context(), router, oldStore); err == nil {
-		t.Fatal("unavailable worker was reported healthy")
+	if err := c.ReconcileAllForRouter(t.Context(), router, oldStore); err != nil {
+		t.Fatalf("first-start worker should wait without failing apply: %v", err)
+	}
+	if mapString(statuses[api.NetAPIVersion+"/DHCPv4Client/wan"], "phase") != daemonapi.ResourcePhasePending {
+		t.Fatal("first-start worker was not reported pending")
 	}
 	status := func(ifname string) daemonapi.DaemonStatus {
 		return daemonapi.DaemonStatus{Resources: []daemonapi.ResourceStatus{{

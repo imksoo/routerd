@@ -123,6 +123,44 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 Use that only when the follow-up fix is already clear.
 CI still runs after the branch is pushed.
 
+## Linux WAN DHCPv4 lifecycle VM gate
+
+`scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` tests the installed `make dist`
+package in a dedicated disposable Linux VM with an empty router configuration
+and independent management access. It replaces that guest's configuration and
+changes its test interfaces and IPv4 forwarding. Prepare iproute2, Python 3,
+curl, jq, dig, tcpdump, dnsmasq and Kea DHCPv4 with its libraries. The guest must
+use systemd-resolved's stub resolv.conf; another Kea instance or its `/run/kea`
+directory is a collision. The fixture uses Kea 2.4.1 for Ubuntu 24.04.
+
+```sh
+python3 scripts/verify-dhcpv4-rebind_test.py
+sudo bash scripts/linux-wan-dhcpv4-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-wan-dhcpv4-lifecycle.json" /opt/routerd-wan-peer
+```
+
+The package root contains `usr/sbin/kea-dhcp4` and
+`usr/lib/x86_64-linux-gnu`. The upstream and LAN clients are separate namespaces
+inside the VM, not separate physical machines. Kea supplies a single IPv4 lease
+with T1/T2/expiry at 20/40/90 seconds. Pass requires the actual leased address,
+metric-qualified default route, per-link resolved DNS/domain, LAN DNS over
+UDP/TCP and an independent HTTP peer observing the leased NAT source.
+
+After a successful renewal, the fixture stops Kea until the next T1 attempt and
+restarts it before T2. The temporary capture must contain a unicast Renew,
+broadcast Rebind with nonzero ciaddr, and ACK correlated by transaction ID and
+client MAC. The lease epoch must advance. This distinguishes actual
+[RFC 2131 rebind](https://www.rfc-editor.org/rfc/rfc2131#section-4.4.5) from a
+fresh acquisition. A second outage must remove address, route, DNS/domain and
+forwarding at real lease expiry; returning Kea must restore them without a
+product restart. Empty apply must then become Healthy with no stale errors.
+
+Successful raw captures and outputs are deleted. A failed stage stops the
+product and peers and retains only the current fixture for local reproduction;
+repair and verify locally before another native run. Successful completion
+removes the namespaces and restores the original forwarding sysctl. This gate
+does not qualify physical WAN devices, other DHCP servers, a reboot, or FreeBSD.
+
 ## Linux PD/RA lifecycle VM gate
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` exercises an installed `make dist`

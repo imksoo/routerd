@@ -119,6 +119,37 @@ sudo unshare --mount --pid --fork --mount-proc /tmp/chain-native.test -test.run=
 DHCP の取得・更新、DNS、service 再起動は、別途隔離 VM と実クライアントで確認します。
 終了後はテストバイナリを削除します。
 
+## Linux の WAN DHCPv4 ライフサイクル VM 試験
+
+`scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` は `make dist` で導入した製品を
+専用の使い捨て Linux VM で検査します。空の router 設定と独立した管理経路が必要です。
+ゲストの設定・試験用インターフェース・IPv4 forwarding を変更します。
+iproute2、Python 3、curl、jq、dig、tcpdump、dnsmasq、Kea DHCPv4 と依存ライブラリを
+用意し、systemd-resolved の stub resolv.conf を使用します。既存 Kea や `/run/kea`
+との衝突時は開始しません。fixture は Ubuntu 24.04 用 Kea 2.4.1 を使用します。
+
+```sh
+python3 scripts/verify-dhcpv4-rebind_test.py
+sudo bash scripts/linux-wan-dhcpv4-lifecycle-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-wan-dhcpv4-lifecycle.json" /opt/routerd-wan-peer
+```
+
+パッケージルートには `usr/sbin/kea-dhcp4` と `usr/lib/x86_64-linux-gnu` を配置します。
+上流と LAN クライアントは同一 VM 内の独立 namespace です。別実機間の試験ではありません。
+T1/T2/失効は20/40/90秒です。実アドレス、metric 付き default route、resolved の
+DNS/domain、LAN の UDP/TCP DNS 応答、HTTP peer が観測した NAT 送信元を合格条件とします。
+
+更新成功後に Kea を停止し、次の T1 試行を観測してから T2 前に再開します。
+一時 capture で unicast Renew、ciaddr 付き broadcast Rebind、transaction ID と
+client MAC が一致する ACK を要求し、lease 時刻の更新も確認します。
+[RFC 2131 の再バインド](https://www.rfc-editor.org/rfc/rfc2131#section-4.4.5)と新規取得を区別します。
+再度停止して実期限でアドレス・経路・DNS/domain・転送が失われること、Kea の復帰だけで
+製品再起動なしに復旧すること、空設定への置換が古いエラーを残さず Healthy になることも検査します。
+
+成功時の生 capture・出力は削除し、namespace を撤去して元の forwarding 値へ戻します。
+失敗時は製品と peer を停止し、当該 fixture をローカル再現・修正まで保持します。
+物理 WAN 機器、別 DHCP サーバー、VM 再起動、FreeBSD はこの試験の保証範囲に含みません。
+
 ## Linux の PD・RA ライフサイクル VM 試験
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` は `make dist` から導入した製品を
