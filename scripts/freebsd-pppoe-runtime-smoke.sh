@@ -7,15 +7,26 @@
 set -eu
 
 pppoe_client=
+auth_method=pap
+peer_auth=
 evidence_dir=
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --pppoe-client) pppoe_client=$2; shift 2 ;;
   --evidence-dir) evidence_dir=$2; shift 2 ;;
-  *) echo "usage: $0 --pppoe-client PATH --evidence-dir DIR" >&2; exit 2 ;;
+  --auth-method) auth_method=$2; shift 2 ;;
+  --peer-auth) peer_auth=$2; shift 2 ;;
+  *) echo "usage: $0 --pppoe-client PATH --evidence-dir DIR [--auth-method pap|chap|both] [--peer-auth pap|chap]" >&2; exit 2 ;;
   esac
 done
 
+if [ -z "$peer_auth" ]; then
+  case "$auth_method" in pap) peer_auth=pap ;; chap|both) peer_auth=chap ;; *) exit 2 ;; esac
+fi
+case "$auth_method:$peer_auth" in
+  pap:pap|chap:chap|both:pap|both:chap) ;;
+  *) echo 'fixture requires auth-method pap/chap/both and a matching peer-auth pap/chap' >&2; exit 2 ;;
+esac
 [ -x "$pppoe_client" ]
 [ -n "$evidence_dir" ]
 [ "$(uname -s)" = FreeBSD ]
@@ -171,8 +182,8 @@ routerd_pppoe_server:
   set ipcp ranges 198.18.10.1/32 198.18.10.2/32
   create link template L_routerd pppoe
   set link action bundle B_routerd
-  set link disable chap eap
-  set link enable pap
+  set link disable pap chap eap
+  set link enable $peer_auth
   set auth enable internal
   # This isolated peer intentionally has no accounting backend. mpd5 defaults
   # accounting-start to mandatory, which closes an otherwise authenticated
@@ -218,7 +229,7 @@ awk '{ gsub(/\r/, "") } $1 == "incoming" && $2 == "enable" { found=1 } END { exi
 awk -v want="$epair_b:" '{ gsub(/\r/, "") } $1 == "Iface" && $2 == "Node" && $4 == want { found=1 } END { exit !found }' "$evidence_dir/mpd5-ready.log"
 
 "$pppoe_client" daemon --resource lifecycle-pppoe --interface "$epair_a" \
-  --username routerd --password pppoe-secret --auth-method pap --service-name routerd-lifecycle \
+  --username routerd --password pppoe-secret --auth-method "$auth_method" --service-name routerd-lifecycle \
   --runtime-dir "$work/client" --socket "$work/pppoe.sock" --state-file "$evidence_dir/pppoe-state.json" \
   --event-file "$evidence_dir/pppoe-events.jsonl" >"$evidence_dir/pppoe.stdout.log" 2>"$evidence_dir/pppoe.stderr.log" &
 client_pid=$!
@@ -250,6 +261,9 @@ done
 } | jexec "$jail_name" nc -N -w 2 127.0.0.1 5005 >"$evidence_dir/mpd5-console.log" 2>&1 || true
 jq -e 'type == "object"' "$evidence_dir/pppoe-status-initial.json" >/dev/null 2>&1 || { echo 'INCONCLUSIVE: IPC status unavailable' >&2; exit 3; }
 jq -e '.resources[0].phase == "Connected" and .resources[0].observed.currentAddress == "198.18.10.2" and .resources[0].observed.peerAddress == "198.18.10.1"' "$evidence_dir/pppoe-status-initial.json" >/dev/null
+printf 'client=%s peer=%s\n' "$auth_method" "$peer_auth" >"$evidence_dir/authentication-mode.log"
+case "$peer_auth" in pap) wire_auth=PAP ;; chap) wire_auth=CHAP ;; esac
+grep -F "$wire_auth" "$evidence_dir/pppoe-session-headers.log" >"$evidence_dir/authentication-wire-headers.log"
 owned_ppp_ifname=$(jq -r '.resources[0].observed.ifname' "$evidence_dir/pppoe-status-initial.json")
 case "$owned_ppp_ifname" in
 "" | null | *[!A-Za-z0-9_.-]*) echo "invalid owned PPPoE interface name: $owned_ppp_ifname" >&2; exit 1 ;;
