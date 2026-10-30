@@ -355,7 +355,7 @@ func TestPolicyIPv4NativeRejectsFractionalAndDuplicateReceipts(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if err := store.SQLiteStore.SaveObjectStatus(api.RouterAPIVersion, "Router", policyRouteJournalName(4), map[string]any{"version": 1, "receipts": []any{map[string]any{"scope": "linux:fixture:1", "pending": "", "effect": map[string]any{"kind": "rule", "table": 100.5, "priority": 100, "mark": 256, "metric": 0, "interface": "", "gateway": "", "ifIndex": 0}}}}); err != nil {
+				if err := store.SQLiteStore.SaveObjectStatus(api.RouterAPIVersion, "Router", policyRouteJournalName(4), map[string]any{"version": 2, "receipts": []any{map[string]any{"scope": "linux:fixture:1", "pending": "", "effect": map[string]any{"family": 4, "source": "", "inputIf": "", "kind": "rule", "table": 100.5, "priority": 100, "mark": 256, "metric": 0, "interface": "", "gateway": "", "ifIndex": 0}}}}); err != nil {
 					t.Fatal(err)
 				}
 			}

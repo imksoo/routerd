@@ -87,7 +87,7 @@ func (c IPv4PolicyRouteController) readPolicyRouteJournal(family int) (policyRou
 		return journal, nil
 	}
 	version, ok := statusInt(status["version"])
-	if !ok || version != 1 {
+	if !ok || version != 2 {
 		return journal, errors.New("unsupported native policy ownership journal")
 	}
 	switch rows := status["receipts"].(type) {
@@ -147,7 +147,7 @@ func (c IPv4PolicyRouteController) readPolicyRouteJournal(family int) (policyRou
 }
 
 func (c IPv4PolicyRouteController) savePolicyRouteJournal(family int, j policyRouteJournal) error {
-	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", policyRouteJournalName(family), map[string]any{"version": 1, "receipts": append([]policyRouteReceipt{}, j.Receipts...)})
+	return c.Store.SaveObjectStatus(api.RouterAPIVersion, "Router", policyRouteJournalName(family), map[string]any{"version": 2, "receipts": append([]policyRouteReceipt{}, j.Receipts...)})
 }
 
 func (c IPv4PolicyRouteController) policyRouteScope(ctx context.Context) (string, error) {

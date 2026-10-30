@@ -64,31 +64,55 @@ cookies and policy-routing effects have separate recovery boundaries; their
 implementation and qualification status is tracked in the
 [open findings](../design/routerd15-open-findings.md).
 
-## IPv4 policy routing
+## Policy routing
 
-The policy controller owns exact IPv4 default-route and fwmark-rule receipts in
-`Router/ipv4-policy-native`. Each receipt records the kernel scope, complete
-selector or route tuple, interface index for routes, and pending add/delete.
+The policy controller owns exact IPv4/IPv6 default-route and rule receipts in
+`Router/ipv4-policy-native` and `Router/ipv6-policy-native`. Their format 2 shares
+one typed effect/receipt implementation and records address family, kernel scope,
+complete selector or route tuple, preferred source, interface index for routes,
+and pending add/delete. Old native journal or IPv6 post-effect file state is not
+read or migrated; cutover must resolve possibly live old effects explicitly.
+
 Routes acquire with `ip route add`; rules never delete a priority wholesale.
 Withdrawal removes selectors before routes, matches full selectors including
-protocol, and never flushes a shared route table. Numbered table/mark ranges do
-not establish ownership and are no longer offered for generic artifact adoption
-or cleanup.
+protocol, and never flushes a shared route table. Source changes likewise stop
+selectors, withdraw the previous exact route, acquire its replacement and then
+restore selectors. Numbered table/mark ranges do not establish ownership and are
+not offered for generic artifact adoption or cleanup. IPv6 physical-WAN host
+traffic uses the local-input selector while explicit delegated DS-Lite sources
+use their source-specific main-table rule. IPv6 host-policy state is no longer
+written after native effects to a separate JSON file.
 
 A pending effect that is still present is uncertain, including after a lost
 response or failed acknowledgement write. Reopening the database does not adopt
 or replay it. An exact absence observation releases the pending fence; required
 read failures preserve it. Native scope and current intent/source are checked
-again after pending persistence and before mutation. Foreign same-priority rules
-with different selectors remain untouched. A same-selector foreign rule or
-same-slot route blocks acquisition before any route or rule is changed.
+again after pending persistence and before mutation. Known absence of an eligible
+IPv6 source withdraws its owned selector/route and reports Pending; an address
+inventory failure cannot authorize that withdrawal. Priority selection is derived
+after route persistence/effects so a previous candidate snapshot cannot survive
+that wait.
 
-These checks coordinate routerd's durable intent; they do not establish atomic
-compare-and-delete against an unrelated kernel writer. Linux rules permit
-concurrent insertion, so ambiguous duplicate readback retains pending uncertainty.
-The executed checks use actual SQLite files and native-command boundary fixtures,
-including a SQLite trigger that rejects the pending write, reopen after a lost
-acknowledgement, changed source authority during persistence, and exact teardown.
-Native Netlink/forwarding qualification remains unexecuted. IPv6 host-policy
-ownership remains a separate open finding until its former post-effect file
-state is replaced.
+A foreign same-priority rule with a disjoint mark remains untouched. An overlapping
+selector, even with a different lookup table or wider mark mask, blocks acquisition
+before any route or rule changes. Same-slot foreign routes also block acquisition.
+These checks do not establish atomic compare-and-delete against an unrelated
+kernel writer. Linux rules permit concurrent insertion; ambiguous duplicate
+readback retains pending uncertainty.
+
+Native default-route observation uses numeric `table all exact default`, which
+observes an empty requested table without converting an arbitrary command failure
+into absence. It treats omitted table identity as main (254), filters other tables
+before interpreting route attributes, and accepts numeric static protocol (4) and
+link/global scopes (253/0). These output rules were checked against upstream
+[iproute2 v6.1.0 iproute.c](https://github.com/iproute2/iproute2/blob/v6.1.0/ip/iproute.c#L876)
+and [numeric names](https://github.com/iproute2/iproute2/blob/v6.1.0/lib/rt_names.c#L416),
+matching the locally installed iproute2 version. Other-table RA expiry, preference
+or unreachable routes do not become collision evidence for the requested table.
+
+Executed checks use actual SQLite files and native-command boundary fixtures,
+including a rejected pending write, reopen after lost acknowledgement, changed
+source/Health authority during persistence, exact teardown and family separation.
+Native Netlink/forwarding qualification remains unexecuted. Delegated DS-Lite
+source lifetime/native-authority qualification remains part of the broader source
+owner finding; this change establishes the policy effects' ownership boundary.

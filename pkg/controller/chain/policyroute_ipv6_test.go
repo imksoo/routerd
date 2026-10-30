@@ -313,3 +313,33 @@ func TestPolicyIPv6NativeAllTableObservationIgnoresUnrelatedRADefault(t *testing
 		t.Fatalf("foreign RA/default observation=%v %v %v", match, collision, err)
 	}
 }
+
+func TestPolicyIPv6NativeFamilyJournalDoesNotWithdrawIPv4(t *testing.T) {
+	c, _, ipv4, _ := newPolicyNativeFixture(t)
+	if err := applyPolicyNative(t, c); err != nil {
+		t.Fatal(err)
+	}
+	before, err := c.readPolicyRouteJournal(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ipv6 := &policyIPv6Commands{t: t, source: "2001:db8::2", rules: map[int]string{}, index: 17}
+	c.Router = hostPolicyRouter(true)
+	c.CommandOutput = ipv6.command
+	ipv4.calls = nil
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := c.readPolicyRouteJournal(4)
+	if err != nil || len(after.Receipts) != len(before.Receipts) {
+		t.Fatalf("IPv4 receipts=%+v %v", after, err)
+	}
+	for i := range before.Receipts {
+		if before.Receipts[i] != after.Receipts[i] {
+			t.Fatalf("IPv4 receipt changed: %+v -> %+v", before, after)
+		}
+	}
+	if len(ipv4.mutations()) != 0 {
+		t.Fatal(ipv4.mutations())
+	}
+}
