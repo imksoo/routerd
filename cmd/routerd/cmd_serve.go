@@ -1026,8 +1026,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		},
 	}
 	servers := &serveHTTPServers{
-		observations:   stateStore,
-		targetOS:       platformDefaults.OS,
 		stopping:       stopping.Load,
 		controlHandler: handler,
 		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {

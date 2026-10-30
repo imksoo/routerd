@@ -2022,6 +2022,15 @@ func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Contex
 		}
 		return nil, err
 	}
+	if admitted != nil && decision.Enabled {
+		owned, authorityErr := decision.Lease.OwnsPath(decision.Lease.Config.LeasePath)
+		if authorityErr != nil || !owned {
+			cancel()
+			r.fenceRuntime(true)
+			stopErr := r.closeControllerLifetimes(lifetimes, nil)
+			return nil, errors.Join(authorityErr, errors.New("admitted HA lease no longer owns its pathname"), stopErr)
+		}
+	}
 	heartbeatStarted := false
 	if decision.Enabled && decision.Leader && decision.Lease != nil {
 		heartbeatStarted = true
@@ -2180,6 +2189,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 	waitForGeneration:
 		select {
 		case <-ctx.Done():
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone
@@ -2188,6 +2198,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 			}
 			return ctx.Err()
 		case <-generation.ctx.Done():
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			<-loopDone
 			if err := stopCurrentGeneration(); err != nil {
@@ -2208,6 +2219,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 					}
 					if admitErr == nil {
 						admitErr = request.commit()
+						admitErr = errors.Join(admitErr, r.validateSelectedApplyOwner(generation))
 					}
 				}
 				if admitErr != nil || standby {
@@ -2225,6 +2237,7 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 				continue
 			}
 			pending = &request
+			stopLoop()
 			r.clearRuntimeGeneration(false)
 			generation.cancel()
 			<-loopDone

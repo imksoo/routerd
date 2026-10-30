@@ -46,6 +46,28 @@ func runtimeClusterConfig(router *api.Router) (ha.Config, bool, error) {
 	return cfg, cfg.LeasePath != "" && len(cfg.Peers) > 0, nil
 }
 
+func (r *Runner) validateSelectedApplyOwner(current *controllerGeneration) error {
+	if current == nil {
+		return ErrRuntimeMutationStopped
+	}
+	err := current.ctx.Err()
+	if err == nil && current.decision.Enabled {
+		if current.decision.Lease == nil {
+			err = errors.New("selected HA leader has no native lease owner")
+		} else {
+			same, observeErr := current.decision.Lease.OwnsPath(current.decision.Lease.Config.LeasePath)
+			if observeErr != nil || !same {
+				err = errors.Join(observeErr, errors.New("selected HA lease ownership is unavailable"))
+			}
+		}
+	}
+	if err != nil {
+		r.fenceRuntime(true)
+		current.cancel()
+	}
+	return err
+}
+
 func (r *Runner) admitRuntimeApply(ctx context.Context, current *controllerGeneration, next *api.Router, _ eventedStore) (runtimeApplyAdmission, bool, error) {
 	admission := runtimeApplyAdmission{decision: ha.Decision{Leader: true}}
 	if err := ctx.Err(); err != nil {
@@ -112,6 +134,28 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 		admission.closeNew()
 		return current, false, err
 	}
+	if err := current.ctx.Err(); err != nil {
+		admission.closeNew()
+		r.fenceRuntime(true)
+		current.cancel()
+		return current, false, err
+	}
+	// Canonical persistence and stopping the loop can wait. Re-observe both
+	// actual lease descriptors before candidate preparation or native effects.
+	for _, lease := range []*ha.AcquiredLease{current.decision.Lease, admission.decision.Lease} {
+		if lease == nil {
+			continue
+		}
+		same, authorityErr := lease.OwnsPath(lease.Config.LeasePath)
+		if authorityErr != nil || !same {
+			admission.closeNew()
+			if lease == current.decision.Lease {
+				r.fenceRuntime(true)
+				current.cancel()
+			}
+			return current, false, errors.Join(authorityErr, errors.New("HA lease authority changed while canonical commit waited"))
+		}
+	}
 	if !request.reload {
 		defer admission.closeNew()
 		if admission.newLease {
@@ -135,6 +179,8 @@ func (r *Runner) applyAdmittedRuntime(ctx context.Context, logger *slog.Logger, 
 		heldOld, err = oldDecision.Lease.Transfer(oldDecision.Lease.Config)
 		if err != nil {
 			admission.closeNew()
+			r.fenceRuntime(true)
+			current.cancel()
 			return current, false, err
 		}
 	}

@@ -101,7 +101,7 @@ func testHTTPMutationPublishesTokenTitleBindRecoveryAndDisable(t *testing.T, rel
 			return mutator.apply(r, request)
 		},
 	}
-	servers := &serveHTTPServers{observations: store, targetOS: platformDefaults.OS, controlHandler: handler,
+	servers := &serveHTTPServers{controlHandler: handler,
 		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {
 			return resolveControlAPIHTTPConfig(candidate, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, nil)
 		},

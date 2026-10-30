@@ -17,7 +17,6 @@ import (
 
 	"github.com/imksoo/routerd/pkg/api"
 	controllerchain "github.com/imksoo/routerd/pkg/controller/chain"
-	"github.com/imksoo/routerd/pkg/platform"
 )
 
 type servedHTTPConfig struct {
@@ -36,20 +35,7 @@ type serveHTTPServers struct {
 	newWebHandler        func(api.WebConsoleSpec, *api.Router) http.Handler
 	webSpec              *api.WebConsoleSpec
 	webHandler           http.Handler
-	observations         controllerchain.RuntimeObservationStore
-	targetOS             platform.OS
 	stopping             func() bool
-}
-
-func (s *serveHTTPServers) prepareCandidate(router *api.Router) (*preparedServeHTTPServers, error) {
-	if s.observations == nil {
-		return nil, errors.New("HTTP resource observations are unavailable")
-	}
-	view, err := controllerchain.ObserveRouterConfiguration(router, s.observations, time.Now().UTC(), s.targetOS)
-	if err != nil {
-		return nil, err
-	}
-	return s.prepare(view.EffectiveRouter)
 }
 
 type preparedServeHTTPServers struct {

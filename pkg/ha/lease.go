@@ -116,6 +116,13 @@ func (l *AcquiredLease) Refresh() error {
 	if l.File == nil {
 		return ErrLeaseClosed
 	}
+	same, err := l.ownsPathLocked(l.Config.LeasePath)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return errors.New("cluster lease ownership is unavailable")
+	}
 	now := time.Now().UTC()
 	lease := Lease{Holder: l.Config.Identity, UpdatedAt: now, ExpiresAt: now.Add(l.Config.TTL)}
 	if err := writeLease(l.File, lease); err != nil {
