@@ -60,7 +60,7 @@ spec:
 	got := stdout.String()
 	for _, want := range []string{
 		"# routerd-managed-service: v1",
-		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE",
+		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE",
 		"Environment=\"OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry.example.test:4318\"",
 		"Environment=\"OTEL_SERVICE_NAMESPACE=lab\"",
 	} {
