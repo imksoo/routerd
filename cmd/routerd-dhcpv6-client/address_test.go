@@ -80,3 +80,37 @@ func TestAddressExpiryPersistsWithoutPrefixOrExchangeChange(t *testing.T) {
 		t.Fatal("secondary expiry was not observable through address event")
 	}
 }
+
+func TestPartialNoBindingTickDoesNotRewriteUnchangedLease(t *testing.T) {
+	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	client, err := pdclient.New(pdclient.Config{Resource: "wan-address", Interface: "wan0", ClientDUID: []byte{1}, IAID: 7, Mode: pdclient.RequestPrefixAndAddress, Now: func() time.Time { return now }}, &daemonMemoryTransport{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// NoBinding recovery is requesting internally while the still-valid sibling
+	// association remains publicly Bound. A tick with no reply changes neither.
+	client.State = pdclient.StateRequesting
+	client.Lease = pdclient.Lease{ServerDUID: []byte{2}, IAID: 7, AddressAcquiredAt: now, AddressT1: time.Minute, AddressT2: 2 * time.Minute,
+		Addresses: []pdclient.AddressLease{{Address: netip.MustParseAddr("2001:db8::1"), Preferred: 3 * time.Minute, Valid: 4 * time.Minute, AcquiredAt: now}}}
+	dir := t.TempDir()
+	d := &dhcpv6Daemon{opts: options{resource: "wan-address", leaseFile: filepath.Join(dir, "lease.json"), eventFile: filepath.Join(dir, "events.jsonl")}, client: client, recorder: &packetRecorder{limit: 10}}
+	d.cond = sync.NewCond(&d.mu)
+	d.initTelemetry()
+	if err := d.saveLeaseLocked(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Unix(1000, 0)
+	if err := os.Chtimes(d.opts.leaseFile, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(d.opts.leaseFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(stamp) || len(d.events) != 0 {
+		t.Fatal("unchanged partial lease rewrote storage or fabricated a binding event")
+	}
+}
