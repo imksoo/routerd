@@ -481,12 +481,12 @@ func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error 
 	d.publishReceiveEvent(msg)
 	d.mu.Lock()
 	before := d.client.Snapshot()
+	// If nothing has been saved yet, retain the owner state so a snapshot that
+	// already filters expired leases cannot hide the first expiry transition.
+	before.State = d.client.State
 	if d.savedSnapshot != nil {
 		before = *d.savedSnapshot
 	}
-	// Keep the owner transition for persistence/events even when the public
-	// snapshot already reports authority expired at this instant.
-	before.State = d.client.State
 	err = d.client.HandleMessage(ctx, msg)
 	if errors.Is(err, pdclient.ErrSend) {
 		err = nil
@@ -506,10 +506,10 @@ func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error 
 func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	d.mu.Lock()
 	before := d.client.Snapshot()
+	before.State = d.client.State
 	if d.savedSnapshot != nil {
 		before = *d.savedSnapshot
 	}
-	before.State = d.client.State
 	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcpv6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin)
 	if errors.Is(err, pdclient.ErrSend) {
