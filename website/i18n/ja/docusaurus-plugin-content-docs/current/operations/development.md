@@ -197,3 +197,61 @@ nft の所有 comment は最初のテーブル作成時に指定します。後�
 書いてもカーネルの comment は更新されません。撤去時は実マーカーと handle を確認し、
 読み取り・削除失敗時は再試行用の状態を保持します。旧ビルドのマーカーなしテーブルは
 自動削除しません。隔離環境の準備段階で明示的に処理し、手動撤去を製品の合格結果に含めません。
+
+## 2台の VM による再起動・適用中断試験
+
+`scripts/linux-router-reboot-fixture.sh` は、独立した router VM と peer VM を使います。
+隔離 Ethernet segment が VLAN 3131〜3133 を通すこと、他試験と ID が衝突しないことを
+事前確認してください。router は正式パッケージ、peer は BusyBox udhcpc、dnsmasq、
+Python HTTP server、curl、dig を使います。両方に iproute2、jq、systemd と独立した
+管理経路が必要です。ゲストの試験ポート用 boot unit を作成します。hypervisor の
+ネットワーク設定は変更しません。
+
+両 VM の `/home/ubuntu/` に shell script と
+`tests/fixtures/linux-dhcp-firewall-lifecycle.json` をコピーします。
+router には `scripts/linux-interrupted-apply-smoke.py` もコピーします。
+以下の SSH alias は鍵を確認して operator が設定したもの、eth0 は隔離 trunk です。
+
+```sh
+ssh router-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo /usr/local/sbin/routerctl apply -f /var/tmp/rd15-reboot/candidate.json --replace'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
+```
+
+両 VM の `/proc/sys/kernel/random/boot_id`、routerd の MainPID、peer の
+`rd15-dhcp-client` の MainPID を記録します。peer の `/var/tmp/rd15-reboot/leases`
+から bound address と renew を確認し、試験中に peer や DHCP process を再起動しません。
+
+1. router で `sudo systemctl reboot`。90秒以内に boot ID が変わり、routerd active、
+   systemd running、`routerctl get status -o json` の controller currentError がないこと。
+2. peer の `probe` と `isolation` を再実行。peer の boot ID・DHCP PID は不変、
+   同じ address で実タイマー更新が続くこと。router の nft chain
+   `wan_to_lan`・`lan_to_admin`・`wan_to_self` の counter も確認します。
+3. router で `sudo systemctl kill --kill-whom=main --signal=SIGKILL routerd`。
+   60秒以内に別 PID で自動復旧し、NRestarts が増加、controller error がないこと。
+   router の boot ID は不変のまま、peer の全チェックを繰り返します。
+4. 正常性を確認した後、router で次を実行します。
+
+```sh
+sudo /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm
+```
+
+helper は `recovery.home.arpa` を追加し、canonical file の置換後、apply client が
+応答待ちの間に元の製品 process を pidfd で停止します。client が既に成功した場合は
+この試験の成立と見なしません。停止時点で directory fsync が完了したかは断定しません。
+apply は結果未確認の失敗を返す必要があります。60秒以内の自動復旧後、peer の LAN
+namespace から `dig +short @198.18.15.1 recovery.home.arpa A` が `198.18.15.1` を返すこと、
+probe・isolation・同じ peer identity・DHCP 更新を再確認してください。
+helper の正常終了だけでは復旧の合格になりません。
+
+probe はローカル・転送 DNS UDP/TCP、HTTP 対向が観測した NAT 送信元、管理→LAN の
+正常通信を検査します。isolation は client 失敗と対向 HTTP ログへの非到達、WAN DNS
+遮断を検査します。手動で製品状態を直して合格にしません。fixture 準備の失敗は
+環境準備として扱い、製品の合格数には含めません。
+
+成功後は同じ flag で router の `cleanup-router`、peer の `cleanup-peer` を実行します。
+空設定、firewall・管理アドレスの撤去を確認してから fixture の port・unit・namespace を
+削除します。一時出力は削除されます。残すのは手順・revision・判定です。
+電源断の永続性、全中断位置、IPv6 再起動、異なる版への切戻しは別の試験です。

@@ -218,3 +218,76 @@ and deletes the observed handle, retaining retry input on read/delete failure.
 An unmarked table from an older build is not automatically adopted for deletion.
 Resolve such a table explicitly during isolated-environment preparation; a manual
 cleanup is not a passing product withdrawal result.
+
+## Two-VM reboot and interrupted-apply gate
+
+`scripts/linux-router-reboot-fixture.sh` uses two dedicated disposable Linux VMs
+on an isolated Ethernet segment that passes tagged VLANs 3131–3133. The router
+runs the formal package; the independent peer runs BusyBox udhcpc, dnsmasq,
+Python HTTP servers, curl and dig. Both need iproute2, jq, systemd and independent
+management access. The fixture changes only guest networking and creates a
+boot unit for the router's external test ports. It does not create hypervisor
+networks. Do not use a segment whose VLAN IDs collide with other work.
+
+Copy the shell script and `tests/fixtures/linux-dhcp-firewall-lifecycle.json`
+to `/home/ubuntu/` on both VMs, and `scripts/linux-interrupted-apply-smoke.py`
+to the router. Below, `router-fixture` and `peer-fixture` are operator-configured
+SSH aliases with verified keys; `eth0` is the isolated management/trunk port.
+
+```sh
+ssh router-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo /usr/local/sbin/routerctl apply -f /var/tmp/rd15-reboot/candidate.json --replace'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
+ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
+```
+
+Before each interruption, record both `/proc/sys/kernel/random/boot_id` values,
+the router's `systemctl show -p MainPID --value routerd`, and the peer's
+`systemctl show -p MainPID --value rd15-dhcp-client`. Preserve the first `bound`
+address and subsequent `renew` lines in the peer's `/var/tmp/rd15-reboot/leases`.
+Do not restart the peer or its DHCP process between checks.
+
+1. Run `sudo systemctl reboot` on the router. Within 90 seconds require a
+   different router boot ID, active routerd, systemd `running`, and no
+   `currentError` controllers in `routerctl get status -o json`.
+2. Repeat `probe` and `isolation` from the peer. Its boot ID and DHCP PID must
+   match the recorded values. Require the same lease address and another actual
+   timer renewal. Check the router's `wan_to_lan`, `lan_to_admin` and `wan_to_self`
+   nft chain counters after the denied probes.
+3. Run `sudo systemctl kill --kill-whom=main --signal=SIGKILL routerd` on the
+   router. Within 60 seconds require an active replacement PID, an increased
+   `NRestarts`, no controller errors, and repeat the peer checks. The router's
+   boot ID must remain unchanged for this process-crash case.
+4. Run the following only after the previous configuration is healthy:
+
+```sh
+ssh router-fixture 'sudo /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm'
+```
+
+The helper adds `recovery.home.arpa`, observes canonical file replacement and
+kills the exact original product process through pidfd while the apply client
+is still awaiting a response. It requires a failed client response; success
+already acknowledged by the client does not prove this scenario. It does not
+assert whether directory fsync had returned at the interruption. The failed
+apply response must retain an unconfirmed outcome, not claim rollback or success.
+Within 60 seconds require automatic service recovery. From the peer's LAN
+namespace require `dig +short @198.18.15.1 recovery.home.arpa A` to return
+`198.18.15.1`, then repeat `probe`, `isolation`, unchanged peer identity and DHCP
+renewal checks. The helper alone does not establish recovery.
+
+The probe requires local/upstream DNS over UDP/TCP, a WAN HTTP peer observing
+the NAT source, and the management-to-LAN positive control. Isolation requires
+client failure and absence from destination HTTP logs, plus WAN DNS rejection.
+The independent peer keeps its processes and lease throughout all interruptions.
+No manual repair of product state is permitted to turn a failed gate into PASS.
+A fixture setup failure is environment preparation, not a product result.
+
+After a successful campaign, run `cleanup-router` on the router and
+`cleanup-peer` on the peer with the same `--disposable-vm` flag. Router cleanup
+requires empty apply, native firewall absence and address withdrawal before
+removing the fixture ports and unit override. Peer cleanup stops the owned units
+and removes its namespaces. These actions delete the temporary raw output.
+Retain the procedure, revisions and verdict instead. This gate does not prove
+power-loss durability, every possible interruption point, IPv6 reboot, or a
+cross-version cutback; those remain separate checks.

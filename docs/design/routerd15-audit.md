@@ -1332,3 +1332,35 @@ DHCPv4 client or rebind/expiry. VM reboot, interrupted-operation recovery, 1.0
 cutback, IPv6 renumbering/WAN RA/IA_NA and all other unqualified 1.0 functions
 remain required. Existing tables without the native marker require explicit
 operator resolution; automatic old-format adoption is not provided.
+
+## Independent Linux peer across VM reboot and interrupted apply
+
+The same formal product `ad686135` passed on the dedicated Ubuntu 24.04.4 router
+VM (kernel 6.8.0-124) with a second Ubuntu 24.04.4 peer VM (kernel 6.8.0-117).
+Guest VLANs 3131–3133 separate LAN, WAN and management traffic on the existing
+isolated segment. A fixture boot unit recreates external guest ports only;
+routerd restores addresses, routes, DNS/DHCP, NAT and filtering itself.
+
+The router boot ID changed and its service automatically became active in about
+40 seconds. The peer boot ID and udhcpc PID stayed unchanged; its original
+120-second DHCP lease address continued renewing. Local/upstream DNS UDP/TCP,
+peer-observed NAT source, management positive control, WAN/LAN/management
+isolation and WAN DNS rejection passed after reboot. No controller errors or
+service restart loop were observed. SIGKILL of the main process subsequently
+recovered automatically with a new PID and increased NRestarts (about 16 seconds
+observed), and the same peer checks passed again.
+
+The interrupted ApplyAPI trial added a new DNS record, observed canonical file
+replacement, and killed the exact original process through pidfd while the
+client remained in flight. The client returned EOF with an explicitly unconfirmed
+outcome. Automatic restart loaded the new record; the independent client resolved
+it and passed all traffic/isolation checks without manual product repair. This
+observation does not place the kill on a particular side of directory fsync and
+does not prove power-loss durability or all interruption points.
+
+Reproduction uses `scripts/linux-router-reboot-fixture.sh`, the existing DHCP
+JSON fixture, `scripts/linux-interrupted-apply-smoke.py`, and the English/Japanese
+development procedure. The initial peer helper name shadowed Python's `http`
+module; it was corrected during preparation before product apply. No new product
+code was needed for these successful recovery paths. Cross-version 1.0 cutback,
+IPv6 reboot/renumbering, WAN protocol modes and remaining 1.0 parity stay open.
