@@ -80,7 +80,7 @@ Implemented across existing callers:
   previous reachability; failure grace requires a previously healthy path.
 - Explicit MTU resource handling; removal of unreachable standalone IPv4/Health
   apply paths and obsolete skipped inspection tests.
-- One SQLite schema (user_version 1500) shared by state and the ownership ledger;
+- One SQLite schema (user_version 1501) shared by state and the ownership ledger;
   no JSON persistence backend, migration chain, or no-op Save contract. Closed
   stores and invalid status encodings report errors.
 - Error-returning state-variable writes, propagated through PD observations and

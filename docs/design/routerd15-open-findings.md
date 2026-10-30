@@ -99,24 +99,29 @@ Implemented in the native/runtime follow-up:
   independent M/O, router lifetime and prefix/DNS withdrawal. dnsmasq no longer
   creates RAs or a DHCPv6 socket for ra-only intent. See
   [RA contracts and limits](../reference/router-advertisements.md).
+- IPv4/IPv6 policy routing shares exact, family-separated native receipts,
+  pending add/delete and current-source checks. Priority-only deletion, shared
+  table flushes, inferred artifact ownership and post-effect IPv6 file state are
+  removed. Overlapping foreign selectors cannot hide beside an owned rule.
+- Mobility addresses and routes record native scope/index/virtual-parent proof,
+  acknowledge exact readback explicitly and fence interrupted presence. Current
+  typed source and native authority are rechecked after persistence and the last
+  observation wait; pending intent alone cannot authorize adoption or deletion.
+- RA SelfAddressPolicy prepares ordered candidates and selects current native
+  validity or canonical PD plus acknowledged exact address receipts. Finite
+  per-address RDNSS lifetimes, fallback/withdrawal, DAD and cross-interface proof
+  have local regressions.
 
 Still open:
 
-- Policy routing can delete foreign rules sharing priority; IPv6 host routes can
-  be installed before any durable receipt. Use exact native identities and one
-  pending owner rather than priority-only deletion or inferred ownership.
-- Mobility's separate address/route pending paths still have automatic unmarked
-  adoption/replace recovery; the ordinary owners' fence does not repair them.
 - Child proof for virtual parents other than the shared native VXLAN owner
   remains open. VXLAN local wildcard source, nolearning and Linux outer DF
   use native readback; explicit FreeBSD outer DF remains unsupported.
-- RA custom DHCPv6 SelfAddressPolicy selection now prepares ordered candidates
-  and uses current native address validity or canonical PD plus acknowledged
-  exact address receipts. Per-address RDNSS deadlines, fallback/withdrawal, failed
-  reads, DAD failure and cross-interface native identity have local regressions.
-  Fragmented-RS provenance remains unavailable through the current ndp API;
-  native independent peers remain required. Separately rendered DHCP DNS
-  selection and FreeBSD forward-zone firewall parity remain unqualified.
+- Fragmented-RS provenance remains unavailable through the current ndp API.
+  Separately rendered DHCP DNS selection, FreeBSD forward-zone firewall parity
+  and native independent peers remain unqualified. Native route/address APIs
+  also lack an atomic full-identity CAS against unrelated external writers; a
+  final userspace recheck does not establish that stronger property.
 
 ## Runtime graph and process owner
 
