@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	state "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/vxlan"
 )
@@ -183,7 +184,7 @@ func TestVXLANPlansSeparateKindsAndRejectSharedNativeName(t *testing.T) {
 	c, _, _ := tunnelOwnerFixture(t)
 	segment := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANSegment"}, Metadata: api.ObjectMeta{Name: "segment"}, Spec: api.VXLANSegmentSpec{IfName: "vx200", VNI: 200, LocalAddress: "192.0.2.1", Remotes: []string{"192.0.2.2"}, UnderlayInterface: "uplink"}}
 	c.Router.Spec.Resources = append(c.Router.Spec.Resources, segment)
-	plans, err := segmentPlans(c.Router)
+	plans, err := segmentPlans(c.Router, platform.CurrentOS())
 	if err != nil || len(plans) != 2 {
 		t.Fatalf("kind identities collided: %+v %v", plans, err)
 	}
@@ -191,7 +192,7 @@ func TestVXLANPlansSeparateKindsAndRejectSharedNativeName(t *testing.T) {
 	spec.IfName = "vxlan100"
 	segment.Spec = spec
 	c.Router.Spec.Resources[3] = segment
-	if _, err := segmentPlans(c.Router); err == nil {
+	if _, err := segmentPlans(c.Router, platform.CurrentOS()); err == nil {
 		t.Fatal("two resources acquired the same native name")
 	}
 }
@@ -213,5 +214,21 @@ func TestVXLANTunnelReadOnlyParentRequiresFreshGateWithoutStartedAt(t *testing.T
 	link, err := c.ObserveOwnedInterface(t.Context(), api.NetAPIVersion+"/VXLANTunnel/segment")
 	if err == nil && link.Exists {
 		t.Fatal("read-only observer authorized parent from hour-old gate")
+	}
+}
+
+func TestVXLANTunnelOmittedDFUsesNativeFreeBSDDefault(t *testing.T) {
+	c, _, _ := tunnelOwnerFixture(t)
+	plans, err := segmentPlans(c.Router, platform.OSFreeBSD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, ok := plans[api.NetAPIVersion+"/VXLANTunnel/segment"]
+	if !ok || plan.OuterDF != "" || !plan.NoLearning {
+		t.Fatalf("omitted DF became unsupported explicit FreeBSD request: %+v", plan)
+	}
+	linux, err := segmentPlans(c.Router, platform.OSLinux)
+	if err != nil || linux[api.NetAPIVersion+"/VXLANTunnel/segment"].OuterDF != "inherit" {
+		t.Fatalf("Linux implicit inherit lost: %+v %v", linux, err)
 	}
 }

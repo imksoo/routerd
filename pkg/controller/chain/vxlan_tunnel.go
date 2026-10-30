@@ -26,10 +26,9 @@ var errVXLANGateRevisionChanged = errors.New("VXLAN gate dependency revision cha
 type vxlanGateState string
 
 const (
-	vxlanGateEnabled    vxlanGateState = "Enabled"
-	vxlanGateFalse      vxlanGateState = "WhenFalse"
-	vxlanGateUnknown    vxlanGateState = "WhenUnknown"
-	vxlanGateSuppressed vxlanGateState = "Suppressed"
+	vxlanGateEnabled vxlanGateState = "Enabled"
+	vxlanGateFalse   vxlanGateState = "WhenFalse"
+	vxlanGateUnknown vxlanGateState = "WhenUnknown"
 )
 
 func (c vxlanGateReader) gateState(resource api.Resource) (vxlanGateState, error) {

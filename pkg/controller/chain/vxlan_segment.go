@@ -409,7 +409,7 @@ func sameSegmentPlan(a, b vxlan.SegmentConfig) bool {
 	return a.IfName == b.IfName && a.VNI == b.VNI && a.Local == b.Local && slices.Equal(a.Remotes, b.Remotes) && a.Group == b.Group && a.Underlay == b.Underlay && a.Port == b.Port && a.MTU == b.MTU && a.Bridge == b.Bridge && a.NoLearning == b.NoLearning && a.OuterDF == b.OuterDF
 }
 
-func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
+func segmentPlans(router *api.Router, targetOS platform.OS) (map[string]vxlan.SegmentConfig, error) {
 	plans := map[string]vxlan.SegmentConfig{}
 	ifnames := map[string]string{}
 	aliases := bridgeInterfaceAliases(router)
@@ -430,7 +430,7 @@ func segmentPlans(router *api.Router) (map[string]vxlan.SegmentConfig, error) {
 				return nil, err
 			}
 			df := spec.OuterDF
-			if df == "" && platform.CurrentOS() == platform.OSLinux {
+			if df == "" && targetOS == platform.OSLinux {
 				df = "inherit"
 			}
 			plan = vxlan.SegmentConfig{IfName: firstNonEmpty(spec.IfName, resource.Metadata.Name), VNI: spec.VNI, Local: spec.LocalAddress, Remotes: append([]string(nil), spec.Peers...), Port: chainFirstNonZero(spec.UDPPort, 4789), MTU: spec.MTU, NoLearning: true, OuterDF: df}
@@ -548,7 +548,7 @@ func (r *Runner) vxlanSegmentController(store eventedStore, actor VXLANSegmentCo
 			if err != nil {
 				return false, err
 			}
-			plans, err := segmentPlans(latest.EffectiveRouter)
+			plans, err := segmentPlans(latest.EffectiveRouter, platform.CurrentOS())
 			if err != nil {
 				return false, err
 			}
@@ -726,7 +726,7 @@ func nativeVXLANIdentity(id string) (string, string, error) {
 }
 
 func (c *VXLANSegmentController) currentPlans() (map[string]vxlan.SegmentConfig, error) {
-	plans, err := segmentPlans(c.Router)
+	plans, err := segmentPlans(c.Router, platform.CurrentOS())
 	if err != nil {
 		return nil, err
 	}

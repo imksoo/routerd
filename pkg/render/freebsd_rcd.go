@@ -267,10 +267,6 @@ func FreeBSDTailscaleRCDScript(name string, spec api.TailscaleNodeSpec) []byte {
 	return b.Bytes()
 }
 
-// FreeBSDVXLANRCDScript owns exactly one routerd-created vxlan(4) interface.
-// It refuses an existing interface without its own runtime marker and retains
-// that receipt until cleanup succeeds.
-
 func freeBSDInterfacePresenceFunction(service, ifname string) string {
 	return service + "_present() {\n  target_interface=${1:-" + shellSingleQuote(ifname) + "}\n  native_interfaces=$(/sbin/ifconfig -l) || return 2\n  for native_interface in ${native_interfaces}; do\n    [ \"${native_interface}\" != \"${target_interface}\" ] || return 0\n  done\n  return 1\n}\n\n"
 }

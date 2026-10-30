@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/vxlan"
 )
@@ -410,7 +411,7 @@ func TestVXLANSegmentOwnsBridgeMembershipExactlyOnce(t *testing.T) {
 	if err != nil || len(plan.Members) != 0 {
 		t.Fatalf("Bridge claims Segment native port: %+v %v", plan, err)
 	}
-	plans, err := segmentPlans(c.Router)
+	plans, err := segmentPlans(c.Router, platform.CurrentOS())
 	if err != nil || plans[api.NetAPIVersion+"/VXLANSegment/segment"].Bridge != "bridge0" {
 		t.Fatalf("Segment lost declared Bridge.Members association: %+v %v", plans, err)
 	}
