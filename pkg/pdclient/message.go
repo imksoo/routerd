@@ -21,6 +21,8 @@ const (
 
 	optionClientID        uint16 = 1
 	optionServerID        uint16 = 2
+	optionIANA            uint16 = 3
+	optionIAAddress       uint16 = 5
 	optionORO             uint16 = 6
 	optionElapsedTime     uint16 = 8
 	optionStatusCode      uint16 = 13
@@ -61,6 +63,25 @@ type IAPD struct {
 	StatusCode uint16
 }
 
+// IAAddress retains an individual address's preferred and valid lifetimes.
+// An address is not a delegated prefix and does not imply an on-link subnet.
+type IAAddress struct {
+	Address    netip.Addr
+	Preferred  uint32
+	Valid      uint32
+	StatusCode uint16
+}
+
+// IANA carries the non-temporary address association, independently of IA_PD
+// even when both associations use the same IAID on the same interface.
+type IANA struct {
+	IAID       uint32
+	T1         uint32
+	T2         uint32
+	Addresses  []IAAddress
+	StatusCode uint16
+}
+
 // Message represents a DHCPv6 payload, not an Ethernet/IP/UDP frame.
 type Message struct {
 	Type            uint8
@@ -68,6 +89,7 @@ type Message struct {
 	ClientDUID      []byte
 	ServerDUID      []byte
 	IAPDs           []IAPD
+	IANAs           []IANA
 	ORO             []uint16
 	DNSServers      []netip.Addr
 	SNTPServers     []netip.Addr
@@ -107,6 +129,13 @@ func EncodeMessage(msg Message) ([]byte, error) {
 			return nil, err
 		}
 		out = appendOption(out, optionIAPD, data)
+	}
+	for _, ia := range msg.IANAs {
+		data, err := encodeIANA(ia)
+		if err != nil {
+			return nil, err
+		}
+		out = appendOption(out, optionIANA, data)
 	}
 	out = appendStatus(out, msg.StatusCode)
 	for _, field := range []struct {
@@ -244,6 +273,17 @@ func decodeMessage(payload []byte, wantedIAID *uint32) (Message, error) {
 				}
 			}
 			msg.IAPDs = append(msg.IAPDs, ia)
+		case optionIANA:
+			ia, err := decodeIANA(data)
+			if err != nil || (wantedIAID != nil && ia.IAID != *wantedIAID) {
+				return nil
+			}
+			for _, existing := range msg.IANAs {
+				if existing.IAID == ia.IAID {
+					return nil
+				}
+			}
+			msg.IANAs = append(msg.IANAs, ia)
 		}
 		return nil
 	})

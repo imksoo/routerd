@@ -92,6 +92,7 @@ const (
 	EventDHCPv6PrefixRebound     = "routerd.dhcpv6.client.prefix.rebound"
 	EventDHCPv6PrefixExpired     = "routerd.dhcpv6.client.prefix.expired"
 	EventDHCPv6ServerLost        = "routerd.dhcpv6.client.server.lost"
+	EventDHCPv6AddressesChanged  = "routerd.dhcpv6.client.addresses.changed"
 )
 
 const (

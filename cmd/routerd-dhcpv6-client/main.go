@@ -77,6 +77,7 @@ type options struct {
 	listenPort   int
 	renewMargin  time.Duration
 	rebindMargin time.Duration
+	requestMode  string
 }
 
 func bindOptions(fs *flag.FlagSet, opts *options) {
@@ -84,7 +85,8 @@ func bindOptions(fs *flag.FlagSet, opts *options) {
 	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.clientDUID, "client-duid", "", "client DUID hex; default derives DUID-LL from interface MAC")
-	fs.UintVar(&opts.iaid, "iaid", 1, "IA_PD IAID")
+	fs.UintVar(&opts.iaid, "iaid", 1, "IAID for the requested associations")
+	fs.StringVar(&opts.requestMode, "request-mode", "pd", "associations to request: pd, address, or pd-address")
 	fs.DurationVar(&opts.timeout, "timeout", 60*time.Second, "overall acquisition timeout for --once")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.leaseFile, "lease-file", "", "lease snapshot path")
@@ -100,7 +102,7 @@ func bindOptions(fs *flag.FlagSet, opts *options) {
 func parseOptions(name string, args []string) (options, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	once := fs.Bool("once", false, "run one DHCPv6-PD acquisition and exit")
+	once := fs.Bool("once", false, "run one DHCPv6 acquisition and exit")
 	_ = once
 	var opts options
 	bindOptions(fs, &opts)
@@ -109,6 +111,9 @@ func parseOptions(name string, args []string) (options, error) {
 	}
 	if opts.ifname == "" {
 		return options{}, errors.New("--interface is required")
+	}
+	if _, err := requestMode(opts.requestMode); err != nil {
+		return options{}, err
 	}
 	if strings.TrimSpace(opts.srcMAC) != "" {
 		return options{}, errors.New("--src-mac requires raw Ethernet transport, which is not implemented in Phase 0")
@@ -205,13 +210,14 @@ func onceCommand(args []string, stdout io.Writer) error {
 }
 
 type dhcpv6Daemon struct {
-	cancel     context.CancelFunc
-	opts       options
-	ifi        *net.Interface
-	clientDUID []byte
-	conn       *net.UDPConn
-	transport  *udpTransport
-	client     *pdclient.Client
+	cancel        context.CancelFunc
+	opts          options
+	ifi           *net.Interface
+	clientDUID    []byte
+	conn          *net.UDPConn
+	transport     *udpTransport
+	client        *pdclient.Client
+	savedSnapshot *pdclient.Snapshot
 
 	startedAt  time.Time
 	mu         sync.Mutex
@@ -232,6 +238,10 @@ type eventsResponse struct {
 }
 
 func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
+	mode, err := requestMode(opts.requestMode)
+	if err != nil {
+		return nil, err
+	}
 	ifi, err := net.InterfaceByName(opts.ifname)
 	if err != nil {
 		return nil, err
@@ -267,6 +277,7 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 		Interface:  opts.ifname,
 		ClientDUID: clientDUID,
 		IAID:       uint32(opts.iaid),
+		Mode:       mode,
 	}, transport)
 	if err != nil {
 		_ = conn.Close()
@@ -470,9 +481,12 @@ func (d *dhcpv6Daemon) handlePayload(ctx context.Context, payload []byte) error 
 	d.publishReceiveEvent(msg)
 	d.mu.Lock()
 	before := d.client.Snapshot()
-	// Keep the owner transition for persistence/events even when the public
-	// snapshot already reports authority expired at this instant.
+	// If nothing has been saved yet, retain the owner state so a snapshot that
+	// already filters expired leases cannot hide the first expiry transition.
 	before.State = d.client.State
+	if d.savedSnapshot != nil {
+		before = *d.savedSnapshot
+	}
 	err = d.client.HandleMessage(ctx, msg)
 	if errors.Is(err, pdclient.ErrSend) {
 		err = nil
@@ -493,6 +507,9 @@ func (d *dhcpv6Daemon) tick(ctx context.Context) error {
 	d.mu.Lock()
 	before := d.client.Snapshot()
 	before.State = d.client.State
+	if d.savedSnapshot != nil {
+		before = *d.savedSnapshot
+	}
 	spanCtx, span := d.telemetry.Tracer.Start(ctx, "dhcpv6.tick", trace.WithAttributes(attribute.String("routerd.resource.name", d.opts.resource)))
 	err := d.client.TickWithMargin(ctx, d.opts.renewMargin, d.opts.rebindMargin)
 	if errors.Is(err, pdclient.ErrSend) {
@@ -546,7 +563,8 @@ func (d *dhcpv6Daemon) saveLeaseLocked(_ context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(d.opts.leaseFile), 0755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(d.client.Snapshot(), "", "  ")
+	snapshot := d.client.Snapshot()
+	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -554,7 +572,11 @@ func (d *dhcpv6Daemon) saveLeaseLocked(_ context.Context) error {
 	if err := os.WriteFile(tmp, append(data, '\n'), 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, d.opts.leaseFile)
+	if err := os.Rename(tmp, d.opts.leaseFile); err != nil {
+		return err
+	}
+	d.savedSnapshot = &snapshot
+	return nil
 }
 
 func (d *dhcpv6Daemon) prepareFilesystem() error {
@@ -733,18 +755,26 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 	snapshot := d.client.Snapshot()
+	ready := snapshot.CurrentPrefix != ""
+	if snapshot.Mode == pdclient.RequestAddresses {
+		ready = len(snapshot.Addresses) > 0
+	}
+	phase := resourcePhase(snapshot.State)
+	if !ready && phase == daemonapi.ResourcePhaseBound {
+		phase = daemonapi.ResourcePhasePending
+	}
 	d.leaseGauge.Record(context.Background(), leaseStateValue(snapshot.State), metric.WithAttributes(
 		attribute.String("routerd.resource.name", d.opts.resource),
 		attribute.String("routerd.dhcpv6.state", string(snapshot.State)),
 	))
 	resourceStatus := daemonapi.ResourceStatus{
-		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: d.opts.resource},
-		Phase:    resourcePhase(snapshot.State),
+		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource},
+		Phase:    phase,
 		Health:   daemonapi.HealthOK,
 		Since:    snapshot.UpdatedAt,
 		Conditions: []daemonapi.Condition{{
 			Type:               "LeaseReady",
-			Status:             conditionStatus(snapshot.CurrentPrefix != "" && (snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding)),
+			Status:             conditionStatus(ready && (snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding)),
 			Reason:             string(snapshot.State),
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
@@ -762,6 +792,7 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 			"infoStatusCode": strconv.Itoa(int(snapshot.InfoStatusCode)),
 			"infoLastError":  snapshot.InfoLastError,
 			"prefixCount":    strconv.Itoa(len(snapshot.Prefixes)),
+			"addressCount":   strconv.Itoa(len(snapshot.Addresses)),
 			"lastError":      snapshot.LastError,
 		},
 	}
@@ -805,10 +836,10 @@ func (d *dhcpv6Daemon) publishReceiveEvent(msg pdclient.Message) {
 }
 
 func (d *dhcpv6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
-	if before.State == after.State && before.CurrentPrefix == after.CurrentPrefix && prefixSnapshotsEqual(before.Prefixes, after.Prefixes) && !infoChanged(before, after) && before.InfoLastSentAt.Equal(after.InfoLastSentAt) && before.LastSentAt.Equal(after.LastSentAt) && before.LastMessageType == after.LastMessageType {
+	if !snapshotChanged(before, after) {
 		return
 	}
-	if before.State != after.State || before.CurrentPrefix != after.CurrentPrefix || !prefixSnapshotsEqual(before.Prefixes, after.Prefixes) {
+	if after.Mode != pdclient.RequestAddresses && (before.State != after.State || before.CurrentPrefix != after.CurrentPrefix || !prefixSnapshotsEqual(before.Prefixes, after.Prefixes)) {
 		attrs := map[string]string{"prefix": after.CurrentPrefix}
 		switch {
 		case after.State == pdclient.StateBound && before.State == pdclient.StateRenewing:
@@ -820,6 +851,9 @@ func (d *dhcpv6Daemon) publishStateEvents(before, after pdclient.Snapshot) {
 		case after.State == pdclient.StateExpired:
 			d.publish(daemonapi.EventDHCPv6PrefixExpired, daemonapi.SeverityWarning, "PrefixExpired", "delegated prefix expired", nil)
 		}
+	}
+	if !addressSnapshotsEqual(before.Addresses, after.Addresses) {
+		d.publish(daemonapi.EventDHCPv6AddressesChanged, daemonapi.SeverityInfo, "AddressesChanged", "DHCPv6 address leases changed", map[string]string{"addressCount": strconv.Itoa(len(after.Addresses))})
 	}
 	if !before.LastSentAt.Equal(after.LastSentAt) || before.LastMessageType != after.LastMessageType {
 		switch after.LastMessageType {
@@ -848,7 +882,7 @@ func (d *dhcpv6Daemon) publish(topic, severity, reason, message string, attrs ma
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6PrefixDelegation", Name: d.opts.resource}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs
@@ -1193,6 +1227,10 @@ func leaseStateValue(state pdclient.State) int64 {
 
 func snapshotChanged(a, b pdclient.Snapshot) bool {
 	return a.State != b.State ||
+		a.Mode != b.Mode ||
+		!addressSnapshotsEqual(a.Addresses, b.Addresses) ||
+		!a.AddressUpdatedAt.Equal(b.AddressUpdatedAt) ||
+		a.AddressT1Seconds != b.AddressT1Seconds || a.AddressT2Seconds != b.AddressT2Seconds ||
 		a.CurrentPrefix != b.CurrentPrefix ||
 		!prefixSnapshotsEqual(a.Prefixes, b.Prefixes) ||
 		!a.LeaseUpdatedAt.Equal(b.LeaseUpdatedAt) ||
@@ -1318,6 +1356,7 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  daemon     run the Unix-socket HTTP+JSON daemon")
-	fmt.Fprintln(w, "  once       run one DHCPv6-PD acquisition and print the lease snapshot")
+	fmt.Fprintln(w, "  once       run one DHCPv6 acquisition and print the lease snapshot")
+	fmt.Fprintln(w, "             --request-mode pd|address|pd-address selects the associations")
 	fmt.Fprintln(w, "  selftest   run an in-process DHCPv6-PD state-machine handshake")
 }

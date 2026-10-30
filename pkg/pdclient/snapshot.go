@@ -31,6 +31,13 @@ type PrefixSnapshot struct {
 	AcquiredAt time.Time `json:"acquiredAt"`
 }
 
+type AddressSnapshot struct {
+	Address    string    `json:"address"`
+	Preferred  int64     `json:"preferredSeconds"`
+	Valid      int64     `json:"validSeconds"`
+	AcquiredAt time.Time `json:"acquiredAt"`
+}
+
 // Snapshot retains the complete association for recovery. CurrentPrefix and
 // PreviousPrefixes are the LAN controller's primary and renumbering projection;
 // they are derived output, never an alternate source for lease restoration.
@@ -38,6 +45,11 @@ type Snapshot struct {
 	Resource         string                   `json:"resource"`
 	Interface        string                   `json:"interface"`
 	State            State                    `json:"state"`
+	Mode             RequestMode              `json:"requestMode"`
+	Addresses        []AddressSnapshot        `json:"addresses,omitempty"`
+	AddressUpdatedAt time.Time                `json:"addressUpdatedAt,omitempty"`
+	AddressT1Seconds int64                    `json:"addressT1Seconds,omitempty"`
+	AddressT2Seconds int64                    `json:"addressT2Seconds,omitempty"`
 	Prefixes         []PrefixSnapshot         `json:"prefixes,omitempty"`
 	LeaseUpdatedAt   time.Time                `json:"leaseUpdatedAt,omitempty"`
 	CurrentPrefix    string                   `json:"currentPrefix,omitempty"`
@@ -73,13 +85,27 @@ type Snapshot struct {
 
 func (c *Client) Snapshot() Snapshot {
 	now := c.now()
-	s := Snapshot{Resource: c.Config.Resource, Interface: c.Config.Interface, State: c.State, IAID: c.Config.IAID,
+	s := Snapshot{Resource: c.Config.Resource, Interface: c.Config.Interface, State: c.State, Mode: c.Config.Mode, IAID: c.Config.IAID,
 		ClientDUID: hex.EncodeToString(c.Config.ClientDUID), UpdatedAt: now, LastError: c.lastError, LastSentAt: c.lastSentAt, LastMessageType: c.lastMessageType,
 		InfoPending: c.infoExchange.active(), InfoStatusCode: c.Info.StatusCode, InfoLastError: c.Info.LastError,
 		SOLMaxRTSeconds: int64(c.solicitMaxRT / time.Second), INFMaxRTSeconds: int64(c.infoMaxRT / time.Second)}
 	current := currentPrefixAt(c.Lease.Prefixes, c.Lease.CurrentPrefix, now)
-	if !current.IsValid() && snapshotCarriesUsableLease(s.State) {
+	for _, a := range c.Lease.Addresses {
+		if now.Before(a.ExpiresAt()) {
+			s.Addresses = append(s.Addresses, AddressSnapshot{Address: a.Address.String(), Preferred: int64(a.Preferred / time.Second), Valid: int64(a.Valid / time.Second), AcquiredAt: a.AcquiredAt})
+		}
+	}
+	if len(s.Addresses) > 0 {
+		s.AddressUpdatedAt = c.Lease.AddressAcquiredAt
+		s.AddressT1Seconds = int64(c.Lease.AddressT1 / time.Second)
+		s.AddressT2Seconds = int64(c.Lease.AddressT2 / time.Second)
+	}
+	if !current.IsValid() && len(s.Addresses) == 0 && snapshotCarriesUsableLease(s.State) {
 		s.State = StateExpired
+	}
+	if (current.IsValid() || len(s.Addresses) > 0) && s.State == StateRequesting {
+		// NoBinding on one association does not withdraw a valid sibling.
+		s.State = StateBound
 	}
 	for _, p := range c.Lease.Prefixes {
 		if !now.Before(p.ExpiresAt()) {
@@ -97,10 +123,12 @@ func (c *Client) Snapshot() Snapshot {
 		}
 	}
 	if len(s.Prefixes) > 0 {
-		s.ServerDUID = hex.EncodeToString(c.Lease.ServerDUID)
 		s.LeaseUpdatedAt = c.Lease.AcquiredAt
 		s.T1Seconds = int64(c.Lease.T1 / time.Second)
 		s.T2Seconds = int64(c.Lease.T2 / time.Second)
+	}
+	if len(s.Prefixes) > 0 || len(s.Addresses) > 0 {
+		s.ServerDUID = hex.EncodeToString(c.Lease.ServerDUID)
 		s.RenewAt = c.Lease.RenewAt()
 		s.RebindAt = c.Lease.RebindAt()
 	}
@@ -117,7 +145,7 @@ func (c *Client) Snapshot() Snapshot {
 func (c *Client) Restore(snapshot Snapshot) {
 	c.State = StateIdle
 	c.Lease = Lease{}
-	c.prefixExchange = exchange{}
+	c.leaseExchange = exchange{}
 	c.infoExchange = exchange{}
 	if !snapshotMatchesConfig(snapshot, c.Config) {
 		return
@@ -130,28 +158,47 @@ func (c *Client) Restore(snapshot Snapshot) {
 		return
 	}
 	serverDUID, err := hex.DecodeString(snapshot.ServerDUID)
-	if err != nil || len(serverDUID) == 0 || len(serverDUID) > 130 || snapshot.LeaseUpdatedAt.IsZero() || snapshot.LeaseUpdatedAt.After(now) || snapshot.T1Seconds <= 0 || snapshot.T2Seconds <= 0 || snapshot.T1Seconds > snapshot.T2Seconds || snapshot.T2Seconds > 0xffffffff {
+	if err != nil || len(serverDUID) == 0 || len(serverDUID) > 130 {
 		return
 	}
-	lease := Lease{ServerDUID: serverDUID, IAID: snapshot.IAID, T1: seconds(uint32(snapshot.T1Seconds)), T2: seconds(uint32(snapshot.T2Seconds)), AcquiredAt: snapshot.LeaseUpdatedAt}
-	seen := make(map[netip.Prefix]bool, len(snapshot.Prefixes))
-	for _, entry := range snapshot.Prefixes {
-		prefix, err := netip.ParsePrefix(entry.Prefix)
-		if err != nil || !prefix.Addr().Is6() || prefix.Addr().Is4In6() || entry.Preferred < 0 || entry.Preferred > entry.Valid || entry.Valid > 0xffffffff || entry.AcquiredAt.IsZero() || entry.AcquiredAt.After(now) {
-			continue
+	lease := Lease{ServerDUID: serverDUID, IAID: snapshot.IAID}
+	if c.wantsAddresses() && validSnapshotTimers(snapshot.AddressUpdatedAt, snapshot.AddressT1Seconds, snapshot.AddressT2Seconds, now) {
+		lease.AddressAcquiredAt = snapshot.AddressUpdatedAt
+		lease.AddressT1, lease.AddressT2 = seconds(uint32(snapshot.AddressT1Seconds)), seconds(uint32(snapshot.AddressT2Seconds))
+		seen := make(map[netip.Addr]bool, len(snapshot.Addresses))
+		for _, entry := range snapshot.Addresses {
+			addr, err := netip.ParseAddr(entry.Address)
+			if err != nil || !usableAddress(IAAddress{Address: addr}) || entry.Preferred < 0 || entry.Preferred > entry.Valid || entry.Valid > 0xffffffff || entry.AcquiredAt.IsZero() || entry.AcquiredAt.After(now) || seen[addr] || len(lease.Addresses) >= maxAssignedAddresses {
+				continue
+			}
+			a := AddressLease{Address: addr, Preferred: seconds(uint32(entry.Preferred)), Valid: seconds(uint32(entry.Valid)), AcquiredAt: entry.AcquiredAt}
+			if now.Before(a.ExpiresAt()) {
+				seen[addr] = true
+				lease.Addresses = append(lease.Addresses, a)
+			}
 		}
-		prefix = prefix.Masked()
-		if seen[prefix] || len(lease.Prefixes) >= maxDelegatedPrefixes {
-			continue
-		}
-		p := PrefixLease{Prefix: prefix, Preferred: seconds(uint32(entry.Preferred)), Valid: seconds(uint32(entry.Valid)), AcquiredAt: entry.AcquiredAt}
-		if !now.Before(p.ExpiresAt()) {
-			continue
-		}
-		seen[prefix] = true
-		lease.Prefixes = append(lease.Prefixes, p)
 	}
-	if len(lease.Prefixes) == 0 {
+	if c.wantsPrefixes() && validSnapshotTimers(snapshot.LeaseUpdatedAt, snapshot.T1Seconds, snapshot.T2Seconds, now) {
+		lease.T1, lease.T2, lease.AcquiredAt = seconds(uint32(snapshot.T1Seconds)), seconds(uint32(snapshot.T2Seconds)), snapshot.LeaseUpdatedAt
+		seen := make(map[netip.Prefix]bool, len(snapshot.Prefixes))
+		for _, entry := range snapshot.Prefixes {
+			prefix, err := netip.ParsePrefix(entry.Prefix)
+			if err != nil || !prefix.Addr().Is6() || prefix.Addr().Is4In6() || entry.Preferred < 0 || entry.Preferred > entry.Valid || entry.Valid > 0xffffffff || entry.AcquiredAt.IsZero() || entry.AcquiredAt.After(now) {
+				continue
+			}
+			prefix = prefix.Masked()
+			if seen[prefix] || len(lease.Prefixes) >= maxDelegatedPrefixes {
+				continue
+			}
+			p := PrefixLease{Prefix: prefix, Preferred: seconds(uint32(entry.Preferred)), Valid: seconds(uint32(entry.Valid)), AcquiredAt: entry.AcquiredAt}
+			if !now.Before(p.ExpiresAt()) {
+				continue
+			}
+			seen[prefix] = true
+			lease.Prefixes = append(lease.Prefixes, p)
+		}
+	}
+	if len(lease.Prefixes) == 0 && len(lease.Addresses) == 0 {
 		return
 	}
 	lease.CurrentPrefix, _ = netip.ParsePrefix(snapshot.CurrentPrefix)
@@ -160,12 +207,16 @@ func (c *Client) Restore(snapshot Snapshot) {
 	c.State = snapshot.State
 }
 
+func validSnapshotTimers(updated time.Time, t1, t2 int64, now time.Time) bool {
+	return !updated.IsZero() && !updated.After(now) && t1 > 0 && t2 > 0 && t1 <= t2 && t2 <= 0xffffffff
+}
+
 func snapshotCarriesUsableLease(state State) bool {
 	return state == StateBound || state == StateRenewing || state == StateRebinding
 }
 
 func snapshotMatchesConfig(snapshot Snapshot, config Config) bool {
-	if snapshot.Resource != config.Resource || snapshot.Interface != config.Interface || snapshot.IAID != config.IAID {
+	if snapshot.Resource != config.Resource || snapshot.Interface != config.Interface || snapshot.IAID != config.IAID || snapshot.Mode != config.Mode {
 		return false
 	}
 	duid, err := hex.DecodeString(snapshot.ClientDUID)

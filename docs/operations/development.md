@@ -278,6 +278,34 @@ procedure and criteria. This gate excludes RDNSS/DNSSL consumption, DHCPv6 IA_NA
 LAN forwarding, host reboot, loss of kernel state, storage failure and other
 platforms. Service restart/SIGKILL checks retain the kernel network state.
 
+## Linux DHCPv6 address and prefix client gate
+
+Use a dedicated disposable Linux VM with iproute2, util-linux, curl, jq,
+Python 3 and an extracted Kea 2.4.1 package. Run the helper from a checksum-pinned
+`make dist` archive; the script creates isolated client and peer network namespaces.
+It does not replace the installed routerd service or its configuration.
+
+```sh
+sudo bash scripts/linux-dhcpv6-association-smoke.sh --disposable-vm \
+  /var/tmp/routerd-CANDIDATE-linux-amd64.tar.gz ARCHIVE_SHA256 /opt/kea-package
+```
+
+First certify link-local reachability, Kea configuration and its UDP/547 socket.
+Then test both helper modes, `--request-mode address` and `--request-mode pd-address`:
+
+- Match acquired IA_NA addresses and IA_PD prefixes against Kea's lease database.
+- Restart the helper and require restoration without extending acquisition time.
+- Observe a natural T1 Renew. Freeze the peer and require Renew, T2 Rebind and
+  actual 45-second lease expiry in both public state and the persisted snapshot.
+- Resume only the peer and require autonomous acquisition. Release must withdraw
+  local lease authority; helper termination and all fixture cleanup must succeed.
+
+Keep the archive/source/script hashes and scoped verdict; successful raw output is
+deleted. A failed gate stops its processes and retains diagnostics for local
+reproduction. This is a DHCPv6 helper protocol gate. It does not establish kernel
+address installation, DAD/Decline, WAN routing, forwarding, full routerd supervision,
+FreeBSD support, or complete `DHCPv6Address` resource qualification.
+
 ## Linux DHCP and firewall withdrawal gate
 
 Run the packaged service in an empty disposable VM with independent management
