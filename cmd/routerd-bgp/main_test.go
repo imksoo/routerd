@@ -103,11 +103,14 @@ func TestStopBGPDaemonBoundsBlockingControlAndGoBGP(t *testing.T) {
 	releaseStop := make(chan struct{})
 	stopDone := make(chan struct{})
 	start := time.Now()
-	stopBGPDaemon(control, func() {
+	acknowledged := stopBGPDaemon(control, func() {
 		close(stopStarted)
 		<-releaseStop
 		close(stopDone)
 	}, nil, 15*time.Millisecond, 15*time.Millisecond)
+	if acknowledged {
+		t.Fatal("blocked native stop acknowledged process ownership release")
+	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("bounded shutdown took %s, want < 1s", elapsed)
 	}
@@ -126,6 +129,13 @@ func TestStopBGPDaemonBoundsBlockingControlAndGoBGP(t *testing.T) {
 	case <-stopDone:
 	case <-time.After(time.Second):
 		t.Fatal("blocked GoBGP stop did not finish after release")
+	}
+}
+
+func TestStopBGPDaemonAcknowledgesCompletedStop(t *testing.T) {
+	stopped := false
+	if !stopBGPDaemon(nil, func() { stopped = true }, nil, time.Second, time.Second) || !stopped {
+		t.Fatal("completed native stop was not acknowledged")
 	}
 }
 

@@ -18,7 +18,10 @@ observation is not a replacement for the daemon's desired-path journal.
 
 ## Configuration and cutover
 
-`communities.send` supports `both` (the default), `standard`, and `extended`.
+`communities.send` currently accepts `both` (the default), `standard`, and
+`extended`, but the pinned GoBGP gRPC conversion drops this setting. The
+nondefault export masks are not enforced yet. Earlier claims of working send
+modes were incorrect; actual export actions and wire regressions remain required.
 `communities.accept` and `communities.set.in` are unsupported and rejected.
 Standard community values accept decimal integers, `high:low`, `internet`,
 `no-export`, and `no-advertise`; initial application and restoration use the same
@@ -77,3 +80,21 @@ RPC lifetime, typed SQL corruption/recovery and current-intent/native-operation
 failure ordering. Independent Linux/FreeBSD peer traffic and native forwarding still
 require isolated target qualification; a successful policy RPC does not prove
 packet forwarding.
+
+## Daemon process admission
+
+Before state, socket or native effects, one daemon takes a nonblocking native
+lock for the actual kernel network world in the platform runtime directory.
+Custom public state/socket paths cannot create a second owner. All three public
+paths are checked against the locked path and inode before effects; a normalized
+path or inode alias cannot unlink or atomically replace the owner's lock.
+
+After GoBGP construction, the raw CLOEXEC descriptor remains held until actual
+process exit, including an unacknowledged stop. It has no Go finalizer. The
+upstream private RPC listener lifetime is not completely observable through its
+current public API; successful core stop alone does not justify early lock
+release. Private/public RPC socket ownership remains a separate repair scope.
+
+Actual child-process regressions cover duplicate admission, alternate paths,
+lock aliases, retained pending files and release at process exit. These are
+local lifecycle checks, not native forwarding qualification.
