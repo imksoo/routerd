@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-// PublishManualPluginResult commits a manual invocation only if no newer result
+// PublishPluginResult commits an invocation only if no newer result
 // for its source has been published while the external plugin was running.
 // The external process is never run inside this transaction.
-func (s *SQLiteStore) PublishManualPluginResult(ctx context.Context, previousGeneration int64, part DynamicConfigPartRecord) error {
+func (s *SQLiteStore) PublishPluginResult(ctx context.Context, previousGeneration int64, part DynamicConfigPartRecord) error {
 	if !strings.HasPrefix(part.Source, "Plugin/") || previousGeneration < 0 || part.Generation != previousGeneration+1 {
-		return fmt.Errorf("manual plugin publication requires its next Plugin source generation")
+		return fmt.Errorf("plugin publication requires its next Plugin source generation")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

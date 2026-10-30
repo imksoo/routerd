@@ -102,6 +102,10 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	sourceTTL, err := routerplugin.SourceTTL(router, name)
+	if err != nil {
+		return err
+	}
 	source := "Plugin/" + name
 	var previousGeneration int64
 	if !opts.dryRun {
@@ -156,6 +160,9 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 		return runErr
 	}
 	part, err := routerplugin.DynamicConfigPartFromResult(source, previousGeneration+1, result, time.Now().UTC())
+	if err == nil {
+		err = routerplugin.LimitDynamicConfigLifetime(&part, sourceTTL, time.Now().UTC())
+	}
 	if err != nil {
 		if store != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
@@ -183,7 +190,7 @@ func pluginRunCommand(args []string, stdout io.Writer) error {
 			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)
 			return err
 		}
-		if err := store.PublishManualPluginResult(context.Background(), previousGeneration, record); err != nil {
+		if err := store.PublishPluginResult(context.Background(), previousGeneration, record); err != nil {
 			_ = completePluginRun(store, runID, outcome, "failed", err.Error())
 			recordDynamicPartRejectedEvent(store, source, err)
 			recordPluginRunFinishedEvent(store, "routerd.plugin.run.failed", daemonapi.SeverityError, name, outcome)

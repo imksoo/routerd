@@ -18,12 +18,12 @@ func TestManualPluginPublicationCannotOverwriteCompletedConcurrentRun(t *testing
 	defer other.Close()
 	now := time.Now().UTC()
 	newer := DynamicConfigPartRecord{Source: "Plugin/example", Generation: 1, ObservedAt: now, ExpiresAt: now.Add(time.Minute), Digest: "new-result", ResourcesJSON: "[]", Status: "active"}
-	if err := store.PublishManualPluginResult(context.Background(), 0, newer); err != nil {
+	if err := store.PublishPluginResult(context.Background(), 0, newer); err != nil {
 		t.Fatal(err)
 	}
 	stale := newer
 	stale.Digest = "slow-old-result"
-	if err := other.PublishManualPluginResult(context.Background(), 0, stale); err == nil {
+	if err := other.PublishPluginResult(context.Background(), 0, stale); err == nil {
 		t.Fatal("old invocation replaced the published result")
 	}
 	rows, err := store.GetDynamicConfigPartsBySource(newer.Source)
@@ -31,7 +31,7 @@ func TestManualPluginPublicationCannotOverwriteCompletedConcurrentRun(t *testing
 		t.Fatalf("current result lost: %#v %v", rows, err)
 	}
 	newer.Generation = 2
-	if err := other.PublishManualPluginResult(context.Background(), 1, newer); err != nil {
+	if err := other.PublishPluginResult(context.Background(), 1, newer); err != nil {
 		t.Fatalf("subsequent current invocation failed: %v", err)
 	}
 }
