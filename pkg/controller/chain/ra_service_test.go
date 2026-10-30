@@ -592,3 +592,60 @@ func TestRAImplicitServerModesHaveIndependentFlagsAndNativeDeadlines(t *testing.
 		})
 	}
 }
+
+// A newly installed delegated address is tentative while the kernel performs
+// DAD. Configuration apply must remain pending, not fail merely because the RA
+// controller runs before that asynchronous check finishes.
+func TestRADelegatedDADWaitDefersAdvertisementAndResumes(t *testing.T) {
+	service, store, _, endpoint, socket, _ := raServiceFixture(t)
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status["phase"], status["reason"] = "Pending", "AddressNotReady"
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", status); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err != nil {
+		t.Fatalf("ordinary DAD wait failed configuration apply: %v", err)
+	}
+	packet := socket.packets[len(socket.packets)-1]
+	if len(raWirePrefixes(t, packet)) != 0 || binary.BigEndian.Uint16(packet[6:8]) != 0 {
+		t.Fatalf("tentative address advertised a prefix/default route: %x", packet)
+	}
+	raStatus, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv6RouterAdvertisement", "lan-ra")
+	if err != nil || raStatus["phase"] != "Pending" {
+		t.Fatalf("DAD wait should publish Pending: %+v, %v", raStatus, err)
+	}
+	status["phase"] = "Applied"
+	delete(status, "reason")
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", status); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err != nil {
+		t.Fatal(err)
+	}
+	packet = socket.packets[len(socket.packets)-1]
+	if raWirePrefixes(t, packet)["2001:db8:1200:1::/64"].valid == 0 || binary.BigEndian.Uint16(packet[6:8]) == 0 {
+		t.Fatal("DAD completion did not resume prefix/default-router advertisement")
+	}
+}
+
+func TestRADelegatedFailedDADAndUnknownOwnershipRemainErrors(t *testing.T) {
+	for _, reason := range []string{"AddressDADFailed", "NativeOwnershipUnknown"} {
+		t.Run(reason, func(t *testing.T) {
+			service, store, _, endpoint, socket, _ := raServiceFixture(t)
+			status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
+			if err != nil {
+				t.Fatal(err)
+			}
+			status["phase"], status["reason"] = "Pending", reason
+			if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", status); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err == nil || len(socket.packets) != 0 {
+				t.Fatalf("unsafe advertisement for %s: packets=%d err=%v", reason, len(socket.packets), err)
+			}
+		})
+	}
+}
