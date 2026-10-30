@@ -57,9 +57,6 @@ func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T
 				}
 				return store.FinishGeneration(g, p, w)
 			}
-			if stage == "sandbox-plan" {
-				opts.OverrideClient = "invalid-client"
-			}
 			gate := &sync.RWMutex{}
 			opts.MutationGate = gate
 			cache := &resultCache{}
@@ -79,7 +76,7 @@ func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T
 			if err == nil || response != nil {
 				t.Fatalf("partial failure response=%+v, err=%v", response, err)
 			}
-			if stage != "sandbox-plan" && !errors.Is(err, fault) {
+			if !errors.Is(err, fault) {
 				t.Errorf("original error lost: %v", err)
 			}
 			if strings.Contains(err.Error(), "secret payload") {
@@ -116,8 +113,6 @@ func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T
 			if stage == "finish-generation" {
 				// An unfinished SQLite generation has NULL phase, exposed as "".
 				wantPhase = ""
-			} else if stage == "sandbox-plan" {
-				wantPhase = "Committed"
 			}
 			if rows[0].Phase != wantPhase || rows[0].FinishedAt.IsZero() != (stage == "finish-generation") {
 				t.Errorf("terminal row=%+v, want phase=%s", rows[0], wantPhase)
@@ -136,7 +131,7 @@ func TestFaultMutationActivatesOnlyAfterDurableCanonicalReplacement(t *testing.T
 				t.Errorf("cache=%+v", cached)
 			}
 			// A later scheduled observation can be healthy even though the
-			// configuration transaction still has unresolved persistence/restoration.
+			// configuration transaction still has unresolved persistence/activation.
 			cache.Store(&apply.Result{Phase: "Healthy"})
 			if cached := cache.Load(); cached == nil || cached.Phase != "Error" {
 				t.Errorf("scheduled observation hid failed configuration attempt: %+v", cached)

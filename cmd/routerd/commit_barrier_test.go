@@ -170,6 +170,99 @@ func TestCanonicalBarrierLiveReloadCannotPublishRejectedCandidateEffects(t *test
 			if mode == "rejected" && !strings.Contains(string(canonical), "old-router") {
 				t.Fatal("rejected rename replaced canonical")
 			}
+			if mode == "directory-sync" {
+				// Visible rename without acknowledged durability did not authorize
+				// workers. An explicit durable retry can now acquire that authority.
+				mutator.baseOpts.attemptHooks.writeCanonical = nil
+				if result, err := mutator.apply(nil, controlapi.ApplyRequest{CandidateYAML: encoded, Replace: true}); err != nil || result == nil {
+					t.Fatalf("durable retry failed: %v", err)
+				}
+				if err := db.QueryRow(`SELECT COUNT(*) FROM dns_queries WHERE question_name='sentinel.example'`).Scan(&count); err != nil || count != 0 {
+					t.Fatalf("retry did not activate actual candidate effect: %d %v", count, err)
+				}
+				if current == initial || runner.ActiveRuntimeSnapshot().Router == initial {
+					t.Fatal("retry retained old runtime")
+				}
+			}
 		})
+	}
+}
+
+func TestCanonicalBarrierSandboxAdmissionPrecedesCommitAndReload(t *testing.T) {
+	_, opts := faultApplyFixture(t)
+	opts.Sandbox = true
+	opts.OverrideClient = "invalid-client"
+	current, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := faultGenerationStore(t, opts.StatePath, false)
+	writes, reloads := 0, 0
+	opts.attemptHooks.writeCanonical = func(string, []byte) (config.AtomicWriteOutcome, error) {
+		writes++
+		return config.AtomicWriteOutcome{}, errors.New("unexpected commit")
+	}
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, reload: func(context.Context, *api.Router) error { reloads++; return nil }}
+	if _, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: dnsRuntimeYAML("127.0.0.2"), Replace: true}); err == nil {
+		t.Fatal("invalid options accepted")
+	}
+	if writes != 0 || reloads != 0 {
+		t.Fatalf("failed admission committed/activated: writes=%d reloads=%d", writes, reloads)
+	}
+	rows, err := store.ListGenerations(10)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("failed admission recorded committed generation: %+v %v", rows, err)
+	}
+	canonical, err := os.ReadFile(opts.ConfigPath)
+	if err != nil || !strings.Contains(string(canonical), "old-router") {
+		t.Fatalf("failed admission replaced canonical: %q %v", canonical, err)
+	}
+}
+
+func TestCanonicalBarrierPostCommitActivationCancellationKeepsDesiredAndActualFactsSeparate(t *testing.T) {
+	_, opts := faultApplyFixture(t)
+	opts.Sandbox = true
+	_, encoded, _ := barrierRetentionCandidate(t)
+	current, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := current
+	store := faultGenerationStore(t, opts.StatePath, false)
+	gate := &sync.RWMutex{}
+	opts.MutationGate = gate
+	runner := &controllerchain.Runner{Router: current, Store: store, Bus: bus.NewWithStore(store), Opts: controllerchain.Options{EnabledControllers: []string{"log-retention"}, MutationGate: gate}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if err := runner.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		waitCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stop()
+		if err := runner.Wait(waitCtx); err != nil && !errors.Is(err, context.Canceled) {
+			t.Error(err)
+		}
+	}()
+	m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(next *api.Router) { current = next }, reloadWithOutcome: runner.ReloadRuntimeWithOutcome, activeRuntime: runner.ActiveRuntimeSnapshot, updateRuntime: runner.UpdateRuntimeRouter}
+	m.reloadWithOutcome = func(ctx context.Context, next *api.Router) (controllerchain.RuntimeReloadOutcome, error) {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		return runner.ReloadRuntimeWithOutcome(canceled, next)
+	}
+	if result, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: encoded, Replace: true}); err == nil || result != nil {
+		t.Fatalf("canceled actual runtime activation reported success: %+v %v", result, err)
+	}
+	canonical, err := os.ReadFile(opts.ConfigPath)
+	if err != nil || !strings.Contains(string(canonical), "candidate-only") {
+		t.Fatalf("postcommit failure silently reverted desired config: %q %v", canonical, err)
+	}
+	attempt, _, ok := m.cache.LastAttempt()
+	if !ok || attempt.Canonical != canonicalReplaced || !attempt.DurabilityConfirmed {
+		t.Fatalf("durable desired fact lost: %+v", attempt)
+	}
+	if current != initial || !runner.ActiveRuntimeSnapshot().Available || runner.ActiveRuntimeSnapshot().Router != initial {
+		t.Fatalf("canceled candidate misreported actual old runtime: %+v", runner.ActiveRuntimeSnapshot())
 	}
 }
