@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // vxlan-controller-driver is an integration-only adapter that runs the
-// production chain.VXLANTunnelController against an iproute2 network namespace.
+// production shared VXLAN native owner against an isolated network namespace.
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/controller/chain"
-	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
+	"github.com/imksoo/routerd/pkg/vxlan"
 )
 
 func main() {
@@ -42,7 +41,13 @@ func main() {
 		{State: map[string]api.StateMatchSpec{"ha.witness": {Equals: "leader", MaxAge: "5s"}}},
 	}}
 	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VXLANTunnel"}, Metadata: api.ObjectMeta{Name: "overlay"}, Spec: api.VXLANTunnelSpec{IfName: "vx-l2", VNI: vni, LocalAddress: local, Peers: []string{peer}, UnderlayInterface: "ul0", UDPPort: 4789, MTU: 1450, Bridge: "br-l2", When: when}}
-	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{resource}}}
+	// Declarations resolve the actual existing fixture interfaces. This driver
+	// does not run another Bridge owner or generate boot configuration.
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ul0"}, Spec: api.InterfaceSpec{IfName: "ul0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Bridge"}, Metadata: api.ObjectMeta{Name: "br-l2"}, Spec: api.BridgeSpec{IfName: "br-l2"}},
+		resource,
+	}}}
 	dir := filepath.Join(os.TempDir(), "routerd-netns-controller", ns)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		panic(err)
@@ -58,20 +63,15 @@ func main() {
 	if _, err := s.Set("ha.witness", witness, "netns fixture"); err != nil {
 		panic(err)
 	}
-	c := chain.VXLANTunnelController{Router: router, DeclaredRouter: router, Store: s, OperatingSystem: platform.OSLinux, NetworkdDir: dir, StartedAt: now.Add(-time.Second)}
-	c.Command = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-		// The namespace intentionally has no systemd-networkd. Runtime kernel
-		// mutations still use real iproute2; only the persistence reload is a no-op.
-		if name == "networkctl" {
-			return nil, nil
-		}
-		out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-		if err != nil {
-			return out, fmt.Errorf("%v: %w: %s", append([]string{name}, args...), err, out)
-		}
-		return out, nil
-	}
-	if err := c.Reconcile(context.Background()); err != nil {
+	// The process owns an immutable configuration; live role/witness state
+	// remains in SQLite and is rechecked by the actual native owner after waits.
+	// StateDir holds the same kernel-scope receipts across driver invocations.
+	c := chain.VXLANSegmentController{Router: router, Store: s, StateDir: dir, StartedAt: now.Add(-time.Second), Admit: func(ctx context.Context, id string, _ vxlan.SegmentConfig) (bool, error) {
+		return id == resource.ID(), ctx.Err()
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Reconcile(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
