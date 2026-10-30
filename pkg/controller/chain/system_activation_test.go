@@ -318,3 +318,51 @@ func TestNetworkAdoptionRetainsActivationUntilLANRouteCleanupSucceeds(t *testing
 		t.Fatalf("render-only intent changed native routes: flushes=%d err=%v", flushes, err)
 	}
 }
+
+// The release archive installs this exact unit before the first reconciliation.
+// Generated-only fixtures miss ownership failures in the packaged input.
+func TestPackagedBGPUnitCanBeReconciledAndWithdrawn(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "contrib", "systemd", render.BGPUnitName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, present := range []bool{false, true} {
+		name := "withdraw"
+		if present {
+			name = "activate"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, render.BGPUnitName)
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			var commands []string
+			command := func(_ context.Context, name string, args ...string) ([]byte, error) {
+				commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+				return nil, nil
+			}
+			c := SystemdUnitController{Store: mapStore{}, SystemdSystemDir: dir}
+			if present {
+				spec := render.BGPSystemdSpecWithPaths("/run/routerd/bgp/gobgp.sock", "/run/routerd/bgp/control.sock", "/var/lib/routerd/bgp/applied.json")
+				if err := c.reconcileLongLivedSystemdHelperUnit(t.Context(), render.BGPUnitName, "BGPRouter/lab", spec, command); err != nil {
+					t.Fatalf("packaged BGP activation: %v", err)
+				}
+				status := c.Store.ObjectStatus(api.SystemAPIVersion, "ServiceUnit", render.BGPUnitName)
+				if status["phase"] != "Applied" {
+					t.Fatalf("activation status: %v", status)
+				}
+			} else {
+				if err := c.cleanupLongLivedSystemdHelperUnit(t.Context(), render.BGPUnitName, "Router/empty/BGPRouter", command); err != nil {
+					t.Fatalf("packaged BGP withdrawal: %v", err)
+				}
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("withdrawal retained packaged unit: %v", err)
+				}
+				if !commandLineContains(commands, "systemctl disable --now "+render.BGPUnitName) || !commandLineContains(commands, "systemctl daemon-reload") {
+					t.Fatalf("withdrawal omitted acknowledged stop/reload: %v", commands)
+				}
+			}
+		})
+	}
+}
