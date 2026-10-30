@@ -1458,3 +1458,46 @@ configuration replacement/idempotence/withdrawal, foreign-artifact preservation,
 Kea DHCPv6 prefix acquisition/reacquisition and resolver health/reload/restart.
 The resolver slice still lacks independent DNS UDP/TCP queries. This is not
 FreeBSD package upgrade/rollback, CARP failover or complete platform parity.
+
+
+### Integration, independent DNS and CARP follow-up
+
+At clean integration source `f54ceecb96a2e74d29e69827fb57b84c77286e4a`, the
+complete normal Go suite exited 0: 120 packages passed, nine had no tests,
+4,120 top-level tests passed and ten skipped (6,186 passing entries including
+subtests). Schemas, website schema copies and focused vet passed. The explicit
+Linux native parent target passed again at this source. The added FreeBSD
+entry-point fixtures passed after integration; descriptor preparation now occurs
+before the complete native Go suite, while the DHCP relay is prepared only for
+the opted-in lifecycle slice. The entry restores only the mount/files it created.
+
+The independent FreeBSD DNS script is saved in `9651257e` and integrated as
+`a0aca109`. Using the actual resolver binary, FreeBSD 14.3 and the independent
+`drill` 1.8.3 client, initial, reload and restarted replies matched over both UDP
+and TCP. Shutdown removed the listening sockets, IPC socket and owned processes.
+The resolver binary is bound by SHA-256 in the qualification ledger; its exact
+original source revision was not recorded, so this is not a clean-source binary
+qualification. Upstream forwarding, DNSSEC, TLS, IPv6 and DHCP-derived sources
+remain separate checks.
+
+VRF work at `9735f25e` adds a concrete Linux owner and SQLite pending receipts
+while retaining the baseline plan/artifact declarations. Its real Linux check
+passed with a distinct peer namespace, table-101 connected routes, unchanged
+parent/member identities across SQLite reopen and Down recovery, and child/parent
+withdrawal. An independent review reproduced receipt replacement during the last
+withdrawal wait causing a native delete before an error. The owner now checks the
+actual receipt immediately before Delete; the regression and native test passed.
+Multiple VRFs, member-address dependency semantics and PD/RA within VRF remain
+unqualified. The compile-only FreeBSD check does not claim a FreeBSD VRF runtime.
+
+The existing CARP VNET fixture initially left both sides MASTER. Packet capture
+at its bridge observed no CARP advertisements. The host-facing epair ports had
+not been brought up. The corrected fixture enables both ports and tests VIP
+traffic from the root network stack, which has no VIP, rather than a CARP peer's
+own stack. With the production binary built from `f54ceecb`, the public corrected
+script passed election, priority change, unchanged restart, takeover, reacquisition,
+withdrawal and foreign address/VHID preservation. Independent requests reached the
+VIP before and after takeover, with three replies and no loss in each phase.
+Post-run inspection found no fixture jail/interface/socket; the CARP module was
+returned to its previously unloaded state. This is a VNET/kernel lifecycle check,
+not a three-machine failure-domain or physical-network qualification.

@@ -375,6 +375,141 @@
         "A packaged running routerd daemon, CLI mutation authorization or every baseline UI workflow",
         "Independent-peer interoperability, native FreeBSD/browser qualification or complete feature/OS qualification"
       ]
+    },
+    "normal-code-gate-f54ceecb": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "f54ceecb96a2e74d29e69827fb57b84c77286e4a",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": "Full Go execution on the recorded clean source. This supersedes neither historical execution-tree details nor the explicit exclusions of earlier evidence.",
+      "reproduction": "GOMAXPROCS=2 GOFLAGS='-p=2 -buildvcs=false' go test -json -count=1 ./...",
+      "counts": {
+        "passing_test_packages": 120,
+        "packages_without_tests": 9,
+        "top_level_pass": 4120,
+        "top_level_skip": 10,
+        "pass_including_subtests": 6186
+      },
+      "checks": [
+        "Exit 0 for the complete Go package run",
+        "Counts distinguish top-level tests from the inclusive subtest total; 6186 is not an additional disjoint pass count"
+      ],
+      "excludes": [
+        "The ten skipped top-level tests; a skip remains unexecuted",
+        "Native/opt-in checks except where separately executed below",
+        "All baseline function parity, every example or every operator workflow",
+        "Platform or independent-peer qualification inferred from a package pass"
+      ]
+    },
+    "linux-bridge-vxlan-native-f54ceecb": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "f54ceecb96a2e74d29e69827fb57b84c77286e4a",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": "Executed by make check-routerd15-native-parent-linux on the same recorded clean source as the full Go run.",
+      "reproduction": "make check-routerd15-native-parent-linux; retain the existing isolated namespace/sysfs setup in this target and its native fixtures.",
+      "checks": [
+        "TestBridgeParentNativeLinuxAddressLifecycle: actual Bridge/static-address acquisition, SQLite reopen and recorded child/parent withdrawal",
+        "TestLinuxSegmentNativeCreateInstallsOwnershipCookie: exclusive VXLAN creation with ownership cookie, configuration and withdrawal"
+      ],
+      "excludes": [
+        "Bridge or VXLAN independent-peer forwarding",
+        "A packaged running routerd service, reboot/crash or cross-version recovery",
+        "FreeBSD behavior or complete Bridge/VXLAN feature qualification"
+      ]
+    },
+    "linux-wireguard-peer-f54ceecb": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "f54ceecb96a2e74d29e69827fb57b84c77286e4a",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": "Executed by make check-routerd15-native-parent-linux on the same recorded clean source as the full Go run.",
+      "reproduction": "make check-routerd15-native-parent-linux; TestWireGuardParentNativeLinuxPeerLifecycle runs in the target's isolated user/network/mount namespace with fresh sysfs.",
+      "checks": [
+        "Independent WireGuard peers both reported handshake and transmit/receive activity",
+        "An externally lowered interface was restored through the actual controller chain",
+        "SQLite reopen preserved the recorded owner; withdrawal and peer-process reaping completed"
+      ],
+      "excludes": [
+        "Every WireGuard endpoint, roaming or failure combination",
+        "Bridge/VXLAN forwarding inferred from this WireGuard peer result",
+        "A packaged routerd service, production deployment, FreeBSD or complete WireGuard qualification"
+      ]
+    },
+    "linux-vrf-withdraw-review-9735f25e": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "9735f25ee547bf9d6ad201e151abf1c4ed463cc3",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": {
+        "execution_tree": "The final VRF working-tree files matched the executed-source manifest and the subsequently committed files. This is a scoped source match, not a clean whole-tree Go qualification.",
+        "source_manifest_sha256": "c0efb7e78a3dd671c50ee5c9a530b5faf307d793569ad5961352255d38cb2667",
+        "vrf_go_sha256": "88b5765f0788b2307f3c03b18f6e67956a938ce83b1226995ba8dcb393b44419",
+        "review_test_sha256": "c10dddf3e393b26b2a197c926b595cd97952bcd6dbfd9273ef5d11acc528d284"
+      },
+      "reproduction": "GOMAXPROCS=2 GOFLAGS='-p=2 -buildvcs=false' go test ./pkg/controller/chain -run '^TestVRFWithdrawalPreservesNativeWhenReceiptChangesDuringFinalObserve$' -count=1",
+      "checks": [
+        "Actual SQLite and the production Reconcile/withdraw path use the existing concrete native fixture",
+        "Before the fix, changing the stored withdrawal during final Observe caused Delete before the receipt-change error",
+        "The final regression passed: changed receipt stops deletion, preserves native parent/member state and retains the replacement receipt",
+        "Reviewed order is final native Observe, identity/scope checks, actual receipt reread/full match, then Delete"
+      ],
+      "excludes": [
+        "Real-kernel reproduction of the concurrent receipt change; this regression substitutes only the native I/O boundary",
+        "Complete VRF parity or platform qualification"
+      ]
+    },
+    "linux-vrf-peer-9735f25e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "9735f25ee547bf9d6ad201e151abf1c4ed463cc3",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": {
+        "execution_tree": "All seven recorded VRF source/test file digests matched the executed-source manifest and this commit. The evidence does not assert that every source file in the execution tree was clean.",
+        "source_manifest_sha256": "c0efb7e78a3dd671c50ee5c9a530b5faf307d793569ad5961352255d38cb2667"
+      },
+      "reproduction": "go test -c ./pkg/controller/chain; run TestVRFParentNativeLinuxPeerLifecycle with ROUTERD_RUN_NETNS=1 and the recorded host namespace identity in fresh user/network/mount namespaces with a new sysfs mount, as described in the reference.",
+      "checks": [
+        "TestVRFParentNativeLinuxPeerLifecycle executed separately from the ordinary run, where this opt-in test was skipped",
+        "Actual VRF identity/table 101, child address, SQLite reopen and child/parent withdrawal were checked",
+        "Independent peer ICMP traffic succeeded in distinct isolated router/peer namespaces across the tested lifecycle phases",
+        "The independent peer process exited and was reaped; unit, native-test compilation and native execution all exited 0"
+      ],
+      "excludes": [
+        "VRF route leaking, other routing tables/protocols or all address-family combinations",
+        "FreeBSD VRF support or a packaged daemon/service qualification",
+        "Complete baseline VRF functional parity"
+      ]
+    },
+    "freebsd-dns-drill-binary-323c8e24": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "unknown",
+      "reference": "docs/design/routerd15-audit.md#native-ownership-and-freebsd-lifecycle-checkpoint-2026-10-31",
+      "source_binding": {
+        "resolver_source_revision": "unknown",
+        "execution_tree": "The resolver binary was built from the then-current working tree. Runtime success is bound to this binary hash, not to a clean source commit.",
+        "resolver_binary_sha256": "323c8e24a4069baec7ffb683c0dea149da7c58b045fbb6f315194135ad26434d",
+        "lifecycle_helper_binary_sha256": "6aade1afa51cde8cfe97295237192911fab7393db846e77abf0764b75df5cb33",
+        "entry_script": "scripts/freebsd-dns-resolver-smoke.sh",
+        "entry_script_sha256": "421f42bbb56e328d6e35125249017c0801491a2dcb2f7b51495fdad4dd130f13",
+        "entry_script_revision": "9651257e2c69de5b6ffac2b96e1ef8d622d2295f",
+        "script_integration_revision": "a0aca10922314d9734385ee17fccb8d393d0af64",
+        "integration_limit": "Script publication/integration does not establish a clean-source resolver-binary pass."
+      },
+      "environment": "FreeBSD 14.3-RELEASE amd64; independent drill/ldns 1.8.3; IPv4 loopback port 15353, private files and foreground children owned through the existing native lifecycle helper.",
+      "reproduction": "sh scripts/freebsd-dns-resolver-smoke.sh --dns-resolver <native binary> --lifecycle-helper <native helper> --evidence-dir <fresh private directory>",
+      "checks": [
+        "Independent drill queries over explicit UDP and TCP returned static A answer 192.0.2.10",
+        "Reload changed both UDP and TCP answers to 192.0.2.11; restart retained the new answer on both transports",
+        "Graceful stop removed UDP/TCP listeners, the private Unix socket and the owned processes; independent process/socket checks found no remnants",
+        "Final script execution and ShellCheck exited 0; the earlier missing --resource selftest argument was a tooling failure before daemon startup and is not a product failure or pass"
+      ],
+      "excludes": [
+        "Upstream forwarding, TLS/DNSSEC, IPv6 or DHCP-derived DNS records",
+        "A remote-LAN client, management-network changes, packaged service operation or whole FreeBSD parity",
+        "A clean-source claim for f54ceecb, 9651257e, a0aca109 or any other commit based on this working-tree binary"
+      ]
     }
   },
   "features": [
@@ -738,7 +873,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-bridge-aa9f3cac"
+          "linux-bridge-aa9f3cac",
+          "linux-bridge-vxlan-native-f54ceecb"
         ]
       },
       "freebsd": {
@@ -781,7 +917,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-wireguard-peer-f54ceecb"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -895,7 +1033,10 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vrf-withdraw-review-9735f25e",
+          "linux-vrf-peer-9735f25e"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -937,7 +1078,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-bridge-vxlan-native-f54ceecb"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -976,7 +1119,9 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-bridge-aa9f3cac"
+          "linux-bridge-aa9f3cac",
+          "linux-bridge-vxlan-native-f54ceecb",
+          "linux-vrf-peer-9735f25e"
         ]
       },
       "freebsd": {
@@ -1474,7 +1619,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "freebsd-dns-drill-binary-323c8e24"
+        ]
       },
       "required_remaining_checks": [
         "All baseline source/query policies, private containment and DNS transports",
