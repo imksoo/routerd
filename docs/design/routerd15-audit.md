@@ -990,3 +990,72 @@ and inspected, not executed as live router daemons. Actual native FreeBSD/PVE,
 independent client/peer traffic, forwarding and image boot remain unqualified.
 The implementation gaps in [remaining findings](routerd15-open-findings.md)
 remain open; these checks are not whole-repository compliance certification.
+
+## Resumed native ownership and DNS recovery checkpoint, 2026-10-30
+
+Resumed from the observed public `8458ab2a`, rather than the earlier handoff's
+`973340bc`. The existing 321 changed/new paths were first preserved at WIP
+`a66e6739`. Feature work and review corrections were then committed and published
+incrementally. A WIP checkpoint is preservation, not a successful acceptance gate.
+
+The final checked code is public commit
+`3d247aed92d4f618d76597bb7085ac4879ec5745`, tree
+`23fd6ed20fea8cc77fc96b5f142df851254d240c`. The tracked tree was clean at launch;
+all 2640 tracked blobs were checked against that tree during and after execution.
+Subsequent audit/PR updates are documentation only. Go 1.25.9 was used;
+GitHub Actions was not awaited.
+
+Implemented and reviewed paths now include:
+
+- A shared kind-aware native owner for both VXLAN kinds, current HA gates through
+  child/native waits, no duplicate boot creators, and the updated real netns
+  driver. Omitted FreeBSD DF retains native behavior; explicit DF is unsupported.
+- One exact IPv4/IPv6 policy receipt owner, exclusive route acquisition, precise
+  selector withdrawal, unknown-presence fences and current Health/source checks.
+  Numeric iproute2 observations distinguish empty tables from failed reads.
+- Mobility route/address scope, index and virtual-parent receipts with explicit
+  pending/ACK transitions and current typed source reads at effect boundaries.
+  The four reproduced final-native-read races now have passing regressions.
+- Custom RA self-DNS selection from current native/PD validity and finite per-
+  address RDNSS deadlines, including DAD and cross-interface identity.
+- BGP community selection on independently cloned outbound paths. Static/dynamic
+  admission, actual TCP UPDATE/withdrawal and retained local RIB are checked.
+  The pinned GoBGP subset retains its license and documents four upstream edits.
+- Named DHCP lease/tombstone projection committed atomically in the existing
+  SQLite journal (format 1501). Fresh workers read that journal before serving,
+  including when the consumed runtime JSON is unchanged. Actual SQLite reopen,
+  early loopback queries, client reassignment and IPv6 aliases have regressions.
+  DNS query/probe owners join before handoff; staged/retired listener admission
+  and wildcard TCP source selection have actual TCP regressions.
+- Bounded QA proxy header/write/connect I/O and preserved CONNECT payload bytes.
+  Resolver lifetime and concurrent handler admission remain separate open work.
+
+| Check on the fixed code | Observed result |
+| --- | --- |
+| Whole-repository vet | Pass, including the migrated VXLAN netns driver |
+| Generated config/control/OpenAPI and website schema consistency | Pass |
+| Linux release binaries and static-link checks | Pass; all 20 binaries, CGO disabled; embedded commit equals the public code checkpoint |
+| Complete FreeBSD/amd64 test compilation | Pass; compile-only, no native test execution |
+| Complete normal Go suite | 129 packages: 104 pass, 16 fail, nine without tests; 3957 top-level tests pass, 57 fail, six skip |
+| Related feature race checks | Pass, including the final combined DNS worker/controller/runtime/state and Mobility owners |
+| Release-QA offline suite | 480 cases: 471 pass, nine existing skips, no failures |
+
+All 57 failed Go tests have an observed permission denial: 48 direct AF_UNIX
+failures, six Unix-readiness failures with the actual denied listener reported,
+and three Netlink/native-interface failures. The two formerly unclassified
+timeouts now report their actual AF_UNIX denial. Required positive assertions
+remain; no skip was added to hide a blocked assertion. These failures do not
+qualify the behavior they could not exercise.
+
+The first integrated pass additionally found an obsolete netns controller caller
+and stale render snapshots; both were repaired before the fixed-source checks.
+Render changes are the required `script-on-renewal` line in 19 existing snapshots.
+Independent review reproduced and then verified the fixes for source changes
+during Mobility native waits, stale DNS names on client reassignment, staged-port
+old-policy exposure and wildcard TCP source bypass.
+
+Native Linux/FreeBSD forwarding, independent router peers/clients, PVE, systemd
+restart, provider mutations and image boot remain unexecuted. The repository-wide
+semantic audit and the implementation findings still listed in
+[open findings](routerd15-open-findings.md) remain incomplete. This checkpoint is
+not a release or a whole-product qualification.
