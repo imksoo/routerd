@@ -343,6 +343,18 @@ func (o ntpConfigOwner) withdraw(ctx context.Context, r ntpConfigRecord, dryRun 
 	if _, err := os.Lstat(r.Path); !errors.Is(err, os.ErrNotExist) {
 		return false, errors.New("NTP config absence is not confirmed after provider reload")
 	}
+	if err := o.require(r); err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(r.Path); !errors.Is(err, os.ErrNotExist) {
+		return false, errors.New("NTP config absence changed before withdrawal publication")
+	}
+	if err := o.store.SaveObjectStatus(api.SystemAPIVersion, o.kind, r.Name, map[string]any{"phase": "Removed", "reason": "ConfigWithdrawn", "provider": r.Provider, "configPath": r.Path, "dryRun": false}); err != nil {
+		return false, err
+	}
+	if _, err := os.Lstat(r.Path); !errors.Is(err, os.ErrNotExist) {
+		return false, errors.New("NTP config absence changed while publishing withdrawal")
+	}
 	if err := o.save(r.Name, &r, nil); err != nil {
 		return false, err
 	}
