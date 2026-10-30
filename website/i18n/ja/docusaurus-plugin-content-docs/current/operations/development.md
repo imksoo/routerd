@@ -79,3 +79,21 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 
 後続の修正が明確な場合だけ使ってください。
 ブランチを push した後は CI が実行されます。
+
+
+## 実カーネルの ICMPv6 受信テスト
+
+通常の `go test ./...` は非特権で実行します。raw socket を使う受信試験は
+`routerd_native` build tag で分離し、Linux CI の独立 network namespace と
+FreeBSD native VM のゲートで明示的に実行します。有効化した試験の権限エラーは失敗です。
+
+隔離 Linux VM では通常ユーザーでコンパイルし、対象の試験だけを特権で実行します。
+
+```sh
+go test -tags routerd_native -c -o /tmp/routeradvertisement-native.test ./pkg/routeradvertisement
+sudo unshare --net sh -ec 'ip link set lo up; exec /tmp/routeradvertisement-native.test -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v'
+```
+
+隔離 FreeBSD VM でも同じ tag でコンパイルし、テストバイナリを root で実行します。
+対象は実カーネルでの受信とパケットの付帯情報です。転送や独立した対向機との疎通の証明とは分けます。
+終了後はテストバイナリを削除します。

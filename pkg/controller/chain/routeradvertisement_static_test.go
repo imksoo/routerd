@@ -13,11 +13,12 @@ import (
 )
 
 func TestDnsmasqConfigDoesNotOwnStaticRouterAdvertisements(t *testing.T) {
+	dir := t.TempDir()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcp"}, Spec: api.DHCPv4ServerSpec{Interface: "lan", LeaseFile: filepath.Join(dir, "state", "dnsmasq.leases"), AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.10", End: "192.0.2.20"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6RouterAdvertisement"}, Metadata: api.ObjectMeta{Name: "lan-ra"}, Spec: api.IPv6RouterAdvertisementSpec{Interface: "lan", Prefix: "2001:db8:1::123/64"}},
 	}}}
-	dir := t.TempDir()
 	path := filepath.Join(dir, "dnsmasq.conf")
 	if _, _, err := writeDnsmasqConfig(router, mapStore{}, path, filepath.Join(dir, "dnsmasq.pid"), 0, nil); err != nil {
 		t.Fatal(err)

@@ -26,6 +26,11 @@ Replacing the root ruleset withdraws a removed explicit rule while retaining
 those anchor references. Existing PF states are retained on ruleset replacement;
 removing a rule does not flush established connections.
 
+An empty runtime NAT/ingress anchor does not require loading PF: when `/dev/pf`
+is absent, reconciliation succeeds without running `pfctl` or writing an anchor
+file. When PF is present, the empty anchor is still loaded to withdraw previous
+rules. Device observation errors and failed required applies remain errors.
+
 ## Supported selectors and limits
 
 Source/destination CIDRs, TCP/UDP source and destination ports, protocol, ICMP

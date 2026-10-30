@@ -39,6 +39,7 @@ type Controller struct {
 	IngressLive  bool
 	NftablesPath string
 	NftCommand   string
+	PFDevicePath string
 	Interval     time.Duration
 	Logger       *slog.Logger
 }
@@ -231,6 +232,17 @@ func (c Controller) reconcilePF(ctx context.Context, router *api.Router, rules, 
 	data, err := render.PFNAT44RulesForRouter(router, rules, states...)
 	if err != nil {
 		return err
+	}
+	// With no desired anchor and no PF device there is nothing to withdraw.
+	// A present device still needs an empty load to remove old rules, including
+	// rules left by an earlier daemon. Unknown device state is never absence.
+	if len(data) == 0 && (!c.DryRun || c.IngressLive) {
+		device := stringutil.FirstNonEmpty(c.PFDevicePath, "/dev/pf")
+		if _, err := os.Stat(device); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("observe PF device: %w", err)
+		}
 	}
 	defaults, _ := platform.Current()
 	path := stringutil.FirstNonEmpty(c.NftablesPath, filepath.Join(defaults.RuntimeDir, "nat44.pf"))

@@ -156,7 +156,7 @@ func TestDnsmasqFailedSourcePreservesConfigAndHostSidecar(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "eth0"}}, {
 			TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"},
-			Spec: api.DHCPv4ServerSpec{Interface: "lan", AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.10", End: "192.0.2.20"}, DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "Interface/unavailable", Field: "primaryIPv4", Optional: true}}},
+			Spec: api.DHCPv4ServerSpec{Interface: "lan", LeaseFile: filepath.Join(dir, "state", "dnsmasq.leases"), AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.10", End: "192.0.2.20"}, DNSServerFrom: []api.StatusValueSourceSpec{{Resource: "Interface/unavailable", Field: "primaryIPv4", Optional: true}}},
 		}}}}
 	_, _, err := writeDnsmasqConfig(router, unavailableSourceStore{mapStore: mapStore{}, failure: failure}, path, filepath.Join(dir, "dnsmasq.pid"), 0, nil)
 	if !errors.Is(err, failure) {

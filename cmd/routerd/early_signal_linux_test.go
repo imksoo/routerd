@@ -19,6 +19,7 @@ import (
 func TestServeStopsDuringInitialObservation(t *testing.T) {
 	if os.Getenv("ROUTERD_INITIAL_OBSERVATION_CHILD") == "1" {
 		dir := os.Getenv("ROUTERD_INITIAL_OBSERVATION_DIR")
+		platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
 		err := serveCommand([]string{"--config", filepath.Join(dir, "router.yaml"), "--state-file", filepath.Join(dir, "state.db"), "--ledger-file", filepath.Join(dir, "ledger.db"), "--status-file", filepath.Join(dir, "status.json"), "--controllers", "log-retention", "--graceful-stop-timeout", "0"}, io.Discard, os.Stderr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

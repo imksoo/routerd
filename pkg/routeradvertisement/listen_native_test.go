@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-//go:build linux || freebsd
+//go:build (linux || freebsd) && routerd_native
 
 package routeradvertisement
 
@@ -17,7 +17,8 @@ import (
 )
 
 // The test sends an RS only to loopback. No RA is sent and no host interface,
-// address or route is configured. Permission failures remain test failures.
+// address or route is configured. Enable with -tags routerd_native in the
+// privileged native gate; permission failures remain test failures there.
 func TestSolicitationWildcardReceiverOnActualSocket(t *testing.T) {
 	name := "lo"
 	if runtime.GOOS == "freebsd" {

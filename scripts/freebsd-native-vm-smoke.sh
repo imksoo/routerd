@@ -50,6 +50,7 @@ export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
 # This is the native package gate. Do not narrow it to selected packages: a
 # FreeBSD-only build or runtime dependency failure must be visible in CI.
 go test ./...
+go test -tags routerd_native ./pkg/routeradvertisement -run '^TestSolicitationWildcardReceiverOnActualSocket$' -count=1
 
 work=$(mktemp -d /tmp/routerd-freebsd-native-smoke.XXXXXX)
 root="$work/root"

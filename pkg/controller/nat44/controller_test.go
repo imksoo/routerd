@@ -601,7 +601,7 @@ func TestControllerPFRetriesFailedAnchorWithdrawal(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			pfctl, logPath, failPath := nftRecoveryFixture(t)
 			path := filepath.Join(t.TempDir(), "nat44.pf")
-			controller := Controller{Router: &api.Router{}, Store: &testStore{}, NftablesPath: path, NftCommand: pfctl}
+			controller := Controller{Router: &api.Router{}, Store: &testStore{}, NftablesPath: path, NftCommand: pfctl, PFDevicePath: pfctl}
 			if err := os.WriteFile(failPath, []byte(stage), 0644); err != nil {
 				t.Fatal(err)
 			}
@@ -639,7 +639,7 @@ func TestControllerPFAppliesBackendHealthAndEmptyAnchor(t *testing.T) {
 	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", "api", map[string]any{"activeBackend": map[string]any{"name": "selected", "address": "10.0.0.12", "port": 6443}}); err != nil {
 		t.Fatal(err)
 	}
-	controller := Controller{Router: router, Store: store, DryRun: true, IngressLive: true, NftCommand: pfctl, NftablesPath: path}
+	controller := Controller{Router: router, Store: store, DryRun: true, IngressLive: true, NftCommand: pfctl, NftablesPath: path, PFDevicePath: pfctl}
 	if err := controller.reconcilePF(context.Background(), router, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -762,32 +762,59 @@ func testShellQuote(value string) string {
 // desired state must work without loading PF, while an existing device still
 // requires withdrawal and a nonempty desired anchor must report apply errors.
 func TestControllerPFDeviceAbsence(t *testing.T) {
- for _, tc := range []struct {
-  name string
-  device bool
-  desired bool
-  wantError bool
- }{
-  {name: "empty absent"},
-  {name: "empty present", device: true, wantError: true},
-  {name: "desired absent", desired: true, wantError: true},
- } {
-  t.Run(tc.name, func(t *testing.T) {
-   dir := t.TempDir()
-   device := filepath.Join(dir, "pf")
-   if tc.device { if err := os.WriteFile(device, nil, 0600); err != nil { t.Fatal(err) } }
-   pfctl, logPath, failPath := nftRecoveryFixture(t)
-   if err := os.WriteFile(failPath, []byte("-a"), 0600); err != nil { t.Fatal(err) }
-   router := &api.Router{}
-   if tc.desired { router = natRecoveryRouter("192.0.2.0/24") }
-   c := Controller{OS: platform.OSFreeBSD, Router: router, Store: &testStore{}, NftCommand: pfctl, NftablesPath: filepath.Join(dir,"out","nat44.pf"), PFDevicePath: device}
-   err := c.Reconcile(t.Context())
-   if (err != nil) != tc.wantError { t.Fatalf("reconcile error=%v, wantError=%v",err,tc.wantError) }
-   calls,_ := os.ReadFile(logPath)
-   if !tc.device && !tc.desired {
-    if len(calls)!=0 { t.Fatalf("empty absent PF invoked command: %s",calls) }
-    if _,err:=os.Stat(filepath.Dir(c.NftablesPath)); !os.IsNotExist(err) { t.Fatalf("empty absent PF wrote artifacts: %v",err) }
-   } else if !strings.Contains(string(calls),"-a routerd_nat -f ") { t.Fatalf("required PF apply/withdrawal not attempted: %s",calls) }
-  })
- }
+	for _, tc := range []struct {
+		name      string
+		device    bool
+		desired   bool
+		wantError bool
+	}{
+		{name: "empty absent"},
+		{name: "empty present", device: true, wantError: true},
+		{name: "desired absent", desired: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			device := filepath.Join(dir, "pf")
+			if tc.device {
+				if err := os.WriteFile(device, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pfctl, logPath, failPath := nftRecoveryFixture(t)
+			if err := os.WriteFile(failPath, []byte("-a"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			router := &api.Router{}
+			if tc.desired {
+				router = natRecoveryRouter("192.0.2.0/24")
+			}
+			c := Controller{OS: platform.OSFreeBSD, Router: router, Store: &testStore{}, NftCommand: pfctl, NftablesPath: filepath.Join(dir, "out", "nat44.pf"), PFDevicePath: device}
+			err := c.Reconcile(t.Context())
+			if (err != nil) != tc.wantError {
+				t.Fatalf("reconcile error=%v, wantError=%v", err, tc.wantError)
+			}
+			calls, _ := os.ReadFile(logPath)
+			if !tc.device && !tc.desired {
+				if len(calls) != 0 {
+					t.Fatalf("empty absent PF invoked command: %s", calls)
+				}
+				if _, err := os.Stat(filepath.Dir(c.NftablesPath)); !os.IsNotExist(err) {
+					t.Fatalf("empty absent PF wrote artifacts: %v", err)
+				}
+			} else if !strings.Contains(string(calls), "-a routerd_nat -f ") {
+				t.Fatalf("required PF apply/withdrawal not attempted: %s", calls)
+			}
+		})
+	}
+}
+
+func TestControllerPFUnknownDeviceIsNotAbsence(t *testing.T) {
+	pfctl, logPath, _ := nftRecoveryFixture(t)
+	c := Controller{OS: platform.OSFreeBSD, Router: &api.Router{}, Store: &testStore{}, NftCommand: pfctl, NftablesPath: filepath.Join(t.TempDir(), "nat44.pf"), PFDevicePath: filepath.Join(pfctl, "not-a-directory")}
+	if err := c.Reconcile(t.Context()); err == nil || !strings.Contains(err.Error(), "observe PF device") {
+		t.Fatalf("unknown device state accepted: %v", err)
+	}
+	if calls, _ := os.ReadFile(logPath); len(calls) != 0 {
+		t.Fatalf("unknown device state invoked PF: %s", calls)
+	}
 }

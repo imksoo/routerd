@@ -123,7 +123,7 @@ func (c PathMTUController) Reconcile(ctx context.Context) error {
 	// both outputs in the caller-selected dry-run directory while preserving the
 	// usual /run/routerd paths for a live controller.
 	l2Path := firstNonEmpty(c.L2Path, filepath.Join(filepath.Dir(path), "l2-mss.nft"))
-	forceFragmentPath := firstNonEmpty(c.ForceFragmentPath, "/run/routerd/forcefrag.nft")
+	forceFragmentPath := firstNonEmpty(c.ForceFragmentPath, filepath.Join(filepath.Dir(path), "forcefrag.nft"))
 	nft := firstNonEmpty(c.NftCommand, "nft")
 	mssChanged, err := c.applyTable(ctx, nft, path, "inet", "routerd_mss", mssData)
 	if err != nil {

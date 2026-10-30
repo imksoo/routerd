@@ -883,6 +883,9 @@ func TestServeOnceConvergesAndExits(t *testing.T) {
 	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
 
 	dir := t.TempDir()
+	previousRuntimeDir := platformDefaults.RuntimeDir
+	platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
+	t.Cleanup(func() { platformDefaults.RuntimeDir = previousRuntimeDir })
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")
@@ -1107,6 +1110,9 @@ func TestServeAcceptsLegacyControllerChainFlags(t *testing.T) {
 	t.Cleanup(func() { ensureLoopbackUpForServe = originalEnsureLoopback })
 
 	dir := t.TempDir()
+	previousRuntimeDir := platformDefaults.RuntimeDir
+	platformDefaults.RuntimeDir = filepath.Join(dir, "runtime")
+	t.Cleanup(func() { platformDefaults.RuntimeDir = previousRuntimeDir })
 	configPath := filepath.Join(dir, "router.yaml")
 	statePath := filepath.Join(dir, "routerd.db")
 	statusPath := filepath.Join(dir, "status.json")

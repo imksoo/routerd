@@ -53,6 +53,25 @@ type-checking, a production build, and a generated-asset drift check.
 The CI workflow does not publish release artifacts.
 Release archives are created only by the `Release` workflow on date-based tags.
 
+## Native socket checks
+
+Normal `go test ./...` is unprivileged. The actual ICMPv6 receiver test uses the
+`routerd_native` build tag and must run separately with raw-socket privileges.
+CI runs it in an isolated Linux network namespace; the FreeBSD native VM gate
+also runs it explicitly. Enabling the tag retains permission failures as failures.
+
+In a disposable Linux VM, compile as the normal user and execute only that test
+with privilege:
+
+```sh
+go test -tags routerd_native -c -o /tmp/routeradvertisement-native.test ./pkg/routeradvertisement
+sudo unshare --net sh -ec 'ip link set lo up; exec /tmp/routeradvertisement-native.test -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v'
+```
+
+On a disposable FreeBSD VM, build with the same tag and execute the test binary
+as root. This checks actual kernel reception and packet metadata; it does not
+prove forwarding or peer interoperability. Remove the binary when finished.
+
 ## Pre-commit hook
 
 The repository includes an optional pre-commit hook script:

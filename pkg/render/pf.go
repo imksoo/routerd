@@ -439,6 +439,10 @@ func PFNAT44RulesForRouter(router *api.Router, rules []NAT44RenderRule, states .
 			return nil, err
 		}
 	}
+	if len(rules) == 0 && len(ingressRules) == 0 {
+		return nil, nil
+	}
+
 	rules = append([]NAT44RenderRule(nil), rules...)
 	sort.Slice(rules, func(i, j int) bool { return rules[i].Name < rules[j].Name })
 	var buf bytes.Buffer
