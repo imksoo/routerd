@@ -144,7 +144,7 @@ func TestFaultMutatorPostCommitFailureKeepsVisibleRuntime(t *testing.T) {
 			opts.Sandbox = sandbox
 			cache := &resultCache{}
 			cache.Store(&apply.Result{Phase: "Healthy", Generation: 99})
-			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
+			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: cache, applyRuntimeWithOutcome: testCommitRuntime(func() *api.Router { return current }), getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { current = r }}
 			response, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: opts.ConfigYAMLOverride, Replace: true})
 			if err == nil || response != nil {
 				t.Errorf("partial failure response = %+v, %v", response, err)
@@ -282,7 +282,10 @@ func TestFaultNoReconcileFailureDoesNotChangeRuntime(t *testing.T) {
 			if stage == "finish-generation" {
 				opts.attemptHooks.finishGeneration = func(*routerstate.SQLiteStore, int64, string, []string) error { return fault }
 			}
-			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { t.Error("NoReconcile published runtime"); current = r }, reload: func(context.Context, *api.Router) error { t.Error("NoReconcile reloaded"); return nil }}
+			m := serveConfigMutator{configPath: opts.ConfigPath, statePath: opts.StatePath, baseOpts: opts, cache: &resultCache{}, getRouter: func() *api.Router { return current }, setRouter: func(r *api.Router) { t.Error("NoReconcile published runtime"); current = r }, applyRuntimeWithOutcome: func(context.Context, *api.Router, bool, func() error) (controllerchain.RuntimeReloadOutcome, error) {
+				t.Error("NoReconcile requested runtime apply")
+				return controllerchain.RuntimeReloadOutcome{}, nil
+			}}
 			response, err := m.apply(nil, controlapi.ApplyRequest{CandidateYAML: opts.ConfigYAMLOverride, Replace: true, NoReconcile: true})
 			if !errors.Is(err, fault) || response != nil || current != old {
 				t.Fatalf("response=%+v,error=%v,current=%+v", response, err, current)

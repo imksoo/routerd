@@ -407,7 +407,7 @@ check-routerd15-focused: check-spec
 	go vet ./...
 
 .PHONY: check-routerd15-recovery
-check-routerd15-recovery:
+check-routerd15-recovery: check-routerd15-activation
 	go test ./pkg/platform -run '^TestKernelNetworkScope' -count=1
 	go test ./cmd/routerd -run '^TestNativeOwner' -count=1
 	go test ./pkg/controller/mobility
@@ -444,3 +444,7 @@ check-routerd15-policy-native:
 .PHONY: check-routerd15-proxy-lifetime
 check-routerd15-proxy-lifetime:
 	python3 -B -m unittest discover -s tools/release-qa-labs/tests -p test_egress_proxy.py -v
+
+.PHONY: check-routerd15-activation
+check-routerd15-activation:
+	go test ./cmd/routerd -run '^(TestCanonicalBarrier|TestHTTPMutation|TestMutation|TestFault|TestServeConfigMutator|TestLifecycleLiveApply|TestConfigMutation|TestRunApplyChainOnce|TestRollback)' -count=1

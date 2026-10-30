@@ -45,7 +45,7 @@ func TestHTTPFrameworkOwnerRebindsObservedAddressAndWithdrawsExpiredDynamicConso
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "local", map[string]any{"primaryIPv4": "127.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
-	servers := &serveHTTPServers{observations: store, targetOS: platformDefaults.OS,
+	servers := &serveHTTPServers{
 		controlConfiguration: func(candidate *api.Router) (controlAPIHTTPConfig, error) {
 			return resolveControlAPIHTTPConfig(candidate, "", nil, api.SecretValueSourceSpec{}, controlAPITLSConfig{}, nil)
 		},

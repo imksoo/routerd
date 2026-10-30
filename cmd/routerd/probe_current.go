@@ -103,6 +103,9 @@ func daemonDNSAttemptCurrent(ctx context.Context, current probeCurrentRouter, st
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if local, err := daemonDNSProbeEndpointLocal(endpoint); err != nil || !local {
+		return false, nil
+	}
 	router, err := current()
 	if err != nil || router == nil {
 		return false, err
@@ -133,6 +136,45 @@ func daemonDNSAttemptCurrent(ctx context.Context, current probeCurrentRouter, st
 			}
 		}
 		return false, nil
+	}
+	return false, nil
+}
+
+// A configured bind address is intent, not proof that traffic stays on this
+// host. Non-loopback destinations need current native assignment observation.
+func daemonDNSProbeEndpointLocal(endpoint string) (bool, error) {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return false, err
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false, err
+	}
+	ip = ip.Unmap()
+	if ip.IsLoopback() {
+		return true, nil
+	}
+	var addresses []net.Addr
+	if zone := ip.Zone(); zone != "" {
+		iface, err := net.InterfaceByName(zone)
+		if err != nil {
+			return false, err
+		}
+		addresses, err = iface.Addrs()
+		if err != nil {
+			return false, err
+		}
+	} else {
+		addresses, err = net.InterfaceAddrs()
+		if err != nil {
+			return false, err
+		}
+	}
+	for _, address := range addresses {
+		if prefix, err := netip.ParsePrefix(address.String()); err == nil && prefix.Addr().Unmap() == ip.WithZone("") {
+			return true, nil
+		}
 	}
 	return false, nil
 }
