@@ -177,6 +177,10 @@ DHCP/RA service, and ports packages for WireGuard, Tailscale, and strongSwan.
 | Diagnostics | `bind-tools` |
 | Base system | `ifconfig`, `sysctl`, `service`, `sysrc`, `netstat`, `sockstat`, `tcpdump`, `ping`, `traceroute` |
 
+The `routerctl mobility leaf-config` command defaults to GRE on FreeBSD,
+where FOU/GUE are unsupported. Linux retains its FOU default; an explicit
+`--mode` continues to be validated for the current platform.
+
 Native dnsmasq activation also requires `fdescfs` mounted on `/dev/fd`.
 Bare devfs exposes only descriptors 0, 1 and 2. In the native FreeBSD 14.3
 test with dnsmasq 2.91, its DHCP script helper consequently retained sockets

@@ -1501,3 +1501,33 @@ VIP before and after takeover, with three replies and no loss in each phase.
 Post-run inspection found no fixture jail/interface/socket; the CARP module was
 returned to its previously unloaded state. This is a VNET/kernel lifecycle check,
 not a three-machine failure-domain or physical-network qualification.
+
+
+### Native FreeBSD normal-suite follow-up
+
+The complete normal Go suite was actually executed in the dedicated FreeBSD
+14.3 VM from fixed source `c9f5a5cc`, with Go 1.25.9, CGO disabled and a local
+module proxy. It failed: 107 packages passed, 12 failed, nine had no tests;
+3,425 top-level tests passed, 97 failed and 165 skipped. These results must not
+be replaced by the earlier cross-compilation or narrow runtime passes.
+The initial environment lacked git/bash/ShellCheck and Git checkout metadata.
+Other failures expose Linux-specific test assumptions or real FreeBSD behavior;
+each remains classified and repaired at its actual boundary, without a blanket
+OS skip or a claim that every failure is environmental.
+
+At `a9a6a5b8`, focused regressions passed on Linux and the actual FreeBSD VM.
+The default generated leaf transport is now supported GRE on FreeBSD while
+Linux retains FOU. FreeBSD's native `daemon -f -S -P` closes the launching
+command's descriptors, preserves syslog output and retains the provider pidfile
+lease; the actual duplicate-admission/lease test now passes without WaitDelay.
+The DUID fixture uses an actual Ethernet interface rather than a Linux-only
+loopback name, and the community wire fixture uses a configured loopback address
+without changing host networking. The two FreeBSD-specific launcher tests and
+six raw BGP community-selection subcases passed on the real OS.
+
+Four declaration-validation regressions were separately repaired by explicitly
+selecting their intended Linux target through the existing ValidateForOS API.
+All 252 config tests passed on Linux, and the previously failing four tests also
+passed in the FreeBSD test binary. FreeBSD's real unsupported-feature rejection
+was retained. The whole normal FreeBSD gate remains open until the remaining
+observed failures are resolved and the complete fixed-source run passes.
