@@ -34,6 +34,7 @@ a_jail_created=0
 b_jail_created=0
 a_started=0
 b_started=0
+own_carp=0
 
 empty_config="$work/empty.yaml"
 cat >"$empty_config" <<'EOF'
@@ -84,12 +85,26 @@ cleanup() {
   if [ -n "$bridge" ] && ifconfig "$bridge" >/dev/null 2>&1; then ifconfig "$bridge" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
   if [ -n "$a_host" ] && ifconfig "$a_host" >/dev/null 2>&1; then ifconfig "$a_host" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
   if [ -n "$b_host" ] && ifconfig "$b_host" >/dev/null 2>&1; then ifconfig "$b_host" destroy >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
-  rm -rf "$work"
+  if [ "$own_carp" -eq 1 ]; then kldunload carp >>"$evidence_dir/cleanup.log" 2>&1 || rc=1; fi
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$work" || rc=1
+  else
+    echo "CARP recovery files retained at $work" >&2
+  fi
+  if [ "$rc" -eq 0 ]; then
+    echo 'carp-owned-cleanup=ok' >>"$evidence_dir/summary.log"
+    printf 'freebsd-carp-runtime=ok\n' >"$evidence_dir/result"
+  else
+    printf 'freebsd-carp-runtime=not-pass\n' >"$evidence_dir/result"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT HUP INT TERM
 
-kldload carp >"$evidence_dir/kldload-carp.log" 2>&1 || true
+if ! kldstat -q -m carp; then
+  kldload carp >"$evidence_dir/kldload-carp.log" 2>&1
+  own_carp=1
+fi
 kldstat -m carp >"$evidence_dir/carp-module.log"
 
 bridge=$(ifconfig bridge create)
@@ -98,6 +113,11 @@ b_host=$(ifconfig epair create)
 a_if=${a_host%a}b
 b_if=${b_host%a}b
 ifconfig "$bridge" addm "$a_host" addm "$b_host" up
+ifconfig "$a_host" up
+ifconfig "$b_host" up
+# The root network stack has no CARP VIP. Its requests must cross the bridge
+# into the elected VNET instead of being delivered to a peer's own local VIP.
+ifconfig "$bridge" inet 198.18.232.3/24 up
 jail -c name="$jail_a" path=/ host.hostname="$jail_a" persist vnet allow.raw_sockets=1 vnet.interface="$a_if"
 a_jail_created=1
 jail -c name="$jail_b" path=/ host.hostname="$jail_b" persist vnet allow.raw_sockets=1 vnet.interface="$b_if"
@@ -168,7 +188,7 @@ wait_role() {
 }
 wait_role "$jail_a" "$a_if" MASTER "$evidence_dir/carp-a-master.log"
 wait_role "$jail_b" "$b_if" BACKUP "$evidence_dir/carp-b-backup.log"
-jexec "$jail_b" ping -S 198.18.232.2 -c 3 198.18.232.100 >"$evidence_dir/carp-initial-vip-ping.log"
+ping -S 198.18.232.3 -c 3 198.18.232.100 >"$evidence_dir/carp-initial-vip-ping.log"
 
 # New actor processes must retain the exact applied receipt on restart and
 # refresh the owned native parameters when the declared priority changes.
@@ -188,7 +208,7 @@ run_a failover "$empty_config" >"$evidence_dir/carp-a-stop-failover.log" 2>&1
 a_started=0
 observe_withdrawal a failover
 wait_role "$jail_b" "$b_if" MASTER "$evidence_dir/carp-b-master-after-failover.log"
-jexec "$jail_a" ping -S 198.18.232.1 -c 3 198.18.232.100 >"$evidence_dir/carp-failover-vip-ping.log"
+ping -S 198.18.232.3 -c 3 198.18.232.100 >"$evidence_dir/carp-failover-vip-ping.log"
 
 a_started=1
 run_a reacquire "$work/a.yaml" >"$evidence_dir/carp-a-reacquire.log" 2>&1
@@ -225,7 +245,5 @@ jexec "$jail_a" ifconfig "$a_if" inet 198.18.232.101/32 -alias
 
 printf '%s\n' \
   'carp-actor-vnet-boot-master-backup-change-failover-restart-withdraw=ok' \
-  'carp-vip-ping-before-after-failover=ok' \
-  'carp-foreign-address-and-vhid=actor-refusal-preserved' \
-  'carp-owned-cleanup=ok' >"$evidence_dir/summary.log"
-printf 'freebsd-carp-runtime=ok\n' >"$evidence_dir/result"
+  'carp-independent-vip-ping-before-after-failover=ok' \
+  'carp-foreign-address-and-vhid=actor-refusal-preserved' >"$evidence_dir/summary.log"
