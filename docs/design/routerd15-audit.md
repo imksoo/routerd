@@ -1873,7 +1873,25 @@ The broader render check failed in the existing
 `TestFreeBSDTailscaleRCDTimeoutsWholeStartAndRollsBack/tailscale-up` marker
 cleanup assertion, and `make validate-example` failed because its sandbox
 server exited with `context deadline exceeded`. These failures remain under
-investigation; this checkpoint does not claim a complete check pass. Website
-and whole-Go qualification are pending. The change prevents new observe-only
-effects; it does not restore settings from an earlier managed configuration or
-qualify WAN SLAAC/IA_NA interoperability.
+investigation at the first checkpoint. Capturing the previously discarded rc.d
+output at `17b303ab` identified the stop-not-confirmed branch, which correctly
+retains ownership. A normal whole-Go run on the persistent test directory failed
+in two packages: two ARP tests timed out while opening a new SQLite database,
+and the Tailscale rollback fixture could not confirm stop. Concurrent host
+observations showed high I/O pressure; this is not a reason to weaken deadlines
+or remove retained ownership. The unchanged baseline passed the focused
+Tailscale check and sandbox startup, and example validation subsequently passed.
+
+At `17b303ab`, the same test deadlines and production code passed the whole Go
+suite with test temporary files on an existing executable tmpfs:
+`TMPDIR=/tmp/r15 GOTMPDIR=/tmp go test -p 2 -json ./...` (`/tmp/r15` was a temporary
+symlink to that tmpfs). There were 120 passing packages, nine with no tests,
+4,161 passing top-level tests, 14 skips and no failures; 46 package verdicts
+were cached. The ARP failure reproducer passed in 0.03 seconds there. This is
+functional unit/control-plane verification, not persistent-media durability or
+proof that the original storage condition is repaired. Four-locale website
+build passed with existing unrelated localized-link warnings. Successful raw
+outputs and the temporary test area are removed after recording these limits.
+
+The change prevents new observe-only effects; it does not restore settings from
+an earlier managed configuration or qualify WAN SLAAC/IA_NA interoperability.

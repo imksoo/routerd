@@ -787,6 +787,37 @@
       "excludes": [
         "Normal tests do not replace opt-in native/peer/platform qualification"
       ]
+    },
+    "ra-observe-only-603a815e": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "603a815ed0a63f58b646019c9d33686f4b6ecc0b",
+      "reference": "docs/design/routerd15-audit.md#observe-only-wan-ra-host-effects",
+      "reproduction": "go test ./pkg/controller/chain -run '^TestRAObserveOnlyDoesNotConfigureLinuxHost$' -count=1",
+      "checks": [
+        "Test-first 3469b567 reproduces runtime/persistent sysctl and networkd adoption effects from managed:false through actual controllers with temporary files and injected commands",
+        "The correction prevents both effects for fresh observe-only intent while retaining omitted/true management and an independent PD owner on the same interface"
+      ],
+      "excludes": [
+        "WAN RA/SLAAC or IA_NA interoperability",
+        "Restoration of settings previously applied under managed intent",
+        "FreeBSD native host behavior"
+      ]
+    },
+    "normal-code-gate-17b303ab-tmpfs": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "17b303ab039896d97e0d7c80e69098fcc83ddc3e",
+      "reference": "docs/design/routerd15-audit.md#observe-only-wan-ra-host-effects",
+      "environment": "Linux amd64, Go 1.25.9, CGO_ENABLED=1; temporary test data on an existing executable tmpfs, Go build data on /tmp; 46 cached package verdicts. No native VM rerun is implied.",
+      "reproduction": "TMPDIR=/tmp/r15 GOTMPDIR=/tmp go test -p 2 -json ./...",
+      "checks": [
+        "120 packages passed; nine had no tests; 4,161 top-level tests passed; 14 skipped; zero failures"
+      ],
+      "excludes": [
+        "Earlier persistent-directory run failed two packages under observed high I/O pressure; that storage condition is not qualified",
+        "Native peer/platform, reboot and persistent-media durability qualification"
+      ]
     }
   },
   "features": [
@@ -1711,7 +1742,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "ra-observe-only-603a815e"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
