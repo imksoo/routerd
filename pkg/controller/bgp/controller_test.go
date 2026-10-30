@@ -3384,18 +3384,33 @@ func TestTypedPolicyIntentChangesWithEffectiveImportBoundary(t *testing.T) {
 }
 
 func TestImportPolicyPrefixesAllowMoreSpecifics(t *testing.T) {
-	prefixes := policyPrefixesForTest(api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}})
-	if !prefixSetAllows(prefixes, "10.77.60.0/24") || !prefixSetAllows(prefixes, "10.77.60.11/32") {
-		t.Fatalf("import prefixes = %#v, want IPv4 prefix and more-specific accepted", prefixes)
+	plan := bgpdaemon.BuildPolicyPlan(bgpdaemon.PolicyIntent{RouterName: "fixture", Scopes: []bgpdaemon.PolicyScope{{Name: "fixture", Neighbors: []string{"192.0.2.2/32"}, ExportPolicyName: "fixture-export", Spec: api.BGPImportPolicySpec{AllowedPrefixes: []string{"10.77.60.0/24", "2001:db8:77::/64"}}}}}, nil)
+	var ipv4, ipv6 []*gobgpapi.Prefix
+	for _, set := range plan.SetPolicies.GetDefinedSets() {
+		switch set.GetName() {
+		case "fixture-prefixes-ipv4":
+			ipv4 = set.GetPrefixes()
+		case "fixture-prefixes-ipv6":
+			ipv6 = set.GetPrefixes()
+		}
 	}
-	if prefixSetAllows(prefixes, "10.77.0.0/16") || prefixSetAllows(prefixes, "10.88.0.1/32") {
-		t.Fatalf("import prefixes = %#v, want less-specific and unrelated IPv4 rejected", prefixes)
+	if len(ipv4) != 1 || ipv4[0].GetIpPrefix() != "10.77.60.0/24" || ipv4[0].GetMaskLengthMin() != 24 || ipv4[0].GetMaskLengthMax() != 32 {
+		t.Fatalf("IPv4 prefix set lost its prefix or mask bounds: %v", ipv4)
 	}
-	if !prefixSetAllows(prefixes, "2001:db8:77::/64") || !prefixSetAllows(prefixes, "2001:db8:77::11/128") {
-		t.Fatalf("import prefixes = %#v, want IPv6 prefix and /128 accepted", prefixes)
+	if len(ipv6) != 1 || ipv6[0].GetIpPrefix() != "2001:db8:77::/64" || ipv6[0].GetMaskLengthMin() != 64 || ipv6[0].GetMaskLengthMax() != 128 {
+		t.Fatalf("IPv6 prefix set lost its prefix or mask bounds: %v", ipv6)
 	}
-	if prefixSetAllows(prefixes, "2001:db8:88::1/128") {
-		t.Fatalf("import prefixes = %#v, want unrelated IPv6 rejected", prefixes)
+	if !prefixSetAllows(ipv4, "10.77.60.0/24") || !prefixSetAllows(ipv4, "10.77.60.11/32") {
+		t.Fatalf("import prefixes = %#v, want IPv4 prefix and more-specific accepted", ipv4)
+	}
+	if prefixSetAllows(ipv4, "10.77.0.0/16") || prefixSetAllows(ipv4, "10.88.0.1/32") {
+		t.Fatalf("import prefixes = %#v, want less-specific and unrelated IPv4 rejected", ipv4)
+	}
+	if !prefixSetAllows(ipv6, "2001:db8:77::/64") || !prefixSetAllows(ipv6, "2001:db8:77::11/128") {
+		t.Fatalf("import prefixes = %#v, want IPv6 prefix and /128 accepted", ipv6)
+	}
+	if prefixSetAllows(ipv6, "2001:db8:77::/48") || prefixSetAllows(ipv6, "2001:db8:88::1/128") {
+		t.Fatalf("import prefixes = %#v, want less-specific and unrelated IPv6 rejected", ipv6)
 	}
 }
 
