@@ -32,6 +32,14 @@ retains exact prefix and DNS records until transmission is acknowledged. A
 recorded VXLAN parent must retain its actual cookie, scope and interface index;
 declaration removal cannot redirect withdrawal onto a foreign link.
 
+The solicitation receiver binds the wildcard IPv6 address and joins the selected
+interface's all-routers group. A receiver bound to its transmit link-local
+address can exclude multicast solicitations on FreeBSD. Transmissions still use
+an explicitly selected IPv6 link-local source and interface index. Portable
+source-selection and solicitation tests pass; the actual-socket positive test
+is retained but cannot run past this environment's Netlink permission denial.
+Multicast reception on a native FreeBSD target remains unqualified.
+
 Local wire/owner tests cover finite deadlines, previous-prefix withdrawal,
 M/O/MTU/router lifetime, solicitation scheduling, source failures and stop/join.
 Independent clients and native Linux/FreeBSD forwarding are not qualified here.

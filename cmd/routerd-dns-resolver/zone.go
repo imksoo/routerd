@@ -96,7 +96,7 @@ func newZoneTable(zones []dnsresolver.RuntimeZone) *zoneTable {
 		for _, record := range runtime.DHCPHostRecords {
 			zone.addRecoveredLease(record)
 		}
-		table.zones[name] = zone
+		table.zones[zone.ResourceName] = zone
 	}
 	return table
 }
@@ -112,14 +112,14 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 		return
 	}
 	type dynamicZone struct {
-		name, resource string
+		apex, resource string
 		dhcp           api.DNSZoneDHCPDerivedSpec
 		records        []zoneRecord
 	}
 	var retained []dynamicZone
 	old.mu.RLock()
-	for zoneName, zone := range old.zones {
-		item := dynamicZone{name: zoneName, resource: zone.ResourceName, dhcp: zone.DHCP}
+	for _, zone := range old.zones {
+		item := dynamicZone{apex: zone.Name, resource: zone.ResourceName, dhcp: zone.DHCP}
 		for _, record := range zone.Records {
 			switch record.Source {
 			case zoneRecordSourceActiveEvent:
@@ -137,8 +137,8 @@ func (t *zoneTable) CopyDynamicFrom(old *zoneTable) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, item := range retained {
-		zone := t.zones[item.name]
-		if zone == nil || zone.ResourceName != item.resource || !sameDHCPNamespace(zone.DHCP, item.dhcp) {
+		zone := t.zones[item.resource]
+		if zone == nil || zone.Name != item.apex || !sameDHCPNamespace(zone.DHCP, item.dhcp) {
 			continue
 		}
 		ttl := uint32(zone.DHCP.TTL)
@@ -195,22 +195,16 @@ func (t *zoneTable) selectedZones(refs []string) []*zoneData {
 	}
 	var out []*zoneData
 	for _, ref := range refs {
-		name := refName(ref)
+		// ZoneRef identifies a resource, never a DNS suffix that might be
+		// owned by an unrelated zone with the same spelling.
+		name := strings.TrimPrefix(strings.TrimSpace(ref), "DNSZone/")
 		for _, zone := range t.zones {
-			if zone.matchesRef(ref, name) {
+			if zone.ResourceName != "" && zone.ResourceName == name {
 				out = append(out, zone)
 			}
 		}
 	}
 	return out
-}
-
-func (z *zoneData) matchesRef(ref, name string) bool {
-	zoneName := strings.TrimSuffix(z.Name, ".")
-	refName := strings.TrimSuffix(name, ".")
-	rawRef := strings.TrimSuffix(ref, ".")
-	resourceName := strings.TrimSuffix(z.ResourceName, ".")
-	return zoneName == refName || zoneName == rawRef || resourceName == refName || rawRef == "DNSZone/"+resourceName
 }
 
 func (t *zoneTable) ApplyLease(lease dhcpLeaseEvent) {
@@ -239,11 +233,11 @@ func (z *zoneData) answer(req *dns.Msg, q dns.Question) (*dns.Msg, bool) {
 			// RFC 4592 style wildcard: with no exact match, walk up toward the
 			// zone apex looking for a "*" record at the closest enclosing label.
 			for rest := name; ; {
-				idx := strings.IndexByte(rest, '.')
-				if idx < 0 {
+				next, end := dns.NextLabel(rest, 0)
+				if end {
 					break
 				}
-				rest = rest[idx+1:]
+				rest = rest[next:]
 				if len(rest) < len(z.Name) {
 					break
 				}
@@ -547,13 +541,6 @@ func dnsMessageTTL(msg *dns.Msg, spec api.DNSResolverCacheSpec) time.Duration {
 		}
 	}
 	return out
-}
-
-func refName(ref string) string {
-	if i := strings.LastIndex(ref, "/"); i >= 0 {
-		return ref[i+1:]
-	}
-	return ref
 }
 
 func contains(values []string, target string) bool {

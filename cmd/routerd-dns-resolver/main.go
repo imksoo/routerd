@@ -768,6 +768,15 @@ func (d *daemon) leaseHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported DHCP lease action", http.StatusBadRequest)
 		return
 	}
+	// Reload snapshots and replaces the zone table under the same owner. A
+	// callback arriving during staging must update the table that is actually
+	// selected afterward, rather than acknowledge a write into the retired one.
+	d.reloadMu.Lock()
+	defer d.reloadMu.Unlock()
+	if err := r.Context().Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusRequestTimeout)
+		return
+	}
 	d.stateMu.RLock()
 	zones := d.zones
 	d.stateMu.RUnlock()
