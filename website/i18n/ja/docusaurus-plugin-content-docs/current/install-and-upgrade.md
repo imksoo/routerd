@@ -61,9 +61,14 @@ Linuxでは、設定適用処理と常駐処理が`/run/routerd/nat44.nft`を共
 
 BGPの保存済み設定は永続領域に置き、ソケットは実行時の領域に置きます。常駐処理で明示指定したパスは、即時の設定適用とLinuxのサービス定義にも反映します。
 
-更新時には、現行routerdが生成した`routerd.service`を保持します。
-`Managed by routerd`というコメントだけでは旧形式と判断しません。
-削除済みの`--controller-chain`を含むunitは移行対象です。
+更新時には、routerdが生成し、正確な所有マーカー
+`# routerd-managed-service: v1`を持つ`routerd.service`を、新しいバイナリの
+読み取り専用`render systemd-service`で現在の正本設定から起動前に再生成します。
+必要な権限を更新し、設定由来のサービスアクセス権限やTelemetry設定も維持します。
+再生成に失敗した場合は、サービスを再起動せず更新前のファイルへ戻します。
+正本設定がなければ既存の生成済みunitを保持します。所有していないunitは上書きせず、
+古い起動オプションだけを所有の証明には使いません。`--no-restart`でも管理下unitは
+更新しますが、起動・再起動は行いません。
 設定の世代切替では、設定が変わらない管理下DHCPクライアントを維持します。
 VRRPの`gracefulActivation`はVIPの初回公開を待機し、公開済みのMASTERでは
 一時的な条件低下によるVIP撤去を行いません。BACKUP等への降格時は撤去します。

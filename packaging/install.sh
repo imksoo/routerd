@@ -2084,7 +2084,27 @@ case "${os}" in
                 unit_name=$(basename "${unit}")
                 target_unit="${systemd_system_dir}/${unit_name}"
                 if [ "${unit_name}" = "routerd.service" ] && [ -f "${target_unit}" ] && grep -q '^# Managed by routerd\.' "${target_unit}"; then
-                    echo "preserving generated routerd.service: ${target_unit}"
+                    if [ ! -f "${sysconfdir}/router.yaml" ]; then
+                        echo "preserving generated routerd.service without canonical config: ${target_unit}"
+                    elif [ "${dry_run}" -eq 1 ]; then
+                        echo "dry-run: regenerate ${target_unit} from ${sysconfdir}/router.yaml"
+                    else
+                        # Refresh capabilities before starting the new daemon, while
+                        # retaining config-derived telemetry and service access.
+                        # Render failure occurs before the service recovery boundary;
+                        # the install transaction restores the previous payload.
+                        rendered_unit="${backup_dir}/routerd.service.rendered"
+                        if ! "${bindir}/routerd" render systemd-service --config "${sysconfdir}/router.yaml" > "${rendered_unit}"; then
+                            echo "error: cannot regenerate routerd.service from ${sysconfdir}/router.yaml" >&2
+                            exit 1
+                        fi
+                        if ! routerd_service_has_ownership_marker "${rendered_unit}"; then
+                            echo "error: rendered routerd.service lacks ownership marker" >&2
+                            exit 1
+                        fi
+                        atomic_install 0644 "${rendered_unit}" "${target_unit}"
+                        echo "regenerated routerd.service: ${target_unit}"
+                    fi
                     continue
                 fi
                 atomic_install 0644 "${unit}" "${target_unit}"
