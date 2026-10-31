@@ -19,7 +19,7 @@ import (
 )
 
 func TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting(t *testing.T) {
-	for _, mode := range []string{"missing", "disabled", "filtered", "delivered"} {
+	for _, mode := range []string{"missing", "disabled", "filtered", "delivered", "override"} {
 		t.Run(mode, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "dns.db")
 			dns, err := logstore.OpenDNSQueryLog(path)
@@ -61,6 +61,12 @@ func TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting(t *testi
 			if mode != "missing" {
 				resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogSink"}, Metadata: api.ObjectMeta{Name: "archive"}, Spec: spec})
 			}
+			if mode == "override" {
+				previous := eventlog.LevelOverride()
+				t.Cleanup(func() { eventlog.SetLevelOverride(previous) })
+				level := eventlog.LevelError
+				eventlog.SetLevelOverride(&level)
+			}
 			controller := LogRetentionController{Router: &api.Router{Spec: api.RouterSpec{Resources: resources}}, Store: mapStore{}}
 			err = controller.Reconcile(context.Background())
 			db, openErr := sql.Open("sqlite", path)
@@ -72,7 +78,7 @@ func TestRetentionRequiresEverySelectedArchiveDestinationBeforeDeleting(t *testi
 			if queryErr := db.QueryRow(`SELECT count(*) FROM dns_queries`).Scan(&rows); queryErr != nil {
 				t.Fatal(queryErr)
 			}
-			if mode == "delivered" {
+			if mode == "delivered" || mode == "override" {
 				if err != nil || rows != 0 || delivered.Load() != 1 {
 					t.Fatalf("archive-before-delete rows=%d delivered=%d err=%v", rows, delivered.Load(), err)
 				}
