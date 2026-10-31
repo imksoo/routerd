@@ -24,8 +24,9 @@ import (
 const ReceiptName = "routerd-ipsec.json"
 
 type connectionReceipt struct {
-	Name string `json:"name"`
-	Hash string `json:"hash,omitempty"`
+	Name string      `json:"name"`
+	Hash string      `json:"hash,omitempty"`
+	SAs  []saReceipt `json:"sas,omitempty"`
 }
 
 // A pending receipt is written before sending any mutation. It retains every
@@ -56,6 +57,7 @@ type desiredConnection struct {
 type Controller struct {
 	Session   *vici.Session
 	Directory string
+	nativeSAs nativeSAStore
 }
 
 // Needed avoids requiring charon on routers which have never owned IPsec.
