@@ -229,7 +229,7 @@ func (c Controller) observeOwnedSAs(ctx context.Context, state receipt) (receipt
 	return state, nil
 }
 
-func (c Controller) withdrawRecordedSAs(ctx context.Context, conn connectionReceipt) error {
+func (c Controller) withdrawRecordedSAs(ctx context.Context, conn connectionReceipt, connections []connectionReceipt) error {
 	native := c.kernelSAs()
 	if native == nil {
 		if len(conn.SAs) != 0 || conn.Scope != "" {
@@ -271,8 +271,29 @@ func (c Controller) withdrawRecordedSAs(ctx context.Context, conn connectionRece
 	if after != conn.Scope {
 		return errors.New("IPsec kernel scope changed during withdrawal inventory")
 	}
-	if len(remaining) != 0 {
-		return fmt.Errorf("IPsec kernel SAs remain without current ownership proof; retain pending receipt (%d SAs)", len(remaining))
+	for _, id := range remaining {
+		knownOther := false
+		for _, other := range connections {
+			if other.Name == conn.Name {
+				continue
+			}
+			for _, recorded := range other.SAs {
+				if recorded.ID != id {
+					continue
+				}
+				current, found, err := native.Observe(ctx, id)
+				if err != nil {
+					return err
+				}
+				if found && current != recorded {
+					return errors.New("another recorded IPsec SA was replaced during withdrawal")
+				}
+				knownOther = true
+			}
+		}
+		if !knownOther {
+			return fmt.Errorf("IPsec kernel SAs remain without current ownership proof; retain pending receipt (%s SPI %x)", id.Protocol, id.SPI)
+		}
 	}
 	return nil
 }

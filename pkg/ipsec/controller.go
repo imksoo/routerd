@@ -175,7 +175,7 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		if err := terminateConnection(ctx, c.Session, old.Name); err != nil {
 			return err
 		}
-		if err := c.withdrawRecordedSAs(ctx, old); err != nil {
+		if err := c.withdrawRecordedSAs(ctx, old, pending.Connections); err != nil {
 			return err
 		}
 	}

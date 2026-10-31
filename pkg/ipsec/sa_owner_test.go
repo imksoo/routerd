@@ -177,3 +177,39 @@ func TestScopedVICIUnknownSameEndpointSARetainsPendingWithoutDeletion(t *testing
 		t.Fatalf("unknown SA was forgotten/adopted: %+v %v", state, readErr)
 	}
 }
+
+func TestScopedVICIWithdrawalPreservesAnotherRecordedConnectionAtSameEndpoints(t *testing.T) {
+	directory := t.TempDir()
+	_, session := newVICIEndpoint(t, directory)
+	owned := saReceipt{ID: saID{Source: "198.51.100.1", Destination: "203.0.113.1", Protocol: "ESP", SPI: 0xc77c3da9}, Scope: "fixture-kernel", ReqID: 1, AddTime: 123, Fingerprint: strings.Repeat("1", 64)}
+	other := owned
+	other.ID.SPI = 0xcb967070
+	other.Fingerprint = strings.Repeat("2", 64)
+	native := &recordedNativeSAs{states: []saReceipt{owned, other}}
+	desired := ipsecTestRouter("203.0.113.1", "other-secret")
+	desired.Spec.Resources[0].Metadata.Name = "other"
+	prepared, _, err := prepareConnections(desired, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained := prepared[0].connectionReceipt
+	retained.Scope, retained.SAs = "fixture-kernel", []saReceipt{other}
+	previous := receipt{Version: 1, Connections: []connectionReceipt{
+		{Name: "routerd-site", Hash: "previous", Local: owned.ID.Source, Remote: owned.ID.Destination, Scope: owned.Scope, SAs: []saReceipt{owned}},
+		retained,
+	}}
+	if err := writeReceipt(directory, previous); err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: native}
+	if err := controller.Reconcile(t.Context(), desired); err != nil {
+		t.Fatal(err)
+	}
+	if len(native.deleted) != 1 || native.deleted[0] != owned || len(native.states) != 1 || native.states[0] != other {
+		t.Fatalf("another owned connection changed: %+v", native)
+	}
+	state, err := readReceipt(directory)
+	if err != nil || state.Pending || len(state.Connections) != 1 || state.Connections[0].Name != "routerd-other" || len(state.Connections[0].SAs) != 1 || state.Connections[0].SAs[0] != other {
+		t.Fatalf("retained connection receipt=%+v err=%v", state, err)
+	}
+}
