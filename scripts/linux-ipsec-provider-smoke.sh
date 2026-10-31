@@ -37,6 +37,7 @@ ip -4 -j route show table all > "$work/routes4.before.json"
 ip -6 -j route show table all > "$work/routes6.before.json"
 ip -4 rule show > "$work/rules4.before"
 ip -6 rule show > "$work/rules6.before"
+cat /sys/kernel/security/apparmor/profiles > "$work/apparmor.before"
 dpkg-query -W > "$work/packages.before"
 systemctl cat routerd > "$work/unit.before.txt"
 sha256sum /usr/local/sbin/routerd /usr/local/etc/routerd/router.yaml /etc/systemd/system/routerd.service > "$work/installed.sha256"
@@ -61,11 +62,11 @@ metadata: {name: ipsec-provider-native}
 spec: {resources: []}
 YAML
 product() {
- timeout -k 5 300 "$routerd" serve --once --controllers package,ipsec --config "$1" \
+ timeout -k 5 300 "$routerd" serve --once --controllers "${2:-package,ipsec}" --config "$1" \
   --state-file "$work/state.db" --ledger-file "$work/ledger.db" --status-file "$work/status.json" \
   --socket "$work/control.sock" --status-socket "$work/status.sock"
 }
-stage=preparation peer='' holder='' running_router='' peer_birth='' holder_birth='' running_birth='' stopped=0 link_created=0 link_index='' address_created=0
+stage=preparation peer='' holder='' running_router='' peer_birth='' holder_birth='' running_birth='' stopped=0 link_created=0 link_index='' address_created=0 foreign_created=0
 birth() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 stop_child() {
  local pid=$1 expected=$2 label=$3 rc=0
@@ -119,6 +120,14 @@ os.unlink(p)
 PY
    then failures=1; fi
   fi
+  if ((foreign_created)); then rm /etc/swanctl/routerd-fixture-foreign.conf || failures=1; fi
+  for executable in swanctl charon-systemd; do
+   if ! grep -q "^/usr/sbin/$executable " "$work/apparmor.before"; then
+    if grep -q "^/usr/sbin/$executable " /sys/kernel/security/apparmor/profiles; then
+     apparmor_parser -R "/etc/apparmor.d/usr.sbin.$executable" || failures=1
+    fi
+   fi
+  done
   # Remove only this gate's initially absent packages, never autoremove.
   apt-get -y --no-auto-remove purge "${packages[@]}" > "$work/package-remove.log" 2>&1 || failures=1
  fi
@@ -170,6 +179,8 @@ PY
  grep -Eq 'SPD IN +0 OUT 0 FWD 0' "$work/xfrm.after" || failures=1
  dpkg-query -W > "$work/packages.after"
  cmp "$work/packages.before" "$work/packages.after" || failures=1
+ sort /sys/kernel/security/apparmor/profiles > "$work/apparmor.after.sorted"
+ sort "$work/apparmor.before" | cmp - "$work/apparmor.after.sorted" || failures=1
  if ((failures)); then rc=1; fi
  printf 'runtime_exit=%s cleanup_errors=%s stage=%s\n' "$rc" "$failures" "$stage" | tee "$work/result.txt"
  exit "$rc"
@@ -201,10 +212,25 @@ peer_exec ip addr add 10.254.95.2/32 dev lo
 peer_exec ip route add 10.254.95.1/32 via 198.18.95.1
 stage=fresh-package-provider
 touch "$work/provider-started"
-product "$work/router.yaml" > "$work/fresh-package-provider.log" 2>&1
+product "$work/router.yaml" package > "$work/fresh-package-provider.log" 2>&1
 systemctl is-active --quiet strongswan.service
 systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "$work/provider.first"
 swanctl --stats > "$work/provider.stats" 2>&1
+cat > /etc/swanctl/routerd-fixture-foreign.conf <<'EOF'
+connections {
+ fixture-foreign {
+  local_addrs = 198.18.95.1
+  remote_addrs = 198.18.95.254
+  local { auth = psk }
+  remote { auth = psk }
+ }
+}
+EOF
+foreign_created=1
+swanctl --load-conns --file /etc/swanctl/routerd-fixture-foreign.conf > "$work/foreign-load.log" 2>&1
+swanctl --list-conns > "$work/foreign-loaded.connections" 2>&1
+grep -q fixture-foreign "$work/foreign-loaded.connections"
+product "$work/router.yaml" > "$work/fresh-ipsec.log" 2>&1
 cp /usr/local/etc/routerd/swanctl/routerd-ipsec.json "$work/receipt.acquired.json"
 mkdir "$work/peer-run"
 cat > "$work/peer-strongswan.conf" <<'EOF'
@@ -264,17 +290,6 @@ traffic() {
 }
 stage=initial-traffic
 traffic
-cat > "$work/foreign.conf" <<'EOF'
-connections {
- fixture-foreign {
-  local_addrs = 198.18.95.1
-  remote_addrs = 198.18.95.254
-  local { auth = psk }
-  remote { auth = psk }
- }
-}
-EOF
-swanctl --load-conns --file "$work/foreign.conf" > "$work/foreign-load.log" 2>&1
 stage=unchanged-provider
 product "$work/router.yaml" > "$work/unchanged.log" 2>&1
 systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "$work/provider.unchanged"
@@ -297,7 +312,9 @@ systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "
 cmp "$work/provider.first" "$work/provider.reacquired"
 swanctl --list-conns > "$work/reacquired.connections" 2>&1
 grep -q fixture-foreign "$work/reacquired.connections"
-swanctl --unload-conn --name fixture-foreign > "$work/foreign-unload.log" 2>&1
+# Remove the fixture file before the crash so startup cannot reload it.
+rm /etc/swanctl/routerd-fixture-foreign.conf
+foreign_created=0
 stage=provider-crash-recovery
 "$routerd" serve --controllers package,ipsec --config "$work/router.yaml" \
  --state-file "$work/state.db" --ledger-file "$work/ledger.db" --status-file "$work/status.json" \
