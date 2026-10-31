@@ -145,7 +145,7 @@ spec:
       managed: true
 EOF
 "$product/routerd" validate --config "$work/router.yaml" >"$work/validate.log" 2>&1
-"$product/routerd" run --config "$work/router.yaml" --controllers=daemon-supervisor,daemon-status,pppoe-session --state-file /var/lib/routerd/state.db --ledger-file /var/lib/routerd/state.db --socket /run/routerd/control.sock --status-socket /run/routerd/status.sock --status-file /run/routerd/status.json --http-listen 127.0.0.1:65432 >"$work/router.log" 2>&1 &
+"$product/routerd" serve --config "$work/router.yaml" --controllers=daemon-supervisor,daemon-status,pppoe-session --state-file /var/lib/routerd/state.db --ledger-file /var/lib/routerd/state.db --socket /run/routerd/control.sock --status-socket /run/routerd/status.sock --status-file /run/routerd/status.json --http-listen 127.0.0.1:65432 >"$work/router.log" 2>&1 &
 router_pid=$!
 socket=/run/routerd/pppoe-client/lifecycle.sock
 ipc() { curl --connect-timeout 1 --max-time 4 --fail --silent --show-error --unix-socket "$socket" "$@"; }
