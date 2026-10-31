@@ -33,8 +33,14 @@ func (s *SQLiteStore) PublishPluginResult(ctx context.Context, previousGeneratio
 	if current != previousGeneration {
 		return fmt.Errorf("plugin source %q changed from generation %d to %d during invocation", part.Source, previousGeneration, current)
 	}
+	if !s.now().UTC().Before(part.ExpiresAt) {
+		return fmt.Errorf("plugin source %q expired before publication", part.Source)
+	}
 	if _, err := tx.ExecContext(ctx, upsertDynamicConfigPartSQL, dynamicConfigPartArguments(part, s.now().UTC())...); err != nil {
 		return err
+	}
+	if !s.now().UTC().Before(part.ExpiresAt) {
+		return fmt.Errorf("plugin source %q expired before publication", part.Source)
 	}
 	return tx.Commit()
 }
