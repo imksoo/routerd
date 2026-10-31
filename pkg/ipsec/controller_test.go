@@ -223,7 +223,7 @@ func ipsecTestRouter(remote, secret string) *api.Router {
 func TestScopedVICIReconcileFailureRecoveryFreshDaemonAndLastWithdrawal(t *testing.T) {
 	directory := t.TempDir()
 	endpoint, session := newVICIEndpoint(t, directory)
-	controller := Controller{Session: session, Directory: directory}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}
 	router := ipsecTestRouter("203.0.113.1", "first-secret")
 	endpoint.mu.Lock()
 	endpoint.failLoad = true
@@ -312,7 +312,7 @@ func TestScopedVICIRefusesUnownedNameAndSharedKeyCollisions(t *testing.T) {
 				endpoint.keys["routerd-site"] = []byte("unowned")
 			}
 			endpoint.mu.Unlock()
-			err := (Controller{Session: session, Directory: directory}).Reconcile(t.Context(), ipsecTestRouter("203.0.113.1", "secret"))
+			err := (Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}).Reconcile(t.Context(), ipsecTestRouter("203.0.113.1", "secret"))
 			if err == nil || !strings.Contains(err.Error(), "unowned IPsec "+collision) {
 				t.Fatalf("collision = %v", err)
 			}
@@ -341,7 +341,7 @@ func TestScopedVICIRequiresPositiveACKAndPropagatesCancellation(t *testing.T) {
 			endpoint.mu.Unlock()
 			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 			defer cancel()
-			err := (Controller{Session: session, Directory: directory}).Reconcile(ctx, ipsecTestRouter("203.0.113.1", "secret"))
+			err := (Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}).Reconcile(ctx, ipsecTestRouter("203.0.113.1", "secret"))
 			if mode == "missing ACK" && (err == nil || !strings.Contains(err.Error(), "did not acknowledge")) {
 				t.Fatalf("missing ACK=%v", err)
 			}
@@ -378,7 +378,7 @@ func TestScopedVICICorruptReceiptHasNoNativeEffects(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(directory, ReceiptName), []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := (Controller{Session: session, Directory: directory}).Reconcile(t.Context(), ipsecTestRouter("203.0.113.1", "secret")); err == nil {
+	if err := (Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}).Reconcile(t.Context(), ipsecTestRouter("203.0.113.1", "secret")); err == nil {
 		t.Fatal("accepted corrupt ownership")
 	}
 	endpoint.mu.Lock()
@@ -415,7 +415,7 @@ func TestScopedVICICertificateUsesBlobAndNeverUnloadsSharedNativeKeys(t *testing
 	spec, _ := router.Spec.Resources[0].IPsecConnectionSpec()
 	spec.CertificateRef = "site.pem"
 	router.Spec.Resources[0].Spec = spec
-	controller := Controller{Session: session, Directory: directory}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}
 	if err := controller.Reconcile(t.Context(), router); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,7 @@ func TestScopedVICICertificateUsesBlobAndNeverUnloadsSharedNativeKeys(t *testing
 func TestScopedVICIInterruptedReplacementCannotTrustOldHashOnRestore(t *testing.T) {
 	directory := t.TempDir()
 	endpoint, session := newVICIEndpoint(t, directory)
-	controller := Controller{Session: session, Directory: directory}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}
 	original := ipsecTestRouter("203.0.113.1", "original")
 	if err := controller.Reconcile(t.Context(), original); err != nil {
 		t.Fatal(err)
@@ -492,7 +492,7 @@ func TestScopedVICIRejectsUnimportedContainerBeforeNativeMutation(t *testing.T) 
 	spec, _ := router.Spec.Resources[0].IPsecConnectionSpec()
 	spec.CertificateRef = "site.pem"
 	router.Spec.Resources[0].Spec = spec
-	err := (Controller{Session: session, Directory: directory}).Reconcile(t.Context(), router)
+	err := (Controller{Session: session, Directory: directory, nativeSAs: &recordedNativeSAs{}}).Reconcile(t.Context(), router)
 	if err == nil || !strings.Contains(err.Error(), "PKCS#12") {
 		t.Fatalf("unimported key container implied successful authentication configuration: %v", err)
 	}

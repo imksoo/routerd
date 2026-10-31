@@ -24,9 +24,12 @@ import (
 const ReceiptName = "routerd-ipsec.json"
 
 type connectionReceipt struct {
-	Name string      `json:"name"`
-	Hash string      `json:"hash,omitempty"`
-	SAs  []saReceipt `json:"sas,omitempty"`
+	Name   string      `json:"name"`
+	Hash   string      `json:"hash,omitempty"`
+	SAs    []saReceipt `json:"sas,omitempty"`
+	Local  string      `json:"local"`
+	Remote string      `json:"remote"`
+	Scope  string      `json:"scope,omitempty"`
 }
 
 // A pending receipt is written before sending any mutation. It retains every
@@ -116,13 +119,26 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	previous, err = c.observeOwnedSAs(ctx, previous)
+	if err != nil {
+		return err
+	}
+	if native := c.kernelSAs(); native != nil && len(desired) != 0 {
+		scope, err := native.Scope(ctx)
+		if err != nil {
+			return err
+		}
+		for i := range desired {
+			desired[i].Scope = scope
+		}
+	}
 	pending := receipt{Version: 1, Pending: true, Connections: slices.Clone(previous.Connections), SharedKeys: slices.Clone(previous.SharedKeys)}
 	for _, conn := range desired {
 		if !ownsConnection(previous, conn.Name) && slices.Contains(loaded, conn.Name) {
 			return fmt.Errorf("refuse to replace unowned IPsec connection %s", conn.Name)
 		}
 		if !ownsConnection(pending, conn.Name) {
-			pending.Connections = append(pending.Connections, connectionReceipt{Name: conn.Name})
+			pending.Connections = append(pending.Connections, conn.connectionReceipt)
 		}
 		if conn.spec.PreSharedKey != "" {
 			if !slices.Contains(previous.SharedKeys, conn.Name) && slices.Contains(shared, conn.Name) {
@@ -157,6 +173,9 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 			}
 		}
 		if err := terminateConnection(ctx, c.Session, old.Name); err != nil {
+			return err
+		}
+		if err := c.withdrawRecordedSAs(ctx, old); err != nil {
 			return err
 		}
 	}
@@ -198,7 +217,13 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		if err := checkAck("load-conn", response, err); err != nil {
 			return err
 		}
-		final.Connections = append(final.Connections, conn.connectionReceipt)
+		accepted := conn.connectionReceipt
+		for _, old := range pending.Connections {
+			if old.Name == conn.Name && old.Hash == conn.Hash {
+				accepted.SAs = slices.Clone(old.SAs)
+			}
+		}
+		final.Connections = append(final.Connections, accepted)
 	}
 	for _, key := range pending.SharedKeys {
 		if !slices.Contains(final.SharedKeys, key) && slices.Contains(shared, key) {
@@ -231,6 +256,10 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 			return fmt.Errorf("IPsec shared key %s does not match acknowledged desired state", key)
 		}
 	}
+	final, err = c.observeOwnedSAs(ctx, final)
+	if err != nil {
+		return err
+	}
 	return writeReceipt(c.Directory, final)
 }
 
@@ -258,7 +287,7 @@ func prepareConnections(router *api.Router, directory string) ([]desiredConnecti
 		if err != nil {
 			return nil, nil, err
 		}
-		conn := desiredConnection{connectionReceipt: connectionReceipt{Name: "routerd-" + res.Metadata.Name}, spec: spec}
+		conn := desiredConnection{connectionReceipt: connectionReceipt{Name: "routerd-" + res.Metadata.Name, Local: spec.LocalAddress, Remote: spec.RemoteAddress}, spec: spec}
 		if res.Metadata.Name == "" || filepath.Base(res.Metadata.Name) != res.Metadata.Name || desiredByName(desired, conn.Name) != nil {
 			return nil, nil, fmt.Errorf("invalid or duplicate IPsec connection name %q", res.Metadata.Name)
 		}
@@ -357,6 +386,11 @@ func readReceipt(directory string) (receipt, error) {
 	for _, conn := range state.Connections {
 		if !validOwnedName(conn.Name) {
 			return receipt{}, fmt.Errorf("invalid owned IPsec connection %q", conn.Name)
+		}
+		for _, state := range conn.SAs {
+			if !state.valid() {
+				return receipt{}, errors.New("invalid native IPsec ownership receipt")
+			}
 		}
 	}
 	for _, key := range state.SharedKeys {
