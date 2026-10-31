@@ -64,6 +64,31 @@ func TestLogRetentionExplicitEventPolicyOwnsIdleExpiry(t *testing.T) {
 			if rows != 1 || delivered.Load() != 0 {
 				t.Fatalf("generic idle prune bypassed the policy: rows=%d archive=%d status=%v", rows, delivered.Load(), status)
 			}
+			if status["warning"] == "" || status["archiveScope"] != "retainedRows" {
+				t.Fatalf("event journal limits were not disclosed: %v", status)
+			}
+			if !notDue && (status["phase"] != "Degraded" || status["reason"] != "EventJournalSafetyBound") {
+				t.Fatalf("unsupported long retention claimed Applied: %v", status)
+			}
+			// When the explicit policy becomes due, it must still archive
+			// before deleting its own eligible record.
+			if _, err := db.Exec(`UPDATE events SET created_at = ?`, time.Now().Add(-96*time.Hour).UTC().Format(time.RFC3339Nano)); err != nil {
+				t.Fatal(err)
+			}
+			status["lastRunAt"] = time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339Nano)
+			if err := store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", "events", status); err != nil {
+				t.Fatal(err)
+			}
+			if err := controller.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.QueryRow(`SELECT count(*) FROM events WHERE reason = 'Old'`).Scan(&rows); err != nil {
+				t.Fatal(err)
+			}
+			if rows != 0 || delivered.Load() != 1 {
+				t.Fatalf("explicit archive owner did not expire its record: rows=%d archive=%d", rows, delivered.Load())
+			}
+
 		})
 	}
 }

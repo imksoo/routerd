@@ -34,6 +34,7 @@ const (
 
 type SQLiteStore struct {
 	path                     string
+	retentionFile            os.FileInfo
 	db                       *sql.DB
 	now                      func() time.Time
 	generation               int64
@@ -65,7 +66,27 @@ type objectRef struct {
 
 type objectStatus map[string]any
 
+// sqliteStateURI preserves SQLite's explicit memory database while treating
+// every filesystem input as an escaped absolute path, independent of later cwd.
+func sqliteStateURI(path string) (url.URL, string, error) {
+	if strings.IndexByte(path, 0) >= 0 {
+		return url.URL{}, "", fmt.Errorf("state database path contains NUL")
+	}
+	if path == ":memory:" {
+		return url.URL{Scheme: "file", Opaque: path}, path, nil
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return url.URL{}, "", err
+	}
+	return url.URL{Scheme: "file", Path: absolute}, absolute, nil
+}
+
 func OpenSQLite(path string) (*SQLiteStore, error) {
+	u, path, err := sqliteStateURI(path)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, err
 	}
@@ -73,7 +94,6 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 	// premise. A deferred WAL snapshot cannot upgrade after another connection
 	// commits, even with busy_timeout. The driver keeps ReadOnly snapshots
 	// deferred, so topology and checkpoint GETs still require no writer lock.
-	u := url.URL{Scheme: "file", Path: path}
 	q := u.Query()
 	q.Set("_txlock", "immediate")
 	u.RawQuery = q.Encode()
@@ -93,8 +113,16 @@ PRAGMA wal_checkpoint(TRUNCATE);
 		_ = db.Close()
 		return nil, err
 	}
+	var identity os.FileInfo
+	if path != ":memory:" {
+		identity, err = os.Stat(path)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
 	store := &SQLiteStore{
-		path: path, db: db, now: time.Now,
+		path: path, retentionFile: identity, db: db, now: time.Now,
 		eventJournalMaxRows:  defaultEventJournalMaxRows,
 		eventJournalMaxBytes: defaultEventJournalMaxPayloadBytes,
 	}
@@ -118,7 +146,10 @@ func OpenSQLiteReadOnlyImmutable(path string) (*SQLiteStore, error) {
 }
 
 func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
-	u := url.URL{Scheme: "file", Path: path}
+	u, path, err := sqliteStateURI(path)
+	if err != nil {
+		return nil, err
+	}
 	q := u.Query()
 	q.Set("mode", "ro")
 	if immutable {
@@ -138,7 +169,15 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &SQLiteStore{path: path, db: db, now: time.Now}, nil
+	var identity os.FileInfo
+	if path != ":memory:" {
+		identity, err = os.Stat(path)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+	}
+	return &SQLiteStore{path: path, retentionFile: identity, db: db, now: time.Now}, nil
 }
 
 func (s *SQLiteStore) Get(name string) Value {

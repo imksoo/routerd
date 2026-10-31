@@ -137,7 +137,7 @@ func TestLogRetentionActualGenerationUsesItsCustomStateFileAndRecoversArchive(t 
 	if err != nil || value.Value != "keep" {
 		t.Fatalf("retention changed non-log state: %+v %v", value, err)
 	}
-	source, err := store.LogRetentionPath()
+	source, _, err := store.LogRetentionSource()
 	if err != nil || source != path {
 		t.Fatalf("actual state source=%q want=%q err=%v", source, path, err)
 	}

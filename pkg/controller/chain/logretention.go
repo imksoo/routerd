@@ -5,6 +5,8 @@ package chain
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"maps"
 	"slices"
 	"time"
 
@@ -19,7 +21,7 @@ import (
 // Status and journal data have different owners in a controller generation:
 // the evented status adapter must not hide the actual SQLite source.
 type logRetentionData interface {
-	LogRetentionPath() (string, error)
+	LogRetentionSource() (string, fs.FileInfo, error)
 	PruneEventsOlderThan(time.Time) (int64, error)
 }
 
@@ -31,6 +33,8 @@ type LogRetentionController struct {
 	DryRun bool
 }
 
+const eventRetentionWarning = "The event journal's independent write-time age and capacity limits take precedence; archives include only retained rows."
+
 func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	// Dry-run must not open external log databases, archive records, vacuum,
 	// or prune the journal. Even an isolated state snapshot can reference
@@ -41,6 +45,7 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	explicitEvents := false
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogRetention" {
 			continue
@@ -49,16 +54,45 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !retentionDue(c.Store.ObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name), spec.Schedule) {
+		eventPolicy := len(spec.Signals) == 0 || slices.Contains(spec.Signals, "events")
+		explicitEvents = explicitEvents || eventPolicy
+		duration, err := logstore.ParseRetention(spec.Retention)
+		if err != nil {
+			return fmt.Errorf("%s retention %q: %w", res.ID(), spec.Retention, err)
+		}
+		previous, err := c.Store.ReadObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !retentionDue(previous, spec.Schedule) {
+			if eventPolicy {
+				status := maps.Clone(previous)
+				status["warning"] = eventRetentionWarning
+				status["archiveScope"] = "retainedRows"
+				if duration > 24*time.Hour {
+					status["phase"] = "Degraded"
+					status["reason"] = "EventJournalSafetyBound"
+				}
+				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name, status); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		stateFile := ""
+		var stateIdentity fs.FileInfo
 		if len(spec.Signals) == 0 || slices.Contains(spec.Signals, "events") || slices.Contains(spec.Signals, "accessLogs") || slices.Contains(spec.Signals, "pluginRuns") {
 			if c.Data == nil {
 				return fmt.Errorf("%s state log database is unavailable", res.ID())
 			}
-			stateFile, err = c.Data.LogRetentionPath()
+			stateFile, stateIdentity, err = c.Data.LogRetentionSource()
 			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}
@@ -74,11 +108,10 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		var total int64
 		var targets []map[string]any
 		for _, target := range targetSpecs {
-			duration, err := logstore.ParseRetention(target.Retention)
-			if err != nil {
-				return fmt.Errorf("%s retention %q: %w", res.ID(), target.Retention, err)
-			}
 			retentionTarget := logstore.RetentionTarget{File: target.File, Retention: duration, Signals: target.Signals}
+			if target.File == stateFile {
+				retentionTarget.Identity = stateIdentity
+			}
 			if archive != nil {
 				retentionTarget.BeforeDelete = func(record logstore.RetentionRecord) error {
 					return archive.EmitRecord(record.Signal, record.Values)
@@ -98,6 +131,14 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			"targets":   targets,
 			"deleted":   total,
 		}
+		if eventPolicy {
+			status["warning"] = eventRetentionWarning
+			status["archiveScope"] = "retainedRows"
+			if duration > 24*time.Hour {
+				status["phase"] = "Degraded"
+				status["reason"] = "EventJournalSafetyBound"
+			}
+		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -111,9 +152,10 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		}
 	}
 	// The event journal is part of the router's safety envelope, not an
-	// opt-in observability feature. Enforce its age bound even when no
-	// LogRetention resource is declared and when the journal is otherwise idle.
-	if c.Data != nil {
+	// opt-in observability feature. Without an explicit events policy, prune
+	// the idle journal here. A declared policy alone owns idle archive/expiry;
+	// the state store's independent write-time safety bounds still apply.
+	if c.Data != nil && !explicitEvents {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
