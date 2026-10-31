@@ -152,7 +152,7 @@ func (e *Engine) evaluate(router *api.Router, includePlan bool) (*Result, error)
 		case "DHCPv4Reservation":
 			e.observeDHCPv4Reservation(res, includePlan, &rr)
 		case "DHCPv6Address":
-			e.observeDHCP(res, aliases, policies, "ipv6", includePlan, &rr)
+			e.observeDHCPv6Address(res, aliases, includePlan, &rr)
 		case "IPv6RAAddress":
 			e.observeIPv6RAAddress(res, aliases, policies, includePlan, &rr)
 		case "DHCPv6PrefixDelegation":
@@ -1693,36 +1693,20 @@ func (e *Engine) observeIPv4Static(res api.Resource, aliases map[string]string, 
 	}
 }
 
-func (e *Engine) observeDHCP(res api.Resource, aliases map[string]string, policies map[string]interfacePolicy, family string, includePlan bool, rr *ResourceResult) {
-	iface := stringSpec(res, "interface")
-	ifname := aliases[iface]
-	policy := policies[iface]
-	client := stringSpecDefault(res, "client", "dhcpcd")
-
-	rr.Observed["interface"] = iface
-	rr.Observed["ifname"] = ifname
-	rr.Observed["family"] = family
-	rr.Observed["client"] = client
-
-	if dhcpClientAvailable(client) {
-		rr.Observed["clientAvailable"] = "true"
-	} else {
-		rr.Observed["clientAvailable"] = "false"
-		if includePlan {
-			rr.Warnings = append(rr.Warnings, fmt.Sprintf("%s is required to ensure DHCP on this host", client))
-		}
+func (e *Engine) observeDHCPv6Address(res api.Resource, aliases map[string]string, includePlan bool, rr *ResourceResult) {
+	spec, err := res.DHCPv6AddressSpec()
+	if err != nil {
+		rr.Phase = "Blocked"
+		rr.Warnings = append(rr.Warnings, err.Error())
+		return
 	}
+	ifname := aliases[spec.Interface]
+	rr.Observed["interface"] = spec.Interface
+	rr.Observed["ifname"] = ifname
+	rr.Observed["family"] = "ipv6"
+	rr.Observed["client"] = "routerd-dhcpv6-client"
 	if includePlan {
-		if !policy.Managed || policy.Owner == "external" {
-			rr.Plan = append(rr.Plan, "observe only; referenced interface is externally managed")
-			return
-		}
-		if policy.RequiresAdoption {
-			rr.Phase = "RequiresAdoption"
-			rr.Plan = append(rr.Plan, "blocked: referenced interface requires adoption before routerd manages DHCP")
-			return
-		}
-		rr.Plan = append(rr.Plan, fmt.Sprintf("ensure %s DHCP client %s is running for %s", family, client, ifname))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("request DHCPv6 IA_NA through the per-interface supervised client on %s; apply finite /128 addresses and require DAD before Applied", ifname))
 	}
 }
 

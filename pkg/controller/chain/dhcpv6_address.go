@@ -76,7 +76,11 @@ func (c DHCPv6AddressController) Reconcile(ctx context.Context) error {
 	for name := range active {
 		names[name] = true
 	}
-	if lister, ok := c.Store.(interface {
+	inventory := c.Store
+	if evented, ok := inventory.(eventedStore); ok {
+		inventory = evented.Store
+	}
+	if lister, ok := inventory.(interface {
 		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
 	}); ok {
 		statuses, err := lister.ListObjectStatuses()
@@ -124,7 +128,10 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 		}
 		return e
 	}
-	state.Phase, state.Reason, state.Message = "Pending", "WaitingForLease", ""
+	if state.Phase == "" {
+		state.Phase, state.Reason = "Pending", "WaitingForLease"
+	}
+	state.Message = ""
 	var source dhcpv6AddressSource
 	if active {
 		if c.Source == nil {
@@ -184,6 +191,9 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 			return a.Address == d.Address && a.AcquiredAt.Equal(d.AcquiredAt)
 		})
 	})
+	if !slices.Equal(state.Leases, record.State.Leases) || !sameDHCPv6Association(state.Source, record.State.Source) {
+		state.Phase, state.Reason = "Pending", "LeaseChanged"
+	}
 	if err := save(); err != nil {
 		return err
 	}
@@ -204,6 +214,7 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 				continue
 			}
 			if obs.dadFailed && owned.Held {
+				state.Native.Addresses[i].Ready = false
 				address := netip.MustParsePrefix(owned.Address).Addr().String()
 				if !slices.ContainsFunc(state.PendingDeclines, func(d routerstate.DHCPv6AddressDecline) bool {
 					return d.Address == address && d.AcquiredAt.Equal(owned.AcquiredAt)
@@ -299,13 +310,15 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 			return err
 		}
 		if state.Native != nil {
-			for _, owned := range state.Native.Addresses {
+			for j, owned := range state.Native.Addresses {
 				if owned.Address == address && owned.Held && owned.Pending == nil {
 					obs, e := c.observe(ctx, state.Native.IfName, address, state.Native.ParentToken)
 					if e != nil {
 						return e
 					}
-					if obs.ifIndex == state.Native.IfIndex && obs.scope == state.Native.Scope && obs.parentToken == state.Native.ParentToken && obs.usable && c.now().Before(owned.ValidUntil) {
+					ready := obs.ifIndex == state.Native.IfIndex && obs.scope == state.Native.Scope && obs.parentToken == state.Native.ParentToken && obs.usable && c.now().Before(owned.ValidUntil)
+					state.Native.Addresses[j].Ready = ready
+					if ready {
 						applied++
 					}
 				}
@@ -314,8 +327,11 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 	}
 	if applied > 0 {
 		state.Phase, state.Reason = "Applied", "AddressReady"
-	} else if len(state.Leases) > 0 {
-		state.Reason = "WaitingForDAD"
+	} else {
+		state.Phase, state.Reason = "Pending", "WaitingForLease"
+		if len(state.Leases) > 0 {
+			state.Reason = "WaitingForDAD"
+		}
 	}
 	if len(state.PendingDeclines) > 0 {
 		state.Reason = "DuplicateAddress"
@@ -359,8 +375,8 @@ func (c DHCPv6AddressController) applyAddress(ctx context.Context, store dhcpv6A
 			}
 		}
 	}
-	preferredUntil := lease.AcquiredAt.Add(time.Duration(lease.Preferred) * time.Second)
-	validUntil := lease.AcquiredAt.Add(time.Duration(lease.Valid) * time.Second)
+	preferredUntil := dhcpv6AddressDeadline(lease.AcquiredAt, lease.Preferred)
+	validUntil := dhcpv6AddressDeadline(lease.AcquiredAt, lease.Valid)
 	if index >= 0 {
 		owned := state.Native.Addresses[index]
 		if owned.Pending != nil {
@@ -423,6 +439,9 @@ func (c DHCPv6AddressController) applyAddress(ctx context.Context, store dhcpv6A
 	}
 	if !sameDHCPv6Association(current.Config, state.Source) {
 		return fmt.Errorf("DHCPv6 source changed before apply")
+	}
+	if !fresh && !c.now().Before(state.Native.Addresses[index].ValidUntil) {
+		return fmt.Errorf("previous DHCPv6 native ownership expired before refresh")
 	}
 	preferred := remainingPDLifetime(lease.AcquiredAt, uint32(lease.Preferred), c.now())
 	valid := remainingPDLifetime(lease.AcquiredAt, uint32(lease.Valid), c.now())
@@ -504,4 +523,11 @@ func (c DHCPv6AddressController) observe(ctx context.Context, ifname, address, p
 		observed.parentToken = after.Token
 	}
 	return observed, nil
+}
+
+func dhcpv6AddressDeadline(acquired time.Time, seconds int64) time.Time {
+	if seconds == 0xffffffff {
+		return time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+	}
+	return acquired.Add(time.Duration(seconds) * time.Second)
 }

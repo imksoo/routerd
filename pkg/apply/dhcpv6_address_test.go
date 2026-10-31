@@ -11,7 +11,7 @@ func TestDHCPv6AddressPlanUsesNativeSupervisorOwner(t *testing.T) {
 	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Address"}, Metadata: api.ObjectMeta{Name: "wan-address"}, Spec: api.DHCPv6AddressSpec{Interface: "wan"}}
 	result := ResourceResult{Observed: map[string]string{}}
 	engine := &Engine{}
-	engine.observeDHCP(resource, map[string]string{"wan": "wan0"}, map[string]interfacePolicy{}, "ipv6", true, &result)
+	engine.observeDHCPv6Address(resource, map[string]string{"wan": "wan0"}, true, &result)
 	if result.Observed["client"] != "routerd-dhcpv6-client" {
 		t.Fatalf("plan advertises a different client: %v", result.Observed)
 	}

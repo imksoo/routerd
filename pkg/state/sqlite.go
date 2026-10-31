@@ -934,6 +934,11 @@ func (s *SQLiteStore) ReadObjectStatus(apiVersion, kind, name string) (map[strin
 			return nil, err
 		}
 	}
+	if apiVersion == "net.routerd.net/v1alpha1" && kind == "DHCPv6Address" {
+		if err := projectDHCPv6AddressStatus(status, raw, s.now().UTC()); err != nil {
+			return nil, err
+		}
+	}
 	out := map[string]any{}
 	for key, value := range status {
 		out[key] = value
@@ -972,6 +977,11 @@ func (s *SQLiteStore) ListObjectStatuses() ([]ObjectStatus, error) {
 		}
 		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6PrefixDelegation" {
 			if err := projectPDStatus(item.Status, raw, s.now().UTC()); err != nil {
+				return nil, err
+			}
+		}
+		if item.APIVersion == "net.routerd.net/v1alpha1" && item.Kind == "DHCPv6Address" {
+			if err := projectDHCPv6AddressStatus(item.Status, raw, s.now().UTC()); err != nil {
 				return nil, err
 			}
 		}

@@ -317,6 +317,29 @@ its resource status and address events retain the declared name. Protocol
 `Bound` is an observation and must not promote native address status to `Applied`.
 Local declaration/supervisor tests do not replace the native ownership gate above.
 
+## Linux native DHCPv6 address gate
+
+Use the same disposable VM prerequisites and a checksum-pinned `make dist`
+archive. `scripts/linux-dhcpv6-native-smoke.sh --disposable-vm ARCHIVE SHA256
+KEA_PACKAGE_ROOT` runs routerd itself with its supervisor and native address
+controller. Fixed runtime/state paths are mounted privately inside the fixture.
+
+Pass requires an independent Kea lease, an exact finite `/128`, completed DAD,
+bidirectional peer traffic, service stop/restart with the same SQLite acquisition,
+natural Renew, actual kernel expiry while Kea is stopped, automatic reacquisition,
+and configuration removal that completes native withdrawal before deleting the
+receipt. An independent host claiming the leased address must cause DAD failure,
+a server-observed Decline and withdrawal of the failed local address.
+
+The helper owns protocol transactions; the address controller owns native effects.
+Unknown helper state does not extend or immediately revoke a known valid lease.
+Only DAD-ready, unexpired addresses appear as applied addresses. A lost native
+operation acknowledgment retains pending ownership instead of adopting a present
+foreign tuple. Service stop leaves finite addresses to their existing deadlines;
+removing the declaration requests explicit withdrawal. Retain the procedure and
+scoped verdict, and delete successful raw output. This gate does not qualify WAN
+routing, transit forwarding, FreeBSD, or all routerd 1.0 functions.
+
 ## Linux DHCP and firewall withdrawal gate
 
 Run the packaged service in an empty disposable VM with independent management

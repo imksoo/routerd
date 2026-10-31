@@ -36,6 +36,7 @@ type DHCPv6AddressIntent struct {
 
 type DHCPv6OwnedAddress struct {
 	Address        string               `json:"address"`
+	Ready          bool                 `json:"ready"`
 	Held           bool                 `json:"held"`
 	PreferredUntil time.Time            `json:"preferredUntil"`
 	ValidUntil     time.Time            `json:"validUntil"`
@@ -161,7 +162,7 @@ func (s *SQLiteStore) SaveDHCPv6AddressRecord(name string, expected DHCPv6Addres
 	document := dhcpv6AddressDocument{Owner: owner, State: next, Phase: next.Phase, Reason: next.Reason, Message: next.Message, IfName: next.Source.IfName, Addresses: []string{}}
 	if next.Phase == "Applied" && next.Native != nil {
 		for _, address := range next.Native.Addresses {
-			if address.Held && address.Pending == nil {
+			if address.Held && address.Ready && address.Pending == nil {
 				document.Addresses = append(document.Addresses, address.Address)
 			}
 		}
@@ -227,6 +228,16 @@ func (s *SQLiteStore) DeleteDHCPv6AddressRecord(name string, expected DHCPv6Addr
 }
 
 func validateDHCPv6AddressState(state DHCPv6AddressState) error {
+	if len(state.PendingDeclines) > 2048 {
+		return fmt.Errorf("DHCPv6 decline bound exceeded")
+	}
+	for _, d := range state.PendingDeclines {
+		ip, err := netip.ParseAddr(d.Address)
+		if err != nil || !ip.Is6() || ip.Is4In6() || d.AcquiredAt.IsZero() || d.ServerDUID == "" {
+			return fmt.Errorf("invalid pending DHCPv6 decline")
+		}
+	}
+
 	if len(state.Leases) > 2048 {
 		return fmt.Errorf("DHCPv6 address lease bound exceeded")
 	}
@@ -265,6 +276,34 @@ func validateDHCPv6AddressState(state DHCPv6AddressState) error {
 				return fmt.Errorf("invalid DHCPv6 pending lifetime")
 			}
 		}
+	}
+	return nil
+}
+
+// Display expiry must not require a running controller or discard cleanup state.
+func projectDHCPv6AddressStatus(status map[string]any, raw string, now time.Time) error {
+	var doc dhcpv6AddressDocument
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return err
+	}
+	if doc.Owner == "" {
+		return nil
+	}
+	addresses := []string{}
+	if doc.State.Phase == "Applied" && doc.State.Native != nil {
+		for _, a := range doc.State.Native.Addresses {
+			if a.Held && a.Ready && a.Pending == nil && now.Before(a.ValidUntil) {
+				addresses = append(addresses, a.Address)
+			}
+		}
+	}
+	status["addresses"] = addresses
+	status["address"] = ""
+	if len(addresses) > 0 {
+		status["address"] = addresses[0]
+	} else if doc.State.Phase == "Applied" {
+		status["phase"] = "Pending"
+		status["reason"] = "AddressExpired"
 	}
 	return nil
 }
