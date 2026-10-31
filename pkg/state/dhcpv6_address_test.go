@@ -152,3 +152,33 @@ func TestDHCPv6AddressRecordCannotForgeWithdrawalByChangingExpectedState(t *test
 		t.Fatal("unpersisted withdrawal discarded actual native ownership")
 	}
 }
+
+func TestDHCPv6AddressProjectionExpiresWithoutAControllerWrite(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	s.now = func() time.Time { return now }
+	state := dhcpv6AddressStateFixture()
+	state.Phase = "Applied"
+	state.Native.Addresses = []DHCPv6OwnedAddress{{Address: "2001:db8::123/128", Held: true, Ready: true, AcquiredAt: now, PreferredUntil: now.Add(time.Second), ValidUntil: now.Add(2 * time.Second)}}
+	if _, err := s.SaveDHCPv6AddressRecord("wan", DHCPv6AddressRecord{}, state); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.ObjectStatus(api.NetAPIVersion, "DHCPv6Address", "wan"); got["address"] != "2001:db8::123/128" {
+		t.Fatalf("fresh projection=%v", got)
+	}
+	now = now.Add(3 * time.Second)
+	if got := s.ObjectStatus(api.NetAPIVersion, "DHCPv6Address", "wan"); got["phase"] == "Applied" || got["address"] != "" {
+		t.Fatalf("expired address still advertised: %v", got)
+	}
+	record, err := s.ReadDHCPv6AddressRecord("wan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State.Native == nil {
+		t.Fatal("read-only projection erased cleanup ownership")
+	}
+}
