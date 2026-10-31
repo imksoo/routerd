@@ -62,7 +62,7 @@ cleanup() {
     printf '%s\n' "$child_rc" >"$work/server.wait"
     [[ $child_rc == 0 ]] || rc=1
   fi
-  if [[ $peer_created == 1 ]] && ip netns list | awk '{print $1}' | grep -Fxq "$peer"; then
+  if [[ $peer_created == 1 ]] && ip netns list | cut -d' ' -f1 | grep -Fxq "$peer"; then
     ip netns pids "$peer" >"$work/peer-pids.after"
     [[ ! -s "$work/peer-pids.after" ]] || rc=1
     ip netns del "$peer" || rc=1
@@ -114,12 +114,12 @@ server_pid=$!
 tcpdump -n -e -vv -l -s 26 -i pppoe-wan 'ether proto 0x8863 or ether proto 0x8864' >"$work/wire-headers.log" 2>&1 &
 capture_pid=$!
 for _ in $(seq 1 50); do
-  if [[ -s "$work/peer.pid" ]] && ip netns exec "$peer" awk 'NR>1 && toupper($4)=="8863" {found=1} END{exit !found}' /proc/net/packet; then break; fi
+  if [[ -s "$work/peer.pid" ]] && ip netns exec "$peer" python3 -c 'import pathlib;raise SystemExit(not any(l.split()[3].upper()=="8863" for l in pathlib.Path("/proc/net/packet").read_text().splitlines()[1:]))'; then break; fi
   kill -0 "$server_pid"
   sleep .1
 done
 [[ -s "$work/peer.pid" ]]
-ip netns exec "$peer" awk 'NR>1 && toupper($4)=="8863" {found=1} END{exit !found}' /proc/net/packet
+ip netns exec "$peer" python3 -c 'import pathlib;raise SystemExit(not any(l.split()[3].upper()=="8863" for l in pathlib.Path("/proc/net/packet").read_text().splitlines()[1:]))'
 cat >"$work/router.yaml" <<EOF
 apiVersion: routerd.net/v1alpha1
 kind: Router
