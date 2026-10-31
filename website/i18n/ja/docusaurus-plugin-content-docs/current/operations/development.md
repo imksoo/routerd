@@ -246,6 +246,35 @@ WAN 経路、転送、routerd 全体の監督、FreeBSD、`DHCPv6Address` リソ
 OS への適用状態を `Applied` にする根拠にはなりません。宣言・監督のローカルテストだけで
 上記の実機所有権検証を代替しないでください。
 
+## Linux native Health to PBR gate
+
+`make dist` で正式archiveを作り、SHA256を固定します。iproute2、nftables、
+Python 3、curl、jqとnamespace/mount権限を備えたLinux試験ホストで実行します。
+
+```sh
+sudo make check-routerd15-health-pbr-native-linux \
+  HEALTH_PBR_ARCHIVE=/absolute/path/to/routerd-archive.tar.gz \
+  HEALTH_PBR_ARCHIVE_SHA256=EXPECTED_SHA256 \
+  HEALTH_PBR_WORK_PARENT=/absolute/path/to/existing/private/work-directory
+```
+
+専用network/mount namespace、独立した二つのHTTP上流とLAN clientを用意し、
+両経路を環境認証してから認証用routeを撤去します。既存の `/run/routerd` と
+`/var/lib/routerd` はprivate mountに置き換え、ホストのroute/firewall/serviceは変更しません。
+
+合格条件は正式packageのHealth worker→IPC→routerdの選択→実HTTP転送、
+優先上流の停止による代替への切替、上流だけの再開による自動復帰です。
+監視worker停止後は古い成功判定が失効し、155秒以内に代替へ切り替わることを要求します
+（鮮度期限の最小2分＋通常poll最大30秒＋実行余裕）。worker再開とrouterd再起動後も転送でき、設定撤去後は
+所有rule/route/default mark tableが消え、client転送が止まる必要があります。
+全上流停止時はPending/NoReadyCandidatesとなりmark tableを撤去し、上流再開だけで
+転送が復帰すること、無関係なrule/routeを保持することも確認します。
+
+Health helperの起動はfixtureが担当するため、systemd起動、package更新、NAT、
+全policy/source mode、VRRP、FreeBSDの認証は含みません。source/archive/scriptの
+識別子と限定した判定を残し、成功時の生出力は削除します。失敗時は所有processを止め、
+指定work directory内の診断を保持して再現に使います。
+
 ## Linux の DHCPv6 アドレス実適用試験
 
 同じ専用 VM の前提と checksum を固定した `make dist` archive を使い、
