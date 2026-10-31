@@ -75,3 +75,30 @@ failures. A configured provider, an Applied display or a compiled test binary
 does not establish communication. These isolated checks do not qualify actual
 clock discipline, packaged service-manager behavior, physical failure domains or
 target-storage crash durability.
+
+## Pending: actual FreeBSD rc.d and sysrc lifecycle
+
+This next gate is a design, not an executed qualification. Existing packet checks
+use a private provider adapter and do not establish packaged rc.d withdrawal.
+
+The proposed gate uses private filesystem VNET jails, with base binaries/libraries
+mounted read-only and private `/etc`, `/var` and `/usr/local`. It copies the VM's
+unchanged `rc.subr`, `rc.d/ntpd` and default rc configuration into that private
+root; actual `service ntpd` and `sysrc` run inside it. The prior `path=/` packet
+jails are unsuitable because their rc.conf would be shared. No host rc.conf,
+NTP service or clock is changed. Both existing effect-free jail clock guards
+must return EPERM before any daemon starts. Private `ntpd_user=root` avoids a
+MAC-policy module load. All mounts/jails must be recorded and removed by exact
+identity, followed by independent absence checks; unknown cleanup cannot pass.
+
+For standalone Client, standalone Server and shared Client+Server, the gate will
+check initial rc values, acquisition, actual PID/socket, stop/reopen recovery,
+full declaration withdrawal, prior rc-value restoration and final process/socket
+absence. A receiver/kernel limitation must be distinguished from a product
+withdrawal failure. Ntpd behavior after removal of its selected configuration is
+not assumed; preserve command output and native observations even on failure.
+
+Primary sources: [FreeBSD 14.3 ntpd rc.d](https://github.com/freebsd/freebsd-src/blob/releng/14.3/libexec/rc/rc.d/ntpd),
+[rc.subr](https://github.com/freebsd/freebsd-src/blob/releng/14.3/libexec/rc/rc.subr),
+[sysrc](https://github.com/freebsd/freebsd-src/blob/releng/14.3/usr.sbin/sysrc/sysrc).
+Actual VM execution remains a separate, explicitly scoped operation.
