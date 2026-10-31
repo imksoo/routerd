@@ -204,6 +204,22 @@ printf 'PASS: real DAD conflict triggers server-observed Decline and native with
 apply_config "$work/empty.yaml"
 await_withdrawn
 peer_run ip -6 addr del "$address/128" dev peer0
+cp "$work/candidate.yaml" "$work/combined.yaml"
+cat >> "$work/combined.yaml" <<'YAML'
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata: {name: prefix}
+      spec: {interface: wan, client: routerd-dhcpv6-client}
+YAML
+routerd validate --config "$work/combined.yaml"
+apply_config "$work/combined.yaml"
+await_applied
+curl --silent --fail --max-time 2 --unix-socket /run/routerd/dhcpv6-client/prefix.sock http://localhost/v1/lease > "$work/combined-lease.json"
+jq -e '.requestMode==2 and (.addresses|length)>0 and (.prefixes|length)>0' "$work/combined-lease.json" >/dev/null
+state | jq -e '.nativeState.source.worker=="prefix" and .phase=="Applied"' >/dev/null
+printf 'PASS: shared PD/NA worker retains independent associations and native /128 ownership\n'
+apply_config "$work/empty.yaml"
+await_withdrawn
 stop_router
 kill "$server"; wait "$server"; server=''
 ip link del wan0
