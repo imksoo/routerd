@@ -37,12 +37,15 @@ if [[ ${1:-} != --inside ]]; then
   trap cleanup_outer EXIT
   ip -j link show | jq -S '[.[]|{ifindex,ifname,mtu,address,master,kind:.linkinfo.info_kind}]' >"$work/outer-links.before.json"
   rc=0
-  unshare --mount --net --pid --fork --mount-proc bash "$0" --inside "$work" "$product" "$deps" "$auth" || rc=$?
+  ROUTERD_PPPOE_OUTER_NETNS=$(readlink /proc/self/ns/net) ROUTERD_PPPOE_OUTER_MNTNS=$(readlink /proc/self/ns/mnt) unshare --mount --net --pid --fork --mount-proc bash "$0" --inside "$work" "$product" "$deps" "$auth" || rc=$?
   ip -j link show | jq -S '[.[]|{ifindex,ifname,mtu,address,master,kind:.linkinfo.info_kind}]' >"$work/outer-links.after.json"
   cmp "$work/outer-links.before.json" "$work/outer-links.after.json" || rc=1
   exit "$rc"
 fi
 
+# Refuse direct internal-mode execution before any mount or cleanup effect.
+[[ $$ == 1 && -n ${ROUTERD_PPPOE_OUTER_NETNS:-} && -n ${ROUTERD_PPPOE_OUTER_MNTNS:-} ]]
+[[ $(readlink /proc/self/ns/net) != "$ROUTERD_PPPOE_OUTER_NETNS" && $(readlink /proc/self/ns/mnt) != "$ROUTERD_PPPOE_OUTER_MNTNS" ]]
 work=$2; product=$3; deps=$4; auth=$5
 stage=setup; router_pid=; server_pid=; capture_pid=; peer=pppoe-ac; peer_created=0; state_mounted=0
 cleanup() {
