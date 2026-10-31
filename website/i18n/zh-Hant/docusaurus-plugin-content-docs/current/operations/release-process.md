@@ -202,7 +202,7 @@ make third-party-licenses
 Debian 與 Ubuntu 上，安裝程式使用 `apt-get` 安裝下列套件：
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl charon-systemd iptables keepalived
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack conntrackd iproute2 iputils-ping iputils-arping iputils-tracepath traceroute net-tools kmod radvd strongswan-swanctl charon-systemd iptables keepalived
 ```
 
 Fedora 系統上，安裝程式使用 `dnf` 安裝下列套件：

@@ -38,7 +38,7 @@ Ubuntu でも、パッケージが事前に導入されていることは前提�
 
 | 分類 | パッケージ |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `charon-systemd`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `conntrackd`, `iproute2`, `iputils-arping`, `traceroute`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `charon-systemd`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 制御 | `procps`, `systemd`, `kmod` |
 
