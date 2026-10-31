@@ -37,6 +37,10 @@ func TestDHCPv6AddressRecordPersistsLeaseAndPendingOwnership(t *testing.T) {
 	if record.Revision != 1 || record.Owner == "" {
 		t.Fatal("record has no durable write identity")
 	}
+	unchanged, err := s.SaveDHCPv6AddressRecord("wan", record, want)
+	if err != nil || unchanged.Revision != record.Revision {
+		t.Fatalf("unchanged state generated another write: %+v %v", unchanged, err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -99,5 +103,36 @@ func TestDHCPv6AddressRecordRejectsStaleAndRecreatedOwner(t *testing.T) {
 	}
 	if _, err := s.SaveDHCPv6AddressRecord("wan", first, first.State); err == nil {
 		t.Fatal("same numeric revision admitted an old owner's write")
+	}
+}
+
+func TestDHCPv6AddressRecordDeletionRequiresWithdrawnCurrentOwner(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	record, err := s.SaveDHCPv6AddressRecord("wan", DHCPv6AddressRecord{}, dhcpv6AddressStateFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDHCPv6AddressRecord("wan", record); err == nil {
+		t.Fatal("pending native ownership was deleted")
+	}
+	next := record.State
+	next.Native = nil
+	withdrawn, err := s.SaveDHCPv6AddressRecord("wan", record, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteDHCPv6AddressRecord("wan", record); err == nil {
+		t.Fatal("stale cleanup acknowledgment deleted current state")
+	}
+	if err := s.DeleteDHCPv6AddressRecord("wan", withdrawn); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadDHCPv6AddressRecord("wan")
+	if err != nil || got.Revision != 0 {
+		t.Fatalf("withdrawn state remains: %+v %v", got, err)
 	}
 }
