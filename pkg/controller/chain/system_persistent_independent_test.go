@@ -47,14 +47,15 @@ func TestReviewUnknownSysctlDeclarationCannotWithdrawAcquiredBlock(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	acquired, err := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", "owned-review")
+	authorityName := routerstate.SysctlPersistentOwnerName("owned-review", "routerd.review.unavailable")
+	acquired, err := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", authorityName)
 	if err != nil || acquired[sysctlPersistentOwnerKey] == nil {
 		t.Fatalf("actual acquisition produced no receipt: status=%+v err=%v", acquired, err)
 	}
 	controller.Router = nil
 	reconcileErr := controller.Reconcile(t.Context())
 	after, readErr := os.ReadFile(path)
-	current, statusErr := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", "owned-review")
+	current, statusErr := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", authorityName)
 	if reconcileErr == nil || readErr != nil || statusErr != nil || !bytes.Equal(before, after) || !reflect.DeepEqual(acquired[sysctlPersistentOwnerKey], current[sysctlPersistentOwnerKey]) {
 		t.Fatalf("unknown Router withdrew a proven block: err=%v readErr=%v statusErr=%v before=%q after=%q receiptBefore=%+v receiptAfter=%+v", reconcileErr, readErr, statusErr, before, after, acquired[sysctlPersistentOwnerKey], current[sysctlPersistentOwnerKey])
 	}
