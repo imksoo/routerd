@@ -81,6 +81,19 @@ spec:
 
 The MVP merge policy supports only `conflict: reject`.
 
+Startup sources may also declare `triggers` with the same interval/event shape
+as Plugin triggers. The daemon takes their union for the referenced Plugin,
+deduplicates equal intervals/topics, and executes through one controller worker.
+Each interval keeps its own deadline; event triggers use explicitly named bus
+topics or explicit bus wildcard patterns. See
+[Plugin triggers](../plugin-protocol.md#triggers).
+
+Failed automatic execution or publication does not advance the accepted source
+generation or extend its expiry. An expired part remains inactive until a
+successful fresh observation is published. Daemon preview, sandbox, and standby
+modes do not execute automatic Plugins. Cancellation stops and reaps an active
+child before the controller finishes.
+
 The configured `ttl` bounds direct `Plugin/<name>` publications, including
 manual `routerctl plugin run` invocations. When multiple sources bind the same
 plugin, the shortest declared bound applies. A shorter plugin-result lifetime

@@ -5,14 +5,16 @@ toolchain in `go.mod`, `/bin/sh`, and `sha256sum`. `GO` can name that toolchain'
 absolute executable. The script uses one build worker and private temporary
 files. It starts no shared service and changes no host network configuration.
 
-The first check uses the production EventSubscription controller, its default
-plugin runner, an independent executable, and SQLite. It stops an invocation
-while its actual process is alive, waits for controller acknowledgement, checks
-that the process no longer exists, then retries through a new owner. A real
-exit status 7 publishes nothing. A later successful invocation publishes its
-resource. Reopening SQLite does not replay an already acknowledged event.
+## Checks and evidence
 
-The second check uses a separately built production `routerctl` executable.
+The EventSubscription check uses its production controller, default plugin
+runner, an independent executable, and SQLite. It stops an invocation while its
+actual process is alive, waits for controller acknowledgement, checks that the
+process no longer exists, then retries through a new owner. A real exit status 7
+publishes nothing. A later successful invocation publishes its resource.
+Reopening SQLite does not replay an already acknowledged event.
+
+The CLI check uses a separately built production `routerctl` executable.
 Each invocation is an independent process. It verifies the actual stdin request,
 manual publication, durable generations, and rendered effective configuration.
 An allowed mask suppresses a startup route; removing its DynamicOverridePolicy
@@ -20,26 +22,76 @@ rejects the mask. A failing plugin preserves the previous generation and its
 original expiry. Actual wall-clock expiry restores the startup route. Another
 successful process advances the generation and restores the dynamic route.
 
-These are local plugin protocol, process lifetime, persistence, and effective
-configuration checks. They do not install a kernel route, qualify forwarding,
-exercise provider credentials, execute actionPlans, or replace independent
-network-peer/platform qualification. Evidence remains in the printed temporary
-directory and includes the executed revision, source hashes, binary hash, and
-both test logs. Ordinary package tests skip the separate-binary check unless
+The prepared-owner package checks trigger union, independent interval deadlines,
+source lifetime bounds, failure retention, compare-and-swap publication,
+expiry during a publication wait, effective-change notifications, and
+cancellation with actual process reaping. The chain checks use the production
+controller registration and actual executables: interval startup, a second
+invocation from the framework's positive deadline, and a named bus event.
+Preview and standby checks require no process execution or publication.
+
+Evidence remains in the printed temporary directory. It includes the revision,
+Go version, source hashes, the `routerctl` binary hash, and separate
+`subscription.log`, `cli.log`, `owner.log`, and `declared.log` files.
+Ordinary package tests skip the separate-binary CLI check unless
 `ROUTERD_RUN_PLUGIN_PROCESS=1` and `ROUTERCTL_BINARY` are explicitly supplied.
+The script supplies both for that check.
 
-## Entry points still missing
+## Declared execution
 
-In both the 1.0 baseline `e3b49dbb` and the reviewed 1.5 base `f294bb23`,
-`DynamicConfigSource` is decoded and validated, but no runtime caller consumes
-its `pluginRef`, `ttl`, `mergePolicy`, or `triggers`. Likewise, declared
-`Plugin.spec.triggers` are validated and displayed without scheduling a plugin.
-These declarations are not a working periodic or event-bus refresh mechanism.
-The effective lifetime in the demonstrated manual path comes from
-`PluginResult.status.ttl`; it is not bounded by `DynamicConfigSource.spec.ttl`.
+For each startup configuration, the Plugin controller prepares the executable
+specification, allowed context, source lifetime bound, and triggers once. It
+takes the union of `Plugin.spec.triggers` and the triggers of every startup
+`DynamicConfigSource` whose `pluginRef` names that Plugin. Equal interval
+durations and equal event topics are deduplicated.
 
-The reachable execution paths are explicit `routerctl plugin run` and an
-EventSubscription naming a Plugin. DynamicOverridePolicy is consumed when the
-effective configuration is built. The missing DynamicConfigSource scheduler is
-an unfinished advertised entry point; these passing checks do not mark the
-whole plugin-and-dynamic-configuration feature complete.
+Interval work is initially due when the controller starts. Each distinct
+interval keeps its own deadline. Multiple due intervals and a matching event
+produce one invocation for that Plugin in the same reconciliation. After an
+attempt, each interval due by completion advances to completion time plus its
+duration, including after failure; future deadlines are preserved. There is no
+catch-up burst for missed intervals. The existing framework owns the single
+worker and its next wake-up.
+
+Event triggers use the named bus topic in `topic` and the existing bus matching
+rules. An explicitly configured wildcard such as `**` keeps those rules.
+A blank topic is not expanded to all notifications. Synthetic controller startup
+and periodic notifications only enter interval processing. An event-only Plugin
+does not run merely because routerd started.
+
+Direct `Plugin/<name>` publications, automatic or manual, use the shortest
+`ttl` among startup DynamicConfigSources referring to that Plugin. Without
+such a source there is no additional source bound. A shorter result TTL remains
+unchanged. Expiry is measured from the result's original `observedAt`; an
+already expired result is rejected, including if it expires while waiting for
+publication.
+
+A failed invocation or rejected publication leaves the previously accepted
+generation and expiry unchanged. An expired previous part remains inactive
+until a successful fresh result is accepted. A successful refresh with the same
+effective content does not emit a change notification merely for a new
+generation or a later expiry. Changed content and recovery from expiry do emit
+one, preventing repeated identical refreshes from feeding an explicit wildcard
+subscription indefinitely.
+
+Daemon preview, sandbox, and standby modes neither start automatic Plugin
+processes nor consume due work. Manual `routerctl plugin run --dry-run` is a
+different operation: it executes the Plugin to print a candidate without
+publishing. When the controller context is canceled, its child is stopped and
+reaped; a result returned after cancellation cannot be published.
+
+## Qualification boundary
+
+These are local plugin protocol, scheduling, process lifetime, persistence, and
+effective configuration checks. They do not install a kernel route, qualify
+forwarding, exercise provider credentials, or execute actionPlans. Passing them
+does not replace independent network-peer or platform qualification.
+
+The prepared-owner and chain process checks have been executed on Linux.
+FreeBSD test binaries can be cross-compiled from the same source, but
+cross-compilation alone does not establish FreeBSD process or worker behavior.
+Record actual FreeBSD execution separately when performed. No provider/cloud
+integration or privileged network mutation is required by this script.
+
+See [Plugin protocol](../plugin-protocol.md) and
+[Dynamic config reference](../reference/dynamic-config.md).
