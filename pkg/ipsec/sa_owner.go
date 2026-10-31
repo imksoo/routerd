@@ -200,6 +200,9 @@ func (c Controller) observeOwnedSAs(ctx context.Context, state receipt) (receipt
 		if conn.Scope == "" || conn.Scope != scope {
 			return state, errors.New("recorded IPsec connection has no matching kernel scope")
 		}
+		if !conn.Acknowledged {
+			continue
+		} // A name from an intent is not acquisition proof.
 		if len(conn.SAs) != 0 {
 			for _, old := range conn.SAs {
 				if old.Scope != scope {
