@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-3-Clause
-# FreeBSD 14.3 only: owned ntpd processes, disable ntp, private VNET, no rc.d.
+# FreeBSD 14.3 only: owned ntpd processes, denied jail clock privileges, private VNET, no rc.d.
 set -eu
 PATH="$PATH:/usr/sbin:/sbin"
 export PATH
@@ -27,16 +27,22 @@ managed_jid=
 reference_jid=
 module_initial=unknown
 
+# Called by the EXIT trap cleanup chain.
+# shellcheck disable=SC2317
 jail_identity() {
   awk -v wanted_id="jid=$1" -v wanted_name="name=$2" '
     { id=0; name=0; for (i=1;i<=NF;i++) { if ($i==wanted_id) id=1; if ($i==wanted_name) name=1 }; if (id && name) found=1 }
     END { exit !found }' "$3"
 }
+# Called by the EXIT trap cleanup chain.
+# shellcheck disable=SC2317
 jail_remaining() {
   awk -v wanted_id="jid=$1" -v wanted_name="name=$2" '
     { for (i=1;i<=NF;i++) if ($i==wanted_id || $i==wanted_name) found=1 }
     END { exit !found }' "$3"
 }
+# Called by the EXIT trap cleanup chain.
+# shellcheck disable=SC2317
 remove_owned_jail() {
   if [ -z "$1" ]; then cleanup_bad=1; return; fi
   if ! timeout 5 jls -n jid name >"$work/cleanup-jails-$1-before.txt" 2>>"$work/cleanup.log"; then
@@ -48,6 +54,8 @@ remove_owned_jail() {
     cleanup_bad=1
   fi
 }
+# Invoked indirectly by EXIT/HUP/INT/TERM traps.
+# shellcheck disable=SC2317
 cleanup() {
   body_result=$?
   trap - EXIT HUP INT TERM
@@ -112,7 +120,7 @@ echo "ntpd-native-evidence=$work"
 uname -a >"$work/uname.txt"
 sha256 "$binary" >"$work/binary.sha256"
 sha256 "$0" >"$work/script.sha256"
-printf 'FreeBSD 14.3 VNET; disable ntp; packet/ACL only; no shared rc.d or clock changes\n' >"$work/scope.txt"
+printf 'FreeBSD 14.3 VNET; jail denies clock and NTP adjustment; packet/ACL only; no shared rc.d or clock changes\n' >"$work/scope.txt"
 kldstat -v >"$work/modules-before.txt"
 grep -Eq '^Id[[:space:]]' "$work/modules-before.txt"
 if grep -Eq '(^|[[:space:]])if_epair(\.ko)?([[:space:]]|$)' "$work/modules-before.txt"; then
