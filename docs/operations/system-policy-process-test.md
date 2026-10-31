@@ -20,7 +20,7 @@ forwarding value before and after execution. Namespace setup failure is a failed
 gate, not permission to fall back to shared settings.
 
 The native target is maintained with the other development gates in
-[development.md](development.md). It does not install packages, start services or
+[development.md](/operations/development.md). It does not install packages, start services or
 load kernel modules.
 
 ## Behaviors under test

@@ -241,7 +241,7 @@ after exchanges. Declared/reported status remains distinct from communication.
 Local static DNS questions use RD=0; the same-revision resolver refuses upstream
 forwarding on a nonrecursive miss, and unobserved/nonlocal listener addresses
 cannot admit private questions. This does not constrain unrelated/older servers.
-See [doctor operations](../operations/routerctl-doctor.md). Neighbor/conntrack
+See [doctor operations](/operations/routerctl-doctor.md). Neighbor/conntrack
 packet probing, native forwarding/failover and independent client qualification
 remain unexecuted. The scoped Linux IPsec package/systemd/IKE/ESP gate at
 `dc14c486` passes acquisition, unchanged SA retention and foreign-safe withdrawal.

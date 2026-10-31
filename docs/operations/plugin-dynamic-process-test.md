@@ -100,5 +100,5 @@ cross-compilation alone does not establish FreeBSD process or worker behavior.
 Record actual FreeBSD execution separately when performed. No provider/cloud
 integration or privileged network mutation is required by this script.
 
-See [Plugin protocol](../plugin-protocol.md) and
-[Dynamic config reference](../reference/dynamic-config.md).
+See [Plugin protocol](/plugin-protocol.md) and
+[Dynamic config reference](/reference/dynamic-config.md).
