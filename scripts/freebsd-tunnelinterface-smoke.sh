@@ -6,6 +6,8 @@
 # one epair. Reciprocal GIF endpoints in one kernel stack are not a valid
 # dataplane oracle because inner and outer routes collide locally.
 set -eu
+LC_ALL=C
+export LC_ALL
 # Keep diagnostics visible even if a failing compound command redirected output.
 exec 3>&1
 stage=prepare-native
@@ -43,6 +45,13 @@ epair_b=
 own_epair_module=0
 own_gre_module=0
 capture_pid=
+own_r1=0
+own_r2=0
+r1_jid=
+r2_jid=
+epair_valid=0
+body_ok=0
+module_inventory_ready=0
 
 set_stage() {
   stage=$1
@@ -50,6 +59,8 @@ set_stage() {
   printf 'freebsd-tunnelinterface-stage=%s=begin\n' "$stage" >&3
 }
 
+# Called by cleanup through the EXIT trap.
+# shellcheck disable=SC2317
 emit_initial_failure() {
 	for evidence in \
 		failure-native.log failure-config.yaml failure-objects.json \
@@ -72,15 +83,47 @@ emit_initial_failure() {
 	done
 }
 
+# Helpers run only through the EXIT trap cleanup path.
+# shellcheck disable=SC2317
+jail_identity() {
+  awk -v wanted_id="jid=$1" -v wanted_name="name=$2" '
+    { id=0; name=0; for (i=1;i<=NF;i++) { if ($i==wanted_id) id=1; if ($i==wanted_name) name=1 }; if (id && name) found=1 }
+    END { exit !found }' "$3"
+}
+# Called by the EXIT trap cleanup chain.
+# shellcheck disable=SC2317
+jail_remaining() {
+  awk -v wanted_id="jid=$1" -v wanted_name="name=$2" '
+    { for (i=1;i<=NF;i++) if ($i==wanted_id || $i==wanted_name) found=1 }
+    END { exit !found }' "$3"
+}
+# Called by the EXIT trap cleanup chain.
+# shellcheck disable=SC2317
+remove_owned_jail() {
+  if [ -z "$1" ]; then cleanup_bad=1; return; fi
+  if ! timeout 5 jls -n jid name >"$work/cleanup-jails-$1-before.txt" 2>>"$work/cleanup.log"; then
+    cleanup_bad=1
+  elif jail_identity "$1" "$2" "$work/cleanup-jails-$1-before.txt"; then
+    if ! timeout 10 jail -r "$1" >>"$work/cleanup.log" 2>&1; then cleanup_bad=1; fi
+  elif jail_remaining "$1" "$2" "$work/cleanup-jails-$1-before.txt"; then
+    echo "owned jail identity changed: $1 $2" >>"$work/cleanup.log"
+    cleanup_bad=1
+  fi
+}
+
+# shellcheck disable=SC2317
 cleanup() {
-	rc=$?
-	if [ -n "$capture_pid" ]; then
-		kill "$capture_pid" >/dev/null 2>&1 || true
-		wait "$capture_pid" >/dev/null 2>&1 || true
-	fi
-	if [ "$rc" -ne 0 ]; then
+  rc=$?
+  trap - EXIT HUP INT TERM
+  cleanup_bad=0
+  if [ -n "$capture_pid" ]; then
+    kill "$capture_pid" >/dev/null 2>&1 || true
+    capture_exit=0
+    wait "$capture_pid" >/dev/null 2>&1 || capture_exit=$?
+    case "$capture_exit" in 0|124|137|143) ;; *) cleanup_bad=1 ;; esac
+  fi
+  if [ "$rc" -ne 0 ]; then
     printf 'freebsd-tunnelinterface-failure stage=%s exit=%s operation=%s\n' "$stage" "$rc" "$operation" >&3
-    # Use direct commands so the failed operation remains identifiable.
     {
       jls
       for failed_jail in "$r1" "$r2"; do
@@ -92,51 +135,103 @@ cleanup() {
         fi
       done
     } >"$work/failure-native.log" 2>&1 || true
-    if [ -f "$work/router.yaml" ]; then
-      cp "$work/router.yaml" "$work/failure-config.yaml" || true
-    fi
-    if [ -f "$state" ]; then
-      sqlite3 -json "$state" 'SELECT api_version,kind,name,status FROM objects;' >"$work/failure-objects.json" 2>&1 || true
-    fi
+    if [ -f "$work/router.yaml" ]; then cp "$work/router.yaml" "$work/failure-config.yaml" || true; fi
+    if [ -f "$state" ]; then sqlite3 -json "$state" 'SELECT api_version,kind,name,status FROM objects;' >"$work/failure-objects.json" 2>&1 || true; fi
     emit_initial_failure >&3 2>&3 || true
-	fi
-	if jls -j "$r1" >/dev/null 2>&1; then
-		jail -r "$r1" >/dev/null 2>&1 || true
-	fi
-	if jls -j "$r2" >/dev/null 2>&1; then
-		jail -r "$r2" >/dev/null 2>&1 || true
-	fi
-	if [ -n "$epair_a" ] && ifconfig "$epair_a" >/dev/null 2>&1; then
-		ifconfig "$epair_a" destroy >/dev/null 2>&1 || true
-	fi
-	if [ "$own_epair_module" -eq 1 ]; then
-		kldunload if_epair >/dev/null 2>&1 || true
-	fi
-	if [ "$own_gre_module" -eq 1 ]; then
-		kldunload if_gre >/dev/null 2>&1 || true
-	fi
+  fi
+  if [ "$own_r1" -eq 1 ]; then remove_owned_jail "$r1_jid" "$r1"; fi
+  if [ "$own_r2" -eq 1 ]; then remove_owned_jail "$r2_jid" "$r2"; fi
+  if ! timeout 5 jls -n jid name >"$work/cleanup-jails-after.txt" 2>>"$work/cleanup.log"; then
+    cleanup_bad=1
+  else
+    if [ "$own_r1" -eq 1 ] && jail_remaining "$r1_jid" "$r1" "$work/cleanup-jails-after.txt"; then cleanup_bad=1; fi
+    if [ "$own_r2" -eq 1 ] && jail_remaining "$r2_jid" "$r2" "$work/cleanup-jails-after.txt"; then cleanup_bad=1; fi
+  fi
+  if [ "$epair_valid" -eq 1 ]; then
+    for owned_iface in "$epair_a" "$epair_b"; do
+      if ! timeout 5 ifconfig -l >"$work/cleanup-ifconfig-before.txt" 2>>"$work/cleanup.log"; then
+        cleanup_bad=1
+      elif ! tr '[:space:]' '\n' <"$work/cleanup-ifconfig-before.txt" | grep -Fxq lo0; then
+        cleanup_bad=1
+      elif tr '[:space:]' '\n' <"$work/cleanup-ifconfig-before.txt" | grep -Fxq "$owned_iface"; then
+        if ! timeout 10 ifconfig "$owned_iface" destroy >>"$work/cleanup.log" 2>&1; then cleanup_bad=1; fi
+      fi
+    done
+    if ! timeout 5 ifconfig -l >"$work/cleanup-ifconfig-after.txt" 2>>"$work/cleanup.log"; then
+      cleanup_bad=1
+    elif ! tr '[:space:]' '\n' <"$work/cleanup-ifconfig-after.txt" | grep -Fxq lo0; then
+      cleanup_bad=1
+    else
+      for owned_iface in "$epair_a" "$epair_b"; do
+        if tr '[:space:]' '\n' <"$work/cleanup-ifconfig-after.txt" | grep -Fxq "$owned_iface"; then cleanup_bad=1; fi
+      done
+    fi
+  fi
+  if [ "$own_epair_module" -eq 1 ] && ! timeout 10 kldunload if_epair >>"$work/cleanup.log" 2>&1; then cleanup_bad=1; fi
+  if [ "$own_gre_module" -eq 1 ] && ! timeout 10 kldunload if_gre >>"$work/cleanup.log" 2>&1; then cleanup_bad=1; fi
+  if [ "$module_inventory_ready" -eq 1 ]; then
+    if ! timeout 5 kldstat -v >"$work/modules-after.txt" 2>>"$work/cleanup.log"; then
+      cleanup_bad=1
+    elif ! grep -Eq '^Id[[:space:]]' "$work/modules-after.txt"; then
+      cleanup_bad=1
+    else
+      for module in if_epair if_gre; do
+        module_before=absent
+        module_after=absent
+        if grep -Eq "(^|[[:space:]])$module(\.ko)?([[:space:]]|$)" "$work/modules-before.txt"; then module_before=present; fi
+        if grep -Eq "(^|[[:space:]])$module(\.ko)?([[:space:]]|$)" "$work/modules-after.txt"; then module_after=present; fi
+        if [ "$module_before" != "$module_after" ]; then cleanup_bad=1; fi
+      done
+    fi
+  fi
+  if [ "$rc" -eq 0 ] && { [ "$cleanup_bad" -ne 0 ] || [ "$body_ok" -ne 1 ]; }; then rc=70; fi
   if [ "$rc" -eq 0 ]; then
     rm -rf "$work"
+    echo 'freebsd-tunnelinterface=ok' >&3
   else
-    printf 'freebsd-tunnelinterface-failure-evidence=%s\n' "$work" >&3
+    printf '%s\n' "$cleanup_bad" >"$work/cleanup.exit"
+    printf '%s\n' "$rc" >"$work/native.exit"
+    printf 'freebsd-tunnelinterface-failure-evidence=%s cleanup-failed=%s\n' "$work" "$cleanup_bad" >&3
   fi
   exit "$rc"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 r1cmd() { operation="r1: $*"; jexec "$r1" "$@"; }
 r2cmd() { operation="r2: $*"; jexec "$r2" "$@"; }
+
+for tool in timeout jail jexec jls ifconfig kldstat kldload kldunload; do command -v "$tool" >/dev/null; done
+kldstat -v >"$work/modules-before.txt"
+grep -Eq '^Id[[:space:]]' "$work/modules-before.txt"
+module_inventory_ready=1
 
 if ! kldstat -q -m if_epair; then
 	kldload if_epair
 	own_epair_module=1
 fi
 epair_a=$(ifconfig epair create)
+case "$epair_a" in
+  epair*a) epair_number=${epair_a#epair}; epair_number=${epair_number%a} ;;
+  *) echo 'unexpected epair identity' >&2; exit 65 ;;
+esac
+case "$epair_number" in ''|*[!0-9]*) echo 'nonnumeric epair identity' >&2; exit 65 ;; esac
+epair_valid=1
 epair_b="${epair_a%a}b"
 jail -c name="$r1" path=/ host.hostname="$r1" persist vnet allow.raw_sockets=1 \
 	vnet.interface="$epair_a"
+own_r1=1
+r1_jid=$(timeout 5 jls -n -j "$r1" jid)
+r1_jid=${r1_jid#jid=}
+case "$r1_jid" in ''|*[!0-9]*) exit 65 ;; esac
 jail -c name="$r2" path=/ host.hostname="$r2" persist vnet allow.raw_sockets=1 \
 	vnet.interface="$epair_b"
+own_r2=1
+r2_jid=$(timeout 5 jls -n -j "$r2" jid)
+r2_jid=${r2_jid#jid=}
+case "$r2_jid" in ''|*[!0-9]*) exit 65 ;; esac
 r1cmd ifconfig lo0 up
 r2cmd ifconfig lo0 up
 r1cmd ifconfig "$epair_a" inet "$outer_a/30" up
@@ -463,4 +558,4 @@ r1cmd ifconfig gif0 >"$work/gif0.foreign.stale.after"
 cmp "$work/gif0.foreign.before" "$work/gif0.foreign.stale.after"
 r1cmd ifconfig gif0 destroy
 echo 'freebsd-tunnelinterface-stage=foreign-stale-preservation=ok'
-echo "freebsd-tunnelinterface=ok"
+body_ok=1
