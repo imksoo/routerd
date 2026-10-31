@@ -30,3 +30,11 @@ Local checks cover the actual scoped VICI controller with a test-owned TCP VICI
 endpoint, failure/retry and startup wiring. Linux/FreeBSD strongSwan peer
 negotiation, tunnel traffic and native credential behavior require isolated target
 qualification; configuration loading alone does not establish an IPsec tunnel.
+
+
+Ubuntu and Debian automatic dependencies include both charon-systemd and
+strongswan-swanctl. The client package alone does not provide the IKE daemon.
+The daemon package supplies the OS-managed strongswan.service; its installation,
+enablement and startup must be qualified separately from scoped VICI loading.
+routerd does not unconditionally restart a shared provider or invoke a global
+load-all during its normal scoped connection reconciliation.
