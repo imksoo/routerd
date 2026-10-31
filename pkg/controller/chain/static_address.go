@@ -193,7 +193,7 @@ func staticReceipt(status map[string]any) (*staticAddressReceipt, error) {
 
 var errStaticReceiptChanged = errors.New("static address ownership changed during the operation")
 
-func (c IPv4StaticAddressController) requireStaticReceipt(name string, expected staticAddressReceipt) error {
+func (c IPv4StaticAddressController) requireStaticReceipt(name string, expected *staticAddressReceipt) error {
 	status, err := c.Store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", name)
 	if err != nil {
 		return err
@@ -202,7 +202,10 @@ func (c IPv4StaticAddressController) requireStaticReceipt(name string, expected 
 	if err != nil {
 		return err
 	}
-	if current == nil || *current != expected {
+	if expected == nil && current == nil {
+		return nil
+	}
+	if current == nil || expected == nil || *current != *expected {
 		return errStaticReceiptChanged
 	}
 	return nil
@@ -220,13 +223,16 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 		return nil
 	}
 	observed, err := c.staticAddresses(ctx, receipt.IfName)
+	if checkErr := c.requireStaticReceipt(name, receipt); checkErr != nil {
+		return errors.Join(err, checkErr)
+	}
 	if err != nil {
 		return err
 	}
 	// An interface that disappeared or was replaced no longer carries our
 	// acquired identity. Its replacement's addresses must survive.
 	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
-		return c.requireStaticReceipt(name, *receipt)
+		return c.requireStaticReceipt(name, receipt)
 	}
 	if receipt.Pending {
 		return errors.New("static address operation outcome is unknown; inspect the native address and confirm absence before retrying")
@@ -241,6 +247,13 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err != nil {
 		return err
 	}
+	current, err := staticReceipt(status)
+	if err != nil {
+		return err
+	}
+	if current == nil || *current != *receipt {
+		return errStaticReceiptChanged
+	}
 	status = copyStatusMap(status)
 	previous := copyStatusMap(status)
 	status["phase"], status["reason"] = "Pending", "WithdrawingAddress"
@@ -248,11 +261,11 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err := c.saveStaticAddress(name, status, receipt); err != nil {
 		return err
 	}
-	if err := c.requireStaticReceipt(name, *receipt); err != nil {
+	if err := c.requireStaticReceipt(name, receipt); err != nil {
 		return err
 	}
 	abortBeforeDelete := func(cause error) error {
-		if err := c.requireStaticReceipt(name, *receipt); err != nil {
+		if err := c.requireStaticReceipt(name, receipt); err != nil {
 			return errors.Join(cause, err)
 		}
 		// No native deletion was issued. Preserve the prior acquisition and
@@ -266,12 +279,12 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 		return abortBeforeDelete(err)
 	}
 	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
-		return c.requireStaticReceipt(name, *receipt)
+		return c.requireStaticReceipt(name, receipt)
 	}
 	if err := c.checkStaticWithdrawalParent(ctx, receipt, observed); err != nil {
 		return abortBeforeDelete(err)
 	}
-	if err := c.requireStaticReceipt(name, *receipt); err != nil {
+	if err := c.requireStaticReceipt(name, receipt); err != nil {
 		return err
 	}
 	command := c.Command
@@ -292,7 +305,7 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if err := c.staticAddressEvent(ctx, name, receipt.IfName, receipt.Address, "removed"); err != nil {
 		return err
 	}
-	return c.requireStaticReceipt(name, *receipt)
+	return c.requireStaticReceipt(name, receipt)
 }
 
 func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Context, receipt *staticAddressReceipt, observed staticAddressSnapshot) error {
@@ -472,6 +485,9 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		return c.saveStaticAddress(resource.Metadata.Name, status, receipt)
 	}
 	observed, err := c.staticAddresses(ctx, ifname)
+	if checkErr := c.requireStaticReceipt(resource.Metadata.Name, receipt); checkErr != nil {
+		return errors.Join(err, checkErr)
+	}
 	if err != nil {
 		return err
 	}
@@ -492,6 +508,9 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		return c.saveStaticAddress(resource.Metadata.Name, status, nil)
 	}
 	parentToken, err := c.staticNativeParent(ctx, spec.Interface, observed)
+	if checkErr := c.requireStaticReceipt(resource.Metadata.Name, receipt); checkErr != nil {
+		return errors.Join(err, checkErr)
+	}
 	if errors.Is(err, errStaticParentNotReady) {
 		status["phase"], status["reason"] = "Pending", "ParentNotReady"
 		return c.saveStaticAddress(resource.Metadata.Name, status, receipt)
@@ -518,11 +537,11 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
 			return err
 		}
-		if err := c.requireStaticReceipt(resource.Metadata.Name, *receipt); err != nil {
+		if err := c.requireStaticReceipt(resource.Metadata.Name, receipt); err != nil {
 			return err
 		}
 		abortBeforeCommand := func(cause error) error {
-			if err := c.requireStaticReceipt(resource.Metadata.Name, *receipt); err != nil {
+			if err := c.requireStaticReceipt(resource.Metadata.Name, receipt); err != nil {
 				return errors.Join(cause, err)
 			}
 			status["phase"], status["reason"], status["error"] = "Error", "AcquisitionNotStarted", cause.Error()
