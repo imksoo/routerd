@@ -159,7 +159,7 @@ mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub" "${payload_root}"
 rootfs_cache=${ROOTFS_CACHE_TAR:-}
 
 if [ -n "${rootfs_cache}" ] && [ -f "${rootfs_cache}" ]; then
-    tar -xf "${rootfs_cache}" -C "${workdir}"
+    tar --numeric-owner -xf "${rootfs_cache}" -C "${workdir}"
     if [ ! -f "${rootfs}/etc/routerd-live-rootfs-format" ] || [ "$(cat "${rootfs}/etc/routerd-live-rootfs-format")" != routerd-live-rootfs-v2 ]; then
         echo "rootfs cache predates preserved package ownership; rebuild it" >&2
         exit 1
@@ -212,7 +212,7 @@ refuse_live_mounts
 
 if [ -n "${rootfs_cache}" ]; then
     printf '%s\n' routerd-live-rootfs-v2 > "${rootfs}/etc/routerd-live-rootfs-format"
-    tar -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
+    tar --numeric-owner -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
     echo "saved rootfs cache at ${rootfs_cache}"
 fi
 
