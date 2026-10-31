@@ -106,13 +106,16 @@ The daemon prepares startup Plugin declarations once per configuration. For each
 Plugin it unions its triggers with triggers on all startup
 DynamicConfigSources referring to it. Equal intervals and topics are
 deduplicated. Each distinct interval has its own deadline and is initially due;
-simultaneous due work invokes the Plugin once. After success or failure,
-intervals due by completion advance to completion time plus their duration.
-Future deadlines are retained.
+simultaneous due work invokes the Plugin once during periodic processing. After
+an interval attempt succeeds or fails, intervals due by completion advance to
+completion time plus their duration. Future deadlines are retained. Named
+events invoke only matching Plugins and never consume interval deadlines.
 
 Event triggers use named topics and existing bus matching rules. A wildcard
 such as `**` must be explicit; a blank topic is not expanded to all events.
-Event-only Plugins do not run at startup or on synthetic periodic notifications.
+Internal framework startup and periodic callbacks process interval deadlines;
+ordinary bus events with those same topic names still match event declarations.
+Event-only Plugins do not run merely because their worker starts.
 Daemon preview, sandbox, and standby modes do not execute automatic Plugins or
 consume their interval deadlines. Controller cancellation stops and reaps the
 child and prevents publication of its result.

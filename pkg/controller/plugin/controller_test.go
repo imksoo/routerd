@@ -243,3 +243,26 @@ func TestContextAndSourcePolicyArePreparedOncePerConfiguration(t *testing.T) {
 		t.Fatalf("prepared source TTL changed: %+v %v", parts, err)
 	}
 }
+
+func TestNamedEventPreservesIntervalDeadlineAcrossSlowInvocation(t *testing.T) {
+	c, _, now, calls := triggerFixture(t)
+	if _, err := c.Periodic(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	*now = now.Add(5 * time.Second)
+	run := c.Runner
+	c.Runner = func(ctx context.Context, spec api.PluginSpec, name string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		*now = now.Add(30 * time.Second)
+		return run(ctx, spec, name, opts)
+	}
+	if err := c.HandleEvent(t.Context(), daemonapi.DaemonEvent{Type: "device.changed"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 2 || c.NextAfter() != time.Millisecond {
+		t.Fatalf("event invocation consumed intervals that became due: calls=%d next=%v", len(*calls), c.NextAfter())
+	}
+	c.Runner = run
+	if worked, err := c.Periodic(t.Context()); err != nil || !worked || len(*calls) != 3 {
+		t.Fatalf("interval work was lost after the named event: worked=%v calls=%d err=%v", worked, len(*calls), err)
+	}
+}

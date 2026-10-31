@@ -17,10 +17,12 @@ sha256sum pkg/controller/eventsubscription/process_lifecycle_test.go \
   pkg/controller/plugin/controller.go pkg/controller/plugin/controller_test.go \
   pkg/controller/plugin/process_unix_test.go \
   pkg/controller/plugin/publication_wait_test.go \
+  pkg/controller/plugin/trigger_review_test.go \
   pkg/controller/chain/chain.go \
   pkg/controller/chain/plugin_trigger_runner_test.go \
   pkg/controller/chain/plugin_trigger_runtime_test.go \
-  pkg/controller/framework/framework.go cmd/routerd/cmd_serve.go \
+  pkg/controller/framework/framework.go pkg/controller/framework/bootstrap_test.go \
+  cmd/routerd/cmd_serve.go \
   pkg/dynamicconfig/merge.go scripts/plugin-dynamic-process-smoke.sh \
   >"$work/source.sha256"
 

@@ -177,17 +177,15 @@ func (c *Controller) NextAfter() time.Duration {
 }
 
 func (c *Controller) HandleEvent(ctx context.Context, event daemonapi.DaemonEvent) error {
-	topic := event.Type
-	if topic == "routerd.controller.bootstrap" || topic == "routerd.controller.periodic" {
-		topic = ""
-	}
-	_, err := c.reconcile(ctx, topic)
+	_, err := c.reconcile(ctx, event.Type, false)
 	return err
 }
 
-func (c *Controller) Periodic(ctx context.Context) (bool, error) { return c.reconcile(ctx, "") }
+func (c *Controller) Periodic(ctx context.Context) (bool, error) {
+	return c.reconcile(ctx, "", true)
+}
 
-func (c *Controller) reconcile(ctx context.Context, topic string) (bool, error) {
+func (c *Controller) reconcile(ctx context.Context, topic string, periodic bool) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -204,34 +202,37 @@ func (c *Controller) reconcile(ctx context.Context, topic string) (bool, error) 
 			return worked, errors.Join(append(failures, err)...)
 		}
 		plan, now := &c.plans[i], c.now()
-		var due []int
-		for j, interval := range plan.intervals {
-			if interval.due.IsZero() || !interval.due.After(now) {
-				due = append(due, j)
+		selected := false
+		if periodic {
+			for _, interval := range plan.intervals {
+				if interval.due.IsZero() || !interval.due.After(now) {
+					selected = true
+					break
+				}
 			}
-		}
-		matched := false
-		if topic != "" {
+		} else {
 			for _, pattern := range plan.topics {
 				if bus.MatchTopic(pattern, topic) {
-					matched = true
+					selected = true
 					break
 				}
 			}
 		}
-		if len(due) == 0 && !matched {
+		if !selected {
 			continue
 		}
 		trigger := routerplugin.TriggerRef{Type: "interval"}
-		if matched {
+		if !periodic {
 			trigger.Type, trigger.Topic = "event", topic
 		}
 		worked = true
 		err := c.invoke(ctx, *plan, trigger, now)
-		finished := c.now()
-		for j := range plan.intervals {
-			if plan.intervals[j].due.IsZero() || !plan.intervals[j].due.After(finished) {
-				plan.intervals[j].due = finished.Add(plan.intervals[j].every)
+		if periodic {
+			finished := c.now()
+			for j := range plan.intervals {
+				if plan.intervals[j].due.IsZero() || !plan.intervals[j].due.After(finished) {
+					plan.intervals[j].due = finished.Add(plan.intervals[j].every)
+				}
 			}
 		}
 		if err != nil {

@@ -46,18 +46,22 @@ takes the union of `Plugin.spec.triggers` and the triggers of every startup
 durations and equal event topics are deduplicated.
 
 Interval work is initially due when the controller starts. Each distinct
-interval keeps its own deadline. Multiple due intervals and a matching event
-produce one invocation for that Plugin in the same reconciliation. After an
-attempt, each interval due by completion advances to completion time plus its
-duration, including after failure; future deadlines are preserved. There is no
-catch-up burst for missed intervals. The existing framework owns the single
-worker and its next wake-up.
+interval keeps its own deadline. Multiple due intervals produce one invocation
+for that Plugin in the same periodic reconciliation. After an interval attempt,
+each interval due by completion advances to completion time plus its duration,
+including after failure; future deadlines are preserved. A named event invokes
+only matching Plugins and does not consume any interval deadline, including
+deadlines reached during the event invocation. There is no catch-up burst for
+missed intervals. The existing framework owns the single worker and its next
+wake-up.
 
 Event triggers use the named bus topic in `topic` and the existing bus matching
 rules. An explicitly configured wildcard such as `**` keeps those rules.
-A blank topic is not expanded to all notifications. Synthetic controller startup
-and periodic notifications only enter interval processing. An event-only Plugin
-does not run merely because routerd started.
+A blank topic is not expanded to all notifications. Internal framework startup
+and periodic callbacks enter interval processing separately from bus events.
+Published bus events named `routerd.controller.bootstrap` or
+`routerd.controller.periodic` still match explicit event declarations normally.
+An event-only Plugin does not run merely because its worker started.
 
 Direct `Plugin/<name>` publications, automatic or manual, use the shortest
 `ttl` among startup DynamicConfigSources referring to that Plugin. Without

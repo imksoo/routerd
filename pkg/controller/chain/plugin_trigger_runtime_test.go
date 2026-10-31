@@ -34,6 +34,13 @@ func (pluginWorkerObserver) ControllerReconciled(string, string, time.Duration, 
 }
 
 func TestDeclaredPluginNamedEventUsesFrameworkWorker(t *testing.T) {
+	for _, topic := range []string{"inventory.refresh", "routerd.controller.bootstrap", "routerd.controller.periodic"} {
+		t.Run(topic, func(t *testing.T) { declaredPluginNamedEventUsesFrameworkWorker(t, topic) })
+	}
+}
+
+func declaredPluginNamedEventUsesFrameworkWorker(t *testing.T, topic string) {
+	t.Helper()
 	dir := t.TempDir()
 	request := filepath.Join(dir, "request.json")
 	executable := filepath.Join(dir, "plugin.sh")
@@ -46,8 +53,8 @@ func TestDeclaredPluginNamedEventUsesFrameworkWorker(t *testing.T) {
 	}
 	defer store.Close()
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"}, Metadata: api.ObjectMeta{Name: "inventory"}, Spec: api.PluginSpec{Executable: executable, Env: map[string]string{"REQUEST": request}, Triggers: []api.PluginTrigger{{Type: "event", Topic: "inventory.refresh"}}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "2m", Triggers: []api.PluginTrigger{{Type: "event", Topic: "inventory.refresh"}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"}, Metadata: api.ObjectMeta{Name: "inventory"}, Spec: api.PluginSpec{Executable: executable, Env: map[string]string{"REQUEST": request}, Triggers: []api.PluginTrigger{{Type: "event", Topic: topic}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "2m", Triggers: []api.PluginTrigger{{Type: "event", Topic: topic}}}},
 	}}}
 	r := &Runner{Router: router, Store: store, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"plugin"}}}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
@@ -97,7 +104,7 @@ func TestDeclaredPluginNamedEventUsesFrameworkWorker(t *testing.T) {
 	if _, err := os.Stat(request); !os.IsNotExist(err) {
 		t.Fatalf("event-only declaration ran at bootstrap: %v", err)
 	}
-	if err := r.Bus.Publish(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "fixture", Kind: "test"}, "inventory.refresh", daemonapi.SeverityInfo)); err != nil {
+	if err := r.Bus.Publish(ctx, daemonapi.NewEvent(daemonapi.DaemonRef{Name: "fixture", Kind: "test"}, topic, daemonapi.SeverityInfo)); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -125,7 +132,7 @@ func TestDeclaredPluginNamedEventUsesFrameworkWorker(t *testing.T) {
 	if err := json.Unmarshal(data, &received); err != nil {
 		t.Fatal(err)
 	}
-	if received.Spec.Trigger.Type != "event" || received.Spec.Trigger.Topic != "inventory.refresh" {
+	if received.Spec.Trigger.Type != "event" || received.Spec.Trigger.Topic != topic {
 		t.Fatalf("actual event request: %+v", received)
 	}
 	stop()

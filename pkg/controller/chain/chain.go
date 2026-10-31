@@ -3146,7 +3146,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "plugin", Subs: plugins.Subscriptions(), NextAfter: plugins.NextAfter, ReconcileFunc: plugins.HandleEvent, PeriodicFunc: plugins.Periodic},
+		framework.FuncController{ControllerName: "plugin", Subs: plugins.Subscriptions(), NextAfter: plugins.NextAfter, BootstrapFunc: func(ctx context.Context) error { _, err := plugins.Periodic(ctx); return err }, ReconcileFunc: plugins.HandleEvent, PeriodicFunc: plugins.Periodic},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
 		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremARPRequestObservedEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()
