@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -47,7 +48,7 @@ func TestReviewFlowLogFailureCannotRemainObserved(t *testing.T) {
 				t.Fatalf("actual configuration admission: %v", err)
 			}
 			calls := 0
-			events := bus.New(bus.WithJournal(store))
+			events := bus.NewWithStore(store)
 			controller := &conntrackobserver.Controller{Router: router, Store: eventedStore{Store: store, Bus: events, Router: router}, Bus: events,
 				Paths: conntrack.Paths{Count: countPath, Max: maxPath},
 				Connections: func(ctx context.Context, limit int) (*observe.ConnectionTable, error) {
@@ -57,8 +58,8 @@ func TestReviewFlowLogFailureCannotRemainObserved(t *testing.T) {
 					}
 					return &observe.ConnectionTable{Count: 1, Entries: []observe.ConnectionEntry{{
 						Protocol: "tcp",
-						Original: observe.ConntrackTuple{Source: "192.0.2.10", SourcePort: "12345", Destination: "198.51.100.20", DestinationPort: "443"},
-						Reply:    observe.ConntrackTuple{Source: "198.51.100.20", SourcePort: "443", Destination: "192.0.2.10", DestinationPort: "12345"},
+						Original: observe.ConntrackTuple{Source: "192.0.2.10", SourcePort: strconv.Itoa(12344 + calls), Destination: "198.51.100.20", DestinationPort: "443"},
+						Reply:    observe.ConntrackTuple{Source: "198.51.100.20", SourcePort: "443", Destination: "192.0.2.10", DestinationPort: strconv.Itoa(12344 + calls)},
 					}}}, ctx.Err()
 				},
 			}
@@ -113,11 +114,26 @@ WHEN NEW.kind='TrafficFlowLog' BEGIN SELECT RAISE(ABORT,'fixture required flow s
 				t.Fatal("flow log failure disabled the independent conntrack threshold event")
 			}
 			if failure == "configured database" {
-				if reconcileErr != nil || public["phase"] == "Observed" || public["reason"] == nil {
+				if reconcileErr != nil || public["phase"] != "Degraded" || public["reason"] == nil || public["activeFlows"] != nil {
 					t.Fatalf("failed diagnostic destination remained healthy or blocked the observer: err=%v status=%+v", reconcileErr, public)
 				}
-			} else if reconcileErr == nil {
-				t.Fatalf("required public status failure was acknowledged: status=%+v", public)
+			} else {
+				written, err := logstore.OpenTrafficFlowLog(t.Context(), path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				actual, readErr := written.List(t.Context(), logstore.TrafficFlowFilter{Limit: 10})
+				closeErr := written.Close()
+				secondWritten := false
+				for _, row := range actual {
+					secondWritten = secondWritten || row.ClientPort == 12346 && row.EndedAt.IsZero()
+				}
+				if readErr != nil || closeErr != nil || !secondWritten {
+					t.Fatalf("fixture did not complete the actual flow write before status failure: %+v %v/%v", actual, readErr, closeErr)
+				}
+				if reconcileErr == nil {
+					t.Fatalf("required public status failure was acknowledged after the actual data write: status=%+v", public)
+				}
 			}
 		})
 	}
