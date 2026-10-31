@@ -69,6 +69,8 @@ type FuncController struct {
 	NextAfter func() time.Duration
 }
 
+func (c FuncController) EventReconcileLockKey() string { return c.EventLockKey }
+
 func (c FuncController) NextReconcileAfter() time.Duration {
 	if c.NextAfter == nil {
 		return 0
@@ -286,8 +288,10 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				return
 			}
 			key := eventResourceKey(event)
-			if scoped, ok := controller.(FuncController); ok && scoped.EventLockKey != "" {
-				key = scoped.EventLockKey
+			if scoped, ok := controller.(interface{ EventReconcileLockKey() string }); ok {
+				if ownedKey := scoped.EventReconcileLockKey(); ownedKey != "" {
+					key = ownedKey
+				}
 			}
 			kind, name := eventResourceKindName(event)
 			runWithMutationGate(ctx, gate, func() {

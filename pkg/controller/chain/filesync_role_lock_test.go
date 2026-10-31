@@ -40,6 +40,15 @@ func (o leaseRoleLockObserver) ControllerReconciled(name, _ string, _, _ time.Du
 // stopped peer must not lock that source and prevent forwarding owners from
 // processing the same MASTER notification.
 func TestLeaseSyncRoleNotificationDoesNotBlockOtherConsumers(t *testing.T) {
+	for _, pointer := range []bool{false, true} {
+		t.Run(map[bool]string{false: "value", true: "pointer"}[pointer], func(t *testing.T) {
+			leaseSyncRoleNotificationDoesNotBlockOtherConsumers(t, pointer)
+		})
+	}
+}
+
+func leaseSyncRoleNotificationDoesNotBlockOtherConsumers(t *testing.T, pointer bool) {
+	t.Helper()
 	dir := t.TempDir()
 	lease := filepath.Join(dir, "dnsmasq.leases")
 	if err := os.WriteFile(lease, []byte("1 02:00:00:00:00:01 192.0.2.10 client *\n"), 0600); err != nil {
@@ -91,7 +100,11 @@ func TestLeaseSyncRoleNotificationDoesNotBlockOtherConsumers(t *testing.T) {
 	runtime := framework.Runner{Bus: wakeups, Locker: locker, Logger: logger, Observer: observer, SkipBootstrap: true, Interval: time.Hour}
 	done := make(chan error, 2)
 	workers := 1
-	go func() { done <- runtime.Run(ctx, registered) }()
+	var transferWorker framework.Controller = registered
+	if pointer {
+		transferWorker = &registered
+	}
+	go func() { done <- runtime.Run(ctx, transferWorker) }()
 	defer func() {
 		close(release)
 		cancel()
