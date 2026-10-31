@@ -40,6 +40,10 @@ type Event struct {
 	Command    string            `json:"command,omitempty"`
 	ResourceID string            `json:"resourceID,omitempty"`
 	Fields     map[string]string `json:"fields,omitempty"`
+
+	// Archive delivery is required before local deletion. Operational verbosity
+	// overrides must not silently acknowledge an archive that was not sent.
+	archive bool
 }
 
 type Sink interface {
@@ -188,6 +192,7 @@ func (l *Logger) EmitRecord(signal string, record map[string]any) error {
 		Message:   "routerd operational log archived",
 		Router:    l.router,
 		Command:   "log-retention",
+		archive:   true,
 		Fields: map[string]string{
 			"signal": signal,
 			"record": string(data),
@@ -229,7 +234,7 @@ type SyslogSink struct {
 }
 
 func (s *SyslogSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	s.mu.Lock()
@@ -279,7 +284,7 @@ type WebhookSink struct {
 }
 
 func (s *WebhookSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	data, err := json.Marshal(event)
@@ -319,7 +324,7 @@ type FileSink struct {
 }
 
 func (s *FileSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
@@ -348,7 +353,7 @@ type JournaldSink struct {
 }
 
 func (s *JournaldSink) Emit(event Event) error {
-	if !shouldEmit(event.Level, s.minLevel) {
+	if !shouldEmit(event, s.minLevel) {
 		return nil
 	}
 	log.Printf("%s %s", s.identifier, formatEvent(event))
@@ -465,11 +470,11 @@ func LevelOverride() *Level {
 	}
 }
 
-func shouldEmit(level Level, minLevel int) bool {
-	if override := levelOverride.Load(); override > 0 {
+func shouldEmit(event Event, minLevel int) bool {
+	if override := levelOverride.Load(); override > 0 && !event.archive {
 		minLevel = int(override - 1)
 	}
-	return parseLevel(string(level)) >= minLevel
+	return parseLevel(string(event.Level)) >= minLevel
 }
 
 func defaultString(value, fallback string) string {

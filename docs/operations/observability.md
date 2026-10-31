@@ -4,8 +4,9 @@
 
 `Telemetry` remains the small OTLP-only resource for routerd's own metrics,
 traces, and logs. `LogSink` describes log forwarding routes for operational
-events and observed network logs; an OTLP `LogSink` should reference a
-`Telemetry` resource rather than duplicating collector endpoints. Use
+events and observed network logs. OTLP export uses `Telemetry` or the OTLP
+fields of `ObservabilityPipeline`; an `otlp` LogSink is rejected because it
+has no delivery implementation. Use
 `ObservabilityPipeline` when the router should also forward routerd event logs
 to pipeline-style remote sinks such as Loki.
 
@@ -20,8 +21,8 @@ Supported log sinks today:
 - `syslog`: local or remote syslog using the existing `LogSink` syslog shape.
 - `loki`: HTTP push to `/loki/api/v1/push`.
 
-`kafka` is accepted as documented metadata only so configs can record the
-intended external pipeline, but routerd does not publish to Kafka directly yet.
+`kafka` is rejected because routerd has no direct Kafka publisher. The 1.0
+implementation skipped these sink entries rather than delivering their events.
 
 Example:
 
@@ -70,6 +71,9 @@ does not remove events already committed to SQLite. The exporter and EventRule
 engine use the bus only to wake their journal drains, with a default one-second
 poll when no wakeup arrives. Failed drains back off from one second to one minute.
 Polling periods exclude execution time, database outages, and a stalled process.
+A pipeline initializes its durable cursor before acknowledging startup. A journal
+initialization error prevents `Running`; successful startup does not by itself
+mean that a remote destination has accepted a log.
 
 | Consumer | Authoritative input | Recovery and limit |
 | --- | --- | --- |
@@ -123,3 +127,20 @@ an unselected candidate does not change consumption state.
 The separate [event federation protocol](../reference/event-federation.md) has
 its own delivery records and does not use the local status notification queue
 as its durable source of truth.
+
+## Log retention archives
+
+`LogRetention.sinks` selects the `LogSink` destinations that must accept each
+expired record before its local transaction can delete it. Missing, disabled or
+severity-filtered selected sinks fail the run and preserve the local rows.
+Runtime log-level overrides affect operational messages, not required archive
+records. A sink error rolls back deletion; retry can deliver a record again if
+an earlier destination already accepted it. Delivery to multiple sinks is not
+atomic, and syslog transport success is not an application-level storage receipt.
+
+Relevant local checks are:
+
+```sh
+go test ./pkg/eventlog ./pkg/logstore ./pkg/observabilitypipeline
+go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention)'
+```
