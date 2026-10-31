@@ -134,7 +134,32 @@ as its durable source of truth.
 expired record before its local transaction can delete it. Missing, disabled or
 severity-filtered selected sinks fail the run and preserve the local rows.
 Runtime log-level overrides affect operational messages, not required archive
-records. A sink error rolls back deletion; retry can deliver a record again if
+records.
+For `events`, `accessLogs` and `pluginRuns`, retention uses the opened state
+database selected by `--state-file`, including a nondefault path. Its raw data
+source is separate from the generation's evented status adapter. An unavailable
+state source stops the run rather than selecting the platform's default file.
+Only registered operational-log tables are pruned; configuration and lease state
+are outside this policy.
+
+The opened state file's identity is checked at the separate retention connection
+and before deletion, commit and vacuum. A same-named replacement is an ownership
+error, not a new retention target. Relative SQLite filenames resolve when opened;
+`:memory:` retains its database semantics and cannot authorize file retention.
+The DHCP lease journal uses this same opened-file check for its cross-process
+source. In-memory state cannot be advertised as a filesystem source for a
+DHCP-derived DNS worker.
+
+
+An explicit `events` retention policy owns idle expiry, including its archive
+selection and schedule. Without one, idle cleanup uses the 24-hour default.
+The state writer independently enforces its existing safety bounds: 24 hours,
+100,000 rows and 64 MiB of logical payload. These limits take precedence over
+forensic retention and can evict history before an exporter or archive consumes
+it. An event policy requesting more than 24 hours is `Degraded` with reason
+`EventJournalSafetyBound`. Event policy status declares `archiveScope: retainedRows`
+and discloses these limits. It does not claim a complete or lossless audit archive.
+ A sink error rolls back deletion; retry can deliver a record again if
 an earlier destination already accepted it. Delivery to multiple sinks is not
 atomic, and syslog transport success is not an application-level storage receipt.
 
@@ -142,5 +167,5 @@ Relevant local checks are:
 
 ```sh
 go test ./pkg/eventlog ./pkg/logstore ./pkg/observabilitypipeline
-go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention)'
+go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention|TestReviewArchive)'
 ```

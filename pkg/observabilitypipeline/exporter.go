@@ -75,6 +75,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if c.running == nil {
 		c.running = map[string]runningExporter{}
 	}
@@ -112,6 +115,9 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		// mistaken for history predating the exporter.
 		if _, err := c.Events.LoadOrInitializeEventConsumerCursor("observabilitypipeline/" + resource.Metadata.Name); err != nil {
 			return fmt.Errorf("initialize pipeline %s: %w", resource.Metadata.Name, err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		ch, _ := c.Bus.Subscribe(runCtx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)

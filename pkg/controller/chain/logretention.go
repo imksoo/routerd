@@ -5,6 +5,9 @@ package chain
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -15,12 +18,22 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
+// Status and journal data have different owners in a controller generation:
+// the evented status adapter must not hide the actual SQLite source.
+type logRetentionData interface {
+	LogRetentionSource() (string, fs.FileInfo, error)
+	PruneEventsOlderThan(time.Time) (int64, error)
+}
+
 type LogRetentionController struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
+	Data   logRetentionData
 	DryRun bool
 }
+
+const eventRetentionWarning = "The event journal's independent write-time age and capacity limits take precedence; archives include only retained rows."
 
 func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	// Dry-run must not open external log databases, archive records, vacuum,
@@ -29,6 +42,10 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	if c.DryRun || c.Router == nil || c.Store == nil {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	explicitEvents := false
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogRetention" {
 			continue
@@ -37,10 +54,49 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if !retentionDue(c.Store.ObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name), spec.Schedule) {
+		eventPolicy := len(spec.Signals) == 0 || slices.Contains(spec.Signals, "events")
+		explicitEvents = explicitEvents || eventPolicy
+		duration, err := logstore.ParseRetention(spec.Retention)
+		if err != nil {
+			return fmt.Errorf("%s retention %q: %w", res.ID(), spec.Retention, err)
+		}
+		previous, err := c.Store.ReadObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !retentionDue(previous, spec.Schedule) {
+			if eventPolicy {
+				status := maps.Clone(previous)
+				status["warning"] = eventRetentionWarning
+				status["archiveScope"] = "retainedRows"
+				if duration > 24*time.Hour {
+					status["phase"] = "Degraded"
+					status["reason"] = "EventJournalSafetyBound"
+				}
+				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name, status); err != nil {
+					return err
+				}
+			}
 			continue
 		}
-		targetSpecs := logRetentionTargets(c.Router, spec)
+		stateFile := ""
+		var stateIdentity fs.FileInfo
+		if len(spec.Signals) == 0 || slices.Contains(spec.Signals, "events") || slices.Contains(spec.Signals, "accessLogs") || slices.Contains(spec.Signals, "pluginRuns") {
+			if c.Data == nil {
+				return fmt.Errorf("%s state log database is unavailable", res.ID())
+			}
+			stateFile, stateIdentity, err = c.Data.LogRetentionSource()
+			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		targetSpecs := logRetentionTargets(c.Router, spec, stateFile)
 		var archive *eventlog.Logger
 		if len(spec.Sinks) > 0 {
 			archive, err = eventlog.NewSelected(c.Router, spec.Sinks)
@@ -52,11 +108,10 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		var total int64
 		var targets []map[string]any
 		for _, target := range targetSpecs {
-			duration, err := logstore.ParseRetention(target.Retention)
-			if err != nil {
-				return fmt.Errorf("%s retention %q: %w", res.ID(), target.Retention, err)
-			}
 			retentionTarget := logstore.RetentionTarget{File: target.File, Retention: duration, Signals: target.Signals}
+			if target.File == stateFile {
+				retentionTarget.Identity = stateIdentity
+			}
 			if archive != nil {
 				retentionTarget.BeforeDelete = func(record logstore.RetentionRecord) error {
 					return archive.EmitRecord(record.Signal, record.Values)
@@ -76,6 +131,14 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 			"targets":   targets,
 			"deleted":   total,
 		}
+		if eventPolicy {
+			status["warning"] = eventRetentionWarning
+			status["archiveScope"] = "retainedRows"
+			if duration > 24*time.Hour {
+				status["phase"] = "Degraded"
+				status["reason"] = "EventJournalSafetyBound"
+			}
+		}
 		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name, status); err != nil {
 			return err
 		}
@@ -89,19 +152,21 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		}
 	}
 	// The event journal is part of the router's safety envelope, not an
-	// opt-in observability feature. Enforce its age bound even when no
-	// LogRetention resource is declared and when the journal is otherwise idle.
-	if store, ok := c.Store.(interface {
-		PruneEventsOlderThan(time.Time) (int64, error)
-	}); ok {
-		if _, err := store.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
+	// opt-in observability feature. Without an explicit events policy, prune
+	// the idle journal here. A declared policy alone owns idle archive/expiry;
+	// the state store's independent write-time safety bounds still apply.
+	if c.Data != nil && !explicitEvents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := c.Data.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.LogRetentionTargetSpec {
+func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec, stateFile string) []api.LogRetentionTargetSpec {
 	signals := spec.Signals
 	if len(signals) == 0 {
 		signals = []string{"events", "accessLogs", "pluginRuns", "dnsQueries", "trafficFlows", "firewallEvents", "dhcpFingerprints"}
@@ -109,7 +174,7 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	byFile := map[string]int{}
 	var out []api.LogRetentionTargetSpec
 	for _, signal := range signals {
-		for _, file := range logRetentionSignalFiles(router, signal) {
+		for _, file := range logRetentionSignalFiles(router, signal, stateFile) {
 			if i, ok := byFile[file]; ok {
 				out[i].Signals = append(out[i].Signals, signal)
 				continue
@@ -121,11 +186,11 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	return out
 }
 
-func logRetentionSignalFiles(router *api.Router, signal string) []string {
+func logRetentionSignalFiles(router *api.Router, signal, stateFile string) []string {
 	defaults, _ := platform.Current()
 	switch signal {
 	case "events", "accessLogs", "pluginRuns":
-		return []string{defaults.DBFile()}
+		return []string{stateFile}
 	case "dnsQueries":
 		if router != nil {
 			var out []string
