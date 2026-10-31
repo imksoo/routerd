@@ -2763,8 +2763,9 @@ VIP Ready was about 44 seconds after the role transition. No permanent DAD
 cycle occurred. All four DS-Lite links eventually came up; new IPv4/IPv6 UDP
 and TCP DNS, IPv4 DS-Lite HTTP and native IPv6 HTTP then passed without operator
 repair. The stopped VM was started again and the promoted node retained master.
-Its initial startup was killed by SIGUSR1 before notification setup; the next
-startup completed after about 84 seconds, including three failed 10-second
+Its initial startup was killed by SIGUSR1; the exact initialization stage was
+not observed. The next startup completed after about 84 seconds, including
+three failed 10-second
 lease sends and about 47 seconds of unavailable name resolution. No recorded
 Type=notify timeout is claimed for that process exit.
 
