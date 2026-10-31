@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -70,5 +71,83 @@ func TestLeaseSyncStartupCannotUsePersistedMaster(t *testing.T) {
 	}
 	if status["phase"] == "Synced" {
 		t.Fatalf("unobserved role reported a successful sync: %v", status)
+	}
+}
+
+func TestLeaseSyncRoleProjectionPreservesWhenAlternatives(t *testing.T) {
+	dir := t.TempDir()
+	lease := filepath.Join(dir, "leases")
+	if err := os.WriteFile(lease, []byte("private leases"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "gateway", map[string]any{"role": "master"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "independent", map[string]any{"phase": "Ready"}); err != nil {
+		t.Fatal(err)
+	}
+	// The status evaluator falls back to state variables when a field is absent.
+	// The same persisted value there must not bypass the projected unknown role.
+	if _, err := store.Set("VirtualAddress/gateway.status.role", "master", "previous process"); err != nil {
+		t.Fatal(err)
+	}
+	role := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.status.role": {Equals: "master"}}}
+	independent := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"Interface/independent.status.phase": {Equals: "Ready"}}}
+	var observed atomic.Bool
+	cases := []struct {
+		name   string
+		when   api.ResourceWhenSpec
+		proof  bool
+		copies int
+	}{
+		{"persisted role", role, false, 0},
+		{"all still requires role", api.ResourceWhenSpec{All: []api.ResourceWhenSpec{role, independent}}, false, 0},
+		{"independent any alternative", api.ResourceWhenSpec{Any: []api.ResourceWhenSpec{role, independent}}, false, 1},
+		{"unconditional", api.ResourceWhenSpec{}, false, 1},
+		{"observed current role", role, true, 1},
+		{"failed subsequent observation", role, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			observed.Store(tc.proof)
+			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: lease}},
+				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "leases"}, Spec: api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "private-unused.invalid"}}, Interval: "1ns", When: tc.when}},
+			}}}
+			copies := 0
+			current := FileSyncController{Router: router, Store: leaseSyncRoleStore{eventedStore: eventedStore{Store: store, Router: router}, rolesObserved: &observed}, Command: func(context.Context, string, ...string) ([]byte, error) { copies++; return nil, nil }}
+			if err := current.Reconcile(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if copies != tc.copies {
+				t.Fatalf("copy effects=%d want=%d", copies, tc.copies)
+			}
+		})
+	}
+}
+
+func TestLeaseSyncBootstrapFollowsVRRPRegistration(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	router := &api.Router{}
+	runner := &Runner{Router: router, Store: store, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"vrrp", "dhcp-lease-sync"}, DryRunVRRP: true}}
+	controllers, _, _, err := runner.frameworkControllers(t.Context(), slog.New(slog.NewTextHandler(io.Discard, nil)), eventedStore{Store: store, Router: router}, false, ha.Decision{Leader: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(controllers) != 2 || controllers[0].Name() != "vrrp" || controllers[1].Name() != "dhcp-lease-sync" {
+		t.Fatalf("startup order: %v", controllers)
+	}
+	registered := controllers[1].(framework.FuncController)
+	if registered.EventLockKey != "dhcp-lease-sync" {
+		t.Fatalf("runtime event lock changed: %q", registered.EventLockKey)
 	}
 }
