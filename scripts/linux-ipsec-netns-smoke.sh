@@ -26,6 +26,7 @@ swanctl=$dependency_root/usr/sbin/swanctl
 [[ -x $routerd && -x $charon && -x $swanctl ]]
 for command in ip nsenter unshare mount timeout python3 sha256sum; do command -v "$command" >/dev/null; done
 if ((inside == 0)); then
+  [[ -d /usr/lib/ipsec/plugins ]] || { echo "private plugin bind requires an existing /usr/lib/ipsec/plugins mountpoint" >&2; exit 69; }
   # kernel-netlink probes XFRM interfaces even before an IKE request. A network
   # namespace does not contain automatic module loading, so require prerequisites.
   require_module_or_builtin() {
@@ -101,7 +102,7 @@ write_daemon_config "$work/peer-strongswan.conf"
 router_pid='' peer_pid='' peer_holder='' router_birth='' peer_birth='' holder_birth=''
 birth() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 stop_child() {
-  local pid=$1 expected=$2 label=$3 rc=0
+  local pid=$1 expected=$2 label=$3 rc=0 child_rc=0
   [[ -n $pid ]] || return 0
   if [[ -e /proc/$pid/stat && $(birth "$pid") == "$expected" ]]; then
     kill -TERM "$pid"
@@ -113,9 +114,14 @@ stop_child() {
       kill -KILL "$pid"; rc=1
     fi
   fi
-  wait "$pid" || true
+  if wait "$pid"; then child_rc=0; else child_rc=$?; fi
+  if [[ $label == peer-namespace ]]; then
+    [[ $child_rc == 0 || $child_rc == 143 ]] || rc=1
+  else
+    [[ $child_rc == 0 ]] || rc=1
+  fi
   if [[ -e /proc/$pid/stat && $(birth "$pid") == "$expected" ]]; then rc=1; fi
-  printf 'reaped=%s pid=%s result=%s\n' "$label" "$pid" "$rc" | tee -a "$evidence/process-cleanup.log"
+  printf 'reaped=%s pid=%s waitExit=%s result=%s\n' "$label" "$pid" "$child_rc" "$rc" | tee -a "$evidence/process-cleanup.log"
   return "$rc"
 }
 cleanup() {
