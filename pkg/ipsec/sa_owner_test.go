@@ -61,7 +61,7 @@ func TestScopedVICIWithdrawalRemovesRecordedKernelSAAfterProviderLoss(t *testing
 	foreign.ID.Destination = "203.0.113.254"
 	foreign.Fingerprint = strings.Repeat("2", 64)
 	native := &recordedNativeSAs{states: []saReceipt{owned, foreign}}
-	if err := writeReceipt(directory, receipt{Version: 1, Connections: []connectionReceipt{{Name: "routerd-site", Hash: "previous", Local: owned.ID.Source, Remote: owned.ID.Destination, Scope: owned.Scope, SAs: []saReceipt{owned}}}}); err != nil {
+	if err := writeReceipt(directory, receipt{Version: 1, Connections: []connectionReceipt{{Name: "routerd-site", Acknowledged: true, Hash: "previous", Local: owned.ID.Source, Remote: owned.ID.Destination, Scope: owned.Scope, SAs: []saReceipt{owned}}}}); err != nil {
 		t.Fatal(err)
 	}
 	controller := Controller{Session: session, Directory: directory, nativeSAs: native}
@@ -160,7 +160,7 @@ func TestScopedVICIUnknownSameEndpointSARetainsPendingWithoutDeletion(t *testing
 	_, session := newVICIEndpoint(t, directory)
 	unknown := saReceipt{ID: saID{Source: "198.51.100.1", Destination: "203.0.113.1", Protocol: "ESP", SPI: 0xc77c3da9}, Scope: "fixture-kernel", ReqID: 1, AddTime: 123, Fingerprint: strings.Repeat("1", 64)}
 	native := &recordedNativeSAs{states: []saReceipt{unknown}}
-	previous := receipt{Version: 1, Connections: []connectionReceipt{{Name: "routerd-site", Hash: "previous", Local: unknown.ID.Source, Remote: unknown.ID.Destination, Scope: unknown.Scope}}}
+	previous := receipt{Version: 1, Connections: []connectionReceipt{{Name: "routerd-site", Acknowledged: true, Hash: "previous", Local: unknown.ID.Source, Remote: unknown.ID.Destination, Scope: unknown.Scope}}}
 	if err := writeReceipt(directory, previous); err != nil {
 		t.Fatal(err)
 	}
@@ -193,9 +193,10 @@ func TestScopedVICIWithdrawalPreservesAnotherRecordedConnectionAtSameEndpoints(t
 		t.Fatal(err)
 	}
 	retained := prepared[0].connectionReceipt
+	retained.Acknowledged = true
 	retained.Scope, retained.SAs = "fixture-kernel", []saReceipt{other}
 	previous := receipt{Version: 1, Connections: []connectionReceipt{
-		{Name: "routerd-site", Hash: "previous", Local: owned.ID.Source, Remote: owned.ID.Destination, Scope: owned.Scope, SAs: []saReceipt{owned}},
+		{Name: "routerd-site", Acknowledged: true, Hash: "previous", Local: owned.ID.Source, Remote: owned.ID.Destination, Scope: owned.Scope, SAs: []saReceipt{owned}},
 		retained,
 	}}
 	if err := writeReceipt(directory, previous); err != nil {

@@ -362,6 +362,7 @@ receipt=json.loads(pathlib.Path(sys.argv[2]).read_text())
 connections=[c for c in receipt['connections']if c['name']=='routerd-provider-native']
 assert not receipt['pending']and len(connections)==1
 connection=connections[0]
+assert connection.get('acknowledged')is True
 recorded={hex(s['id']['spi']):s for s in connection.get('sas',[])}
 coverage={}
 for state in plan['states']:
