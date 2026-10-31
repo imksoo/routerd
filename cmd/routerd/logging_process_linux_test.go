@@ -98,12 +98,18 @@ func TestServePipelineProcessRestartRetainsPendingEvents(t *testing.T) {
 				default:
 					t.Errorf("unexpected process event %q", event.Message)
 				}
-				received <- event.Message
+				select {
+				case received <- event.Message:
+				default:
+					t.Error("logging receiver overflowed with duplicate deliveries")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	defer receiver.Close()
+	t.Cleanup(receiver.Close)
 	config := fmt.Sprintf(`apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
