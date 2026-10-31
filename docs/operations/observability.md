@@ -169,3 +169,11 @@ Relevant local checks are:
 go test ./pkg/eventlog ./pkg/logstore ./pkg/observabilitypipeline
 go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention|TestReviewArchive)'
 ```
+
+## Traffic flow observation failures
+
+A failed flow observation or `TrafficFlowLog` database write marks that resource
+`Degraded`, with a failure message instead of old active-flow counts. Connection
+counts and threshold events continue. Successful writes restore `Observed`;
+disabling the log changes its status to `Skipped` without reading its destination.
+Failure to save the required resource status remains an error.
