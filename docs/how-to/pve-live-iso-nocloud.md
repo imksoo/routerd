@@ -99,11 +99,16 @@ below it causes refusal before recursive traversal. Failed unmounts remain
 errors; the builder neither lazily detaches them nor walks through them for
 cleanup. Use a new work directory when an older build has no ownership marker.
 
-Rootfs caches now use format `routerd-live-rootfs-v2`. Rebuild older caches;
-their recursive ownership changes may already have discarded package modes.
-The release and quality workflows use the new exact cache key. Local shell
-failure tests cover refusal and firstboot ordering; native ISO building and VM
-boot remain separate qualification steps.
+Rootfs caches now use format `routerd-live-rootfs-v3`. Both archive creation and
+extraction preserve numeric ownership, package modes, `user.*` extended attributes,
+and Linux `security.capability`. Other security/system attribute namespaces are
+not imported from the build machine. GNU tar's `--xattrs` alone restores only the
+user namespace; the builder explicitly includes file capabilities as well.
+Rebuild v1/v2 caches: earlier ownership changes or omitted file capabilities cannot
+be repaired reliably from those archives. The release and quality workflows use
+the new exact cache key. Local shell tests cover refusal, attribute round trips,
+and firstboot ordering; native ISO building and VM boot remain separate
+qualification steps.
 
 ## Scope
 

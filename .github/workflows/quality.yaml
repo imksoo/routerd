@@ -309,7 +309,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dist/live/rootfs-cache.tar
-          key: live-iso-rootfs-v2-${{ steps.rootfs-key.outputs.hash }}
+          key: live-iso-rootfs-v3-${{ steps.rootfs-key.outputs.hash }}
 
       - name: Install debootstrap
         if: steps.cache.outputs.cache-hit != 'true'

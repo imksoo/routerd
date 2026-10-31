@@ -160,9 +160,9 @@ mkdir -p "${iso_root}/casper" "${iso_root}/boot/grub" "${payload_root}"
 rootfs_cache=${ROOTFS_CACHE_TAR:-}
 
 if [ -n "${rootfs_cache}" ] && [ -f "${rootfs_cache}" ]; then
-    tar --numeric-owner -xf "${rootfs_cache}" -C "${workdir}"
-    if [ ! -f "${rootfs}/etc/routerd-live-rootfs-format" ] || [ "$(cat "${rootfs}/etc/routerd-live-rootfs-format")" != routerd-live-rootfs-v2 ]; then
-        echo "rootfs cache predates preserved package ownership; rebuild it" >&2
+    tar --numeric-owner --xattrs --xattrs-include='user.*' --xattrs-include='security.capability' -xf "${rootfs_cache}" -C "${workdir}"
+    if [ ! -f "${rootfs}/etc/routerd-live-rootfs-format" ] || [ "$(cat "${rootfs}/etc/routerd-live-rootfs-format")" != routerd-live-rootfs-v3 ]; then
+        echo "rootfs cache lacks preserved package ownership or capabilities; rebuild it" >&2
         exit 1
     fi
     mkdir -p "${workdir}/rootfs/dev"
@@ -212,8 +212,8 @@ cleanup_mounts
 refuse_live_mounts
 
 if [ -n "${rootfs_cache}" ]; then
-    printf '%s\n' routerd-live-rootfs-v2 > "${rootfs}/etc/routerd-live-rootfs-format"
-    tar --numeric-owner -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
+    printf '%s\n' routerd-live-rootfs-v3 > "${rootfs}/etc/routerd-live-rootfs-format"
+    tar --numeric-owner --xattrs --xattrs-include='user.*' --xattrs-include='security.capability' -cf "${rootfs_cache}" -C "${workdir}" --exclude='rootfs/dev/*' rootfs
     echo "saved rootfs cache at ${rootfs_cache}"
 fi
 
