@@ -96,3 +96,40 @@ func TestReviewOptionalUnknownRuntimeKeyDoesNotPersistSkippedSetting(t *testing.
 		t.Fatalf("Skipped optional setting changed boot policy: err=%v readErr=%v statusErr=%v before=%q after=%q status=%+v", reconcileErr, readErr, statusErr, before, after, current)
 	}
 }
+
+func TestReviewRemovedPersistentSysctlCannotRemainApplied(t *testing.T) {
+	directory := t.TempDir()
+	store, err := routerstate.OpenSQLite(filepath.Join(directory, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	runtime := false
+	path := filepath.Join(directory, "sysctl.conf.local")
+	original := []byte("# operator line remains\noperator.unrelated = 7\n")
+	if err := os.WriteFile(path, original, 0640); err != nil {
+		t.Fatal(err)
+	}
+	controller := SysctlController{Router: persistentReviewRouter(false, &runtime), Store: store, OS: platform.OSFreeBSD, PersistentPath: path,
+		Command: func(context.Context, string, ...string) ([]byte, error) {
+			t.Fatal("persistent-only lifecycle dispatched a native operation")
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	authority := routerstate.SysctlPersistentOwnerName("owned-review", "routerd.review.unavailable")
+	acquired, err := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", authority)
+	if err != nil || acquired[sysctlPersistentOwnerKey] == nil {
+		t.Fatalf("actual acquisition missing: %+v %v", acquired, err)
+	}
+	controller.Router = &api.Router{}
+	reconcileErr := controller.Reconcile(t.Context())
+	file, readErr := os.ReadFile(path)
+	current, statusErr := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", "owned-review")
+	receipt, receiptErr := store.ReadObjectStatus(api.SystemAPIVersion, "Sysctl", authority)
+	if reconcileErr != nil || readErr != nil || statusErr != nil || receiptErr != nil || !bytes.Equal(file, original) || receipt[sysctlPersistentOwnerKey] != nil || current["phase"] == "Applied" {
+		t.Fatalf("withdrawn boot policy remains publicly Applied: err=%v readErr=%v statusErr=%v receiptErr=%v file=%q public=%+v authority=%+v", reconcileErr, readErr, statusErr, receiptErr, file, current, receipt)
+	}
+}
