@@ -19,17 +19,18 @@ import (
 // or all rules at a priority. Plain routes/rules have no private kernel cookie:
 // presence after an interrupted write is uncertainty, not an adoption receipt.
 type policyRouteEffect struct {
-	Family    int    `json:"family"`
-	Source    string `json:"source"`
-	InputIf   string `json:"inputIf"`
-	Kind      string `json:"kind"`
-	Table     int    `json:"table"`
-	Priority  int    `json:"priority"`
-	Mark      int    `json:"mark"`
-	Metric    int    `json:"metric"`
-	Interface string `json:"interface"`
-	Gateway   string `json:"gateway"`
-	IfIndex   int    `json:"ifIndex"`
+	Family              int    `json:"family"`
+	Source              string `json:"source"`
+	InputIf             string `json:"inputIf"`
+	Kind                string `json:"kind"`
+	Table               int    `json:"table"`
+	Priority            int    `json:"priority"`
+	Mark                int    `json:"mark"`
+	Metric              int    `json:"metric"`
+	Interface           string `json:"interface"`
+	Gateway             string `json:"gateway"`
+	IfIndex             int    `json:"ifIndex"`
+	SuppressMainDefault bool   `json:"suppressMainDefault"`
 }
 
 type policyRouteReceipt struct {
@@ -51,13 +52,16 @@ func validPolicyRouteEffect(e policyRouteEffect) bool {
 		if e.Priority < 1 || e.Priority > 2147483647 || e.Metric != 0 || e.Interface != "" || e.Gateway != "" || e.IfIndex != 0 {
 			return false
 		}
+		if e.SuppressMainDefault {
+			return e.Family == 6 && e.Table == 254 && e.Mark == 0 && e.InputIf == "lo" && e.Source == ""
+		}
 		if e.Family == 4 {
 			return e.Mark > 0 && uint64(e.Mark) <= 1<<32-1 && e.Source == "" && e.InputIf == ""
 		}
 		source, err := netip.ParseAddr(e.Source)
 		return e.Mark == 0 && (e.InputIf == "lo" && e.Source == "" || e.InputIf == "" && err == nil && source.Is6())
 	case "route":
-		if e.Priority != 0 || e.Mark != 0 || e.Metric < 0 || e.Interface == "" || e.IfIndex < 1 || e.InputIf != "" {
+		if e.Priority != 0 || e.Mark != 0 || e.Metric < 0 || e.Interface == "" || e.IfIndex < 1 || e.InputIf != "" || e.SuppressMainDefault {
 			return false
 		}
 		if e.Gateway != "" {
@@ -120,6 +124,13 @@ func (c IPv4PolicyRouteController) readPolicyRouteJournal(family int) (policyRou
 					return journal, fmt.Errorf("invalid native policy %s", key)
 				}
 				*target = s
+			}
+			if value, present := effect["suppressMainDefault"]; present {
+				var ok bool
+				e.SuppressMainDefault, ok = value.(bool)
+				if !ok {
+					return journal, errors.New("invalid native policy main-route guard")
+				}
 			}
 			scope, ok := r["scope"].(string)
 			if !ok {
@@ -201,10 +212,20 @@ func (c IPv4PolicyRouteController) verifyPolicyRouteEffect(ctx context.Context, 
 	return nil
 }
 
+func policyRouteEffectOrder(e policyRouteEffect) int {
+	if e.Kind == "route" {
+		return 0
+	}
+	if e.SuppressMainDefault {
+		return 1
+	}
+	return 2
+}
+
 func policyRouteEffectLess(a, b policyRouteEffect) bool {
-	// Routes acquire before rules; withdrawal uses the reverse order.
-	if a.Kind != b.Kind {
-		return a.Kind == "route"
+	// Install a main-route guard before its default selector; withdraw in reverse.
+	if orderA, orderB := policyRouteEffectOrder(a), policyRouteEffectOrder(b); orderA != orderB {
+		return orderA < orderB
 	}
 	return fmt.Sprint(a) < fmt.Sprint(b)
 }
@@ -331,11 +352,11 @@ func (c IPv4PolicyRouteController) reconcilePolicyRouteEffects(ctx context.Conte
 		}
 	}
 	// Stop selectors before removing their routes. Never flush a shared table.
-	for _, kind := range []string{"rule", "route"} {
+	for order := 2; order >= 0; order-- {
 		for i := 0; i < len(journal.Receipts); {
 			r := journal.Receipts[i]
 			keep := wanted[r.Effect] && !(r.Effect.Kind == "rule" && changingTables[r.Effect.Table])
-			if r.Scope != scope || r.Effect.Kind != kind || keep {
+			if r.Scope != scope || policyRouteEffectOrder(r.Effect) != order || keep {
 				i++
 				continue
 			}
@@ -469,7 +490,11 @@ func (c IPv4PolicyRouteController) mutatePolicyRouteEffect(ctx context.Context, 
 		if e.InputIf != "" {
 			args = append(args, "iif", e.InputIf)
 		}
-		args = append(args, "table", strconv.Itoa(e.Table), "protocol", "static")
+		args = append(args, "table", strconv.Itoa(e.Table))
+		if e.SuppressMainDefault {
+			args = append(args, "suppress_prefixlength", "0")
+		}
+		args = append(args, "protocol", "static")
 	}
 	out, err := c.commandOutput(ctx, "ip", args...)
 	if err != nil {
@@ -586,6 +611,7 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 				continue
 			}
 			from, mark, table, protocol, inputIf := "", "", "", "", ""
+			suppressMainDefault, suppressSeen := false, false
 			valid := true
 			for i := 1; i < len(f); i++ {
 				if i+1 >= len(f) {
@@ -605,6 +631,12 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 					table = value
 				case "proto":
 					protocol = value
+				case "suppress_prefixlength":
+					if suppressSeen || value != "0" {
+						valid = false
+					}
+					suppressSeen = true
+					suppressMainDefault = value == "0"
 				default:
 					valid = false
 				}
@@ -659,7 +691,7 @@ func (c IPv4PolicyRouteController) observePolicyRouteEffect(ctx context.Context,
 				}
 				exactSelector = mark == "" && strings.TrimSuffix(from, "/128") == expectedSource && inputIf == e.InputIf
 			}
-			if exactSelector && table == strconv.Itoa(e.Table) && (protocol == "static" || protocol == "4") {
+			if exactSelector && suppressMainDefault == e.SuppressMainDefault && table == strconv.Itoa(e.Table) && (protocol == "static" || protocol == "4") {
 				if valid {
 					matching = true
 				}
@@ -682,6 +714,16 @@ func sortedPolicyRouteEffects(input []policyRouteEffect) ([]policyRouteEffect, e
 		if !seen[e] {
 			seen[e] = true
 			out = append(out, e)
+		}
+	}
+	for _, guard := range out {
+		if !guard.SuppressMainDefault {
+			continue
+		}
+		for _, other := range out {
+			if other != guard && other.Kind == "rule" && other.Family == guard.Family && other.Priority == guard.Priority {
+				return nil, errors.New("IPv6 host main-route guard priority conflicts with another policy selector")
+			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return policyRouteEffectLess(out[i], out[j]) })
