@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -170,6 +171,15 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			})
 			return sysctlApplyResult{skipped: true}, nil
+		}
+		if currentErr != nil {
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+				"phase": "Error", "reason": "ObserveFailed", "key": spec.Key, "error": currentErr.Error(),
+				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); saveErr != nil {
+				return sysctlApplyResult{}, errors.Join(currentErr, saveErr)
+			}
+			return sysctlApplyResult{}, fmt.Errorf("read sysctl %s: %w", spec.Key, currentErr)
 		}
 		matches, compareErr := sysctlValueMatches(current, expected, spec.Compare)
 		runtimeChanged = currentErr != nil || compareErr != nil || !matches

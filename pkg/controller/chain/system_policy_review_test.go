@@ -130,3 +130,49 @@ func TestHostnameIsReachableThroughActualStandbyRunner(t *testing.T) {
 		t.Fatalf("standby changed the shared hostname: before=%q after=%q err=%v", before, after, err)
 	}
 }
+
+func TestPackageObservationFailureDoesNotInstall(t *testing.T) {
+	c := PackageController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+			Metadata: api.ObjectMeta{Name: "dependency"},
+			Spec:     api.PackageSpec{Packages: []api.OSPackageSetSpec{{OS: "debian", Manager: "apt", Names: []string{"unobserved"}}}},
+		}}}},
+		OSName: "debian", Store: mapStore{},
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			if name != "dpkg-query" {
+				t.Fatalf("failed package query reached mutation: %s %v", name, args)
+			}
+			return exec.CommandContext(ctx, "sh", "-c", "echo query-failed >&2; exit 2").CombinedOutput()
+		},
+	}
+	if err := c.Reconcile(t.Context()); err == nil {
+		t.Fatal("unknown package observation was accepted")
+	}
+	if status := c.Store.ObjectStatus(api.SystemAPIVersion, "Package", "dependency"); status["reason"] != "ObserveFailed" {
+		t.Fatalf("package observation failure status: %+v", status)
+	}
+}
+
+func TestSysctlObservationFailureDoesNotWrite(t *testing.T) {
+	c := SysctlController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+			TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"},
+			Metadata: api.ObjectMeta{Name: "unobserved"},
+			Spec:     api.SysctlSpec{Key: "net.ipv4.ip_forward", Value: "1"},
+		}}}},
+		Store: mapStore{},
+		Command: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			if len(args) != 2 || args[0] != "-n" {
+				t.Fatalf("failed sysctl query reached mutation: %s %v", name, args)
+			}
+			return exec.CommandContext(ctx, "sh", "-c", "echo query-failed >&2; exit 2").CombinedOutput()
+		},
+	}
+	if err := c.Reconcile(t.Context()); err == nil {
+		t.Fatal("unknown sysctl observation was accepted")
+	}
+	if status := c.Store.ObjectStatus(api.SystemAPIVersion, "Sysctl", "unobserved"); status["reason"] != "ObserveFailed" {
+		t.Fatalf("sysctl observation failure status: %+v", status)
+	}
+}

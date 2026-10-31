@@ -4,8 +4,10 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -69,8 +71,26 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 				continue
 			}
 			checkName, checkArgs := packageCheckCommand(manager, name)
-			out, err := command(ctx, checkName, checkArgs...)
-			if err != nil || (manager == "apt" && strings.TrimSpace(string(out)) != "install ok installed") {
+			out, checkErr := command(ctx, checkName, checkArgs...)
+			installed := checkErr == nil
+			if checkErr != nil {
+				var exitErr *exec.ExitError
+				if errors.As(checkErr, &exitErr) && exitErr.ExitCode() == 1 {
+					installed, checkErr = false, nil
+				}
+			} else if manager == "apt" {
+				installed, checkErr = installedDPKGStatus(string(out))
+			}
+			if checkErr != nil {
+				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
+					"phase": "Error", "reason": "ObserveFailed", "manager": manager, "package": name, "error": checkErr.Error(),
+					"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
+				}); saveErr != nil {
+					return errors.Join(checkErr, saveErr)
+				}
+				return fmt.Errorf("observe package %s: %w", name, checkErr)
+			}
+			if !installed {
 				missing = append(missing, name)
 			}
 		}
@@ -127,6 +147,29 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// dpkg's selection state (including hold) does not establish whether the
+// package is installed. Decode its error and actual status fields separately.
+func installedDPKGStatus(output string) (bool, error) {
+	fields := strings.Fields(output)
+	if len(fields) != 3 {
+		return false, errors.New("dpkg-query returned an unrecognized package status")
+	}
+	switch fields[0] {
+	case "unknown", "install", "hold", "deinstall", "purge":
+	default:
+		return false, errors.New("dpkg-query returned an unrecognized selection state")
+	}
+	if fields[1] != "ok" && fields[1] != "reinstreq" {
+		return false, errors.New("dpkg-query returned an unrecognized package error state")
+	}
+	switch fields[2] {
+	case "not-installed", "config-files", "half-installed", "unpacked", "half-configured", "triggers-awaited", "triggers-pending", "installed":
+		return fields[1] == "ok" && fields[2] == "installed", nil
+	default:
+		return false, errors.New("dpkg-query returned an unrecognized installation state")
+	}
 }
 
 func packageControllerResources(router *api.Router) []api.Resource {
