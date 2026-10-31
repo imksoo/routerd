@@ -3,6 +3,7 @@
 package ipsec
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -39,5 +40,53 @@ func TestReviewChangedVICIEndpointsCannotGrantKernelDeletion(t *testing.T) {
 	after, readErr := readReceipt(directory)
 	if readErr != nil || len(after.Connections) != 1 || after.Connections[0].Local != before.Connections[0].Local || after.Connections[0].Remote != before.Connections[0].Remote || len(after.Connections[0].SAs) != 0 {
 		t.Fatalf("original receipt was forgotten or foreign SAs adopted: %+v %v", after, readErr)
+	}
+}
+
+type scopeChangingSAReview struct {
+	*recordedNativeSAs
+	scope           string
+	switchOnObserve bool
+}
+
+func (n *scopeChangingSAReview) Scope(context.Context) (string, error) { return n.scope, nil }
+func (n *scopeChangingSAReview) Observe(ctx context.Context, id saID) (saReceipt, bool, error) {
+	if n.switchOnObserve {
+		n.scope = "another-kernel"
+		n.switchOnObserve = false
+	}
+	return n.recordedNativeSAs.Observe(ctx, id)
+}
+func TestReviewIPsecSAObservationCannotCrossKernelScope(t *testing.T) {
+	directory := t.TempDir()
+	endpoint, session := newVICIEndpoint(t, directory)
+	native := &recordedNativeSAs{}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: native}
+	router := ipsecTestRouter("203.0.113.1", "fixture-shared-key")
+	if err := controller.Reconcile(t.Context(), router); err != nil {
+		t.Fatal(err)
+	}
+	before, err := readReceipt(directory)
+	if err != nil || len(before.Connections) != 1 || before.Connections[0].Scope != "fixture-kernel" || len(before.Connections[0].SAs) != 0 {
+		t.Fatalf("real initial acquisition: %+v %v", before, err)
+	}
+	foreignIn := saReceipt{ID: saID{Source: "203.0.113.1", Destination: "198.51.100.1", Protocol: "ESP", SPI: 0x10203040}, Scope: "another-kernel", ReqID: 1, AddTime: 456, Fingerprint: strings.Repeat("4", 64)}
+	foreignOut := foreignIn
+	foreignOut.ID.Source, foreignOut.ID.Destination = foreignIn.ID.Destination, foreignIn.ID.Source
+	foreignOut.ID.SPI = 0x50607080
+	native.states = []saReceipt{foreignIn, foreignOut}
+	endpoint.mu.Lock()
+	endpoint.saEvents = map[string][]byte{"routerd-site": viciSAEvent(foreignOut.ID.Source, foreignOut.ID.Destination, foreignIn.ID.SPI, foreignOut.ID.SPI)}
+	endpoint.mu.Unlock()
+	// The namespace switches after the pre-VICI Scope call, before native readback.
+	controller.nativeSAs = &scopeChangingSAReview{recordedNativeSAs: native, scope: "fixture-kernel", switchOnObserve: true}
+	err = controller.Reconcile(t.Context(), router)
+	after, readErr := readReceipt(directory)
+	if err == nil {
+		removeErr := controller.Reconcile(t.Context(), &api.Router{})
+		t.Fatalf("new namespace acquired authority after observation wait: reconcile=%v removal=%v deletes=%d scope=%s", err, removeErr, len(native.deleted), after.Connections[0].Scope)
+	}
+	if readErr != nil || len(after.Connections) != 1 || after.Connections[0].Scope != before.Connections[0].Scope || len(after.Connections[0].SAs) != 0 || len(native.deleted) != 0 {
+		t.Fatalf("scope mismatch lost original receipt or acquired foreign authority: after=%+v err=%v deletes=%d", after, readErr, len(native.deleted))
 	}
 }
