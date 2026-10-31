@@ -391,7 +391,7 @@ func readReceipt(directory string) (receipt, error) {
 			return receipt{}, fmt.Errorf("invalid owned IPsec connection %q", conn.Name)
 		}
 		for _, state := range conn.SAs {
-			if !state.valid() {
+			if !state.valid() || !state.ID.matchesEndpoints(conn.Local, conn.Remote) {
 				return receipt{}, errors.New("invalid native IPsec ownership receipt")
 			}
 		}
