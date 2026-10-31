@@ -219,7 +219,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 			if err == nil {
 				for _, line := range strings.Split(last, "\n") {
 					fields := strings.Fields(line)
-					if len(fields) > 0 && strings.HasPrefix(fields[0], "*") && strings.Contains(strings.TrimPrefix(fields[0], "*"), source) {
+					if len(fields) > 0 && strings.HasPrefix(fields[0], "*") && strings.TrimPrefix(fields[0], "*") == source {
 						t.Logf("actual ntpq selected source (%s):\n%s", jail, last)
 						return
 					}
@@ -232,7 +232,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 	referenceConfig := filepath.Join(base, "reference.conf")
 	write(referenceConfig, "disable ntp\ninterface ignore all\ninterface listen 127.0.0.1\ninterface listen 198.18.97.2\nrestrict default nomodify notrap nopeer noquery\nrestrict 127.0.0.1\nserver 127.127.1.0 prefer minpoll 4 maxpoll 4\nfudge 127.127.1.0 stratum 10\ndriftfile "+filepath.Join(base, "reference.drift")+"\n")
 	referenceProcess := start(reference, referenceConfig, "reference")
-	waitSource(reference, referenceProcess, "LOCAL")
+	waitSource(reference, referenceProcess, "127.127.1.0")
 	fragment, runtime := filepath.Join(base, "routerd.conf"), filepath.Join(base, "runtime.conf")
 	// Isolation controls only: no ACL or source is added outside the generated
 	// fragment. The fragment is consumed verbatim by the real provider.
