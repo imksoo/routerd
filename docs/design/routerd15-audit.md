@@ -2217,3 +2217,105 @@ Reviewed implementation/consumer paths for this increment include
 `pkg/render/netplan.go`, their related protocol/daemon/configuration tests, and
 the development runbook. The native controller paths were inspected for the next
 integration step, not changed or qualified by this increment.
+
+## Automatic Plugin triggers and shared NTP owner, 2026-10-31
+
+Integration `309af77fe23dc049ff2485c86204caed2ff64a0e` contains the automatic
+Plugin owner (`035d13c8`), NTP lifecycle/shared-provider fixes (`59104e2a`),
+FreeBSD ntpd fixture (`1c389ab8`), static-address ownership rechecks (`d2efd8f9`)
+and the independently reproduced logging archive/startup fixes (`49bd1e7e`).
+This is an implementation checkpoint; whole-suite results and per-feature
+qualification remain separate observations.
+
+### Automatic local Plugin publication
+
+The existing framework worker now executes prepared Plugin/DynamicConfigSource
+trigger unions. Each interval has its own due time. Ordinary events select only
+matching named topics and cannot consume interval deadlines. An optional explicit
+bootstrap callback separates internal startup from valid operator-declared events
+named `routerd.controller.bootstrap` or `routerd.controller.periodic`; unchanged
+controllers retain their prior bootstrap behavior.
+
+The production runner publishes through the existing source/generation SQL CAS.
+A source TTL caps the original observation lifetime, including manual CLI
+publication. Expiry while waiting for SQL cannot commit an already expired new
+generation. Cancellation reaps the actual child before completion and cannot
+publish late output. Read-only and standby paths neither launch nor consume due
+work. Unchanged active content does not generate another change notification.
+
+At `035d13c8`, the Linux smoke entry point passed 41 top-level tests: subscription
+1, separate CLI 1, owner 14, framework 21 and actual declared callers 4, with no
+failure or skip. Independent review reproduced the event/deadline and reserved
+name failures before the fix, then passed the same three cases afterward.
+
+The exact-source FreeBSD 14.3 binaries also ran: owner 14 and actual framework
+callers 4 top-level passes (23 passes including subtests), no failure or skip.
+The owner binary SHA256 is
+`61ee69d5b06dae53d64e5da5172fe2a5150beb102a47b0462045dc1140e93722`;
+the caller binary SHA256 is
+`02b8c02a5377abd814dc7fc8a21144186161c7d481c31a7711a0a78eba23c216`.
+Actual interval repetition, bus publication, SQL generation and cancellation
+were exercised. This does not qualify native forwarding from a plugin's output
+or every external provider. See [the reusable process gate](../operations/plugin-dynamic-process-test.md).
+
+### NTP fragments, shared provider and real packets
+
+The NTP owner joins acquired fragments to private receipts, exact marker/digest,
+provider and path. Interrupted writes/reloads/withdrawals retain retry state;
+unacquired or foreign replacements survive. A declared managed server owns the
+shared provider, including a Linux timesyncd-requesting client delegated to
+chrony. A false server condition keeps active client upstreams while disabling
+its downstream service. Public Applied state requires the confirmed fragment.
+
+The final Linux NTP candidate `59104e2a` passed 28 NTP top-level tests (one
+separate native opt-in skip), and its whole chain passed 869 (five existing
+native opt-in skips). The real isolated chronyd/independent-UDP gate passed three
+configurations, including the mixed-client/server case, source selection,
+allowed/denied queries, process/SQLite recovery and declaration withdrawal.
+Native execution/build inputs were compared with all 13 NTP-related git blobs
+at `59104e2a`; the record retains that execution began at `f74b3ab3` plus the
+subsequently committed native test. It is not relabeled as a clean-commit build.
+Chronyd used `-x` in private user/network/mount namespaces.
+
+A separate FreeBSD 14.3 pair used the identical final fixture and script on both
+sides. Baseline `112a1e1b` selected its independent reference and returned a valid
+mode-4 reply to the explicitly denied source; the expected silence assertion
+failed. Candidate `1c389ab8` passed in 91.46 seconds, including allowed replies,
+three silent denied queries per stage, owned process restart/Wait, SQLite reopen,
+WhenFalse silence with upstream selection retained, and WhenTrue recovery. The
+candidate production source here includes `b8cdb17e`; later shared-provider/token
+changes in `59104e2a` require their own exact-source native replay.
+
+Candidate binary SHA256:
+`48815b5518eb3395c3cc070fa3b96d0e528b89a67aadf89ba1ed3ed1c478ff1c`.
+Both runs used script SHA256
+`8b1566a7c7996937ff73b1c42111ab8ab00b8cea709961136c5691ca8953bbe5`
+and the same fixture source hash. Earlier attempts failed during fixture setup
+(ntpq path, numeric peer matching, disabled-feedback leap alarm, then cold
+reference dispersion); they are retained as failed setup attempts. The final
+fixture waits for measured reference quality without changing product maxdist,
+ACLs or upstream inputs.
+
+Both VNET jails first proved clock-setting and NTP-adjustment privilege denial.
+The generated provider fragment was consumed unchanged, with private drift files
+and disabled kernel discipline. Independent source review checked FreeBSD 14.3
+jail rejection of the fallback clock APIs. No shared clock or rc.d/sysrc setting
+was changed. Each run confirmed process exit, jail removal, epair absence and
+module restoration before its final result. Independent post-run inspection
+found no trial jail, ntpd process or trial interface. Actual clock precision,
+packaged shared-service control and physical failure domains remain unqualified.
+See [the native NTP gates](../operations/ntp-runtime-test.md).
+
+### Static address receipt replacement
+
+Independent SQLite regressions reproduced replacement during initial native
+observation, pending persistence and native re-read, for both acquisition and
+withdrawal, with peer change or cancellation. `d2efd8f9` preserves the replacement
+receipt and its Applied phase in all 12 cases; no native mutation occurs. The
+independent replay also passed all 12. Nil prior ownership is a real expected
+state, not permission to overwrite a newly acquired receipt. These userspace
+checks do not establish atomic native/SQL CAS against unrelated external writers.
+
+The 50 full feature scopes and 100 platform verdicts remain unknown. These
+scoped observations do not reduce the complete routerd 1.0 preservation goal or
+authorize production cutover.

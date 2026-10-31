@@ -1040,7 +1040,7 @@
       ],
       "excludes": [
         "Native route application/forwarding and provider credentials",
-        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Automatic scheduling was unimplemented at this revision; later trigger evidence records its implementation",
         "Complete plugin/dynamic-configuration qualification"
       ]
     },
@@ -1055,7 +1055,7 @@
       ],
       "excludes": [
         "Native route application/forwarding and provider credentials",
-        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Automatic scheduling was unimplemented at this revision; later trigger evidence records its implementation",
         "Complete plugin/dynamic-configuration qualification"
       ],
       "cli_sha256": "67466729a122032e828961a6d20708adb795c7c2cfa5e66158826bb921538511"
@@ -1100,6 +1100,84 @@
         "Native runtime verification of this follow-up revision",
         "Complete DHCPv6Address resource or 1.0 functional qualification"
       ]
+    },
+    "plugin-triggers-linux-035d13c8": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "035d13c8d94f3820fb57150d4a6691d9e40b591f",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual framework bootstrap/periodic/named-event worker invokes external Plugin and commits source-bound SQL generations",
+        "Independent deadline and explicit controller-topic RED-to-GREEN; interval repetition; dry-run/standby; actual child cancellation and reap",
+        "Source TTL limits manual/automatic publication and expiry during SQL wait preserves previous generation",
+        "Updated smoke entry point: 41 top-level passes, no failure or skip"
+      ],
+      "excludes": [
+        "Complete baseline option/body qualification and native forwarding from arbitrary dynamic output",
+        "External provider credentials and target-device deployment"
+      ]
+    },
+    "plugin-triggers-freebsd-035d13c8": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "035d13c8d94f3820fb57150d4a6691d9e40b591f",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "FreeBSD 14.3 actual owner and framework caller binaries: 18 top-level passes, 23 including subtests, no failure or skip",
+        "Actual processes, SQLite generations, named bus delivery, repeat interval, cancellation/reap and read-only paths"
+      ],
+      "owner_binary_sha256": "61ee69d5b06dae53d64e5da5172fe2a5150beb102a47b0462045dc1140e93722",
+      "caller_binary_sha256": "02b8c02a5377abd814dc7fc8a21144186161c7d481c31a7711a0a78eba23c216",
+      "excludes": [
+        "Native forwarding and full plugin/dynamic-configuration qualification"
+      ]
+    },
+    "ntp-linux-59104e2a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "59104e2a0f0d13c5608a93ef41406774c8bd90cc",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual chronyd -x and independent UDP across private namespaces: three configurations pass",
+        "Mixed timesyncd-requesting client plus chrony server has one provider owner; false server condition keeps client source but denies clients",
+        "Owned process restart, SQLite reopen, foreign-file preservation and declaration withdrawal",
+        "Execution/build input correspondence with all 13 committed NTP sources; execution initially f74b3ab3 plus subsequently committed native test"
+      ],
+      "excludes": [
+        "Actual clock discipline, shared systemd service-manager qualification and target-storage crash durability",
+        "Full baseline NTP provider/platform qualification"
+      ]
+    },
+    "ntp-freebsd-1c389ab8": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1c389ab8b4747e05c357bfe5d115468479cfda63",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Same-fixture baseline 112a1e1b returns valid NTP to denied source and fails; candidate passes in 91.46 seconds",
+        "Allowed mode4 usable reply; denied silence; process/SQLite restart; WhenFalse keeps selected upstream and denies both clients; WhenTrue recovers",
+        "Both jailed clock guards pass before daemons; final owned process/jail/interface/module cleanup and independent post-run census pass"
+      ],
+      "binary_sha256": "48815b5518eb3395c3cc070fa3b96d0e528b89a67aadf89ba1ed3ed1c478ff1c",
+      "script_sha256": "8b1566a7c7996937ff73b1c42111ab8ab00b8cea709961136c5691ca8953bbe5",
+      "excludes": [
+        "Later 59104e2a shared-provider/token changes need exact-source native replay",
+        "Clock synchronization accuracy, shared rc.d/sysrc effects, physical failure domains and full NTP qualification"
+      ]
+    },
+    "static-receipt-replacement-d2efd8f9": {
+      "level": "ordinary-tests",
+      "outcome": "pass",
+      "revision": "d2efd8f99a35cee4654949de46037e27f95f69e3",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual SQLite replacement across initial observation, pending save and native re-read; acquire/withdraw times peer change/cancel: 12 passes",
+        "Independent replay preserves replacement receipt and Applied phase with zero native mutations"
+      ],
+      "excludes": [
+        "Atomic SQL/native identity CAS against unrelated external writers",
+        "Full static-address platform qualification"
+      ]
     }
   },
   "features": [
@@ -1124,7 +1202,10 @@
           "pkg/controller/chain/chain.go",
           "pkg/plugin/runner.go",
           "pkg/plugin/dynamic_config.go",
-          "pkg/dynamicconfig/merge.go"
+          "pkg/dynamicconfig/merge.go",
+          "pkg/controller/plugin/controller.go",
+          "pkg/plugin/source_policy.go",
+          "pkg/state/plugin_publication.go"
         ],
         "related_test_files": [
           "pkg/plugin/runner_test.go",
@@ -1135,13 +1216,15 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "plugin-process-linux-e4097d0b"
+          "plugin-process-linux-e4097d0b",
+          "plugin-triggers-linux-035d13c8"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "plugin-process-freebsd-e4097d0b"
+          "plugin-process-freebsd-e4097d0b",
+          "plugin-triggers-freebsd-035d13c8"
         ]
       },
       "required_remaining_checks": [
@@ -1292,7 +1375,9 @@
         "body_and_entrypoint_files": [
           "pkg/controller/chain/chain.go",
           "pkg/controller/chain/ntp.go",
-          "pkg/render/timesyncd.go"
+          "pkg/render/timesyncd.go",
+          "pkg/controller/chain/ntp_config_owner.go",
+          "pkg/controller/chain/ntp_shared.go"
         ],
         "related_test_files": [
           "pkg/controller/chain/ntp_test.go"
@@ -1301,11 +1386,15 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "ntp-linux-59104e2a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "ntp-freebsd-1c389ab8"
+        ]
       },
       "required_remaining_checks": [
         "Independent NTP server/client exchange",
