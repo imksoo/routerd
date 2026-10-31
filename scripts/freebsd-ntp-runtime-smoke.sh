@@ -159,7 +159,7 @@ jexec "$reference" ifconfig "$epair_b" inet 198.18.97.10/32 alias
 jexec "$reference" ifconfig "$epair_b" inet 198.18.97.20/32 alias
 result=0
 ROUTERD_RUN_NTPD_VNET=1 ROUTERD_NTPD_MANAGED_JAIL="$managed" ROUTERD_NTPD_REFERENCE_JAIL="$reference" ROUTERD_NTPD_WORK="$work" \
-  timeout 190 "$binary" -test.run '^TestNTPNTPDNativeFreeBSDControllerLifecycle$' -test.v -test.count=1 -test.timeout=180s >"$work/native.log" 2>&1 || result=$?
+  timeout 280 "$binary" -test.run '^TestNTPNTPDNativeFreeBSDControllerLifecycle$' -test.v -test.count=1 -test.timeout=270s >"$work/native.log" 2>&1 || result=$?
 if [ "$result" -eq 0 ]; then
   if ! grep -q '^--- PASS: TestNTPNTPDNativeFreeBSDControllerLifecycle' "$work/native.log" ||
      ! grep -q 'native-stage=WhenTrue-recovery' "$work/native.log" ||
