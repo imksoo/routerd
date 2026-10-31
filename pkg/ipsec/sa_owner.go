@@ -232,7 +232,7 @@ func (c Controller) observeOwnedSAs(ctx context.Context, state receipt) (receipt
 			if !found {
 				continue
 			} // A normal rekey/expiry may retire the sampled SPI.
-			if !current.valid() || current.ReqID != sa.ReqID {
+			if !current.valid() || current.Scope != conn.Scope || current.ReqID != sa.ReqID {
 				return state, errors.New("IPsec VICI and kernel SA identities do not match")
 			}
 			if !slices.Contains(kept, current) {
@@ -249,6 +249,13 @@ func (c Controller) observeOwnedSAs(ctx context.Context, state receipt) (receipt
 					return state, errors.New("IPsec SA ownership changed during native observation")
 				}
 			}
+		}
+		after, err := native.Scope(ctx)
+		if err != nil {
+			return state, err
+		}
+		if after != conn.Scope {
+			return state, errors.New("IPsec kernel scope changed during VICI/native observation")
 		}
 		conn.SAs = kept
 	}

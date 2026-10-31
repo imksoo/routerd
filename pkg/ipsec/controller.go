@@ -99,6 +99,30 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	native := c.kernelSAs()
+	operationScope := ""
+	if native != nil {
+		operationScope, err = native.Scope(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	checkScope := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if native == nil {
+			return nil
+		}
+		current, err := native.Scope(ctx)
+		if err != nil {
+			return err
+		}
+		if current != operationScope {
+			return errors.New("IPsec kernel scope changed during reconciliation")
+		}
+		return nil
+	}
 	if previous.Pending {
 		// An interrupted request may have loaded a different configuration before
 		// losing its final acknowledgement. Its old content hash proves nothing
@@ -123,14 +147,8 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
-	if native := c.kernelSAs(); native != nil && len(desired) != 0 {
-		scope, err := native.Scope(ctx)
-		if err != nil {
-			return err
-		}
-		for i := range desired {
-			desired[i].Scope = scope
-		}
+	for i := range desired {
+		desired[i].Scope = operationScope
 	}
 	pending := receipt{Version: 1, Pending: true, Connections: slices.Clone(previous.Connections), SharedKeys: slices.Clone(previous.SharedKeys)}
 	for _, conn := range desired {
@@ -148,6 +166,9 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 				pending.SharedKeys = append(pending.SharedKeys, conn.Name)
 			}
 		}
+	}
+	if err := checkScope(); err != nil {
+		return err
 	}
 	if err := writeReceipt(c.Directory, pending); err != nil {
 		return err
@@ -260,7 +281,7 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := checkScope(); err != nil {
 		return err
 	}
 	return writeReceipt(c.Directory, final)
