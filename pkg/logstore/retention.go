@@ -190,7 +190,15 @@ func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []R
 	// Archive and delete exactly one database snapshot. A concurrent WAL writer
 	// can invalidate the read-to-write upgrade; rollback then retains the local
 	// rows for retry rather than deleting records the archive never observed.
-	tx, err := db.BeginTx(ctx, nil)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// A canceled transaction can report ErrTxDone while database/sql's
+	// cancellation goroutine is still rolling back the driver transaction.
+	// Closing the reserved connection joins that work before returning.
+	defer conn.Close()
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
