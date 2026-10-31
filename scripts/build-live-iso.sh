@@ -140,6 +140,7 @@ if [ "${rootfs_only}" = false ]; then
     require mksquashfs
     require grub-mkrescue
     require xorriso
+    require file
 fi
 
 workdir=$(realpath -m -- "${workdir}")
@@ -228,29 +229,16 @@ if [ "${rootfs_only}" = true ]; then
     exit 0
 fi
 
-make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
+# Reuse the release payload inventory, including provider Plugin manifests and
+# their executable paths. A separate list here silently omitted libexec assets.
+make dist ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}" DISTBASE="${distbase}" DISTROOT="${payload_root}"
 
-install -d "${payload_root}/bin" "${payload_root}/etc/routerd" "${payload_root}/share/licenses/routerd"
-for binary in bin/linux-amd64/*; do
-    [ -f "${binary}" ] || continue
-    install -m 0755 "${binary}" "${payload_root}/bin/$(basename "${binary}")"
-done
-install -m 0755 packaging/install.sh "${payload_root}/install.sh"
-install -m 0755 packaging/uninstall.sh "${payload_root}/uninstall.sh"
-install -m 0644 examples/router-lab.yaml "${payload_root}/etc/routerd/router.yaml.sample"
-install -m 0644 LICENSE "${payload_root}/share/licenses/routerd/LICENSE"
-if [ -f THIRD_PARTY_LICENSES.md ]; then
-    install -m 0644 THIRD_PARTY_LICENSES.md "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt"
-fi
-
-install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
+install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/libexec" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
 cp -a "${payload_root}/." "${rootfs}/opt/routerd-live/"
 cp -a "${payload_root}/bin/." "${rootfs}/usr/local/sbin/"
+cp -a "${payload_root}/libexec/." "${rootfs}/usr/local/libexec/"
+cp -a "${payload_root}/share/doc/." "${rootfs}/usr/local/share/doc/routerd/"
 install -m 0644 "${payload_root}/etc/routerd/router.yaml.sample" "${rootfs}/usr/local/etc/routerd/router.yaml.sample"
-install -m 0644 "${payload_root}/share/licenses/routerd/LICENSE" "${rootfs}/usr/local/share/doc/routerd/LICENSE"
-if [ -f "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" ]; then
-    install -m 0644 "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" "${rootfs}/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt"
-fi
 
 install -d "${rootfs}/etc/systemd/system"
 if [ -f contrib/systemd/routerd.service ]; then
@@ -275,23 +263,8 @@ WantedBy=multi-user.target
 EOF
 fi
 
-cat > "${rootfs}/etc/systemd/system/routerd-dns-resolver@.service" <<'EOF'
-[Unit]
-Description=routerd DNS resolver daemon (%i)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json
-Restart=always
-RestartSec=5
-RuntimeDirectory=routerd/dns-resolver
-StateDirectory=routerd/dns-resolver
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# The systemd controller renders and owns DNS units for configured resources.
+# A generic image template has no receipt and becomes a stale foreign artifact.
 
 cat > "${payload_root}/README.txt" <<EOF
 routerd live payload ${version}
@@ -974,9 +947,7 @@ fi
 prepare_routerd_service
 disable_bootstrap_dhcp
 
-if [ -x /usr/local/sbin/routerd-dns-resolver ]; then
-    systemctl enable routerd-dns-resolver@lan-resolver.service >/dev/null 2>&1 || true
-fi
+# routerd reconciles DNS resolver instances from the restored configuration.
 EOF
 chmod 0755 "${rootfs}/opt/routerd-live/firstboot.sh"
 
