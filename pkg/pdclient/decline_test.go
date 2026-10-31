@@ -113,3 +113,24 @@ func TestDeclineValidatesWholeRequestBeforeChangingBindings(t *testing.T) {
 		t.Fatal("canceled report changed lease")
 	}
 }
+
+func TestDeclineSendFailureStillRevokesAddressAndRetries(t *testing.T) {
+	now := time.Now().UTC()
+	c, transport := addressClient(t, &now, RequestPrefixAndAddress)
+	acquireAddresses(t, c, true)
+	transport.failure = errors.New("temporary send failure")
+	if err := declineForTest(t, c, c.Lease.Addresses[0].Address); !errors.Is(err, ErrSend) {
+		t.Fatalf("send failure lost: %v", err)
+	}
+	if len(c.Lease.Addresses) != 0 || len(c.Lease.Prefixes) != 1 {
+		t.Fatal("send failure revived duplicate or revoked PD")
+	}
+	transport.failure = nil
+	now = c.NextRetryAt()
+	if err := c.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if transport.last().Message.Type != 9 {
+		t.Fatal("failed Decline lost retry ownership")
+	}
+}
