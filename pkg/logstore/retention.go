@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 
 type RetentionTarget struct {
 	File         string
+	Identity     fs.FileInfo
 	Retention    time.Duration
 	Signals      []string
 	BeforeDelete func(RetentionRecord) error
@@ -94,16 +96,23 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 		return result, nil
 	}
 	if _, err := os.Stat(target.File); err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) && target.Identity == nil {
 			result.Skipped = true
 			return result, nil
 		}
 		return result, err
 	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return result, err
+	}
 	if err := os.MkdirAll(filepath.Dir(target.File), 0o755); err != nil {
 		return result, err
 	}
-	db, err := sql.Open("sqlite", sqliteFileURI(target.File))
+	dsn, err := sqliteFileURI(target.File)
+	if err != nil {
+		return result, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return result, err
 	}
@@ -112,13 +121,19 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000;`); err != nil {
 		return result, err
 	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return result, err
+	}
 	cutoff := time.Now().Add(-target.Retention).UTC()
-	deleted, err := deleteExpired(ctx, db, cutoff, RetentionTables(target.Signals), target.BeforeDelete)
+	deleted, err := deleteExpired(ctx, db, cutoff, RetentionTables(target.Signals), target)
 	result.Deleted = deleted
 	if err != nil {
 		return result, err
 	}
 	if incrementalVacuum {
+		if err := requireRetentionIdentity(target); err != nil {
+			return result, err
+		}
 		vacuumed, freelistPages, err := vacuumAfterRetention(ctx, db)
 		if err != nil {
 			return result, err
@@ -127,6 +142,20 @@ func ApplyRetention(ctx context.Context, target RetentionTarget, incrementalVacu
 		result.FreelistPages = freelistPages
 	}
 	return result, nil
+}
+
+func requireRetentionIdentity(target RetentionTarget) error {
+	if target.Identity == nil {
+		return nil
+	}
+	current, err := os.Stat(target.File)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(target.Identity, current) {
+		return fmt.Errorf("retention database file identity changed")
+	}
+	return nil
 }
 
 func vacuumAfterRetention(ctx context.Context, db *sql.DB) (bool, int64, error) {
@@ -157,7 +186,7 @@ func vacuumAfterRetention(ctx context.Context, db *sql.DB) (bool, int64, error) 
 	return true, freelistPages, nil
 }
 
-func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []RetentionTable, beforeDelete func(RetentionRecord) error) (int64, error) {
+func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []RetentionTable, target RetentionTarget) (int64, error) {
 	// Archive and delete exactly one database snapshot. A concurrent WAL writer
 	// can invalidate the read-to-write upgrade; rollback then retains the local
 	// rows for retry rather than deleting records the archive never observed.
@@ -176,10 +205,13 @@ func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []R
 			continue
 		}
 		var result sql.Result
-		if beforeDelete != nil {
-			if err := exportExpired(ctx, tx, table, cutoff, beforeDelete); err != nil {
+		if target.BeforeDelete != nil {
+			if err := exportExpired(ctx, tx, table, cutoff, target.BeforeDelete); err != nil {
 				return 0, err
 			}
+		}
+		if err := requireRetentionIdentity(target); err != nil {
+			return 0, err
 		}
 		switch table.Kind {
 		case "unix_ns":
@@ -195,6 +227,9 @@ func deleteExpired(ctx context.Context, db *sql.DB, cutoff time.Time, tables []R
 		if affected, err := result.RowsAffected(); err == nil {
 			total += affected
 		}
+	}
+	if err := requireRetentionIdentity(target); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err

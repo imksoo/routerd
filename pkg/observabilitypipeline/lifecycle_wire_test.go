@@ -325,3 +325,38 @@ func TestPipelineActualHTTPAndTCPRecoverJournalDeliveryAndStop(t *testing.T) {
 		t.Fatal("withdrawn exporter still has a worker")
 	}
 }
+
+// Cancellation happens immediately after a real SQLite cursor operation, at
+// the startup wait boundary rather than by substituting exporter decisions.
+type canceledCursorJournal struct {
+	*routerstate.SQLiteStore
+	cancel context.CancelFunc
+}
+
+func (s canceledCursorJournal) LoadOrInitializeEventConsumerCursor(name string) (int64, error) {
+	cursor, err := s.SQLiteStore.LoadOrInitializeEventConsumerCursor(name)
+	s.cancel()
+	return cursor, err
+}
+func TestPipelineCanceledCursorWaitCannotStartAnotherWorker(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	controller := testStoredController(bus.NewWithStore(store), store, canceledCursorJournal{SQLiteStore: store, cancel: cancel}, &lockedBuffer{})
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer stopCancel()
+		if err := controller.Stop(stopCtx); err != nil {
+			t.Error(err)
+		}
+	})
+	err = controller.Start(ctx)
+	status, readErr := store.ReadObjectStatus(api.SystemAPIVersion, "ObservabilityPipeline", "test")
+	if !errors.Is(err, context.Canceled) || readErr != nil || len(controller.running) != 0 || status["phase"] == "Running" {
+		t.Fatalf("canceled startup: err=%v status=%v workers=%d readErr=%v", err, status, len(controller.running), readErr)
+	}
+}

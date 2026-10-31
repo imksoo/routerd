@@ -141,7 +141,11 @@ func OpenFirewallLog(path string) (*FirewallLog, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", sqliteFileURI(path))
+	dsn, err := sqliteFileURI(path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}

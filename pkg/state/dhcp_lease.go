@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/netip"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -121,11 +120,6 @@ func (s *SQLiteStore) ReadDHCPLeaseObservations(ctx context.Context) ([]daemonap
 func (s *SQLiteStore) DHCPLeaseJournalPath() (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.closed {
-		return "", sql.ErrConnDone
-	}
-	if s.path == "" {
-		return "", fmt.Errorf("DHCP lease journal has no filesystem identity")
-	}
-	return filepath.Abs(s.path)
+	path, _, err := s.databaseFileLocked()
+	return path, err
 }
