@@ -1168,7 +1168,7 @@ func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string
 		"claimRef":     status.ClaimRef,
 		"failureCount": status.FailureCount,
 		"claimDigest":  status.ClaimDigest,
-		"updatedAt":    now.UTC().Format(time.RFC3339),
+		"updatedAt":    now.UTC().Format(time.RFC3339Nano),
 		"conditions": []map[string]any{{
 			"type":   "Ready",
 			"status": status.Phase == "Ready",
@@ -1182,13 +1182,13 @@ func (c SAMEnrollmentClientController) saveSAMEnrollmentClientStatus(name string
 		out["observedDirectPeerGroup"] = status.ObservedDirectPeerGroup
 	}
 	if !status.LastAttempt.IsZero() {
-		out["lastAttempt"] = status.LastAttempt.UTC().Format(time.RFC3339)
+		out["lastAttempt"] = status.LastAttempt.UTC().Format(time.RFC3339Nano)
 	}
 	if !status.LastSuccess.IsZero() {
-		out["lastSuccess"] = status.LastSuccess.UTC().Format(time.RFC3339)
+		out["lastSuccess"] = status.LastSuccess.UTC().Format(time.RFC3339Nano)
 	}
 	if !status.NextAttempt.IsZero() {
-		out["nextAttempt"] = status.NextAttempt.UTC().Format(time.RFC3339)
+		out["nextAttempt"] = status.NextAttempt.UTC().Format(time.RFC3339Nano)
 	}
 	if status.Backoff != "" {
 		out["backoff"] = status.Backoff
