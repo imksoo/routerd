@@ -26,8 +26,9 @@ stop/start, process completion, and PPP interface withdrawal. Final success is
 printed only after namespace cleanup and outer interface comparison.
 
 Preserve failures and inspect their actual cause before any repeat. The initial
-fixture qualifies negotiated IPv6CP/link-local traffic only, not global IPv6 routing, default-route selection, provider
-specific authentication, or uninterrupted availability. The legacy renderer's
+fixture qualifies negotiated IPv6CP/link-local traffic only. Global IPv6
+routing, default-route selection, provider-specific authentication and
+uninterrupted availability remain outside that qualification. The legacy renderer's
 IPv6 and route options must be traced separately from the helper's runtime
 path; an IPv4 result does not qualify them.
 
@@ -40,32 +41,47 @@ does not imply immediate or uninterrupted recovery.
 
 ## Observed qualification
 
-The release 9a90c9b31452de4b6be43c3a308e7f367fed4ccc was tested on an
-isolated Ubuntu 24.04 VM with kernel 6.8.0-124-generic. Archive SHA256:
-f393761a9646bc04da8bc8440ddf4dfaf5bf790c8c67713d5e8ac8e7d0ae5848.
-The actual routerd and helper SHA256 values were
-d6a9b57d40b5b2344069faff4b89e7d93879a23bbd433db030131f432dd9c762 and
-c7dd6f2fd4e2f3849a4dcf9a53934b20d722174887533d9fbcb8eb13602e1517.
+The qualified product is full commit
+`2b2793b21a8d1dada768757d108e56fd34344fba`, version `1.5-dev-2b2793b2`,
+tested on Ubuntu 24.04 / kernel 6.8.0-124-generic. The fixture originated at
+`3a66efa4724f1d03cd0148ee54667b38e0225b8d`; its bytes are identical in the
+qualified product source. These are separate source identities.
 
-With fixture b1d86b0f, separate PAP and CHAP trials negotiated real sessions,
-published the matching session through the actual controller and SQLite, and
-passed three replies in each IPv4/IPv6 link-local direction before and after
-reconnection. Immediate restart recovered through the existing persist cycle
-in approximately 34 seconds. These are packet and caller results, not a
-qualification of the Internet access path or uninterrupted availability.
+The formal archive is 97,017,219 bytes, SHA256
+`e3dc45eb315de11c2e98650993a3154595bfdbaf29d33f78066a6b650d2afb25`.
+The actual routerd and helper SHA256 values are
+`c629302f53bd857e192699250eba4eb813e0825b5e11648a8e88bc7b19a240f9` and
+`c5843dffc2475cffbe1760742527e73887efcb84d68402cb658aa2fae023b2df`.
+The executed fixture SHA256 is
+`4137a8a538a7923d16e265e199195d46617bf84486c1e6a5c83208b9edebb903`.
 
-The complete gate has not passed. In the PAP trial, the parent routerd returned
-exit 0 before its DOWN PPP interface disappeared. The helper subsequently
-saved Idle/Stopped. This is an ordering observation, not permanent interface
-retention. The CHAP trial did not reproduce that ordering, but both fixtures
-checked the independent peer's child too early after its server exited. The
-current cleanup waits up to five seconds for only that peer namespace to drain.
-The original non-pass results remain preserved.
+| Trial | Initial and reconnected packets | Reconnect | Completion and restoration |
+| --- | --- | --- | --- |
+| PAP | IPv4/IPv6 link-local, both directions, 3/3 replies each | 33 seconds | PASS |
+| CHAP | IPv4/IPv6 link-local, both directions, 3/3 replies each | 34 seconds | PASS |
 
-After both trials, independent checks confirmed the original router was
-Healthy; package inventory, original router files, shared APT files, outer
-interface identity and kernel module names matched their initial values.
-No trial PPP processes or IPsec SAs/policies remained.
+Both trials used the actual Runner, supervisor, helper, pppd, status socket and
+SQLite. The parent returned exit 0 after the PPP interface was absent. The peer
+server returned exit 0 and its namespace drained within the bounded cleanup.
+Final success was emitted after cleanup and outer interface comparison.
+
+The earlier non-pass evidence remains preserved: the parent could return while
+its DOWN PPP interface was still disappearing. No permanent interface retention
+was established. The supervisor completion fix joins its existing child
+cancellation/completion channels. The same strict parent-completion condition
+passed with the qualified package.
+
+Eighteen final independent checks passed. Original service PID and restart
+count, configuration/binary hashes, shared APT files, package inventory,
+interfaces, routes, rules, namespaces and module names matched the baseline.
+The original router was Healthy without current controller errors. No trial
+workers, capture processes, PPP processes, IPsec SAs or policies remained.
+Raw header logs, 16 packet-probe logs, native transmit/receive snapshots, and
+cleanup/restoration hashes are retained in the qualification manifest.
+
+This is a qualification of the tested PAP/CHAP session paths. It does not cover
+`authMethod: both`, global IPv6/default routes, provider-specific
+authentication, Internet access, uninterrupted availability or FreeBSD.
 
 ## Boundary with the 1.0 implementation
 
