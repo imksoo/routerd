@@ -53,6 +53,29 @@ func (id saID) valid() bool {
 	return err == nil && !destination.IsUnspecified() && source.Is4() == destination.Is4() && id.SPI != 0 && (id.Protocol == "ESP" || id.Protocol == "AH")
 }
 
+// A provider name identifies the configured owner, not an independent peer
+// pair. Moving an endpoint cannot silently extend native deletion authority.
+func (id saID) matchesEndpoints(local, remote string) bool {
+	a, err := netip.ParseAddr(local)
+	if err != nil {
+		return false
+	}
+	b, err := netip.ParseAddr(remote)
+	if err != nil {
+		return false
+	}
+	src, err := netip.ParseAddr(id.Source)
+	if err != nil {
+		return false
+	}
+	dst, err := netip.ParseAddr(id.Destination)
+	if err != nil {
+		return false
+	}
+	a, b, src, dst = a.Unmap(), b.Unmap(), src.Unmap(), dst.Unmap()
+	return (src == a && dst == b) || (src == b && dst == a)
+}
+
 func (state saReceipt) valid() bool {
 	decoded, err := hex.DecodeString(state.Fingerprint)
 	return err == nil && len(decoded) == 32 && state.ID.valid() && state.Scope != "" && state.AddTime != 0
@@ -199,6 +222,9 @@ func (c Controller) observeOwnedSAs(ctx context.Context, state receipt) (receipt
 			return state, err
 		}
 		for _, sa := range reported {
+			if !sa.ID.matchesEndpoints(conn.Local, conn.Remote) {
+				return state, errors.New("IPsec provider SA endpoints do not match the recorded connection; native ownership is unknown")
+			}
 			current, found, err := native.Observe(ctx, sa.ID)
 			if err != nil {
 				return state, err

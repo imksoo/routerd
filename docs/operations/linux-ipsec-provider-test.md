@@ -149,6 +149,16 @@ can qualify them. They do not change the recorded run05 or product-dc14/fixture-
 result. That original short trial recovered traffic and new provider SAs but
 left two old SPIs after the declaration was removed.
 
+The renderer and VICI loader continue to omit `mobike`. strongSwan 5.9 enables
+[MOBIKE by default](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html),
+so the absence of a dedicated routerd API field does not mean endpoint mobility
+is disabled. This gate uses fixed configured endpoints. The native recovery
+owner does not acquire new kernel deletion authority for a changed endpoint
+pair merely because VICI reports the same connection name. It retains the
+original receipt and returns an unknown-ownership error. Recovery withdrawal
+after an authenticated MOBIKE move needs additional association proof and is
+not qualified here; the protocol's existing default is unchanged.
+
 The peer settings use the documented [swanctl CHILD lifetime and DPD controls](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html)
 and private daemon retransmission controls. No provider-wide flush, foreign
 connection removal, test-only product API or general recovery manager is added.
