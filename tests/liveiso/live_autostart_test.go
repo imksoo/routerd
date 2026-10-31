@@ -89,7 +89,6 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	for _, needle := range []string{
 		"routerd-live-setup.service",
 		"WantedBy=multi-user.target",
-		"systemctl enable routerd-dns-resolver@lan-resolver.service",
 		"multi-user.target.wants/routerd-live-setup.service",
 		"multi-user.target.wants/routerd.service",
 		"Before=routerd.service",
@@ -114,11 +113,17 @@ func TestLiveISOInstallsRouterdSystemdUnits(t *testing.T) {
 		"${rootfs}/etc/systemd/system/routerd.service",
 		"Description=routerd network router daemon",
 		"ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s",
-		"routerd-dns-resolver@.service",
-		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO systemd unit install missing %q", needle)
+		}
+	}
+	for _, stale := range []string{
+		"cat > \"${rootfs}/etc/systemd/system/routerd-dns-resolver@.service\"",
+		"systemctl enable routerd-dns-resolver@lan-resolver.service",
+	} {
+		if strings.Contains(script, stale) {
+			t.Fatalf("image bypasses the configured DNS unit owner: %s", stale)
 		}
 	}
 }
