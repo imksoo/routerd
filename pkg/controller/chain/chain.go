@@ -1051,8 +1051,9 @@ func vrrpStatusSubscriptions(router *api.Router) []bus.Subscription {
 }
 
 func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
+	// ServiceUnit results are outputs of this worker. Explicit When references
+	// below still wake dependent units without feeding failed removals back.
 	allowed := map[string]bool{
-		"ServiceUnit":             true,
 		"TailscaleNode":           true,
 		"DHCPv4Client":            true,
 		"DHCPv6PrefixDelegation":  true,

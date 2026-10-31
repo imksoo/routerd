@@ -37,16 +37,22 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 	for _, needle := range []string{
 		"payload_root=\"${iso_root}/routerd\"",
 		"rootfs=\"${workdir}/rootfs\"",
-		"make build-daemons ROUTERD_OS=linux GOARCH=amd64",
-		"install -m 0755 packaging/install.sh",
-		"install -m 0755 packaging/uninstall.sh",
+		"make dist ROUTERD_OS=linux GOARCH=amd64",
+		"DISTROOT=\"${payload_root}\"",
+		"cp -a \"${payload_root}/libexec/.\" \"${rootfs}/usr/local/libexec/\"",
+		"cp -a \"${payload_root}/share/doc/.\" \"${rootfs}/usr/local/share/doc/routerd/\"",
 		"router.yaml.sample",
-		"THIRD_PARTY_LICENSES.txt",
 		"/cdrom/routerd/install.sh configure",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO payload script missing %q", needle)
 		}
+	}
+	build := strings.Index(script, "make dist ROUTERD_OS=linux")
+	copy := strings.Index(script, "cp -a \"${payload_root}/bin/.\"")
+	plugins := strings.Index(script, "cp -a \"${payload_root}/libexec/.\"")
+	if build < 0 || copy < build || plugins < build {
+		t.Fatal("rootfs binaries and plugins must come from the completed release payload")
 	}
 }
 
@@ -83,7 +89,6 @@ func TestLiveISOUsesSystemdFirstBootSetup(t *testing.T) {
 	for _, needle := range []string{
 		"routerd-live-setup.service",
 		"WantedBy=multi-user.target",
-		"systemctl enable routerd-dns-resolver@lan-resolver.service",
 		"multi-user.target.wants/routerd-live-setup.service",
 		"multi-user.target.wants/routerd.service",
 		"Before=routerd.service",
@@ -108,11 +113,17 @@ func TestLiveISOInstallsRouterdSystemdUnits(t *testing.T) {
 		"${rootfs}/etc/systemd/system/routerd.service",
 		"Description=routerd network router daemon",
 		"ExecStart=/usr/local/sbin/routerd serve --config /usr/local/etc/routerd/router.yaml --socket /run/routerd/routerd.sock --status-socket /run/routerd/routerd-status.sock --apply-interval 10s",
-		"routerd-dns-resolver@.service",
-		"ExecStart=/usr/local/sbin/routerd-dns-resolver daemon --resource %i --config-file /run/routerd/dns-resolver/%i.json",
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO systemd unit install missing %q", needle)
+		}
+	}
+	for _, stale := range []string{
+		"cat > \"${rootfs}/etc/systemd/system/routerd-dns-resolver@.service\"",
+		"systemctl enable routerd-dns-resolver@lan-resolver.service",
+	} {
+		if strings.Contains(script, stale) {
+			t.Fatalf("image bypasses the configured DNS unit owner: %s", stale)
 		}
 	}
 }
