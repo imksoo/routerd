@@ -1178,6 +1178,38 @@
         "Atomic SQL/native identity CAS against unrelated external writers",
         "Full static-address platform qualification"
       ]
+    },
+    "ntp-freebsd-0c3b60f6": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0c3b60f6179f664d560488b087dffe1e3999d5fe",
+      "reference": "docs/design/routerd15-audit.md#whole-suite-integration-and-exact-source-freebsd-replay",
+      "checks": [
+        "Final 59104e2a NTP production source passes actual ntpd VNET packet gate in 91.404 seconds",
+        "Allowed and denied queries, upstream selection through WhenFalse, process/SQLite recovery, guards, Wait and independent cleanup census"
+      ],
+      "binary_sha256": "d90341f932ccbf932d48bcf0c6326070955414fa120c792ff34bc6538ba9fc50",
+      "script_sha256": "8b1566a7c7996937ff73b1c42111ab8ab00b8cea709961136c5691ca8953bbe5",
+      "excludes": [
+        "Shared rc.d/sysrc integration, actual clock discipline and full NTP qualification"
+      ]
+    },
+    "tunnel-static-children-freebsd-0c3b60f6": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0c3b60f6179f664d560488b087dffe1e3999d5fe",
+      "reference": "docs/design/routerd15-audit.md#whole-suite-integration-and-exact-source-freebsd-replay",
+      "checks": [
+        "Actual production IPIP/GRE parent plus static IPv4 address/route children through an independent VNET peer: all 11 stages pass",
+        "Parent-only reconcile preserves children; child-only withdrawal; MTU update; GRE key42-to-zero, restart/rekey; foreign preservation",
+        "Seven three-packet checks receive all three replies; separate native post-check confirms trial cleanup"
+      ],
+      "binary_sha256": "72ffa88851dc88976f20e3e53113fe60c02cbaebad63916839ee0f6742a7e3c1",
+      "script_sha256": "6079c2ae76bceda33ed95c789241ab28612bff108024cf73a760b812c9aa1038",
+      "excludes": [
+        "Cleanup-command failure handling in the reusable fixture",
+        "Physical failure domains and complete tunnel/static-address qualification"
+      ]
     }
   },
   "features": [
@@ -1393,7 +1425,8 @@
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "ntp-freebsd-1c389ab8"
+          "ntp-freebsd-1c389ab8",
+          "ntp-freebsd-0c3b60f6"
         ]
       },
       "required_remaining_checks": [
@@ -1815,7 +1848,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "tunnel-static-children-freebsd-0c3b60f6"
+        ]
       },
       "required_remaining_checks": [
         "Target link kinds beyond the proved Linux Bridge slice",
@@ -2432,7 +2467,9 @@
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "tunnel-static-children-freebsd-0c3b60f6"
+        ]
       },
       "required_remaining_checks": [
         "Actual IPIP/FOU/WireGuard peers and routing",

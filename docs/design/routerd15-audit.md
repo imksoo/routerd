@@ -2319,3 +2319,47 @@ checks do not establish atomic native/SQL CAS against unrelated external writers
 The 50 full feature scopes and 100 platform verdicts remain unknown. These
 scoped observations do not reduce the complete routerd 1.0 preservation goal or
 authorize production cutover.
+
+### Whole-suite integration and exact-source FreeBSD replay
+
+Whole ordinary Go tests at clean `309af77f` completed on both platforms:
+
+| Platform | Top-level pass | Top-level fail | Top-level skip | Package pass/fail/no-test | Seconds |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Linux | 4235 | 1 | 23 | 120 / 1 / 9 | 430.216 |
+| FreeBSD 14.3 | 4023 | 1 | 212 | 119 / 1 / 9 | 205.906 |
+
+The sole failure on both was the old expected worker list in
+`TestContractFrameworkRegistrationAndScheduledSelection`: the actual new Plugin
+worker was absent from that test's expected names. Test-only `0c3b60f6` adds the
+actual worker to the expectation; the focused contract passed on both Linux and
+FreeBSD. These focused results do not relabel the original whole runs as passes.
+Source trees remained clean before/after both whole runs.
+
+The final NTP production source, including `59104e2a`, then ran from clean
+integration `0c3b60f6` through the same real FreeBSD ntpd gate: PASS in 91.404
+seconds, no skip, with guards, packets, restart/reopen/When transitions, owned
+process Wait, final cleanup and independent post-run absence confirmed. The
+exact-source chain binary SHA256 is
+`d90341f932ccbf932d48bcf0c6326070955414fa120c792ff34bc6538ba9fc50`.
+This closes the later-source replay caveat of the earlier `1c389ab8` packet
+result; shared rc.d/sysrc and actual clock discipline remain separate gates.
+The same binary passed the static receipt replacement's 12 cases natively.
+
+The production router binary from `0c3b60f6`, SHA256
+`72ffa88851dc88976f20e3e53113fe60c02cbaebad63916839ee0f6742a7e3c1`,
+also passed the actual FreeBSD TunnelInterface parent/IPv4StaticAddress/IPv4Route
+child gate in 26.623 seconds. All 11 stages passed: IPIP/GRE traffic, repeated
+no-op, child acquisition, parent reconciliation preserving child effects,
+child-only withdrawal, MTU change, GRE key 42 to zero and restart/rekey,
+owned parent cleanup and both foreign-preservation cases. Seven three-packet
+checks each received all three replies. Independent post-run checks confirmed
+the original interfaces, no trial jails or routerd process, and restored trial
+module presence. The fixture still suppresses some cleanup command errors; this
+run's overall cleanup conclusion uses those separate native post-checks and does
+not qualify its cleanup fault handling.
+
+Standalone NTP previews were separately reproduced publishing Applied despite
+zero provider commands, no generated file and no acquired receipt. `b34d87b8`
+changes only that unexecuted display to Rendered. Its same SQLite regression and
+all normal NTP tests passed; the live packet path above is unchanged.
