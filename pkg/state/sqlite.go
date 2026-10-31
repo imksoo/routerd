@@ -180,6 +180,32 @@ func openSQLiteReadOnly(path string, immutable bool) (*SQLiteStore, error) {
 	return &SQLiteStore{path: path, retentionFile: identity, db: db, now: time.Now}, nil
 }
 
+// databaseFileLocked is the shared native identity boundary for file-backed
+// consumers. The caller holds the store's read lock through the observation.
+func (s *SQLiteStore) databaseFileLocked() (string, os.FileInfo, error) {
+	if s.closed {
+		return "", nil, sql.ErrConnDone
+	}
+	if s.retentionFile == nil {
+		return "", nil, fmt.Errorf("state database has no filesystem identity")
+	}
+	var path string
+	if err := s.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path); err != nil {
+		return "", nil, err
+	}
+	if !filepath.IsAbs(path) {
+		return "", nil, fmt.Errorf("state database has no absolute filesystem identity")
+	}
+	current, err := os.Stat(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if !os.SameFile(s.retentionFile, current) {
+		return "", nil, fmt.Errorf("state database file identity changed")
+	}
+	return path, s.retentionFile, nil
+}
+
 func (s *SQLiteStore) Get(name string) Value {
 	value, err := s.ReadVariable(name)
 	if err != nil && !errors.Is(err, sql.ErrConnDone) {

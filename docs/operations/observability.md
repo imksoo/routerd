@@ -146,6 +146,10 @@ The opened state file's identity is checked at the separate retention connection
 and before deletion, commit and vacuum. A same-named replacement is an ownership
 error, not a new retention target. Relative SQLite filenames resolve when opened;
 `:memory:` retains its database semantics and cannot authorize file retention.
+The DHCP lease journal uses this same opened-file check for its cross-process
+source. In-memory state cannot be advertised as a filesystem source for a
+DHCP-derived DNS worker.
+
 
 An explicit `events` retention policy owns idle expiry, including its archive
 selection and schedule. Without one, idle cleanup uses the 24-hour default.
