@@ -229,30 +229,16 @@ if [ "${rootfs_only}" = true ]; then
     exit 0
 fi
 
-make build-daemons build-provider-executors ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
-make check-linux-static ROUTERD_OS=linux GOARCH=amd64
+# Reuse the release payload inventory, including provider Plugin manifests and
+# their executable paths. A separate list here silently omitted libexec assets.
+make dist ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}" DISTBASE="${distbase}" DISTROOT="${payload_root}"
 
-install -d "${payload_root}/bin" "${payload_root}/etc/routerd" "${payload_root}/share/licenses/routerd"
-for binary in bin/linux-amd64/*; do
-    [ -f "${binary}" ] || continue
-    install -m 0755 "${binary}" "${payload_root}/bin/$(basename "${binary}")"
-done
-install -m 0755 packaging/install.sh "${payload_root}/install.sh"
-install -m 0755 packaging/uninstall.sh "${payload_root}/uninstall.sh"
-install -m 0644 examples/router-lab.yaml "${payload_root}/etc/routerd/router.yaml.sample"
-install -m 0644 LICENSE "${payload_root}/share/licenses/routerd/LICENSE"
-if [ -f THIRD_PARTY_LICENSES.md ]; then
-    install -m 0644 THIRD_PARTY_LICENSES.md "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt"
-fi
-
-install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
+install -d "${rootfs}/opt/routerd-live" "${rootfs}/usr/local/sbin" "${rootfs}/usr/local/libexec" "${rootfs}/usr/local/etc/routerd" "${rootfs}/usr/local/share/doc/routerd"
 cp -a "${payload_root}/." "${rootfs}/opt/routerd-live/"
 cp -a "${payload_root}/bin/." "${rootfs}/usr/local/sbin/"
+cp -a "${payload_root}/libexec/." "${rootfs}/usr/local/libexec/"
+cp -a "${payload_root}/share/doc/." "${rootfs}/usr/local/share/doc/routerd/"
 install -m 0644 "${payload_root}/etc/routerd/router.yaml.sample" "${rootfs}/usr/local/etc/routerd/router.yaml.sample"
-install -m 0644 "${payload_root}/share/licenses/routerd/LICENSE" "${rootfs}/usr/local/share/doc/routerd/LICENSE"
-if [ -f "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" ]; then
-    install -m 0644 "${payload_root}/share/licenses/routerd/THIRD_PARTY_LICENSES.txt" "${rootfs}/usr/local/share/doc/routerd/THIRD_PARTY_LICENSES.txt"
-fi
 
 install -d "${rootfs}/etc/systemd/system"
 if [ -f contrib/systemd/routerd.service ]; then
