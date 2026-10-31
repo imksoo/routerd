@@ -95,8 +95,9 @@ finish() {
  printf 'stage=%s exit=%s\n' "$stage" "$rc" > "$work/result-stage.txt"
  cp -a /usr/local/etc/routerd/swanctl "$work/receipt-before-cleanup" 2>/dev/null
  journalctl -u strongswan.service -n 120 --no-pager > "$work/provider-journal.log"
- stop_child "$running_router" "$running_birth" router || failures=1
- if [[ -S /run/charon.vici && -f /usr/local/etc/routerd/swanctl/routerd-ipsec.json ]]; then
+ cleanup_worker_stopped=0
+ if stop_child "$running_router" "$running_birth" router; then cleanup_worker_stopped=1; else failures=1; fi
+ if ((cleanup_worker_stopped)) && [[ -S /run/charon.vici && -f /usr/local/etc/routerd/swanctl/routerd-ipsec.json ]]; then
   product "$work/empty.yaml" > "$work/cleanup-withdraw.log" 2>&1 || failures=1
  fi
  stop_child "$peer" "$peer_birth" peer || failures=1
@@ -371,10 +372,15 @@ done
 grep -q routerd-provider-native "$work/recovered.connections"
 systemctl show strongswan.service -p MainPID -p InvocationID -p NRestarts > "$work/provider.recovered"
 # Continuity is distinct from recovery of IKE control over new SAs.
+gate_failed=0
+continuity_pass=0 continuity_native=0 continuity_vici=0
 stage=provider-crash-continuity
-traffic existing
-cp "$work/$stage.xfrm" "$work/continuity.xfrm"
-timeout -k 2 5 swanctl --list-sas > "$work/continuity.sas" 2>&1
+if traffic existing; then continuity_pass=1; else gate_failed=1; fi
+if ip -s xfrm state > "$work/$stage.xfrm"; then
+ cp "$work/$stage.xfrm" "$work/continuity.xfrm"
+ continuity_native=1
+else gate_failed=1; fi
+if timeout -k 2 5 swanctl --list-sas > "$work/continuity.sas" 2>&1; then continuity_vici=1; else gate_failed=1; fi
 stage='peer-expiry-recovery'
 earliest_success=$((crash_epoch + 32))
 deadline=$((crash_epoch + 90))
@@ -416,18 +422,23 @@ PY
 }
 recovery_stage=$stage
 stage=provider-crash-continuity
-cp "$work/continuity.sas" "$work/recovered.sas"
-if check_recovered_state > "$work/continuity-state.json"; then :; fi
+if ((continuity_native && continuity_vici)); then
+ cp "$work/continuity.sas" "$work/recovered.sas"
+ if check_recovered_state > "$work/continuity-state.json"; then :; fi
+else
+ printf '%s\n' '{"observation":"unknown","newProviderRecoveryNotInferred":true}' > "$work/continuity-state.json"
+fi
 stage=$recovery_stage
 recovered=0
 while (( $(date +%s) <= deadline )); do
  traffic_ok=0
  if traffic existing; then traffic_ok=1; fi
- ip -s xfrm state > "$work/$stage.xfrm"
+ native_ok=0
+ if ip -s xfrm state > "$work/$stage.xfrm"; then native_ok=1; fi
  query_ok=0
  if timeout -k 2 5 swanctl --list-sas > "$work/recovered.sas" 2>&1; then query_ok=1; fi
  fresh=0
- if ((query_ok)) && check_recovered_state >> "$work/recovery-observations.jsonl"; then fresh=1; fi
+ if ((native_ok && query_ok)) && check_recovered_state >> "$work/recovery-observations.jsonl"; then fresh=1; fi
  if ((traffic_ok && fresh && $(date +%s) >= earliest_success)); then
   if ((wait_local_expiry)) && ! python3 -c 'import json,sys; assert not json.load(open(sys.argv[1]))["oldSPIsStillInstalled"]' "$work/recovery-state.json"; then
    sleep 1; continue
@@ -436,38 +447,68 @@ while (( $(date +%s) <= deadline )); do
  fi
  sleep 1
 done
-[[ $recovered == 1 ]]
-peer_control --list-sas > "$work/recovered.peer-sas" 2>&1
-grep -q 'provider-peer:.*ESTABLISHED' "$work/recovered.peer-sas"
-peer_exec ip -s xfrm state > "$work/recovered.peer-xfrm"
-swanctl --list-conns > "$work/recovered.connections" 2>&1
-awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/recovered.connections" > "$work/foreign.recovered"
-cmp "$work/foreign.expected" "$work/foreign.recovered"
-stop_child "$running_router" "$running_birth" router
-running_router=''
+if ((recovered == 0)); then gate_failed=1; fi
+peer_observed=0
+if peer_control --list-sas > "$work/recovered.peer-sas" 2>&1 && grep -q 'provider-peer:.*ESTABLISHED' "$work/recovered.peer-sas"; then
+ peer_observed=1
+else gate_failed=1; fi
+if ! peer_exec ip -s xfrm state > "$work/recovered.peer-xfrm"; then gate_failed=1; fi
+foreign_recovered=0
+if timeout -k 2 5 swanctl --list-conns > "$work/recovered.connections" 2>&1; then
+ awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/recovered.connections" > "$work/foreign.recovered"
+ if cmp "$work/foreign.expected" "$work/foreign.recovered"; then foreign_recovered=1; else gate_failed=1; fi
+else gate_failed=1; fi
+
+# Failed continuity/recovery observations remain failures, but do not suppress
+# independent withdrawal evidence while our worker has exited and VICI is ready.
+worker_stopped=0
+if stop_child "$running_router" "$running_birth" router; then
+ worker_stopped=1
+ running_router=''
+else gate_failed=1; fi
 stage=post-crash-withdrawal
-product "$work/empty.yaml" > "$work/post-crash-withdraw.log" 2>&1
-jq -e '.pending==false and (.connections|length)==0 and (.sharedKeys|length)==0' /usr/local/etc/routerd/swanctl/routerd-ipsec.json >/dev/null
-swanctl --list-sas > "$work/post-crash-withdraw.sas" 2>&1
-swanctl --list-conns > "$work/post-crash-withdraw.connections" 2>&1
-if grep -q routerd-provider-native "$work/post-crash-withdraw.connections"; then exit 1; fi
-if grep -q 'routerd-provider-native:.*ESTABLISHED' "$work/post-crash-withdraw.sas"; then exit 1; fi
-awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/post-crash-withdraw.connections" > "$work/foreign.withdrawn"
-cmp "$work/foreign.expected" "$work/foreign.withdrawn"
-ip -s xfrm state > "$work/post-crash-withdraw.xfrm"
-python3 - "$work/recovery-state.json" "$work/post-crash-withdraw.xfrm" "$work/withdrawal-state.json" <<'PY'
+withdraw_attempted=0 withdraw_ack=0 receipt_empty=0 connection_absent=0 foreign_withdrawn=0 native_withdrawal=0
+if ((worker_stopped)) && timeout -k 2 5 swanctl --stats > "$work/pre-withdraw.stats" 2>&1; then
+ withdraw_attempted=1
+ if product "$work/empty.yaml" > "$work/post-crash-withdraw.log" 2>&1; then withdraw_ack=1; else gate_failed=1; fi
+else
+ printf '%s\n' 'not attempted: owned worker exit or VICI readiness is unconfirmed' > "$work/post-crash-withdraw.log"
+ gate_failed=1
+fi
+if jq -e '.pending==false and (.connections|length)==0 and (.sharedKeys|length)==0' /usr/local/etc/routerd/swanctl/routerd-ipsec.json >/dev/null; then receipt_empty=1; else gate_failed=1; fi
+if timeout -k 2 5 swanctl --list-conns > "$work/post-crash-withdraw.connections" 2>&1; then
+ if grep -q routerd-provider-native "$work/post-crash-withdraw.connections"; then gate_failed=1; else connection_absent=1; fi
+ awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/post-crash-withdraw.connections" > "$work/foreign.withdrawn"
+ if cmp "$work/foreign.expected" "$work/foreign.withdrawn"; then foreign_withdrawn=1; else gate_failed=1; fi
+else gate_failed=1; fi
+if timeout -k 2 5 swanctl --list-sas > "$work/post-crash-withdraw.sas" 2>&1; then
+ if grep -q 'routerd-provider-native:.*ESTABLISHED' "$work/post-crash-withdraw.sas"; then gate_failed=1; fi
+else gate_failed=1; fi
+if ip -s xfrm state > "$work/post-crash-withdraw.xfrm"; then
+ if python3 - "$work/local-expiry-plan.json" "$work/recovery-state.json" "$work/post-crash-withdraw.xfrm" "$work/withdrawal-state.json" "$foreign_withdrawn" <<'PY'
 import json,pathlib,re,sys
-recovery=json.loads(pathlib.Path(sys.argv[1]).read_text())
-known=set(recovery['oldSPIs']+recovery['currentProviderSPIs'])
-native=pathlib.Path(sys.argv[2]).read_text()
+plan=json.loads(pathlib.Path(sys.argv[1]).read_text())
+record=pathlib.Path(sys.argv[2])
+recovery=json.loads(record.read_text())if record.exists()else{}
+known={x['spi']for x in plan['states']}|set(recovery.get('currentProviderSPIs',[]))
+native=pathlib.Path(sys.argv[3]).read_text()
 actual=set()
 if native.strip()and not re.search(r'^src ',native,re.M):raise ValueError('unexpected native SA output')
 for block in re.split(r'(?=^src )',native,flags=re.M):
     if block.split()[:4]not in [['src','198.18.95.1','dst','198.18.95.2'],['src','198.18.95.2','dst','198.18.95.1']]:continue
     spi=re.search(r'proto esp spi (0x[0-9a-f]+)',block)
     if spi:actual.add(hex(int(spi[1],16)))
-report={'knownOwnedSPIs':sorted(known),'knownOwnedSPIsStillInstalled':sorted(known.intersection(actual)),'unclassifiedSameEndpointSPIs':sorted(actual-known),'foreignConnectionPreserved':True}
-pathlib.Path(sys.argv[3]).write_text(json.dumps(report,indent=2))
-assert not actual,report
+report={'knownOwnedSPIs':sorted(known),'knownOwnedSPIsStillInstalled':sorted(known.intersection(actual)),'unclassifiedSameEndpointSPIs':sorted(actual-known),'foreignConnectionPreserved':sys.argv[5]=='1'}
+pathlib.Path(sys.argv[4]).write_text(json.dumps(report,indent=2))
+assert not actual and report['foreignConnectionPreserved'],report
 PY
+ then native_withdrawal=1; else gate_failed=1; fi
+else gate_failed=1; fi
+python3 - "$work/recovery-result.json" "$continuity_pass" "$recovered" "$peer_observed" "$foreign_recovered" "$wait_local_expiry" "$worker_stopped" "$withdraw_attempted" "$withdraw_ack" "$receipt_empty" "$connection_absent" "$foreign_withdrawn" "$native_withdrawal" "$gate_failed" <<'PY'
+import json,pathlib,sys
+names=['ordinaryTrafficContinued','newProviderSPIsWithPackets','peerIKEObserved','foreignPreservedAfterRestart','waitedForRecordedLocalExpiry','workerExitAcknowledged','withdrawalAttempted','withdrawalAcknowledged','receiptEmpty','ownedConnectionAbsent','foreignPreservedAfterWithdrawal','knownAndUnclassifiedNativeSAsAbsent','anyGateFailed']
+report={name:value=='1'for name,value in zip(names,sys.argv[2:])}
+pathlib.Path(sys.argv[1]).write_text(json.dumps(report,indent=2))
+PY
+if ((gate_failed)); then stage=completed-with-failures; exit 1; fi
 stage=completed
