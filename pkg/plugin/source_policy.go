@@ -33,8 +33,10 @@ func SourceTTL(router *api.Router, pluginName string) (time.Duration, error) {
 		if err != nil || ttl <= 0 {
 			return 0, fmt.Errorf("%s requires a positive source ttl", resource.ID())
 		}
-		if spec.MergePolicy != nil && spec.MergePolicy.Conflict != "" && spec.MergePolicy.Conflict != "reject" {
-			return 0, fmt.Errorf("%s source merge policy must reject conflicts", resource.ID())
+		if spec.MergePolicy != nil {
+			if conflict := strings.TrimSpace(spec.MergePolicy.Conflict); conflict != "" && conflict != "reject" {
+				return 0, fmt.Errorf("%s source merge policy must reject conflicts", resource.ID())
+			}
 		}
 		if limit == 0 || ttl < limit {
 			limit = ttl

@@ -12,7 +12,7 @@ import (
 
 func TestSourcePolicyBoundsExistingObservation(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
-		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "site"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "10s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "site"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "10s", MergePolicy: &api.MergePolicy{Conflict: " reject "}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "local"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "3s"}},
 	}}}
 	limit, err := SourceTTL(router, "inventory")
