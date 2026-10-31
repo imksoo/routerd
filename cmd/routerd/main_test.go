@@ -1878,7 +1878,7 @@ func TestCleanupUnsupportedLegacyObjectStatusesDefersOwnedTunnelInterfaceTeardow
 	}
 }
 
-func TestServePreGCLeavesOwnedTunnelInterfaceForControllerTeardown(t *testing.T) {
+func TestServePreGCKeepsTunnelClaimsForPlatformController(t *testing.T) {
 	for _, targetOS := range []platform.OS{platform.OSLinux, platform.OSFreeBSD} {
 		t.Run(string(targetOS), func(t *testing.T) {
 			statePath := filepath.Join(t.TempDir(), "routerd.db")
@@ -1909,10 +1909,18 @@ func TestServePreGCLeavesOwnedTunnelInterfaceForControllerTeardown(t *testing.T)
 			if err := controller.Reconcile(context.Background()); err != nil {
 				t.Fatalf("controller teardown: %v", err)
 			}
-			want := []string{"ip", "link", "del", "dev", "old-tun"}
-			if targetOS == platform.OSFreeBSD {
-				want = []string{"ifconfig", "old-tun", "destroy"}
+			if targetOS == platform.OSLinux {
+				// Display claims grant no Linux kernel authority. Only the native
+				// owner journal can authorize the independently tested teardown.
+				if len(calls) != 0 {
+					t.Fatalf("display-only claim caused native mutation: %#v", calls)
+				}
+				if status := store.ObjectStatus(api.HybridAPIVersion, "TunnelInterface", "old"); status["interfaceOwned"] != true {
+					t.Fatalf("unconfirmed tunnel claim was lost: %#v", status)
+				}
+				return
 			}
+			want := []string{"ifconfig", "old-tun", "destroy"}
 			if len(calls) != 1 || !reflect.DeepEqual(calls[0], want) {
 				t.Fatalf("calls = %#v, want %#v", calls, want)
 			}
