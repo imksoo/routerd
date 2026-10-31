@@ -461,6 +461,11 @@ check-routerd15-ntp-native-linux:
 check-routerd15-ntp-native-freebsd:
 	sh scripts/freebsd-ntp-runtime-smoke.sh "$(NTP_TEST_BINARY)"
 
+.PHONY: check-routerd15-dhcpv6-native-freebsd
+# Explicit FreeBSD 14.3 disposable guest; package identity and private work parent are required.
+check-routerd15-dhcpv6-native-freebsd:
+	timeout -k 30 600 sh scripts/freebsd-dhcpv6-native-smoke.sh --disposable-vm "$(DHCPV6_ARCHIVE)" "$(DHCPV6_ARCHIVE_SHA256)" "$(DHCPV6_KEA_BINARY)" "$(DHCPV6_WORK_PARENT)"
+
 .PHONY: check-routerd15-plugin-process
 check-routerd15-plugin-process:
 	sh scripts/plugin-dynamic-process-smoke.sh

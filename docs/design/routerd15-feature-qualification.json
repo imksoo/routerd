@@ -2198,7 +2198,9 @@
           "pkg/controller/chain/dhcpv6_dad_linux_test.go",
           "pkg/state/dhcpv6_address_test.go",
           "pkg/pdclient/decline_test.go",
-          "scripts/linux-dhcpv6-native-smoke.sh"
+          "scripts/linux-dhcpv6-native-smoke.sh",
+          "pkg/controller/chain/dhcpv6_address_freebsd_observation_test.go",
+          "scripts/freebsd-dhcpv6-native-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",

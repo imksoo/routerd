@@ -340,6 +340,42 @@ removing the declaration requests explicit withdrawal. Retain the procedure and
 scoped verdict, and delete successful raw output. This gate does not qualify WAN
 routing, transit forwarding, FreeBSD, or all routerd 1.0 functions.
 
+## FreeBSD native DHCPv6 address gate
+
+`scripts/freebsd-dhcpv6-native-smoke.sh` prepares the same ownership checks for
+FreeBSD 14.3. Its addition and cross-compilation do **not** establish a native
+pass. Use a disposable VM with independent management access, root, VNET/epair,
+nullfs, devfs/fdescfs, Kea under `/usr`, sqlite3, jq, Python 3 and curl already
+installed. Finish package/environment preparation before qualification.
+
+Build with `make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION=... GIT_COMMIT=...`.
+Transfer the checksum-pinned archive and script. From the repository directory
+in the guest, with an existing private work parent such as `/root/routerd-tests`:
+
+```sh
+sudo timeout -k 30 600 sh scripts/freebsd-dhcpv6-native-smoke.sh \
+  --disposable-vm /absolute/routerd-freebsd-amd64.tar.gz ARCHIVE_SHA256 \
+  /usr/local/sbin/kea-dhcp6 /root/routerd-tests
+```
+
+The work parent must be outside `/usr` (which is mounted read-only into each
+jail) and temporary storage. Separate jail roots keep supervisor sockets and
+SQLite/helper state away from the installed service. Certification first checks
+the scoped IPv6 return path, finite `/128` setup, an independent duplicate and
+Kea configuration/listener. A certification failure must not become a product
+failure or trigger repairs during qualification.
+
+Pass requires Kea lease agreement, finite `/128` and completed DAD, all three
+packets each way, stop/restart without extending acquisition, timer-driven Renew
+and native lifetime refresh, actual expiry, peer-only recovery, configuration
+withdrawal, Kea's `DHCP6_DECLINE_LEASE` event for the conflicting address plus its
+native withdrawal, and shared PD/NA acquisition. Cleanup must stop owned children,
+remove owned jails/epair and unmount private filesystems. Success removes raw
+output; failures retain their bounded diagnostics under the work parent. Record
+the stage and inspect those files before constructing a local reproduction.
+Neither this gate nor cross-build covers all source modes, WAN forwarding or
+the complete routerd 1.0 feature set.
+
 ## Linux DHCP and firewall withdrawal gate
 
 Run the packaged service in an empty disposable VM with independent management

@@ -266,6 +266,35 @@ helper はプロトコル、アドレスコントローラーは OS への適用
 宣言の削除時は明示的に撤去します。手順と範囲付き判定を残し、成功した生ログは削除します。
 この試験だけで WAN 経路、通過トラフィックの転送、FreeBSD、routerd 1.0 全機能を合格としません。
 
+## FreeBSD の native DHCPv6 アドレス試験
+
+`scripts/freebsd-dhcpv6-native-smoke.sh` は FreeBSD 14.3 用の所有権検証手順です。
+スクリプトの追加やクロスコンパイルだけでは、実機合格になりません。独立した管理経路のある
+使い捨て VM で、root、VNET/epair、nullfs、devfs/fdescfs、`/usr` 配下の Kea、
+sqlite3、jq、Python 3、curl を先に準備してください。環境準備を完了してから製品を検証します。
+
+`make dist ROUTERD_OS=freebsd GOARCH=amd64 VERSION=... GIT_COMMIT=...` で正式 archive を
+作成し、SHA256 とスクリプトを VM へ転送します。VM のリポジトリディレクトリから、
+既存の private 作業親ディレクトリを指定して実行します。
+
+```sh
+sudo timeout -k 30 600 sh scripts/freebsd-dhcpv6-native-smoke.sh \
+  --disposable-vm /absolute/routerd-freebsd-amd64.tar.gz ARCHIVE_SHA256 \
+  /usr/local/sbin/kea-dhcp6 /root/routerd-tests
+```
+
+作業親は一時領域と `/usr` の外に置きます。各 jail は独立した root と `/var` を使い、
+既存サービスの socket、SQLite、helper 状態と分離します。最初に scoped IPv6 の往復経路、
+有限 `/128`、独立した重複アドレス、Kea の設定と listener を認証します。
+ここでの失敗を製品不良と判定したり、製品検証中に環境修復したりしません。
+
+合格には Kea リースとの一致、有限 `/128` と DAD 完了、双方向各 3 パケットの全受信、
+停止・再起動時の取得時刻維持、自然な Renew と native 寿命の更新、実失効、peer だけの再開からの
+自動再取得、設定撤去、対象アドレスの `DHCP6_DECLINE_LEASE` と native 撤去、PD/NA 共用 worker
+での取得が必要です。所有する子プロセス、jail、epair、マウントの後片付けも合格条件です。
+成功時は生出力を削除し、失敗時は作業親配下に診断を残します。失敗段階と内容を確認してから
+ローカル再現を組み立てます。全 source mode、WAN 転送、routerd 1.0 全機能の維持は別の判定です。
+
 ## Linux の DHCP・firewall 撤去試験
 
 空設定と独立した管理経路を持つ専用 VM に正式パッケージを導入して実行します。
