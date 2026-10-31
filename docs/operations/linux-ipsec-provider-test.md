@@ -52,7 +52,9 @@ Acceptance requires:
 - An explicitly injected provider SIGKILL followed by systemd restart and the
   running routerd's periodic configuration recovery, with no manual provider
   restart or product reconcile between failure and recovered traffic. Record
-  existing-SA traffic continuity separately from new-provider IKE/ESP recovery.
+  ordinary traffic continuity separately from new-provider IKE/ESP recovery.
+  Continuity may use old or immediately re-established SPIs; their identities
+  and counters are recorded without requiring an old SPI to remain installed.
 - The independent peer uses a 20-second CHILD rekey, a 30-second hard lifetime,
   no lifetime jitter, short retries and a trap action. After at least one such
   interval, ordinary selector traffic must establish new provider-managed SPIs
@@ -69,9 +71,14 @@ Acceptance requires:
   AppArmor inventories; removal of the stopped provider's own stale socket; unchanged
   installed binary/config/unit/state hashes; and the original routerd Healthy again.
 
-Failure retains the stage, provider journal, receipt and cleanup results. Stop
-qualification if package installation, ownership, restoration or native traffic
-fails; investigate the preserved result before another run. Never restore a DB
+Failure retains the stage, provider journal, receipt and cleanup results.
+After the provider crash, a failed continuity or recovery observation remains a
+final failure but does not suppress the independent withdrawal observation.
+Withdrawal runs only after the owned routerd worker's exit is acknowledged and
+VICI readiness is confirmed. If either is unknown, the fixture records that
+withdrawal was not attempted. `recovery-result.json` records these separate
+verdicts; final success also requires cleanup and restoration to pass. Investigate
+the preserved failure before another run. Never restore a DB
 over an unexplained concurrent writer or remove an unknown pending receipt.
 This is one PSK/algorithm/peer configuration, not all IPsec modes or a release verdict.
 Preserve source/archive/script hashes and the scoped verdict. After review, remove
@@ -120,6 +127,10 @@ Retain distinct verdicts for `provider-crash-continuity`,
 `post-crash-withdrawal`. A pending/empty receipt, a native SA inventory and real
 packet counters are different observations. Failure of a later condition does
 not erase earlier continuity, and continuity does not qualify the later ones.
+The fixture continues to the safe withdrawal stage after a failed recovery
+deadline so that remaining known SPIs and preserved foreign configuration can
+be assessed independently. An immediate new-SPI recovery qualifies ordinary
+traffic continuity without making a claim about old-SPI counter growth.
 These additions are prepared test conditions; only a new assigned-VM execution
 can qualify them. They do not change the recorded run05 result.
 
