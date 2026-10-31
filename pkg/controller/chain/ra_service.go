@@ -155,6 +155,29 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 		s.mu.Unlock()
 		return err
 	}
+	// An inactive receipt from another kernel cannot authorize a final RA.
+	// Retire it before opening a standby link which may have no link-local
+	// address. Current-kernel withdrawal still requires the real socket/send.
+	if len(journal) > 0 {
+		scope, err := s.scope(ctx)
+		if err != nil || scope == "" {
+			s.mu.Unlock()
+			return errors.Join(err, fmt.Errorf("RA kernel scope is unavailable"))
+		}
+		retired := false
+		for ifname, receipt := range journal {
+			if _, active := plans[ifname]; !active && receipt.Scope != scope {
+				delete(journal, ifname)
+				retired = true
+			}
+		}
+		if retired {
+			if err := saveRAJournal(store, journal); err != nil {
+				s.mu.Unlock()
+				return err
+			}
+		}
+	}
 	interfaces := map[string]bool{}
 	for ifname := range plans {
 		interfaces[ifname] = true
