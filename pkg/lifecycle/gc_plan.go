@@ -196,7 +196,7 @@ func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) 
 		if status.APIVersion == api.SystemAPIVersion && (status.Kind == "Sysctl" || status.Kind == "SysctlProfile") {
 			// Preserve concrete persistent ownership, including unknown records.
 			// Only the Sysctl actor may validate and retire these blocks.
-			if _, exists := status.Status["sysctlPersistentOwner"]; exists {
+			if _, exists := status.Status[routerstate.SysctlPersistentOwnerKey]; exists {
 				continue
 			}
 		}
