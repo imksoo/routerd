@@ -332,7 +332,11 @@ for _ in {1..60}; do
 done
 [[ $new_pid != 0 && $new_pid != "$old_pid" ]]
 grep -q routerd-provider-native "$work/recovered.connections"
-traffic
+systemctl show strongswan.service -p MainPID -p InvocationID -p NRestarts > "$work/provider.recovered"
+# Ordinary selector traffic must trigger recovery; do not manually initiate an SA.
+traffic existing
+swanctl --list-sas > "$work/recovered.sas" 2>&1
+grep -q 'routerd-provider-native:.*ESTABLISHED' "$work/recovered.sas"
 stop_child "$running_router" "$running_birth" router
 running_router=''
 stage=completed
