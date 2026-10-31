@@ -226,7 +226,7 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	// An interface that disappeared or was replaced no longer carries our
 	// acquired identity. Its replacement's addresses must survive.
 	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
-		return nil
+		return c.requireStaticReceipt(name, *receipt)
 	}
 	if receipt.Pending {
 		return errors.New("static address operation outcome is unknown; inspect the native address and confirm absence before retrying")
@@ -266,10 +266,13 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 		return abortBeforeDelete(err)
 	}
 	if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
-		return nil
+		return c.requireStaticReceipt(name, *receipt)
 	}
 	if err := c.checkStaticWithdrawalParent(ctx, receipt, observed); err != nil {
 		return abortBeforeDelete(err)
+	}
+	if err := c.requireStaticReceipt(name, *receipt); err != nil {
+		return err
 	}
 	command := c.Command
 	if command == nil {
@@ -286,7 +289,10 @@ func (c IPv4StaticAddressController) withdrawStaticAddress(ctx context.Context, 
 	if observed.Scope == receipt.Scope && observed.Index == receipt.IfIndex && observed.owns(*receipt) {
 		return errors.New("static address remains after withdrawal")
 	}
-	return c.staticAddressEvent(ctx, name, receipt.IfName, receipt.Address, "removed")
+	if err := c.staticAddressEvent(ctx, name, receipt.IfName, receipt.Address, "removed"); err != nil {
+		return err
+	}
+	return c.requireStaticReceipt(name, *receipt)
 }
 
 func (c IPv4StaticAddressController) checkStaticWithdrawalParent(ctx context.Context, receipt *staticAddressReceipt, observed staticAddressSnapshot) error {
