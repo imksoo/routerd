@@ -1370,6 +1370,43 @@
         "Natural SA expiry and eventual rekey/recovery",
         "A demonstrated baseline regression or production outage"
       ]
+    },
+    "linux-liveiso-boot-dc14c486": {
+      "level": "native-kernel",
+      "outcome": "fail",
+      "revision": "dc14c48673e249ef489016d9ed9eea0208cbf4ce",
+      "reference": "docs/design/routerd15-audit.md#linux-live-iso-boot-and-serviceunit-recovery-2026-10-31",
+      "image_sha256": "60cf131393a5d82750dd4da35ffa131066c18f84bbba51d67b8b11c2d585353f",
+      "environment": "Ubuntu live ISO, Linux 6.8.0-147-generic, isolated no-NIC/no-disk VM; actual firstboot, systemd and control API",
+      "checks": [
+        "OS boot, firstboot success and live control API confirmed",
+        "Readiness fails on the builder-created unowned DNS ServiceUnit template",
+        "ServiceUnit self-status feedback observed: 10159 reconciles in 99.564198 seconds",
+        "Conntrack unavailability remains distinct from the feedback cause"
+      ],
+      "excludes": [
+        "Corrected ISO build or boot",
+        "Provider payload completeness and whole Linux qualification"
+      ]
+    },
+    "linux-serviceunit-feedback-919499c4": {
+      "level": "actual-controller",
+      "outcome": "pass",
+      "revision": "919499c40006c4d72b8761b1509d8c067b53d4e8",
+      "reference": "docs/design/routerd15-audit.md#linux-live-iso-boot-and-serviceunit-recovery-2026-10-31",
+      "routerd_sha256": "7893aff4868d785e7544632ed4fbc4b228cedfdf439c4df238f28ea83c995e78",
+      "environment": "Real SQLite/evented store/Bus/Framework regressions plus diagnostic static runtime replacement in the original dc14c486 ISO RAM overlay",
+      "checks": [
+        "Three actual-path regressions pass with no skips; explicit named ServiceUnit When and periodic recovery remain functional",
+        "ServiceUnit status resolves to the system API namespace as in 1.0",
+        "Actual VM replay: 14 service-unit reconciles in 15.046025 seconds, periodic triggers, same PID and no automatic restarts",
+        "Unowned template and operator configuration hashes unchanged; expected Error remains visible",
+        "Resourcequery and Framework suites, focused vet and all 20 Linux static builds pass"
+      ],
+      "excludes": [
+        "A corrected image clean-boot pass; runtime replacement was manual and the original ISO commit marker remains dc14c486",
+        "Whole Linux or ServiceUnit dependency qualification"
+      ]
     }
   },
   "features": [
@@ -1671,7 +1708,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-serviceunit-feedback-919499c4"
         ]
       },
       "freebsd": {
@@ -3173,7 +3211,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-packaged-service-6135bb03"
+          "linux-packaged-service-6135bb03",
+          "linux-serviceunit-feedback-919499c4"
         ]
       },
       "freebsd": {
@@ -3333,7 +3372,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-liveiso-boot-dc14c486"
         ]
       },
       "freebsd": {

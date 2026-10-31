@@ -2567,3 +2567,42 @@ implementation. Initial permission failures occurred before product startup;
 operator certification supplied echainiv before the final unchanged-module run.
 `8f75fcd4` makes these discovered prerequisites explicit and retains the executed
 fixture's historical hash. See the [IPsec procedure](../operations/linux-ipsec-process-test.md).
+
+## Linux live ISO boot and ServiceUnit recovery, 2026-10-31
+
+The first actual Ubuntu live ISO was built from `dc14c486`, SHA256
+`60cf131393a5d82750dd4da35ffa131066c18f84bbba51d67b8b11c2d585353f`
+(1,401,188,352 bytes). Its booted kernel was 6.8.0-147-generic. The disposable
+VM had no network interface or writable disk. Firstboot completed, the daemon
+started and the real control API answered, but readiness **failed**: the image
+builder had emitted an unowned legacy DNS systemd template. The controller
+correctly refused to remove it. An unused conntrack module also produced an
+honest Unavailable observation; that observation was not the feedback cause.
+
+The stale ServiceUnit moved through Removing/Error on each reconcile. Its
+unconditional self-status subscription re-entered the same worker 10,159 times
+in 99.564198 seconds. `bf22e472` removes that self-subscription while preserving
+explicit named When dependencies and periodic recovery. The new actual SQLite,
+evented-store, bus and Framework tests also exposed a separate 1.0 regression:
+ServiceUnit status had lost its system API namespace in the resource-kind lookup.
+`919499c4` restores that existing runtime-status mapping, without inventing a
+configuration kind. Three actual-path regressions pass, including the real
+canonical `ServiceUnit/external-gate.service.status.phase` lookup. Resourcequery
+and Framework suites and the two affected packages' vet checks also pass.
+
+A diagnostic replay replaced only routerd/routerctl in the running ISO's RAM
+overlay with official static builds from `919499c4`. The original ISO and its
+unowned DNS template were retained. Across 15.046025 seconds, service-unit ran
+14 times on its one-second periodic error-retry interval, with the same PID and
+zero automatic restarts. DNS and configuration hashes were unchanged, and the
+API still reported the expected Error. This qualifies feedback suppression,
+not the original ISO's readiness or a clean boot of a corrected image. After
+capture the daemon was stopped, the diagnostic disc unmounted and the original
+configuration disc restored.
+
+The builder now uses the canonical distribution payload, including provider
+executors and their libexec manifests, and no longer emits that unowned DNS
+template (`27a70036`, `363678de`). A corrected image must still be built and
+booted. Separately, real cache restoration lost ping's file capability despite
+retaining numeric ownership and modes; unprivileged raw ICMP failed after
+restore. That cache is not accepted for subsequent image qualification.
