@@ -114,9 +114,22 @@ func TestReviewRejectedInitialConnectionCannotAdoptForeignSAs(t *testing.T) {
 	endpoint.mu.Lock()
 	endpoint.failLoad = false
 	endpoint.connections["routerd-site"] = []byte("independently created after rejected initial load")
+	callsBeforeRemoval := len(endpoint.calls)
 	endpoint.saEvents = map[string][]byte{"routerd-site": viciSAEvent(foreignOut.ID.Source, foreignOut.ID.Destination, foreignIn.ID.SPI, foreignOut.ID.SPI)}
 	endpoint.mu.Unlock()
 	err = controller.Reconcile(t.Context(), &api.Router{})
+	endpoint.mu.Lock()
+	retainedConnection := string(endpoint.connections["routerd-site"])
+	removalCalls := append([]string(nil), endpoint.calls[callsBeforeRemoval:]...)
+	endpoint.mu.Unlock()
+	if retainedConnection != "independently created after rejected initial load" {
+		t.Errorf("foreign VICI connection was removed/replaced: present=%v", retainedConnection != "")
+	}
+	for _, call := range removalCalls {
+		if call == "unload-conn" || call == "terminate" {
+			t.Errorf("unconfirmed connection received mutation: %s", call)
+		}
+	}
 	if err == nil || len(native.deleted) != 0 || len(native.states) != 2 {
 		t.Fatalf("rejected initial connection granted later foreign authority: err=%v deletes=%d remaining=%d", err, len(native.deleted), len(native.states))
 	}
