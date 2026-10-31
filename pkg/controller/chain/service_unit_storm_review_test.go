@@ -221,3 +221,20 @@ func TestReviewUnchangedConntrackUnavailableDoesNotPublishAgain(t *testing.T) {
 	}
 	t.Logf("three actual missing-file observations; status=%s; transition events=%d; changedFields=%s", status["phase"], len(recorded), recorded[0].Attributes["changedFields"])
 }
+
+func TestReviewServiceUnitWhenReadsActualSystemStatus(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", "external-gate.service", map[string]any{"phase": "Applied"}); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := resourcequery.ResourceWhenMatches(api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
+		"ServiceUnit/external-gate.service.status.phase": {Equals: "Applied"},
+	}}, store)
+	if err != nil || !matched {
+		t.Fatalf("actual ServiceUnit status was not resolved: storedAPI=%s resolvedAPI=%s matched=%v err=%v", api.SystemAPIVersion, resourcequery.APIVersionForKind("ServiceUnit"), matched, err)
+	}
+}
