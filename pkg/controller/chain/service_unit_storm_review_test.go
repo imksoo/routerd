@@ -98,6 +98,13 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 			return nil, nil
 		},
 	}
+	// Acquire the unrelated synthetic helper once before starting subscriptions,
+	// so the regression specifically observes the stale-template failure cycle.
+	for i := 0; i < 2; i++ {
+		if err := controller.Reconcile(t.Context()); err == nil || !strings.Contains(err.Error(), "refuse to replace unowned routerd artifact") {
+			t.Fatalf("prepare actual controller: %v", err)
+		}
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	observer := &serviceStormReviewObserver{runs: make(chan serviceStormReviewRun, 64), cancel: cancel}
 	done := make(chan error, 1)
@@ -116,6 +123,10 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 		case err := <-done:
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("worker termination: %v", err)
+			}
+			status, err := store.ReadObjectStatus(api.SystemAPIVersion, "ServiceUnit", filepath.Base(path))
+			if err != nil || status["phase"] != "Error" {
+				t.Errorf("failure status lost after worker termination: %+v %v", status, err)
 			}
 		case <-time.After(3 * time.Second):
 			t.Error("worker did not terminate")
@@ -143,10 +154,6 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 		if foreignCommands.Load() != 0 {
 			t.Fatalf("foreign unit received %d commands", foreignCommands.Load())
 		}
-		status, err := store.ReadObjectStatus(api.SystemAPIVersion, "ServiceUnit", filepath.Base(path))
-		if err != nil || status["phase"] != "Error" {
-			t.Fatalf("failure status lost: %+v %v", status, err)
-		}
 	}
 	first := next()
 	checkFailure(first)
@@ -156,7 +163,7 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 	second := next()
 	checkFailure(second)
 	if second.trigger != "periodic" {
-		t.Fatalf("own failure status re-entered service worker before periodic retry: trigger=%s", second.trigger)
+		t.Fatalf("own failure status re-entered service worker before periodic retry: trigger=%s resource=%s", second.trigger, second.resourceName)
 	}
 	// An explicit dependency still wakes the same worker, but an unrelated unit does not.
 	if err := state.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", "unrelated.service", map[string]any{"phase": "Applied"}); err != nil {
