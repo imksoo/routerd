@@ -29,6 +29,7 @@ type viciEndpoint struct {
 	connections     map[string][]byte
 	keys            map[string][]byte
 	active          map[string]bool
+	saEvents        map[string][]byte
 	calls           []string
 	failLoad        bool
 	lieUnload       bool
@@ -165,12 +166,16 @@ func (e *viciEndpoint) reply(command string, body []byte) ([]byte, []byte) {
 		delete(e.keys, viciRequestValue(body, "id"))
 	case "list-sas":
 		name := viciRequestValue(body, "ike")
+		if event := e.saEvents[name]; event != nil {
+			return nil, event
+		}
 		if e.active[name] {
 			return nil, append(append([]byte{1, byte(len(name))}, []byte(name)...), 2)
 		}
 	case "terminate":
 		e.recordPending()
 		delete(e.active, viciRequestValue(body, "ike"))
+		delete(e.saEvents, viciRequestValue(body, "ike"))
 	default:
 		return append(viciValue("success", "no"), viciValue("errmsg", "unexpected command "+command)...), nil
 	}

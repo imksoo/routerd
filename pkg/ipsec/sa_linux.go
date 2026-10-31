@@ -69,6 +69,13 @@ func (n linuxSAs) Observe(ctx context.Context, id saID) (saReceipt, bool, error)
 	state, err := netlink.XfrmStateGet(key)
 	if err != nil {
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ESRCH) {
+			after, scopeErr := n.Scope(ctx)
+			if scopeErr != nil {
+				return saReceipt{}, false, scopeErr
+			}
+			if scope != after {
+				return saReceipt{}, false, errors.New("IPsec kernel scope changed during absent observation")
+			}
 			return saReceipt{}, false, nil
 		}
 		return saReceipt{}, false, fmt.Errorf("observe IPsec kernel SA: %w", err)

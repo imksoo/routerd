@@ -4,6 +4,7 @@ package ipsec
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -53,7 +54,8 @@ func (id saID) valid() bool {
 }
 
 func (state saReceipt) valid() bool {
-	return state.ID.valid() && state.Scope != "" && state.AddTime != 0 && len(state.Fingerprint) == 64
+	decoded, err := hex.DecodeString(state.Fingerprint)
+	return err == nil && len(decoded) == 32 && state.ID.valid() && state.Scope != "" && state.AddTime != 0
 }
 
 type reportedSA struct {
@@ -261,6 +263,13 @@ func (c Controller) withdrawRecordedSAs(ctx context.Context, conn connectionRece
 	remaining, err := native.ForEndpoints(ctx, conn.Local, conn.Remote)
 	if err != nil {
 		return err
+	}
+	after, err := native.Scope(ctx)
+	if err != nil {
+		return err
+	}
+	if after != conn.Scope {
+		return errors.New("IPsec kernel scope changed during withdrawal inventory")
 	}
 	if len(remaining) != 0 {
 		return fmt.Errorf("IPsec kernel SAs remain without current ownership proof; retain pending receipt (%d SAs)", len(remaining))
