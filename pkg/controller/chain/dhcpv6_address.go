@@ -459,10 +459,50 @@ func (c DHCPv6AddressController) applyAddress(ctx context.Context, store dhcpv6A
 	if fresh && c.currentOS() == platform.OSLinux {
 		args[2] = "add"
 	}
+	var dad ipv6DADWatcher
+	if fresh && c.ObserveAddress == nil {
+		dad, err = watchIPv6DAD(obs.ifIndex, address)
+		if err != nil {
+			return fmt.Errorf("subscribe before DHCPv6 address DAD: %w", err)
+		}
+		if dad != nil {
+			defer dad.Close()
+		}
+	}
 	if err := c.command(ctx, command, args...); err != nil {
 		return err
 	}
+	duplicate := false
+	if dad != nil {
+		duplicate, err = dad.Wait(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	check, err = c.observe(ctx, state.Source.IfName, address, state.Native.ParentToken)
+	if err != nil {
+		return err
+	}
+	if duplicate {
+		if check.ifIndex != obs.ifIndex || check.scope != obs.scope || check.parentToken != obs.parentToken {
+			return fmt.Errorf("DHCPv6 native parent changed during DAD")
+		}
+		state.PendingDeclines = append(state.PendingDeclines, routerstate.DHCPv6AddressDecline{Address: lease.Address, AcquiredAt: lease.AcquiredAt, ServerDUID: state.ServerDUID})
+		if check.present {
+			state.Native.Addresses[index] = routerstate.DHCPv6OwnedAddress{Address: address, Held: true, AcquiredAt: lease.AcquiredAt, PreferredUntil: preferredUntil, ValidUntil: validUntil}
+		} else {
+			state.Native.Addresses = append(state.Native.Addresses[:index], state.Native.Addresses[index+1:]...)
+			if len(state.Native.Addresses) == 0 {
+				state.Native = nil
+			}
+		}
+		state.Phase, state.Reason = "Pending", "DuplicateAddress"
+		saved, err = store.SaveDHCPv6AddressRecord(name, *record, *state)
+		if err == nil {
+			*record = saved
+		}
+		return err
+	}
 	if err != nil {
 		return err
 	}
