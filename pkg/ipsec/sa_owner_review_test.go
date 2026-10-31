@@ -90,3 +90,38 @@ func TestReviewIPsecSAObservationCannotCrossKernelScope(t *testing.T) {
 		t.Fatalf("scope mismatch lost original receipt or acquired foreign authority: after=%+v err=%v deletes=%d", after, readErr, len(native.deleted))
 	}
 }
+
+func TestReviewRejectedInitialConnectionCannotAdoptForeignSAs(t *testing.T) {
+	directory := t.TempDir()
+	endpoint, session := newVICIEndpoint(t, directory)
+	native := &recordedNativeSAs{}
+	controller := Controller{Session: session, Directory: directory, nativeSAs: native}
+	endpoint.mu.Lock()
+	endpoint.failLoad = true
+	endpoint.mu.Unlock()
+	if err := controller.Reconcile(t.Context(), ipsecTestRouter("203.0.113.1", "fixture-shared-key")); err == nil || !strings.Contains(err.Error(), "load rejected") {
+		t.Fatalf("initial load-conn was not explicitly rejected: %v", err)
+	}
+	pending, err := readReceipt(directory)
+	if err != nil || !pending.Pending || len(pending.Connections) != 1 || len(pending.Connections[0].SAs) != 0 {
+		t.Fatalf("rejected connection pending state: %+v %v", pending, err)
+	}
+	foreignIn := saReceipt{ID: saID{Source: "203.0.113.1", Destination: "198.51.100.1", Protocol: "ESP", SPI: 0x10203040}, Scope: "fixture-kernel", ReqID: 1, AddTime: 456, Fingerprint: strings.Repeat("4", 64)}
+	foreignOut := foreignIn
+	foreignOut.ID.Source, foreignOut.ID.Destination = foreignIn.ID.Destination, foreignIn.ID.Source
+	foreignOut.ID.SPI = 0x50607080
+	native.states = []saReceipt{foreignIn, foreignOut}
+	endpoint.mu.Lock()
+	endpoint.failLoad = false
+	endpoint.connections["routerd-site"] = []byte("independently created after rejected initial load")
+	endpoint.saEvents = map[string][]byte{"routerd-site": viciSAEvent(foreignOut.ID.Source, foreignOut.ID.Destination, foreignIn.ID.SPI, foreignOut.ID.SPI)}
+	endpoint.mu.Unlock()
+	err = controller.Reconcile(t.Context(), &api.Router{})
+	if err == nil || len(native.deleted) != 0 || len(native.states) != 2 {
+		t.Fatalf("rejected initial connection granted later foreign authority: err=%v deletes=%d remaining=%d", err, len(native.deleted), len(native.states))
+	}
+	retained, readErr := readReceipt(directory)
+	if readErr != nil || !retained.Pending || len(retained.Connections) != 1 || len(retained.Connections[0].SAs) != 0 {
+		t.Fatalf("unconfirmed pending receipt lost or adopted foreign SAs: %+v %v", retained, readErr)
+	}
+}
