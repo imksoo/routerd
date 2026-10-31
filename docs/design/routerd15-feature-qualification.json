@@ -1407,6 +1407,28 @@
         "A corrected image clean-boot pass; runtime replacement was manual and the original ISO commit marker remains dc14c486",
         "Whole Linux or ServiceUnit dependency qualification"
       ]
+    },
+    "linux-liveiso-basic-5e6d57a8": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "5e6d57a88cc323707ceb5134fe88ac16d33c2066",
+      "reference": "docs/design/routerd15-audit.md#corrected-linux-image-and-vlan-trial-preparation-2026-10-31",
+      "image_sha256": "0a0918e24408d226758e32d19c9dc06dd3ff2b817c50a66a47732d6a52c0fc97",
+      "image_bytes": 1411469312,
+      "archive_sha256": "8b48a136415dd6c3444b810171ca9f4154a7d52f2c82543deebf43053b1747ec",
+      "environment": "Actual Ubuntu image construction and SquashFS extraction; clean disposable VM boot with functional NICs link-down; Linux 6.8.0-147-generic",
+      "checks": [
+        "All 41 embedded image MD5 entries pass; no temporary checksum entry",
+        "All 20 static Go executables and three libexec manifests match the official distribution in content/owner/mode",
+        "Real manifest-selected executor IPC and Python helper startup with unsupported inputs, no cloud calls",
+        "Restored v3 cache and extracted image retain ping file capability; actual UID1000 raw ICMP succeeds",
+        "Exact embedded revision, successful firstboot and running systemd router service with NRestarts0"
+      ],
+      "excludes": [
+        "NIC/client forwarding, VLAN isolation, two-router failover, restart/reboot state recovery or performance",
+        "Graceful image shutdown: ACPI timeout required explicit stop of the RAM-only VM",
+        "Real cloud actions, external CLI prerequisites and full 1.0 functionality"
+      ]
     }
   },
   "features": [
@@ -3371,7 +3393,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-liveiso-boot-dc14c486"
+          "linux-liveiso-boot-dc14c486",
+          "linux-liveiso-basic-5e6d57a8"
         ]
       },
       "freebsd": {

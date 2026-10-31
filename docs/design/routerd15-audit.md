@@ -2606,3 +2606,51 @@ template (`27a70036`, `363678de`). A corrected image must still be built and
 booted. Separately, real cache restoration lost ping's file capability despite
 retaining numeric ownership and modes; unprivileged raw ICMP failed after
 restore. That cache is not accepted for subsequent image qualification.
+
+
+## Corrected Linux image and VLAN trial preparation, 2026-10-31
+
+At fixed `b3cbc323`, ordinary Linux Go tests passed: 4,286 top-level passes,
+26 explicit skips and zero failures; 2,205 subtests passed. There were 121 tested
+packages and nine packages with no tests. The uncached run took 438.020 seconds,
+followed by full vet in 15.436 seconds. All 2,830 tracked source files were
+unchanged. These counts qualify this ordinary run, not actual forwarding.
+
+The first `34d184ab` image actually booted, completed firstboot and ran the
+product control API without the earlier unowned DNS template or feedback loop.
+The empty no-NIC fixture honestly reported ConntrackUnavailable. Its real
+unprivileged raw-ICMP probe passed and its provider payload was complete. The
+image still failed its embedded MD5 check: the temporary checksum output could
+include itself in the input list. The original failed image remains preserved.
+The subsequent native DHCP/client attempt failed before client startup because
+the test-only BusyBox path was absent from systemd's environment; this is not a
+DHCP forwarding pass or evidence of a product DHCP failure.
+
+`5e6d57a8` excludes that temporary checksum file. Its 1,411,469,312-byte ISO,
+SHA256 `0a0918e24408d226758e32d19c9dc06dd3ff2b817c50a66a47732d6a52c0fc97`,
+passed all 41 checksum entries extracted from the completed ISO. All 20 static
+Go programs, three manifests, numeric ownership and modes matched across the
+regular distribution, CD payload and installed SquashFS paths. The real Python
+helper and the three manifest-selected executors returned the expected negative
+protocol responses in isolated processes without contacting a cloud provider.
+The SquashFS ping retained CAP_NET_RAW and worked as UID 1000. A clean VM boot
+then confirmed the exact commit, kernel 6.8.0-147-generic, successful firstboot,
+running router service and zero automatic restarts. Its three functional links
+were down for this basic check; it does not qualify forwarding. ACPI shutdown
+timed out and the disposable RAM-only VM was stopped explicitly; graceful
+image shutdown is not claimed.
+
+The new v3 base cache was created and restored through the real builder. All
+numeric ownership/modes and the file capability survived, and raw ICMP worked
+before and after restoration. Older v1/v2 caches remain rejected. The cloud CLI
+programs aws/az/oci are separate operator prerequisites in both the baseline
+and current distributions; their absence is not promoted to cloud qualification.
+
+The operator requested actual clients in separate VMs and VLANs, matching the
+existing two-router WAN/LAN/management arrangement. The isolated VLAN-aware
+bridge has no physical uplink or host IP. Separate WAN peer, trusted client and
+other-VLAN client VMs have been provisioned; the two routers are being prepared
+with persistent OS/state disks. Lab candidates retain the existing VRRP,
+conditional PD/RA/DS-Lite behavior, lease synchronization and conntrackd paths.
+No inter-VM forwarding, redundancy or whole-function verdict is claimed yet.
+Production routers were read only and were not changed or probed.
