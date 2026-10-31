@@ -173,6 +173,9 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			"changed":    changed,
 			"dryRun":     c.DryRun,
 		}
+		if c.DryRun {
+			status["phase"] = "Rendered"
+		}
 		if timesyncdDisabled {
 			status["disabledUnit"] = "systemd-timesyncd.service"
 			status["disableReason"] = "TimesyncdDisabledForChrony"
@@ -648,6 +651,9 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 			"configPath":      configPath,
 			"changed":         changed,
 			"dryRun":          c.DryRun,
+		}
+		if c.DryRun {
+			status["phase"] = "Rendered"
 		}
 		if timesyncdDisabled {
 			status["disabledUnit"] = "systemd-timesyncd.service"
