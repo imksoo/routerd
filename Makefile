@@ -490,3 +490,7 @@ check-routerd15-proxy-lifetime:
 .PHONY: check-routerd15-activation
 check-routerd15-activation:
 	go test ./cmd/routerd -run '^(TestCanonicalBarrier|TestHTTPMutation|TestMutation|TestFault|TestServeConfigMutator|TestLifecycleLiveApply|TestConfigMutation|TestRunApplyChainOnce|TestRollback)' -count=1
+
+.PHONY: check-routerd15-system-policy
+check-routerd15-system-policy:
+	go test ./pkg/controller/chain ./cmd/routerd -run '^(TestSysctlController|TestSAMSysctl|TestPackageController|TestPackageObservation|TestHostnameController|TestHostnameIsReachable|TestSysctlPersistentOnly|TestSysctlObservation|TestReviewDPKG|TestReviewOptionalSystem|TestParseOSReleaseID|TestContractFrameworkRegistrationAndScheduledSelection|TestSandboxControllerOptions|TestServeConfigMutatorSandboxApply|TestControllerDefaultStatusesAreLive|TestControllerResourceKindsUseCanonicalNames)' -count=1
