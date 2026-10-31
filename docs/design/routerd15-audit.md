@@ -1284,7 +1284,7 @@ expiry withdrawing the router address and client default route while the daemon
 remains active; traffic failure after expiry; empty apply and fixture cleanup.
 The final reusable script passed with explicit negative assertions and successful
 raw-output deletion. Procedure and boundaries are in
-[development](../operations/development.md#linux-pdra-lifecycle-vm-gate), with
+[development](https://routerd.net/docs/operations/development#linux-pdra-lifecycle-vm-gate), with
 `scripts/linux-pd-ra-lifecycle-smoke.sh` and its committed JSON fixture.
 
 At the product checkpoint the complete normal suite again passed: 120 packages,
@@ -2460,7 +2460,7 @@ forwarding value and namespace identities matched before and after. The test
 and production source blobs were those of `2e99c7e7`; the new Makefile entry and
 development procedure were uncommitted at execution and their hashes were
 captured unchanged. This does not qualify package boot, all profile values or
-FreeBSD. See the [system policy gate](../operations/development.md#linux-system-policy-native-gate).
+FreeBSD. See the [system policy gate](https://routerd.net/docs/operations/development#linux-system-policy-native-gate).
 
 ### Linux ordinary gate after the shared rollback repair
 
@@ -2481,7 +2481,7 @@ Linux cancellation race checking also passed separately.
 The retained two-WAN gate at product `58bef4e9` and fixture `2ec2460b` passed
 independent HTTP forwarding, loss/return, natural Health sample expiry, total
 upstream loss, SQLite restart and declaration withdrawal. The
-[operator procedure](../operations/development.md#linux-native-health-to-pbr-gate)
+[operator procedure](https://routerd.net/docs/operations/development#linux-native-health-to-pbr-gate)
 and ledger retain its exact package/hash and exclusions. This gate starts its
 Health helpers explicitly; it is not a systemd/boot acceptance result.
 
