@@ -50,7 +50,9 @@ stop_child() {
     fi
     sleep .2
   done
-  wait "$child" 2>/dev/null || true
+  if wait "$child"; then return 0; else child_status=$?; fi
+  # A conventional SIGTERM exit is acceptable; crashes and other errors are not.
+  [ "$child_status" -eq 143 ]
 }
 remove_jail() {
   [ -n "$2" ] || return 0
