@@ -4,10 +4,12 @@ package chain
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +17,9 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controller/framework"
+	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/ha"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -149,5 +153,72 @@ func TestLeaseSyncBootstrapFollowsVRRPRegistration(t *testing.T) {
 	registered := controllers[1].(framework.FuncController)
 	if registered.EventLockKey != "dhcp-lease-sync" {
 		t.Fatalf("runtime event lock changed: %q", registered.EventLockKey)
+	}
+}
+
+// A periodic observation may publish role events before returning. Previously
+// confirmed same-generation authority must remain available during that read;
+// an actual failed/unknown observation must close it when the result is known.
+func TestLeaseSyncKeepsCurrentProofUntilNativeObservationReturns(t *testing.T) {
+	dir := t.TempDir()
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	lease := filepath.Join(dir, "leases")
+	if err := os.WriteFile(lease, []byte("private leases"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "gateway"}, Spec: api.VirtualAddressSpec{Interface: "lan", Address: "192.0.2.1/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Priority: 200}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: lease}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "leases"}, Spec: api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "private-unused.invalid"}}, Interval: "1ns", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.status.role": {Equals: "master"}}}}},
+	}}}
+	var proof atomic.Bool
+	copies := 0
+	consumer := FileSyncController{Router: router, Store: leaseSyncRoleStore{eventedStore: eventedStore{Store: store, Router: router}, rolesObserved: &proof}, Command: func(context.Context, string, ...string) ([]byte, error) { copies++; return nil, nil }}
+	observingAgain := false
+	producer := vrrpcontroller.Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(dir, "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens19" {
+			if observingAgain {
+				if !proof.Load() {
+					t.Fatal("previous current-generation proof was closed before a new result existed")
+				}
+				if err := consumer.Reconcile(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				return nil, errors.New("native role observation failed")
+			}
+			return []byte("inet 192.0.2.1/32 scope global ens19\n"), nil
+		}
+		return []byte("active\n"), nil
+	}}
+	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof, router); err != nil {
+		t.Fatal(err)
+	}
+	if !proof.Load() {
+		t.Fatal("actual native role success did not open the same-generation proof")
+	}
+	observingAgain = true
+	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof, router); err != nil {
+		t.Fatal(err)
+	}
+	if copies != 1 {
+		t.Fatalf("current native role could not authorize its subscribed consumer: copies=%d", copies)
+	}
+	if proof.Load() {
+		t.Fatal("unknown native result retained role authority")
+	}
+	// A stale status restored by another writer cannot reopen this in-memory proof.
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "gateway", map[string]any{"role": "master"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if copies != 1 {
+		t.Fatalf("old MASTER authorized another copy after unknown observation: copies=%d", copies)
 	}
 }
