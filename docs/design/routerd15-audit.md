@@ -2428,3 +2428,36 @@ WAN routing/forwarding composition, other source modes, multiple-prefix/server
 behavior and native FreeBSD remain separate gates. The feature preservation and
 platform-wide verdicts remain unknown; this result does not close routerd 1.0
 functional preservation or authorize a release.
+
+## Linux-first qualification and canceled retention recovery, 2026-10-31
+
+The operator selected Linux implementation and acceptance as the current
+priority. Published FreeBSD work remains retained; FreeBSD-only native checks
+and new OS-specific work are deferred, not relabeled as completed.
+
+The clean integration at `14b128dd` passed the Linux ordinary Go gate with
+4276 top-level passes, 26 skips and no failures (121 packages passed, nine had no
+tests; 381.308 seconds). The same revision's FreeBSD run had 4060 top-level
+passes, 214 skips and one failure: the canceled archive test immediately read
+SQLite while the canceled driver transaction still held its lock. That failed
+FreeBSD run remains a failed historical result.
+
+`2e99c7e7` repairs the shared cancellation boundary. A deterministic Linux test
+uses real SQLite and pauses only its driver rollback. Before the repair,
+retention returned while an independent `BEGIN EXCLUSIVE` still reported
+`SQLITE_BUSY`. Reserving `sql.Conn` and closing it after the transaction rollback
+joins the driver's actual completion. The same test passed five runs, the
+logstore package and eight retention controller tests passed, and the independent
+review confirmed that archive, identity, deletion and immediate-reader
+conditions were preserved. FreeBSD runtime replay is deferred.
+
+`make check-routerd15-system-native-linux` ran the actual Hostname and Sysctl
+controllers in private UTS, network, user and mount namespaces with a private
+sysfs. Both native cases passed without skips: hostname acquisition, SQLite
+reopen, update and management release; a real network sysctl change, private
+persistent fragment and converged second reconcile. The outer hostname,
+forwarding value and namespace identities matched before and after. The test
+and production source blobs were those of `2e99c7e7`; the new Makefile entry and
+development procedure were uncommitted at execution and their hashes were
+captured unchanged. This does not qualify package boot, all profile values or
+FreeBSD. See the [system policy gate](../operations/development.md#linux-system-policy-native-gate).

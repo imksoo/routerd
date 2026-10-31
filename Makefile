@@ -478,6 +478,21 @@ check-routerd15-native-parent-linux:
 	ROUTERD_HOST_NETNS="$$parent_netns" ROUTERD_RUN_NETNS=1 unshare -Urnm sh -c \
 	'mount -t sysfs sysfs /sys && exec go test ./pkg/controller/chain -run "^(TestBridgeParentNativeLinuxAddressLifecycle|TestWireGuardParentNativeLinuxPeerLifecycle|TestVRFParentNativeLinuxPeerLifecycle|TestDSLiteParentNativeLinuxAFTRLifecycle)$$" -count=1 -v'
 
+# Both UTS and network effects stay in a private user/mount namespace.
+.PHONY: check-routerd15-system-native-linux
+check-routerd15-system-native-linux:
+	@system_utsns=$$(readlink /proc/self/ns/uts) && \
+	system_netns=$$(readlink /proc/self/ns/net) && \
+	system_hostname=$$(hostname) && \
+	system_forward=$$(sysctl -n net.ipv4.ip_forward) || exit 1; \
+	ROUTERD_HOST_UTSNS="$$system_utsns" ROUTERD_HOST_NETNS="$$system_netns" \
+	ROUTERD_RUN_SYSTEM_POLICY_NATIVE=1 unshare -Urnmu sh -ec \
+	'mount -t sysfs sysfs /sys; exec go test ./pkg/controller/chain -run "^(TestHostnameNativeLinuxPrivateUTSLifecycle|TestSysctlNativeLinuxPrivateNetworkValue)$$" -count=1 -v'; \
+	system_result=$$?; \
+	test "$$(hostname)" = "$$system_hostname" && \
+	test "$$(sysctl -n net.ipv4.ip_forward)" = "$$system_forward" || exit 1; \
+	exit "$$system_result"
+
 check-routerd15-policy-native:
 	go test ./pkg/controller/chain -run '^(TestPolicyIPv4Native|TestPolicyIPv6Native|TestIPv4PolicyRoute|TestPriorityPolicy|TestEffectivePolicyRoute)' -count=1
 	go test ./pkg/apply ./pkg/lifecycle -count=1

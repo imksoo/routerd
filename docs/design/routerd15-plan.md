@@ -48,6 +48,15 @@ routine repairs and authorized isolated-VM checks without requesting a new task
 for each failure. Preserve small checkpoints remotely, and keep reproducible
 procedures and verdicts rather than permanent raw-log bundles.
 
+## Current execution priority, 2026-10-31
+
+Complete Linux implementation and qualification first, as requested by the
+operator. Preserve published FreeBSD work and its open findings, but defer
+FreeBSD-only implementation and native execution. Fix shared defects when they
+affect Linux, including cancellation, storage and process ownership. A Linux
+acceptance result does not establish whole-platform completion; retain the
+remaining FreeBSD functions in the final 1.0 preservation scope.
+
 ## Work sequence
 
 1. **Health to PBR (initial implementation).** Decode current status at its
