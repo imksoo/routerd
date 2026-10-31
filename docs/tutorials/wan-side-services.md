@@ -220,6 +220,7 @@ The Web Console summarises the same information under the **Overview** and **Res
 
 ## See also
 
+- [Native NTP runtime checks](../operations/ntp-runtime-test.md)
 - [LAN-side services](./lan-side-services.md)
 - [Multi-WAN egress](../how-to/multi-wan.md)
 - [DS-Lite via NTT NGN](../how-to/flets-ipv6-setup.md)
