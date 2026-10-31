@@ -165,3 +165,76 @@ func TestDeclaredPluginReadOnlyModesNeverStartExecutable(t *testing.T) {
 		})
 	}
 }
+
+func TestDeclaredPluginIntervalRepeatsWithinFrameworkWorker(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "plugin.sh")
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"apiVersion\":\"plugin.routerd.net/v1alpha1\",\"kind\":\"PluginResult\",\"status\":{\"ttl\":\"1h\"}}'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"},
+		Metadata: api.ObjectMeta{Name: "inventory"},
+		Spec:     api.PluginSpec{Executable: executable, Triggers: []api.PluginTrigger{{Type: "interval", Every: "30ms"}}},
+	}}}}
+	r := &Runner{Router: router, Store: store, Bus: bus.New(), Opts: Options{EnabledControllers: []string{"plugin"}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	controllers, _, _, err := r.frameworkControllers(ctx, logger, eventedStore{Store: store, Router: router}, false, ha.Decision{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var declared framework.Controller
+	for _, controller := range controllers {
+		if controller.Name() == "plugin" {
+			declared = controller
+			break
+		}
+	}
+	if declared == nil {
+		t.Fatal("prepared Plugin owner is absent from the real chain")
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- (framework.Runner{Bus: r.Bus, Logger: logger, Interval: time.Hour}).Run(ctx, declared)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("framework stop: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("Plugin interval worker did not stop")
+		}
+	})
+	for {
+		parts, err := store.GetDynamicConfigPartsBySource("Plugin/inventory")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(parts) >= 2 {
+			first, second := false, false
+			for _, part := range parts {
+				first = first || part.Generation == 1
+				second = second || part.Generation == 2
+			}
+			if !first || !second {
+				t.Fatalf("actual interval publications: %+v", parts)
+			}
+			break
+		}
+		select {
+		case <-time.After(5 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatal("positive interval deadline did not start the next actual process")
+		}
+	}
+}
