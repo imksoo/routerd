@@ -126,11 +126,11 @@ kind: Router
 metadata: {name: isolated-pppoe}
 spec:
   resources:
-  - apiVersion: routerd.net/v1alpha1
+  - apiVersion: net.routerd.net/v1alpha1
     kind: Interface
     metadata: {name: wan}
     spec: {ifname: pppoe-wan}
-  - apiVersion: routerd.net/v1alpha1
+  - apiVersion: net.routerd.net/v1alpha1
     kind: PPPoESession
     metadata: {name: lifecycle}
     spec:
@@ -172,7 +172,7 @@ stage=traffic
 traffic initial
 # Confirm the actual framework caller published the same negotiated source.
 for _ in $(seq 1 50); do
-  "$product/routerctl" --socket /run/routerd/control.sock get PPPoESession/lifecycle -o json >"$work/controller-status.json" 2>"$work/controller-status.err" || true
+  "$product/routerctl" get PPPoESession/lifecycle --socket /run/routerd/control.sock -o json >"$work/controller-status.json" 2>"$work/controller-status.err" || true
   jq -e '..|objects|select(.currentAddress?=="198.18.10.2" and .peerAddress?=="198.18.10.1")' "$work/controller-status.json" >/dev/null && break
   sleep .2
 done
