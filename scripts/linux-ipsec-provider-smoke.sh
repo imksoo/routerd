@@ -98,7 +98,27 @@ finish() {
  stop_child "$peer" "$peer_birth" peer || failures=1
  stop_child "$holder" "$holder_birth" namespace || failures=1
  if [[ -f $work/provider-started ]]; then
+  vici_inode=$(stat -c '%d:%i' /run/charon.vici 2>/dev/null)
   systemctl stop strongswan.service || failures=1
+  # Some providers leave their socket inode after a confirmed stop.
+  # Delete only this run's unchanged socket with no accepting listener.
+  if [[ -S /run/charon.vici && -n $vici_inode ]]; then
+   if ! python3 - "$vici_inode" <<'PY'
+import errno,os,socket,sys
+p='/run/charon.vici'
+st=os.stat(p)
+assert f'{st.st_dev}:{st.st_ino}'==sys.argv[1]
+with socket.socket(socket.AF_UNIX) as s:
+    try: s.connect(p)
+    except OSError as e:
+        if e.errno!=errno.ECONNREFUSED: raise
+    else: raise RuntimeError('provider still accepts VICI connections')
+st=os.stat(p)
+assert f'{st.st_dev}:{st.st_ino}'==sys.argv[1]
+os.unlink(p)
+PY
+   then failures=1; fi
+  fi
   # Remove only this gate's initially absent packages, never autoremove.
   apt-get -y --no-auto-remove purge "${packages[@]}" > "$work/package-remove.log" 2>&1 || failures=1
  fi
