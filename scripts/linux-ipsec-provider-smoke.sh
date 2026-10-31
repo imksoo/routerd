@@ -12,6 +12,9 @@ work=$(realpath "$2") archive=$(realpath "$3") peer_root=$(realpath "$5")
 export APT_CONFIG
 APT_CONFIG=$(realpath "$6")
 export DEBIAN_FRONTEND=noninteractive
+export TZ=UTC
+wait_local_expiry=${ROUTERD_IPSEC_WAIT_LOCAL_EXPIRY:-0}
+[[ $wait_local_expiry == 0 || $wait_local_expiry == 1 ]]
 [[ -d $work && -f $APT_CONFIG && -x $peer_root/usr/lib/ipsec/charon ]]
 [[ $(sha256sum "$archive" | cut -d ' ' -f1) == "$4" ]]
 [[ ! -e $work/provider-started ]]
@@ -120,7 +123,7 @@ os.unlink(p)
 PY
    then failures=1; fi
   fi
-  if ((foreign_created)); then rm /etc/swanctl/routerd-fixture-foreign.conf || failures=1; fi
+  if ((foreign_created)); then rm /etc/swanctl/conf.d/routerd-fixture-foreign.conf || failures=1; fi
   for executable in swanctl charon-systemd; do
    if ! grep -q "^/usr/sbin/$executable " "$work/apparmor.before"; then
     if grep -q "^/usr/sbin/$executable " /sys/kernel/security/apparmor/profiles; then
@@ -192,7 +195,9 @@ stopped=1
 systemctl stop routerd
 tar --acls --xattrs -cpf "$work/installed-backup.tar" /usr/local/etc/routerd /var/lib/routerd /etc/systemd/system/routerd.service
 find /var/lib/routerd -type f -print0 | sort -z | xargs -0 sha256sum > "$work/state.sha256"
-unshare -n sleep 600 & holder=$!
+holder_seconds=600
+if ((wait_local_expiry)); then holder_seconds=6000; fi
+unshare -n sleep "$holder_seconds" & holder=$!
 holder_birth=$(birth "$holder")
 for _ in {1..50}; do [[ $(readlink /proc/"$holder"/ns/net) != "$(readlink /proc/self/ns/net)" ]] && break; sleep .1; done
 [[ $(readlink /proc/"$holder"/ns/net) != "$(readlink /proc/self/ns/net)" ]]
@@ -210,13 +215,14 @@ peer_exec ip link set rd-peer up
 peer_exec ip addr add 198.18.95.2/30 dev rd-peer
 peer_exec ip addr add 10.254.95.2/32 dev lo
 peer_exec ip route add 10.254.95.1/32 via 198.18.95.1
-stage=fresh-package-provider
+stage='fresh-package-provider'
 touch "$work/provider-started"
 product "$work/router.yaml" package > "$work/fresh-package-provider.log" 2>&1
 systemctl is-active --quiet strongswan.service
 systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "$work/provider.first"
 swanctl --stats > "$work/provider.stats" 2>&1
-cat > /etc/swanctl/routerd-fixture-foreign.conf <<'EOF'
+mkdir -p /etc/swanctl/conf.d
+cat > /etc/swanctl/conf.d/routerd-fixture-foreign.conf <<'EOF'
 connections {
  fixture-foreign {
   local_addrs = 198.18.95.1
@@ -227,7 +233,7 @@ connections {
 }
 EOF
 foreign_created=1
-swanctl --load-conns --file /etc/swanctl/routerd-fixture-foreign.conf > "$work/foreign-load.log" 2>&1
+swanctl --load-conns --file /etc/swanctl/conf.d/routerd-fixture-foreign.conf > "$work/foreign-load.log" 2>&1
 swanctl --list-conns > "$work/foreign-loaded.connections" 2>&1
 grep -q fixture-foreign "$work/foreign-loaded.connections"
 product "$work/router.yaml" > "$work/fresh-ipsec.log" 2>&1
@@ -236,6 +242,9 @@ mkdir "$work/peer-run"
 cat > "$work/peer-strongswan.conf" <<'EOF'
 charon {
  load_modular = no
+ retransmit_timeout = 1.0
+ retransmit_base = 1.0
+ retransmit_tries = 1
  load = aes sha1 sha2 random nonce gmp hmac xcbc kdf kernel-netlink socket-default vici
  plugins { vici { socket = unix:///run/charon.vici } }
 }
@@ -260,6 +269,9 @@ cat > "$work/peer.conf" <<'EOF'
 connections {
  provider-peer {
   version = 2
+  dpd_delay = 2s
+  rekey_time = 0s
+  reauth_time = 0s
   local_addrs = 198.18.95.2
   remote_addrs = 198.18.95.1
   proposals = aes256-sha256-modp2048
@@ -269,6 +281,10 @@ connections {
    remote_ts = 10.254.95.1/32
    esp_proposals = aes256-sha256
    start_action = trap
+   rekey_time = 20s
+   life_time = 30s
+   rand_time = 0s
+   dpd_action = trap
   } }
  }
 }
@@ -283,9 +299,9 @@ traffic() {
  if [[ ${1:-new} == new ]]; then
   timeout -k 2 25 swanctl --initiate --ike routerd-provider-native --child net --timeout 15 > "$work/$stage.initiate" 2>&1
  fi
- ping -n -I 10.254.95.1 -c 2 -W 2 10.254.95.2 > "$work/$stage.forward"
- peer_exec ping -n -I 10.254.95.2 -c 2 -W 2 10.254.95.1 > "$work/$stage.reverse"
- ip -s xfrm state > "$work/$stage.xfrm"
+ ping -n -I 10.254.95.1 -c 2 -W 2 10.254.95.2 > "$work/$stage.forward" || return 1
+ peer_exec ping -n -I 10.254.95.2 -c 2 -W 2 10.254.95.1 > "$work/$stage.reverse" || return 1
+ ip -s xfrm state > "$work/$stage.xfrm" || return 1
  grep -Eq '[1-9][0-9]*\(packets\)' "$work/$stage.xfrm"
 }
 stage=initial-traffic
@@ -312,9 +328,29 @@ systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "
 cmp "$work/provider.first" "$work/provider.reacquired"
 swanctl --list-conns > "$work/reacquired.connections" 2>&1
 grep -q fixture-foreign "$work/reacquired.connections"
-# Remove the fixture file before the crash so startup cannot reload it.
-rm /etc/swanctl/routerd-fixture-foreign.conf
-foreign_created=0
+# Keep the independent configuration under the package's normal include path.
+# The unit may reload it after the crash; routerd must preserve that connection.
+awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/reacquired.connections" > "$work/foreign.expected"
+[[ -s $work/foreign.expected ]]
+cp "$work/reacquired-traffic.xfrm" "$work/owned-precrash.xfrm"
+python3 - "$work/owned-precrash.xfrm" "$work/local-expiry-plan.json" <<'PY'
+import datetime,json,pathlib,re,sys
+text=pathlib.Path(sys.argv[1]).read_text()
+states=[]
+for block in re.split(r'(?=^src )',text,flags=re.M):
+    if block.split()[:4]not in [['src','198.18.95.1','dst','198.18.95.2'],['src','198.18.95.2','dst','198.18.95.1']]:continue
+    spi=re.search(r'proto esp spi (0x[0-9a-f]+)',block)
+    hard=re.search(r'expire add: soft [^\n]*hard (\d+)\(sec\)',block)
+    added=re.search(r'^\s+add (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) use ',block,re.M)
+    if not (spi and hard and added) or int(hard[1])<=0:raise ValueError('native local lifetime is unknown')
+    packet=re.search(r'^\s+\d+\(bytes\), (\d+)\(packets\)',block,re.M)
+    if not packet:raise ValueError('native packet counter is unknown')
+    stamp=datetime.datetime.strptime(added[1],'%Y-%m-%d %H:%M:%S').replace(tzinfo=datetime.timezone.utc)
+    states.append({'spi':hex(int(spi[1],16)),'addTimeUTC':stamp.isoformat(),'packetCountBeforeCrash':int(packet[1]),'hardLifetimeSeconds':int(hard[1]),'hardExpiryUnix':int(stamp.timestamp())+int(hard[1])})
+assert len(states)==2,states
+plan={'states':states,'latestRecordedHardExpiryUnix':max(s['hardExpiryUnix']for s in states),'peerRekeySeconds':20,'peerHardLifetimeSeconds':30,'productLifetimeModified':False}
+pathlib.Path(sys.argv[2]).write_text(json.dumps(plan,indent=2))
+PY
 stage=provider-crash-recovery
 "$routerd" serve --controllers package,ipsec --config "$work/router.yaml" \
  --state-file "$work/state.db" --ledger-file "$work/ledger.db" --status-file "$work/status.json" \
@@ -324,6 +360,7 @@ for _ in {1..50}; do [[ -S $work/control.sock ]] && break; kill -0 "$running_rou
 [[ -S $work/control.sock ]]
 old_pid=$(systemctl show strongswan.service -p MainPID --value)
 [[ $old_pid != 0 ]]
+crash_epoch=$(date +%s)
 systemctl kill --kill-whom=main --signal=SIGKILL strongswan.service
 for _ in {1..60}; do
  new_pid=$(systemctl show strongswan.service -p MainPID --value)
@@ -333,10 +370,104 @@ done
 [[ $new_pid != 0 && $new_pid != "$old_pid" ]]
 grep -q routerd-provider-native "$work/recovered.connections"
 systemctl show strongswan.service -p MainPID -p InvocationID -p NRestarts > "$work/provider.recovered"
-# Ordinary selector traffic must trigger recovery; do not manually initiate an SA.
+# Continuity is distinct from recovery of IKE control over new SAs.
+stage=provider-crash-continuity
 traffic existing
-swanctl --list-sas > "$work/recovered.sas" 2>&1
-grep -q 'routerd-provider-native:.*ESTABLISHED' "$work/recovered.sas"
+cp "$work/$stage.xfrm" "$work/continuity.xfrm"
+timeout -k 2 5 swanctl --list-sas > "$work/continuity.sas" 2>&1
+stage='peer-expiry-recovery'
+earliest_success=$((crash_epoch + 32))
+deadline=$((crash_epoch + 90))
+if ((wait_local_expiry)); then
+ earliest_success=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["latestRecordedHardExpiryUnix"]+5)' "$work/local-expiry-plan.json")
+ deadline=$((earliest_success + 90))
+ stage=recorded-local-expiry-recovery
+fi
+check_recovered_state() {
+ python3 - "$work/local-expiry-plan.json" "$work/$stage.xfrm" "$work/recovered.sas" "$work/recovery-state.json" <<'PY'
+import datetime,json,pathlib,re,sys
+plan=json.loads(pathlib.Path(sys.argv[1]).read_text())
+native=pathlib.Path(sys.argv[2]).read_text()
+vici=pathlib.Path(sys.argv[3]).read_text()
+old={s['spi']for s in plan['states']}
+kernel={}
+if native.strip()and not re.search(r'^src ',native,re.M):raise ValueError('unexpected native SA output')
+for block in re.split(r'(?=^src )',native,flags=re.M):
+    if block.split()[:4]not in [['src','198.18.95.1','dst','198.18.95.2'],['src','198.18.95.2','dst','198.18.95.1']]:continue
+    spi=re.search(r'proto esp spi (0x[0-9a-f]+)',block)
+    count=re.search(r'^\s+\d+\(bytes\), (\d+)\(packets\)',block,re.M)
+    if spi:
+        if not count:raise ValueError('native SA packet observation is unknown')
+        kernel[hex(int(spi[1],16))]=int(count[1])
+active=False
+child={}
+for line in vici.splitlines():
+    if line and not line[0].isspace():
+        active=line.startswith('routerd-provider-native:')and'ESTABLISHED'in line
+    if active:
+        m=re.match(r'\s+(in|out)\s+([0-9a-f]+),\s+\d+ bytes,\s+(\d+) packets',line)
+        if m:child[hex(int(m[2],16))]=int(m[3])
+fresh=len(child)==2 and not old.intersection(child) and all(n>0 and kernel.get(spi,0)>0 for spi,n in child.items())
+report={'observedAtUTC':datetime.datetime.now(datetime.timezone.utc).isoformat(),'newProviderSAWithPackets':fresh,'oldSPIs':sorted(old),'oldPacketsBeforeCrash':{x['spi']:x['packetCountBeforeCrash']for x in plan['states']},'oldPacketsNow':{spi:kernel.get(spi)for spi in old},'oldSPIsStillInstalled':sorted(old.intersection(kernel)),'currentProviderSPIs':sorted(child),'nativePackets':kernel,'productLifetimeModified':False}
+pathlib.Path(sys.argv[4]).write_text(json.dumps(report,indent=2))
+print(json.dumps(report,separators=(',',':')))
+sys.exit(0 if fresh else 1)
+PY
+}
+recovery_stage=$stage
+stage=provider-crash-continuity
+cp "$work/continuity.sas" "$work/recovered.sas"
+if check_recovered_state > "$work/continuity-state.json"; then :; fi
+stage=$recovery_stage
+recovered=0
+while (( $(date +%s) <= deadline )); do
+ traffic_ok=0
+ if traffic existing; then traffic_ok=1; fi
+ ip -s xfrm state > "$work/$stage.xfrm"
+ query_ok=0
+ if timeout -k 2 5 swanctl --list-sas > "$work/recovered.sas" 2>&1; then query_ok=1; fi
+ fresh=0
+ if ((query_ok)) && check_recovered_state >> "$work/recovery-observations.jsonl"; then fresh=1; fi
+ if ((traffic_ok && fresh && $(date +%s) >= earliest_success)); then
+  if ((wait_local_expiry)) && ! python3 -c 'import json,sys; assert not json.load(open(sys.argv[1]))["oldSPIsStillInstalled"]' "$work/recovery-state.json"; then
+   sleep 1; continue
+  fi
+  recovered=1; break
+ fi
+ sleep 1
+done
+[[ $recovered == 1 ]]
+peer_control --list-sas > "$work/recovered.peer-sas" 2>&1
+grep -q 'provider-peer:.*ESTABLISHED' "$work/recovered.peer-sas"
+peer_exec ip -s xfrm state > "$work/recovered.peer-xfrm"
+swanctl --list-conns > "$work/recovered.connections" 2>&1
+awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/recovered.connections" > "$work/foreign.recovered"
+cmp "$work/foreign.expected" "$work/foreign.recovered"
 stop_child "$running_router" "$running_birth" router
 running_router=''
+stage=post-crash-withdrawal
+product "$work/empty.yaml" > "$work/post-crash-withdraw.log" 2>&1
+jq -e '.pending==false and (.connections|length)==0 and (.sharedKeys|length)==0' /usr/local/etc/routerd/swanctl/routerd-ipsec.json >/dev/null
+swanctl --list-sas > "$work/post-crash-withdraw.sas" 2>&1
+swanctl --list-conns > "$work/post-crash-withdraw.connections" 2>&1
+if grep -q routerd-provider-native "$work/post-crash-withdraw.connections"; then exit 1; fi
+if grep -q 'routerd-provider-native:.*ESTABLISHED' "$work/post-crash-withdraw.sas"; then exit 1; fi
+awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/post-crash-withdraw.connections" > "$work/foreign.withdrawn"
+cmp "$work/foreign.expected" "$work/foreign.withdrawn"
+ip -s xfrm state > "$work/post-crash-withdraw.xfrm"
+python3 - "$work/recovery-state.json" "$work/post-crash-withdraw.xfrm" "$work/withdrawal-state.json" <<'PY'
+import json,pathlib,re,sys
+recovery=json.loads(pathlib.Path(sys.argv[1]).read_text())
+known=set(recovery['oldSPIs']+recovery['currentProviderSPIs'])
+native=pathlib.Path(sys.argv[2]).read_text()
+actual=set()
+if native.strip()and not re.search(r'^src ',native,re.M):raise ValueError('unexpected native SA output')
+for block in re.split(r'(?=^src )',native,flags=re.M):
+    if block.split()[:4]not in [['src','198.18.95.1','dst','198.18.95.2'],['src','198.18.95.2','dst','198.18.95.1']]:continue
+    spi=re.search(r'proto esp spi (0x[0-9a-f]+)',block)
+    if spi:actual.add(hex(int(spi[1],16)))
+report={'knownOwnedSPIs':sorted(known),'knownOwnedSPIsStillInstalled':sorted(known.intersection(actual)),'unclassifiedSameEndpointSPIs':sorted(actual-known),'foreignConnectionPreserved':True}
+pathlib.Path(sys.argv[3]).write_text(json.dumps(report,indent=2))
+assert not actual,report
+PY
 stage=completed
