@@ -230,7 +230,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 		t.Fatalf("actual ntpd never selected %s: running=%v context=%v ntpq=%s", source, process.running(), ctx.Err(), last)
 	}
 	referenceConfig := filepath.Join(base, "reference.conf")
-	write(referenceConfig, "disable ntp\ninterface ignore all\ninterface listen 127.0.0.1\ninterface listen 198.18.97.2\nrestrict default nomodify notrap nopeer noquery\nrestrict 127.0.0.1\nserver 127.127.1.0 minpoll 4 maxpoll 4\nfudge 127.127.1.0 stratum 10\ndriftfile "+filepath.Join(base, "reference.drift")+"\n")
+	write(referenceConfig, "disable ntp\ninterface ignore all\ninterface listen 127.0.0.1\ninterface listen 198.18.97.2\nrestrict default nomodify notrap nopeer noquery\nrestrict 127.0.0.1\nserver 127.127.1.0 prefer minpoll 4 maxpoll 4\nfudge 127.127.1.0 stratum 10\ndriftfile "+filepath.Join(base, "reference.drift")+"\n")
 	referenceProcess := start(reference, referenceConfig, "reference")
 	waitSource(reference, referenceProcess, "LOCAL")
 	fragment, runtime := filepath.Join(base, "routerd.conf"), filepath.Join(base, "runtime.conf")
