@@ -1239,6 +1239,37 @@
         "Multiple-prefix and multiple-server lifecycle qualification",
         "Complete routerd 1.0 functional preservation, release qualification or production readiness"
       ]
+    },
+    "linux-health-pbr-native-58bef4e9": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "58bef4e9738636e38096def465f79834feac41c1",
+      "reference": "docs/operations/development.md#linux-native-health-to-pbr-gate",
+      "archive_sha256": "c4b01a9b378c038a738cd201c86f6a6a7feb18a47cd476e6a5696587f3ada807",
+      "routerd_sha256": "c4802f4174abda32dc87318538d97e8e33a6799f0f50bfb2d745324b76dd87e5",
+      "helper_sha256": "3e176463d710cb8b80eabe8f8bcef0ead75c3dac5e5ffd38c6d12f1cf94ce4b5",
+      "fixture_revision": "2ec2460b18fd3251f07a29bb5ae88a54684bcd42",
+      "executed_fixture_sha256": "1c500492f9b8d539243882432744b40d98090a48732084f0ee1c0a8d636fdbda",
+      "build_source_revision": "2ec2460b18fd3251f07a29bb5ae88a54684bcd42",
+      "build_source_note": "Only fixture, Make check target and operator documentation differ from the embedded product revision; product Go source, dependencies, configuration examples and service files are unchanged.",
+      "environment": "Ubuntu 24.04.4, Linux 6.8.0-136-generic; explicit private network/mount namespaces, independent HTTP upstreams and LAN client; formal static make dist package",
+      "reproduction": "sudo make check-routerd15-health-pbr-native-linux HEALTH_PBR_ARCHIVE=ARCHIVE HEALTH_PBR_ARCHIVE_SHA256=SHA256 HEALTH_PBR_WORK_PARENT=EXISTING_PRIVATE_DIRECTORY",
+      "checks": [
+        "Certify independent routed HTTP through both upstreams before qualification, then remove certification routes",
+        "Actual Health worker TCP probes, IPC snapshots, routerd priority policy and LAN HTTP select preferred WAN A",
+        "Upstream A service outage switches client forwarding to B; resuming only A restores preferred forwarding",
+        "Terminated Health worker loses its old successful observation after natural two-minute freshness plus normal polling; client forwarding selects B within the 155-second bound",
+        "Restarting only the Health worker restores A; both upstreams unavailable publishes Pending/NoReadyCandidates, removes the marking table and stops client forwarding; peer-only recovery restores A",
+        "Router service stop/restart reopens SQLite and restores client forwarding",
+        "Configuration removal withdraws owned rules, routes and marking table, stops client forwarding, and preserves byte-identical unrelated rule and route tuples",
+        "Fixture cleanup reaps its processes, private namespaces disappear and successful raw output is removed"
+      ],
+      "excludes": [
+        "Systemd Health activation, package upgrade and boot",
+        "NAT and IPv6 policy forwarding",
+        "VRRP, hash/mark modes, dynamic gateway/source modes and physical WAN link failure",
+        "FreeBSD and whole routerd 1.0 functional preservation"
+      ]
     }
   },
   "features": [
@@ -2681,13 +2712,16 @@
         ],
         "related_test_files": [
           "pkg/controller/chain/policyroute_native_test.go",
-          "pkg/controller/chain/health_observation_test.go"
+          "pkg/controller/chain/health_observation_test.go",
+          "scripts/linux-health-pbr-native-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-health-pbr-native-58bef4e9"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2697,8 +2731,9 @@
         ]
       },
       "required_remaining_checks": [
-        "Actual independent two-WAN probe/forwarded traffic and failover",
-        "Freshness/expiry and native IPv4/IPv6 policy withdrawal/recovery"
+        "Systemd Health activation and package/reboot composition on the final integration",
+        "Independent native IPv6 policy forwarding/withdrawal/recovery",
+        "Hash/mark policies, dynamic gateway/source modes, VRRP and physical WAN link failure"
       ]
     },
     {
