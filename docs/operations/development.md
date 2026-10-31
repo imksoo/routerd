@@ -306,6 +306,17 @@ reproduction. This is a DHCPv6 helper protocol gate. It does not establish kerne
 address installation, DAD/Decline, WAN routing, forwarding, full routerd supervision,
 FreeBSD support, or complete `DHCPv6Address` resource qualification.
 
+The 1.5 supervisor resolves `DHCPv6Address` and `DHCPv6PrefixDelegation`
+declarations by kernel interface. One of each on the same interface uses one
+`pd-address` worker, including when the declarations use different interface
+aliases. Duplicate address or duplicate prefix declarations on that interface
+are rejected. Leave `DHCPv6Address.spec.client` empty or set it to
+`routerd-dhcpv6-client`; an external client is not an additional socket owner.
+An address-only worker uses the internal identity `DHCPv6Address/NAME`, while
+its resource status and address events retain the declared name. Protocol
+`Bound` is an observation and must not promote native address status to `Applied`.
+Local declaration/supervisor tests do not replace the native ownership gate above.
+
 ## Linux DHCP and firewall withdrawal gate
 
 Run the packaged service in an empty disposable VM with independent management

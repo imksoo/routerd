@@ -1059,6 +1059,47 @@
         "Complete plugin/dynamic-configuration qualification"
       ],
       "cli_sha256": "67466729a122032e828961a6d20708adb795c7c2cfa5e66158826bb921538511"
+    },
+    "linux-dhcpv6-associations-ede8dbf2": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ede8dbf269148435c9ddc2a3c95bd187e808d863",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-iana-and-combined-pd-client-lifecycle",
+      "archive_sha256": "1e5196c6311ea836a02741988a8148ad7f15b94df4a141e5f03e0cb112c6b144",
+      "helper_sha256": "efc41c3ff1605a506da866eab3bb52b48b6bf5a47e57122665eaf939082763d9",
+      "fixture_revision": "8d3064b52242131bd60d7c013ce15499628dd710",
+      "executed_fixture_sha256": "67b7eb1b0d2f632790b06a27dc85aaf942434948a07aeb42cda8db694dab11a4",
+      "environment": "Ubuntu 24.04.4 dedicated VM, Linux 6.8.0-124-generic; formal static make dist helper; separate network namespaces and independent Kea 2.4.1",
+      "reproduction": "scripts/linux-dhcpv6-association-smoke.sh --disposable-vm ARCHIVE SHA256 KEA_PACKAGE_ROOT",
+      "checks": [
+        "IA_NA-only and combined IA_NA/IA_PD acquisition agrees with independent Kea lease database",
+        "Helper restart restores acquisition time without extending lease validity; natural T1 Renew succeeds",
+        "Frozen peer causes Renew, T2 Rebind and actual 45-second expiry in live and durable state",
+        "Peer-only resumption causes autonomous reacquisition; explicit Release withdraws lease authority",
+        "Helpers/peer processes reaped, isolated trial links removed, successful temporary output deleted; installed router remains Healthy"
+      ],
+      "excludes": [
+        "DHCPv6Address declaration through full routerd supervision and native kernel address ownership",
+        "DAD/Decline, WAN routes, forwarding and complete source-mode qualification",
+        "FreeBSD native runtime; only targeted FreeBSD cross-compilation was checked",
+        "Complete 1.0 function preservation or release qualification"
+      ]
+    },
+    "dhcpv6-partial-recovery-87761c0e": {
+      "level": "ordinary-tests",
+      "outcome": "pass",
+      "revision": "87761c0ef4da26620e087f81bb47851908c6ac95",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-iana-and-combined-pd-client-lifecycle",
+      "reproduction": "go test -race ./cmd/routerd-dhcpv6-client ./pkg/pdclient ./pkg/daemonapi",
+      "checks": [
+        "Unchanged partial NoBinding recovery neither rewrites the lease file nor fabricates a binding event",
+        "Actual secondary-address expiry persists and publishes even when overall state is unchanged",
+        "Whole ordinary Linux suite: 120 packages, 4177 top-level passes, 15 skips, 118 cached package results"
+      ],
+      "excludes": [
+        "Native runtime verification of this follow-up revision",
+        "Complete DHCPv6Address resource or 1.0 functional qualification"
+      ]
     }
   },
   "features": [
@@ -1981,11 +2022,19 @@
           "cmd/routerd-dhcpv6-client/main.go",
           "pkg/pdclient/client.go",
           "pkg/raobserver/raobserver.go",
-          "pkg/controller/chain/phase2.go"
+          "pkg/controller/chain/phase2.go",
+          "pkg/pdclient/address_client.go",
+          "pkg/pdclient/address_message.go",
+          "pkg/pdclient/snapshot.go",
+          "cmd/routerd-dhcpv6-client/address.go"
         ],
         "related_test_files": [
           "pkg/pdclient/client_test.go",
-          "pkg/raobserver/raobserver_test.go"
+          "pkg/raobserver/raobserver_test.go",
+          "pkg/pdclient/address_client_test.go",
+          "pkg/pdclient/address_message_test.go",
+          "cmd/routerd-dhcpv6-client/address_test.go",
+          "scripts/linux-dhcpv6-association-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
@@ -1995,7 +2044,9 @@
           "ra-observe-only-603a815e",
           "persistent-controller-fixtures-593cb42b",
           "linux-wan-ra-lifecycle-a00a4826",
-          "linux-wan-ra-recovery-2b8ad068"
+          "linux-wan-ra-recovery-2b8ad068",
+          "linux-dhcpv6-associations-ede8dbf2",
+          "dhcpv6-partial-recovery-87761c0e"
         ]
       },
       "freebsd": {
@@ -2004,7 +2055,8 @@
       },
       "required_remaining_checks": [
         "Independent DHCPv6/RA server exchange for each source mode",
-        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal"
+        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal",
+        "Connect DHCPv6Address declarations to one shared per-interface helper and native /128 ownership; qualify DAD/Decline, expiry withdrawal and recovery through full routerd"
       ]
     },
     {

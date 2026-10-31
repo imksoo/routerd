@@ -63,26 +63,29 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 type options struct {
-	resource     string
-	ifname       string
-	clientDUID   string
-	iaid         uint
-	timeout      time.Duration
-	socketPath   string
-	leaseFile    string
-	eventFile    string
-	srcLL        string
-	srcMAC       string
-	hopLimit     int
-	listenPort   int
-	renewMargin  time.Duration
-	rebindMargin time.Duration
-	requestMode  string
+	resource        string
+	addressResource string
+	supervisorOwner string
+	ifname          string
+	clientDUID      string
+	iaid            uint
+	timeout         time.Duration
+	socketPath      string
+	leaseFile       string
+	eventFile       string
+	srcLL           string
+	srcMAC          string
+	hopLimit        int
+	listenPort      int
+	renewMargin     time.Duration
+	rebindMargin    time.Duration
+	requestMode     string
 }
 
 func bindOptions(fs *flag.FlagSet, opts *options) {
 	fs.StringVar(&opts.resource, "resource", "wan-pd", "resource name")
-	_ = fs.String("supervisor-owner", "", "internal routerd supervisor ownership token")
+	fs.StringVar(&opts.addressResource, "address-resource", "", "DHCPv6Address resource served by this worker")
+	fs.StringVar(&opts.supervisorOwner, "supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "uplink interface name")
 	fs.StringVar(&opts.clientDUID, "client-duid", "", "client DUID hex; default derives DUID-LL from interface MAC")
 	fs.UintVar(&opts.iaid, "iaid", 1, "IAID for the requested associations")
@@ -114,6 +117,9 @@ func parseOptions(name string, args []string) (options, error) {
 	}
 	if _, err := requestMode(opts.requestMode); err != nil {
 		return options{}, err
+	}
+	if opts.addressResource != "" && (opts.requestMode == "pd" || strings.ContainsAny(opts.addressResource, "/\\\x00\r\n") || strings.TrimSpace(opts.addressResource) != opts.addressResource) {
+		return options{}, errors.New("--address-resource requires address or pd-address mode and a single resource name")
 	}
 	if strings.TrimSpace(opts.srcMAC) != "" {
 		return options{}, errors.New("--src-mac requires raw Ethernet transport, which is not implemented in Phase 0")
@@ -627,10 +633,11 @@ func (d *dhcpv6Daemon) httpServer() (*http.Server, net.Listener, error) {
 	mux.HandleFunc("/v1/healthz", d.handleHealthz)
 	mux.HandleFunc("/v1/events", d.handleEvents)
 	mux.HandleFunc("/v1/commands/", d.handleCommand)
-	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, listener, nil
+	return &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second}, listener, nil
 }
 
 func (d *dhcpv6Daemon) handleLease(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set(daemonapi.DHCPv6SupervisorOwnerHeader, d.opts.supervisorOwner)
 	d.mu.Lock()
 	snapshot := d.client.Snapshot()
 	d.mu.Unlock()
@@ -698,36 +705,45 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	d.publish(daemonapi.EventCommandReceived, daemonapi.SeverityInfo, "CommandReceived", command, map[string]string{"command": command})
 	ctx := r.Context()
-	d.mu.Lock()
 	var err error
-	switch command {
-	case daemonapi.CommandRenew:
-		err = d.client.Renew(ctx)
-	case daemonapi.CommandRebind:
-		err = d.client.Rebind(ctx)
-	case daemonapi.CommandRelease:
-		err = d.client.Release(ctx)
-	case daemonapi.CommandInfoRequest:
-		err = d.client.InfoRequest(ctx)
-		if err == nil && d.conn != nil {
-			_ = d.conn.SetReadDeadline(time.Now())
+	var decline daemonapi.DHCPv6DeclineRequest
+	if command == daemonapi.CommandDecline {
+		decline, err = decodeDeclineRequest(http.MaxBytesReader(w, r.Body, 512<<10))
+	}
+	d.mu.Lock()
+	before := d.client.Snapshot()
+	if err == nil {
+		switch command {
+		case daemonapi.CommandDecline:
+			err = d.declineLocked(ctx, decline)
+		case daemonapi.CommandRenew:
+			err = d.client.Renew(ctx)
+		case daemonapi.CommandRebind:
+			err = d.client.Rebind(ctx)
+		case daemonapi.CommandRelease:
+			err = d.client.Release(ctx)
+		case daemonapi.CommandInfoRequest:
+			err = d.client.InfoRequest(ctx)
+			if err == nil && d.conn != nil {
+				_ = d.conn.SetReadDeadline(time.Now())
+			}
+		case daemonapi.CommandReload:
+			err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
+		case daemonapi.CommandStop:
+			if d.cancel == nil {
+				err = errors.New("daemon is not running")
+			} else {
+				defer d.cancel()
+			}
+		case daemonapi.CommandStart:
+			err = d.client.Start(ctx)
+		case daemonapi.CommandFlush:
+			d.events = nil
+			d.recorder.clear()
+			err = os.Truncate(d.opts.eventFile, 0)
+		default:
+			err = fmt.Errorf("unknown command %q", command)
 		}
-	case daemonapi.CommandReload:
-		err = errors.New("worker configuration is supplied by its supervisor; update the Router configuration to restart it")
-	case daemonapi.CommandStop:
-		if d.cancel == nil {
-			err = errors.New("daemon is not running")
-		} else {
-			defer d.cancel()
-		}
-	case daemonapi.CommandStart:
-		err = d.client.Start(ctx)
-	case daemonapi.CommandFlush:
-		d.events = nil
-		d.recorder.clear()
-		err = os.Truncate(d.opts.eventFile, 0)
-	default:
-		err = fmt.Errorf("unknown command %q", command)
 	}
 	if errors.Is(err, pdclient.ErrSend) {
 		result.Message = "send failed; retry scheduled: " + err.Error()
@@ -736,7 +752,11 @@ func (d *dhcpv6Daemon) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = d.saveLeaseLocked(ctx)
 	}
+	after := d.client.Snapshot()
 	d.mu.Unlock()
+	if command == daemonapi.CommandDecline && err == nil {
+		d.publishStateEvents(before, after)
+	}
 	if err != nil {
 		result.Accepted = false
 		result.Message = err.Error()
@@ -768,7 +788,7 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 		attribute.String("routerd.dhcpv6.state", string(snapshot.State)),
 	))
 	resourceStatus := daemonapi.ResourceStatus{
-		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource},
+		Resource: daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.resourceName()},
 		Phase:    phase,
 		Health:   daemonapi.HealthOK,
 		Since:    snapshot.UpdatedAt,
@@ -779,32 +799,44 @@ func (d *dhcpv6Daemon) statusLocked() daemonapi.DaemonStatus {
 			LastTransitionTime: snapshot.UpdatedAt,
 		}},
 		Observed: map[string]string{
-			"interface":      d.opts.ifname,
-			"leaseState":     string(snapshot.State),
-			"currentPrefix":  snapshot.CurrentPrefix,
-			"serverDUID":     snapshot.ServerDUID,
-			"packetRing":     strconv.Itoa(len(d.recorder.snapshot())),
-			"aftrName":       snapshot.AFTRName,
-			"dnsServers":     jsonStringList(snapshot.DNSServers),
-			"sntpServers":    jsonStringList(snapshot.SNTPServers),
-			"domainSearch":   jsonStringList(snapshot.DomainSearch),
-			"infoPending":    strconv.FormatBool(snapshot.InfoPending),
-			"infoStatusCode": strconv.Itoa(int(snapshot.InfoStatusCode)),
-			"infoLastError":  snapshot.InfoLastError,
-			"prefixCount":    strconv.Itoa(len(snapshot.Prefixes)),
-			"addressCount":   strconv.Itoa(len(snapshot.Addresses)),
-			"lastError":      snapshot.LastError,
+			"supervisorOwner": d.opts.supervisorOwner,
+			"interface":       d.opts.ifname,
+			"leaseState":      string(snapshot.State),
+			"currentPrefix":   snapshot.CurrentPrefix,
+			"serverDUID":      snapshot.ServerDUID,
+			"packetRing":      strconv.Itoa(len(d.recorder.snapshot())),
+			"aftrName":        snapshot.AFTRName,
+			"dnsServers":      jsonStringList(snapshot.DNSServers),
+			"sntpServers":     jsonStringList(snapshot.SNTPServers),
+			"domainSearch":    jsonStringList(snapshot.DomainSearch),
+			"infoPending":     strconv.FormatBool(snapshot.InfoPending),
+			"infoStatusCode":  strconv.Itoa(int(snapshot.InfoStatusCode)),
+			"infoLastError":   snapshot.InfoLastError,
+			"prefixCount":     strconv.Itoa(len(snapshot.Prefixes)),
+			"addressCount":    strconv.Itoa(len(snapshot.Addresses)),
+			"lastError":       snapshot.LastError,
 		},
 	}
+	resources := []daemonapi.ResourceStatus{resourceStatus}
+	if snapshot.Mode == pdclient.RequestPrefixAndAddress && d.opts.addressResource != "" {
+		address := resourceStatus
+		address.Resource = daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: "DHCPv6Address", Name: d.opts.addressResource}
+		address.Phase = resourcePhase(snapshot.State)
+		ready := len(snapshot.Addresses) > 0
+		if !ready && address.Phase == daemonapi.ResourcePhaseBound {
+			address.Phase = daemonapi.ResourcePhasePending
+		}
+		address.Conditions = append([]daemonapi.Condition(nil), resourceStatus.Conditions...)
+		address.Conditions[0].Status = conditionStatus(ready && (snapshot.State == pdclient.StateBound || snapshot.State == pdclient.StateRenewing || snapshot.State == pdclient.StateRebinding))
+		resources = append(resources, address)
+	}
 	return daemonapi.DaemonStatus{
-		TypeMeta: daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonStatus},
-		Daemon:   d.daemonRef(),
-		Phase:    daemonapi.PhaseRunning,
-		Health:   daemonapi.HealthOK,
-		Since:    d.startedAt,
-		Resources: []daemonapi.ResourceStatus{
-			resourceStatus,
-		},
+		TypeMeta:  daemonapi.TypeMeta{APIVersion: daemonapi.APIVersion, Kind: daemonapi.KindDaemonStatus},
+		Daemon:    d.daemonRef(),
+		Phase:     daemonapi.PhaseRunning,
+		Health:    daemonapi.HealthOK,
+		Since:     d.startedAt,
+		Resources: resources,
 	}
 }
 
@@ -882,7 +914,10 @@ func (d *dhcpv6Daemon) publish(topic, severity, reason, message string, attrs ma
 	d.nextCursor++
 	event := daemonapi.NewEvent(d.daemonRef(), topic, severity)
 	event.Cursor = strconv.FormatUint(d.nextCursor, 10)
-	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.opts.resource}
+	event.Resource = &daemonapi.ResourceRef{APIVersion: "net.routerd.net/v1alpha1", Kind: d.resourceKind(), Name: d.resourceName()}
+	if topic == daemonapi.EventDHCPv6AddressesChanged && d.opts.addressResource != "" {
+		event.Resource.Kind, event.Resource.Name = "DHCPv6Address", d.opts.addressResource
+	}
 	event.Reason = reason
 	event.Message = message
 	event.Attributes = attrs

@@ -220,7 +220,11 @@ func (idx *RouterIndex) build(router *api.Router, targetOS platform.OS, allowRun
 			if err != nil {
 				return err
 			}
-			idx.DHCPv6AddressByInterface[api.ResolveInterfaceIfName(router, spec.Interface)] = res.ID()
+			ifname := api.ResolveInterfaceIfName(router, spec.Interface)
+			if previous := idx.DHCPv6AddressByInterface[ifname]; previous != "" {
+				return fmt.Errorf("%s conflicts with %s on interface %q: one DHCPv6 address association must own UDP port 546", res.ID(), previous, ifname)
+			}
+			idx.DHCPv6AddressByInterface[ifname] = res.ID()
 		}
 		if res.APIVersion == api.NetAPIVersion && res.Kind == "IPv6DelegatedAddress" {
 			idx.DelegatedAddresses[res.Metadata.Name] = true

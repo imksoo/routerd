@@ -27,14 +27,16 @@ type daemonEventSourceState struct {
 
 func daemonEventSourceKey(kind, resource string) string { return kind + "/" + resource }
 
-func (r *Runner) daemonEventSourceSpecs(router *api.Router, observers []mobilityARPObserverDaemonSpec) map[string]daemonEventSourceSpec {
+func (r *Runner) daemonEventSourceSpecs(router *api.Router, observers []mobilityARPObserverDaemonSpec) (map[string]daemonEventSourceSpec, error) {
+	workers, err := observedDHCPv6Workers(router, r.Store)
+	if err != nil {
+		return nil, err
+	}
 	specs := map[string]daemonEventSourceSpec{}
 	for _, resource := range router.Spec.Resources {
 		binary := ""
 		publishTail := false
 		switch resource.Kind {
-		case "DHCPv6PrefixDelegation":
-			binary, publishTail = "routerd-dhcpv6-client", true
 		case "DHCPv4Client":
 			binary = "routerd-dhcpv4-client"
 		case "HealthCheck":
@@ -56,13 +58,17 @@ func (r *Runner) daemonEventSourceSpecs(router *api.Router, observers []mobility
 		}
 		specs[daemonEventSourceKey(binary, name)] = daemonEventSourceSpec{Daemon: daemonapi.DaemonRef{Name: binary + "-" + name, Kind: binary, Instance: name}, Socket: socket, PublishTail: publishTail}
 	}
+	for _, worker := range workers {
+		name, binary := worker.Name, "routerd-dhcpv6-client"
+		specs[daemonEventSourceKey(binary, name)] = daemonEventSourceSpec{Daemon: daemonapi.DaemonRef{Name: binary + "-" + name, Kind: binary, Instance: name}, Socket: worker.socket(r.Opts.DaemonSockets), PublishTail: true}
+	}
 	for _, observer := range observers {
 		if r.arpObserverReady(observer.ResourceName) {
 			name := observer.ResourceName
 			specs[daemonEventSourceKey("routerd-arp-observer", name)] = daemonEventSourceSpec{Daemon: daemonapi.DaemonRef{Name: "routerd-arp-observer-" + name, Kind: "routerd-arp-observer", Instance: name}, Socket: observer.Socket, Replay: true}
 		}
 	}
-	return specs
+	return specs, nil
 }
 
 func (r *Runner) refreshDaemonEventSources(ctx context.Context) error {
@@ -80,7 +86,10 @@ func (r *Runner) refreshDaemonEventSources(ctx context.Context) error {
 // Unchanged readers keep their daemon cursor through controller reloads.
 // Only a complete desired-source observation authorizes reader replacement.
 func (r *Runner) reconcileDaemonEventSources(ctx context.Context, router *api.Router, observers []mobilityARPObserverDaemonSpec) error {
-	desired := r.daemonEventSourceSpecs(router, observers)
+	desired, err := r.daemonEventSourceSpecs(router, observers)
+	if err != nil {
+		return err
+	}
 	r.daemonSourceMu.Lock()
 	defer r.daemonSourceMu.Unlock()
 	if !r.daemonSourcesEnabled {

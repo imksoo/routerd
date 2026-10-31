@@ -17,6 +17,7 @@ const (
 	MessageRebind      uint8 = 6
 	MessageReply       uint8 = 7
 	MessageRelease     uint8 = 8
+	MessageDecline     uint8 = 9
 	MessageInfoRequest uint8 = 11
 
 	optionClientID        uint16 = 1

@@ -2162,3 +2162,58 @@ All full-feature/platform verdicts remain unknown. The complete 1.0 scope,
 unimplemented advertised entry points, native forwarding and failure recovery,
 remaining platform/service combinations, and release qualification remain in
 the completion criteria. No production deployment or main merge is included.
+
+
+## DHCPv6 IA_NA and combined PD client lifecycle
+
+Product `ede8dbf269148435c9ddc2a3c95bd187e808d863` extends the existing
+DHCPv6 exchange owner with typed IA_NA addresses and independently timed IA_NA/
+IA_PD leases. Test-first checks cover omitted-association replies, partial offers,
+NoBinding, independent withdrawals/expiry, identity rejection and snapshot
+restoration. A daemon test reproduced secondary-address expiry remaining on disk;
+comparison against the last successfully saved snapshot now persists and publishes
+that expiry even when the overall lease/exchange state is unchanged.
+
+The formal static `make dist` helper passed both `address` and `pd-address` modes
+against independent Kea 2.4.1 in an isolated Ubuntu 24.04.4 VM with Linux
+6.8.0-124-generic. Allocations matched Kea's lease database. Helper restart retained
+acquisition timestamps; natural T1 Renew succeeded. SIGSTOP of only the peer
+produced Renew, T2 Rebind and actual 45-second expiry in public and saved state.
+Peer-only resumption restored acquisition; Release and clean termination passed.
+The procedure at `8d3064b5`, archive and executed helper/script hashes are bound in
+`linux-dhcpv6-associations-ede8dbf2` in the feature ledger. Reproduce using the
+[DHCPv6 client procedure](https://routerd.net/docs/operations/development#linux-dhcpv6-address-and-prefix-client-gate).
+Fixture processes/links and successful temporary output were removed. The installed
+router configuration was not replaced and its status remained Healthy.
+
+At the product revision, the whole ordinary Linux Go run passed 120 packages and
+4,176 top-level tests, with 15 explicit test skips and 67 cached package results.
+Targeted protocol/helper/daemon API race tests passed. FreeBSD-targeted protocol
+and helper compilation passed; this was not FreeBSD runtime execution. Schema,
+example, shell syntax/ShellCheck and four-locale website builds passed. Existing
+unrelated translated-link warnings remain.
+
+This is helper protocol qualification. The configured `DHCPv6Address` supervisor
+entry point, shared-interface validation, kernel /128 address ownership, DAD/
+Decline, forwarding and native FreeBSD gates remain open. In the pinned 1.0
+baseline, the reviewed DHCPv6Address entry point represented renderer intent;
+that does not prove native runtime support. Neither that limitation nor the
+successful helper gate closes full 1.0 preservation requirements.
+
+A follow-up test reproduced repeated disk writes and fabricated binding events
+while an internal NoBinding Request retained a publicly Bound sibling.
+`87761c0ef4da26620e087f81bb47851908c6ac95` compares against the saved public
+state without replacing it with the internal exchange state. The new regression
+and targeted race checks pass. The subsequent full ordinary Linux run passed
+120 packages and 4,177 top-level tests, with 15 test skips and 118 cached package
+results. Targeted FreeBSD cross-compilation also passes. The independent Kea
+result above remains pinned to `ede8dbf2`; no newer native result is implied.
+
+Reviewed implementation/consumer paths for this increment include
+`pkg/pdclient/{message,address_message,client,address_client,snapshot}.go`,
+`cmd/routerd-dhcpv6-client/{main,address}.go`, `pkg/daemonapi/types.go`,
+`pkg/controller/chain/{chain,pd_observation,lan_native_receipt,static_address}.go`,
+`pkg/config/{validate,validate_wan,listen_ports,index}.go`, `pkg/api/specs.go`,
+`pkg/render/netplan.go`, their related protocol/daemon/configuration tests, and
+the development runbook. The native controller paths were inspected for the next
+integration step, not changed or qualified by this increment.
