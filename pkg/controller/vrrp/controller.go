@@ -59,29 +59,37 @@ type Controller struct {
 }
 
 func (c *Controller) Reconcile(ctx context.Context) error {
+	_, err := c.ReconcileWithNativeRoleObservation(ctx)
+	return err
+}
+
+// ReconcileWithNativeRoleObservation identifies the VirtualAddresses whose
+// current native role this invocation observed and saved. Missing entries,
+// persisted roles and rendering grant no dependent-effect authority.
+func (c *Controller) ReconcileWithNativeRoleObservation(ctx context.Context) (map[string]bool, error) {
 	if c.Router == nil || c.Store == nil {
-		return nil
+		return nil, nil
 	}
 	aliases := interfaceAliases(c.Router)
 	cleanupChanged, err := c.cleanupStaleStaticAddresses(ctx, aliases)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !hasVirtualAddress(c.Router) {
-		return c.stopVirtualAddressBackend(ctx)
+		return nil, c.stopVirtualAddressBackend(ctx)
 	}
 	priorities, tracks, err := c.effectivePriorities()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	staticChanged, staticIsolated, err := c.applyStaticAddresses(ctx, aliases)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	backend := c.vrrpBackend()
 	result, err := backend.Apply(ctx, c, aliases, priorities)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	extra := map[string]any{}
 	if result.ConfigHash != "" {
@@ -103,9 +111,28 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		extra["vmacRepairError"] = result.VMACRepairError.Error()
 	}
 	if err := c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, result.GracefulActivations, extra); err != nil {
-		return err
+		return nil, err
 	}
-	return result.VMACRepairError
+	if result.VMACRepairError != nil {
+		return nil, result.VMACRepairError
+	}
+	if c.DryRun {
+		return nil, nil
+	}
+	observed := map[string]bool{}
+	for _, resource := range c.Router.Spec.Resources {
+		spec, ok, err := vrrpResourceSpec(resource)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || spec.Mode != "vrrp" {
+			continue
+		}
+		if role := result.Roles[resource.Metadata.Name]; role == "master" || role == "backup" {
+			observed[resource.Metadata.Name] = true
+		}
+	}
+	return observed, nil
 }
 
 func (c *Controller) stopVirtualAddressBackend(ctx context.Context) error {

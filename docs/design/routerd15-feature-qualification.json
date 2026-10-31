@@ -1448,6 +1448,126 @@
         "HA/session survival, lease activation, wrong-VLAN denial, all DS-Lite candidates and performance",
         "Unmodeled upstream services, production symptom diagnosis and full-feature parity"
       ]
+    },
+    "linux-ipsec-recorded-expiry-84926025": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "84926025027a3118f768432686735843880faa59",
+      "reference": "docs/design/routerd15-audit.md#recorded-ipsec-expiry-and-withdrawal-2026-10-31",
+      "archive_sha256": "b412e73eb46ec60c99ff9740c30f7a4146c424408f105d305230aa9aafc311f8",
+      "checks": [
+        "Exact old SAs recorded before provider crash; recovery retains old/new generations",
+        "Original hard-expiry deadline crossed without clock/lifetime/source changes; old SAs disappear before explicit withdrawal",
+        "Current new-provider packets, exact withdrawal, foreign preservation and independent environment restoration pass"
+      ],
+      "excludes": [
+        "Full-interval lossless connectivity",
+        "Unobserved creation/rekey crash window and MOBIKE endpoint-change withdrawal",
+        "Earlier short-trial shared APT cache gap"
+      ]
+    },
+    "linux-normal-gate-9a90c9b3": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "9a90c9b31452de4b6be43c3a308e7f367fed4ccc",
+      "reference": "docs/design/routerd15-audit.md#combined-linux-source-and-failed-vlan-ha-trial-2026-10-31",
+      "checks": [
+        "One uncached ordinary Go run: 4298 top passes,26 explicit skips,2213 subtest passes,0 failures",
+        "Full go vet passes;2840 tracked files unchanged before/after both checks"
+      ],
+      "excludes": [
+        "Native forwarding or HA qualification",
+        "Skipped opt-in/platform checks"
+      ]
+    },
+    "linux-vlan-ha-9a90c9b3": {
+      "level": "independent-peer",
+      "outcome": "fail",
+      "revision": "9a90c9b31452de4b6be43c3a308e7f367fed4ccc",
+      "reference": "docs/design/routerd15-audit.md#combined-linux-source-and-failed-vlan-ha-trial-2026-10-31",
+      "checks": [
+        "Exact established TCP/NAT/mark in master cache and backup external cache; automatic commit restores full kernel SNAT/mark",
+        "Independent TCP fails after17frames/15second read timeout, no reconnect",
+        "DAD completes about2seconds after link-up;VIP Ready observed about44seconds after role transition",
+        "New IPv4/IPv6 DNS and HTTP pass after automatic recovery;stopped VM restored"
+      ],
+      "excludes": [
+        "Lossless or established-session failover pass",
+        "A permanent DAD deadlock",
+        "Updated event-lock/RA/early-notification code has not yet passed this native trial"
+      ]
+    },
+    "linux-normal-gate-88927a4a": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "88927a4abb1d2e85358e1352f175de847481f918",
+      "reference": "docs/design/routerd15-audit.md#linux-88927a4a-session-continuity-and-cold-boot-checkpoint-2026-10-31",
+      "source_manifest_sha256": "741e024fcc57eb2f2289adb9f0695771eb9e0d3a59b42f6047e86fe56b5bddd1",
+      "checks": [
+        "One uncached ordinary Linux Go run: 121 tested packages, 9 with no tests, 4308 top-level passes, 2223 subtest passes, 26 explicit skips and 0 failures (387.928 seconds)",
+        "One full go vet ./... run passes (13.627 seconds); all 2846 tracked files/public blobs unchanged before and after both checks",
+        "The stored-exporter missed-wakeup/cursor regression passes in this run (4.14 seconds); the separate eff6 139/257 timeout remains a distinct unresolved observation"
+      ],
+      "excludes": [
+        "Native peer forwarding or HA qualification",
+        "The 26 skipped isolated-native, CLI, ICMP-capability, FreeBSD-only, nft-syntax and browser checks",
+        "Later source revisions or resolution of the separate Observability timeout"
+      ]
+    },
+    "linux-vlan-package-coldboot-88927a4a": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "88927a4abb1d2e85358e1352f175de847481f918",
+      "reference": "docs/design/routerd15-audit.md#linux-88927a4a-session-continuity-and-cold-boot-checkpoint-2026-10-31",
+      "archive_sha256": "b1d3422a7493c1ec44f2379d5e8bc02a6ef5fb79f53b3c2112dd3164dcf54408",
+      "archive_bytes": 97013646,
+      "environment": "Two persistent Ubuntu 24.04/Linux 6.8.0-117 router VMs in the isolated VLAN lab",
+      "checks": [
+        "Canonical make dist archive contains 20 static Go programs with the full revision embedded; official installer updates both routers with each configuration hash unchanged",
+        "A after r2 cold restart and B after r3 restoration each report NRestarts=0 in the current boot; lab OS wait-online succeeds in about 2 seconds and 1 second respectively",
+        "Latest post-r3 readback: both services active/running and both controller currentErrors lists empty; A master/Ready, B backup/Standby"
+      ],
+      "excludes": [
+        "No transient errors or immediate startup are inferred from the final snapshots",
+        "Complete bootstrap, peer session survival, received-lease activation, full Healthy status or production equivalence",
+        "Later package/source revisions"
+      ]
+    },
+    "linux-vlan-ha-direct-r2-88927a4a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "88927a4abb1d2e85358e1352f175de847481f918",
+      "reference": "docs/design/routerd15-audit.md#linux-88927a4a-session-continuity-and-cold-boot-checkpoint-2026-10-31",
+      "archive_sha256": "b1d3422a7493c1ec44f2379d5e8bc02a6ef5fb79f53b3c2112dd3164dcf54408",
+      "checks": [
+        "A-to-B outage trial r2: exact established tuple/NAT/mark in master internal cache and backup external cache, followed by automatic takeover",
+        "One independent TCP connection receives 120 frames/491520 bytes in 120.028691 seconds with no reconnect; payload SHA256 75904bfc18bdc8c7b752817a5b0c6c808b96dca5525f07c8c86f45fb536b8815",
+        "Maximum complete-frame gap 15.2407 seconds; mark 276 selects legacy/direct table 114 while the server sees SNAT 192.0.0.2"
+      ],
+      "excludes": [
+        "Uninterrupted delivery, all traffic classes, both failover directions or a general HA pass",
+        "DS-Lite-C or balanced DS-Lite path qualification; the displayed SNAT address alone does not identify the tunnel",
+        "Other feature/platform preservation verdicts"
+      ]
+    },
+    "linux-vlan-ha-dslite-c-r3-88927a4a": {
+      "level": "independent-peer",
+      "outcome": "fail",
+      "revision": "88927a4abb1d2e85358e1352f175de847481f918",
+      "reference": "docs/design/routerd15-audit.md#linux-88927a4a-session-continuity-and-cold-boot-checkpoint-2026-10-31",
+      "archive_sha256": "b1d3422a7493c1ec44f2379d5e8bc02a6ef5fb79f53b3c2112dd3164dcf54408",
+      "checks": [
+        "B-to-A outage trial r3 uses mark 274/table 112/DS-Lite-C/SNAT 192.0.0.4, distinct from the successful mark-276 direct trial",
+        "Automatic conntrackd commit restores the exact full kernel tuple and mark; the entry remains ESTABLISHED through the timeout window",
+        "The same independent TCP fails after 30 frames/122880 bytes and its 15-second receive timeout, with no reconnect",
+        "The imported entry subsequently progresses through TIME_WAIT/CLOSE and disappears after client termination; later absence does not prove an import or premature-deletion failure",
+        "Router-side delegated/RA/egress readiness precedes the sampled VIP add window; the blocker causing the observed admission delay remains unknown, with no input-source lock holder established as its cause"
+      ],
+      "excludes": [
+        "Established-session continuity, lossless HA or a whole-feature pass",
+        "A permanent DAD cycle, missing parent-owned /32 source, or controller-error-free final status as proof of continuity",
+        "The subsequent VRRP event-lock repair or its planned native replay has not passed this trial"
+      ]
     }
   },
   "features": [
@@ -1792,7 +1912,12 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vlan-ha-9a90c9b3",
+          "linux-vlan-package-coldboot-88927a4a",
+          "linux-vlan-ha-direct-r2-88927a4a",
+          "linux-vlan-ha-dslite-c-r3-88927a4a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1962,7 +2087,8 @@
         "scoped_evidence": [
           "linux-ipsec-native-bab44306",
           "linux-ipsec-provider-dc14c486",
-          "linux-ipsec-provider-recovery-dc14c486"
+          "linux-ipsec-provider-recovery-dc14c486",
+          "linux-ipsec-recorded-expiry-84926025"
         ]
       },
       "freebsd": {
@@ -2550,7 +2676,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vlan-ha-9a90c9b3"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2677,7 +2805,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-combined-native-3e58c93a",
-          "linux-vlan-clients-39156bb6"
+          "linux-vlan-clients-39156bb6",
+          "linux-vlan-ha-dslite-c-r3-88927a4a"
         ]
       },
       "freebsd": {
@@ -2908,7 +3037,9 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-health-pbr-native-58bef4e9",
-          "linux-vlan-clients-39156bb6"
+          "linux-vlan-clients-39156bb6",
+          "linux-vlan-ha-direct-r2-88927a4a",
+          "linux-vlan-ha-dslite-c-r3-88927a4a"
         ]
       },
       "freebsd": {
@@ -3001,7 +3132,10 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-vlan-ha-9a90c9b3",
+          "linux-vlan-ha-direct-r2-88927a4a",
+          "linux-vlan-ha-dslite-c-r3-88927a4a"
         ]
       },
       "freebsd": {
@@ -3256,7 +3390,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
-          "linux-serviceunit-feedback-919499c4"
+          "linux-serviceunit-feedback-919499c4",
+          "linux-vlan-package-coldboot-88927a4a"
         ]
       },
       "freebsd": {
@@ -3341,7 +3476,9 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-normal-gate-dc14c486"
+          "linux-normal-gate-dc14c486",
+          "linux-normal-gate-88927a4a",
+          "linux-vlan-package-coldboot-88927a4a"
         ]
       },
       "freebsd": {
@@ -3381,7 +3518,8 @@
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
           "linux-nonresource-code-c7f89dda",
-          "linux-vlan-clients-39156bb6"
+          "linux-vlan-clients-39156bb6",
+          "linux-vlan-package-coldboot-88927a4a"
         ]
       },
       "freebsd": {
@@ -3574,7 +3712,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "qa-offline-ba054d2f",
-          "linux-normal-gate-dc14c486"
+          "linux-normal-gate-dc14c486",
+          "linux-normal-gate-88927a4a"
         ]
       },
       "freebsd": {

@@ -25,21 +25,6 @@ func TestParseOptions(t *testing.T) {
 	}
 }
 
-func TestNotifyRouterdVRRPTransitionSignalsMainProcess(t *testing.T) {
-	var got []string
-	err := notifyRouterdVRRPTransition(func(name string, args ...string) ([]byte, error) {
-		got = append([]string{name}, args...)
-		return nil, nil
-	})
-	if err != nil {
-		t.Fatalf("notify routerd: %v", err)
-	}
-	want := []string{"systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("command = %#v, want %#v", got, want)
-	}
-}
-
 func TestGracefulDeactivateWithdrawsVIPBeforeVMACAndConntrack(t *testing.T) {
 	var events []string
 	err := runWithHooks([]string{

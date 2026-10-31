@@ -161,7 +161,33 @@ func (r *Runner) pauseDaemonEventSource(kind, resource string) {
 	}
 }
 
-// Wait acknowledges actual controller-generation and event-source exit.
+// Client supervisors belong to serve, not to individual controller generations:
+// unchanged clients must survive a warm generation replacement. On final exit,
+// cancellation is asynchronous; Done includes exec.Wait for directly spawned
+// children. Only this Runner's in-memory supervisors are canceled and joined.
+// Systemd-managed units and processes outside these states remain untouched.
+func (r *Runner) stopSupervisedClientDaemons() {
+	r.supervisedMu.Lock()
+	states := make([]supervisedDaemonState, 0, len(r.clientDaemonStates))
+	for _, state := range r.clientDaemonStates {
+		if state.Cancel != nil {
+			state.Cancel()
+		}
+		states = append(states, state)
+	}
+	r.supervisedMu.Unlock()
+	for _, state := range states {
+		<-state.Done
+		r.supervisedMu.Lock()
+		key := supervisedDaemonKey(state.Spec.Binary, state.Spec.ResourceName)
+		if current, found := r.clientDaemonStates[key]; found && current.Done == state.Done {
+			delete(r.clientDaemonStates, key)
+		}
+		r.supervisedMu.Unlock()
+	}
+}
+
+// Wait acknowledges actual controller-generation, supervised-client and event-source exit.
 func (r *Runner) Wait(ctx context.Context) error {
 	r.reloadMu.Lock()
 	var done <-chan struct{} = r.runtimeDone

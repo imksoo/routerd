@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1813,6 +1814,7 @@ func (r *Runner) Start(ctx context.Context) error {
 
 	first, err := r.prepareControllerGeneration(ctx, logger, store)
 	if err != nil {
+		r.stopSupervisedClientDaemons()
 		return fmt.Errorf("start initial controller generation: %w", err)
 	}
 	r.daemonSourceMu.Lock()
@@ -1820,13 +1822,16 @@ func (r *Runner) Start(ctx context.Context) error {
 	r.daemonSourceMu.Unlock()
 	if err := r.refreshDaemonEventSources(ctx); err != nil {
 		r.stopDaemonEventSources()
-		return errors.Join(err, r.closeControllerGeneration(first))
+		stopErr := r.closeControllerGeneration(first)
+		r.stopSupervisedClientDaemons()
+		return errors.Join(err, stopErr)
 	}
 	r.reloadMu.Lock()
 	r.runtimeDone = make(chan struct{})
 	r.reloadMu.Unlock()
 	go func() {
 		err := r.runControllerGenerations(ctx, logger, store, first)
+		r.stopSupervisedClientDaemons()
 		r.stopDaemonEventSources()
 		r.waitControllerCleanup()
 		if err != nil && ctx.Err() == nil {
@@ -2551,6 +2556,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
+	var leaseSyncRolesObserved atomic.Pointer[leaseSyncRoleProof]
 	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync, Logger: logger}
 	nat44SessionSync := NAT44SessionSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunNAT44SessionSync}
 	bgpDaemon := bgpcontroller.DefaultDaemonSpec()
@@ -2743,17 +2749,6 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current := daemonStatusSync
 			current.Router = prepared.startup.Router()
 			current.Store = store.withRouter(prepared.declared)
-			return didWorkError(current.Reconcile(ctx))
-		}},
-		framework.FuncController{ControllerName: "dhcp-lease-sync", EventLockKey: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			observation, err := effectiveForReconcile()
-			if err != nil {
-				return false, err
-			}
-			effective := observation.EffectiveRouter
-			current := leaseSync
-			current.Router = effective
-			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "nat44-session-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"NAT44SessionSync"}, "NAT44SessionSync", "NAT44Rule", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -3316,15 +3311,27 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return didWorkError(bgp.ReconcileRouter(ctx, effective, store.withRouter(effective)))
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vrrp", EventLockKey: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			observation, err := effectiveForReconcile()
 			if err != nil {
+				leaseSyncRolesObserved.Store(nil)
 				return false, err
 			}
 			effective := observation.EffectiveRouter
 			vrrp.Router = effective
 			vrrp.Store = store.withRouter(observation.DeclaredRouter)
-			return didWorkError(vrrp.Reconcile(ctx))
+			return didWorkError(reconcileLeaseSyncVRRPRoles(ctx, &vrrp, &leaseSyncRolesObserved))
+		}},
+		framework.FuncController{ControllerName: "dhcp-lease-sync", EventLockKey: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return false, err
+			}
+			effective := observation.EffectiveRouter
+			current := leaseSync
+			current.Router = effective
+			current.Store = leaseSyncRoleStore{eventedStore: store.withRouter(observation.DeclaredRouter), rolesObserved: &leaseSyncRolesObserved}
+			return didWorkError(current.Reconcile(ctx))
 		}},
 		// Client daemons with a VRRP role condition must be supervised only
 		// after this generation has observed the kernel-owned VIP.  A persisted

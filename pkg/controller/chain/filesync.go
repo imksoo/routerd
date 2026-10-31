@@ -6,14 +6,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/resourcequery"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
 const (
@@ -59,6 +64,23 @@ type FileSyncController struct {
 
 func (c FileSyncController) Reconcile(ctx context.Context) error {
 	for _, resource := range c.fileSyncResources() {
+		when := resourcequery.ResourceWhen(resource)
+		if resourcequery.ResourceWhenPresent(when) {
+			whenStore, ok := c.Store.(resourcequery.StateStore)
+			if !ok {
+				return fmt.Errorf("%s: lease synchronization condition reader is unavailable", resource.ID())
+			}
+			ready, err := resourcequery.ResourceWhenMatches(when, whenStore)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				if err := c.save(resource.APIVersion, resource.Kind, resource.Metadata.Name, map[string]any{"phase": "Pending", "reason": "WaitingForCondition", "dryRun": c.DryRun}); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		job, err := c.fileSyncJobFromResource(resource)
 		if err != nil {
 			if saveErr := c.save(resource.APIVersion, resource.Kind, resource.Metadata.Name, map[string]any{"phase": "Error", "reason": "InvalidSpec", "error": err.Error(), "dryRun": c.DryRun}); saveErr != nil {
@@ -611,4 +633,53 @@ func fileSyncDestination(target fileSyncTarget, remotePath string) string {
 
 func fileSyncShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// Keep the previous native observation while the next one is in progress.
+// Closing admission on entry would let role events published during that
+// observation race ahead of its successful completion and be needlessly lost.
+func reconcileLeaseSyncVRRPRoles(ctx context.Context, current *vrrpcontroller.Controller, observed *atomic.Pointer[leaseSyncRoleProof]) error {
+	roles, err := current.ReconcileWithNativeRoleObservation(ctx)
+	observed.Store(&leaseSyncRoleProof{names: roles})
+	return err
+}
+
+// This proof belongs to one controller generation. Persisted role timestamps,
+// including timestamps in the future, cannot establish a native observation in
+// this generation. A failed subsequent observation closes admission again.
+type leaseSyncRoleProof struct {
+	names map[string]bool
+}
+
+type leaseSyncRoleStore struct {
+	eventedStore
+	rolesObserved *atomic.Pointer[leaseSyncRoleProof]
+}
+
+func (s leaseSyncRoleStore) ReadObjectStatus(version, kind, name string) (map[string]any, error) {
+	status, err := s.eventedStore.ReadObjectStatus(version, kind, name)
+	if err != nil || kind != "VirtualAddress" || s.roleObserved(name) {
+		return status, err
+	}
+	status = maps.Clone(status)
+	delete(status, "role")
+	return status, nil
+}
+
+func (s leaseSyncRoleStore) ReadVariable(name string) (routerstate.Value, error) {
+	ref := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(name, "${"), "}"))
+	kind, resourceName, valid := whenStatusDependencyRef(ref)
+	_, field, hasField := strings.Cut(ref, ".status.")
+	if !hasField {
+		_, field, hasField = strings.Cut(ref, ".")
+	}
+	if valid && kind == "VirtualAddress" && hasField && strings.TrimSpace(field) == "role" && !s.roleObserved(resourceName) {
+		return routerstate.Value{Status: routerstate.StatusUnknown}, nil
+	}
+	return s.eventedStore.ReadVariable(name)
+}
+
+func (s leaseSyncRoleStore) roleObserved(name string) bool {
+	proof := s.rolesObserved.Load()
+	return proof != nil && proof.names[name]
 }
