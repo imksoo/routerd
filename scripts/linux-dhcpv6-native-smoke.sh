@@ -30,6 +30,10 @@ peer='' server='' client=''
 finish() {
  rc=$?
  trap - EXIT
+ if [ "$rc" != 0 ]; then
+  ip -6 addr show > "$work/failure-addresses.txt" 2>&1 || true
+  ip -6 route show table all > "$work/failure-routes.txt" 2>&1 || true
+ fi
  for pid in "$client" "$server" "$peer"; do
   if [ -n "$pid" ]; then kill -CONT "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true; fi
  done
@@ -59,13 +63,20 @@ for _ in {1..30}; do
 done
 peer_ll=$(peer_run ip -6 -j addr show dev peer0 | jq -r '.[0].addr_info[] | select(.scope=="link") | .local')
 ping -6 -I wan0 -c 1 -W 2 "$peer_ll" >/dev/null
+# IA_NA grants /128 authority, not an on-link /64 or default route. Prove
+# the test path using the peer's scoped link-local source before qualification.
+ip -6 addr add 2001:db8:1620::ffff/128 dev wan0 preferred_lft 10 valid_lft 10 nodad
+peer_run ping -6 -I peer0 -I "$peer_ll" -c 1 -W 2 2001:db8:1620::ffff >/dev/null
+ping -6 -I wan0 -I 2001:db8:1620::ffff -c 1 -W 2 "$peer_ll%wan0" >/dev/null
+ip -6 addr del 2001:db8:1620::ffff/128 dev wan0
+test -z "$(ip -6 -o addr show dev wan0 scope global)"
 export KEA_PIDFILE_DIR="$work" KEA_LOCKFILE_DIR="$work"
 cat > "$work/kea.json" <<EOF
 {"Dhcp6": {
  "interfaces-config":{"interfaces":["peer0"]},
  "lease-database":{"type":"memfile","persist":true,"name":"$work/leases.csv","lfc-interval":0},
- "data-directory":"$work", "renew-timer":15, "rebind-timer":30,
- "preferred-lifetime":30, "valid-lifetime":45,
+ "data-directory":"$work", "renew-timer":45, "rebind-timer":75,
+ "preferred-lifetime":60, "valid-lifetime":90,
  "subnet6":[{"id":16,"subnet":"2001:db8:1620::/64","interface":"peer0",
  "pools":[{"pool":"2001:db8:1620::100-2001:db8:1620::1ff"}],
  "pd-pools":[{"prefix":"2001:db8:1630::","prefix-len":56,"delegated-len":60}]}]
@@ -155,12 +166,12 @@ python3 - "$work/observed.json" "$work/kernel.json" "$work/leases.csv" <<'PYVERI
 import csv,json,sys
 s=json.load(open(sys.argv[1]));native=json.load(open(sys.argv[2]));lease=s['nativeState']['leases'][0]
 a=next(a for a in native[0]['addr_info'] if a['local']==lease['address'])
-assert a['prefixlen']==128 and 0<a['valid_life_time']<=45 and a['preferred_life_time']<=30,a
+assert a['prefixlen']==128 and 0<a['valid_life_time']<=90 and a['preferred_life_time']<=60,a
 assert not any(x in a.get('flags',[]) for x in ['tentative','dadfailed']),a
-assert any(r['address']==lease['address'] and int(r['valid_lifetime'])==45 for r in csv.DictReader(open(sys.argv[3])))
+assert any(r['address']==lease['address'] and int(r['valid_lifetime'])==90 for r in csv.DictReader(open(sys.argv[3])))
 PYVERIFY
-peer_run ping -6 -c 3 -W 2 "$address"
-ping -6 -I "$address" -c 3 -W 2 "$peer_ll%wan0"
+peer_run ping -6 -I peer0 -I "$peer_ll" -c 3 -W 2 "$address"
+ping -6 -I wan0 -I "$address" -c 3 -W 2 "$peer_ll%wan0"
 printf 'PASS: independent IA_NA allocation, finite /128, DAD and bidirectional peer traffic\n'
 # Stop and reopen SQLite while the original acquisition is still valid.
 stop_router
@@ -178,7 +189,7 @@ done
 test "$(jq -r '.nativeState.leases[0].acquiredAt' "$work/observed.json")" != "$acquired"
 printf 'PASS: timed Renew updates acquisition and native lifetime\n'
 kill -STOP "$server"
-for _ in {1..60}; do
+for _ in {1..110}; do
  if ! ip -6 -o addr show dev wan0 scope global | grep -q inet6 && state | jq -e '.phase!="Applied" and (.nativeState.leases|length)==0' >/dev/null; then break; fi
  kill -0 "$client"; sleep 1
 done
