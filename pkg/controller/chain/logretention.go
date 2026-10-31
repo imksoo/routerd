@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -15,10 +16,18 @@ import (
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
+// Status and journal data have different owners in a controller generation:
+// the evented status adapter must not hide the actual SQLite source.
+type logRetentionData interface {
+	LogRetentionPath() (string, error)
+	PruneEventsOlderThan(time.Time) (int64, error)
+}
+
 type LogRetentionController struct {
 	Router *api.Router
 	Bus    *bus.Bus
 	Store  Store
+	Data   logRetentionData
 	DryRun bool
 }
 
@@ -28,6 +37,9 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	// live data files through resource settings and platform defaults.
 	if c.DryRun || c.Router == nil || c.Store == nil {
 		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	for _, res := range c.Router.Spec.Resources {
 		if res.APIVersion != api.SystemAPIVersion || res.Kind != "LogRetention" {
@@ -40,7 +52,17 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 		if !retentionDue(c.Store.ObjectStatus(api.SystemAPIVersion, "LogRetention", res.Metadata.Name), spec.Schedule) {
 			continue
 		}
-		targetSpecs := logRetentionTargets(c.Router, spec)
+		stateFile := ""
+		if len(spec.Signals) == 0 || slices.Contains(spec.Signals, "events") || slices.Contains(spec.Signals, "accessLogs") || slices.Contains(spec.Signals, "pluginRuns") {
+			if c.Data == nil {
+				return fmt.Errorf("%s state log database is unavailable", res.ID())
+			}
+			stateFile, err = c.Data.LogRetentionPath()
+			if err != nil {
+				return err
+			}
+		}
+		targetSpecs := logRetentionTargets(c.Router, spec, stateFile)
 		var archive *eventlog.Logger
 		if len(spec.Sinks) > 0 {
 			archive, err = eventlog.NewSelected(c.Router, spec.Sinks)
@@ -91,17 +113,18 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 	// The event journal is part of the router's safety envelope, not an
 	// opt-in observability feature. Enforce its age bound even when no
 	// LogRetention resource is declared and when the journal is otherwise idle.
-	if store, ok := c.Store.(interface {
-		PruneEventsOlderThan(time.Time) (int64, error)
-	}); ok {
-		if _, err := store.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
+	if c.Data != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := c.Data.PruneEventsOlderThan(time.Now().UTC().Add(-24 * time.Hour)); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.LogRetentionTargetSpec {
+func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec, stateFile string) []api.LogRetentionTargetSpec {
 	signals := spec.Signals
 	if len(signals) == 0 {
 		signals = []string{"events", "accessLogs", "pluginRuns", "dnsQueries", "trafficFlows", "firewallEvents", "dhcpFingerprints"}
@@ -109,7 +132,7 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	byFile := map[string]int{}
 	var out []api.LogRetentionTargetSpec
 	for _, signal := range signals {
-		for _, file := range logRetentionSignalFiles(router, signal) {
+		for _, file := range logRetentionSignalFiles(router, signal, stateFile) {
 			if i, ok := byFile[file]; ok {
 				out[i].Signals = append(out[i].Signals, signal)
 				continue
@@ -121,11 +144,11 @@ func logRetentionTargets(router *api.Router, spec api.LogRetentionSpec) []api.Lo
 	return out
 }
 
-func logRetentionSignalFiles(router *api.Router, signal string) []string {
+func logRetentionSignalFiles(router *api.Router, signal, stateFile string) []string {
 	defaults, _ := platform.Current()
 	switch signal {
 	case "events", "accessLogs", "pluginRuns":
-		return []string{defaults.DBFile()}
+		return []string{stateFile}
 	case "dnsQueries":
 		if router != nil {
 			var out []string

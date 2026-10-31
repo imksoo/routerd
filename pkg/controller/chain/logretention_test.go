@@ -75,7 +75,7 @@ func TestLogRetentionControllerPrunesDefaultEventAgeWithoutResource(t *testing.T
 		t.Fatal(err)
 	}
 	defer store.Close()
-	controller := LogRetentionController{Router: &api.Router{}, Bus: bus.New(), Store: store}
+	controller := LogRetentionController{Router: &api.Router{}, Bus: bus.New(), Store: store, Data: store}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}

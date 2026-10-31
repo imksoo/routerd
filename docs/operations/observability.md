@@ -134,7 +134,14 @@ as its durable source of truth.
 expired record before its local transaction can delete it. Missing, disabled or
 severity-filtered selected sinks fail the run and preserve the local rows.
 Runtime log-level overrides affect operational messages, not required archive
-records. A sink error rolls back deletion; retry can deliver a record again if
+records.
+For `events`, `accessLogs` and `pluginRuns`, retention uses the opened state
+database selected by `--state-file`, including a nondefault path. Its raw data
+source is separate from the generation's evented status adapter. An unavailable
+state source stops the run rather than selecting the platform's default file.
+Only registered operational-log tables are pruned; configuration and lease state
+are outside this policy.
+ A sink error rolls back deletion; retry can deliver a record again if
 an earlier destination already accepted it. Delivery to multiple sinks is not
 atomic, and syslog transport success is not an application-level storage receipt.
 
@@ -142,5 +149,5 @@ Relevant local checks are:
 
 ```sh
 go test ./pkg/eventlog ./pkg/logstore ./pkg/observabilitypipeline
-go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention)'
+go test ./pkg/controller/chain -run '^(TestLogRetention|TestRetention|TestReviewArchive)'
 ```
