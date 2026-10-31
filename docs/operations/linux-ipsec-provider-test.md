@@ -49,6 +49,11 @@ Acceptance requires:
 - Reconciliation, withdrawal and reacquisition without changing provider PID or
   systemd invocation identity, while an independently loaded connection survives.
   Unchanged reconciliation also retains the active ESP SPIs and actual traffic.
+- Before injecting a crash, the running owner must persist each sampled native
+  SPI, installation time, kernel scope and configuration fingerprint in its
+  actual receipt. The fixture samples fresh native state while waiting, records
+  exact coverage in `precrash-receipt-proof.json`, and stops before the crash if
+  that prerequisite is not met within 60 seconds.
 - An explicitly injected provider SIGKILL followed by systemd restart and the
   running routerd's periodic configuration recovery, with no manual provider
   restart or product reconcile between failure and recovered traffic. Record
@@ -131,8 +136,18 @@ The fixture continues to the safe withdrawal stage after a failed recovery
 deadline so that remaining known SPIs and preserved foreign configuration can
 be assessed independently. An immediate new-SPI recovery qualifies ordinary
 traffic continuity without making a claim about old-SPI counter growth.
+The exact-record gate covers SAs observed before the crash. It does not qualify
+the asynchronous window between a new SA's creation/rekey and the owner's next
+observation. On withdrawal, a remaining same-endpoint SA without exact recorded
+authority is detected as uncertainty: routerd preserves its pending receipt and
+returns an error instead of deleting it or reporting withdrawal complete. Endpoint
+matching supplies no deletion authority. A different native generation under a
+recorded lookup identity is also preserved and rejected.
+
 These additions are prepared test conditions; only a new assigned-VM execution
-can qualify them. They do not change the recorded run05 result.
+can qualify them. They do not change the recorded run05 or product-dc14/fixture-2b
+result. That original short trial recovered traffic and new provider SAs but
+left two old SPIs after the declaration was removed.
 
 The peer settings use the documented [swanctl CHILD lifetime and DPD controls](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html)
 and private daemon retransmission controls. No provider-wide flush, foreign
