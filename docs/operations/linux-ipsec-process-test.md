@@ -13,6 +13,15 @@ shared service, invokes modprobe or changes shared configuration.
 Use the Go toolchain from go.mod and a CGO-disabled Linux routerd binary built
 from the tested revision. Keep its SHA-256 and source manifest.
 
+Run as root in the assigned VM. Put the script, binary, extracted dependencies
+and evidence below a root-owned private directory, such as a directory created
+with `install -d -m 0700 /root/routerd-ipsec-qa`. Copy inputs as root and extract
+the dependency archive there with `tar --no-same-owner`. The gate checks input
+ownership, ancestor ownership/traversal and the private directory before starting
+namespaces. A root command inside `unshare -Ur` cannot bypass permissions on
+an unmapped user's private directory; running sudo against inputs under that
+user's private home does not resolve this boundary.
+
 The dependency directory is a private extraction of these matching Ubuntu 24.04
 amd64 packages, not an installation into the running OS:
 
@@ -30,9 +39,12 @@ contains an explicit plugin list and no shared include.
 
 The assigned VM operator prepares the VM's kernel prerequisites outside the gate
 and records the module list before and after that preparation. For the default
-AES/SHA-256 ESP test this includes XFRM user/interface support, IPv4 ESP, authenc
-and CBC when they are modules. The gate deliberately fails when a prerequisite
-is unknown or missing.
+AES/SHA-256 ESP test this includes XFRM user/interface support, IPv4 ESP, authenc,
+CBC and echainiv when they are modules. The CBC ESP path uses the encrypted-chain
+IV generator (`CONFIG_CRYPTO_ECHAINIV`); leaving it unresolved can automatically
+load a global module on the first SA installation. The gate deliberately fails
+when a prerequisite is unknown or missing. Module preparation remains an explicit
+VM-operator action; the script never loads the kernel's entire module set.
 
 ## Execute
 
@@ -82,3 +94,25 @@ strongswan-swanctl does not depend on a charon daemon package. The alternative
 charon-systemd package includes a systemd unit whose ExecStartPost and reload use
 swanctl --load-all; that service behavior must not be confused with routerd's
 scoped connection ownership.
+
+
+## Recorded native result
+
+The scoped gate passed on Ubuntu 24.04.4, Linux 6.8.0-124-generic and strongSwan
+5.9.13-2ubuntu4.24.04.5. The product was built from `bab44306` (binary SHA-256
+`8cb8a3d170ec4f24a81f162a705419e8ed096aef6b47786b1838f14f6871f88d`).
+The executed fixture was `1189a939` (script SHA-256
+`db007dffaf09b8db1f0f45d189bbe5a97d7615941f4c024e061495560e5c44e4`).
+Acquisition, unchanged reapplication, withdrawal, reacquisition and daemon
+restart/reconciliation succeeded. Both endpoints recorded two ESP states with
+four packets each in every traffic phase, with two replies from each ping.
+The final receipt was empty and no longer pending; all owned children were
+waited for, and outer link and module-name inventories were restored.
+
+The successful measurement pre-certified echainiv and used root-owned inputs.
+The later prerequisite guards make those conditions explicit; they do not change
+the executed script hash or constitute a new native run. Initial input-permission
+failures occurred before product startup. The earlier traffic run that
+additionally loaded echainiv was followed by a separate run with a stable module
+set. This remains a scoped private-provider result, with the service-manager and
+automatic-start exclusions above.

@@ -19,6 +19,26 @@ done
 [[ ${ROUTERD_RUN_IPSEC_DEDICATED_VM:-} == 1 ]] || { echo "requires explicit dedicated VM gate" >&2; exit 64; }
 routerd=$(realpath "$routerd")
 dependency_root=$(realpath "$dependency_root")
+if ((inside == 0)); then
+  ((EUID == 0)) || { echo "dedicated VM gate requires root and root-owned private input paths" >&2; exit 64; }
+  require_root_private_path() {
+    local path=$1 original=$1 private=0 permissions
+    while :; do
+      [[ $(stat -c %u "$path") == 0 ]] || { echo "input path has a non-root-owned component: $original ($path)" >&2; return 1; }
+      if [[ -d $path ]]; then
+        permissions=$(stat -c %a "$path")
+        (( (8#$permissions & 0500) == 0500 )) || { echo "input directory is not readable/traversable by mapped root: $path" >&2; return 1; }
+        if (( (8#$permissions & 077) == 0 )); then private=1; fi
+      fi
+      [[ $path == / ]] && break
+      path=$(dirname "$path")
+    done
+    ((private == 1)) || { echo "input is not below a root-owned private directory: $original" >&2; return 1; }
+  }
+  for input in "$routerd" "$dependency_root" "$(realpath "$0")" "$(dirname "$(realpath -m "$evidence")")"; do
+    require_root_private_path "$input"
+  done
+fi
 mkdir -p "$evidence"
 evidence=$(realpath "$evidence")
 charon=$dependency_root/usr/lib/ipsec/charon
@@ -42,6 +62,7 @@ if ((inside == 0)); then
     require_module_or_builtin esp4 CONFIG_INET_ESP
     require_module_or_builtin authenc CONFIG_CRYPTO_AUTHENC
     require_module_or_builtin cbc CONFIG_CRYPTO_CBC
+    require_module_or_builtin echainiv CONFIG_CRYPTO_ECHAINIV
   fi
   export ROUTERD_HOST_USERNS ROUTERD_HOST_NETNS ROUTERD_HOST_MNTNS
   ROUTERD_HOST_USERNS=$(readlink /proc/self/ns/user)
