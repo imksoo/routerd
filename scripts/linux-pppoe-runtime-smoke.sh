@@ -11,6 +11,9 @@ if [[ ${1:-} != --inside ]]; then
   }
   work=$(realpath -e "$2"); product=$(realpath -e "$3"); deps=$(realpath -e "$4"); auth=$5
   [[ $(id -u) == 0 && $(uname -s) == Linux && -c /dev/ppp ]]
+  [[ -d /sys/module/pppoe && -d /sys/module/pppox ]] || {
+    echo "INCONCLUSIVE: prepare and record PPPoE kernel prerequisites in this disposable VM" >&2; exit 3;
+  }
   [[ $(stat -c '%u:%a' "$work") == 0:700 && ! -e "$work/started" ]]
   case "$auth" in pap|chap) ;; *) exit 2;; esac
   for cmd in ip unshare mount python3 curl jq tcpdump; do command -v "$cmd" >/dev/null; done
@@ -150,10 +153,15 @@ router_pid=$!
 socket=/run/routerd/pppoe-client/lifecycle.sock
 ipc() { curl --connect-timeout 1 --max-time 4 --fail --silent --show-error --unix-socket "$socket" "$@"; }
 wait_connected() {
-  local label=$1
-  for _ in $(seq 1 100); do
+  local label=$1 started=$SECONDS
+  # An immediate restart can meet a peer still releasing its only session.
+  # Keep pppd's normal persist/holdoff behavior; do not inject reconnect commands.
+  for _ in $(seq 1 350); do
     if [[ -S $socket ]] && ipc http://localhost/v1/status >"$work/$label.status.json"; then
-      if jq -e '.resources[0].phase=="Connected" and .resources[0].observed.currentAddress=="198.18.10.2" and .resources[0].observed.peerAddress=="198.18.10.1"' "$work/$label.status.json" >/dev/null; then return 0; fi
+      if jq -e '.resources[0].phase=="Connected" and .resources[0].observed.currentAddress=="198.18.10.2" and .resources[0].observed.peerAddress=="198.18.10.1"' "$work/$label.status.json" >/dev/null; then
+        printf '%s\n' "$((SECONDS-started))" >"$work/$label.connect-seconds"
+        return 0
+      fi
     fi
     kill -0 "$router_pid"; kill -0 "$server_pid"; sleep .2
   done
@@ -165,6 +173,14 @@ traffic() {
   ip netns exec "$peer" ping -n -c 3 -W 2 198.18.10.2 >"$work/$label.peer-to-client.ping" 2>&1
   ip -s -j addr show dev ppp-lifecycle >"$work/$label.link.json"
   ip netns exec "$peer" ip -s -j addr show >"$work/$label.peer-links.json"
+  local client_ll peer_ll peer_if
+  client_ll=$(jq -er '.[0].addr_info[]|select(.family=="inet6" and .scope=="link")|.local' "$work/$label.link.json")
+  peer_ll=$(jq -er '.[0].addr_info[]|select(.family=="inet6" and .scope=="link")|.address' "$work/$label.link.json")
+  peer_if=$(jq -er '.[]|select(.link_type=="ppp")|.ifname' "$work/$label.peer-links.json")
+  ping -6 -n -c 3 -W 2 -I ppp-lifecycle "$peer_ll" >"$work/$label.client-to-peer-ipv6.ping" 2>&1
+  ip netns exec "$peer" ping -6 -n -c 3 -W 2 -I "$peer_if" "$client_ll" >"$work/$label.peer-to-client-ipv6.ping" 2>&1
+  ip -j -4 route show table all >"$work/$label.routes4.json"
+  ip -j -6 route show table all >"$work/$label.routes6.json"
 }
 stage=acquire
 wait_connected initial
