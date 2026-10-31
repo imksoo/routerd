@@ -107,6 +107,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 				return fmt.Errorf("stop pipeline %s before replacement: %w", resource.Metadata.Name, err)
 			}
 		}
+		// Capture the new consumer's starting position before acknowledging
+		// startup. Otherwise events committed just after Start returns can be
+		// mistaken for history predating the exporter.
+		if _, err := c.Events.LoadOrInitializeEventConsumerCursor("observabilitypipeline/" + resource.Metadata.Name); err != nil {
+			return fmt.Errorf("initialize pipeline %s: %w", resource.Metadata.Name, err)
+		}
 		runCtx, cancel := context.WithCancel(ctx)
 		ch, _ := c.Bus.Subscribe(runCtx, bus.Subscription{Topics: []string{"routerd.**"}}, 256)
 		done := make(chan struct{})

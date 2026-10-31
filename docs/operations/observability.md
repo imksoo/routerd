@@ -71,6 +71,9 @@ does not remove events already committed to SQLite. The exporter and EventRule
 engine use the bus only to wake their journal drains, with a default one-second
 poll when no wakeup arrives. Failed drains back off from one second to one minute.
 Polling periods exclude execution time, database outages, and a stalled process.
+A pipeline initializes its durable cursor before acknowledging startup. A journal
+initialization error prevents `Running`; successful startup does not by itself
+mean that a remote destination has accepted a log.
 
 | Consumer | Authoritative input | Recovery and limit |
 | --- | --- | --- |
