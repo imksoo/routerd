@@ -673,8 +673,8 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
-	if err := controller.Reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile: %v", err)
+	if observed, err := controller.ReconcileWithNativeRoleObservation(context.Background()); err != nil || !observed {
+		t.Fatalf("native role observation: observed=%v err=%v", observed, err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
 	if status["role"] != "master" {
