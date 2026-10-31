@@ -1290,6 +1290,42 @@
         "VRRP, hash/mark modes, dynamic gateway/source modes and physical WAN link failure",
         "FreeBSD and whole routerd 1.0 functional preservation"
       ]
+    },
+    "linux-ipsec-provider-dc14c486": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "dc14c48673e249ef489016d9ed9eea0208cbf4ce",
+      "reference": "docs/design/routerd15-audit.md#linux-ipsec-package-ownership-and-provider-recovery-gate",
+      "environment": "Disposable Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic, strongSwan 5.9.13-2ubuntu4.24.04.5; product make-dist archive and fixture 255deff6 pinned in the audit.",
+      "checks": [
+        "Actual PackageController dependency installation and systemd/VICI startup",
+        "Independent peer IKE/ESP and bidirectional selector traffic",
+        "Unchanged reconcile retains active SPIs and provider identity",
+        "Scoped withdrawal and reacquisition preserve the unrelated connection",
+        "Original installed service/state and kernel/package/AppArmor inventories restored"
+      ],
+      "excludes": [
+        "Complete automatic SA recovery after provider crash",
+        "Natural SA expiry/rekey and all algorithm/authentication modes",
+        "Complete IPsec or 1.0 feature qualification"
+      ]
+    },
+    "linux-ipsec-provider-recovery-dc14c486": {
+      "level": "native-kernel",
+      "outcome": "fail",
+      "revision": "dc14c48673e249ef489016d9ed9eea0208cbf4ce",
+      "reference": "docs/design/routerd15-audit.md#linux-ipsec-package-ownership-and-provider-recovery-gate",
+      "environment": "Disposable Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic, strongSwan 5.9.13-2ubuntu4.24.04.5; product make-dist archive and fixture 255deff6 pinned in the audit.",
+      "checks": [
+        "New-provider ESTABLISHED assertion fails after ordinary traffic following SIGKILL",
+        "Systemd restarts once and routerd reloads connection/key, but the new provider SA list remains empty",
+        "Traffic continues over unchanged pre-crash kernel SPIs; this is not a measured traffic outage",
+        "Cleanup passes; no 1.0 regression verdict is established"
+      ],
+      "excludes": [
+        "Natural SA expiry and eventual rekey/recovery",
+        "A demonstrated baseline regression or production outage"
+      ]
     }
   },
   "features": [
@@ -1800,15 +1836,18 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ipsec-provider-dc14c486",
+          "linux-ipsec-provider-recovery-dc14c486"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Native IKE/CHILD_SA and packet exchange with an independent peer",
-        "Rekey, loss/recovery, restart and withdrawal"
+        "Automatic provider-owned SA recovery after crash, including natural kernel-SA expiry and rekey",
+        "Other authentication/algorithm/peer configurations and complete platform parity"
       ]
     },
     {

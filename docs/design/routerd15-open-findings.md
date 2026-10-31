@@ -243,8 +243,13 @@ forwarding on a nonrecursive miss, and unobserved/nonlocal listener addresses
 cannot admit private questions. This does not constrain unrelated/older servers.
 See [doctor operations](../operations/routerctl-doctor.md). Neighbor/conntrack
 packet probing, native forwarding/failover and independent client qualification
-remain unexecuted. IPsec control tests do not establish native IKE or packet
-forwarding; SAM tests do not establish independent RR/leaf interoperability.
+remain unexecuted. The scoped Linux IPsec package/systemd/IKE/ESP gate at
+`dc14c486` passes acquisition, unchanged SA retention and foreign-safe withdrawal.
+Complete provider-crash recovery remains open: after SIGKILL, the new provider
+has no established SA while ordinary traffic continues over old kernel SAs.
+Natural expiry/rekey and baseline comparison are unverified. See the
+[executed provider gate](routerd15-audit.md#linux-ipsec-package-ownership-and-provider-recovery-gate).
+SAM tests do not establish independent RR/leaf interoperability.
 
 ## Build, release and isolated lab tools
 

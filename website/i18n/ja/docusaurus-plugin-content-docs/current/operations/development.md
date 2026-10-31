@@ -275,6 +275,13 @@ Health helperの起動はfixtureが担当するため、systemd起動、package�
 識別子と限定した判定を残し、成功時の生出力は削除します。失敗時は所有processを止め、
 指定work directory内の診断を保持して再現に使います。
 
+## Linux IPsec の依存導入と provider 試験
+
+[IPsec のパッケージ・サービス検証手順](linux-ipsec-provider-test.md)に従い、
+割り当て済みの専用 Ubuntu VM で実際の依存導入、systemd/VICI、接続の所有権、
+強制終了後の復旧を検査します。既存 routerd の設定・DB の保持と復元も合格条件です。
+IPsec 全機能の維持を認定する試験ではありません。
+
 ## Linux の DHCPv6 アドレス実適用試験
 
 同じ専用 VM の前提と checksum を固定した `make dist` archive を使い、
