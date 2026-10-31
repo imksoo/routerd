@@ -1299,6 +1299,7 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunDNSResolver = true
 	opts.DryRunEventFederation = true
 	opts.DryRunEventSubscription = true
+	opts.DryRunPlugin = true
 	opts.DryRunLeaseSync = true
 	opts.DryRunNAT44SessionSync = true
 	opts.DryRunProviderAction = true

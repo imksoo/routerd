@@ -57,7 +57,10 @@ type FuncController struct {
 	Subs           []bus.Subscription
 	Every          time.Duration
 	ReconcileFunc  func(context.Context, daemonapi.DaemonEvent) error
-	PeriodicFunc   func(context.Context) (bool, error)
+	// BootstrapFunc separates initial due work from named bus events.
+	// When unset, bootstrap preserves the normal Reconcile behavior.
+	BootstrapFunc func(context.Context) error
+	PeriodicFunc  func(context.Context) (bool, error)
 	// NextAfter returns an optional one-shot safety deadline. It is consulted
 	// after every event/periodic reconciliation and never lengthens Every.
 	NextAfter func() time.Duration
@@ -90,6 +93,22 @@ func (c FuncController) Reconcile(ctx context.Context, event daemonapi.DaemonEve
 		return err
 	}
 	return nil
+}
+
+func (c FuncController) BootstrapReconcile(ctx context.Context, event daemonapi.DaemonEvent) error {
+	if c.BootstrapFunc != nil {
+		return c.BootstrapFunc(ctx)
+	}
+	return c.Reconcile(ctx, event)
+}
+
+func bootstrapController(ctx context.Context, controller Controller, event daemonapi.DaemonEvent) error {
+	if initial, ok := controller.(interface {
+		BootstrapReconcile(context.Context, daemonapi.DaemonEvent) error
+	}); ok {
+		return initial.BootstrapReconcile(ctx, event)
+	}
+	return controller.Reconcile(ctx, event)
 }
 
 func (c FuncController) PeriodicReconcile(ctx context.Context) (bool, error) {
@@ -182,7 +201,7 @@ func (r Runner) Bootstrap(ctx context.Context, controllers ...Controller) error 
 		interval := controllerInterval(controller, r.Interval)
 		runWithMutationGate(ctx, r.MutationGate, func() {
 			runLocked(ctx, logger, locker, r.Observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", interval, func(runCtx context.Context) error {
-				return controller.Reconcile(runCtx, event)
+				return bootstrapController(runCtx, controller, event)
 			})
 		})
 	}
@@ -252,7 +271,7 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 		bootstrap := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "event-loop"}, "routerd.controller.bootstrap", daemonapi.SeverityInfo)
 		runWithMutationGate(ctx, gate, func() {
 			runLocked(ctx, logger, locker, observer, controller.Name()+":bootstrap", controller.Name(), "bootstrap", "", "", intervals[level], func(runCtx context.Context) error {
-				return controller.Reconcile(runCtx, bootstrap)
+				return bootstrapController(runCtx, controller, bootstrap)
 			})
 		})
 		ticker.Reset(nextControllerInterval(controller, intervals[level]))
