@@ -157,3 +157,19 @@ When a `HealthCheck` is referenced by an `EgressRoutePolicy` candidate or
 target, routerd derives the health-check daemon, socket mark, and source binding
 from that route target automatically. The config describes the probe intent;
 platform-specific socket mechanics stay inside the controller and renderer.
+
+## Locally generated IPv6 default traffic
+
+On Linux, an IPv6 EgressRoutePolicy with hostTraffic enabled keeps more-specific
+routes from the main table ahead of its selected WAN default. Its native rule
+at candidate priority minus one looks up main with suppress_prefixlength 0:
+LAN-connected routes and explicit main-table prefixes remain usable, while the
+main default falls through to the policy's existing iif lo rule. Existing
+DS-Lite source-address exceptions keep their own priorities.
+
+The preceding priority must be positive and free of overlapping policy rules.
+An occupied slot is an error; routerd does not replace or adopt another writer's
+rule. The guard and default selector use the existing native ownership receipts,
+including exact suppression attributes and kernel namespace identity. This does
+not add destination selectors to the hostTraffic implementation or change
+forwarded traffic or IPv4 policies.

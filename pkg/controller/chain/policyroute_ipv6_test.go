@@ -91,7 +91,11 @@ func (f *policyIPv6Commands) command(ctx context.Context, name string, args ...s
 			if input := policyCommandValue(args, "iif"); input != "" {
 				row += " iif " + input
 			}
-			f.rules[priority] = row + " lookup " + policyCommandValue(args, "table") + " proto 4\n"
+			row += " lookup " + policyCommandValue(args, "table")
+			if suppress := policyCommandValue(args, "suppress_prefixlength"); suppress != "" {
+				row += " suppress_prefixlength " + suppress
+			}
+			f.rules[priority] = row + " proto 4\n"
 		} else {
 			delete(f.rules, priority)
 		}
@@ -130,12 +134,19 @@ func TestPolicyIPv6NativeAcquisitionRepairAndExactWithdrawal(t *testing.T) {
 	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(native.mutations()) != 2 || strings.Contains(strings.Join(native.calls, "\n"), "replace") {
+	if len(native.mutations()) != 3 || strings.Contains(strings.Join(native.calls, "\n"), "replace") {
 		t.Fatal(native.calls)
 	}
 	journal, err := c.readPolicyRouteJournal(6)
-	if err != nil || len(journal.Receipts) != 2 {
+	if err != nil || len(journal.Receipts) != 3 {
 		t.Fatalf("journal=%+v %v", journal, err)
+	}
+	writes := native.mutations()
+	if !strings.Contains(writes[0], "route add") || !strings.Contains(writes[1], "priority 10119") || !strings.Contains(writes[2], "priority 10120") {
+		t.Fatalf("route/guard/selector acquisition order: %v", writes)
+	}
+	if !journal.Receipts[1].Effect.SuppressMainDefault || journal.Receipts[1].Effect.Table != 254 {
+		t.Fatal(journal)
 	}
 	for _, receipt := range journal.Receipts {
 		if receipt.Pending != "" || receipt.Scope == "" || receipt.Effect.Family != 6 {
@@ -161,12 +172,12 @@ func TestPolicyIPv6NativeAcquisitionRepairAndExactWithdrawal(t *testing.T) {
 	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if writes := native.mutations(); len(writes) != 2 || !strings.Contains(writes[0], "rule del") || !strings.Contains(writes[1], "route del") {
+	if writes := native.mutations(); len(writes) != 3 || !strings.Contains(writes[0], "priority 10120") || !strings.Contains(writes[1], "priority 10119") || !strings.Contains(writes[1], "suppress_prefixlength 0") || !strings.Contains(writes[2], "route del") {
 		t.Fatal(writes)
 	}
 }
 func TestPolicyIPv6NativeForeignPresenceNeverAdoptsOrReplaces(t *testing.T) {
-	for _, kind := range []string{"route", "rule", "broader-rule"} {
+	for _, kind := range []string{"route", "rule", "broader-rule", "guard", "guard-without-suppress", "guard-other-suppress"} {
 		t.Run(kind, func(t *testing.T) {
 			c, _, native, _ := newPolicyIPv6Fixture(t)
 			switch kind {
@@ -174,6 +185,12 @@ func TestPolicyIPv6NativeForeignPresenceNeverAdoptsOrReplaces(t *testing.T) {
 				native.route = "default via fe80::1 dev wan0 table 120 proto 4 src 2001:db8::2 metric 50 pref medium\n"
 			case "rule":
 				native.rules[10120] = "10120: from all iif lo lookup 120 proto 4\n"
+			case "guard":
+				native.rules[10119] = "10119: from all iif lo lookup 254 suppress_prefixlength 0 proto 4\n"
+			case "guard-without-suppress":
+				native.rules[10119] = "10119: from all iif lo lookup 254 proto 4\n"
+			case "guard-other-suppress":
+				native.rules[10119] = "10119: from all iif lo lookup 254 suppress_prefixlength 64 proto 4\n"
 			default:
 				native.rules[10120] = "10120: from all lookup 999 proto boot\n"
 			}
@@ -216,7 +233,7 @@ func TestPolicyIPv6NativeLostAcknowledgementReopenRetainsFence(t *testing.T) {
 	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(native.mutations()) != 2 {
+	if len(native.mutations()) != 3 {
 		t.Fatal(native.mutations())
 	}
 }
@@ -238,7 +255,7 @@ func TestPolicyIPv6NativeSourceFailurePreservesAndKnownAbsenceWithdraws(t *testi
 	if err := c.reconcileIPv6HostPolicies(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(native.mutations()) != 2 {
+	if len(native.mutations()) != 3 {
 		t.Fatal(native.mutations())
 	}
 	status := c.Store.ObjectStatus(api.NetAPIVersion, "EgressRoutePolicy", "host-ipv6-ra")
@@ -271,7 +288,7 @@ func TestPolicyIPv6NativeHostRoutingRetainsPhysicalWANAndDSLiteSourceScope(t *te
 		t.Fatal(err)
 	}
 	joined := strings.Join(native.mutations(), "\n")
-	for _, want := range []string{"route add default via fe80::1 dev wan0 table 120", "rule add priority 10100 from 2001:db8::23/128 table 254 protocol static", "rule add priority 10120 from all iif lo table 120 protocol static"} {
+	for _, want := range []string{"route add default via fe80::1 dev wan0 table 120", "rule add priority 10119 from all iif lo table 254 suppress_prefixlength 0 protocol static", "rule add priority 10100 from 2001:db8::23/128 table 254 protocol static", "rule add priority 10120 from all iif lo table 120 protocol static"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s: %s", want, joined)
 		}
@@ -356,5 +373,35 @@ func TestPolicyIPv6NativeOwnedReceiptCannotHideForeignSelectorOverlap(t *testing
 	}
 	if len(native.mutations()) != 0 {
 		t.Fatal(native.mutations())
+	}
+}
+
+// A generated guard must not collide with an existing DS-Lite source selector,
+// even when neither effect is present yet.
+func TestPolicyIPv6NativeGuardPriorityConflictHasNoEffects(t *testing.T) {
+	c, store, native, _ := newPolicyIPv6Fixture(t)
+	spec, err := c.Router.Spec.Resources[1].EgressRoutePolicySpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Candidates[0].Priority = 10101
+	c.Router.Spec.Resources[1].Spec = spec
+	c.Router.Spec.Resources = append(c.Router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"},
+		Metadata: api.ObjectMeta{Name: "delegated"},
+		Spec:     api.DSLiteTunnelSpec{Interface: "wan-vmac", LocalAddressSource: "delegatedAddress"},
+	})
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "DSLiteTunnel", "delegated", map[string]any{"phase": "Up", "localIPv6": "2001:db8::23"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.reconcileIPv6HostPolicies(t.Context()); err == nil {
+		t.Fatal("overlapping generated guard priority accepted")
+	}
+	if len(native.mutations()) != 0 {
+		t.Fatal(native.mutations())
+	}
+	journal, err := c.readPolicyRouteJournal(6)
+	if err != nil || len(journal.Receipts) != 0 {
+		t.Fatalf("conflict saved ownership: %+v %v", journal, err)
 	}
 }
