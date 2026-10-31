@@ -102,7 +102,7 @@ func TestLeaseSyncRoleProjectionPreservesWhenAlternatives(t *testing.T) {
 	}
 	role := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.status.role": {Equals: "master"}}}
 	independent := api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"Interface/independent.status.phase": {Equals: "Ready"}}}
-	var observed atomic.Bool
+	var observed atomic.Pointer[leaseSyncRoleProof]
 	cases := []struct {
 		name   string
 		when   api.ResourceWhenSpec
@@ -118,7 +118,7 @@ func TestLeaseSyncRoleProjectionPreservesWhenAlternatives(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			observed.Store(tc.proof)
+			observed.Store(&leaseSyncRoleProof{names: map[string]bool{"gateway": tc.proof}})
 			router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: lease}},
 				{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "leases"}, Spec: api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "private-unused.invalid"}}, Interval: "1ns", When: tc.when}},
@@ -176,14 +176,14 @@ func TestLeaseSyncKeepsCurrentProofUntilNativeObservationReturns(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: lease}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "leases"}, Spec: api.DHCPv4ServerLeaseSyncSpec{Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "private-unused.invalid"}}, Interval: "1ns", When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/gateway.status.role": {Equals: "master"}}}}},
 	}}}
-	var proof atomic.Bool
+	var proof atomic.Pointer[leaseSyncRoleProof]
 	copies := 0
 	consumer := FileSyncController{Router: router, Store: leaseSyncRoleStore{eventedStore: eventedStore{Store: store, Router: router}, rolesObserved: &proof}, Command: func(context.Context, string, ...string) ([]byte, error) { copies++; return nil, nil }}
 	observingAgain := false
 	producer := vrrpcontroller.Controller{Router: router, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(dir, "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens19" {
 			if observingAgain {
-				if !proof.Load() {
+				if !(proof.Load() != nil && proof.Load().names["gateway"]) {
 					t.Fatal("previous current-generation proof was closed before a new result existed")
 				}
 				if err := consumer.Reconcile(t.Context()); err != nil {
@@ -195,20 +195,20 @@ func TestLeaseSyncKeepsCurrentProofUntilNativeObservationReturns(t *testing.T) {
 		}
 		return []byte("active\n"), nil
 	}}
-	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof, router); err != nil {
+	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof); err != nil {
 		t.Fatal(err)
 	}
-	if !proof.Load() {
+	if !(proof.Load() != nil && proof.Load().names["gateway"]) {
 		t.Fatal("actual native role success did not open the same-generation proof")
 	}
 	observingAgain = true
-	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof, router); err != nil {
+	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof); err != nil {
 		t.Fatal(err)
 	}
 	if copies != 1 {
 		t.Fatalf("current native role could not authorize its subscribed consumer: copies=%d", copies)
 	}
-	if proof.Load() {
+	if proof.Load() != nil && proof.Load().names["gateway"] {
 		t.Fatal("unknown native result retained role authority")
 	}
 	// A stale status restored by another writer cannot reopen this in-memory proof.
@@ -220,5 +220,81 @@ func TestLeaseSyncKeepsCurrentProofUntilNativeObservationReturns(t *testing.T) {
 	}
 	if copies != 1 {
 		t.Fatalf("old MASTER authorized another copy after unknown observation: copies=%d", copies)
+	}
+}
+
+// A's current native proof must not depend on an unrelated B excluded by When.
+// B's prior MASTER and its persisted variable fallback still grant no authority.
+func TestLeaseSyncOnlyRequiresReferencedNativeRole(t *testing.T) {
+	dir := t.TempDir()
+	store, err := routerstate.OpenSQLite(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	lease := filepath.Join(dir, "leases")
+	if err := os.WriteFile(lease, []byte("private leases"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "blocked", map[string]any{"phase": "Down"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "excluded", map[string]any{"role": "master"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Set("VirtualAddress/excluded.status.role", "master", "previous generation"); err != nil {
+		t.Fatal(err)
+	}
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "gateway"}, Spec: api.VirtualAddressSpec{Interface: "lan", Address: "192.0.2.1/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 18, Priority: 200}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "VirtualAddress"}, Metadata: api.ObjectMeta{Name: "excluded"}, Spec: api.VirtualAddressSpec{Interface: "lan", Address: "192.0.2.2/32", Family: "ipv4", Mode: "vrrp", VRRP: api.VirtualAddressVRRPSpec{VirtualRouterID: 19, Priority: 200}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"Interface/blocked.status.phase": {Equals: "Ready"}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{LeaseFile: lease}},
+	}}}
+	for _, name := range []string{"gateway", "excluded"} {
+		router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4ServerLeaseSync"}, Metadata: api.ObjectMeta{Name: "leases-" + name}, Spec: api.DHCPv4ServerLeaseSyncSpec{
+			Source: api.DHCPv4ServerLeaseSyncSourceSpec{Resource: "DHCPv4Server/lan"}, Targets: []api.LeaseSyncTargetSpec{{Host: "private-unused.invalid"}}, Interval: "1ns",
+			When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/" + name + ".status.role": {Equals: "master"}}},
+		}})
+	}
+	evented := eventedStore{Store: store, Router: router}
+	runner := Runner{Router: router, Store: store}
+	initial, err := runner.effectiveRouterForReconcile(evented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var proof atomic.Pointer[leaseSyncRoleProof]
+	producer := vrrpcontroller.Controller{Router: initial.EffectiveRouter, Store: store, OperatingSystem: platform.OSLinux, ConfigPath: filepath.Join(dir, "keepalived.conf"), Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens19" {
+			return []byte("inet 192.0.2.1/32 scope global ens19\n"), nil
+		}
+		return []byte("active\n"), nil
+	}}
+	if err := reconcileLeaseSyncVRRPRoles(t.Context(), &producer, &proof); err != nil {
+		t.Fatal(err)
+	}
+	observed := proof.Load()
+	if observed == nil || !observed.names["gateway"] || observed.names["excluded"] {
+		t.Fatalf("native proof=%v", observed)
+	}
+	// Use the actual caller's post-observation view as well. The excluded B has
+	// no native proof even though the persisted state-variable fallback is MASTER.
+	current, err := runner.effectiveRouterForReconcile(evented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copies := 0
+	consumer := FileSyncController{Router: current.EffectiveRouter, Store: leaseSyncRoleStore{eventedStore: evented, rolesObserved: &proof}, Command: func(context.Context, string, ...string) ([]byte, error) { copies++; return nil, nil }}
+	if err := consumer.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if copies != 1 {
+		t.Fatalf("observed A must sync, excluded B must not: copies=%d", copies)
+	}
+	for name, phase := range map[string]string{"gateway": "Synced", "excluded": "Pending"} {
+		status, err := store.ReadObjectStatus(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "leases-"+name)
+		if err != nil || status["phase"] != phase {
+			t.Fatalf("%s status=%v error=%v; want %s", name, status, err, phase)
+		}
 	}
 }

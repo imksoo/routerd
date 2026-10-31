@@ -61,8 +61,8 @@ func TestLeaseSyncObservedRoleSurvivesUnrelatedDisabledVRRP(t *testing.T) {
 				}
 				return []byte("ok"), nil
 			}}
-			var proof atomic.Bool
-			if err := reconcileLeaseSyncVRRPRoles(t.Context(), &native, &proof, declared); err != nil {
+			var proof atomic.Pointer[leaseSyncRoleProof]
+			if err := reconcileLeaseSyncVRRPRoles(t.Context(), &native, &proof); err != nil {
 				t.Fatal(err)
 			}
 			status, err := store.ReadObjectStatus(api.NetAPIVersion, "VirtualAddress", "active")
@@ -80,7 +80,7 @@ func TestLeaseSyncObservedRoleSurvivesUnrelatedDisabledVRRP(t *testing.T) {
 			got, err := os.ReadFile(copied)
 			if err != nil || string(got) != string(content) {
 				status, _ := store.ReadObjectStatus(api.NetAPIVersion, "DHCPv4ServerLeaseSync", "leases")
-				t.Fatalf("observed active MASTER lost independent lease sync: copy=%q err=%v roleProof=%t status=%v", got, err, proof.Load(), status)
+				t.Fatalf("observed active MASTER lost independent lease sync: copy=%q err=%v roleProof=%v status=%v", got, err, proof.Load(), status)
 			}
 		})
 	}
