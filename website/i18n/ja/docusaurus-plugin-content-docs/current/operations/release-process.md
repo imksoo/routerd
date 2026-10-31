@@ -243,7 +243,7 @@ Ubuntu リリースのソースとライセンス情報を確認してくださ�
 Debian と Ubuntu では、インストーラーは `apt-get` を使い、次を導入します。
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl charon-systemd iptables keepalived
 ```
 
 Fedora 系では、インストーラーは `dnf` を使い、次を導入します。

@@ -248,7 +248,7 @@ sudo ./install.sh --with-tailscale
 The installer uses `apt-get` and installs:
 
 ```text
-ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl iptables keepalived openssh-server
+ca-certificates curl dnsmasq-base nftables wireguard-tools chrony bind9-dnsutils tcpdump cron jq ppp pppoe conntrack iproute2 iputils-ping iputils-tracepath net-tools kmod radvd strongswan-swanctl charon-systemd iptables keepalived openssh-server
 ```
 
 ### Fedora-like systems

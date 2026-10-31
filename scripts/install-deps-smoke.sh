@@ -25,6 +25,8 @@ assert_contains "${apt_deps}" "package manager: apt" "apt package manager select
 assert_contains "${apt_deps}" "- dnsmasq-base" "apt dnsmasq package"
 assert_contains "${apt_deps}" "- nftables" "apt nftables package"
 assert_contains "${apt_deps}" "- keepalived" "apt VRRP package"
+assert_contains "${apt_deps}" "- strongswan-swanctl" "apt IPsec VICI client"
+assert_contains "${apt_deps}" "- charon-systemd" "apt IPsec IKE daemon"
 
 pkg_deps=$(ROUTERD_INSTALL_PACKAGE_MANAGER=pkg ./packaging/install.sh --list-deps)
 assert_contains "${pkg_deps}" "package manager: pkg" "FreeBSD package manager selection"
