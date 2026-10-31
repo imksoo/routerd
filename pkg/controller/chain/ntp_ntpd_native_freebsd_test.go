@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -163,7 +164,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 	if !strings.HasPrefix(managed, "routerd-ntpd-") || !strings.HasPrefix(reference, "routerd-ntpd-") || managed == reference || !filepath.IsAbs(base) {
 		t.Fatal("private jail identities and evidence directory are required")
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 150*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 240*time.Second)
 	t.Cleanup(cancel)
 	binaryPath, err := os.Executable()
 	if err != nil {
@@ -224,7 +225,11 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 	}
 	waitSource := func(jail string, process *ntpdNativeProcess, source string) {
 		t.Helper()
-		deadline := time.Now().Add(40 * time.Second)
+		wait := 40 * time.Second
+		if jail == reference {
+			wait = 75 * time.Second
+		}
+		deadline := time.Now().Add(wait)
 		last := ""
 		for time.Now().Before(deadline) && ctx.Err() == nil && process.running() {
 			queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
@@ -235,6 +240,25 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 				for _, line := range strings.Split(last, "\n") {
 					fields := strings.Fields(line)
 					if len(fields) > 0 && strings.HasPrefix(fields[0], "*") && strings.TrimPrefix(fields[0], "*") == source {
+						if jail == reference {
+							// A selected but cold LOCAL filter initially advertises
+							// about eight seconds of root dispersion. Wait for its
+							// real samples; do not relax the product's maxdist.
+							qualityCtx, qualityCancel := context.WithTimeout(ctx, 2*time.Second)
+							quality, qualityErr := exec.CommandContext(qualityCtx, "jexec", jail, "/usr/bin/ntpq", "-4", "-n", "-c", "rv 0 rootdisp", "127.0.0.1").CombinedOutput()
+							qualityCancel()
+							ready := false
+							for _, field := range strings.Fields(string(quality)) {
+								if value, ok := strings.CutPrefix(field, "rootdisp="); ok {
+									dispersion, parseErr := strconv.ParseFloat(strings.TrimSuffix(value, ","), 64)
+									ready = qualityErr == nil && parseErr == nil && dispersion >= 0 && dispersion < 1000
+								}
+							}
+							last += "\n" + string(quality)
+							if !ready {
+								break
+							}
+						}
 						t.Logf("actual ntpq selected source (%s):\n%s", jail, last)
 						return
 					}
