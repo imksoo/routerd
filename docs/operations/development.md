@@ -368,6 +368,13 @@ Retain source/archive/script identities and the scoped verdict. Successful raw
 output is removed; failure stops owned processes and retains bounded diagnostics
 under the selected work directory for reproduction.
 
+## Linux IPsec package and provider gate
+
+The [IPsec package and service procedure](linux-ipsec-provider-test.md) exercises
+actual dependency installation, systemd/VICI, scoped ownership and crash recovery
+on an assigned disposable Ubuntu VM. It preserves the installed router configuration
+and state and requires restoration; it is not a complete IPsec qualification.
+
 ## Linux native DHCPv6 address gate
 
 Use the same disposable VM prerequisites and a checksum-pinned `make dist`

@@ -2524,3 +2524,44 @@ implementation. Initial permission failures occurred before product startup;
 operator certification supplied echainiv before the final unchanged-module run.
 `8f75fcd4` makes these discovered prerequisites explicit and retains the executed
 fixture's historical hash. See the [IPsec procedure](../operations/linux-ipsec-process-test.md).
+
+### Linux IPsec package, ownership and provider recovery gate
+
+Product `dc14c48673e249ef489016d9ed9eea0208cbf4ce`, fixture `255deff6`,
+Ubuntu 24.04.4 / Linux 6.8.0-124-generic, strongSwan
+5.9.13-2ubuntu4.24.04.5 were exercised on an assigned disposable VM.
+The `make dist` archive SHA256 was
+`7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08`;
+the executed fixture SHA256 was
+`61ad446f8f49d3fc9f74a64fd3b0c638ffcca187cbeedd22c1119347f84c6ec1`.
+The [provider procedure](../operations/linux-ipsec-provider-test.md) records the
+reproducible prerequisites, invocation and acceptance criteria.
+
+Passed: actual PackageController installation of the six initially absent
+dependencies, real systemd/VICI startup, independent classic-charon peer IKE/ESP
+and bidirectional traffic, unchanged-reconcile SPI/PID/invocation retention,
+withdrawal and reacquisition while preserving an unrelated connection.
+The fixture loaded the unrelated connection before product acquisition;
+it did not use global load-conns after product ownership began.
+
+The stronger automatic-SA-recovery gate **did not pass**. After SIGKILL,
+systemd restarted the provider once and running routerd restored its VICI
+connection and shared key. Ordinary bidirectional traffic still succeeded,
+but used the pre-crash kernel SPIs: each counter increased from four to eight
+packets. The new provider's SA list was empty. The receipt was acknowledged,
+with one connection/key and no pending operation. Consequently the fixture's
+new-provider ESTABLISHED assertion failed at `provider-crash-recovery`.
+An earlier explicitly initiated SA succeeded; that is not automatic recovery.
+
+This is neither an observed traffic outage nor an established 1.0 regression.
+Natural kernel-SA expiry, rekey and subsequent peer recovery remain unverified.
+Reproduce those lifecycle paths locally and establish the provider-recovery
+contract before choosing a product fix; do not add global XFRM flushing or an
+unconditional provider restart to satisfy the fixture.
+
+Cleanup passed: child exits were acknowledged, all owned effects were withdrawn,
+added packages/AppArmor profiles and the stale provider socket were removed,
+module/link/route/rule/package inventories matched, XFRM was empty, and original
+binary/config/unit/stopped-state hashes matched. The installed routerd returned
+Healthy with no controller errors. This does not qualify all IPsec modes,
+platforms, algorithms, certificate authentication or complete 1.0 preservation.
