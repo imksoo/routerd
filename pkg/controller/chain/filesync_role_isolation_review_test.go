@@ -61,12 +61,14 @@ func TestLeaseSyncObservedRoleSurvivesUnrelatedDisabledVRRP(t *testing.T) {
 				}
 				return []byte("ok"), nil
 			}}
-			observed, err := native.ReconcileWithNativeRoleObservation(t.Context())
-			if err != nil || !observed {
-				t.Fatalf("active native observation: %t %v", observed, err)
-			}
 			var proof atomic.Bool
-			proof.Store(observed && allLeaseSyncVRRPTargetsSelected(declared, selected))
+			if err := reconcileLeaseSyncVRRPRoles(t.Context(), &native, &proof, declared); err != nil {
+				t.Fatal(err)
+			}
+			status, err := store.ReadObjectStatus(api.NetAPIVersion, "VirtualAddress", "active")
+			if err != nil || status["role"] != "master" {
+				t.Fatalf("active native observation: %v %v", status, err)
+			}
 			selected, err = resourcequery.FilterRouterByResolvedWhen(declared, store)
 			if err != nil {
 				t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
 	"github.com/imksoo/routerd/pkg/platform"
 	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
@@ -632,6 +633,15 @@ func fileSyncDestination(target fileSyncTarget, remotePath string) string {
 
 func fileSyncShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// Keep the previous native observation while the next one is in progress.
+// Closing admission on entry would let role events published during that
+// observation race ahead of its successful completion and be needlessly lost.
+func reconcileLeaseSyncVRRPRoles(ctx context.Context, current *vrrpcontroller.Controller, observed *atomic.Bool, declared *api.Router) error {
+	ready, err := current.ReconcileWithNativeRoleObservation(ctx)
+	observed.Store(ready && err == nil && allLeaseSyncVRRPTargetsSelected(declared, current.Router))
+	return err
 }
 
 // This proof belongs to one controller generation. Persisted role timestamps,

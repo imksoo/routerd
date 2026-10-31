@@ -3308,17 +3308,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return didWorkError(bgp.ReconcileRouter(ctx, effective, store.withRouter(effective)))
 		}},
 		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
-			leaseSyncRolesObserved.Store(false)
 			observation, err := effectiveForReconcile()
 			if err != nil {
+				leaseSyncRolesObserved.Store(false)
 				return false, err
 			}
 			effective := observation.EffectiveRouter
 			vrrp.Router = effective
 			vrrp.Store = store.withRouter(observation.DeclaredRouter)
-			observed, err := vrrp.ReconcileWithNativeRoleObservation(ctx)
-			leaseSyncRolesObserved.Store(observed && err == nil && allLeaseSyncVRRPTargetsSelected(observation.DeclaredRouter, effective))
-			return didWorkError(err)
+			return didWorkError(reconcileLeaseSyncVRRPRoles(ctx, &vrrp, &leaseSyncRolesObserved, observation.DeclaredRouter))
 		}},
 		framework.FuncController{ControllerName: "dhcp-lease-sync", EventLockKey: "dhcp-lease-sync", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync"}, "DHCPv4ServerLeaseSync", "DHCPv6ServerLeaseSync", "DHCPv6PrefixDelegationLeaseSync", "VirtualAddress", "RouterdCluster"), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			observation, err := effectiveForReconcile()
