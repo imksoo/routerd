@@ -1029,7 +1029,8 @@ install -m 0644 "${initrd_image}" "${iso_root}/casper/initrd"
 chroot_run dpkg-query -W --showformat='${Package} ${Version}\n' > "${iso_root}/casper/filesystem.manifest"
 printf '%s' "$(du -sx --block-size=1 "${rootfs}" | awk '{print $1}')" > "${iso_root}/casper/filesystem.size"
 mksquashfs "${rootfs}" "${iso_root}/casper/filesystem.squashfs" -noappend -comp xz >/dev/null
-(cd "${iso_root}" && find . -type f ! -name md5sum.txt -print0 | sort -z | xargs -0 md5sum > md5sum.txt.new && mv md5sum.txt.new md5sum.txt)
+# shellcheck disable=SC2094 # Both checksum paths are excluded from find's input.
+(cd "${iso_root}" && find . -type f ! -name md5sum.txt ! -name md5sum.txt.new -print0 | sort -z | xargs -0 md5sum > md5sum.txt.new && mv md5sum.txt.new md5sum.txt)
 
 cat > "${iso_root}/boot/grub/grub.cfg" <<EOF
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
