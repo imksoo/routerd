@@ -273,3 +273,47 @@ func TestDHCPv6NativeInfiniteLifetimeIsNotConvertedToFiniteExpiry(t *testing.T) 
 		t.Fatalf("infinite lease was expired or replaced: %+v calls=%v", record.State, f.calls)
 	}
 }
+
+func TestDHCPv6NativeWhenFalsePreservesJournalUntilWithdrawal(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	f.observation.usable = true
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := &f.c.DeclaredRouter.Spec.Resources[2]
+	spec, err := resource.DHCPv6AddressSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"VirtualAddress/wan.role": {Equals: "master"}}}
+	resource.Spec = spec
+	if err := f.store.SaveObjectStatus(api.NetAPIVersion, "VirtualAddress", "wan", map[string]any{"role": "backup"}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Router: f.c.DeclaredRouter}
+	if err := runner.saveWhenFalseStatuses(eventedStore{Store: f.store, Router: f.c.DeclaredRouter}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Owner != before.Owner || current.State.Native == nil {
+		t.Fatal("generic WhenFalse writer erased native cleanup journal")
+	}
+	f.c.Router = &api.Router{}
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	current, err = f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State.Native != nil || current.State.Reason != "WhenFalse" || f.observation.present {
+		t.Fatalf("disabled declaration did not withdraw and publish WhenFalse: %+v", current.State)
+	}
+}
