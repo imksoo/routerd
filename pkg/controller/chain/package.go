@@ -40,24 +40,28 @@ func (c PackageController) Reconcile(ctx context.Context) error {
 		}
 		set, ok := packageSetForOS(spec, osName)
 		if !ok {
-			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "NoMatchingOSPackageSet",
 				"os":        osName,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			})
+			}); saveErr != nil {
+				return saveErr
+			}
 			continue
 		}
 		manager := firstNonEmpty(set.Manager, packageManagerForOS(set.OS))
 		if manager != "apt" && manager != "dnf" && manager != "pkg" {
-			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
+			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, "Package", resource.Metadata.Name, map[string]any{
 				"phase":     "Pending",
 				"reason":    "UnsupportedManagerRuntime",
 				"os":        set.OS,
 				"manager":   manager,
 				"names":     set.Names,
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-			})
+			}); saveErr != nil {
+				return saveErr
+			}
 			continue
 		}
 		command := c.Command
