@@ -60,8 +60,9 @@ if ((inside == 0)); then
     echo "outer link inventory changed; retain evidence" >&2
     rc=1
   fi
-  printf '%s\n' "$rc" >"$evidence/runtime.exit"
   cat "$evidence/runtime.log"
+  printf '%s\n' "$rc" >"$evidence/runtime.exit"
+  if ((rc == 0)); then printf 'ipsec-native=%s-ok\n' "$mode"; fi
   exit "$rc"
 fi
 for kind in user net mnt; do
@@ -300,4 +301,4 @@ if grep -q routerd-native-tunnel "$evidence/final-connections.log"; then echo "o
 if grep -q ESTABLISHED "$evidence/final-sas.log"; then echo "owned native state remains after withdrawal" >&2; exit 1; fi
 cp "$receipt" "$evidence/receipt.final.json"
 cp "$work/state.db" "$evidence/state.final.db"
-printf 'ipsec-native=%s-ok\n' "$mode"
+printf 'ipsec-native-stages=%s-complete\n' "$mode"
