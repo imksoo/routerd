@@ -33,6 +33,10 @@ ip xfrm policy count | grep -Eq 'SPD IN +0 OUT 0 FWD 0'
 if ip link show rd-provider >/dev/null 2>&1; then exit 69; fi
 cat /proc/modules > "$work/modules.before"
 ip -j link show > "$work/links.before.json"
+ip -4 -j route show table all > "$work/routes4.before.json"
+ip -6 -j route show table all > "$work/routes6.before.json"
+ip -4 rule show > "$work/rules4.before"
+ip -6 rule show > "$work/rules6.before"
 dpkg-query -W > "$work/packages.before"
 systemctl cat routerd > "$work/unit.before.txt"
 sha256sum /usr/local/sbin/routerd /usr/local/etc/routerd/router.yaml /etc/systemd/system/routerd.service > "$work/installed.sha256"
@@ -61,7 +65,7 @@ product() {
   --state-file "$work/state.db" --ledger-file "$work/ledger.db" --status-file "$work/status.json" \
   --socket "$work/control.sock" --status-socket "$work/status.sock"
 }
-stage=preparation peer='' holder='' running_router='' peer_birth='' holder_birth='' running_birth='' stopped=0 link_created=0 address_created=0
+stage=preparation peer='' holder='' running_router='' peer_birth='' holder_birth='' running_birth='' stopped=0 link_created=0 link_index='' address_created=0
 birth() { awk '{print $22}' "/proc/$1/stat" 2>/dev/null; }
 stop_child() {
  local pid=$1 expected=$2 label=$3 rc=0
@@ -98,7 +102,11 @@ finish() {
   # Remove only this gate's initially absent packages, never autoremove.
   apt-get -y --no-auto-remove purge "${packages[@]}" > "$work/package-remove.log" 2>&1 || failures=1
  fi
- if ((link_created)); then ip link del rd-provider || failures=1; fi
+ if ((link_created)) && [[ -e /sys/class/net/rd-provider/ifindex ]]; then
+  if [[ $(cat /sys/class/net/rd-provider/ifindex) == "$link_index" ]]; then
+   ip link del rd-provider || failures=1
+  else failures=1; fi
+ fi
  if ((address_created)); then ip addr del 10.254.95.1/32 dev lo || failures=1; fi
  if [[ -f /usr/local/etc/routerd/swanctl/routerd-ipsec.json ]]; then
   if jq -e '.pending==false and (.connections|length)==0 and (.sharedKeys|length)==0' /usr/local/etc/routerd/swanctl/routerd-ipsec.json >/dev/null; then
@@ -121,6 +129,9 @@ for _ in range(12):
     if not progress: break
 assert names(pathlib.Path('/proc/modules'))==initial
 assert json.loads((p/'links.before.json').read_text())==json.loads(subprocess.check_output(['ip','-j','link','show']))
+for family in ['4','6']:
+    assert json.loads((p/f'routes{family}.before.json').read_text())==json.loads(subprocess.check_output(['ip','-'+family,'-j','route','show','table','all']))
+    assert (p/f'rules{family}.before').read_bytes()==subprocess.check_output(['ip','-'+family,'rule','show'])
 PY
  then failures=1; fi
  sha256sum -c "$work/installed.sha256" > "$work/installed-unchanged.log" 2>&1 || failures=1
@@ -156,6 +167,7 @@ for _ in {1..50}; do [[ $(readlink /proc/"$holder"/ns/net) != "$(readlink /proc/
 [[ $(readlink /proc/"$holder"/ns/net) != "$(readlink /proc/self/ns/net)" ]]
 ip link add rd-provider type veth peer name rd-peer netns "$holder"
 link_created=1
+link_index=$(cat /sys/class/net/rd-provider/ifindex)
 ip addr add 198.18.95.1/30 dev rd-provider
 ip link set rd-provider up
 ip addr add 10.254.95.1/32 dev lo
@@ -222,7 +234,9 @@ EOF
 mkdir -p "$work"/{x509,x509ca,x509ocsp,x509aa,x509ac,x509crl,pubkey,private,rsa,ecdsa,pkcs8,pkcs12}
 peer_control --load-all --file "$work/peer.conf" > "$work/peer-load.log" 2>&1
 traffic() {
- timeout -k 2 25 swanctl --initiate --ike routerd-provider-native --child net --timeout 15 > "$work/$stage.initiate" 2>&1
+ if [[ ${1:-new} == new ]]; then
+  timeout -k 2 25 swanctl --initiate --ike routerd-provider-native --child net --timeout 15 > "$work/$stage.initiate" 2>&1
+ fi
  ping -n -I 10.254.95.1 -c 2 -W 2 10.254.95.2 > "$work/$stage.forward"
  peer_exec ping -n -I 10.254.95.2 -c 2 -W 2 10.254.95.1 > "$work/$stage.reverse"
  ip -s xfrm state > "$work/$stage.xfrm"
@@ -245,7 +259,10 @@ stage=unchanged-provider
 product "$work/router.yaml" > "$work/unchanged.log" 2>&1
 systemctl show strongswan.service -p MainPID -p InvocationID -p FragmentPath > "$work/provider.unchanged"
 cmp "$work/provider.first" "$work/provider.unchanged"
-traffic
+traffic existing
+awk '/proto esp/ {print $4}' "$work/initial-traffic.xfrm" | sort > "$work/initial.spis"
+awk '/proto esp/ {print $4}' "$work/unchanged-provider.xfrm" | sort > "$work/unchanged.spis"
+cmp "$work/initial.spis" "$work/unchanged.spis"
 stage=withdrawal
 product "$work/empty.yaml" > "$work/withdraw.log" 2>&1
 jq -e '.pending==false and (.connections|length)==0 and (.sharedKeys|length)==0' /usr/local/etc/routerd/swanctl/routerd-ipsec.json >/dev/null
