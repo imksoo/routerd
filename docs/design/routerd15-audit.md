@@ -2494,6 +2494,36 @@ package, `charon-systemd`, as well as `strongswan-swanctl` (`885888ea`); the ISO
 package list matches. Native IKE/ESP, OS daemon startup and the first real ISO
 build/boot remain pending isolated Linux VM checks.
 
+### Linux ordinary gate and native IPsec follow-up
+
+Clean `dc14c486` passed all ordinary Linux Go tests: 4281 top-level passes,
+26 explicit skips and zero failures; 121 packages passed and nine had no tests
+(445.513 seconds). Full vet and spec/config/control/OpenAPI/website schema checks
+passed. Release QA offline ran 499 tests: 492 passed, seven skipped; these are
+local/offline tests, not live cloud executions. Formal `make dist` built and
+checked all 20 static Linux executables. Its 96,956,121-byte development archive
+SHA256 is `7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08`.
+The later `00e85ba9` merge adds the IPsec script/procedure only; cmd/pkg/internal
+and Go dependency files are byte-identical to this ordinary-gate source.
+
+The dedicated Linux IPsec run used production `bab44306`, binary SHA256
+`8cb8a3d170ec4f24a81f162a705419e8ed096aef6b47786b1838f14f6871f88d`,
+and the executed `1189a939` fixture, SHA256
+`db007dffaf09b8db1f0f45d189bbe5a97d7615941f4c024e061495560e5c44e4`.
+The actual controller/SQLite/scoped VICI path acquired, converged, withdrew,
+reacquired and recovered after a provider restart. Every initial/reacquired/
+restarted phase had IKE on both ends, two ESP states per endpoint with four
+packets/336 bytes each, and two-of-two bidirectional ping replies. Final receipt,
+VICI and XFRM checks, actual child Wait and independent outer-state restoration
+passed. The existing router service remained healthy.
+
+The provider was supplied privately by the fixture. This is not package/systemd
+startup, other authentication/algorithm modes, LAN transit or whole-feature
+qualification. Two distinct network stacks use the same pinned strongSwan
+implementation. Initial permission failures occurred before product startup;
+operator certification supplied echainiv before the final unchanged-module run.
+`8f75fcd4` makes these discovered prerequisites explicit and retains the executed
+fixture's historical hash. See the [IPsec procedure](../operations/linux-ipsec-process-test.md).
 
 ### Linux IPsec package, ownership and provider recovery gate
 
@@ -2537,36 +2567,6 @@ binary/config/unit/stopped-state hashes matched. The installed routerd returned
 Healthy with no controller errors. This does not qualify all IPsec modes,
 platforms, algorithms, certificate authentication or complete 1.0 preservation.
 
-### Linux ordinary gate and native IPsec follow-up
-
-Clean `dc14c486` passed all ordinary Linux Go tests: 4281 top-level passes,
-26 explicit skips and zero failures; 121 packages passed and nine had no tests
-(445.513 seconds). Full vet and spec/config/control/OpenAPI/website schema checks
-passed. Release QA offline ran 499 tests: 492 passed, seven skipped; these are
-local/offline tests, not live cloud executions. Formal `make dist` built and
-checked all 20 static Linux executables. Its 96,956,121-byte development archive
-SHA256 is `7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08`.
-The later `00e85ba9` merge adds the IPsec script/procedure only; cmd/pkg/internal
-and Go dependency files are byte-identical to this ordinary-gate source.
-
-The dedicated Linux IPsec run used production `bab44306`, binary SHA256
-`8cb8a3d170ec4f24a81f162a705419e8ed096aef6b47786b1838f14f6871f88d`,
-and the executed `1189a939` fixture, SHA256
-`db007dffaf09b8db1f0f45d189bbe5a97d7615941f4c024e061495560e5c44e4`.
-The actual controller/SQLite/scoped VICI path acquired, converged, withdrew,
-reacquired and recovered after a provider restart. Every initial/reacquired/
-restarted phase had IKE on both ends, two ESP states per endpoint with four
-packets/336 bytes each, and two-of-two bidirectional ping replies. Final receipt,
-VICI and XFRM checks, actual child Wait and independent outer-state restoration
-passed. The existing router service remained healthy.
-
-The provider was supplied privately by the fixture. This is not package/systemd
-startup, other authentication/algorithm modes, LAN transit or whole-feature
-qualification. Two distinct network stacks use the same pinned strongSwan
-implementation. Initial permission failures occurred before product startup;
-operator certification supplied echainiv before the final unchanged-module run.
-`8f75fcd4` makes these discovered prerequisites explicit and retains the executed
-fixture's historical hash. See the [IPsec procedure](../operations/linux-ipsec-process-test.md).
 
 ## Linux live ISO boot and ServiceUnit recovery, 2026-10-31
 
@@ -2606,3 +2606,107 @@ template (`27a70036`, `363678de`). A corrected image must still be built and
 booted. Separately, real cache restoration lost ping's file capability despite
 retaining numeric ownership and modes; unprivileged raw ICMP failed after
 restore. That cache is not accepted for subsequent image qualification.
+
+
+## Corrected Linux image and VLAN trial preparation, 2026-10-31
+
+At fixed `b3cbc323`, ordinary Linux Go tests passed: 4,286 top-level passes,
+26 explicit skips and zero failures; 2,205 subtests passed. There were 121 tested
+packages and nine packages with no tests. The uncached run took 438.020 seconds,
+followed by full vet in 15.436 seconds. All 2,830 tracked source files were
+unchanged. These counts qualify this ordinary run, not actual forwarding.
+
+The first `34d184ab` image actually booted, completed firstboot and ran the
+product control API without the earlier unowned DNS template or feedback loop.
+The empty no-NIC fixture honestly reported ConntrackUnavailable. Its real
+unprivileged raw-ICMP probe passed and its provider payload was complete. The
+image still failed its embedded MD5 check: the temporary checksum output could
+include itself in the input list. The original failed image remains preserved.
+The subsequent native DHCP/client attempt failed before client startup because
+the test-only BusyBox path was absent from systemd's environment; this is not a
+DHCP forwarding pass or evidence of a product DHCP failure.
+
+`5e6d57a8` excludes that temporary checksum file. Its 1,411,469,312-byte ISO,
+SHA256 `0a0918e24408d226758e32d19c9dc06dd3ff2b817c50a66a47732d6a52c0fc97`,
+passed all 41 checksum entries extracted from the completed ISO. All 20 static
+Go programs, three manifests, numeric ownership and modes matched across the
+regular distribution, CD payload and installed SquashFS paths. The real Python
+helper and the three manifest-selected executors returned the expected negative
+protocol responses in isolated processes without contacting a cloud provider.
+The SquashFS ping retained CAP_NET_RAW and worked as UID 1000. A clean VM boot
+then confirmed the exact commit, kernel 6.8.0-147-generic, successful firstboot,
+running router service and zero automatic restarts. Its three functional links
+were down for this basic check; it does not qualify forwarding. ACPI shutdown
+timed out and the disposable RAM-only VM was stopped explicitly; graceful
+image shutdown is not claimed.
+
+The new v3 base cache was created and restored through the real builder. All
+numeric ownership/modes and the file capability survived, and raw ICMP worked
+before and after restoration. Older v1/v2 caches remain rejected. The cloud CLI
+programs aws/az/oci are separate operator prerequisites in both the baseline
+and current distributions; their absence is not promoted to cloud qualification.
+
+The operator requested actual clients in separate VMs and VLANs, matching the
+existing two-router WAN/LAN/management arrangement. The isolated VLAN-aware
+bridge has no physical uplink or host IP. Separate WAN peer, trusted client and
+other-VLAN client VMs have been provisioned; the two routers are being prepared
+with persistent OS/state disks. Lab candidates retain the existing VRRP,
+conditional PD/RA/DS-Lite behavior, lease synchronization and conntrackd paths.
+No inter-VM forwarding, redundancy or whole-function verdict is claimed yet.
+Production routers were read only and were not changed or probed.
+
+## Separate Linux VLAN clients and IPv6 reply repair, 2026-10-31
+
+A private VLAN-aware PVE bridge with no physical uplink or host IP carries
+separate WAN, trusted LAN, other-client and management VLANs. Two persistent
+Ubuntu 24.04 router VMs retain the reference routers' three functional network
+planes, 99-resource lab configuration, VRRP/VMAC, conditional PD/RA/DS-Lite,
+lease synchronization and conntrackd. Distinct WAN-service and client VMs use
+real Linux tunnels, DHCP and router advertisements. Production configurations
+were read only; no production probe or configuration change was made.
+
+At `5e6d57a8`, the trusted client obtained DHCPv4 and SLAAC addresses, answered
+local-zone DNS over IPv4 UDP/TCP and received HTTP through a DS-Lite AFTR. The
+independent server observed the inner SNAT address. A 262,144-byte response also
+matched exactly. IPv6 DNS timed out although the service listened: the host-only
+WAN policy selected its default table before the specific LAN route in main.
+The matching reply was observed leaving WAN. A temporary operator-owned
+main-table lookup suppressing only the default restored UDP and TCP responses;
+its exact rule was then removed and the original rule set restored. This is a
+causal experiment, not a product fix or production diagnosis.
+
+`39156bb6cdaa813b1e63ef026a4129b51f2aaa02` includes a typed main-route guard
+before the IPv6 host default selector. Acquisition is route/guard/selector and
+withdrawal the reverse; suppression, ownership and preceding-priority conflicts
+are exact. Both persistent routers were upgraded using the official installer
+and a canonical `make dist` archive, SHA256
+`22fd34370bc43d12954b0c917056594d2412d4c7159e29b598a1ee2da6af2841`,
+97,002,989 bytes. All 20 programs are static and the full revision is embedded.
+Configuration hashes were unchanged; installed versions and zero automatic
+restarts were read back. The first operator invocation on the backup used the
+wrong working directory and was rejected before installation; the corrected
+invocation ran inside the extracted payload. Bootstrap on the backup took about
+53 seconds, including 48.237978558 seconds of unavailable upstream name
+resolution; it completed normally with the same process, not a deadlock.
+
+Without an operator rule, the separate client then received the expected local
+DNS answer over IPv4 and IPv6, each using UDP and TCP. Captured IPv6 requests,
+responses and the TCP handshake use LAN; tcpdump reported zero kernel capture
+drops. Native
+lookup selects LAN for the reply, table 120/WAN for ordinary host traffic and
+main for the existing B4 source exception. Independent HTTP replies identify
+192.0.0.2 for IPv4 DS-Lite and the client's global address for native IPv6.
+These are real communication results, not throughput or lossless-HA claims.
+
+A separate static-address ownership error remains open: successful acquisition
+can lose its acknowledged record when a concurrent DS-Lite parent reconcile
+changes its pending receipt before the final parent check. The native address
+is present on the recorded index, but the child remains pending and must not be
+adopted from matching presence. Journal history first shows this under the
+older `5e6d57a8` process at 06:28 UTC, before this upgrade. The fix must preserve
+acknowledged ownership separately from readiness, then be replayed natively.
+The standby received conntrackd external-cache state and all three lease-sync
+commands reported successful sends from the master; neither observation proves
+session survival, received-lease activation or full HA. Those actual cutovers,
+other-VLAN denial, all DS-Lite candidates, unmodeled BGP/DoH/NTP/Tailscale paths
+and whole-function parity remain outside this checkpoint.

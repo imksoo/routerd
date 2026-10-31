@@ -28,6 +28,9 @@ func (c IPv4PolicyRouteController) policyIPv6Effects(ctx context.Context, polici
 			effects = append(effects, policyRouteEffect{Family: 6, Kind: "rule", Priority: policy.Priority, Table: table, Source: policy.Source})
 			continue
 		}
+		if policy.Priority <= 1 {
+			return nil, errors.New("IPv6 host default policy requires a priority above 1 for its main-route guard")
+		}
 		index := 1
 		if !c.DryRun {
 			var present bool
@@ -42,6 +45,7 @@ func (c IPv4PolicyRouteController) policyIPv6Effects(ctx context.Context, polici
 		}
 		effects = append(effects,
 			policyRouteEffect{Family: 6, Kind: "route", Table: table, Gateway: policy.Gateway, Interface: policy.Interface, Source: policy.Source, Metric: policy.Metric, IfIndex: index},
+			policyRouteEffect{Family: 6, Kind: "rule", Table: 254, Priority: policy.Priority - 1, InputIf: "lo", SuppressMainDefault: true},
 			policyRouteEffect{Family: 6, Kind: "rule", Table: table, Priority: policy.Priority, InputIf: "lo"},
 		)
 	}

@@ -6,6 +6,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/platform"
 	ra "github.com/imksoo/routerd/pkg/routeradvertisement"
+	routerstate "github.com/imksoo/routerd/pkg/state"
 	"net/netip"
 	"strings"
 	"testing"
@@ -505,5 +506,99 @@ func TestDSLiteParentRechecksReceiptAfterLastNativeRead(t *testing.T) {
 	reader := nativeParentReader{Router: parent.Router, Store: store, DSLite: &parent}
 	if link, err := reader.observeDeclared(t.Context(), "ds-owned"); err == nil || link.Exists {
 		t.Fatalf("parent began withdrawal during final native read but admitted child: %+v %v", link, err)
+	}
+}
+
+// The address command and exact readback succeeded before the parent temporarily
+// entered reconciliation. A later parent rejection must not erase that ACK.
+func TestDSLiteStaticAddressACKSurvivesPendingParent(t *testing.T) {
+	parent, native, store := newDSLiteNativeController(t, platform.CurrentOS())
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ifname := interfaceIfName(parent.Router, "ds")
+	scope, err := parent.NativeScope(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.Router.Spec.Resources = append(parent.Router.Spec.Resources, api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"},
+		Metadata: api.ObjectMeta{Name: "child"},
+		Spec:     api.IPv4StaticAddressSpec{Interface: "ds", Address: "192.0.2.1/24"},
+	})
+	present, pauseParent := false, true
+	adds, deletes := 0, 0
+	commandOutput := parent.CommandOutput
+	parent.CommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		out, err := commandOutput(ctx, name, args...)
+		innerRead := name == "ip" && strings.Join(args, " ") == "-j -4 addr show dev "+ifname ||
+			name == "ifconfig" && len(args) == 1 && args[0] == ifname
+		if err == nil && present && pauseParent && innerRead {
+			pauseParent = false
+			records, readErr := parent.nativeTunnelReceipts()
+			if readErr != nil || len(records) != 1 {
+				t.Fatalf("parent receipt: %+v %v", records, readErr)
+			}
+			previous := records[0]
+			records[0].Pending = true
+			if err := parent.saveNativeTunnel(&previous, records[0], false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out, err
+	}
+	child := IPv4StaticAddressController{Router: parent.Router, Store: store, DSLite: &parent,
+		ObserveAddresses: func(context.Context, string) (staticAddressSnapshot, error) {
+			observed := staticAddressSnapshot{Index: native.links[ifname].Index, Scope: scope}
+			if present {
+				observed.Addresses = []netip.Prefix{netip.MustParsePrefix("192.0.2.1/24")}
+			}
+			return observed, nil
+		},
+		Command: func(_ context.Context, _ string, args ...string) error {
+			line := strings.Join(args, " ")
+			if strings.Contains(line, "del") || strings.Contains(line, "-alias") {
+				deletes++
+				present = false
+			} else {
+				adds++
+				present = true
+			}
+			return nil
+		},
+	}
+	if err := child.Reconcile(t.Context()); err == nil || adds != 1 || !present {
+		t.Fatalf("pending parent published success or lost native effect: adds=%d present=%v err=%v", adds, present, err)
+	}
+	status, err := store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "child")
+	receipt, decodeErr := staticReceipt(status)
+	if err != nil || decodeErr != nil || receipt == nil || receipt.Pending || status["phase"] == "Applied" {
+		t.Fatalf("successful exclusive ACK was lost after parent wait: status=%+v err=%v decode=%v", status, err, decodeErr)
+	}
+	before := *receipt
+	// Reopen the real SQLite database; the retry cannot rely on invocation memory.
+	if err := store.SQLiteStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := routerstate.OpenSQLite(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	store.SQLiteStore = reopened
+	if err := parent.reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status, err = store.ReadObjectStatus(api.NetAPIVersion, "IPv4StaticAddress", "child")
+	receipt, decodeErr = staticReceipt(status)
+	if err != nil || decodeErr != nil || receipt == nil || *receipt != before || status["phase"] != "Applied" || adds != 1 {
+		t.Fatalf("retry reacquired or changed identity: adds=%d status=%+v err=%v decode=%v", adds, status, err, decodeErr)
+	}
+	child.Router = &api.Router{}
+	if err := child.Reconcile(t.Context()); err != nil || deletes != 1 || present {
+		t.Fatalf("confirmed receipt cleanup: deletes=%d present=%v err=%v", deletes, present, err)
 	}
 }

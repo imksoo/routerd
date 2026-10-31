@@ -41,7 +41,7 @@ The reference list:
 
 | Category | Packages |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `conntrackd`, `iproute2`, `iputils-arping`, `traceroute`, `keepalived`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `charon-systemd`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS control | `procps`, `systemd`, `kmod` |
 

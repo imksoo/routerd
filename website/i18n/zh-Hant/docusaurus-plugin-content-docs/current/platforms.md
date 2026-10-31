@@ -36,7 +36,7 @@ routerd 在 Linux 上使用的 OS 功能如下。
 
 | 分類 | 套件 |
 | --- | --- |
-| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `iproute2`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `radvd` |
+| Runtime | `dnsmasq-base`, `nftables`, `conntrack`, `conntrackd`, `iproute2`, `iputils-arping`, `traceroute`, `ppp`, `wireguard-tools`, `tailscale`, `tailscale-archive-keyring`, `strongswan-swanctl`, `charon-systemd`, `radvd` |
 | Diagnostics | `dnsutils`, `iputils-ping`, `iputils-tracepath`, `tcpdump`, `traceroute`, `net-tools` |
 | OS 控制 | `procps`, `systemd`, `kmod` |
 
