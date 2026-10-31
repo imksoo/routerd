@@ -16,6 +16,9 @@ reports the effective provider and requested provider separately. A false server
 condition retains active client upstreams and removes downstream access. Removing
 both declarations retires their public results after confirmed withdrawal.
 
+Standalone previews report `Rendered`: they do not write provider files, run
+service commands or acquire private ownership.
+
 ## Linux
 
 Prerequisites: Go from go.mod, chronyd/chronyc, iproute2, unshare, mount, enabled
