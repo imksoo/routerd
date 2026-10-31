@@ -135,6 +135,40 @@ WHEN NEW.kind='TrafficFlowLog' BEGIN SELECT RAISE(ABORT,'fixture required flow s
 					t.Fatalf("required public status failure was acknowledged after the actual data write: status=%+v", public)
 				}
 			}
+			if failure == "configured database" {
+				router.Spec.Resources[0].Spec = api.TrafficFlowLogSpec{Enabled: false, Source: "conntrack", Path: path}
+				if err := controller.Reconcile(t.Context()); err != nil {
+					t.Fatalf("disabling failed flow history blocked aggregate observation: %v", err)
+				}
+				disabled, err := store.ReadObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "flows")
+				if err != nil || disabled["phase"] != "Skipped" || calls != 2 {
+					t.Fatalf("disabled history retained its old failure or read the failed destination: calls=%d status=%+v err=%v", calls, disabled, err)
+				}
+				router.Spec.Resources[0].Spec = api.TrafficFlowLogSpec{Enabled: true, Source: "conntrack", Path: path}
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(filepath.Join(dir, "preserved-flow-database"), path); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				repair, err := sql.Open("sqlite", statePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, dropErr := repair.Exec("DROP TRIGGER reject_flow_public_status")
+				closeErr := repair.Close()
+				if dropErr != nil || closeErr != nil {
+					t.Fatalf("remove private status fault: %v/%v", dropErr, closeErr)
+				}
+			}
+			if err := controller.Reconcile(t.Context()); err != nil {
+				t.Fatalf("restored destination/status writer did not recover: %v", err)
+			}
+			recovered, err := store.ReadObjectStatus(api.NetAPIVersion, "TrafficFlowLog", "flows")
+			if err != nil || recovered["phase"] != "Observed" || recovered["reason"] != nil || recovered["activeFlows"] != float64(1) || len(events.Recent("routerd.conntrack.threshold.exceeded")) != 1 {
+				t.Fatalf("recovery kept a failure or repeated threshold delivery: %+v %v", recovered, err)
+			}
 		})
 	}
 }
