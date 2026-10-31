@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -135,7 +137,7 @@ func TestNTPChronyNativeLinuxControllerLifecycle(t *testing.T) {
 	write(t, "/etc/chrony/reference.conf", "bindaddress 127.0.0.2\nallow 127.0.0.0/8\nlocal stratum 10\ncmdport 0\nbindcmdaddress /run/chrony/reference.sock\npidfile /run/chrony/reference.pid\ndriftfile /var/lib/chrony/reference.drift\n")
 	reference := startNTPNativeProcess(t, ctx, chronyd, "/etc/chrony/reference.conf", filepath.Join(base, "reference.log"))
 	waitNTPNative(t, ctx, reference, func() bool { _, err := queryNTPNative("127.0.0.2:123"); return err == nil })
-	for _, kind := range []string{"NTPClient", "NTPServer"} {
+	for _, kind := range []string{"NTPClient", "NTPServer", "SharedTimesyncdChrony"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := filepath.Join("/etc/chrony", kind)
 			fragments := filepath.Join(dir, "fragments")
@@ -186,11 +188,42 @@ func TestNTPChronyNativeLinuxControllerLifecycle(t *testing.T) {
 			} else {
 				router = ntpServerRouter(api.NTPServerSpec{Provider: "chrony", Managed: true, Servers: []string{"127.0.0.2"}, ListenAddresses: []string{"127.0.0.1"}, AllowCIDRs: []string{"127.0.0.0/8"}})
 			}
-			reconcile := func() error {
-				if kind == "NTPClient" {
-					return (NTPClientController{Router: router, DeclaredRouter: router, Store: store, ConfigPath: path, Command: command}).Reconcile(ctx)
+			if kind == "SharedTimesyncdChrony" {
+				// The server's separate upstream is not the working reference.
+				// Selection of .2 proves that client inputs reached the sole owner.
+				serverSpec, _ := router.Spec.Resources[0].NTPServerSpec()
+				serverSpec.Servers = []string{"127.0.0.3"}
+				serverSpec.When = api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ntp-role": {Equals: "master"}}}
+				router.Spec.Resources[0].Spec = serverSpec
+				router.Spec.Resources = append(router.Spec.Resources, ntpRouter(api.NTPClientSpec{Provider: "systemd-timesyncd", Managed: true, Servers: []string{"127.0.0.2"}}).Spec.Resources...)
+				if _, err := store.Set("ntp-role", "master", "native fixture role"); err != nil {
+					t.Fatal(err)
 				}
-				return (NTPServerController{Router: router, DeclaredRouter: router, Store: store, ConfigPath: path, Command: command}).Reconcile(ctx)
+			}
+			router.TypeMeta = api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}
+			router.Metadata.Name = "ntp-native"
+			if err := config.ValidateForOS(router, platform.OSLinux); err != nil {
+				t.Fatal(err)
+			}
+			declared := router
+			reconcile := func() error {
+				client := NTPClientController{Router: router, DeclaredRouter: declared, Store: store, ConfigPath: path + ".client", Command: command}
+				if kind == "NTPClient" {
+					client.ConfigPath = path
+					return client.Reconcile(ctx)
+				}
+				if kind == "SharedTimesyncdChrony" {
+					if err := client.Reconcile(ctx); err != nil {
+						return err
+					}
+				}
+				if err := (NTPServerController{Router: router, DeclaredRouter: declared, Store: store, ConfigPath: path, Command: command}).Reconcile(ctx); err != nil {
+					return err
+				}
+				if kind == "SharedTimesyncdChrony" {
+					return client.Reconcile(ctx)
+				}
+				return nil
 			}
 			waitSource := func() {
 				var last string
@@ -219,7 +252,7 @@ func TestNTPChronyNativeLinuxControllerLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitSource()
-			if kind == "NTPServer" {
+			if kind != "NTPClient" {
 				waitNTPNative(t, ctx, provider, func() bool {
 					stratum, err := queryNTPNative("127.0.0.1:123")
 					if err == nil {
@@ -243,10 +276,42 @@ func TestNTPChronyNativeLinuxControllerLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitSource()
-			if kind == "NTPServer" {
+			if kind != "NTPClient" {
+				waitNTPNative(t, ctx, provider, func() bool { _, err := queryNTPNative("127.0.0.1:123"); return err == nil })
+			}
+			if kind == "SharedTimesyncdChrony" {
+				if _, err := store.Set("ntp-role", "backup", "native role withdrawal"); err != nil {
+					t.Fatal(err)
+				}
+				router = mustWhenFilteredRouter(t, false, declared, store)
+				if err := reconcile(); err != nil {
+					t.Fatal(err)
+				}
+				waitSource()
+				// Denial must be no UDP response, including malformed or
+				// unsynchronised replies, while upstream selection survives.
+				for i := 0; i < 3; i++ {
+					if reply, _, err := exchangeNTPNative("127.0.0.1:123"); err == nil {
+						t.Fatalf("inactive server replied to mode 3: %x", reply)
+					}
+				}
+				status, err := store.ReadObjectStatus(api.SystemAPIVersion, "NTPClient", "system-time")
+				if err != nil || status["phase"] != "Applied" || status["provider"] != "chrony" || status["requestedProvider"] != "systemd-timesyncd" {
+					t.Fatalf("shared client status: %v err=%v", status, err)
+				}
+				t.Log("native-stage=shared-WhenFalse upstream-selected client-Applied response-none")
+				if _, err := store.Set("ntp-role", "master", "native role restoration"); err != nil {
+					t.Fatal(err)
+				}
+				router = declared
+				if err := reconcile(); err != nil {
+					t.Fatal(err)
+				}
+				waitSource()
 				waitNTPNative(t, ctx, provider, func() bool { _, err := queryNTPNative("127.0.0.1:123"); return err == nil })
 			}
 			router = &api.Router{}
+			declared = router
 			if err := reconcile(); err != nil {
 				t.Fatal(err)
 			}
@@ -257,9 +322,17 @@ func TestNTPChronyNativeLinuxControllerLifecycle(t *testing.T) {
 				out, err := exec.CommandContext(ctx, chronyc, "-n", "-h", socket, "sources").CombinedOutput()
 				return err == nil && !strings.Contains(string(out), "127.0.0.2")
 			})
-			if kind == "NTPServer" {
-				if _, err := queryNTPNative("127.0.0.1:123"); err == nil {
-					t.Fatal("withdrawn server still answers NTP")
+			if kind != "NTPClient" {
+				if reply, _, err := exchangeNTPNative("127.0.0.1:123"); err == nil {
+					t.Fatalf("withdrawn server still replies: %x", reply)
+				}
+			}
+			if kind == "SharedTimesyncdChrony" {
+				for _, item := range []struct{ kind, name string }{{"NTPClient", "system-time"}, {"NTPServer", "lan-time"}} {
+					status, err := store.ReadObjectStatus(api.SystemAPIVersion, item.kind, item.name)
+					if err != nil || status["phase"] != "Removed" || status["servers"] != nil || status["allowCIDRs"] != nil {
+						t.Fatalf("public declaration was not retired: %v err=%v", status, err)
+					}
 				}
 			}
 			if err := provider.stop(); err != nil {
@@ -290,9 +363,20 @@ func waitNTPNative(t *testing.T, ctx context.Context, process *ntpNativeProcess,
 
 // This independent wire query checks the server response without adjusting time.
 func queryNTPNative(address string) (byte, error) {
-	connection, err := net.DialTimeout("udp", address, 300*time.Millisecond)
+	reply, timestamp, err := exchangeNTPNative(address)
 	if err != nil {
 		return 0, err
+	}
+	if len(reply) < 48 || reply[0]&7 != 4 || reply[0]>>6 == 3 || reply[1] < 1 || reply[1] > 15 || binary.BigEndian.Uint64(reply[24:32]) != timestamp || binary.BigEndian.Uint64(reply[40:48]) == 0 {
+		return 0, errors.New("independent NTP response did not confirm the request")
+	}
+	return reply[1], nil
+}
+
+func exchangeNTPNative(address string) ([]byte, uint64, error) {
+	connection, err := net.DialTimeout("udp", address, 300*time.Millisecond)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(300 * time.Millisecond))
@@ -302,15 +386,9 @@ func queryNTPNative(address string) (byte, error) {
 	timestamp := uint64(now.Unix()+2208988800)<<32 | uint64(now.Nanosecond())*(1<<32)/1e9
 	binary.BigEndian.PutUint64(request[40:], timestamp)
 	if _, err := connection.Write(request); err != nil {
-		return 0, err
+		return nil, timestamp, err
 	}
 	reply := make([]byte, 512)
 	n, err := connection.Read(reply)
-	if err != nil {
-		return 0, err
-	}
-	if n < 48 || reply[0]&7 != 4 || reply[0]>>6 == 3 || reply[1] < 1 || reply[1] > 15 || binary.BigEndian.Uint64(reply[24:32]) != timestamp || binary.BigEndian.Uint64(reply[40:48]) == 0 {
-		return 0, errors.New("independent NTP response did not confirm the request")
-	}
-	return reply[1], nil
+	return reply[:n], timestamp, err
 }
