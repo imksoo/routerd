@@ -91,6 +91,10 @@ for i in 1 2; do
  ip route del 198.18.100.1/32 via "198.18.$((10+i)).2" dev "${devices[$i]}"
 done
 echo 'CERTIFIED: independent client and two upstreams, bidirectional routed HTTP'
+ip route add blackhole 203.0.113.0/24 table 999
+ip rule add priority 10999 fwmark 0x999 table 999
+ip -4 rule show priority 10999 > "$work/foreign-rule.txt"
+ip -4 route show table 999 > "$work/foreign-route.txt"
 for path in /run/routerd /var/lib/routerd; do test -d "$path"; mount -t tmpfs tmpfs "$path"; done
 tar -xzf "$archive" -C "$work" ./bin
 export PATH="$work/bin:$PATH"
@@ -175,7 +179,8 @@ PY
 }
 await_path() {
  local name=$1 body=$2 limit=${3:-30}
- for ((attempt=0; attempt<limit; attempt++)); do
+ local deadline=$((SECONDS+limit))
+ while ((SECONDS<deadline)); do
   state > "$work/observed.json"
   if jq -e --arg name "$name" '.phase=="Applied" and .selectedCandidate==$name' "$work/observed.json" >/dev/null; then
    if [ "$(peer_run 0 curl --noproxy '*' -fsS --max-time 1 http://198.18.100.1:8080 2>/dev/null || true)" = "$body" ]; then return; fi
@@ -203,11 +208,25 @@ echo 'PASS: upstream-only recovery restores preferred WAN without manual reconci
 stage=worker-expiry
 stop_worker 1
 # Health's minimum freshness contract is two minutes, not probe interval * 3.
-await_path b 2 145
+# Allow the normal runner's maximum 30-second poll plus a small scheduling margin.
+await_path b 2 155
 echo 'PASS: unavailable Health worker expires its old success and selects WAN B'
 stage=worker-recovery
 start_worker 1 a 272
 await_path a 1
+stage=all-upstreams-unavailable
+kill -STOP "${servers[1]}" "${servers[2]}"
+for _ in {1..30}; do
+ state > "$work/observed.json"
+ if jq -e '.phase=="Pending" and .reason=="NoReadyCandidates"' "$work/observed.json" >/dev/null; then break; fi
+ kill -0 "$router"; sleep 1
+done
+jq -e '.phase=="Pending" and .reason=="NoReadyCandidates"' "$work/observed.json" >/dev/null
+if nft list table ip routerd_default_route >/dev/null 2>&1; then exit 1; fi
+if peer_run 0 curl --noproxy '*' -fsS --max-time 2 http://198.18.100.1:8080 >/dev/null 2>&1; then exit 1; fi
+kill -CONT "${servers[1]}" "${servers[2]}"
+await_path a 1
+echo 'PASS: all upstreams unavailable withdraws selection; peer-only recovery restores forwarding'
 stage='router-restart'
 kill "$router"; wait "$router"; router=''
 start_router
@@ -223,6 +242,10 @@ if ip -4 rule show | grep -Eq '10110:|10120:'; then exit 1; fi
 if ip -4 route show table all | grep -Eq 'table (110|120) '; then exit 1; fi
 if nft list table ip routerd_default_route >/dev/null 2>&1; then exit 1; fi
 if peer_run 0 curl --noproxy '*' -fsS --max-time 2 http://198.18.100.1:8080 >/dev/null 2>&1; then exit 1; fi
+ip -4 rule show priority 10999 > "$work/foreign-rule-after.txt"
+ip -4 route show table 999 > "$work/foreign-route-after.txt"
+cmp "$work/foreign-rule.txt" "$work/foreign-rule-after.txt"
+cmp "$work/foreign-route.txt" "$work/foreign-route-after.txt"
 echo 'PASS: configuration withdrawal removes owned routing and stops client forwarding'
 kill "$router"; wait "$router"; router=''
 for i in 1 2; do stop_worker "$i"; done

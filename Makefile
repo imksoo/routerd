@@ -470,6 +470,11 @@ check-routerd15-dhcpv6-native-freebsd:
 check-routerd15-plugin-process:
 	sh scripts/plugin-dynamic-process-smoke.sh
 
+.PHONY: check-routerd15-health-pbr-native-linux
+# Explicit sudo opt-in: private network/mount namespaces, no installed service changes.
+check-routerd15-health-pbr-native-linux:
+	timeout -k 15 400 bash scripts/linux-health-pbr-native-smoke.sh --isolated-netns "$(HEALTH_PBR_ARCHIVE)" "$(HEALTH_PBR_ARCHIVE_SHA256)" "$(HEALTH_PBR_WORK_PARENT)"
+
 .PHONY: check-routerd15-bfd-native-linux
 check-routerd15-bfd-native-linux:
 	sh scripts/linux-bfd-frr-smoke.sh

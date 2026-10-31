@@ -317,6 +317,41 @@ its resource status and address events retain the declared name. Protocol
 `Bound` is an observation and must not promote native address status to `Applied`.
 Local declaration/supervisor tests do not replace the native ownership gate above.
 
+## Linux native Health to PBR gate
+
+Build a checksum-pinned archive with `make dist`. On a Linux test host with
+iproute2, nftables, Python 3, curl, jq and namespace/mount privileges, run:
+
+```sh
+sudo make check-routerd15-health-pbr-native-linux \
+  HEALTH_PBR_ARCHIVE=/absolute/path/to/routerd-archive.tar.gz \
+  HEALTH_PBR_ARCHIVE_SHA256=EXPECTED_SHA256 \
+  HEALTH_PBR_WORK_PARENT=/absolute/path/to/existing/private/work-directory
+```
+
+The gate creates private network and mount namespaces, two independent HTTP
+upstreams and a LAN client. It certifies both paths before product startup, then
+removes its certification routes. Existing `/run/routerd` and `/var/lib/routerd`
+directories are required and mounted privately. No host route, firewall rule or
+installed service is changed.
+
+Pass requires actual packaged Health workers, IPC, routerd policy selection and
+client HTTP forwarding through the preferred upstream; upstream loss must switch
+traffic to the alternate, and upstream-only recovery must restore the preferred
+path. Terminating a Health worker must expire its old success and select the
+alternate within the fixture's 155-second bound (the current freshness contract
+has a two-minute minimum plus at most 30 seconds of normal polling). Worker recovery and router restart must restore
+forwarding. Configuration withdrawal must remove owned rules, routes and the
+default marking table, and client forwarding must stop. When both upstreams fail,
+selection must become Pending/NoReadyCandidates and withdraw the marking table;
+peer-only recovery must restore traffic. Unrelated rule/route tuples must survive.
+
+The fixture starts Health helpers explicitly; it does not qualify systemd
+activation, package upgrade, NAT, every policy/source mode, VRRP or FreeBSD.
+Retain source/archive/script identities and the scoped verdict. Successful raw
+output is removed; failure stops owned processes and retains bounded diagnostics
+under the selected work directory for reproduction.
+
 ## Linux native DHCPv6 address gate
 
 Use the same disposable VM prerequisites and a checksum-pinned `make dist`
