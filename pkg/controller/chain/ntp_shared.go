@@ -92,7 +92,7 @@ func (c NTPClientController) sharedNTPDReady(ctx context.Context, server api.Res
 	if err != nil {
 		return false, err
 	}
-	if ntpConfigDigest(data) != record.Digest {
+	if !record.matches(data) {
 		return false, errors.New("shared ntpd config changed while confirming client inputs")
 	}
 	for _, server := range servers {

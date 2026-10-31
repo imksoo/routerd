@@ -158,6 +158,9 @@ func ntpConfigDigest(data []byte) string {
 	return hex.EncodeToString(digest[:])
 }
 func (r ntpConfigRecord) matches(data []byte) bool {
+	if !bytes.HasPrefix(data, []byte("# routerd NTP ownership: "+r.Token+"\n")) {
+		return false
+	}
 	digest := ntpConfigDigest(data)
 	return digest == r.Digest || r.NextDigest != "" && digest == r.NextDigest
 }
@@ -369,7 +372,7 @@ func (o ntpConfigOwner) check(r ntpConfigRecord) error {
 	if err != nil {
 		return err
 	}
-	if ntpConfigDigest(data) != r.Digest || r.NextDigest != "" || r.Withdrawing {
+	if !r.matches(data) || r.NextDigest != "" || r.Withdrawing {
 		return errors.New("NTP applied config identity changed")
 	}
 	return o.require(r)
