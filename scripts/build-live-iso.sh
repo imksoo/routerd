@@ -140,6 +140,7 @@ if [ "${rootfs_only}" = false ]; then
     require mksquashfs
     require grub-mkrescue
     require xorriso
+    require file
 fi
 
 workdir=$(realpath -m -- "${workdir}")
@@ -228,7 +229,8 @@ if [ "${rootfs_only}" = true ]; then
     exit 0
 fi
 
-make build-daemons ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
+make build-daemons build-provider-executors ROUTERD_OS=linux GOARCH=amd64 GIT_COMMIT="${git_commit}"
+make check-linux-static ROUTERD_OS=linux GOARCH=amd64
 
 install -d "${payload_root}/bin" "${payload_root}/etc/routerd" "${payload_root}/share/licenses/routerd"
 for binary in bin/linux-amd64/*; do

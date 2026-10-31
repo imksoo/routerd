@@ -37,7 +37,8 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 	for _, needle := range []string{
 		"payload_root=\"${iso_root}/routerd\"",
 		"rootfs=\"${workdir}/rootfs\"",
-		"make build-daemons ROUTERD_OS=linux GOARCH=amd64",
+		"make build-daemons build-provider-executors ROUTERD_OS=linux GOARCH=amd64",
+		"make check-linux-static ROUTERD_OS=linux GOARCH=amd64",
 		"install -m 0755 packaging/install.sh",
 		"install -m 0755 packaging/uninstall.sh",
 		"router.yaml.sample",
@@ -47,6 +48,12 @@ func TestLiveISOIncludesRouterdPayload(t *testing.T) {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("Ubuntu live ISO payload script missing %q", needle)
 		}
+	}
+	build := strings.Index(script, "make build-daemons build-provider-executors")
+	verified := strings.Index(script, "make check-linux-static")
+	copy := strings.Index(script, "for binary in bin/linux-amd64/*; do")
+	if build < 0 || verified < build || copy < verified {
+		t.Fatal("live payload must be complete and statically verified before copying binaries")
 	}
 }
 
