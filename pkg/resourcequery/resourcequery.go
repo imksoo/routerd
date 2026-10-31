@@ -246,6 +246,10 @@ func statusValue(status map[string]any, field string) any {
 }
 
 func APIVersionForKind(kind string) string {
+	// ServiceUnit is runtime status, not a declared configuration kind.
+	if kind == "ServiceUnit" {
+		return api.SystemAPIVersion
+	}
 	if version, known := api.ResourceAPIVersion(kind); known {
 		return version
 	}
