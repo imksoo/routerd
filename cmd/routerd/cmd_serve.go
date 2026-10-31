@@ -104,6 +104,8 @@ func controllerResourceKinds(name string) []string {
 		return []string{"NetworkAdoption"}
 	case "package":
 		return []string{"Package"}
+	case "hostname":
+		return []string{"Hostname"}
 	case "kernel-module":
 		return []string{"KernelModule"}
 	case "pppoesession":
@@ -1309,6 +1311,7 @@ func applySandboxControllerOptions(opts *controllerchain.Options, dnsmasqConfigP
 	opts.DryRunVRRP = true
 	opts.DryRunPackage = true
 	opts.DryRunSysctl = true
+	opts.DryRunHostname = true
 	opts.DryRunNetworkAdoption = true
 	opts.DryRunBridge = true
 	opts.DryRunVXLANTunnel = true

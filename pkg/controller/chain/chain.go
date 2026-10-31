@@ -473,7 +473,9 @@ func resourceOwnerController(kind string) string {
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile":
 		return "route"
-	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+	case "Hostname":
+		return "hostname"
+	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "ConntrackTuning":
 		return "service-unit"
 	case "ConntrackObserver", "TrafficFlowLog":
 		return "conntrack"
@@ -1285,6 +1287,7 @@ type Options struct {
 	DryRunVRRP              bool
 	DryRunPackage           bool
 	DryRunSysctl            bool
+	DryRunHostname          bool
 	DryRunNetworkAdoption   bool
 	DryRunBridge            bool
 	DryRunVXLANTunnel       bool
@@ -2402,7 +2405,7 @@ func filterScheduledReconcileControllers(controllers []framework.Controller) []f
 
 func scheduledReconcileSkipsController(name string) bool {
 	switch name {
-	case "package", "kernel-module", "sysctl", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
+	case "package", "kernel-module", "sysctl", "hostname", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
 		// These controllers already run from the serve event loop with their own
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
@@ -2458,6 +2461,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
 		opts.DryRunSysctl = true
+		opts.DryRunHostname = true
 		opts.DryRunNetworkAdoption = true
 		opts.DryRunBridge = true
 		opts.DryRunVXLANTunnel = true
@@ -2475,6 +2479,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
+	hostname := HostnameController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunHostname}
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
@@ -2774,6 +2779,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			current := sysctl
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "hostname", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			current := hostname
 			current.Router = prepared.startup.Router()
 			current.Store = store.withRouter(prepared.declared)
 			return didWorkError(current.Reconcile(ctx))
