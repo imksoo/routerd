@@ -193,6 +193,13 @@ func PlanDeleteTargetGC(input GCPlanInput) GCPlan {
 func PlanStatusGC(desired map[string]bool, statuses []routerstate.ObjectStatus) GCPlan {
 	var deletes []routerstate.ObjectStatus
 	for _, status := range statuses {
+		if status.APIVersion == api.SystemAPIVersion && (status.Kind == "Sysctl" || status.Kind == "SysctlProfile") {
+			// Preserve concrete persistent ownership, including unknown records.
+			// Only the Sysctl actor may validate and retire these blocks.
+			if _, exists := status.Status["sysctlPersistentOwner"]; exists {
+				continue
+			}
+		}
 		if api.IsRemovedLegacyKind(status.Kind) {
 			deletes = append(deletes, status)
 			continue

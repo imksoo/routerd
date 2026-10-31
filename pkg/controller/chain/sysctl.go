@@ -20,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
 )
@@ -31,13 +32,21 @@ type SysctlController struct {
 	Bus    interface {
 		Publish(context.Context, daemonapi.DaemonEvent) error
 	}
-	Store   Store
-	Command outputCommandFunc
-	BaseDir string
-	DryRun  bool
+	Store             Store
+	Command           outputCommandFunc
+	BaseDir           string
+	PersistentPath    string
+	OS                platform.OS
+	DryRun            bool
+	persistentChanges map[string]bool
 }
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
+	var err error
+	c.persistentChanges, err = c.preparePersistentSysctls(ctx)
+	if err != nil {
+		return err
+	}
 	desired := map[string]bool{}
 	for _, resource := range hostdeps.SysctlResources(c.Router) {
 		desired[resource.Kind+"/"+resource.Metadata.Name] = true
@@ -87,7 +96,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			if c.DryRun && len(changed) > 0 && phase == "Applied" {
 				phase = "Rendered"
 			}
-			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "SysctlProfile", resource.Metadata.Name, map[string]any{
+			if err := c.saveSysctlStatus(api.SystemAPIVersion, "SysctlProfile", resource.Metadata.Name, map[string]any{
 				"phase":      phase,
 				"profile":    spec.Profile,
 				"applied":    applied,
@@ -136,7 +145,7 @@ type sysctlApplyResult struct {
 func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec sysctlSetting) (sysctlApplyResult, error) {
 	runtime := api.BoolDefault(spec.Runtime, true)
 	if !runtime && !spec.Persistent {
-		if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+		if err := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, map[string]any{
 			"phase":      "Skipped",
 			"reason":     "RuntimeDisabled",
 			"key":        spec.Key,
@@ -162,7 +171,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		currentOut, currentErr = command(ctx, "sysctl", "-n", spec.Key)
 		current = normalizeSysctlRuntimeValue(string(currentOut))
 		if currentErr != nil && spec.Optional {
-			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+			if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, map[string]any{
 				"phase":     "Skipped",
 				"reason":    "ReadFailedOptional",
 				"key":       spec.Key,
@@ -175,7 +184,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			return sysctlApplyResult{skipped: true}, nil
 		}
 		if currentErr != nil {
-			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
+			if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, map[string]any{
 				"phase": "Error", "reason": "ObserveFailed", "key": spec.Key, "error": currentErr.Error(),
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
 			}); saveErr != nil {
@@ -199,12 +208,12 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 				if spec.Optional {
 					status["phase"] = "Skipped"
 					status["reason"] = "ApplyFailedOptional"
-					if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+					if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 						return sysctlApplyResult{}, saveErr
 					}
 					return sysctlApplyResult{skipped: true}, nil
 				}
-				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+				if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 					return sysctlApplyResult{}, saveErr
 				}
 				return sysctlApplyResult{}, fmt.Errorf("apply sysctl %s: %w", spec.Key, err)
@@ -215,38 +224,43 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	persistentPath := ""
 	persistentChanged := false
 	if spec.Persistent {
-		baseDir := c.BaseDir
-		if baseDir == "" {
-			baseDir = "/etc/sysctl.d"
-		}
-		persistentPath = filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
-		data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
-		var err error
-		persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, c.DryRun)
-		if err != nil {
-			status := map[string]any{
-				"phase":        "Error",
-				"reason":       "PersistFailed",
-				"key":          spec.Key,
-				"value":        spec.Value,
-				"currentValue": current,
-				"persistent":   true,
-				"path":         persistentPath,
-				"error":        err.Error(),
-				"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
+		if c.sysctlOS() == platform.OSFreeBSD {
+			persistentPath = c.freeBSDSysctlPath()
+			persistentChanged = c.persistentChanges[kind+"/"+name]
+		} else {
+			baseDir := c.BaseDir
+			if baseDir == "" {
+				baseDir = "/etc/sysctl.d"
 			}
-			if spec.Optional {
-				status["phase"] = "Skipped"
-				status["reason"] = "PersistFailedOptional"
-				if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+			persistentPath = filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
+			data := []byte(fmt.Sprintf("# Managed by routerd. Do not edit by hand.\n%s = %s\n", spec.Key, spec.Value))
+			var err error
+			persistentChanged, err = writeFileIfChanged(persistentPath, data, 0644, c.DryRun)
+			if err != nil {
+				status := map[string]any{
+					"phase":        "Error",
+					"reason":       "PersistFailed",
+					"key":          spec.Key,
+					"value":        spec.Value,
+					"currentValue": current,
+					"persistent":   true,
+					"path":         persistentPath,
+					"error":        err.Error(),
+					"updatedAt":    time.Now().UTC().Format(time.RFC3339Nano),
+				}
+				if spec.Optional {
+					status["phase"] = "Skipped"
+					status["reason"] = "PersistFailedOptional"
+					if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
+						return sysctlApplyResult{}, saveErr
+					}
+					return sysctlApplyResult{skipped: true}, nil
+				}
+				if saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
 					return sysctlApplyResult{}, saveErr
 				}
-				return sysctlApplyResult{skipped: true}, nil
+				return sysctlApplyResult{}, fmt.Errorf("persist sysctl %s: %w", spec.Key, err)
 			}
-			if saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); saveErr != nil {
-				return sysctlApplyResult{}, saveErr
-			}
-			return sysctlApplyResult{}, fmt.Errorf("persist sysctl %s: %w", spec.Key, err)
 		}
 	}
 	changed := runtimeChanged || persistentChanged
@@ -272,7 +286,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	if runtimeChanged && currentErr == nil {
 		status["previousValue"] = normalizeSysctlRuntimeValue(string(currentOut))
 	}
-	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); err != nil {
+	if err := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, status); err != nil {
 		return sysctlApplyResult{}, err
 	}
 	return sysctlApplyResult{changed: changed}, nil
@@ -355,7 +369,7 @@ func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
 	path := conntrackTuningFirewallLogPath(c.Router)
 	if path == "" {
 		if c.Store != nil {
-			return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+			return c.saveSysctlStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
 				"phase":     "Skipped",
 				"reason":    "FirewallLogUnavailable",
 				"updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
@@ -366,7 +380,7 @@ func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
 	log, err := logstore.OpenFirewallLogReadOnly(path)
 	if err != nil {
 		if c.Store != nil {
-			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+			_ = c.saveSysctlStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
 				"phase":     "Degraded",
 				"reason":    "FirewallLogOpenFailed",
 				"error":     err.Error(),
@@ -416,7 +430,7 @@ func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
 		if c.DryRun && len(changed) > 0 {
 			phase = "Rendered"
 		}
-		return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+		return c.saveSysctlStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
 			"phase":       phase,
 			"applyMode":   summary.ApplyMode,
 			"autoApply":   summary.AutoApply,
