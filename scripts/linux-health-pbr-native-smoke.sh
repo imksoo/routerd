@@ -157,6 +157,14 @@ start_worker() {
   --socket "/run/routerd/healthcheck/internet-$name.sock" \
   --state-file "$work/health-$name.json" --event-file "$work/events-$name.jsonl" >> "$work/health-$name.log" 2>&1 & workers[i]=$!
 }
+stop_worker() {
+ local i=$1 rc=0
+ kill "${workers[$i]}"
+ wait "${workers[$i]}" || rc=$?
+ # This standalone helper uses the default SIGTERM handler.
+ test "$rc" = 0 || test "$rc" = 143
+ workers[i]=''
+}
 state() {
  python3 - "$work/state.db" <<'PY'
 import sqlite3,sys
@@ -193,9 +201,7 @@ kill -CONT "${servers[1]}"
 await_path a 1
 echo 'PASS: upstream-only recovery restores preferred WAN without manual reconciliation'
 stage=worker-expiry
-kill "${workers[1]}"
-wait "${workers[1]}"
-workers[1]=''
+stop_worker 1
 # Health's minimum freshness contract is two minutes, not probe interval * 3.
 await_path b 2 145
 echo 'PASS: unavailable Health worker expires its old success and selects WAN B'
@@ -219,4 +225,4 @@ if nft list table ip routerd_default_route >/dev/null 2>&1; then exit 1; fi
 if peer_run 0 curl --noproxy '*' -fsS --max-time 2 http://198.18.100.1:8080 >/dev/null 2>&1; then exit 1; fi
 echo 'PASS: configuration withdrawal removes owned routing and stops client forwarding'
 kill "$router"; wait "$router"; router=''
-for i in 1 2; do kill "${workers[$i]}"; wait "${workers[$i]}"; workers[i]=''; done
+for i in 1 2; do stop_worker "$i"; done
