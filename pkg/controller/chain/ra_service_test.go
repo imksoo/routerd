@@ -655,3 +655,37 @@ func TestRADelegatedFailedDADAndUnknownOwnershipRemainErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestRAInactiveReceiptChecksKernelBeforeOpeningInterface(t *testing.T) {
+	for _, stale := range []bool{true, false} {
+		t.Run(fmt.Sprint("stale=", stale), func(t *testing.T) {
+			service, store, router, endpoint, socket, _ := raServiceFixture(t)
+			if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err != nil {
+				t.Fatal(err)
+			}
+			if stale {
+				service.scope = func(context.Context) (string, error) { return "replacement-kernel", nil }
+			}
+			opens := 0
+			service.open = func(string) (ra.Endpoint, error) {
+				opens++
+				return ra.Endpoint{}, errors.New("RA source is not link-local on staged standby interface")
+			}
+			err := service.Reconcile(t.Context(), router, &api.Router{}, store)
+			journal, readErr := readRAJournal(store)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if stale {
+				if err != nil || opens != 0 || len(journal) != 0 {
+					t.Fatalf("prior-kernel receipt tried native withdrawal: opens=%d journal=%+v err=%v", opens, journal, err)
+				}
+			} else if err == nil || opens != 1 || len(journal) != 1 {
+				t.Fatalf("current-kernel withdrawal authority was silently discarded: opens=%d journal=%+v err=%v", opens, journal, err)
+			}
+			if len(socket.packets) != 1 {
+				t.Fatal("inactive receipt emitted an extra advertisement")
+			}
+		})
+	}
+}
