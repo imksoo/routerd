@@ -333,8 +333,9 @@ grep -q fixture-foreign "$work/reacquired.connections"
 # The unit may reload it after the crash; routerd must preserve that connection.
 awk '/^fixture-foreign:/ {keep=1} keep && /^[^[:space:]]/ && !/^fixture-foreign:/ {keep=0} keep' "$work/reacquired.connections" > "$work/foreign.expected"
 [[ -s $work/foreign.expected ]]
-cp "$work/reacquired-traffic.xfrm" "$work/owned-precrash.xfrm"
-python3 - "$work/owned-precrash.xfrm" "$work/local-expiry-plan.json" <<'PY'
+capture_precrash_receipt() {
+ ip -s xfrm state > "$work/owned-precrash.xfrm" || return 1
+ if ! python3 - "$work/owned-precrash.xfrm" "$work/local-expiry-plan.json" <<'PY'
 import datetime,json,pathlib,re,sys
 text=pathlib.Path(sys.argv[1]).read_text()
 states=[]
@@ -352,6 +353,26 @@ assert len(states)==2,states
 plan={'states':states,'latestRecordedHardExpiryUnix':max(s['hardExpiryUnix']for s in states),'peerRekeySeconds':20,'peerHardLifetimeSeconds':30,'productLifetimeModified':False}
 pathlib.Path(sys.argv[2]).write_text(json.dumps(plan,indent=2))
 PY
+ then return 1; fi
+ cp /usr/local/etc/routerd/swanctl/routerd-ipsec.json "$work/precrash-receipt.json" || return 1
+ python3 - "$work/local-expiry-plan.json" "$work/precrash-receipt.json" "$work/precrash-receipt-proof.json" <<'PY'
+import datetime,json,pathlib,re,sys
+plan=json.loads(pathlib.Path(sys.argv[1]).read_text())
+receipt=json.loads(pathlib.Path(sys.argv[2]).read_text())
+connections=[c for c in receipt['connections']if c['name']=='routerd-provider-native']
+assert not receipt['pending']and len(connections)==1
+connection=connections[0]
+assert connection.get('acknowledged')is True
+recorded={hex(s['id']['spi']):s for s in connection.get('sas',[])}
+coverage={}
+for state in plan['states']:
+    native=recorded.get(state['spi'])
+    coverage[state['spi']]=bool(native and native['scope']==connection.get('scope')and native['scope']and native['addTime']==int(datetime.datetime.fromisoformat(state['addTimeUTC']).timestamp())and re.fullmatch('[0-9a-f]{64}',native['fingerprint'])and native['id']['protocol']=='ESP'and {native['id']['source'],native['id']['destination']}=={'198.18.95.1','198.18.95.2'})
+report={'precondition':'exact pre-crash native SAs are already observed and journaled','coverage':coverage,'allObservedSAsRecorded':all(coverage.values()),'unobservedCreationCrashWindowQualified':False}
+pathlib.Path(sys.argv[3]).write_text(json.dumps(report,indent=2))
+assert report['allObservedSAsRecorded'],report
+PY
+}
 stage=provider-crash-recovery
 "$routerd" serve --controllers package,ipsec --config "$work/router.yaml" \
  --state-file "$work/state.db" --ledger-file "$work/ledger.db" --status-file "$work/status.json" \
@@ -359,6 +380,17 @@ stage=provider-crash-recovery
 running_birth=$(birth "$running_router")
 for _ in {1..50}; do [[ -S $work/control.sock ]] && break; kill -0 "$running_router"; sleep .2; done
 [[ -S $work/control.sock ]]
+# This gate qualifies recovery of durably observed SAs. It deliberately does not
+# claim recovery of an SA created and lost before any owner observation.
+precrash_recorded=0
+for _ in {1..120}; do
+ if capture_precrash_receipt > "$work/precrash-receipt-observation.log" 2>&1; then
+  precrash_recorded=1; break
+ fi
+ kill -0 "$running_router"
+ sleep .5
+done
+[[ $precrash_recorded == 1 ]]
 old_pid=$(systemctl show strongswan.service -p MainPID --value)
 [[ $old_pid != 0 ]]
 crash_epoch=$(date +%s)

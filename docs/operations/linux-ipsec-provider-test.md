@@ -49,6 +49,12 @@ Acceptance requires:
 - Reconciliation, withdrawal and reacquisition without changing provider PID or
   systemd invocation identity, while an independently loaded connection survives.
   Unchanged reconciliation also retains the active ESP SPIs and actual traffic.
+- Before injecting a crash, the running owner must persist its positive named
+  `load-conn` acknowledgment and each sampled native
+  SPI, installation time, kernel scope and configuration fingerprint in its
+  actual receipt. The fixture samples fresh native state while waiting, records
+  exact coverage in `precrash-receipt-proof.json`, and stops before the crash if
+  that prerequisite is not met within 60 seconds.
 - An explicitly injected provider SIGKILL followed by systemd restart and the
   running routerd's periodic configuration recovery, with no manual provider
   restart or product reconcile between failure and recovered traffic. Record
@@ -131,8 +137,35 @@ The fixture continues to the safe withdrawal stage after a failed recovery
 deadline so that remaining known SPIs and preserved foreign configuration can
 be assessed independently. An immediate new-SPI recovery qualifies ordinary
 traffic continuity without making a claim about old-SPI counter growth.
+The exact-record gate covers SAs observed before the crash. It does not qualify
+the asynchronous window between a new SA's creation/rekey and the owner's next
+observation. On withdrawal, a remaining same-endpoint SA without exact recorded
+authority is detected as uncertainty: routerd preserves its pending receipt and
+returns an error instead of deleting it or reporting withdrawal complete. Endpoint
+matching supplies no deletion authority. A different native generation under a
+recorded lookup identity is also preserved and rejected.
+
 These additions are prepared test conditions; only a new assigned-VM execution
-can qualify them. They do not change the recorded run05 result.
+can qualify them. They do not change the recorded run05 or product-dc14/fixture-2b
+result. That original short trial recovered traffic and new provider SAs but
+left two old SPIs after the declaration was removed.
+
+A saved pending request is not an acknowledged connection acquisition. The
+owner records a positive `load-conn` response in the same receipt before it can
+learn asynchronous native SAs. A rejected or interrupted initial load grants no
+authority to adopt, unload or terminate a later independently created connection
+with the same name. That situation keeps the pending receipt and returns an
+error; matching endpoint tuples do not establish ownership.
+
+The renderer and VICI loader continue to omit `mobike`. strongSwan 5.9 enables
+[MOBIKE by default](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html),
+so the absence of a dedicated routerd API field does not mean endpoint mobility
+is disabled. This gate uses fixed configured endpoints. The native recovery
+owner does not acquire new kernel deletion authority for a changed endpoint
+pair merely because VICI reports the same connection name. It retains the
+original receipt and returns an unknown-ownership error. Recovery withdrawal
+after an authenticated MOBIKE move needs additional association proof and is
+not qualified here; the protocol's existing default is unchanged.
 
 The peer settings use the documented [swanctl CHILD lifetime and DPD controls](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html)
 and private daemon retransmission controls. No provider-wide flush, foreign
