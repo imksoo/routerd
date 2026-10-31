@@ -638,23 +638,27 @@ func fileSyncShellQuote(value string) string {
 // Keep the previous native observation while the next one is in progress.
 // Closing admission on entry would let role events published during that
 // observation race ahead of its successful completion and be needlessly lost.
-func reconcileLeaseSyncVRRPRoles(ctx context.Context, current *vrrpcontroller.Controller, observed *atomic.Bool, declared *api.Router) error {
-	ready, err := current.ReconcileWithNativeRoleObservation(ctx)
-	observed.Store(ready && err == nil && allLeaseSyncVRRPTargetsSelected(declared, current.Router))
+func reconcileLeaseSyncVRRPRoles(ctx context.Context, current *vrrpcontroller.Controller, observed *atomic.Pointer[leaseSyncRoleProof]) error {
+	roles, err := current.ReconcileWithNativeRoleObservation(ctx)
+	observed.Store(&leaseSyncRoleProof{names: roles})
 	return err
 }
 
 // This proof belongs to one controller generation. Persisted role timestamps,
 // including timestamps in the future, cannot establish a native observation in
 // this generation. A failed subsequent observation closes admission again.
+type leaseSyncRoleProof struct {
+	names map[string]bool
+}
+
 type leaseSyncRoleStore struct {
 	eventedStore
-	rolesObserved *atomic.Bool
+	rolesObserved *atomic.Pointer[leaseSyncRoleProof]
 }
 
 func (s leaseSyncRoleStore) ReadObjectStatus(version, kind, name string) (map[string]any, error) {
 	status, err := s.eventedStore.ReadObjectStatus(version, kind, name)
-	if err != nil || kind != "VirtualAddress" || s.rolesObserved.Load() {
+	if err != nil || kind != "VirtualAddress" || s.roleObserved(name) {
 		return status, err
 	}
 	status = maps.Clone(status)
@@ -664,45 +668,18 @@ func (s leaseSyncRoleStore) ReadObjectStatus(version, kind, name string) (map[st
 
 func (s leaseSyncRoleStore) ReadVariable(name string) (routerstate.Value, error) {
 	ref := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(name, "${"), "}"))
-	kind, _, valid := whenStatusDependencyRef(ref)
+	kind, resourceName, valid := whenStatusDependencyRef(ref)
 	_, field, hasField := strings.Cut(ref, ".status.")
 	if !hasField {
 		_, field, hasField = strings.Cut(ref, ".")
 	}
-	if valid && kind == "VirtualAddress" && hasField && strings.TrimSpace(field) == "role" && !s.rolesObserved.Load() {
+	if valid && kind == "VirtualAddress" && hasField && strings.TrimSpace(field) == "role" && !s.roleObserved(resourceName) {
 		return routerstate.Value{Status: routerstate.StatusUnknown}, nil
 	}
 	return s.eventedStore.ReadVariable(name)
 }
 
-// The boolean is intentionally conservative across all declared VRRP targets.
-// A target excluded by its own When must not leave an old role eligible merely
-// because another target was successfully observed.
-func allLeaseSyncVRRPTargetsSelected(declared, selected *api.Router) bool {
-	if declared == nil || selected == nil {
-		return false
-	}
-	for _, target := range declared.Spec.Resources {
-		if target.Kind != "VirtualAddress" {
-			continue
-		}
-		spec, err := target.VirtualAddressSpec()
-		if err != nil {
-			return false
-		}
-		if spec.Mode != "vrrp" {
-			continue
-		}
-		present := false
-		for _, active := range selected.Spec.Resources {
-			if active.APIVersion == target.APIVersion && active.Kind == target.Kind && active.Metadata.Name == target.Metadata.Name {
-				present = true
-				break
-			}
-		}
-		if !present {
-			return false
-		}
-	}
-	return true
+func (s leaseSyncRoleStore) roleObserved(name string) bool {
+	proof := s.rolesObserved.Load()
+	return proof != nil && proof.names[name]
 }
