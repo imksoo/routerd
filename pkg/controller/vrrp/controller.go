@@ -63,33 +63,33 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	return err
 }
 
-// ReconcileWithNativeRoleObservation returns true only after this invocation
-// observed and saved every configured VRRP role through the native backend.
-// Persisted roles, rendering and incomplete observations grant no authority.
-func (c *Controller) ReconcileWithNativeRoleObservation(ctx context.Context) (bool, error) {
+// ReconcileWithNativeRoleObservation identifies the VirtualAddresses whose
+// current native role this invocation observed and saved. Missing entries,
+// persisted roles and rendering grant no dependent-effect authority.
+func (c *Controller) ReconcileWithNativeRoleObservation(ctx context.Context) (map[string]bool, error) {
 	if c.Router == nil || c.Store == nil {
-		return false, nil
+		return nil, nil
 	}
 	aliases := interfaceAliases(c.Router)
 	cleanupChanged, err := c.cleanupStaleStaticAddresses(ctx, aliases)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if !hasVirtualAddress(c.Router) {
-		return false, c.stopVirtualAddressBackend(ctx)
+		return nil, c.stopVirtualAddressBackend(ctx)
 	}
 	priorities, tracks, err := c.effectivePriorities()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	staticChanged, staticIsolated, err := c.applyStaticAddresses(ctx, aliases)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	backend := c.vrrpBackend()
 	result, err := backend.Apply(ctx, c, aliases, priorities)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	extra := map[string]any{}
 	if result.ConfigHash != "" {
@@ -111,26 +111,25 @@ func (c *Controller) ReconcileWithNativeRoleObservation(ctx context.Context) (bo
 		extra["vmacRepairError"] = result.VMACRepairError.Error()
 	}
 	if err := c.saveStatuses("Applied", result.Path, result.Changed || cleanupChanged || staticChanged, tracks, result.Roles, staticIsolated, result.GracefulActivations, extra); err != nil {
-		return false, err
+		return nil, err
 	}
 	if result.VMACRepairError != nil {
-		return false, result.VMACRepairError
+		return nil, result.VMACRepairError
 	}
 	if c.DryRun {
-		return false, nil
+		return nil, nil
 	}
-	observed := false
+	observed := map[string]bool{}
 	for _, resource := range c.Router.Spec.Resources {
 		spec, ok, err := vrrpResourceSpec(resource)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		if !ok || spec.Mode != "vrrp" {
 			continue
 		}
-		observed = true
-		if role := result.Roles[resource.Metadata.Name]; role != "master" && role != "backup" {
-			return false, nil
+		if role := result.Roles[resource.Metadata.Name]; role == "master" || role == "backup" {
+			observed[resource.Metadata.Name] = true
 		}
 	}
 	return observed, nil

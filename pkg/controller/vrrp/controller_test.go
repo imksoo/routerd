@@ -673,7 +673,7 @@ func TestReconcileObservesVRRPRoleFromVIPAddress(t *testing.T) {
 			return []byte("ok"), nil
 		},
 	}
-	if observed, err := controller.ReconcileWithNativeRoleObservation(context.Background()); err != nil || !observed {
+	if observed, err := controller.ReconcileWithNativeRoleObservation(context.Background()); err != nil || !observed["vip"] {
 		t.Fatalf("native role observation: observed=%v err=%v", observed, err)
 	}
 	status := store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")
@@ -1389,4 +1389,35 @@ func (s mapStore) ReadObjectStatus(apiVersion, kind, name string) (map[string]an
 func (s mapStore) ReadVariable(name string) (routerstate.Value, error) {
 	now := time.Now().UTC()
 	return routerstate.Value{Status: routerstate.StatusUnknown, Since: now, UpdatedAt: now}, nil
+}
+
+func TestNativeRoleObservationKeepsIndependentVIPProof(t *testing.T) {
+	router := vrrpRouter("vrrp")
+	other := router.Spec.Resources[1]
+	spec, err := other.VirtualAddressSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Metadata.Name = "unobserved-vip"
+	spec.Interface, spec.Address, spec.VRRP.VirtualRouterID = "other", "10.240.71.10/32", 19
+	other.Spec = spec
+	router.Spec.Resources = append(router.Spec.Resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "other"}, Spec: api.InterfaceSpec{IfName: "ens19"}}, other)
+	store := mapStore{}
+	controller := Controller{Router: router, Store: store, ConfigPath: t.TempDir() + "/keepalived.conf", Systemctl: "systemctl", IP: "ip", OperatingSystem: platform.OSLinux,
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens18" {
+				return []byte("2: ens18 inet 10.240.70.10/32 scope global ens18\n"), nil
+			}
+			if name == "ip" && strings.Join(args, " ") == "-4 addr show dev ens19" {
+				return nil, errors.New("independent VIP observation unavailable")
+			}
+			return []byte("ok"), nil
+		}}
+	observed, err := controller.ReconcileWithNativeRoleObservation(t.Context())
+	if err != nil || !observed["vip"] || observed["unobserved-vip"] {
+		t.Fatalf("independent native proofs: %+v %v", observed, err)
+	}
+	if store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "vip")["role"] != "master" || store.ObjectStatus(api.NetAPIVersion, "VirtualAddress", "unobserved-vip")["role"] != "unknown" {
+		t.Fatal("native observation results were not preserved")
+	}
 }
