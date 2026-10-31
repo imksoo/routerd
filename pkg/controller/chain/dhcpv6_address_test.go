@@ -245,3 +245,31 @@ func TestDHCPv6NativeLostApplyAcknowledgmentDoesNotAdoptTuple(t *testing.T) {
 		t.Fatalf("uncertain apply adopted/replaced tuple: %+v calls=%v", record.State, f.calls)
 	}
 }
+
+func TestDHCPv6NativeInfiniteLifetimeIsNotConvertedToFiniteExpiry(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	f.snapshot.Addresses[0].Preferred = 0xffffffff
+	f.snapshot.Addresses[0].Valid = 0xffffffff
+	f.observation.usable = true
+	command := f.c.Command
+	f.c.Command = func(ctx context.Context, name string, args ...string) error {
+		err := command(ctx, name, args...)
+		f.observation.preferredSeconds, f.observation.validSeconds = 0xffffffff, 0xffffffff
+		return err
+	}
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.unavailable = true
+	f.now = f.now.Add(140 * 365 * 24 * time.Hour)
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State.Phase != "Applied" || len(f.calls) != 1 {
+		t.Fatalf("infinite lease was expired or replaced: %+v calls=%v", record.State, f.calls)
+	}
+}
