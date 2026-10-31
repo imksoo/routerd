@@ -2379,7 +2379,7 @@ Exact archive, executable and script hashes are recorded in
 
 Reproduce with `scripts/linux-dhcpv6-native-smoke.sh --disposable-vm ARCHIVE
 SHA256 KEA_PACKAGE_ROOT` and the
-[native DHCPv6 runbook](../operations/development.md#linux-native-dhcpv6-address-gate).
+[native DHCPv6 runbook](/docs/operations/development#linux-native-dhcpv6-address-gate).
 Pass requires declaration-to-supervisor acquisition, finite `/128` readback,
 DAD completion, three peer packets each way, service stop/restart preserving the
 SQLite acquisition, timer-driven renewal, actual 90-second expiry with Kea
