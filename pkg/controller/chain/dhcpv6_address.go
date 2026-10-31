@@ -206,7 +206,11 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 				return e
 			}
 			sameParent := obs.ifIndex == state.Native.IfIndex && obs.scope == state.Native.Scope && obs.parentToken == state.Native.ParentToken
-			if !sameParent || !obs.present || owned.Held && !now.Before(owned.ValidUntil) {
+			deadline := owned.ValidUntil
+			if !owned.Held && owned.Pending != nil && owned.Pending.Operation == "apply" {
+				deadline = owned.Pending.ValidUntil
+			}
+			if !sameParent || !obs.present || !deadline.IsZero() && !c.now().Before(deadline) {
 				state.Native.Addresses = append(state.Native.Addresses[:i], state.Native.Addresses[i+1:]...)
 				if err := save(); err != nil {
 					return err
@@ -250,6 +254,9 @@ func (c DHCPv6AddressController) reconcileAddress(ctx context.Context, store dhc
 					return fmt.Errorf("DHCPv6 native parent changed before withdrawal")
 				}
 				if check.present {
+					if !c.now().Before(owned.ValidUntil) {
+						return fmt.Errorf("DHCPv6 ownership expired before withdrawal")
+					}
 					command, args := ipv6StaticAddressDeleteCommand(c.currentOS(), state.Native.IfName, owned.Address)
 					if e := c.command(ctx, command, args...); e != nil {
 						return e
