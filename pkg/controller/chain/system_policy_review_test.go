@@ -25,7 +25,7 @@ func TestPackageControllerDetectsRemovedPackageInActualDPKGDatabase(t *testing.T
 	dir := t.TempDir()
 	writeStatus := func(status string) {
 		t.Helper()
-		data := "Package: routerd-private-fixture\nStatus: " + status + "\nArchitecture: all\nVersion: 1\nDescription: private package status fixture\n"
+		data := "Package: routerd-private-fixture\nStatus: " + status + "\nArchitecture: all\nVersion: 1\nMaintainer: Routerd Test <test@example.invalid>\nDescription: private package status fixture\n"
 		if err := os.WriteFile(filepath.Join(dir, "status"), []byte(data), 0600); err != nil {
 			t.Fatal(err)
 		}
