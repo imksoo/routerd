@@ -2363,3 +2363,68 @@ Standalone NTP previews were separately reproduced publishing Applied despite
 zero provider commands, no generated file and no acquired receipt. `b34d87b8`
 changes only that unexecuted display to Rendered. Its same SQLite regression and
 all normal NTP tests passed; the live packet path above is unchanged.
+
+
+## DHCPv6 native address ownership and DAD
+
+The Linux native gate passed at product source
+`d05524de0f04ef7f77fb1a4051bea35ff729b44a`, including the separately verified
+NTP/plugin/system-policy integration. It used a static `make dist` archive on
+an isolated Ubuntu 24.04.4 VM with Linux 6.8.0-124-generic. Router and independent
+Kea 2.4.1 peer ran in distinct network namespaces; supervisor runtime and state
+paths were privately mounted. No installed service configuration was replaced.
+Exact archive, executable and script hashes are recorded in
+[the qualification ledger](routerd15-feature-qualification.json), entry
+`linux-dhcpv6-native-d05524de`.
+
+Reproduce with `scripts/linux-dhcpv6-native-smoke.sh --disposable-vm ARCHIVE
+SHA256 KEA_PACKAGE_ROOT` and the
+[native DHCPv6 runbook](../operations/development.md#linux-native-dhcpv6-address-gate).
+Pass requires declaration-to-supervisor acquisition, finite `/128` readback,
+DAD completion, three peer packets each way, service stop/restart preserving the
+SQLite acquisition, timer-driven renewal, actual 90-second expiry with Kea
+stopped, peer-only resumption and automatic recovery, and configuration removal
+that withdraws the address before retiring ownership. A conflicting independent
+host must trigger server-observed Decline and native withdrawal. A subsequent
+combined PD/NA configuration must acquire both associations through its shared
+worker and retain native address ownership. All these checks passed; post-run
+inspection found no fixture namespaces or Kea process and the installed router
+remained Healthy. Successful output and resolved failure output were removed.
+
+Two failed gates were diagnosed before retrying qualification. The first fixture
+used a global peer source while assuming `/128` acquisition also installed an
+on-link `/64` return route. A local isolated real-kernel reproduction showed the
+missing route, and scoped link-local peer traffic succeeded in both directions.
+The corrected fixture certifies that path before starting product qualification;
+it does not add a fabricated product route.
+
+The second gate exposed a product bug: Linux deleted a finite address immediately
+on DAD failure. Its `RTM_DELADDR` carried `dadfailed tentative dynamic` within
+24 ms, so periodic address dumps saw absence and reapplied the same lease. The
+new isolated real-kernel regression first failed with no Decline, then passed
+in 1.16 seconds after subscribing before address addition and committing the
+exact acquisition's failure before sending Decline. A bounded subscription also
+honors cancellation and drains its reader at close. This follows actual kernel
+notifications rather than treating arbitrary address disappearance as a duplicate.
+
+SQLite retains upstream authority separately from pending/held native ownership.
+Expiry cannot extend an address, uncertain writes cannot adopt a present foreign
+tuple, and withdrawal rechecks ownership deadlines after observation. Read-only
+status projection removes expired applied addresses without deleting cleanup
+records. Protocol status and generic garbage collection do not own this journal.
+The local deadline, foreign tuple, DAD, restart, no-write and infinite-lifetime
+regressions pass. The integrated ordinary suite passed 121 packages and 4,263
+top-level tests, with 26 explicit skips. Targeted race tests passed; the privileged
+native test ran separately with explicit namespace isolation. FreeBSD chain
+cross-compilation passed, which is not FreeBSD runtime qualification.
+
+Reviewed entry points and consumers include
+`pkg/controller/chain/{chain,dhcpv6_worker,dhcpv6_address,dhcpv6_address_source,dhcpv6_address_store,ipv6_dad_linux,pd_address_observation,native_parent}.go`,
+`pkg/state/{dhcpv6_address,sqlite}.go`, `pkg/pdclient/{client,address_client,decline,snapshot}.go`,
+`cmd/routerd-dhcpv6-client/{main,address,decline}.go`,
+`pkg/lifecycle/{registry,gc_plan}.go`, `pkg/apply/engine.go`, their related tests,
+and the operator runbook. The Linux path is now qualified for the stated fixture.
+WAN routing/forwarding composition, other source modes, multiple-prefix/server
+behavior and native FreeBSD remain separate gates. The feature preservation and
+platform-wide verdicts remain unknown; this result does not close routerd 1.0
+functional preservation or authorize a release.

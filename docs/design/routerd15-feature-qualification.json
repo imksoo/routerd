@@ -1210,6 +1210,35 @@
         "Cleanup-command failure handling in the reusable fixture",
         "Physical failure domains and complete tunnel/static-address qualification"
       ]
+    },
+    "linux-dhcpv6-native-d05524de": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d05524de0f04ef7f77fb1a4051bea35ff729b44a",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-native-address-ownership-and-dad",
+      "archive_sha256": "e69c5ea6a2e2ebc99379dc5174358607b79426df1df1347a0a823a900cdbb6be",
+      "routerd_sha256": "5c8099b7f8757575a1489f7ce8b3cdfff4c28153f577fa3a6156667fd61b1453",
+      "helper_sha256": "d4b61b375df35b086f722f51ac90f834235e2cad456b8db33c6c07270464cf9f",
+      "fixture_revision": "5608ff33d086dab34997cbc3f57cad8706158ae9",
+      "executed_fixture_sha256": "fe32f77e076b15c6739a3285017a6a0f9f463efa21795ebac237c13901cf3c58",
+      "environment": "Ubuntu 24.04.4 dedicated VM, Linux 6.8.0-124-generic; formal static make dist routerd and helper; separate network namespaces, private runtime/state mounts and independent Kea 2.4.1",
+      "reproduction": "scripts/linux-dhcpv6-native-smoke.sh --disposable-vm ARCHIVE SHA256 KEA_PACKAGE_ROOT",
+      "checks": [
+        "DHCPv6Address declaration through actual routerd supervision acquires an independent Kea lease and applies an exact finite /128 after DAD",
+        "Peer link-local source and acquired global address exchange three ICMPv6 packets in each direction; no invented on-link /64 or default route",
+        "Service stop/restart reopens SQLite without extending acquisition time; timer-driven Renew updates native lifetime",
+        "Frozen Kea causes actual 90-second kernel expiry and loss of lease authority; resuming only Kea reacquires autonomously",
+        "Configuration removal withdraws the exact native address and retires its durable receipt",
+        "Independent host address conflict produces Linux DAD failure, server-observed Decline and native withdrawal",
+        "One combined PD/NA worker obtains both associations while the native address controller publishes only the applied /128",
+        "Fixture processes reaped and links removed; successful and resolved-failure output deleted; installed router remains Healthy"
+      ],
+      "excludes": [
+        "WAN route learning, transit forwarding and each deployment/source mode",
+        "FreeBSD native DHCPv6Address ownership/DAD/Decline; targeted chain compilation only",
+        "Multiple-prefix and multiple-server lifecycle qualification",
+        "Complete routerd 1.0 functional preservation, release qualification or production readiness"
+      ]
     }
   },
   "features": [
@@ -2150,7 +2179,13 @@
           "pkg/pdclient/address_client.go",
           "pkg/pdclient/address_message.go",
           "pkg/pdclient/snapshot.go",
-          "cmd/routerd-dhcpv6-client/address.go"
+          "cmd/routerd-dhcpv6-client/address.go",
+          "pkg/controller/chain/dhcpv6_worker.go",
+          "pkg/controller/chain/dhcpv6_address.go",
+          "pkg/controller/chain/dhcpv6_address_source.go",
+          "pkg/controller/chain/ipv6_dad_linux.go",
+          "pkg/state/dhcpv6_address.go",
+          "pkg/pdclient/decline.go"
         ],
         "related_test_files": [
           "pkg/pdclient/client_test.go",
@@ -2158,7 +2193,12 @@
           "pkg/pdclient/address_client_test.go",
           "pkg/pdclient/address_message_test.go",
           "cmd/routerd-dhcpv6-client/address_test.go",
-          "scripts/linux-dhcpv6-association-smoke.sh"
+          "scripts/linux-dhcpv6-association-smoke.sh",
+          "pkg/controller/chain/dhcpv6_address_test.go",
+          "pkg/controller/chain/dhcpv6_dad_linux_test.go",
+          "pkg/state/dhcpv6_address_test.go",
+          "pkg/pdclient/decline_test.go",
+          "scripts/linux-dhcpv6-native-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
@@ -2170,7 +2210,8 @@
           "linux-wan-ra-lifecycle-a00a4826",
           "linux-wan-ra-recovery-2b8ad068",
           "linux-dhcpv6-associations-ede8dbf2",
-          "dhcpv6-partial-recovery-87761c0e"
+          "dhcpv6-partial-recovery-87761c0e",
+          "linux-dhcpv6-native-d05524de"
         ]
       },
       "freebsd": {
@@ -2178,9 +2219,9 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent DHCPv6/RA server exchange for each source mode",
-        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal",
-        "Connect DHCPv6Address declarations to one shared per-interface helper and native /128 ownership; qualify DAD/Decline, expiry withdrawal and recovery through full routerd"
+        "Independent DHCPv6/RA server exchange for each source mode and WAN route/forwarding composition",
+        "Multiple-prefix renewal/rebind/expiry, restart and source withdrawal",
+        "FreeBSD native DHCPv6Address ownership, DAD/Decline, expiry withdrawal and recovery through full routerd"
       ]
     },
     {
