@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,9 @@ func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 	}
 
 	firstOutput := &lockedBuffer{}
+	// Snapshot before store.Close: reading the database here could itself wait
+	// behind the operation that caused the timeout.
+	defer blockedEvents.reportFailure(t, firstOutput)
 	first := testStoredController(b, store, blockedEvents, firstOutput)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := first.Start(ctx); err != nil {
@@ -132,6 +136,17 @@ type blockingEventStore struct {
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
+
+	progressMu     sync.Mutex
+	activeCall     string
+	listCalls      int
+	listedEvents   int
+	savesStarted   int
+	savesCompleted int
+	savingCursor   int64
+	savedCursor    int64
+	storeErrors    int
+	lastError      error
 }
 
 func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routerstate.StoredEvent, error) {
@@ -139,7 +154,74 @@ func (s *blockingEventStore) ListEvents(query routerstate.EventQuery) ([]routers
 		close(s.entered)
 		<-s.release
 	})
-	return s.SQLiteStore.ListEvents(query)
+	s.progressMu.Lock()
+	s.activeCall = "ListEvents"
+	s.listCalls++
+	s.progressMu.Unlock()
+	events, err := s.SQLiteStore.ListEvents(query)
+	s.progressMu.Lock()
+	s.activeCall = ""
+	s.listedEvents += len(events)
+	if err != nil {
+		s.storeErrors++
+		s.lastError = err
+	}
+	s.progressMu.Unlock()
+	return events, err
+}
+
+func (s *blockingEventStore) SaveEventConsumerCursor(consumer string, cursor int64) error {
+	s.progressMu.Lock()
+	s.activeCall = "SaveEventConsumerCursor"
+	s.savesStarted++
+	s.savingCursor = cursor
+	s.progressMu.Unlock()
+	err := s.SQLiteStore.SaveEventConsumerCursor(consumer, cursor)
+	s.progressMu.Lock()
+	s.activeCall = ""
+	s.savesCompleted++
+	if err != nil {
+		s.storeErrors++
+		s.lastError = err
+	} else {
+		s.savedCursor = cursor
+	}
+	s.progressMu.Unlock()
+	return err
+}
+
+func (s *blockingEventStore) reportFailure(t *testing.T, output *lockedBuffer) {
+	if !t.Failed() {
+		return
+	}
+	output.mu.Lock()
+	data := append([]byte(nil), output.Bytes()...)
+	output.mu.Unlock()
+	unique := map[string]bool{}
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
+		var event daemonapi.DaemonEvent
+		if json.Unmarshal(line, &event) == nil {
+			unique[event.Cursor] = true
+		}
+	}
+	s.progressMu.Lock()
+	t.Logf("journal progress: active=%q list_calls=%d listed=%d saves_started=%d saves_completed=%d saving_cursor=%d saved_cursor=%d store_errors=%d last_error=%v output_lines=%d unique_cursors=%d",
+		s.activeCall, s.listCalls, s.listedEvents, s.savesStarted, s.savesCompleted,
+		s.savingCursor, s.savedCursor, s.storeErrors, s.lastError,
+		bytes.Count(data, []byte{'\n'}), len(unique))
+	s.progressMu.Unlock()
+	// Keep failure output scoped to the drain rather than dumping unrelated
+	// goroutines. This identifies a live DB/syscall wait without waiting for it.
+	stack := make([]byte, 1<<20)
+	n := runtime.Stack(stack, true)
+	if n == len(stack) {
+		t.Log("journal failure stack exceeded the diagnostic buffer")
+	}
+	for _, goroutine := range bytes.Split(stack[:n], []byte("\n\n")) {
+		if bytes.Contains(goroutine, []byte("eventconsumer.Drain(")) {
+			t.Logf("journal drain at failure:\n%s", goroutine)
+		}
+	}
 }
 
 type lockedBuffer struct {
