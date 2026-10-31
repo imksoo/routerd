@@ -66,7 +66,14 @@ cleanup() {
     [[ $child_rc == 0 ]] || rc=1
   fi
   if [[ $peer_created == 1 ]] && ip netns list | cut -d' ' -f1 | grep -Fxq "$peer"; then
-    ip netns pids "$peer" >"$work/peer-pids.after"
+    # rp-pppoe returns before pppd's normal LCP termination grace completes.
+    # Observe only this fixture's namespace; do not kill unrelated processes.
+    local peer_deadline=$((SECONDS+5))
+    while :; do
+      ip netns pids "$peer" >"$work/peer-pids.after"
+      [[ -s "$work/peer-pids.after" && $SECONDS -lt $peer_deadline ]] || break
+      sleep .05
+    done
     [[ ! -s "$work/peer-pids.after" ]] || rc=1
     ip netns del "$peer" || rc=1
   fi
@@ -150,6 +157,7 @@ EOF
 "$product/routerd" validate --config "$work/router.yaml" >"$work/validate.log" 2>&1
 "$product/routerd" serve --config "$work/router.yaml" --controllers=daemon-supervisor,daemon-status,pppoe-session --state-file /var/lib/routerd/state.db --ledger-file /var/lib/routerd/state.db --socket /run/routerd/control.sock --status-socket /run/routerd/status.sock --status-file /run/routerd/status.json --http-listen 127.0.0.1:65432 >"$work/router.log" 2>&1 &
 router_pid=$!
+printf '%s\n' "$router_pid" >"$work/router.pid"
 socket=/run/routerd/pppoe-client/lifecycle.sock
 ipc() { curl --connect-timeout 1 --max-time 4 --fail --silent --show-error --unix-socket "$socket" "$@"; }
 wait_connected() {
@@ -203,10 +211,13 @@ jq -e '.accepted==true' "$work/start.json" >/dev/null
 wait_connected restarted
 traffic restarted
 stage=daemon-termination
+ps -eo pid,ppid,stat,args >"$work/processes-before-termination.txt"
+python3 -c 'import json,time;print(json.dumps({"unixNs":time.time_ns(),"monotonicNs":time.monotonic_ns()}))' >"$work/termination-start.json"
 kill -TERM "$router_pid"
 router_rc=0; wait "$router_pid" || router_rc=$?
 router_pid=
 printf '%s\n' "$router_rc" >"$work/router.wait"
 [[ $router_rc == 0 ]]
+python3 -c 'import json,time;print(json.dumps({"unixNs":time.time_ns(),"monotonicNs":time.monotonic_ns()}))' >"$work/router-wait-time.json"
 if ip link show dev ppp-lifecycle >"$work/interface-after-termination.txt" 2>&1; then echo "PPP interface survived daemon exit" >&2; exit 1; fi
 stage=completed
