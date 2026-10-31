@@ -1814,6 +1814,7 @@ func (r *Runner) Start(ctx context.Context) error {
 
 	first, err := r.prepareControllerGeneration(ctx, logger, store)
 	if err != nil {
+		r.stopSupervisedClientDaemons()
 		return fmt.Errorf("start initial controller generation: %w", err)
 	}
 	r.daemonSourceMu.Lock()
@@ -1821,13 +1822,16 @@ func (r *Runner) Start(ctx context.Context) error {
 	r.daemonSourceMu.Unlock()
 	if err := r.refreshDaemonEventSources(ctx); err != nil {
 		r.stopDaemonEventSources()
-		return errors.Join(err, r.closeControllerGeneration(first))
+		stopErr := r.closeControllerGeneration(first)
+		r.stopSupervisedClientDaemons()
+		return errors.Join(err, stopErr)
 	}
 	r.reloadMu.Lock()
 	r.runtimeDone = make(chan struct{})
 	r.reloadMu.Unlock()
 	go func() {
 		err := r.runControllerGenerations(ctx, logger, store, first)
+		r.stopSupervisedClientDaemons()
 		r.stopDaemonEventSources()
 		r.waitControllerCleanup()
 		if err != nil && ctx.Err() == nil {
