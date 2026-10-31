@@ -273,3 +273,58 @@ func TestDHCPv6NativeInfiniteLifetimeIsNotConvertedToFiniteExpiry(t *testing.T) 
 		t.Fatalf("infinite lease was expired or replaced: %+v calls=%v", record.State, f.calls)
 	}
 }
+
+func TestDHCPv6NativeUncertainApplyExpiresWithoutTouchingReplacement(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	apply := f.c.Command
+	f.c.Command = func(ctx context.Context, name string, args ...string) error {
+		if err := apply(ctx, name, args...); err != nil {
+			return err
+		}
+		return errors.New("lost apply acknowledgment")
+	}
+	if err := f.c.Reconcile(t.Context()); err == nil {
+		t.Fatal("lost apply acknowledgment reported success")
+	}
+	f.c.Command = apply
+	f.now = f.now.Add(61 * time.Second)
+	// The tuple is present after the original finite lifetime. It could be a
+	// replacement owned by another actor; expiry must not authorize deletion.
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State.Native != nil || len(f.calls) != 1 {
+		t.Fatalf("expired pending ownership retained or changed replacement: %+v calls=%v", record.State, f.calls)
+	}
+}
+
+func TestDHCPv6NativeWithdrawalRechecksExpiryAfterObservation(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.c.Router, f.c.DeclaredRouter = &api.Router{}, &api.Router{}
+	reads := 0
+	f.c.ObserveAddress = func(context.Context, string, string, string) (delegatedAddressObservation, error) {
+		reads++
+		if reads == 2 {
+			f.now = f.now.Add(time.Minute)
+		}
+		return f.observation, nil
+	}
+	_ = f.c.Reconcile(t.Context())
+	if len(f.calls) != 1 {
+		t.Fatalf("withdrawal deleted tuple after ownership deadline: %v", f.calls)
+	}
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil || record.Revision != 0 {
+		t.Fatalf("expired cleanup journal not retired: %+v %v", record, err)
+	}
+}
