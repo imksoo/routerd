@@ -2654,3 +2654,59 @@ with persistent OS/state disks. Lab candidates retain the existing VRRP,
 conditional PD/RA/DS-Lite behavior, lease synchronization and conntrackd paths.
 No inter-VM forwarding, redundancy or whole-function verdict is claimed yet.
 Production routers were read only and were not changed or probed.
+
+## Separate Linux VLAN clients and IPv6 reply repair, 2026-10-31
+
+A private VLAN-aware PVE bridge with no physical uplink or host IP carries
+separate WAN, trusted LAN, other-client and management VLANs. Two persistent
+Ubuntu 24.04 router VMs retain the reference routers' three functional network
+planes, 99-resource lab configuration, VRRP/VMAC, conditional PD/RA/DS-Lite,
+lease synchronization and conntrackd. Distinct WAN-service and client VMs use
+real Linux tunnels, DHCP and router advertisements. Production configurations
+were read only; no production probe or configuration change was made.
+
+At `5e6d57a8`, the trusted client obtained DHCPv4 and SLAAC addresses, answered
+local-zone DNS over IPv4 UDP/TCP and received HTTP through a DS-Lite AFTR. The
+independent server observed the inner SNAT address. A 262,144-byte response also
+matched exactly. IPv6 DNS timed out although the service listened: the host-only
+WAN policy selected its default table before the specific LAN route in main.
+The matching reply was observed leaving WAN. A temporary operator-owned
+main-table lookup suppressing only the default restored UDP and TCP responses;
+its exact rule was then removed and the original rule set restored. This is a
+causal experiment, not a product fix or production diagnosis.
+
+`39156bb6cdaa813b1e63ef026a4129b51f2aaa02` includes a typed main-route guard
+before the IPv6 host default selector. Acquisition is route/guard/selector and
+withdrawal the reverse; suppression, ownership and preceding-priority conflicts
+are exact. Both persistent routers were upgraded using the official installer
+and a canonical `make dist` archive, SHA256
+`22fd34370bc43d12954b0c917056594d2412d4c7159e29b598a1ee2da6af2841`,
+97,002,989 bytes. All 20 programs are static and the full revision is embedded.
+Configuration hashes were unchanged; installed versions and zero automatic
+restarts were read back. The first operator invocation on the backup used the
+wrong working directory and was rejected before installation; the corrected
+invocation ran inside the extracted payload. Bootstrap on the backup took about
+53 seconds, including 48.237978558 seconds of unavailable upstream name
+resolution; it completed normally with the same process, not a deadlock.
+
+Without an operator rule, the separate client then received the expected local
+DNS answer over IPv4 and IPv6, each using UDP and TCP. Captured IPv6 requests,
+responses and the TCP handshake use LAN; tcpdump reported zero kernel capture
+drops. Native
+lookup selects LAN for the reply, table 120/WAN for ordinary host traffic and
+main for the existing B4 source exception. Independent HTTP replies identify
+192.0.0.2 for IPv4 DS-Lite and the client's global address for native IPv6.
+These are real communication results, not throughput or lossless-HA claims.
+
+A separate static-address ownership error remains open: successful acquisition
+can lose its acknowledged record when a concurrent DS-Lite parent reconcile
+changes its pending receipt before the final parent check. The native address
+is present on the recorded index, but the child remains pending and must not be
+adopted from matching presence. Journal history first shows this under the
+older `5e6d57a8` process at 06:28 UTC, before this upgrade. The fix must preserve
+acknowledged ownership separately from readiness, then be replayed natively.
+The standby received conntrackd external-cache state and all three lease-sync
+commands reported successful sends from the master; neither observation proves
+session survival, received-lease activation or full HA. Those actual cutovers,
+other-VLAN denial, all DS-Lite candidates, unmodeled BGP/DoH/NTP/Tailscale paths
+and whole-function parity remain outside this checkpoint.

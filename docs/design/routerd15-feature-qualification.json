@@ -1429,6 +1429,25 @@
         "Graceful image shutdown: ACPI timeout required explicit stop of the RAM-only VM",
         "Real cloud actions, external CLI prerequisites and full 1.0 functionality"
       ]
+    },
+    "linux-vlan-clients-39156bb6": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "39156bb6cdaa813b1e63ef026a4129b51f2aaa02",
+      "reference": "docs/design/routerd15-audit.md#separate-linux-vlan-clients-and-ipv6-reply-repair-2026-10-31",
+      "archive_sha256": "22fd34370bc43d12954b0c917056594d2412d4c7159e29b598a1ee2da6af2841",
+      "environment": "Two persistent Ubuntu24.04 router VMs, separate real WAN service and client VMs on isolated access VLANs, Linux6.8.0-117",
+      "checks": [
+        "Official installer upgrades both routers; exact version/configuration preservation and IPv6 native guard read back",
+        "Separate client local-zone DNS answers over IPv4/IPv6 UDP/TCP; IPv6 replies and handshake captured on LAN",
+        "Native IPv6 LAN reply route, host WAN default and DS-Lite B4 source exception remain distinct",
+        "Independent HTTP server sees IPv4 DS-Lite SNAT192.0.0.2 and original SLAAC IPv6 client source"
+      ],
+      "excludes": [
+        "The older pending static-address acknowledgement bug remains an observed failure, not repaired by adopting native presence",
+        "HA/session survival, lease activation, wrong-VLAN denial, all DS-Lite candidates and performance",
+        "Unmodeled upstream services, production symptom diagnosis and full-feature parity"
+      ]
     }
   },
   "features": [
@@ -2611,7 +2630,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-vlan-clients-39156bb6"
         ]
       },
       "freebsd": {
@@ -2654,7 +2674,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-vlan-clients-39156bb6"
         ]
       },
       "freebsd": {
@@ -2884,7 +2905,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-health-pbr-native-58bef4e9"
+          "linux-health-pbr-native-58bef4e9",
+          "linux-vlan-clients-39156bb6"
         ]
       },
       "freebsd": {
@@ -3356,7 +3378,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-vlan-clients-39156bb6"
         ]
       },
       "freebsd": {
