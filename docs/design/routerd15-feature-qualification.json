@@ -1290,6 +1290,50 @@
         "VRRP, hash/mark modes, dynamic gateway/source modes and physical WAN link failure",
         "FreeBSD and whole routerd 1.0 functional preservation"
       ]
+    },
+    "linux-normal-gate-dc14c486": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "dc14c48673e249ef489016d9ed9eea0208cbf4ce",
+      "reference": "docs/design/routerd15-audit.md#linux-ordinary-gate-and-native-ipsec-follow-up",
+      "environment": "Linux 6.8.0-136-generic amd64, Go 1.25.9, CGO_ENABLED=0, GOMAXPROCS=2, GOFLAGS=-p=2 -buildvcs=false; clean source before and after.",
+      "checks": [
+        "Full ordinary Go: 4281 top-level passes, 26 explicit skips, zero failures; 121 package passes, nine no-test packages; 445.513 seconds",
+        "Full go vet; spec, config/control/OpenAPI and website schema consistency",
+        "Release QA offline: 499 tests, 492 passed and seven skipped; no live provider effects",
+        "Formal make dist, all 20 Linux executables and static-link checks"
+      ],
+      "archive_sha256": "7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08",
+      "excludes": [
+        "Skipped native tests and actual boot/installation",
+        "All-feature preservation or another source revision"
+      ]
+    },
+    "linux-ipsec-native-bab44306": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "bab44306dce7e0e7872f613bc7fba6155d731b40",
+      "fixture_revision": "1189a9395b7a37e34e7e17fe141b4212cb962a40",
+      "executed_fixture_sha256": "db007dffaf09b8db1f0f45d189bbe5a97d7615941f4c024e061495560e5c44e4",
+      "routerd_sha256": "8cb8a3d170ec4f24a81f162a705419e8ed096aef6b47786b1838f14f6871f88d",
+      "dependency_archive_sha256": "0e047aa4475b8648c1612f1ea2dffcc17015beb9ad663d91baf8445a8d3e3760",
+      "reference": "docs/operations/linux-ipsec-process-test.md",
+      "environment": "Dedicated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; two private network stacks and two strongSwan 5.9.13 daemons; manually supplied private provider and VICI sockets.",
+      "reproduction": "make check-routerd15-ipsec-native-linux with the documented root-owned inputs and preloaded VM prerequisites; the recorded run used fixture 1189a939.",
+      "checks": [
+        "Actual routerd serve --once IPsec controller, SQLite and scoped VICI acquisition, unchanged reapply, withdrawal, reacquisition and provider restart/reconcile",
+        "Initial, reacquired and restarted phases: IKE established on both ends; two ESP states per end, four packets and 336 bytes per state; bidirectional ping two of two in every phase",
+        "Withdrawal left empty connections/sharedKeys and pending=false, with no owned connections or SAs",
+        "Child Wait exit zero, namespace holder expected SIGTERM exit 143, outer links/XFRM restored and existing router service healthy",
+        "Certification supplied echainiv before the final run; module names were unchanged during that run, and task-added modules were removed separately afterward"
+      ],
+      "source_binding": "Standalone production binary from bab44306, with unchanged product Go/dependency sources through the executed fixture revision; retain its actual binary hash and default embedded version. Later preflight-only fixture changes are not relabeled as this run.",
+      "excludes": [
+        "Package installation and systemd provider startup",
+        "Other algorithms/authentication/modes, LAN transit, unrelated-provider takeover or every foreign-resource case",
+        "Different-OS interoperability or physical failure domains",
+        "Whole IPsec or routerd 1.0 feature qualification"
+      ]
     }
   },
   "features": [
@@ -1800,7 +1844,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ipsec-native-bab44306"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -3171,7 +3217,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-normal-gate-dc14c486"
         ]
       },
       "freebsd": {
@@ -3400,7 +3447,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "qa-offline-ba054d2f"
+          "qa-offline-ba054d2f",
+          "linux-normal-gate-dc14c486"
         ]
       },
       "freebsd": {

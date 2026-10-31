@@ -2493,3 +2493,34 @@ regression). Debian/Ubuntu IPsec dependencies now include the real IKE daemon
 package, `charon-systemd`, as well as `strongswan-swanctl` (`885888ea`); the ISO
 package list matches. Native IKE/ESP, OS daemon startup and the first real ISO
 build/boot remain pending isolated Linux VM checks.
+
+### Linux ordinary gate and native IPsec follow-up
+
+Clean `dc14c486` passed all ordinary Linux Go tests: 4281 top-level passes,
+26 explicit skips and zero failures; 121 packages passed and nine had no tests
+(445.513 seconds). Full vet and spec/config/control/OpenAPI/website schema checks
+passed. Release QA offline ran 499 tests: 492 passed, seven skipped; these are
+local/offline tests, not live cloud executions. Formal `make dist` built and
+checked all 20 static Linux executables. Its 96,956,121-byte development archive
+SHA256 is `7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08`.
+The later `00e85ba9` merge adds the IPsec script/procedure only; cmd/pkg/internal
+and Go dependency files are byte-identical to this ordinary-gate source.
+
+The dedicated Linux IPsec run used production `bab44306`, binary SHA256
+`8cb8a3d170ec4f24a81f162a705419e8ed096aef6b47786b1838f14f6871f88d`,
+and the executed `1189a939` fixture, SHA256
+`db007dffaf09b8db1f0f45d189bbe5a97d7615941f4c024e061495560e5c44e4`.
+The actual controller/SQLite/scoped VICI path acquired, converged, withdrew,
+reacquired and recovered after a provider restart. Every initial/reacquired/
+restarted phase had IKE on both ends, two ESP states per endpoint with four
+packets/336 bytes each, and two-of-two bidirectional ping replies. Final receipt,
+VICI and XFRM checks, actual child Wait and independent outer-state restoration
+passed. The existing router service remained healthy.
+
+The provider was supplied privately by the fixture. This is not package/systemd
+startup, other authentication/algorithm modes, LAN transit or whole-feature
+qualification. Two distinct network stacks use the same pinned strongSwan
+implementation. Initial permission failures occurred before product startup;
+operator certification supplied echainiv before the final unchanged-module run.
+`8f75fcd4` makes these discovered prerequisites explicit and retains the executed
+fixture's historical hash. See the [IPsec procedure](../operations/linux-ipsec-process-test.md).

@@ -116,3 +116,19 @@ failures occurred before product startup. The earlier traffic run that
 additionally loaded echainiv was followed by a separate run with a stable module
 set. This remains a scoped private-provider result, with the service-manager and
 automatic-start exclusions above.
+
+## Make entry
+
+From a root-owned checkout on the disposable Linux VM, with the prerequisites
+above already certified, the same script is available through:
+
+```sh
+make check-routerd15-ipsec-native-linux \
+  IPSEC_ROUTERD_BINARY=/root/trial/routerd \
+  IPSEC_DEPENDENCY_ROOT=/root/trial/dependencies \
+  IPSEC_EVIDENCE_DIR=/root/trial/new-evidence \
+  IPSEC_NATIVE_MODE=esp
+```
+
+The target does not install dependencies, load modules or start a shared service.
+Its explicit VM and root-owned-input requirements still apply.

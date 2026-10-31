@@ -514,3 +514,10 @@ check-routerd15-activation:
 .PHONY: check-routerd15-system-policy
 check-routerd15-system-policy:
 	go test ./pkg/controller/chain ./cmd/routerd -run '^(TestSysctlController|TestSAMSysctl|TestPackageController|TestPackageObservation|TestHostnameController|TestHostnameIsReachable|TestSysctlPersistentOnly|TestSysctlObservation|TestReviewDPKG|TestReviewOptionalSystem|TestParseOSReleaseID|TestContractFrameworkRegistrationAndScheduledSelection|TestSandboxControllerOptions|TestServeConfigMutatorSandboxApply|TestControllerDefaultStatusesAreLive|TestControllerResourceKindsUseCanonicalNames)' -count=1
+
+# Run only from a root-owned checkout in an explicit disposable Linux VM.
+IPSEC_NATIVE_MODE ?= esp
+export IPSEC_ROUTERD_BINARY IPSEC_DEPENDENCY_ROOT IPSEC_EVIDENCE_DIR IPSEC_NATIVE_MODE
+.PHONY: check-routerd15-ipsec-native-linux
+check-routerd15-ipsec-native-linux:
+	ROUTERD_RUN_IPSEC_DEDICATED_VM=1 bash scripts/linux-ipsec-netns-smoke.sh --routerd "$$IPSEC_ROUTERD_BINARY" --dependency-root "$$IPSEC_DEPENDENCY_ROOT" --evidence-dir "$$IPSEC_EVIDENCE_DIR" --mode "$$IPSEC_NATIVE_MODE"
