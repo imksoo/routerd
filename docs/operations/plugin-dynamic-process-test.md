@@ -25,14 +25,17 @@ successful process advances the generation and restores the dynamic route.
 The prepared-owner package checks trigger union, independent interval deadlines,
 source lifetime bounds, failure retention, compare-and-swap publication,
 expiry during a publication wait, effective-change notifications, and
-cancellation with actual process reaping. The chain checks use the production
+cancellation with actual process reaping. The framework package also checks
+that a dedicated startup callback preserves the default and named-event paths.
+The chain checks use the production
 controller registration and actual executables: interval startup, a second
 invocation from the framework's positive deadline, and a named bus event.
 Preview and standby checks require no process execution or publication.
 
 Evidence remains in the printed temporary directory. It includes the revision,
 Go version, source hashes, the `routerctl` binary hash, and separate
-`subscription.log`, `cli.log`, `owner.log`, and `declared.log` files.
+`subscription.log`, `cli.log`, `owner.log` (owner and framework), and
+`declared.log` files.
 Ordinary package tests skip the separate-binary CLI check unless
 `ROUTERD_RUN_PLUGIN_PROCESS=1` and `ROUTERCTL_BINARY` are explicitly supplied.
 The script supplies both for that check.

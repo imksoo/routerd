@@ -36,7 +36,8 @@ ROUTERD_RUN_PLUGIN_PROCESS=1 ROUTERCTL_BINARY="$work/routerctl" CGO_ENABLED=0 \
   "$go" test -p 1 ./cmd/routerctl -run '^TestPluginDynamicConfigThroughRealBinary$' \
   -count=1 -v >"$work/cli.log" 2>&1
 cat "$work/cli.log"
-CGO_ENABLED=0 "$go" test -p 1 ./pkg/controller/plugin -count=1 -v \
+CGO_ENABLED=0 "$go" test -p 1 ./pkg/controller/plugin ./pkg/controller/framework \
+  -count=1 -v \
   >"$work/owner.log" 2>&1
 cat "$work/owner.log"
 CGO_ENABLED=0 "$go" test -p 1 ./pkg/controller/chain \
