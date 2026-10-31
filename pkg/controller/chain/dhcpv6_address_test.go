@@ -195,3 +195,53 @@ func TestDHCPv6NativeDADFailureWithdrawsAndReportsExactAcquisition(t *testing.T)
 		t.Fatal("declined address was reapplied")
 	}
 }
+
+func TestDHCPv6NativeStableObservationDoesNotRewriteState(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	f.observation.usable = true
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(time.Second)
+	f.snapshot.UpdatedAt = f.now
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision {
+		t.Fatalf("unchanged observation rewrote native state: %d -> %d", before.Revision, after.Revision)
+	}
+}
+
+func TestDHCPv6NativeLostApplyAcknowledgmentDoesNotAdoptTuple(t *testing.T) {
+	f := newDHCPv6NativeFixture(t)
+	apply := f.c.Command
+	f.c.Command = func(ctx context.Context, name string, args ...string) error {
+		if err := apply(ctx, name, args...); err != nil {
+			return err
+		}
+		return errors.New("lost apply acknowledgment")
+	}
+	if err := f.c.Reconcile(t.Context()); err == nil {
+		t.Fatal("lost acknowledgment reported success")
+	}
+	f.observation.usable = true
+	f.c.Command = apply
+	if err := f.c.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := f.store.ReadDHCPv6AddressRecord("address")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.State.Phase == "Applied" || len(f.calls) != 1 {
+		t.Fatalf("uncertain apply adopted/replaced tuple: %+v calls=%v", record.State, f.calls)
+	}
+}

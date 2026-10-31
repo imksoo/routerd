@@ -136,3 +136,19 @@ func TestDHCPv6AddressRecordDeletionRequiresWithdrawnCurrentOwner(t *testing.T) 
 		t.Fatalf("withdrawn state remains: %+v %v", got, err)
 	}
 }
+
+func TestDHCPv6AddressRecordCannotForgeWithdrawalByChangingExpectedState(t *testing.T) {
+	s, err := OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	record, err := s.SaveDHCPv6AddressRecord("wan", DHCPv6AddressRecord{}, dhcpv6AddressStateFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.State.Native = nil
+	if err := s.DeleteDHCPv6AddressRecord("wan", record); err == nil {
+		t.Fatal("unpersisted withdrawal discarded actual native ownership")
+	}
+}
