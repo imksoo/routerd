@@ -2504,7 +2504,7 @@ The `make dist` archive SHA256 was
 `7c9d28ca0b89c26a4ac32c4ee7ed1b048cf64ad2417a0c87a378da5282aaea08`;
 the executed fixture SHA256 was
 `61ad446f8f49d3fc9f74a64fd3b0c638ffcca187cbeedd22c1119347f84c6ec1`.
-The [provider procedure](../operations/linux-ipsec-provider-test.md) records the
+The [provider procedure](https://routerd.net/docs/operations/linux-ipsec-provider-test) records the
 reproducible prerequisites, invocation and acceptance criteria.
 
 Passed: actual PackageController installation of the six initially absent
@@ -2524,6 +2524,7 @@ new-provider ESTABLISHED assertion failed at `provider-crash-recovery`.
 An earlier explicitly initiated SA succeeded; that is not automatic recovery.
 
 This is neither an observed traffic outage nor an established 1.0 regression.
+The baseline renderer and current VICI connection both use `start_action=trap`.
 Natural kernel-SA expiry, rekey and subsequent peer recovery remain unverified.
 Reproduce those lifecycle paths locally and establish the provider-recovery
 contract before choosing a product fix; do not add global XFRM flushing or an
