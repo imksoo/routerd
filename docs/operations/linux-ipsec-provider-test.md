@@ -50,9 +50,20 @@ Acceptance requires:
   systemd invocation identity, while an independently loaded connection survives.
   Unchanged reconciliation also retains the active ESP SPIs and actual traffic.
 - An explicitly injected provider SIGKILL followed by systemd restart and the
-  running routerd's periodic recovery, with no manual provider restart or product
-  reconcile between failure and recovered traffic. Ordinary selector traffic
-  must recover an established SA without a fixture `--initiate` after the crash.
+  running routerd's periodic configuration recovery, with no manual provider
+  restart or product reconcile between failure and recovered traffic. Record
+  existing-SA traffic continuity separately from new-provider IKE/ESP recovery.
+- The independent peer uses a 20-second CHILD rekey, a 30-second hard lifetime,
+  no lifetime jitter, short retries and a trap action. After at least one such
+  interval, ordinary selector traffic must establish new provider-managed SPIs
+  with actual packet counters. No fixture `--initiate` or `--rekey` follows
+  the crash. The new-provider assertion has a bounded 90-second observation.
+- After stopping the running routerd, a one-shot declaration withdrawal must
+  remove its connections, shared-key receipt and all observed old/new owned SPIs.
+  The independent configuration remains under the package's normal `conf.d`
+  include path across the provider restart. Its native connection block must be
+  unchanged after recovery and withdrawal. The gate does not flush the SAD or
+  run a global connection unload.
 - Child exit acknowledgments; exact owned-effect withdrawal; removal of only
   initially absent test packages; restoration of module/link/route/rule and
   AppArmor inventories; removal of the stopped provider's own stale socket; unchanged
@@ -66,3 +77,52 @@ This is one PSK/algorithm/peer configuration, not all IPsec modes or a release v
 Preserve source/archive/script hashes and the scoped verdict. After review, remove
 resolved raw output, duplicate binaries and backups once restoration is verified.
 Keep this procedure and regression checks as the durable deliverables.
+
+
+## Crash recovery observations and local hard expiry
+
+SIGKILL removes the provider's in-memory IKE state but need not remove the kernel
+SAs. The run05 observation recorded successful bidirectional traffic over the
+same pre-crash SPIs while the restarted provider reported no IKE SA. Both the
+1.0 renderer and the current scoped owner configure `start_action = trap`.
+This observation proves continuity; it does not by itself prove a forwarding
+failure or a 1.5 regression.
+
+IKEv2 endpoints apply their own lifetime policies; the peer's short lifetime
+does not shorten the product's kernel SAs ([RFC 7296 section 2.8](https://www.rfc-editor.org/rfc/rfc7296.html#section-2.8)).
+The current `IPsecConnection` API has no lifetime fields. The observed product
+SAs had a 3960-second hard lifetime. The peer renewal/expiry test above is a
+separate qualification from waiting for those local SAs to expire.
+
+The fixture writes `local-expiry-plan.json` from each actual pre-crash ESP
+SA's add time and configured hard lifetime, with UTC timestamps. It does not
+assume 3960 seconds, reset the VM clock or rewrite kernel lifetimes. To keep the
+same processes and ordinary traffic alive until five seconds after the latest
+recorded local hard-expiry deadline, run a separate fresh trial:
+
+```sh
+sudo env ROUTERD_IPSEC_WAIT_LOCAL_EXPIRY=1 timeout -k 15 6000 \
+  bash scripts/linux-ipsec-provider-smoke.sh \
+  --disposable-vm /root/fresh-private-work /root/routerd.tar.gz EXPECTED_SHA256 \
+  /root/private-peer/extracted /root/fresh-private-work/apt.conf
+```
+
+This longer trial keeps the peer namespace holder alive for 6000 seconds. It
+requires the recorded old SPIs to be absent after their original deadline and
+new provider-managed SAs to carry packets. `recovery-observations.jsonl` retains
+the bounded sequence of old-SPI presence and packet counters. If an old SA is
+retired earlier, report that observed transition rather than attributing it to
+a hard-expiry event. The peer may rekey or time out according to its own normal
+settings; this is not a test of lifetime negotiation between endpoints.
+
+Retain distinct verdicts for `provider-crash-continuity`,
+`peer-expiry-recovery` (or `recorded-local-expiry-recovery`), and
+`post-crash-withdrawal`. A pending/empty receipt, a native SA inventory and real
+packet counters are different observations. Failure of a later condition does
+not erase earlier continuity, and continuity does not qualify the later ones.
+These additions are prepared test conditions; only a new assigned-VM execution
+can qualify them. They do not change the recorded run05 result.
+
+The peer settings use the documented [swanctl CHILD lifetime and DPD controls](https://docs.strongswan.org/docs/5.9/swanctl/swanctlConf.html)
+and private daemon retransmission controls. No provider-wide flush, foreign
+connection removal, test-only product API or general recovery manager is added.
