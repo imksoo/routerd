@@ -1040,7 +1040,7 @@
       ],
       "excludes": [
         "Native route application/forwarding and provider credentials",
-        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Automatic scheduling was unimplemented at this revision; later trigger evidence records its implementation",
         "Complete plugin/dynamic-configuration qualification"
       ]
     },
@@ -1055,10 +1055,129 @@
       ],
       "excludes": [
         "Native route application/forwarding and provider credentials",
-        "DynamicConfigSource and Plugin.triggers automatic scheduling remain unimplemented",
+        "Automatic scheduling was unimplemented at this revision; later trigger evidence records its implementation",
         "Complete plugin/dynamic-configuration qualification"
       ],
       "cli_sha256": "67466729a122032e828961a6d20708adb795c7c2cfa5e66158826bb921538511"
+    },
+    "linux-dhcpv6-associations-ede8dbf2": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ede8dbf269148435c9ddc2a3c95bd187e808d863",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-iana-and-combined-pd-client-lifecycle",
+      "archive_sha256": "1e5196c6311ea836a02741988a8148ad7f15b94df4a141e5f03e0cb112c6b144",
+      "helper_sha256": "efc41c3ff1605a506da866eab3bb52b48b6bf5a47e57122665eaf939082763d9",
+      "fixture_revision": "8d3064b52242131bd60d7c013ce15499628dd710",
+      "executed_fixture_sha256": "67b7eb1b0d2f632790b06a27dc85aaf942434948a07aeb42cda8db694dab11a4",
+      "environment": "Ubuntu 24.04.4 dedicated VM, Linux 6.8.0-124-generic; formal static make dist helper; separate network namespaces and independent Kea 2.4.1",
+      "reproduction": "scripts/linux-dhcpv6-association-smoke.sh --disposable-vm ARCHIVE SHA256 KEA_PACKAGE_ROOT",
+      "checks": [
+        "IA_NA-only and combined IA_NA/IA_PD acquisition agrees with independent Kea lease database",
+        "Helper restart restores acquisition time without extending lease validity; natural T1 Renew succeeds",
+        "Frozen peer causes Renew, T2 Rebind and actual 45-second expiry in live and durable state",
+        "Peer-only resumption causes autonomous reacquisition; explicit Release withdraws lease authority",
+        "Helpers/peer processes reaped, isolated trial links removed, successful temporary output deleted; installed router remains Healthy"
+      ],
+      "excludes": [
+        "DHCPv6Address declaration through full routerd supervision and native kernel address ownership",
+        "DAD/Decline, WAN routes, forwarding and complete source-mode qualification",
+        "FreeBSD native runtime; only targeted FreeBSD cross-compilation was checked",
+        "Complete 1.0 function preservation or release qualification"
+      ]
+    },
+    "dhcpv6-partial-recovery-87761c0e": {
+      "level": "ordinary-tests",
+      "outcome": "pass",
+      "revision": "87761c0ef4da26620e087f81bb47851908c6ac95",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-iana-and-combined-pd-client-lifecycle",
+      "reproduction": "go test -race ./cmd/routerd-dhcpv6-client ./pkg/pdclient ./pkg/daemonapi",
+      "checks": [
+        "Unchanged partial NoBinding recovery neither rewrites the lease file nor fabricates a binding event",
+        "Actual secondary-address expiry persists and publishes even when overall state is unchanged",
+        "Whole ordinary Linux suite: 120 packages, 4177 top-level passes, 15 skips, 118 cached package results"
+      ],
+      "excludes": [
+        "Native runtime verification of this follow-up revision",
+        "Complete DHCPv6Address resource or 1.0 functional qualification"
+      ]
+    },
+    "plugin-triggers-linux-035d13c8": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "035d13c8d94f3820fb57150d4a6691d9e40b591f",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual framework bootstrap/periodic/named-event worker invokes external Plugin and commits source-bound SQL generations",
+        "Independent deadline and explicit controller-topic RED-to-GREEN; interval repetition; dry-run/standby; actual child cancellation and reap",
+        "Source TTL limits manual/automatic publication and expiry during SQL wait preserves previous generation",
+        "Updated smoke entry point: 41 top-level passes, no failure or skip"
+      ],
+      "excludes": [
+        "Complete baseline option/body qualification and native forwarding from arbitrary dynamic output",
+        "External provider credentials and target-device deployment"
+      ]
+    },
+    "plugin-triggers-freebsd-035d13c8": {
+      "level": "native-process",
+      "outcome": "pass",
+      "revision": "035d13c8d94f3820fb57150d4a6691d9e40b591f",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "FreeBSD 14.3 actual owner and framework caller binaries: 18 top-level passes, 23 including subtests, no failure or skip",
+        "Actual processes, SQLite generations, named bus delivery, repeat interval, cancellation/reap and read-only paths"
+      ],
+      "owner_binary_sha256": "61ee69d5b06dae53d64e5da5172fe2a5150beb102a47b0462045dc1140e93722",
+      "caller_binary_sha256": "02b8c02a5377abd814dc7fc8a21144186161c7d481c31a7711a0a78eba23c216",
+      "excludes": [
+        "Native forwarding and full plugin/dynamic-configuration qualification"
+      ]
+    },
+    "ntp-linux-59104e2a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "59104e2a0f0d13c5608a93ef41406774c8bd90cc",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual chronyd -x and independent UDP across private namespaces: three configurations pass",
+        "Mixed timesyncd-requesting client plus chrony server has one provider owner; false server condition keeps client source but denies clients",
+        "Owned process restart, SQLite reopen, foreign-file preservation and declaration withdrawal",
+        "Execution/build input correspondence with all 13 committed NTP sources; execution initially f74b3ab3 plus subsequently committed native test"
+      ],
+      "excludes": [
+        "Actual clock discipline, shared systemd service-manager qualification and target-storage crash durability",
+        "Full baseline NTP provider/platform qualification"
+      ]
+    },
+    "ntp-freebsd-1c389ab8": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1c389ab8b4747e05c357bfe5d115468479cfda63",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Same-fixture baseline 112a1e1b returns valid NTP to denied source and fails; candidate passes in 91.46 seconds",
+        "Allowed mode4 usable reply; denied silence; process/SQLite restart; WhenFalse keeps selected upstream and denies both clients; WhenTrue recovers",
+        "Both jailed clock guards pass before daemons; final owned process/jail/interface/module cleanup and independent post-run census pass"
+      ],
+      "binary_sha256": "48815b5518eb3395c3cc070fa3b96d0e528b89a67aadf89ba1ed3ed1c478ff1c",
+      "script_sha256": "8b1566a7c7996937ff73b1c42111ab8ab00b8cea709961136c5691ca8953bbe5",
+      "excludes": [
+        "Later 59104e2a shared-provider/token changes need exact-source native replay",
+        "Clock synchronization accuracy, shared rc.d/sysrc effects, physical failure domains and full NTP qualification"
+      ]
+    },
+    "static-receipt-replacement-d2efd8f9": {
+      "level": "ordinary-tests",
+      "outcome": "pass",
+      "revision": "d2efd8f99a35cee4654949de46037e27f95f69e3",
+      "reference": "docs/design/routerd15-audit.md#automatic-plugin-triggers-and-shared-ntp-owner-2026-10-31",
+      "checks": [
+        "Actual SQLite replacement across initial observation, pending save and native re-read; acquire/withdraw times peer change/cancel: 12 passes",
+        "Independent replay preserves replacement receipt and Applied phase with zero native mutations"
+      ],
+      "excludes": [
+        "Atomic SQL/native identity CAS against unrelated external writers",
+        "Full static-address platform qualification"
+      ]
     }
   },
   "features": [
@@ -1083,7 +1202,10 @@
           "pkg/controller/chain/chain.go",
           "pkg/plugin/runner.go",
           "pkg/plugin/dynamic_config.go",
-          "pkg/dynamicconfig/merge.go"
+          "pkg/dynamicconfig/merge.go",
+          "pkg/controller/plugin/controller.go",
+          "pkg/plugin/source_policy.go",
+          "pkg/state/plugin_publication.go"
         ],
         "related_test_files": [
           "pkg/plugin/runner_test.go",
@@ -1094,13 +1216,15 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "plugin-process-linux-e4097d0b"
+          "plugin-process-linux-e4097d0b",
+          "plugin-triggers-linux-035d13c8"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "plugin-process-freebsd-e4097d0b"
+          "plugin-process-freebsd-e4097d0b",
+          "plugin-triggers-freebsd-035d13c8"
         ]
       },
       "required_remaining_checks": [
@@ -1251,7 +1375,9 @@
         "body_and_entrypoint_files": [
           "pkg/controller/chain/chain.go",
           "pkg/controller/chain/ntp.go",
-          "pkg/render/timesyncd.go"
+          "pkg/render/timesyncd.go",
+          "pkg/controller/chain/ntp_config_owner.go",
+          "pkg/controller/chain/ntp_shared.go"
         ],
         "related_test_files": [
           "pkg/controller/chain/ntp_test.go"
@@ -1260,11 +1386,15 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "ntp-linux-59104e2a"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "ntp-freebsd-1c389ab8"
+        ]
       },
       "required_remaining_checks": [
         "Independent NTP server/client exchange",
@@ -1981,11 +2111,19 @@
           "cmd/routerd-dhcpv6-client/main.go",
           "pkg/pdclient/client.go",
           "pkg/raobserver/raobserver.go",
-          "pkg/controller/chain/phase2.go"
+          "pkg/controller/chain/phase2.go",
+          "pkg/pdclient/address_client.go",
+          "pkg/pdclient/address_message.go",
+          "pkg/pdclient/snapshot.go",
+          "cmd/routerd-dhcpv6-client/address.go"
         ],
         "related_test_files": [
           "pkg/pdclient/client_test.go",
-          "pkg/raobserver/raobserver_test.go"
+          "pkg/raobserver/raobserver_test.go",
+          "pkg/pdclient/address_client_test.go",
+          "pkg/pdclient/address_message_test.go",
+          "cmd/routerd-dhcpv6-client/address_test.go",
+          "scripts/linux-dhcpv6-association-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
@@ -1995,7 +2133,9 @@
           "ra-observe-only-603a815e",
           "persistent-controller-fixtures-593cb42b",
           "linux-wan-ra-lifecycle-a00a4826",
-          "linux-wan-ra-recovery-2b8ad068"
+          "linux-wan-ra-recovery-2b8ad068",
+          "linux-dhcpv6-associations-ede8dbf2",
+          "dhcpv6-partial-recovery-87761c0e"
         ]
       },
       "freebsd": {
@@ -2004,7 +2144,8 @@
       },
       "required_remaining_checks": [
         "Independent DHCPv6/RA server exchange for each source mode",
-        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal"
+        "Multiple-prefix renewal/rebind/expiry, DAD, restart and source withdrawal",
+        "Connect DHCPv6Address declarations to one shared per-interface helper and native /128 ownership; qualify DAD/Decline, expiry withdrawal and recovery through full routerd"
       ]
     },
     {

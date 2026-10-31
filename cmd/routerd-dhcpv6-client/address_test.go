@@ -27,6 +27,49 @@ func TestAddressRequestModeOptions(t *testing.T) {
 	}
 }
 
+func TestSharedWorkerReportsAddressResourceIndependently(t *testing.T) {
+	for _, mode := range []string{"address", "pd-address"} {
+		t.Run(mode, func(t *testing.T) {
+			opts, err := parseOptions("daemon", []string{"--interface", "wan0", "--resource", "worker", "--request-mode", mode, "--address-resource", "wan-address"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			request, _ := requestMode(mode)
+			client, err := pdclient.New(pdclient.Config{Resource: "worker", Interface: "wan0", ClientDUID: []byte{1}, IAID: 7, Mode: request, Now: func() time.Time { return now }}, &daemonMemoryTransport{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.State = pdclient.StateBound
+			client.Lease = pdclient.Lease{ServerDUID: []byte{2}, IAID: 7, AddressAcquiredAt: now, AddressT1: time.Minute, AddressT2: 2 * time.Minute, Addresses: []pdclient.AddressLease{{Address: netip.MustParseAddr("2001:db8::1"), Preferred: 3 * time.Minute, Valid: 4 * time.Minute, AcquiredAt: now}}}
+			d := &dhcpv6Daemon{opts: opts, client: client, recorder: &packetRecorder{limit: 10}}
+			d.cond = sync.NewCond(&d.mu)
+			d.initTelemetry()
+			status := d.statusLocked()
+			found := false
+			for _, resource := range status.Resources {
+				if resource.Resource.Kind == "DHCPv6Address" {
+					found = true
+					if resource.Resource.Name != "wan-address" || resource.Phase != daemonapi.ResourcePhaseBound || resource.Conditions[0].Status != "True" {
+						t.Fatalf("valid IA_NA lost behind absent PD: %+v", resource)
+					}
+				} else if resource.Resource.Kind == "DHCPv6PrefixDelegation" && (resource.Phase == daemonapi.ResourcePhaseBound || resource.Conditions[0].Status == "True") {
+					t.Fatalf("IA_NA fabricated prefix readiness: %+v", resource)
+				}
+			}
+			if !found {
+				t.Fatal("declared address resource has no protocol status")
+			}
+			d.publishStateEvents(pdclient.Snapshot{}, client.Snapshot())
+			for _, event := range d.events {
+				if event.Type == daemonapi.EventDHCPv6AddressesChanged && (event.Resource.Kind != "DHCPv6Address" || event.Resource.Name != "wan-address") {
+					t.Fatalf("address event uses unrelated primary resource: %+v", event)
+				}
+			}
+		})
+	}
+}
+
 func TestAddressExpiryPersistsWithoutPrefixOrExchangeChange(t *testing.T) {
 	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 	client, err := pdclient.New(pdclient.Config{Resource: "wan-address", Interface: "wan0", ClientDUID: []byte{1}, IAID: 7, Mode: pdclient.RequestAddresses, Now: func() time.Time { return now }, Random: func() float64 { return .5 }}, &daemonMemoryTransport{})

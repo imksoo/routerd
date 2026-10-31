@@ -28,6 +28,13 @@ func (d *dhcpv6Daemon) resourceKind() string {
 	return "DHCPv6PrefixDelegation"
 }
 
+func (d *dhcpv6Daemon) resourceName() string {
+	if d.client.Config.Mode == pdclient.RequestAddresses && d.opts.addressResource != "" {
+		return d.opts.addressResource
+	}
+	return d.opts.resource
+}
+
 func addressSnapshotsEqual(a, b []pdclient.AddressSnapshot) bool {
 	if len(a) != len(b) {
 		return false

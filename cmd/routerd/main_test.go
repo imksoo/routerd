@@ -1179,6 +1179,9 @@ func TestSandboxControllerOptionsRouteArtifactsIntoArtifactDirectory(t *testing.
 	if !opts.DryRunHostname {
 		t.Fatal("sandbox must not change the system hostname")
 	}
+	if !opts.DryRunPlugin {
+		t.Fatal("sandbox must not execute declared plugins")
+	}
 
 	if got, want := opts.DnsmasqPID, filepath.Join(artifacts, "dnsmasq.pid"); got != want {
 		t.Fatalf("DnsmasqPID = %q, want %q", got, want)

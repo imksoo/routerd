@@ -162,6 +162,7 @@ type Client struct {
 	Info            Information
 	leaseExchange   exchange
 	infoExchange    exchange
+	declineExchange exchange
 	solicitMaxRT    time.Duration
 	infoMaxRT       time.Duration
 	lastError       string
@@ -217,6 +218,9 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 		return err
 	}
 	now := c.now()
+	if declineErr := c.tickDecline(ctx, now); declineErr != nil {
+		defer func() { result = errors.Join(declineErr, result) }()
+	}
 	if infoErr := c.tickInformation(ctx, now); infoErr != nil {
 		defer func() { result = errors.Join(infoErr, result) }()
 	}
@@ -281,6 +285,9 @@ func (c *Client) TickWithMargin(ctx context.Context, renewMargin, rebindMargin t
 		return c.retransmit(ctx, e, now)
 	}
 	if c.State == StateIdle || c.State == StateExpired {
+		if c.declineExchange.active() {
+			return nil
+		}
 		return c.Start(ctx)
 	}
 	return nil
@@ -304,6 +311,9 @@ func (c *Client) NextRetryAt() time.Time {
 	}
 	if c.leaseExchange.active() {
 		add(c.leaseExchange.retryAt)
+	}
+	if c.declineExchange.active() {
+		add(c.declineExchange.retryAt)
 	}
 	if c.infoExchange.active() {
 		add(c.infoExchange.retryAt)
@@ -423,6 +433,9 @@ func (c *Client) HandleMessage(ctx context.Context, msg Message) error {
 	}
 	if len(msg.ServerDUID) == 0 || len(msg.ServerDUID) > 130 || !bytes.Equal(msg.ClientDUID, c.Config.ClientDUID) {
 		return nil
+	}
+	if matched, err := c.receiveDeclineReply(ctx, msg); matched {
+		return err
 	}
 	// A matching identifier does not revive an exchange whose complete lease
 	// authority expired between the preceding tick and packet receipt.
@@ -702,7 +715,7 @@ func (c *Client) scheduleRetry(e *exchange, now time.Time) {
 		initial, maximum = time.Second, 30*time.Second
 	case MessageInfoRequest:
 		initial, maximum = time.Second, c.infoMaxRT
-	case MessageRelease:
+	case MessageRelease, MessageDecline:
 		initial, maximum = time.Second, time.Duration(1<<63-1)
 	}
 	e.timeout = c.nextExchangeRetryTimeout(e.timeout, initial, maximum, e.message.Type == MessageSolicit)
@@ -744,7 +757,7 @@ func (c *Client) newTransaction() (uint32, error) {
 		return 0, fmt.Errorf("transaction ID must fit in 24 bits")
 	}
 	// Concurrent prefix and information exchanges must never share an identity.
-	for (c.leaseExchange.active() && xid == c.leaseExchange.message.TransactionID) || (c.infoExchange.active() && xid == c.infoExchange.message.TransactionID) {
+	for (c.leaseExchange.active() && xid == c.leaseExchange.message.TransactionID) || (c.infoExchange.active() && xid == c.infoExchange.message.TransactionID) || (c.declineExchange.active() && xid == c.declineExchange.message.TransactionID) {
 		xid = (xid + 1) & 0xffffff
 	}
 	return xid, nil

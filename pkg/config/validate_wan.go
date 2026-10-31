@@ -76,6 +76,15 @@ func validateWANResource(res api.Resource, targetOS platform.OS) (bool, error) {
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)
 		}
+		if res.Kind == "DHCPv6Address" {
+			spec, err := res.DHCPv6AddressSpec()
+			if err != nil {
+				return true, err
+			}
+			if spec.Client != "" && spec.Client != "routerd-dhcpv6-client" {
+				return true, fmt.Errorf("%s spec.client %q is unsupported; use routerd-dhcpv6-client or omit client", res.ID(), spec.Client)
+			}
+		}
 	case "DHCPv4Client":
 		if res.APIVersion != api.NetAPIVersion {
 			return true, fmt.Errorf("%s must use apiVersion %s", res.ID(), api.NetAPIVersion)

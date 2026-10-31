@@ -236,6 +236,16 @@ sudo bash scripts/linux-dhcpv6-association-smoke.sh --disposable-vm \
 この試験は DHCPv6 helper のプロトコル検証です。カーネルへのアドレス適用、DAD/Decline、
 WAN 経路、転送、routerd 全体の監督、FreeBSD、`DHCPv6Address` リソース全体の合格は示しません。
 
+1.5 の監督処理は `DHCPv6Address` と `DHCPv6PrefixDelegation` の参照先を OS の
+インターフェース名に解決します。同じインターフェースにそれぞれ一つを宣言した場合は、
+異なる別名から参照していても一つの `pd-address` worker で処理します。同じ種類の重複宣言は
+拒否します。`DHCPv6Address.spec.client` は省略するか `routerd-dhcpv6-client` にします。
+外部クライアントを追加の socket 所有者として起動する設定は受け付けません。
+アドレス単独の worker は内部識別子 `DHCPv6Address/NAME` を使い、リソースの状態と
+アドレスのイベントには宣言名を使います。プロトコルの `Bound` は観測値であり、
+OS への適用状態を `Applied` にする根拠にはなりません。宣言・監督のローカルテストだけで
+上記の実機所有権検証を代替しないでください。
+
 ## Linux の DHCP・firewall 撤去試験
 
 空設定と独立した管理経路を持つ専用 VM に正式パッケージを導入して実行します。

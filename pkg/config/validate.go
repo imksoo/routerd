@@ -125,11 +125,6 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 			return fmt.Errorf("spec.apply.protectedZones[%d] references missing FirewallZone %q", i, name)
 		}
 	}
-	for iface, managed := range idx.ManagedDHCPv6ByInterface {
-		if address, ok := idx.DHCPv6AddressByInterface[iface]; ok {
-			return fmt.Errorf("%s conflicts with %s on interface %q: separate DHCPv6 address and managed prefix/information clients cannot both own UDP port 546", managed.id, address, iface)
-		}
-	}
 
 	bfdRefs := map[string]int{}
 	for _, res := range router.Spec.Resources {

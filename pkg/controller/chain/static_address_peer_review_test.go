@@ -13,7 +13,7 @@ import (
 )
 
 func TestStaticPeerReceiptReplacementSurvivesPendingAbort(t *testing.T) {
-	for _, injectionPoint := range []string{"pending-save", "native re-read"} {
+	for _, injectionPoint := range []string{"pending-save", "native re-read", "initial native read"} {
 		for _, operation := range []string{"acquire", "withdraw"} {
 			for _, change := range []string{"peer changed", "cancelled"} {
 				t.Run(injectionPoint+"/"+operation+"/"+change, func(t *testing.T) {
@@ -69,6 +69,9 @@ func TestStaticPeerReceiptReplacementSurvivesPendingAbort(t *testing.T) {
 							if present {
 								snapshot.Addresses = append(snapshot.Addresses, child)
 								snapshot.Peers = append(snapshot.Peers, staticAddressPeer{Address: child, Peer: peer})
+							}
+							if injectionPoint == "initial native read" && !injected {
+								replace()
 							}
 							return snapshot, nil
 						},

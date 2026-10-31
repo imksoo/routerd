@@ -92,6 +92,37 @@ func TestSupervisorReadFailureRetainsMarkerAndSuppressesReplacement(t *testing.T
 	}
 }
 
+func TestSupervisorDHCPv6IdentityChangeWaitsForOldSocketOwner(t *testing.T) {
+	useSupervisedDaemonMarkerTestRoot(t)
+	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
+	t.Cleanup(func() { supervisedDaemonProcesses, supervisedDaemonSocketReady = oldProcesses, oldReady })
+	supervisedDaemonProcesses = func(supervisedDaemonMarker) ([]supervisedDaemonProcess, error) {
+		return nil, errors.New("old owner cannot be observed")
+	}
+	supervisedDaemonSocketReady = func(string) bool { return false }
+	marker := supervisedDaemonMarker{Version: 1, Binary: "routerd-dhcpv6-client", Resource: "pd", SpecHash: "old", OwnerToken: "prior", PID: 536870911}
+	if err := writeSupervisedDaemonMarker(marker); err != nil {
+		t.Fatal(err)
+	}
+	// Removing PD leaves the address-only resource on the same interface. Its
+	// supervisor key changes, but it still needs the old owner's UDP/546 socket.
+	desired := supervisedDaemonSpec{ResourceName: "DHCPv6Address/wan", Binary: marker.Binary, Args: []string{"daemon", "--resource", "DHCPv6Address/wan", "--interface", "wan0"}}
+	ctx, cancel := context.WithCancel(t.Context())
+	r := &Runner{}
+	t.Cleanup(func() {
+		cancel()
+		for _, state := range r.clientDaemonStates {
+			<-state.Done
+		}
+	})
+	if err := r.reconcileSupervisedDaemonSpecs(ctx, nil, []supervisedDaemonSpec{desired}); err == nil {
+		t.Fatal("unknown old owner accepted as stopped")
+	}
+	if len(r.clientDaemonStates) != 0 {
+		t.Fatal("new association worker started while old interface owner was unknown")
+	}
+}
+
 func TestSupervisorWaitsForOwnedInitializingDaemonWithoutReadySocket(t *testing.T) {
 	useSupervisedDaemonMarkerTestRoot(t)
 	oldProcesses, oldReady := supervisedDaemonProcesses, supervisedDaemonSocketReady
