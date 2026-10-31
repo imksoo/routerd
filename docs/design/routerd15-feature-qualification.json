@@ -1448,6 +1448,54 @@
         "HA/session survival, lease activation, wrong-VLAN denial, all DS-Lite candidates and performance",
         "Unmodeled upstream services, production symptom diagnosis and full-feature parity"
       ]
+    },
+    "linux-ipsec-recorded-expiry-84926025": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "84926025027a3118f768432686735843880faa59",
+      "reference": "docs/design/routerd15-audit.md#recorded-ipsec-expiry-and-withdrawal-2026-10-31",
+      "archive_sha256": "b412e73eb46ec60c99ff9740c30f7a4146c424408f105d305230aa9aafc311f8",
+      "checks": [
+        "Exact old SAs recorded before provider crash; recovery retains old/new generations",
+        "Original hard-expiry deadline crossed without clock/lifetime/source changes; old SAs disappear before explicit withdrawal",
+        "Current new-provider packets, exact withdrawal, foreign preservation and independent environment restoration pass"
+      ],
+      "excludes": [
+        "Full-interval lossless connectivity",
+        "Unobserved creation/rekey crash window and MOBIKE endpoint-change withdrawal",
+        "Earlier short-trial shared APT cache gap"
+      ]
+    },
+    "linux-normal-gate-9a90c9b3": {
+      "level": "code-passed",
+      "outcome": "pass",
+      "revision": "9a90c9b31452de4b6be43c3a308e7f367fed4ccc",
+      "reference": "docs/design/routerd15-audit.md#combined-linux-source-and-failed-vlan-ha-trial-2026-10-31",
+      "checks": [
+        "One uncached ordinary Go run: 4298 top passes,26 explicit skips,2213 subtest passes,0 failures",
+        "Full go vet passes;2840 tracked files unchanged before/after both checks"
+      ],
+      "excludes": [
+        "Native forwarding or HA qualification",
+        "Skipped opt-in/platform checks"
+      ]
+    },
+    "linux-vlan-ha-9a90c9b3": {
+      "level": "independent-peer",
+      "outcome": "fail",
+      "revision": "9a90c9b31452de4b6be43c3a308e7f367fed4ccc",
+      "reference": "docs/design/routerd15-audit.md#combined-linux-source-and-failed-vlan-ha-trial-2026-10-31",
+      "checks": [
+        "Exact established TCP/NAT/mark in master cache and backup external cache; automatic commit restores full kernel SNAT/mark",
+        "Independent TCP fails after17frames/15second read timeout, no reconnect",
+        "DAD completes about2seconds after link-up;VIP Ready observed about44seconds after role transition",
+        "New IPv4/IPv6 DNS and HTTP pass after automatic recovery;stopped VM restored"
+      ],
+      "excludes": [
+        "Lossless or established-session failover pass",
+        "A permanent DAD deadlock",
+        "Updated event-lock/RA/early-notification code has not yet passed this native trial"
+      ]
     }
   },
   "features": [
@@ -1792,7 +1840,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vlan-ha-9a90c9b3"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -1962,7 +2012,8 @@
         "scoped_evidence": [
           "linux-ipsec-native-bab44306",
           "linux-ipsec-provider-dc14c486",
-          "linux-ipsec-provider-recovery-dc14c486"
+          "linux-ipsec-provider-recovery-dc14c486",
+          "linux-ipsec-recorded-expiry-84926025"
         ]
       },
       "freebsd": {
@@ -2548,7 +2599,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-vlan-ha-9a90c9b3"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2999,7 +3052,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-vlan-ha-9a90c9b3"
         ]
       },
       "freebsd": {

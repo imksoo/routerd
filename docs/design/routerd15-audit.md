@@ -2710,3 +2710,79 @@ commands reported successful sends from the master; neither observation proves
 session survival, received-lease activation or full HA. Those actual cutovers,
 other-VLAN denial, all DS-Lite candidates, unmodeled BGP/DoH/NTP/Tailscale paths
 and whole-function parity remain outside this checkpoint.
+
+## Recorded IPsec expiry and withdrawal, 2026-10-31
+
+The formal `84926025027a3118f768432686735843880faa59` package (SHA256
+`b412e73eb46ec60c99ff9740c30f7a4146c424408f105d305230aa9aafc311f8`)
+and matching public native fixture passed both a short crash/withdrawal trial
+and the long trial with its original lifetimes and clock unchanged. Before the
+injected provider crash, the exact old kernel SAs were acknowledged and saved.
+After recovery both old and new generations remained covered by those receipts.
+The old pair was last present at 07:25:02.081 UTC and first absent at
+07:25:05.290, consistent with its recorded 07:25:04 hard expiry and before the
+explicit withdrawal. New-generation packets and ordinary peer traffic passed
+at the final 07:25:17 sample. Declaration withdrawal removed all known and
+unclassified same-endpoint states while preserving the foreign connection.
+
+Runtime, cleanup and an independent post-check passed: original file hashes,
+links, routes, rules, modules, packages, AppArmor and the three shared APT files
+were unchanged; original router service was running with no current errors;
+private children and forwarding processes were joined and absent; SAD/SPD were
+empty. The raw result retains 1,254 samples. This does not measure lossless
+communication over the full 66-minute interval. An unobserved creation/rekey
+crash window and authenticated MOBIKE endpoint-change withdrawal remain
+unqualified. The earlier short trial's shared APT-cache observation gap remains
+recorded separately, rather than being overwritten by this long result.
+
+## Combined Linux source and failed VLAN HA trial, 2026-10-31
+
+At fixed `9a90c9b31452de4b6be43c3a308e7f367fed4ccc`, ordinary Go tests and
+full vet passed once each. There were 4,298 top-level passes, 26 explicit skips,
+2,213 passing subtests, 121 tested packages and nine packages with no tests.
+Test time was 384.206 seconds and vet 11.666 seconds. All 2,840 tracked files
+matched before/after both checks (manifest SHA256
+`676f88d5466fe8f374b77f7da908f848b2c62a8f0e21b1a120a1668c2931cbf6`).
+The formal archive SHA256 is
+`f393761a9646bc04da8bc8440ddf4dfaf5bf790c8c67713d5e8ac8e7d0ae5848`,
+97,001,022 bytes, with 20 static executables and the full revision embedded.
+Both persistent VLAN routers were upgraded with unchanged configurations.
+
+The independent client then opened one 120-second TCP response without
+reconnection. Its exact tuple and NAT/mark were present on the master. The
+backup held the corresponding external-cache state and no kernel entry.
+Stopping the active VM caused automatic conntrackd commit: the backup kernel
+then held the correct full SNAT tuple and mark 272. The same connection still
+failed after 17 received frames and a 15-second receive timeout. The peer
+confirmed a write timeout. This is a failed session-continuity verdict, even
+though native NAT-state transfer itself worked.
+
+On the promoted router, LAN came up, DAD completed about two seconds later,
+then delegated-address and RA preparation remained blocked. The first observed
+VIP Ready was about 44 seconds after the role transition. No permanent DAD
+cycle occurred. All four DS-Lite links eventually came up; new IPv4/IPv6 UDP
+and TCP DNS, IPv4 DS-Lite HTTP and native IPv6 HTTP then passed without operator
+repair. The stopped VM was started again and the promoted node retained master.
+Its initial startup was killed by SIGUSR1 before notification setup; the next
+startup completed after about 84 seconds, including three failed 10-second
+lease sends and about 47 seconds of unavailable name resolution. No recorded
+Type=notify timeout is claimed for that process exit.
+
+The exact Framework/FileSync/SQLite caller reproduced a blocking source lock:
+LeaseSync held the changed VirtualAddress key while waiting on a stopped peer,
+preventing other role consumers from starting. `08b1d462` scopes only that
+controller's event lock to its own processing, preserving all other default
+locks, mutation gating and observer resource identity, including value/pointer
+callers. Related and race checks pass. It has not yet passed the same native
+cutover. The overlapping long IPAddressSet resolve does not hold a SQLite
+transaction; its notification-source key was not preserved, so additional
+causality is not asserted or repaired speculatively.
+
+Separately, cold-booted backup retained an RA receipt from its previous boot.
+Opening its inactive staged interface failed for lack of a link-local source
+before the later transmit-path scope check could retire that old receipt.
+`df1fdabc` retires only inactive receipts from a confirmed different kernel
+before socket opening. Same-kernel withdrawal failures retain their receipt;
+active plans retain native checks. The actual RA-service/SQLite regression and
+its same-scope negative control, existing RA tests and vet pass. Native replay
+of this repair and the early-notification fixes remains required.
