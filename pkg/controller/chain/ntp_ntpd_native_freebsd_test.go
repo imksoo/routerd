@@ -83,6 +83,21 @@ func TestNTPNTPDClockGuard(t *testing.T) {
 		t.Fatalf("jail clock privilege was not denied: %v", err)
 	}
 	t.Log("jailed=1 invalid-timespec clock_settime=EPERM; no time value applied")
+	// releng/14.3 checks PRIV_NTP_ADJTIME for any nonzero modes, but
+	// 0x80000000 is outside every supported MOD_* bit. It changes no clock
+	// value even if privilege denial regresses. The first uint32 is modes;
+	// the zeroed buffer covers the complete FreeBSD 14.3 timex structure.
+	var adjustment struct {
+		Modes uint32
+		Rest  [252]byte
+	}
+	adjustment.Modes = 0x80000000
+	_, _, errno = unix.Syscall(unix.SYS_NTP_ADJTIME, uintptr(unsafe.Pointer(&adjustment)), 0, 0)
+	if errno != syscall.EPERM {
+		t.Fatalf("jail NTP adjustment privilege was not denied: %v", errno)
+	}
+	t.Log("jailed=1 unknown-mode ntp_adjtime=EPERM; no supported adjustment requested")
+
 }
 
 func TestNTPNTPDIndependentProbe(t *testing.T) {
@@ -230,13 +245,14 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 		t.Fatalf("actual ntpd never selected %s: running=%v context=%v ntpq=%s", source, process.running(), ctx.Err(), last)
 	}
 	referenceConfig := filepath.Join(base, "reference.conf")
-	write(referenceConfig, "disable ntp\ninterface ignore all\ninterface listen 127.0.0.1\ninterface listen 198.18.97.2\nrestrict default nomodify notrap nopeer noquery\nrestrict 127.0.0.1\nserver 127.127.1.0 prefer minpoll 4 maxpoll 4\nfudge 127.127.1.0 stratum 10\ndriftfile "+filepath.Join(base, "reference.drift")+"\n")
+	write(referenceConfig, "disable kernel\ninterface ignore all\ninterface listen 127.0.0.1\ninterface listen 198.18.97.2\nrestrict default nomodify notrap nopeer noquery\nrestrict 127.0.0.1\nserver 127.127.1.0 prefer minpoll 4 maxpoll 4\nfudge 127.127.1.0 stratum 10\ndriftfile "+filepath.Join(base, "reference.drift")+"\n")
 	referenceProcess := start(reference, referenceConfig, "reference")
 	waitSource(reference, referenceProcess, "127.127.1.0")
+	child(managed, "TestNTPNTPDIndependentProbe", "probe", "ROUTERD_NTPD_PROBE_SOURCE=198.18.97.1", "ROUTERD_NTPD_PROBE_TARGET=198.18.97.2:123", "ROUTERD_NTPD_PROBE_WANT=reply")
 	fragment, runtime := filepath.Join(base, "routerd.conf"), filepath.Join(base, "runtime.conf")
 	// Isolation controls only: no ACL or source is added outside the generated
 	// fragment. The fragment is consumed verbatim by the real provider.
-	write(runtime, "disable ntp\nincludefile "+fragment+"\ndisable ntp\ndriftfile "+filepath.Join(base, "managed.drift")+"\n")
+	write(runtime, "disable kernel\nincludefile "+fragment+"\ndisable kernel\ndriftfile "+filepath.Join(base, "managed.drift")+"\n")
 	var provider *ntpdNativeProcess
 	command := func(operation context.Context, name string, args ...string) ([]byte, error) {
 		if err := operation.Err(); err != nil {
