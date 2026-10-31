@@ -247,6 +247,7 @@ func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysct
 				return false, err
 			}
 		} else {
+			owner = *previous
 			oldBlock = previous.PreviousBlock
 		}
 	}
@@ -271,9 +272,7 @@ func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysct
 		}
 		return false, nil
 	}
-	if previous != nil && previous.Pending {
-		owner = *previous
-	} else {
+	if previous == nil || !previous.Pending {
 		owner.Pending, owner.PreviousBlock = true, oldBlock
 		if err := c.savePersistentSysctlOwner(ctx, previous, &owner, plan.kind, plan.name, false); err != nil {
 			return false, err
