@@ -213,7 +213,7 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 		last := ""
 		for time.Now().Before(deadline) && ctx.Err() == nil && process.running() {
 			queryCtx, queryCancel := context.WithTimeout(ctx, 2*time.Second)
-			out, err := exec.CommandContext(queryCtx, "jexec", jail, "/usr/sbin/ntpq", "-4", "-n", "-p", "127.0.0.1").CombinedOutput()
+			out, err := exec.CommandContext(queryCtx, "jexec", jail, "/usr/bin/ntpq", "-4", "-n", "-p", "127.0.0.1").CombinedOutput()
 			queryCancel()
 			last = string(out)
 			if err == nil {
