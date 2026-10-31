@@ -530,7 +530,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 	if receipt != nil && receipt.Pending && observed.has(spec.Address) {
 		return errors.New("static address operation outcome is unknown; matching presence does not prove ownership")
 	}
-	changed := receipt == nil || receipt.Pending || !observed.has(spec.Address)
+	changed := receipt == nil || receipt.Pending || !observed.has(spec.Address) || previous["phase"] != "Applied"
 	if !observed.has(spec.Address) {
 		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, Pending: true, ParentToken: parentToken, PeerAddress: observed.peerAddress()}
 		status["phase"] = "Pending"
@@ -592,6 +592,16 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if observed.Scope != receipt.Scope || observed.Index != receipt.IfIndex || !observed.owns(*receipt) {
 			return errors.New("static address acquisition was not confirmed on the same interface")
 		}
+		if err := c.requireStaticReceipt(resource.Metadata.Name, receipt); err != nil {
+			return err
+		}
+		// This invocation has the exclusive add ACK and exact native readback.
+		// Persist that ownership before a later parent/source observation can fail;
+		// the public phase remains Pending until those checks also succeed.
+		receipt.Pending = false
+		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
+			return err
+		}
 		currentParent, err = c.staticNativeParent(ctx, spec.Interface, observed)
 		if err != nil {
 			return err
@@ -599,9 +609,6 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		if currentParent != parentToken {
 			return errors.New("native parent changed during address acquisition")
 		}
-		// Only this invocation has both the successful exclusive add and its
-		// readback. A restarted invocation sees the durable pending record.
-		receipt.Pending = false
 	}
 	eligible, err = c.staticAddressEligible(spec)
 	if err != nil {
@@ -624,7 +631,9 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 			return errors.New("static address P2P identity changed before publication")
 		}
 	}
-	receipt.Pending = false
+	if err := c.requireStaticReceipt(resource.Metadata.Name, receipt); err != nil {
+		return err
+	}
 	status["phase"] = "Applied"
 	if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
 		return err

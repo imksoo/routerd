@@ -18,13 +18,15 @@ import (
 
 type staticAddressFaultStore struct {
 	*routerstate.SQLiteStore
-	failApplied  bool
-	afterPending func()
+	failConfirmation bool
+	afterPending     func()
 }
 
 func (s *staticAddressFaultStore) SaveObjectStatus(version, kind, name string, status map[string]any) error {
-	if s.failApplied && kind == "IPv4StaticAddress" && status["phase"] == "Applied" {
-		return errors.New("applied publication unavailable")
+	if s.failConfirmation && kind == "IPv4StaticAddress" {
+		if receipt, err := staticReceipt(status); err == nil && receipt != nil && !receipt.Pending {
+			return errors.New("ownership confirmation unavailable")
+		}
 	}
 	if err := s.SQLiteStore.SaveObjectStatus(version, kind, name, status); err != nil {
 		return err
@@ -159,7 +161,7 @@ func TestStaticAddressPendingSurvivesPublicationFailureAndRestart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &staticAddressFaultStore{SQLiteStore: db, failApplied: true}
+	store := &staticAddressFaultStore{SQLiteStore: db, failConfirmation: true}
 	present := false
 	calls := 0
 	controller := IPv4StaticAddressController{Router: staticOwnerRouter(), Store: store,
@@ -196,7 +198,7 @@ func TestStaticAddressPendingSurvivesPublicationFailureAndRestart(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer db.Close()
-	store.SQLiteStore, store.failApplied = db, false
+	store.SQLiteStore, store.failConfirmation = db, false
 	controller.Router = &api.Router{}
 	if err := controller.Reconcile(t.Context()); err == nil {
 		t.Fatal("matching presence was treated as proof of an interrupted acquisition")

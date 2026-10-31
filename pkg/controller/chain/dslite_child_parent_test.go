@@ -531,7 +531,9 @@ func TestDSLiteStaticAddressACKSurvivesPendingParent(t *testing.T) {
 	commandOutput := parent.CommandOutput
 	parent.CommandOutput = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		out, err := commandOutput(ctx, name, args...)
-		if err == nil && present && pauseParent && name == "ip" && strings.Join(args, " ") == "-j -4 addr show dev "+ifname {
+		innerRead := name == "ip" && strings.Join(args, " ") == "-j -4 addr show dev "+ifname ||
+			name == "ifconfig" && len(args) == 1 && args[0] == ifname
+		if err == nil && present && pauseParent && innerRead {
 			pauseParent = false
 			records, readErr := parent.nativeTunnelReceipts()
 			if readErr != nil || len(records) != 1 {
