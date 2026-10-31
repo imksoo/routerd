@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -59,7 +58,11 @@ func TestExporterPushesLokiEvent(t *testing.T) {
 func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 	const eventCount = 257
 
-	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	// Exceed both the bus capacity and the journal page size. This checks
+	// recovery of a dropped wake-up, not the throughput of 500+ disk syncs.
+	// TestPipelineActualHTTPAndTCPRecoverJournalDeliveryAndStop separately
+	// verifies delivery and cursor recovery after reopening a real database file.
+	store, err := routerstate.OpenSQLite(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +76,11 @@ func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 
 	firstOutput := &lockedBuffer{}
 	first := testStoredController(b, store, blockedEvents, firstOutput)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	defer stopStoredController(t, first)
+	unblock := sync.OnceFunc(func() { close(blockedEvents.release) })
+	defer unblock()
 	if err := first.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +95,21 @@ func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	close(blockedEvents.release)
+	unblock()
 	waitForLines(t, firstOutput, eventCount)
 	cancel()
+	stopStoredController(t, first)
+	// Output precedes cursor persistence. Do not start a replacement while
+	// the first exporter can still write its final cursor.
+	if cursor, err := store.LoadOrInitializeEventConsumerCursor("observabilitypipeline/test"); err != nil || cursor != eventCount {
+		t.Fatalf("saved cursor = %d, want %d: %v", cursor, eventCount, err)
+	}
 
 	secondOutput := &lockedBuffer{}
 	restarted := testStoredController(b, store, store, secondOutput)
-	restartCtx, restartCancel := context.WithCancel(context.Background())
+	restartCtx, restartCancel := context.WithCancel(t.Context())
 	defer restartCancel()
+	defer stopStoredController(t, restarted)
 	if err := restarted.Start(restartCtx); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +122,19 @@ func TestStoredExporterRecoversMissedWakeupAndRestoresCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForLines(t, secondOutput, 1)
+	stopStoredController(t, restarted)
+	if cursor, err := store.LoadOrInitializeEventConsumerCursor("observabilitypipeline/test"); err != nil || cursor != eventCount+1 {
+		t.Fatalf("restarted cursor = %d, want %d: %v", cursor, eventCount+1, err)
+	}
+}
+
+func stopStoredController(t *testing.T, controller *Controller) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := controller.Stop(ctx); err != nil {
+		t.Fatalf("stop stored exporter: %v", err)
+	}
 }
 
 func testStoredController(b *bus.Bus, store *routerstate.SQLiteStore, events eventconsumer.Store, stdout *lockedBuffer) *Controller {
@@ -161,9 +188,8 @@ func (b *lockedBuffer) lines() int {
 
 func waitForLines(t *testing.T, output *lockedBuffer, want int) {
 	t.Helper()
-	// This test asserts eventual store recovery across a dropped bus wake-up,
-	// not a fixed export latency. Leave enough bounded time for per-event
-	// SQLite cursor persistence on loaded CI hosts.
+	// Bound a stuck worker without turning journal recovery into a disk
+	// throughput benchmark. The recovery fixture uses real in-memory SQLite.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if output.lines() == want {
