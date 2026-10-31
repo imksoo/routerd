@@ -120,6 +120,22 @@ still requires address, route and DNS withdrawal.
 
 Use this with the LAN-side `ntpServerFrom` and `sntpServerFrom` fields when the router itself should be the time source advertised to clients.
 
+A managed `NTPServer` is the single configuration and service owner for clients
+using the same provider. On Linux, a chrony server also consumes the upstreams of
+a managed `systemd-timesyncd` client: chrony already takes precedence over
+timesyncd, so the client does not start a competing time service. Its status
+reports the actual `provider: chrony`, the `requestedProvider` and
+`managedBy: NTPServer`. Delegated clients become `Applied` only after the server's
+owned configuration contains their upstreams and its service operation succeeds.
+
+When the server's `when` condition is false, this shared owner keeps active client
+upstreams but removes the server's client-access rules. Removing both declarations
+withdraws only acquired fragments and retires their published upstreams. Existing
+unacquired or replaced configuration files are preserved; shared OS services are
+reloaded rather than treated as exclusively owned processes. `managed: false`
+observes without changing files or services.
+
+
 ## Pattern B: PPPoE for IPv4, DHCPv6-PD for IPv6
 
 Common for older xDSL plans where the IPv4 path goes through PPPoE while IPv6 still rides native DHCPv6-PD on the same physical link.
