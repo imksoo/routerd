@@ -129,7 +129,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := c.cleanupPersistentSysctls(ctx, desiredPersistent); err != nil {
+	if err := c.cleanupPersistentSysctls(ctx, desiredPersistent, desired); err != nil {
 		return err
 	}
 	if err := c.cleanupRemovedSAMProxyARP(ctx, desired); err != nil {
@@ -249,6 +249,9 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 			if err != nil {
 				if errors.Is(err, routerstate.ErrSysctlPersistentOwnerChanged) {
 					return sysctlApplyResult{}, err
+				}
+				if ctx.Err() != nil {
+					return sysctlApplyResult{}, errors.Join(err, ctx.Err())
 				}
 				saveErr := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, map[string]any{
 					"phase": "Error", "reason": "PersistentOwnershipFailed", "key": spec.Key, "error": err.Error(),
@@ -409,7 +412,7 @@ func (c SysctlController) applyConntrackTuning(ctx context.Context) error {
 	log, err := logstore.OpenFirewallLogReadOnly(path)
 	if err != nil {
 		if c.Store != nil {
-			_ = c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
+			return c.Store.SaveObjectStatus(api.SystemAPIVersion, "ConntrackTuning", "default", map[string]any{
 				"phase":     "Degraded",
 				"reason":    "FirewallLogOpenFailed",
 				"error":     err.Error(),

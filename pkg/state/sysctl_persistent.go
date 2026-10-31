@@ -36,11 +36,18 @@ type SysctlPersistentOwner struct {
 	Withdrawing   bool   `json:"withdrawing"`
 }
 
-// SaveSysctlPersistentOwner compares the concrete receipt after acquiring the
-// SQLite writer, then merges only its owner transition into the current status.
-func (s *SQLiteStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name string, previous, next *SysctlPersistentOwner, phase string) error {
+// SaveSysctlPersistentOwner compares the concrete receipt inside the SQLite
+// writer transaction. A final release may retire the declaration display only
+// when no other persistent key still owns it.
+func (s *SQLiteStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name string, previous, next *SysctlPersistentOwner, retireResource bool) error {
 	if kind != "Sysctl" && kind != "SysctlProfile" {
 		return errors.New("unsupported persistent sysctl owner kind")
+	}
+	if previous == nil && next == nil {
+		return errors.New("persistent sysctl transition has no owner")
+	}
+	if retireResource && (previous == nil || next != nil) {
+		return errors.New("resource release requires a proven persistent owner retirement")
 	}
 	for _, owner := range []*SysctlPersistentOwner{previous, next} {
 		if owner != nil && (owner.Kind != kind || owner.Name != name || owner.Version != 1 || owner.ResourceName == "" || owner.Key == "" || owner.Name != SysctlPersistentOwnerName(owner.ResourceName, owner.Key) || strings.ContainsAny(owner.ResourceName+owner.Key, "/\r\n")) {
@@ -102,7 +109,7 @@ func (s *SQLiteStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name 
 		}
 		status[SysctlPersistentOwnerKey] = encoded
 	}
-	status["phase"], _ = json.Marshal(phase)
+	delete(status, "phase")
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	status["updatedAt"], _ = json.Marshal(now)
 	data, err := json.Marshal(status)
@@ -112,7 +119,9 @@ func (s *SQLiteStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if exists {
+	if next == nil {
+		_, err = tx.ExecContext(ctx, "DELETE FROM objects WHERE api_version=? AND kind=? AND name=?", api.SystemAPIVersion, kind, name)
+	} else if exists {
 		_, err = tx.ExecContext(ctx, "UPDATE objects SET resource_version=resource_version+1,observed_generation=?,status=?,modified_at=? WHERE api_version=? AND kind=? AND name=?", nullGeneration(s.generation), string(data), now, api.SystemAPIVersion, kind, name)
 	} else {
 		_, err = tx.ExecContext(ctx, "INSERT INTO objects(api_version,kind,name,uid,resource_version,observed_generation,status,created_at,modified_at) VALUES(?,?,?,?,1,?,?,?,?)",
@@ -120,6 +129,22 @@ func (s *SQLiteStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name 
 	}
 	if err != nil {
 		return s.noteStorageWriteErrorLocked(err)
+	}
+	if retireResource {
+		var otherOwners int
+		prefix := SysctlPersistentOwnerName(previous.ResourceName, "")
+		err := tx.QueryRowContext(ctx, "SELECT count(*) FROM objects WHERE api_version=? AND kind=? AND name!=? AND instr(name,?)=1 AND json_type(status,?) IS NOT NULL",
+			api.SystemAPIVersion, kind, name, prefix, "$."+SysctlPersistentOwnerKey).Scan(&otherOwners)
+		if err != nil {
+			return err
+		}
+		if otherOwners == 0 {
+			_, err = tx.ExecContext(ctx, "UPDATE objects SET resource_version=resource_version+1,observed_generation=?,status=json_set(coalesce(status,'{}'),'$.phase','Removed','$.reason','RemovedFromConfig','$.persistent',json('false'),'$.updatedAt',?),modified_at=? WHERE api_version=? AND kind=? AND name=?",
+				nullGeneration(s.generation), now, now, api.SystemAPIVersion, kind, previous.ResourceName)
+			if err != nil {
+				return s.noteStorageWriteErrorLocked(err)
+			}
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err

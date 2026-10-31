@@ -140,7 +140,18 @@ func (c SysctlController) writePersistentSysctl(ctx context.Context, owner sysct
 			return err
 		}
 		if !samePersistentSysctlSnapshot(before, current) {
+			if err := c.checkPersistentSysctlOwner(ctx, owner); err != nil {
+				return err
+			}
 			return errors.New("persistent sysctl file changed after receipt observation")
+		}
+		if before.info != nil && owner.Pending {
+			directory, err := os.Open(filepath.Dir(owner.Path))
+			if err != nil {
+				return err
+			}
+			defer directory.Close()
+			return directory.Sync()
 		}
 		return nil
 	}
@@ -156,7 +167,7 @@ func (c SysctlController) writePersistentSysctl(ctx context.Context, owner sysct
 	defer file.Close()
 	mode := os.FileMode(0644)
 	if before.info != nil {
-		mode = before.info.Mode().Perm()
+		mode = before.info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
 		if err := copySysctlFileOwner(file, before.info); err != nil {
 			return err
 		}
@@ -183,6 +194,9 @@ func (c SysctlController) writePersistentSysctl(ctx context.Context, owner sysct
 		return err
 	}
 	if !samePersistentSysctlSnapshot(before, current) {
+		if err := c.checkPersistentSysctlOwner(ctx, owner); err != nil {
+			return err
+		}
 		return errors.New("persistent sysctl file changed before replacement")
 	}
 	if err := ctx.Err(); err != nil {
@@ -192,6 +206,9 @@ func (c SysctlController) writePersistentSysctl(ctx context.Context, owner sysct
 		// A new pathname must be created exclusively; never replace a file
 		// introduced by another owner while the intent was being persisted.
 		if err := os.Link(temporary, owner.Path); err != nil {
+			return err
+		}
+		if err := os.Remove(temporary); err != nil {
 			return err
 		}
 	} else if err := os.Rename(temporary, owner.Path); err != nil {
