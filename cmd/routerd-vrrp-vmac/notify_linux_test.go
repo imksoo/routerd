@@ -75,6 +75,23 @@ func TestNotifyRouterdVRRPTransitionDoesNotSignalReplacement(t *testing.T) {
 		t.Fatalf("new unready process was signaled: %v", err)
 	case <-time.After(75 * time.Millisecond):
 	}
+	// Empty first values are still duplicate fields, not a missing first read.
+	ambiguousReads := 0
+	err = notifyRouterdVRRPTransition(func(name string, args ...string) ([]byte, error) {
+		ambiguousReads++
+		if name != "systemctl" || len(args) == 0 || args[0] != "show" {
+			t.Fatalf("ambiguous observation reached a mutation: %s %v", name, args)
+		}
+		return []byte(fmt.Sprintf("ActiveState=\nActiveState=active\nSubState=running\nMainPID=%d\n", replacement.Process.Pid)), nil
+	})
+	if err == nil || ambiguousReads != 1 {
+		t.Fatalf("ambiguous readiness authorized notification: reads=%d err=%v", ambiguousReads, err)
+	}
+	select {
+	case err := <-replacementDone:
+		t.Fatalf("ambiguous readiness signaled private process: %v", err)
+	default:
+	}
 	t.Log("ready PID changed during observation; neither owned process was signaled")
 }
 
