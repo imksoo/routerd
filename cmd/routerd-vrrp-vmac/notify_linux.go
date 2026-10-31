@@ -46,6 +46,7 @@ func readyRouterdMainPID(command commandRunner) (int, error) {
 		return 0, fmt.Errorf("observe routerd notification readiness: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var state, substate, pidText string
+	var seenState, seenSubstate, seenPID bool
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
 		if !ok {
@@ -53,19 +54,22 @@ func readyRouterdMainPID(command commandRunner) (int, error) {
 		}
 		switch key {
 		case "ActiveState":
-			if state != "" {
+			if seenState {
 				return 0, errors.New("duplicate routerd active state")
 			}
+			seenState = true
 			state = value
 		case "SubState":
-			if substate != "" {
+			if seenSubstate {
 				return 0, errors.New("duplicate routerd substate")
 			}
+			seenSubstate = true
 			substate = value
 		case "MainPID":
-			if pidText != "" {
+			if seenPID {
 				return 0, errors.New("duplicate routerd main PID")
 			}
+			seenPID = true
 			pidText = value
 		default:
 			return 0, errors.New("unexpected routerd notification readiness field")
