@@ -21,6 +21,8 @@ import (
 	"unsafe"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"golang.org/x/sys/unix"
 )
@@ -278,10 +280,13 @@ func TestNTPNTPDNativeFreeBSDControllerLifecycle(t *testing.T) {
 	if _, err := store.Set("ntp-role", "master", "private native fixture"); err != nil {
 		t.Fatal(err)
 	}
-	full := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+	full := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "ntpd-native"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPClient"}, Metadata: api.ObjectMeta{Name: "upstream"}, Spec: api.NTPClientSpec{Provider: "ntpd", Managed: true, Servers: []string{"198.18.97.2"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.NTPServerSpec{Provider: "ntpd", Managed: true, AllowCIDRs: []string{"198.18.97.10/32"}, ListenAddresses: []string{"198.18.97.1"}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ntp-role": {Equals: "master"}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NTPServer"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.NTPServerSpec{Provider: "ntpd", Managed: true, Servers: []string{"198.18.97.2"}, AllowCIDRs: []string{"198.18.97.10/32"}, ListenAddresses: []string{"198.18.97.1"}, When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{"ntp-role": {Equals: "master"}}}}},
 	}}}
+	if err := config.ValidateForOS(full, platform.OSFreeBSD); err != nil {
+		t.Fatal(err)
+	}
 	effective := full
 	reconcile := func() {
 		t.Helper()
