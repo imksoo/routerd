@@ -235,7 +235,7 @@ func TestContextAndSourcePolicyArePreparedOncePerConfiguration(t *testing.T) {
 	if _, err := c.Periodic(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(received.Resources) != 1 || received.Resources[0].Spec["ifName"] != "before" {
+	if len(received.Resources) != 1 || received.Resources[0].Spec["ifname"] != "before" {
 		t.Fatalf("prepared context was rebuilt from later input: %+v", received)
 	}
 	parts, err := store.GetDynamicConfigPartsBySource("Plugin/inventory")
