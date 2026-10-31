@@ -188,7 +188,7 @@ var declarations = []Declaration{
 	declare(api.NetAPIVersion, "ClusterNetworkRoute", ClassRendererInput, "expands cluster CIDRs into route intents", noHostTeardown("renderer input expands into route resources")),
 	declare(api.NetAPIVersion, "DHCPv4Server", ClassManagedHost, "dnsmasq DHCPv4 server configuration", resourceLifecycle()),
 	declare(api.NetAPIVersion, "DHCPv4Reservation", ClassRendererInput, "reservation rendered into a DHCPv4 server", noHostTeardown("reservation is rendered into its DHCPv4Server")),
-	declare(api.NetAPIVersion, "DHCPv6Address", ClassRendererInput, "address allocation rendered into DHCPv6 server state", noHostTeardown("address allocation is rendered into DHCPv6 server/client state")),
+	declare(api.NetAPIVersion, "DHCPv6Address", ClassManagedHost, "DHCPv6 IA_NA native addresses with finite lifetime and durable withdrawal ownership", resourceLifecycle()),
 	declare(api.NetAPIVersion, "IPv6RAAddress", ClassRendererInput, "RA address/prefix input", noHostTeardown("RA address input is rendered into router advertisement state")),
 	declare(api.NetAPIVersion, "DHCPv6PrefixDelegation", ClassManagedHost, "DHCPv6 prefix delegation client", resourceLifecycle()),
 	declare(api.NetAPIVersion, "IPv6DelegatedAddress", ClassManagedHost, "address derived from delegated prefix", resourceLifecycle()),

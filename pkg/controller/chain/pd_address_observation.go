@@ -92,6 +92,30 @@ func parseDelegatedAddressObservation(out []byte, address string, osName platfor
 					j++
 				}
 			}
+			if osName == platform.OSLinux {
+				preferredSeen, validSeen := false, false
+				for j := i + 2; j+1 < len(fields); j++ {
+					if fields[j] != "preferred_lft" && fields[j] != "valid_lft" {
+						continue
+					}
+					value := uint64(infinitePDLifetime)
+					if fields[j+1] != "forever" {
+						var err error
+						value, err = strconv.ParseUint(strings.TrimSuffix(fields[j+1], "sec"), 10, 32)
+						if err != nil {
+							return observation, fmt.Errorf("invalid IPv6 native lifetime: %w", err)
+						}
+					}
+					if fields[j] == "preferred_lft" {
+						observation.preferredSeconds = uint32(value)
+						preferredSeen = true
+					} else {
+						observation.validSeconds = uint32(value)
+						validSeen = true
+					}
+				}
+				observation.lifetimeKnown = preferredSeen && validSeen
+			}
 			failed := fieldsContain(fields, "dadfailed") || fieldsContain(fields, "duplicated")
 			observation.dadFailed = failed
 			observation.usable = !failed && (!fieldsContain(fields, "tentative") || staged)
@@ -179,8 +203,12 @@ func (c LANAddressController) observeDelegatedAddress(ctx context.Context, ifnam
 	if c.ObserveAddress != nil {
 		return c.ObserveAddress(ctx, ifname, address, staged)
 	}
+	return observeNativeIPv6Address(ctx, ifname, address, c.currentOS(), staged)
+}
+
+func observeNativeIPv6Address(ctx context.Context, ifname, address string, osName platform.OS, staged bool) (delegatedAddressObservation, error) {
 	name, args := "ip", []string{"-6", "-o", "addr", "show", "dev", ifname}
-	if c.currentOS() == platform.OSFreeBSD {
+	if osName == platform.OSFreeBSD {
 		name, args = "ifconfig", []string{"-L", ifname}
 	}
 	identity, err := (IPv4StaticAddressController{}).staticAddresses(ctx, ifname)
@@ -194,7 +222,7 @@ func (c LANAddressController) observeDelegatedAddress(ctx context.Context, ifnam
 	if err != nil {
 		return delegatedAddressObservation{}, fmt.Errorf("observe delegated IPv6 address on %s: %w", ifname, err)
 	}
-	observation, err := parseDelegatedAddressObservation(out, address, c.currentOS(), staged)
+	observation, err := parseDelegatedAddressObservation(out, address, osName, staged)
 	if err != nil {
 		return observation, err
 	}

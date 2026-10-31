@@ -2408,7 +2408,7 @@ func scheduledReconcileSkipsController(name string) bool {
 		// --apply-interval makes the scheduled pass probe or rewrite host state
 		// without adding a stronger convergence signal.
 		"link", "tunnel", "wireguard", "vrf", "ipv4-static-address", "vxlan-segment", "ipv4-policy-route", "ipv4-route", "hybrid-route",
-		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "lan-address",
+		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "dhcpv6-address", "lan-address",
 		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
 		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
@@ -2954,6 +2954,17 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				}
 			}
 			return nil
+		}},
+		framework.FuncController{ControllerName: "dhcpv6-address", Every: 2 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6Address"}, "DHCPv6Address", "DHCPv6PrefixDelegation", "Interface", "Bridge", "VRF"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
+			observation, err := effectiveForReconcile()
+			if err != nil {
+				return err
+			}
+			current := DHCPv6AddressController{Router: observation.EffectiveRouter, DeclaredRouter: observation.DeclaredRouter, Store: store.withRouter(observation.DeclaredRouter), DryRun: opts.DryRunAddress, Parents: lan.nativeParentReader()}
+			current.Source = func(ctx context.Context, name string) (dhcpv6AddressSource, error) {
+				return r.currentDHCPv6AddressSource(observation.DeclaredRouter, name, store)
+			}
+			return current.Reconcile(ctx)
 		}},
 		framework.FuncController{ControllerName: "lan-address", Every: 30 * time.Second, Subs: statusSubscriptionsWithWhen(r.currentRouter(), []string{"DHCPv6PrefixDelegation", "IPv6DelegatedAddress"}, "DHCPv6PrefixDelegation", "Interface", "VRF"), ReconcileFunc: func(ctx context.Context, _ daemonapi.DaemonEvent) error {
 			observation, err := effectiveForReconcile()
@@ -4760,9 +4771,9 @@ func (c DaemonStatusController) Reconcile(ctx context.Context) error {
 			continue
 		}
 		for _, observed := range status.Resources {
-			if observed.Resource.Kind == "PPPoESession" {
+			if observed.Resource.Kind == "PPPoESession" || observed.Resource.Kind == "DHCPv6Address" {
 				continue
-			} // the source-bound PPPoE actor is the sole projection owner
+			} // source-bound native actors own these projections
 			if observed.Resource.Kind == "DHCPv6PrefixDelegation" {
 				if err := c.observePDLease(ctx, observed.Resource.Name, socket, observed); err != nil {
 					return err
