@@ -17,7 +17,8 @@ Prepare the VM's PPP kernel prerequisites and record their previous state.
       /root/FRESH-ROOT-OWNED-0700-DIR /root/release/bin /root/private-deps pap
 
 Use chap for an independent CHAP trial. The work directory must be fresh.
-The fixture isolates the client and peer in network namespaces and hides
+The internal mode checks its PID, network and mount namespace boundaries before
+any effect. The fixture isolates the client and peer in network namespaces and hides
 /etc, /run, and /var/lib/routerd behind private mounts. It restores an
 initially missing empty /usr/lib/pppd mountpoint after its child exits.
 It checks negotiation, both traffic directions, actual controller publication,
@@ -61,7 +62,7 @@ checked the independent peer's child too early after its server exited. The
 current cleanup waits up to five seconds for only that peer namespace to drain.
 The original non-pass results remain preserved.
 
-After both trials, independent checks confirmed the original router stayed
+After both trials, independent checks confirmed the original router was
 Healthy; package inventory, original router files, shared APT files, outer
 interface identity and kernel module names matched their initial values.
 No trial PPP processes or IPsec SAs/policies remained.
