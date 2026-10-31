@@ -54,9 +54,12 @@ type Runner struct {
 
 type FuncController struct {
 	ControllerName string
-	Subs           []bus.Subscription
-	Every          time.Duration
-	ReconcileFunc  func(context.Context, daemonapi.DaemonEvent) error
+	// EventLockKey selects the controller-owned effects instead of locking an
+	// observed event source. Empty preserves the shared source-resource lock.
+	EventLockKey  string
+	Subs          []bus.Subscription
+	Every         time.Duration
+	ReconcileFunc func(context.Context, daemonapi.DaemonEvent) error
 	// BootstrapFunc separates initial due work from named bus events.
 	// When unset, bootstrap preserves the normal Reconcile behavior.
 	BootstrapFunc func(context.Context) error
@@ -283,6 +286,9 @@ func runController(ctx context.Context, logger *slog.Logger, locker *lock.Resour
 				return
 			}
 			key := eventResourceKey(event)
+			if scoped, ok := controller.(FuncController); ok && scoped.EventLockKey != "" {
+				key = scoped.EventLockKey
+			}
 			kind, name := eventResourceKindName(event)
 			runWithMutationGate(ctx, gate, func() {
 				runLocked(ctx, logger, locker, observer, key, controller.Name(), event.Type, kind, name, intervals[level], func(runCtx context.Context) error {
