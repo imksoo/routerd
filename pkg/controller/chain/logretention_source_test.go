@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -182,5 +183,48 @@ func TestLogRetentionUnavailableStateSourceDoesNotChoosePlatformDefaults(t *test
 	runs, err := data.ListPluginRuns("")
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("unavailable/canceled source lost records: %v %v", runs, err)
+	}
+}
+
+func TestLogRetentionKeepsSameNamedReplacementStateDatabase(t *testing.T) {
+	root := t.TempDir()
+	active := filepath.Join(root, "active")
+	path := filepath.Join(active, "state.db")
+	original, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer original.Close()
+	if _, err := original.RecordPluginRun(routerstate.PluginRunRecord{Plugin: "original", StartedAt: time.Now().Add(-48 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// Move the live database and its WAL/shm files together so the two
+	// independent SQLite handles cannot accidentally share sidecar files.
+	if err := os.Rename(active, filepath.Join(root, "original")); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := routerstate.OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foreign.Close()
+	if _, err := foreign.RecordPluginRun(routerstate.PluginRunRecord{Plugin: "foreign", StartedAt: time.Now().Add(-48 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := routerstate.OpenSQLite(filepath.Join(root, "status.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer status.Close()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "LogRetention"}, Metadata: api.ObjectMeta{Name: "logs"}, Spec: api.LogRetentionSpec{Retention: "24h", Signals: []string{"pluginRuns"}}}}}}
+	controller := LogRetentionController{Router: router, Store: status, Data: original}
+	err = controller.Reconcile(t.Context())
+	rows, readErr := foreign.ListPluginRuns("")
+	if err == nil || readErr != nil || len(rows) != 1 || rows[0].Plugin != "foreign" {
+		t.Fatalf("same-named foreign database was modified: rows=%v err=%v readErr=%v", rows, err, readErr)
+	}
+	oldRows, readErr := original.ListPluginRuns("")
+	if readErr != nil || len(oldRows) != 1 || oldRows[0].Plugin != "original" {
+		t.Fatalf("opened source lost original records: %v %v", oldRows, readErr)
 	}
 }
