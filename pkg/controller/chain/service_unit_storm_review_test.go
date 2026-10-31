@@ -20,6 +20,7 @@ import (
 	"github.com/imksoo/routerd/pkg/conntrack"
 	"github.com/imksoo/routerd/pkg/controller/conntrackobserver"
 	"github.com/imksoo/routerd/pkg/controller/framework"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -68,7 +69,7 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "HealthCheck"},
 		Metadata: api.ObjectMeta{Name: "dependent.service"},
 		Spec: api.HealthCheckSpec{When: api.ResourceWhenSpec{State: map[string]api.StateMatchSpec{
-			"ServiceUnit/external-gate.service.phase": {Equals: "Applied"},
+			"ServiceUnit/external-gate.service.status.phase": {Equals: "Applied"},
 		}}},
 	}}}}
 	state := eventedStore{Store: store, Bus: events, Router: router}
@@ -171,6 +172,10 @@ func TestReviewUnownedDNSUnitCannotReenterOwnServiceWorker(t *testing.T) {
 	}
 	if err := state.SaveObjectStatus(api.SystemAPIVersion, "ServiceUnit", "external-gate.service", map[string]any{"phase": "Applied"}); err != nil {
 		t.Fatal(err)
+	}
+	matched, err := resourcequery.ResourceWhenMatches(resourcequery.ResourceWhen(router.Spec.Resources[0]), store)
+	if err != nil || !matched {
+		t.Fatalf("canonical dotted-name status dependency did not resolve: matched=%v err=%v", matched, err)
 	}
 	third := next()
 	checkFailure(third)
