@@ -365,6 +365,11 @@ func warnIgnoredLegacyServeFlags(stderr io.Writer, setFlags map[string]bool) {
 }
 
 func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
+	// An existing keepalived helper can notify during config, storage or logging
+	// initialization. Queue that transition until the controller bus is ready.
+	vrrpSignalCh := make(chan os.Signal, 1)
+	signal.Notify(vrrpSignalCh, syscall.SIGUSR1)
+	defer signal.Stop(vrrpSignalCh)
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	defaultBGPSocket, defaultBGPControlSocket, defaultBGPState := bgpServeDefaultPaths(platformDefaults)
@@ -554,9 +559,6 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	signalCh := make(chan os.Signal, 2)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signalCh)
-	vrrpSignalCh := make(chan os.Signal, 1)
-	signal.Notify(vrrpSignalCh, syscall.SIGUSR1)
-	defer signal.Stop(vrrpSignalCh)
 	stop := make(chan struct{})
 	var stopOnce sync.Once
 	closeStop := func() {
