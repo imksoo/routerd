@@ -231,6 +231,7 @@ func controllerDefaultStatuses() []controlapi.ControllerStatus {
 		"firewall",
 		"ingress",
 		"ipsec",
+		"hostname",
 		"kernel-module",
 		"nat",
 		"network-adoption",

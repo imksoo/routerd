@@ -453,6 +453,14 @@ check-routerd15-dslite-parent:
 check-routerd15-bgp-native-linux:
 	sh scripts/linux-bgp-frr-smoke.sh
 
+.PHONY: check-routerd15-ntp-native-linux check-routerd15-ntp-native-freebsd
+check-routerd15-ntp-native-linux:
+	sh scripts/check-routerd15-ntp-linux.sh
+
+# Explicit FreeBSD 14.3 disposable guest; pass an exact-source test binary.
+check-routerd15-ntp-native-freebsd:
+	sh scripts/freebsd-ntp-runtime-smoke.sh "$(NTP_TEST_BINARY)"
+
 .PHONY: check-routerd15-plugin-process
 check-routerd15-plugin-process:
 	sh scripts/plugin-dynamic-process-smoke.sh

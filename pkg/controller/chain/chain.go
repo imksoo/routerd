@@ -46,6 +46,7 @@ import (
 	ingressservicecontroller "github.com/imksoo/routerd/pkg/controller/ingressservice"
 	mobilitycontroller "github.com/imksoo/routerd/pkg/controller/mobility"
 	"github.com/imksoo/routerd/pkg/controller/nat44"
+	plugincontroller "github.com/imksoo/routerd/pkg/controller/plugin"
 	"github.com/imksoo/routerd/pkg/controller/pppoesession"
 	provideractioncontroller "github.com/imksoo/routerd/pkg/controller/provideraction"
 	vrrpcontroller "github.com/imksoo/routerd/pkg/controller/vrrp"
@@ -473,7 +474,9 @@ func resourceOwnerController(kind string) string {
 		return "pppoesession"
 	case "IPv4Route", "IPv4StaticRoute", "IPv6StaticRoute", "EgressRoutePolicy", "HybridRoute", "SAMTransportProfile":
 		return "route"
-	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "Hostname", "ConntrackTuning":
+	case "Hostname":
+		return "hostname"
+	case "ServiceUnit", "TailscaleNode", "HealthCheck", "NTPClient", "NTPServer", "SysctlProfile", "Sysctl", "LogRetention", "ConntrackTuning":
 		return "service-unit"
 	case "ConntrackObserver", "TrafficFlowLog":
 		return "conntrack"
@@ -1275,6 +1278,7 @@ type Options struct {
 	DryRunDNSResolver       bool
 	DryRunEventFederation   bool
 	DryRunEventSubscription bool
+	DryRunPlugin            bool
 	DryRunLeaseSync         bool
 	DryRunNAT44SessionSync  bool
 	DryRunProviderAction    bool
@@ -1285,6 +1289,7 @@ type Options struct {
 	DryRunVRRP              bool
 	DryRunPackage           bool
 	DryRunSysctl            bool
+	DryRunHostname          bool
 	DryRunNetworkAdoption   bool
 	DryRunBridge            bool
 	DryRunVXLANTunnel       bool
@@ -2402,14 +2407,14 @@ func filterScheduledReconcileControllers(controllers []framework.Controller) []f
 
 func scheduledReconcileSkipsController(name string) bool {
 	switch name {
-	case "package", "kernel-module", "sysctl", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
+	case "package", "kernel-module", "sysctl", "hostname", "network-adoption", "service-unit", "log-retention", "ntp-client", "ntp-server",
 		// These controllers already run from the serve event loop with their own
 		// periodic cadence and status subscriptions. Running them again from
 		// --apply-interval makes the scheduled pass probe or rewrite host state
 		// without adding a stronger convergence signal.
 		"link", "tunnel", "wireguard", "vrf", "ipv4-static-address", "vxlan-segment", "ipv4-policy-route", "ipv4-route", "hybrid-route",
 		"sam", "sam-enrollment-client", "sam-transport", "path-mtu", "dslite", "dhcpv6-information", "dhcpv6-address", "lan-address",
-		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription",
+		"dhcpv6-server", "dhcpv4-lease", "pppoe-session", "dns-resolver", "event-federation", "event-subscription", "plugin",
 		"mobility-discovery", "mobility-arp-request", "mobility", "mobility-shard", "provider-action-execution", "egress-route-policy",
 		"ingress-service", "nat44", "bfd", "bgp", "vrrp", "ip-address-set", "firewall", "observability-pipeline",
 		"daemon-status", "daemon-supervisor", "daemon-supervisor-reconcile", "dhcp-lease-sync", "nat44-session-sync":
@@ -2448,6 +2453,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunDNSResolver = true
 		opts.DryRunEventFederation = true
 		opts.DryRunEventSubscription = true
+		opts.DryRunPlugin = true
 		opts.DryRunLeaseSync = true
 		opts.DryRunNAT44SessionSync = true
 		opts.DryRunProviderAction = true
@@ -2458,6 +2464,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		opts.DryRunVRRP = true
 		opts.DryRunPackage = true
 		opts.DryRunSysctl = true
+		opts.DryRunHostname = true
 		opts.DryRunNetworkAdoption = true
 		opts.DryRunBridge = true
 		opts.DryRunVXLANTunnel = true
@@ -2475,6 +2482,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	packages := PackageController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	sysctl := SysctlController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunSysctl}
+	hostname := HostnameController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunHostname}
 	kernelModules := KernelModuleController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunPackage}
 	adoption := NetworkAdoptionController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunNetworkAdoption}
 	bridge := BridgeController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunBridge}
@@ -2492,7 +2500,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
 	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, Tunnels: &tunnel}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Logger: logger}
@@ -2530,6 +2538,15 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 		return nil
 	}
 	defaults, features := platform.Current()
+	plugins := &plugincontroller.Controller{}
+	if r.controllerEnabled("plugin") {
+		pluginStore, _ := r.Store.(plugincontroller.DataStore)
+		var err error
+		plugins, err = plugincontroller.New(r.currentRouter(), pluginStore, r.Bus, opts.DryRunPlugin)
+		if err != nil {
+			return nil, DaemonStatusController{}, lifetimes, err
+		}
+	}
 	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync, Logger: logger}
@@ -2774,6 +2791,16 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			current := sysctl
+			current.Router = prepared.startup.Router()
+			current.Store = store.withRouter(prepared.declared)
+			return didWorkError(current.Reconcile(ctx))
+		}},
+		framework.FuncController{ControllerName: "hostname", Every: 5 * time.Minute, Subs: bootstrapSubscriptions(), PeriodicFunc: func(ctx context.Context) (bool, error) {
+			prepared, err := r.currentPreparedRouter()
+			if err != nil {
+				return false, err
+			}
+			current := hostname
 			current.Router = prepared.startup.Router()
 			current.Store = store.withRouter(prepared.declared)
 			return didWorkError(current.Reconcile(ctx))
@@ -3145,6 +3172,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(effective)
 			return didWorkError(current.Reconcile(ctx))
 		}},
+		framework.FuncController{ControllerName: "plugin", Subs: plugins.Subscriptions(), NextAfter: plugins.NextAfter, BootstrapFunc: func(ctx context.Context) error { _, err := plugins.Periodic(ctx); return err }, ReconcileFunc: plugins.HandleEvent, PeriodicFunc: plugins.Periodic},
 		framework.FuncController{ControllerName: "event-subscription", Every: 5 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}, PeriodicFunc: didWorkPeriodic(eventSubscription.Reconcile)},
 		framework.FuncController{ControllerName: "mobility-discovery", Every: 30 * time.Second, Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved, mobilitycontroller.OnPremARPObservedEvent, mobilitycontroller.OnPremARPProbeHitEvent, mobilitycontroller.OnPremARPRequestObservedEvent, mobilitycontroller.OnPremPVESVNetObservedEvent, provideraction.ProviderCaptureChangedEvent}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
 			effective, err := effectiveDynamicForReconcile()

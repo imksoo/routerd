@@ -28,12 +28,12 @@ func TestContractFrameworkRegistrationAndScheduledSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := strings.Fields(`observability-pipeline daemon-status dhcp-lease-sync nat44-session-sync
-		package kernel-module sysctl network-adoption bridge vxlan-segment service-unit log-retention
+		package kernel-module sysctl hostname network-adoption bridge vxlan-segment service-unit log-retention
 		ntp-client ntp-server link sam-enrollment-client sam-transport tunnel wireguard vrf ipv4-static-address
 		dhcpv6-information dhcpv6-address lan-address dslite ipv4-policy-route ipv4-route hybrid-route sam path-mtu
 		dhcpv6-server dhcpv4-lease pppoe-session dns-resolver event-federation event-subscription
 		mobility-discovery mobility-arp-request mobility mobility-shard provider-action-execution
-		egress-route-policy ingress-service nat44 bfd bgp vrrp daemon-supervisor ip-address-set
+		egress-route-policy ingress-service nat44 bfd bgp vrrp daemon-supervisor ip-address-set plugin
 		firewall daemon-supervisor-reconcile`)
 	var got []string
 	byName := map[string]framework.Controller{}

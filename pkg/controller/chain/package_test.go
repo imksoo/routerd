@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestPackageControllerInstallsMissingUbuntuPackages(t *testing.T) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
 			if name == "dpkg-query" && args[len(args)-1] == "dnsmasq-base" {
-				return nil, errTestCommand
+				return nil, packageAbsentExitError(t)
 			}
 			return []byte("install ok installed"), nil
 		},
@@ -69,7 +70,7 @@ func TestPackageControllerDryRunReportsMissingPackages(t *testing.T) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
 			if name == "dpkg-query" {
-				return nil, errTestCommand
+				return nil, packageAbsentExitError(t)
 			}
 			return []byte("ok"), nil
 		},
@@ -151,7 +152,7 @@ func TestPackageControllerInstallsMissingFreeBSDPackages(t *testing.T) {
 			_ = ctx
 			commands = append(commands, strings.Join(append([]string{name}, args...), " "))
 			if name == "pkg" && len(args) == 3 && args[0] == "info" && args[2] == "dnsmasq" {
-				return nil, errTestCommand
+				return nil, packageAbsentExitError(t)
 			}
 			return []byte("ok"), nil
 		},
@@ -180,3 +181,14 @@ type testCommandError struct{}
 func (testCommandError) Error() string { return "command failed" }
 
 var errTestCommand = testCommandError{}
+
+// Package tools distinguish a normal not-installed result from an invocation
+// failure. Use an actual process exit status at this command boundary.
+func packageAbsentExitError(t *testing.T) error {
+	t.Helper()
+	err := exec.CommandContext(t.Context(), "sh", "-c", "exit 1").Run()
+	if err == nil {
+		t.Fatal("not-installed fixture did not exit with failure")
+	}
+	return err
+}

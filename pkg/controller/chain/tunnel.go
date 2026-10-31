@@ -23,13 +23,19 @@ import (
 type TunnelCommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 type TunnelInterfaceController struct {
-	Router  *api.Router
-	Bus     *bus.Bus
-	Store   Store
-	DryRun  bool
-	Command TunnelCommandRunner
-	OS      platform.OS
-	Logger  *slog.Logger
+	Router          *api.Router
+	Bus             *bus.Bus
+	Store           Store
+	DryRun          bool
+	Command         TunnelCommandRunner
+	OS              platform.OS
+	Logger          *slog.Logger
+	NativeScope     func(context.Context) (string, error)
+	ObserveNative   func(context.Context, string) (tunnelNativeLink, error)
+	SetAliasByIndex func(context.Context, int, string, string, string, string) error
+	DeleteByIndex   func(context.Context, int, string, string, string, string) error
+	ApplyNative     func(context.Context, tunnelNativeReceipt) error
+	NativeListeners tunnelNativeListenerIO
 }
 
 type tunnelDesired struct {
@@ -69,6 +75,9 @@ func (c TunnelInterfaceController) Reconcile(ctx context.Context) error {
 	targetOS := c.OS
 	if targetOS == "" {
 		targetOS = platform.CurrentOS()
+	}
+	if targetOS == platform.OSLinux && !c.DryRun {
+		return c.reconcileNativeTunnels(ctx)
 	}
 	if targetOS == platform.OSLinux || targetOS == platform.OSFreeBSD {
 		if err := c.cleanupStaleResources(ctx); err != nil {
@@ -242,8 +251,12 @@ func (c TunnelInterfaceController) reconcileInterface(ctx context.Context, resou
 		}
 		applied = true
 	}
-	if desired.Address != "" || statusvalue.Field(previous, "address") != "" {
-		addressChanged, err := c.reconcileTunnelAddress(ctx, desired)
+	previousAddress := ""
+	if !created {
+		previousAddress = statusvalue.Field(previous, "observedAddress")
+	}
+	if desired.Address != "" || previousAddress != "" {
+		addressChanged, err := c.reconcileTunnelAddress(ctx, desired, previousAddress)
 		if err != nil {
 			return c.saveApplyError(resource, desired, err)
 		}
@@ -353,6 +366,13 @@ func tunnelInterfaceOwned(status map[string]any) bool {
 func preserveTunnelInterfaceOwnership(status, previous map[string]any) {
 	if tunnelInterfaceOwned(previous) {
 		status["interfaceOwned"] = true
+		if status["phase"] != "Up" {
+			for _, field := range []string{"observedAddress", "observedPeerAddress"} {
+				if value, present := previous[field]; present {
+					status[field] = value
+				}
+			}
+		}
 	}
 }
 
@@ -423,7 +443,10 @@ func (c TunnelInterfaceController) tunnelEndpointFromSource(source api.StatusVal
 	if field == "" {
 		return "", false, fmt.Errorf("field is required")
 	}
-	status := c.Store.ObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
+	status, err := c.Store.ReadObjectStatus(c.statusSourceAPIVersion(kind, name), kind, name)
+	if err != nil {
+		return "", false, err
+	}
 	value := statusvalue.Field(status, field)
 	if value == "" {
 		return "", true, nil
@@ -788,7 +811,7 @@ func (c TunnelInterfaceController) setTunnelLinkUp(ctx context.Context, ifname s
 	return commandError("bring tunnel interface "+ifname+" up", err)
 }
 
-func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired) (bool, error) {
+func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, desired tunnelDesired, previousAddress string) (bool, error) {
 	current, err := c.tunnelIPv4Addresses(ctx, desired.Name)
 	if err != nil {
 		return false, err
@@ -798,6 +821,9 @@ func (c TunnelInterfaceController) reconcileTunnelAddress(ctx context.Context, d
 	for _, address := range current {
 		if address == desired.Address {
 			hasDesired = true
+			continue
+		}
+		if address != previousAddress {
 			continue
 		}
 		if err := c.deleteTunnelAddress(ctx, desired.Name, address); err != nil {
@@ -876,7 +902,7 @@ func (c TunnelInterfaceController) deleteTunnelAddress(ctx context.Context, ifna
 
 func (c TunnelInterfaceController) setTunnelAddress(ctx context.Context, desired tunnelDesired) error {
 	if c.targetOS() == platform.OSFreeBSD {
-		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress)
+		_, err := c.run(ctx, "ifconfig", desired.Name, "inet", desired.Address, desired.PeerAddress, "alias")
 		return commandError("set FreeBSD tunnel interface "+desired.Name+" address", err)
 	}
 	_, err := c.run(ctx, "ip", "addr", "replace", desired.Address, "dev", desired.Name)
