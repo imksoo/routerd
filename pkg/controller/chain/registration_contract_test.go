@@ -33,7 +33,7 @@ func TestContractFrameworkRegistrationAndScheduledSelection(t *testing.T) {
 		dhcpv6-information lan-address dslite ipv4-policy-route ipv4-route hybrid-route sam path-mtu
 		dhcpv6-server dhcpv4-lease pppoe-session dns-resolver event-federation event-subscription
 		mobility-discovery mobility-arp-request mobility mobility-shard provider-action-execution
-		egress-route-policy ingress-service nat44 bfd bgp vrrp daemon-supervisor ip-address-set
+		egress-route-policy ingress-service nat44 bfd bgp vrrp daemon-supervisor ip-address-set plugin
 		firewall daemon-supervisor-reconcile`)
 	var got []string
 	byName := map[string]framework.Controller{}
