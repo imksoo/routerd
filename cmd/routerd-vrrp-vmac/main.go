@@ -435,17 +435,6 @@ func vmacActionOrder(action string, entries []vmac) []int {
 	return order
 }
 
-// notifyRouterdVRRPTransition is a best-effort fast path. routerd retains its
-// periodic kernel role observation, so a missing or restarting service cannot
-// make keepalived's transition fail.
-func notifyRouterdVRRPTransition(command commandRunner) error {
-	output, err := command("systemctl", "kill", "--kill-whom=main", "--signal=USR1", "routerd.service")
-	if err != nil {
-		return fmt.Errorf("systemctl kill routerd.service: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
 func runVMACCommands(action string, entry vmac, commands [][]string, hooks runHooks) error {
 	for _, args := range commands {
 		output, err := hooks.command(args[0], args[1:]...)
