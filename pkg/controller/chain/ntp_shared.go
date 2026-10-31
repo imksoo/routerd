@@ -9,13 +9,17 @@ import (
 	"strings"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/state"
 )
 
-// ntpd has one config for client and server roles. A declared managed server
-// remains its single generator while When is false, using only active clients'
-// upstreams for that interval. Chrony's separate fragments do not use this path.
-func (c NTPClientController) sharedNTPDServer() (api.Resource, bool, error) {
+// A managed server owns the shared provider's config and service. Chrony also
+// replaces timesyncd, as in the existing provider conflict policy. Retain that
+// single owner while When is false so active clients keep their upstreams.
+func sharedNTPProvider(client, server string) bool {
+	return client == server || client == "systemd-timesyncd" && server == "chrony"
+}
+
+func (c NTPClientController) sharedNTPServer(clientProvider string) (api.Resource, bool, error) {
 	declared := c.DeclaredRouter
 	if declared == nil {
 		declared = c.Router
@@ -32,18 +36,18 @@ func (c NTPClientController) sharedNTPDServer() (api.Resource, bool, error) {
 		if err != nil {
 			return api.Resource{}, false, err
 		}
-		if !spec.Managed || firstNonEmpty(spec.Provider, defaultNTPServerProvider()) != "ntpd" {
+		if !spec.Managed || !sharedNTPProvider(clientProvider, firstNonEmpty(spec.Provider, defaultNTPServerProvider())) {
 			continue
 		}
 		if selected.Kind != "" {
-			return api.Resource{}, false, errors.New("multiple managed servers declare the shared ntpd config")
+			return api.Resource{}, false, errors.New("multiple managed servers declare the shared NTP provider")
 		}
 		selected = resource
 	}
 	return selected, selected.Kind != "", nil
 }
 
-func ntpdActiveClientServers(router *api.Router, store Store) ([]string, error) {
+func sharedNTPClientServers(router *api.Router, store Store, serverProvider string) ([]string, error) {
 	if router == nil {
 		return nil, errors.New("current NTP client declarations are unavailable")
 	}
@@ -56,7 +60,7 @@ func ntpdActiveClientServers(router *api.Router, store Store) ([]string, error) 
 		if err != nil {
 			return nil, err
 		}
-		if !spec.Managed || firstNonEmpty(spec.Provider, defaultNTPProvider()) != "ntpd" {
+		if !spec.Managed || !sharedNTPProvider(firstNonEmpty(spec.Provider, defaultNTPProvider()), serverProvider) {
 			continue
 		}
 		current, _, err := resolveNTPServers(store, spec.Source, spec.Servers, spec.ServerFrom, spec.FallbackServers)
@@ -68,7 +72,7 @@ func ntpdActiveClientServers(router *api.Router, store Store) ([]string, error) 
 	return compactNTPList(servers), nil
 }
 
-func (c NTPClientController) sharedNTPDReady(ctx context.Context, server api.Resource, servers []string) (bool, error) {
+func (c NTPClientController) sharedNTPReady(ctx context.Context, server api.Resource, provider string, servers []string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -77,9 +81,8 @@ func (c NTPClientController) sharedNTPDReady(ctx context.Context, server api.Res
 	if err != nil || record == nil {
 		return false, err
 	}
-	defaults, _ := platform.Current()
-	if record.Provider != "ntpd" || record.Path != c.ntpConfigPath("ntpd", defaults) {
-		return false, fmt.Errorf("shared ntpd config has a different provider or path")
+	if record.Provider != provider {
+		return false, fmt.Errorf("shared NTP config has a different provider")
 	}
 	if record.Withdrawing || record.ReloadPending || record.NextDigest != "" {
 		return false, nil
@@ -93,7 +96,7 @@ func (c NTPClientController) sharedNTPDReady(ctx context.Context, server api.Res
 		return false, err
 	}
 	if !record.matches(data) {
-		return false, errors.New("shared ntpd config changed while confirming client inputs")
+		return false, errors.New("shared NTP config changed while confirming client inputs")
 	}
 	for _, server := range servers {
 		if !strings.Contains("\n"+string(data), "\nserver "+server+" iburst\n") {
@@ -101,4 +104,42 @@ func (c NTPClientController) sharedNTPDReady(ctx context.Context, server api.Res
 		}
 	}
 	return true, ctx.Err()
+}
+
+// Delegation has no client-owned file receipt. Retire only its public result;
+// this display data never grants authority over the server's file or service.
+func (c NTPClientController) cleanupRemovedNTPDelegations() error {
+	lister, ok := c.Store.(state.ObjectStatusLister)
+	if !ok {
+		return nil
+	}
+	statuses, err := lister.ListObjectStatuses()
+	if err != nil {
+		return err
+	}
+	declared := c.DeclaredRouter
+	if declared == nil {
+		declared = c.Router
+	}
+	if declared == nil {
+		return errors.New("NTP declaration is unavailable")
+	}
+	for _, object := range statuses {
+		if object.APIVersion != api.SystemAPIVersion || object.Kind != "NTPClient" || object.Status["managedBy"] != "NTPServer" {
+			continue
+		}
+		present := false
+		for _, resource := range declared.Spec.Resources {
+			if resource.Kind == "NTPClient" && resource.Metadata.Name == object.Name {
+				present = true
+				break
+			}
+		}
+		if !present && !c.DryRun {
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", object.Name, map[string]any{"phase": "Removed", "reason": "DelegationRemoved", "dryRun": false}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

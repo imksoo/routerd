@@ -37,6 +37,9 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 	if err := c.cleanupObsoleteNTPClients(ctx, command); err != nil {
 		return err
 	}
+	if err := c.cleanupRemovedNTPDelegations(); err != nil {
+		return err
+	}
 	if err := c.cleanupWhenFalseNTPClients(ctx, command); err != nil {
 		return err
 	}
@@ -104,26 +107,32 @@ func (c NTPClientController) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		if provider == "ntpd" {
-			server, delegated, err := c.sharedNTPDServer()
+		server, delegated, err := c.sharedNTPServer(provider)
+		if err != nil {
+			return err
+		}
+		if delegated {
+			serverSpec, err := server.NTPServerSpec()
 			if err != nil {
 				return err
 			}
-			if delegated {
-				ready, err := c.sharedNTPDReady(ctx, server, servers)
-				if err != nil {
-					return err
-				}
-				status := map[string]any{"phase": "Pending", "reason": "WaitingForNTPServer", "provider": provider, "source": source, "servers": servers, "managedBy": "NTPServer", "dryRun": c.DryRun}
-				if ready {
-					status["phase"] = "Applied"
-					delete(status, "reason")
-				}
-				if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, status); err != nil {
-					return err
-				}
-				continue
+			actualProvider := firstNonEmpty(serverSpec.Provider, defaultNTPServerProvider())
+			ready, err := c.sharedNTPReady(ctx, server, actualProvider, servers)
+			if err != nil {
+				return err
 			}
+			status := map[string]any{"phase": "Pending", "reason": "WaitingForNTPServer", "provider": actualProvider, "source": source, "servers": servers, "managedBy": "NTPServer", "dryRun": c.DryRun}
+			if actualProvider != provider {
+				status["requestedProvider"] = provider
+			}
+			if ready {
+				status["phase"] = "Applied"
+				delete(status, "reason")
+			}
+			if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, "NTPClient", resource.Metadata.Name, status); err != nil {
+				return err
+			}
+			continue
 		}
 		configPath := c.ntpConfigPath(provider, defaults)
 		data := renderNTPConfig(provider, servers, compactNTPList(spec.FallbackServers))
@@ -255,25 +264,6 @@ func defaultNTPProvider() string {
 		return "ntpd"
 	}
 	return "systemd-timesyncd"
-}
-
-func hasManagedNTPServer(router *api.Router, provider string) bool {
-	if router == nil {
-		return false
-	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "NTPServer" {
-			continue
-		}
-		spec, err := resource.NTPServerSpec()
-		if err != nil || !spec.Managed {
-			continue
-		}
-		if firstNonEmpty(spec.Provider, defaultNTPServerProvider()) == provider {
-			return true
-		}
-	}
-	return false
 }
 
 func (c NTPClientController) ntpConfigPath(provider string, defaults platform.Defaults) string {
@@ -568,13 +558,11 @@ func (c NTPServerController) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if provider == "ntpd" {
-			clients, err := ntpdActiveClientServers(c.Router, c.Store)
-			if err != nil {
-				return err
-			}
-			servers = compactNTPList(append(servers, clients...))
+		clients, err := sharedNTPClientServers(c.Router, c.Store, provider)
+		if err != nil {
+			return err
 		}
+		servers = compactNTPList(append(servers, clients...))
 		dynamicListen, err := ntpServersFromSources(c.Store, spec.ListenAddressFrom)
 		if err != nil {
 			return err
@@ -709,12 +697,9 @@ func (c NTPServerController) cleanupWhenFalseNTPServers(ctx context.Context, com
 		if err != nil {
 			return err
 		}
-		var clientServers []string
-		if provider == "ntpd" {
-			clientServers, err = ntpdActiveClientServers(c.Router, c.Store)
-			if err != nil {
-				return err
-			}
+		clientServers, err := sharedNTPClientServers(c.Router, c.Store, provider)
+		if err != nil {
+			return err
 		}
 		changed := false
 		if acquired != nil || len(clientServers) > 0 {
@@ -984,7 +969,11 @@ func (c NTPClientController) cleanupObsoleteNTPClients(ctx context.Context, comm
 				break
 			}
 			provider := firstNonEmpty(spec.Provider, defaultNTPProvider())
-			keep = record.Provider == provider && record.Path == c.ntpConfigPath(provider, defaults) && !(provider == "ntpd" && hasManagedNTPServer(declared, provider))
+			_, delegated, err := c.sharedNTPServer(provider)
+			if err != nil {
+				return err
+			}
+			keep = record.Provider == provider && record.Path == c.ntpConfigPath(provider, defaults) && !delegated
 		}
 		if keep && !record.Withdrawing {
 			continue
