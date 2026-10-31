@@ -12,32 +12,19 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
-	"github.com/imksoo/routerd/pkg/hostdeps"
 	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
-const sysctlPersistentOwnerKey = "sysctlPersistentOwner"
+const sysctlPersistentOwnerKey = routerstate.SysctlPersistentOwnerKey
 
-type sysctlPersistentOwner struct {
-	Version       int    `json:"version"`
-	Token         string `json:"token"`
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	Path          string `json:"path"`
-	Key           string `json:"key"`
-	Block         string `json:"block"`
-	PreviousBlock string `json:"previousBlock,omitempty"`
-	Pending       bool   `json:"pending"`
-	Withdrawing   bool   `json:"withdrawing"`
-}
+type sysctlPersistentOwner = routerstate.SysctlPersistentOwner
 
 type sysctlPersistentPlan struct {
-	kind, name string
-	setting    sysctlSetting
+	kind, name, resource string
+	setting              sysctlSetting
 }
 
 func (c SysctlController) sysctlOS() platform.OS {
@@ -57,21 +44,6 @@ func (c SysctlController) freeBSDSysctlPath() string {
 	return "/etc/sysctl.conf.local"
 }
 
-// Ordinary status refreshes must not erase the concrete persistent owner.
-// Only savePersistentSysctlOwner may acquire, replace or release that proof.
-func (c SysctlController) saveSysctlStatus(apiVersion, kind, name string, status map[string]any) error {
-	if c.sysctlOS() == platform.OSFreeBSD && apiVersion == api.SystemAPIVersion && (kind == "Sysctl" || kind == "SysctlProfile") {
-		current, err := c.Store.ReadObjectStatus(apiVersion, kind, name)
-		if err != nil {
-			return err
-		}
-		if owner, exists := current[sysctlPersistentOwnerKey]; exists {
-			status[sysctlPersistentOwnerKey] = owner
-		}
-	}
-	return c.Store.SaveObjectStatus(apiVersion, kind, name, status)
-}
-
 func persistentSysctlOwner(status map[string]any, kind, name string) (*sysctlPersistentOwner, error) {
 	raw, exists := status[sysctlPersistentOwnerKey]
 	if !exists {
@@ -89,7 +61,7 @@ func persistentSysctlOwner(status map[string]any, kind, name string) (*sysctlPer
 	}
 	token, err := hex.DecodeString(owner.Token)
 	if err != nil || len(token) != 16 || owner.Version != 1 || owner.Kind != kind || owner.Name != name ||
-		!filepath.IsAbs(owner.Path) || filepath.Clean(owner.Path) != owner.Path || owner.Key == "" {
+		!filepath.IsAbs(owner.Path) || filepath.Clean(owner.Path) != owner.Path || owner.Key == "" || owner.ResourceName == "" || owner.Name != routerstate.SysctlPersistentOwnerName(owner.ResourceName, owner.Key) || strings.ContainsAny(owner.ResourceName+owner.Key, "/\r\n") {
 		return nil, errors.New("invalid persistent sysctl owner identity")
 	}
 	if kind != "Sysctl" && kind != "SysctlProfile" {
@@ -152,121 +124,61 @@ func (c SysctlController) checkPersistentSysctlOwner(ctx context.Context, expect
 		return err
 	}
 	if current == nil || *current != expected {
-		return errors.New("persistent sysctl receipt changed while observing")
+		return routerstate.ErrSysctlPersistentOwnerChanged
 	}
 	return ctx.Err()
 }
 
-func (c SysctlController) savePersistentSysctlOwner(previous *sysctlPersistentOwner, next *sysctlPersistentOwner, kind, name, phase string) error {
-	status, err := c.Store.ReadObjectStatus(api.SystemAPIVersion, kind, name)
-	if err != nil {
-		return err
-	}
-	current, err := persistentSysctlOwner(status, kind, name)
-	if err != nil {
-		return err
-	}
-	if (previous == nil) != (current == nil) || (previous != nil && *previous != *current) {
-		return errors.New("persistent sysctl receipt changed before persistence")
-	}
-	updated := make(map[string]any, len(status)+3)
-	for key, value := range status {
-		updated[key] = value
-	}
-	if next == nil {
-		delete(updated, sysctlPersistentOwnerKey)
-		delete(updated, "previousValue")
-		updated["changed"] = false
-	} else {
-		updated[sysctlPersistentOwnerKey] = *next
-	}
-	updated["phase"], updated["updatedAt"] = phase, time.Now().UTC().Format(time.RFC3339Nano)
-	return c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, updated)
+type sysctlPersistentWriter interface {
+	SaveSysctlPersistentOwner(context.Context, string, string, *routerstate.SysctlPersistentOwner, *routerstate.SysctlPersistentOwner, string) error
 }
 
-func (c SysctlController) preparePersistentSysctls(ctx context.Context) (map[string]bool, error) {
-	if c.sysctlOS() != platform.OSFreeBSD {
-		return nil, nil
+func (s eventedStore) SaveSysctlPersistentOwner(ctx context.Context, kind, name string, previous, next *routerstate.SysctlPersistentOwner, phase string) error {
+	writer, ok := s.Store.(sysctlPersistentWriter)
+	if !ok {
+		return errors.New("persistent sysctl conditional storage is unavailable")
 	}
-	var plans []sysctlPersistentPlan
-	for _, resource := range hostdeps.SysctlResources(c.Router) {
-		switch resource.Kind {
-		case "Sysctl":
-			spec, err := resource.SysctlSpec()
-			if err != nil {
-				return nil, err
-			}
-			if spec.Persistent {
-				plans = append(plans, sysctlPersistentPlan{"Sysctl", resource.Metadata.Name, sysctlSetting{Key: spec.Key, Value: spec.Value}})
-			}
-		case "SysctlProfile":
-			spec, err := resource.SysctlProfileSpec()
-			if err != nil {
-				return nil, err
-			}
-			if !spec.Persistent {
-				continue
-			}
-			settings, err := sysctlProfileSettings(spec)
-			if err != nil {
-				return nil, err
-			}
-			for _, setting := range settings {
-				plans = append(plans, sysctlPersistentPlan{"SysctlProfile", resource.Metadata.Name + "-" + safeSysctlName(setting.Key), setting})
-			}
-		}
+	return writer.SaveSysctlPersistentOwner(ctx, kind, name, previous, next, phase)
+}
+
+func (c SysctlController) savePersistentSysctlOwner(ctx context.Context, previous, next *sysctlPersistentOwner, kind, name, phase string) error {
+	writer, ok := c.Store.(sysctlPersistentWriter)
+	if !ok {
+		return errors.New("persistent sysctl conditional storage is unavailable")
 	}
-	changes := map[string]bool{}
+	return writer.SaveSysctlPersistentOwner(ctx, kind, name, previous, next, phase)
+}
+
+func (c SysctlController) cleanupPersistentSysctls(ctx context.Context, desired map[string]bool) error {
+	if c.sysctlOS() != platform.OSFreeBSD || c.DryRun {
+		return nil
+	}
 	lister, ok := c.Store.(interface {
 		ListObjectStatuses() ([]routerstate.ObjectStatus, error)
 	})
 	if !ok {
-		if len(plans) != 0 {
-			return nil, errors.New("persistent FreeBSD sysctls require an ownership status store")
-		}
-		return changes, nil
+		return nil
 	}
 	statuses, err := lister.ListObjectStatuses()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	existing := map[string]sysctlPersistentOwner{}
 	for _, status := range statuses {
 		if status.APIVersion != api.SystemAPIVersion || (status.Kind != "Sysctl" && status.Kind != "SysctlProfile") {
 			continue
 		}
 		owner, err := persistentSysctlOwner(status.Status, status.Kind, status.Name)
 		if err != nil {
-			return nil, c.persistentSysctlFailure(status.Kind, status.Name, err)
+			return err
 		}
-		if owner != nil {
-			existing[owner.Kind+"/"+owner.Name] = *owner
+		if owner == nil || desired[owner.Kind+"/"+owner.Name] {
+			continue
 		}
-	}
-	for _, plan := range plans {
-		changed, err := c.ensurePersistentSysctl(ctx, plan)
-		if err != nil {
-			return nil, c.persistentSysctlFailure(plan.kind, plan.name, err)
-		}
-		id := plan.kind + "/" + plan.name
-		changes[id] = changed
-		delete(existing, id)
-	}
-	if !c.DryRun {
-		for _, owner := range existing {
-			if err := c.withdrawPersistentSysctl(ctx, owner); err != nil {
-				return nil, c.persistentSysctlFailure(owner.Kind, owner.Name, err)
-			}
+		if err := c.withdrawPersistentSysctl(ctx, *owner); err != nil {
+			return err
 		}
 	}
-	return changes, nil
-}
-
-func (c SysctlController) persistentSysctlFailure(kind, name string, err error) error {
-	saveErr := c.saveSysctlStatus(api.SystemAPIVersion, kind, name, map[string]any{
-		"phase": "Error", "reason": "PersistentOwnershipFailed", "error": err.Error(), "updatedAt": time.Now().UTC().Format(time.RFC3339Nano),
-	})
-	return errors.Join(err, saveErr)
+	return nil
 }
 
 func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysctlPersistentPlan) (bool, error) {
@@ -287,7 +199,7 @@ func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysct
 		}
 		previous = nil
 	}
-	owner := sysctlPersistentOwner{Version: 1, Kind: plan.kind, Name: plan.name, Path: path, Key: plan.setting.Key}
+	owner := sysctlPersistentOwner{Version: 1, Kind: plan.kind, Name: plan.name, ResourceName: plan.resource, Path: path, Key: plan.setting.Key}
 	if previous != nil {
 		owner.Token = previous.Token
 	} else {
@@ -363,7 +275,7 @@ func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysct
 		owner = *previous
 	} else {
 		owner.Pending, owner.PreviousBlock = true, oldBlock
-		if err := c.savePersistentSysctlOwner(previous, &owner, plan.kind, plan.name, "PersistPending"); err != nil {
+		if err := c.savePersistentSysctlOwner(ctx, previous, &owner, plan.kind, plan.name, "PersistPending"); err != nil {
 			return false, err
 		}
 	}
@@ -389,7 +301,7 @@ func (c SysctlController) ensurePersistentSysctl(ctx context.Context, plan sysct
 	}
 	active := owner
 	active.Pending, active.PreviousBlock = false, ""
-	if err := c.savePersistentSysctlOwner(&owner, &active, plan.kind, plan.name, "PersistentReady"); err != nil {
+	if err := c.savePersistentSysctlOwner(ctx, &owner, &active, plan.kind, plan.name, "PersistentReady"); err != nil {
 		return false, err
 	}
 	return changed, nil
@@ -402,7 +314,7 @@ func (c SysctlController) withdrawPersistentSysctl(ctx context.Context, previous
 		if !previous.Pending || previous.PreviousBlock == "" {
 			owner.PreviousBlock, owner.Block = previous.Block, ""
 		}
-		if err := c.savePersistentSysctlOwner(&previous, &owner, owner.Kind, owner.Name, "PersistWithdrawing"); err != nil {
+		if err := c.savePersistentSysctlOwner(ctx, &previous, &owner, owner.Kind, owner.Name, "PersistWithdrawing"); err != nil {
 			return err
 		}
 	}
@@ -431,5 +343,5 @@ func (c SysctlController) withdrawPersistentSysctl(ctx context.Context, previous
 	if err := c.checkPersistentSysctlOwner(ctx, owner); err != nil {
 		return err
 	}
-	return c.savePersistentSysctlOwner(&owner, nil, owner.Kind, owner.Name, "Removed")
+	return c.savePersistentSysctlOwner(ctx, &owner, nil, owner.Kind, owner.Name, "Removed")
 }
