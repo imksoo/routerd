@@ -260,8 +260,12 @@ SAM tests do not establish independent RR/leaf interoperability.
   pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
   all-root image rewriting are removed; old mode-damaged caches are rejected.
   Firstboot validates before caching and before service generation/DHCP removal.
-  Actual shell-body failure regressions pass. Native image construction, package
-  modes in a built image and VM boot are not yet qualified here.
+  Actual shell-body failure regressions pass. The first native image built and
+  booted, but readiness failed on an unowned builder-created DNS template and
+  status-event feedback. The runtime feedback fix passes an actual VM replay;
+  the corrected distribution payload/template builder still needs a clean boot.
+  A separate real cache restore lost ping's file capability, so that cache is
+  excluded from further qualification until preservation is fixed and verified.
 - Release QA lifecycle ownership is implemented: lock before state/auth changes,
   durable STARTING admission before child effects, native birth/session checks
   with pidfd signaling, exact consumed-input pins and acknowledged stop before
