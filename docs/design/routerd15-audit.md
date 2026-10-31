@@ -2428,3 +2428,68 @@ WAN routing/forwarding composition, other source modes, multiple-prefix/server
 behavior and native FreeBSD remain separate gates. The feature preservation and
 platform-wide verdicts remain unknown; this result does not close routerd 1.0
 functional preservation or authorize a release.
+
+## Linux-first qualification and canceled retention recovery, 2026-10-31
+
+The operator selected Linux implementation and acceptance as the current
+priority. Published FreeBSD work remains retained; FreeBSD-only native checks
+and new OS-specific work are deferred, not relabeled as completed.
+
+The clean integration at `14b128dd` passed the Linux ordinary Go gate with
+4276 top-level passes, 26 skips and no failures (121 packages passed, nine had no
+tests; 381.308 seconds). The same revision's FreeBSD run had 4060 top-level
+passes, 214 skips and one failure: the canceled archive test immediately read
+SQLite while the canceled driver transaction still held its lock. That failed
+FreeBSD run remains a failed historical result.
+
+`2e99c7e7` repairs the shared cancellation boundary. A deterministic Linux test
+uses real SQLite and pauses only its driver rollback. Before the repair,
+retention returned while an independent `BEGIN EXCLUSIVE` still reported
+`SQLITE_BUSY`. Reserving `sql.Conn` and closing it after the transaction rollback
+joins the driver's actual completion. The same test passed five runs, the
+logstore package and eight retention controller tests passed, and the independent
+review confirmed that archive, identity, deletion and immediate-reader
+conditions were preserved. FreeBSD runtime replay is deferred.
+
+`make check-routerd15-system-native-linux` ran the actual Hostname and Sysctl
+controllers in private UTS, network, user and mount namespaces with a private
+sysfs. Both native cases passed without skips: hostname acquisition, SQLite
+reopen, update and management release; a real network sysctl change, private
+persistent fragment and converged second reconcile. The outer hostname,
+forwarding value and namespace identities matched before and after. The test
+and production source blobs were those of `2e99c7e7`; the new Makefile entry and
+development procedure were uncommitted at execution and their hashes were
+captured unchanged. This does not qualify package boot, all profile values or
+FreeBSD. See the [system policy gate](../operations/development.md#linux-system-policy-native-gate).
+
+### Linux ordinary gate after the shared rollback repair
+
+Clean `b3036dec` passed the full Linux ordinary Go run: 4277 top-level passes,
+26 explicit skips, zero failures; 121 packages passed and nine had no tests
+(532.167 seconds). Source remained clean before and after. The same revision
+passed full `go vet`, spec/config/control/OpenAPI/website schema consistency,
+and production builds plus static-link verification for all 20 Linux release
+executables. This result does not qualify unexecuted native gates or later source
+changes.
+
+The subsequent Linux logging process regression uses two real serve processes,
+a private persisted SQLite cursor and an independent HTTP destination. The first
+process's acknowledged record was not replayed and a record inserted while it
+was stopped was delivered after the second process started. See `e6edf265`.
+Linux cancellation race checking also passed separately.
+
+The retained two-WAN gate at product `58bef4e9` and fixture `2ec2460b` passed
+independent HTTP forwarding, loss/return, natural Health sample expiry, total
+upstream loss, SQLite restart and declaration withdrawal. The
+[operator procedure](../operations/development.md#linux-native-health-to-pbr-gate)
+and ledger retain its exact package/hash and exclusions. This gate starts its
+Health helpers explicitly; it is not a systemd/boot acceptance result.
+
+Further repairs report TrafficFlowLog destination failure as a local Degraded
+resource while retaining aggregate observations and threshold notification;
+required status-write failures remain errors (`4b97f5a9`). Numeric UID/GID are
+preserved when saving/restoring live-image caches (`03618b21`, with an actual tar
+regression). Debian/Ubuntu IPsec dependencies now include the real IKE daemon
+package, `charon-systemd`, as well as `strongswan-swanctl` (`885888ea`); the ISO
+package list matches. Native IKE/ESP, OS daemon startup and the first real ISO
+build/boot remain pending isolated Linux VM checks.

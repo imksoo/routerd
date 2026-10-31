@@ -95,6 +95,22 @@ This proves the native privilege boundary. Actual DHCP acquisition, renewal,
 DNS requests and service restart still require the isolated VM/client tests.
 Remove the test binary after use.
 
+## Linux system policy native gate
+
+Run `make check-routerd15-system-native-linux` on Linux with user namespaces,
+`unshare`, `mount`, `hostname` and `sysctl` available. Keep the Go toolchain and
+system utilities in `PATH`; the check does not require host root privileges.
+
+The target creates private UTS, network, user and mount namespaces, mounts a
+private sysfs, and runs the production Hostname and Sysctl controllers. It checks
+real hostname changes, a SQLite reopen, management release, a real forwarding
+sysctl change, the private persistent fragment and a converged second reconcile.
+The outer hostname and forwarding value must remain unchanged. Persistent files
+are private test files, not the host's `/etc/hostname` or `/etc/sysctl.d`.
+
+This is a Linux kernel/controller check. It does not qualify boot-time loading,
+package installation, all SysctlProfile values or another operating system.
+
 ## Pre-commit hook
 
 The repository includes an optional pre-commit hook script:

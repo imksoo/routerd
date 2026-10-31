@@ -1240,6 +1240,26 @@
         "Complete routerd 1.0 functional preservation, release qualification or production readiness"
       ]
     },
+    "linux-system-native-2e99c7e7": {
+      "level": "native-kernel",
+      "outcome": "pass",
+      "revision": "2e99c7e7d7d19266cd1749cd85c92ae6f1c465a2",
+      "reference": "docs/design/routerd15-audit.md#linux-first-qualification-and-canceled-retention-recovery-2026-10-31",
+      "environment": "Linux private user, UTS, network and mount namespaces with fresh sysfs; Go 1.25.9, GOMAXPROCS=2.",
+      "reproduction": "make check-routerd15-system-native-linux",
+      "source_binding": "Production and native test blobs match 2e99c7e7; the new Makefile entry and development procedure were uncommitted during execution, with unchanged captured hashes.",
+      "checks": [
+        "Two native cases passed, no skips",
+        "Actual hostname acquisition, SQLite reopen, update and management release",
+        "Real net.ipv4.ip_forward change, private persistent fragment and converged second reconciliation",
+        "Outer hostname, forwarding value and namespace identities matched before and after"
+      ],
+      "excludes": [
+        "Boot-time loading and package/service startup",
+        "All SysctlProfile values, all package dependency policies or full baseline system-policy qualification",
+        "FreeBSD qualification"
+      ]
+    },
     "linux-health-pbr-native-58bef4e9": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -1438,7 +1458,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-system-native-2e99c7e7"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

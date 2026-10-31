@@ -5,6 +5,7 @@ package conntrackobserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,8 +84,25 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 	if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "ConntrackObserver", "default", status); err != nil {
 		return err
 	}
-	if err := c.recordTrafficFlows(ctx, snapshot.Count); err != nil && c.Logger != nil {
-		c.Logger.Warn("traffic flow log failed", "error", err)
+	var flowStatusErr error
+	if err := c.recordTrafficFlows(ctx, snapshot.Count); err != nil {
+		if ctx.Err() != nil {
+			return errors.Join(err, ctx.Err())
+		}
+		if c.Logger != nil {
+			c.Logger.Warn("traffic flow log failed", "error", err)
+		}
+		// Flow history is diagnostic: report its failed destination without
+		// stopping aggregate observations or independent threshold delivery.
+		resource, spec, configured := trafficFlowLogSpec(c.Router)
+		if configured {
+			if saveErr := c.Store.SaveObjectStatus(resource.APIVersion, "TrafficFlowLog", resource.Metadata.Name, map[string]any{
+				"phase": "Degraded", "reason": "TrafficFlowLogFailed", "message": err.Error(),
+				"path": spec.Path, "source": spec.Source, "observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+			}); saveErr != nil {
+				flowStatusErr = errors.Join(err, saveErr)
+			}
+		}
 	}
 	threshold := c.ThresholdRatio
 	if threshold == 0 {
@@ -96,12 +114,12 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.conntrack.threshold.exceeded", daemonapi.SeverityWarning)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "ConntrackObserver", Name: "default"}
 		event.Attributes = map[string]string{"count": fmt.Sprintf("%d", snapshot.Count), "max": fmt.Sprintf("%d", snapshot.Max), "threshold": fmt.Sprintf("%.2f", threshold)}
-		return c.Bus.Publish(ctx, event)
+		return errors.Join(flowStatusErr, c.Bus.Publish(ctx, event))
 	}
 	if !overThreshold {
 		c.aboveThreshold = false
 	}
-	return nil
+	return flowStatusErr
 }
 
 func (c *Controller) readSnapshot(ctx context.Context) (conntrack.Snapshot, error) {
@@ -130,8 +148,17 @@ func (c *Controller) recordUnavailable(snapshotErr error) error {
 
 func (c *Controller) recordTrafficFlows(ctx context.Context, count int) error {
 	resource, spec, ok := trafficFlowLogSpec(c.Router)
-	if !ok || !spec.Enabled {
+	if !ok {
 		return nil
+	}
+	if !spec.Enabled {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return c.Store.SaveObjectStatus(resource.APIVersion, "TrafficFlowLog", resource.Metadata.Name, map[string]any{
+			"phase": "Skipped", "reason": "Disabled", "path": spec.Path, "source": spec.Source,
+			"observedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		})
 	}
 	path := strings.TrimSpace(spec.Path)
 	if path == "" {
