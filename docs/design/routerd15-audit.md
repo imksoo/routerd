@@ -2461,3 +2461,35 @@ and production source blobs were those of `2e99c7e7`; the new Makefile entry and
 development procedure were uncommitted at execution and their hashes were
 captured unchanged. This does not qualify package boot, all profile values or
 FreeBSD. See the [system policy gate](../operations/development.md#linux-system-policy-native-gate).
+
+### Linux ordinary gate after the shared rollback repair
+
+Clean `b3036dec` passed the full Linux ordinary Go run: 4277 top-level passes,
+26 explicit skips, zero failures; 121 packages passed and nine had no tests
+(532.167 seconds). Source remained clean before and after. The same revision
+passed full `go vet`, spec/config/control/OpenAPI/website schema consistency,
+and production builds plus static-link verification for all 20 Linux release
+executables. This result does not qualify unexecuted native gates or later source
+changes.
+
+The subsequent Linux logging process regression uses two real serve processes,
+a private persisted SQLite cursor and an independent HTTP destination. The first
+process's acknowledged record was not replayed and a record inserted while it
+was stopped was delivered after the second process started. See `e6edf265`.
+Linux cancellation race checking also passed separately.
+
+The retained two-WAN gate at product `58bef4e9` and fixture `2ec2460b` passed
+independent HTTP forwarding, loss/return, natural Health sample expiry, total
+upstream loss, SQLite restart and declaration withdrawal. The
+[operator procedure](../operations/development.md#linux-native-health-to-pbr-gate)
+and ledger retain its exact package/hash and exclusions. This gate starts its
+Health helpers explicitly; it is not a systemd/boot acceptance result.
+
+Further repairs report TrafficFlowLog destination failure as a local Degraded
+resource while retaining aggregate observations and threshold notification;
+required status-write failures remain errors (`4b97f5a9`). Numeric UID/GID are
+preserved when saving/restoring live-image caches (`03618b21`, with an actual tar
+regression). Debian/Ubuntu IPsec dependencies now include the real IKE daemon
+package, `charon-systemd`, as well as `strongswan-swanctl` (`885888ea`); the ISO
+package list matches. Native IKE/ESP, OS daemon startup and the first real ISO
+build/boot remain pending isolated Linux VM checks.
