@@ -205,3 +205,41 @@ func TestConcurrentPublicationCannotBeOverwrittenByAutomaticRun(t *testing.T) {
 		t.Fatalf("newer publisher was lost: %+v %v", parts, err)
 	}
 }
+
+func TestContextAndSourcePolicyArePreparedOncePerConfiguration(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "Plugin"}, Metadata: api.ObjectMeta{Name: "inventory"}, Spec: api.PluginSpec{Executable: "/not-invoked", Triggers: []api.PluginTrigger{{Type: "interval", Every: "1h"}}, Context: api.PluginContextSpec{Resources: []api.PluginContextResourceRef{{APIVersion: api.NetAPIVersion, Kind: "Interface", Name: "uplink"}}}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "DynamicConfigSource"}, Metadata: api.ObjectMeta{Name: "policy"}, Spec: api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "1s"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "uplink"}, Spec: api.InterfaceSpec{IfName: "before"}},
+	}}}
+	c, err := New(router, store, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A later configuration is admitted by a new owner, never by rebuilding
+	// this owner's startup policy from observation-time input.
+	router.Spec.Resources[1].Spec = api.DynamicConfigSourceSpec{PluginRef: "inventory", TTL: "1h"}
+	router.Spec.Resources[2].Spec = api.InterfaceSpec{IfName: "after"}
+	now := time.Now().UTC()
+	c.Now = func() time.Time { return now }
+	var received routerplugin.PluginContext
+	c.Runner = func(_ context.Context, _ api.PluginSpec, _ string, opts routerplugin.RunOptions) (routerplugin.PluginResult, routerplugin.RunOutcome, error) {
+		received = opts.Context
+		return routerplugin.PluginResult{TypeMeta: api.TypeMeta{APIVersion: api.PluginAPIVersion, Kind: "PluginResult"}, Status: routerplugin.PluginResultStatus{ObservedAt: now, TTL: "1h"}}, routerplugin.RunOutcome{}, nil
+	}
+	if _, err := c.Periodic(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Resources) != 1 || received.Resources[0].Spec["ifName"] != "before" {
+		t.Fatalf("prepared context was rebuilt from later input: %+v", received)
+	}
+	parts, err := store.GetDynamicConfigPartsBySource("Plugin/inventory")
+	if err != nil || len(parts) != 1 || parts[0].ExpiresAt.Sub(parts[0].ObservedAt) != time.Second {
+		t.Fatalf("prepared source TTL changed: %+v %v", parts, err)
+	}
+}

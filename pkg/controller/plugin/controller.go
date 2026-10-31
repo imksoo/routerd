@@ -153,9 +153,9 @@ func (c *Controller) Subscriptions() []bus.Subscription {
 
 func (c *Controller) now() time.Time {
 	if c.Now != nil {
-		return c.Now().UTC()
+		return c.Now()
 	}
-	return time.Now().UTC()
+	return time.Now()
 }
 
 func (c *Controller) NextAfter() time.Duration {
@@ -286,6 +286,7 @@ func (c *Controller) invoke(ctx context.Context, plan preparedPlugin, trigger ro
 	if err := c.Store.PublishPluginResult(ctx, generation, record); err != nil {
 		return err
 	}
+	now = c.now()
 	if c.Bus != nil && (last == nil || last.Digest != record.Digest || last.EffectiveStatus(now) != record.EffectiveStatus(now)) {
 		event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "plugin", Kind: "controller"}, dynamicconfig.PartChangedEvent, daemonapi.SeverityInfo)
 		event.Resource = &daemonapi.ResourceRef{APIVersion: api.PluginAPIVersion, Kind: "Plugin", Name: plan.name}
