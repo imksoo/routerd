@@ -97,8 +97,8 @@ func TestReviewOptionalSystemPathsCannotHideRequiredStateWriteFailure(t *testing
 			}
 			switch kind {
 			case "Sysctl":
-				sysctl, err := exec.LookPath("sysctl")
-				if err != nil {
+				sysctl, lookupErr := exec.LookPath("sysctl")
+				if lookupErr != nil {
 					t.Skip("requires the actual read-only sysctl")
 				}
 				controller := SysctlController{
