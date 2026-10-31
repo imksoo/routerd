@@ -215,6 +215,7 @@ secrets {
   }
 }
 EOF
+mkdir -p "$work"/{x509,x509ca,x509ocsp,x509aa,x509ac,x509crl,pubkey,private,rsa,ecdsa,pkcs8,pkcs12}
 run_stage peer-load peer_control --load-all --file "$work/peer.conf"
 cat >"$work/router.yaml" <<'EOF'
 apiVersion: routerd.net/v1alpha1
