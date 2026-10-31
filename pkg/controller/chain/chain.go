@@ -3311,7 +3311,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			}
 			return didWorkError(bgp.ReconcileRouter(ctx, effective, store.withRouter(effective)))
 		}},
-		framework.FuncController{ControllerName: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "vrrp", EventLockKey: "vrrp", Every: 5 * time.Second, Subs: vrrpStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			observation, err := effectiveForReconcile()
 			if err != nil {
 				leaseSyncRolesObserved.Store(nil)
