@@ -27,6 +27,9 @@ import (
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
+// This gate runs production run/serve code in independent test-executable
+// processes. Private Unix HTTP and SQLite prove control-plane admission only;
+// no join-token, BGP, forwarding or distributed capture authority is asserted.
 func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 	if root := os.Getenv("ROUTERD_SAM_PROCESS_ROOT"); root != "" {
 		err := run([]string{"serve", "--sandbox", "--root", root,
@@ -211,6 +214,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 		if err != nil || len(rrSet.Nodes) != 1 || rrSet.Nodes[0].NodeRef != "rr-a" || !rrSet.Nodes[0].RouteReflector {
 			return fmt.Errorf("wrong actual topology: %+v %v", rrSet, err)
 		}
+		t.Logf("leaf current topology source=%s expires=%s phase=%v", part.Spec.Source, part.Spec.ExpiresAt.Format(time.RFC3339Nano), status["phase"])
 		return nil
 	}
 	_, stopRR := start("rr", rr)
@@ -224,6 +228,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 	if err != nil || claim.LeafID != "leaf-a" || claim.JoinNonce != "identity-one" || claim.Revoked {
 		t.Fatalf("accepted remote claim: %+v %v", claim, err)
 	}
+	t.Logf("RR persisted received identity=%s expires=%s", samenrollment.ClientIdentityDigest(claim), accepted.Spec.ExpiresAt.Format(time.RFC3339Nano))
 	stopLeaf()
 	secondLeaf, stopLeaf := start("leaf-reopen", leaf)
 	if secondLeaf.Process.Pid == firstLeaf.Process.Pid {
@@ -243,6 +248,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 		if !part.Spec.ExpiresAt.Equal(lease.Spec.ExpiresAt) || part.Spec.ExpiresAt.After(time.Now()) || status["phase"] == "Ready" {
 			return fmt.Errorf("unavailable RR retained current admission: status=%v expires=%v", status, part.Spec.ExpiresAt)
 		}
+		t.Logf("RR unavailable: unextended lease expired=%s observed=%s phase=%v", part.Spec.ExpiresAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), status["phase"])
 		return nil
 	})
 	_, stopRR = start("rr-reopen", rr)
@@ -264,6 +270,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 		if part.Spec.ExpiresAt.After(time.Now()) || status["phase"] == "Ready" {
 			return fmt.Errorf("revoked admission is still current: %v %v", status, part.Spec.ExpiresAt)
 		}
+		t.Logf("revoked lease expired=%s observed=%s phase=%v", part.Spec.ExpiresAt.Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), status["phase"])
 		return nil
 	})
 	stopRR()
@@ -271,6 +278,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 	if _, err := rrClient.SubmitSAMEnrollmentClaim(ctx, controlapi.SAMEnrollmentClaimSubmitRequest{Claim: original}); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("RR reopen forgot permanent identity revocation: %v", err)
 	}
+	t.Log("RR SQLite reopen retained revocation; the prior client identity was rejected")
 	stopLeaf()
 	writeConfig(leaf, leafConfig("identity-two"))
 	_, stopLeaf = start("leaf-new-identity", leaf)
@@ -283,6 +291,7 @@ func TestSAMRRLeafProcessesAdmissionExpiryAndRevocation(t *testing.T) {
 	if err != nil || newClaim.JoinNonce != "identity-two" || samenrollment.ClientIdentityDigest(newClaim) == samenrollment.ClientIdentityDigest(claim) {
 		t.Fatalf("wrong re-admitted identity: %+v %v", newClaim, err)
 	}
+	t.Logf("RR persisted explicitly rotated identity=%s", samenrollment.ClientIdentityDigest(newClaim))
 	stopLeaf()
 	stopRR()
 	for _, root := range []string{rr, leaf} {
