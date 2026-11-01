@@ -1598,7 +1598,7 @@ func TestValidateDHCPv4RelayRequiresUniqueStaticIPv4Address(t *testing.T) {
 		{name: "missing address", want: "requires exactly one IPv4StaticAddress on \"lan\", found 0"},
 		{name: "multiple addresses", addresses: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-a"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-b"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.2/24"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-b"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.11.1/24"}},
 		}, want: "requires exactly one IPv4StaticAddress on \"lan\", found 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

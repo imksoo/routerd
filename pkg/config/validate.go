@@ -429,9 +429,8 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 					return fmt.Errorf("%s spec.idx.Interfaces[%d] references missing Interface %q", res.ID(), i, name)
 				}
 				addressCount := 0
-				ifname := api.ResolveInterfaceIfName(router, name)
 				for _, address := range idx.StaticIPv4ByName {
-					if address.iface == ifname {
+					if address.iface == name {
 						addressCount++
 					}
 				}
