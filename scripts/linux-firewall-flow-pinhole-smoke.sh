@@ -65,8 +65,6 @@ ip link add rd15-fph-lan type veth peer name peer0 netns rd15-fph-client
 ip link add rd15-fph-wan type veth peer name peer0 netns rd15-fph-server
 ip link set rd15-fph-lan up
 ip link set rd15-fph-wan up
-ip addr add 198.18.60.1/24 dev rd15-fph-lan
-ip addr add 198.18.61.1/24 dev rd15-fph-wan
 ip -n rd15-fph-client link set peer0 up
 ip -n rd15-fph-client addr add 198.18.60.100/24 dev peer0
 ip -n rd15-fph-client route add default via 198.18.60.1
