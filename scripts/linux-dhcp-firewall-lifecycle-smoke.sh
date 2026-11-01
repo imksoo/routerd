@@ -213,7 +213,7 @@ systemctl stop rd15-dhcp-client
 for _ in {1..20}; do
  reservation_present=true
  for mode in +notcp +tcp; do
-  if [ "$(ip netns exec rd15-admin-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" != "$client" ]; then reservation_present=false; break; fi
+  if [ "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" != "$client" ]; then reservation_present=false; break; fi
  done
  [ "$reservation_present" = true ] && break
  sleep 1
@@ -245,7 +245,7 @@ stage=dynamic-release
 systemctl stop rd15-dhcp-client
 absent() {
  for mode in +notcp +tcp; do
-  test -z "$(ip netns exec rd15-admin-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)"
+  test -z "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)"
  done
 }
 for _ in {1..20}; do if absent; then break; fi; sleep 1; done
