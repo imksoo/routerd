@@ -22,7 +22,10 @@ func KernelNetworkScope(ctx context.Context) (string, error) {
 	}
 	// VNET jails may reuse interface indexes independently of the host. ps's
 	// native jid field binds the receipt to the process's actual jail as well.
-	readCtx, cancel := context.WithTimeout(ctx, time.Second)
+	// This is a local, bounded read. It shares the five-second budget used by
+	// other FreeBSD native process observations: a one-second limit spuriously
+	// killed ps while a full native package gate was under load.
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(readCtx, "/bin/ps", "-o", "jid=", "-p", strconv.Itoa(os.Getpid()))
 	output := subprocessio.NewCapture(128)
