@@ -88,6 +88,21 @@ configuration explicitly permits the required inbound UDP/3784 control packets.
 This does not qualify a non-routerd BFD peer, IPv6 BGP, ECMP, or physical-network
 behavior.
 
+The Linux PPPoE PVE result is recorded at `6f67e4fb`. The supervised PPPoE
+client now passes the configured PPP interface name and default-route intent to
+its helper, and the Linux peer file renders both `defaultroute` and
+`replacedefaultroute`. VM219 established PAP/IPCP with an independent VM220
+access concentrator on VLAN 3132. A VLAN 3131 client VM reached VM220's HTTP
+server through VM219, and VM220 recorded the router's PPP address rather than
+the client address. Access-concentrator loss removed the PPP interface and
+default route; its return and a routerd restart restored both and repeated the
+client transfer. Replacing the PPPoE configuration with the base configuration
+removed the PPP daemon/interface and restored the base route. The first
+replacement reported a route-ownership `Drifted` result before convergence; a
+second identical apply reached `Healthy`. That replacement behavior remains an
+open production-path finding. IPv6 PPP traffic and physical/cross-vendor access
+concentrator qualification remain unrun.
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
