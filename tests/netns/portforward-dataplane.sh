@@ -32,7 +32,7 @@ ip -n "$BACKEND" route add default via 10.77.0.1
 ip netns exec "$ROUTER" sysctl -qw net.ipv4.ip_forward=1
 
 RENDER="$WORKDIR/portforward-render"
-(cd "$REPO_ROOT" && go build -o "$RENDER" ./tests/netns/portforward-render)
+(cd "$REPO_ROOT" && go build -buildvcs=false -o "$RENDER" ./tests/netns/portforward-render)
 "$RENDER" nat >"$WORKDIR/nat44.nft"
 "$RENDER" firewall >"$WORKDIR/firewall.nft"
 for ruleset in firewall nat44; do
