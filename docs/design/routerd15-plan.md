@@ -104,6 +104,25 @@ PPP インターフェース名を現在状態へ反映します。修正後の 
 `ppp-lab` 不在、`rd15-wan` 経由の基準既定経路復帰を確認しました。IPv6 PPP、CHAP、
 物理回線および異なる実装のアクセスコンセントレーターは未検証です。
 
+Linux DHCPv4 リレーの隔離 PVE 検証は `00fb5f06` と `2fb7a320` に記録しています。
+`00fb5f06` は、各受信側の論理インターフェースと実際に割り当てた IPv4 アドレスを
+`listeners` へ明示する新しい設定契約に変更しました。このアドレスは dnsmasq が
+上流 DHCP サーバーへ送る `giaddr` です。`2fb7a320` は、指定した上流論理
+インターフェースから自身の UDP/67 宛て応答を許可するファイアウォール規則を追加しました。
+
+隔離したルーター、上流 DHCP サーバー、LAN クライアントの 3 VM で、新しい 1.5 状態領域から
+候補実行物を起動しました。旧状態データは読まずに退避し、検証後に元の状態領域へ復元しました。
+生成された dnsmasq の行は
+`dhcp-relay=198.18.15.1,198.18.16.1,rd15-wan` です。独立クライアントは
+DISCOVER、OFFER、REQUEST、ACK を完了し、`198.18.15.104/24` と既定経路を取得しました。
+ルーター `198.18.15.1` への 3 回の ICMP 到達確認はすべて成功しました。
+
+上流 DHCP サーバーを停止した状態では、クライアントの DISCOVER に応答はなく、IPv4
+アドレスは取得されませんでした。上流を再起動すると、ルーターを再起動せずにクライアントは
+再度 ACK を受け、同じアドレスと既定経路を取得しました。WAN 側の UDP/67 許可規則は
+応答 4 パケットを受信し、後続の既定破棄規則は 0 パケットでした。検証後は元の実行物、
+設定、状態領域を復元し、検証専用の ISO、VLAN、クライアントリンク、上流サーバーを削除しました。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
