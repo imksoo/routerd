@@ -1,6 +1,7 @@
 # routerd 1.5 proposal and implementation plan
 
-Status: proposed on `proposal/routerd15-kiss-runtime`; not a released product.
+Status: active on `work/routerd15-integrate-20261031`, derived from
+`proposal/routerd15-kiss-runtime`; not a released product.
 Baseline: routerd `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 
 ## Product decision
