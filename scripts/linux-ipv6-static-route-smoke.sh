@@ -29,8 +29,8 @@ finish() {
  trap - EXIT
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
-  ip -j -d -6 route show 2001:db8:150::99/128 >&2 || true
-  ip -6 route get 2001:db8:150::99 >&2 || true
+  ip -j -d -6 route show fd42:150::99/128 >&2 || true
+  ip -6 route get fd42:150::99 >&2 || true
   systemctl status routerd --no-pager >&2 || true
  fi
  install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml >/dev/null 2>&1 || true
@@ -47,17 +47,17 @@ ip netns add rd15-v6route-peer
 ip -n rd15-v6route-peer link set lo up
 ip link add rd15-v6route-host type veth peer name peer0 netns rd15-v6route-peer
 ip link set rd15-v6route-host up
-ip -6 addr add 2001:db8:149::1/64 dev rd15-v6route-host
+ip -6 addr add fd42:149::1/64 dev rd15-v6route-host
 ip -n rd15-v6route-peer link set peer0 up
-ip -n rd15-v6route-peer addr add 2001:db8:149::2/64 dev peer0
-ip -n rd15-v6route-peer addr add 2001:db8:150::99/128 dev lo
+ip -n rd15-v6route-peer addr add fd42:149::2/64 dev peer0
+ip -n rd15-v6route-peer addr add fd42:150::99/128 dev lo
 
 cat > "$work/route.json" <<'JSON'
 {
   "apiVersion":"routerd.net/v1alpha1", "kind":"Router", "metadata":{"name":"ipv6-static-route-smoke"},
   "spec":{"resources":[
     {"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","metadata":{"name":"upstream"},"spec":{"ifname":"rd15-v6route-host","managed":false,"owner":"external"}},
-    {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv6StaticRoute","metadata":{"name":"peer-loopback"},"spec":{"interface":"upstream","destination":"2001:db8:150::99/128","via":"2001:db8:149::2","metric":77}}
+    {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv6StaticRoute","metadata":{"name":"peer-loopback"},"spec":{"interface":"upstream","destination":"fd42:150::99/128","via":"fd42:149::2","metric":77}}
   ]}
 }
 JSON
@@ -66,32 +66,32 @@ install -m 0600 "$work/route.json" /usr/local/etc/routerd/router.yaml
 systemctl restart routerd
 stage=initial-apply
 for _ in {1..30}; do
- if ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
-   .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
+ if ip -j -d -6 route show fd42:150::99/128 | jq -e '
+   .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6route-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
  sleep 1
 done
-ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
- .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
+ip -j -d -6 route show fd42:150::99/128 | jq -e '
+ .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6route-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
 stage=forwarding
-ping -6 -c 1 -W 2 2001:db8:150::99 >/dev/null
+ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
 stage=restart-reconcile
 systemctl restart routerd
 systemctl is-active --quiet routerd
-ping -6 -c 1 -W 2 2001:db8:150::99 >/dev/null
+ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
 stage=withdrawal
 install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml
 systemctl restart routerd
 for _ in {1..30}; do
- if ! ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
-   .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77)' >/dev/null; then break; fi
+ if ! ip -j -d -6 route show fd42:150::99/128 | jq -e '
+   .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6route-host" and .metric == 77)' >/dev/null; then break; fi
  sleep 1
 done
-if ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
- .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77)' >/dev/null; then
+if ip -j -d -6 route show fd42:150::99/128 | jq -e '
+ .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6route-host" and .metric == 77)' >/dev/null; then
  echo 'empty apply retained the IPv6StaticRoute' >&2
  exit 1
 fi
-if ping -6 -c 1 -W 1 2001:db8:150::99 >/dev/null 2>&1; then
+if ping -6 -c 1 -W 1 fd42:150::99 >/dev/null 2>&1; then
  echo 'withdrawn IPv6StaticRoute still forwarded traffic' >&2
  exit 1
 fi
