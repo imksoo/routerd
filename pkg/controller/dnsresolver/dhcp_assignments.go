@@ -149,6 +149,63 @@ func assignmentsForSources(records []resolverruntime.RuntimeDHCPHostRecord, sour
 	return out
 }
 
+// declaredReservationAssignments puts fixed intent into the runtime zone at
+// the point where its DNS source is selected. It deliberately does not depend
+// on the dnsmasq hosts sidecar: that file tracks renderer output and may change
+// when a client releases its current lease. An unconditional declaration from
+// DeclaredRouter is retained only while its named DHCP source remains selected.
+func (c Controller) declaredReservationAssignments(scopes []resolverruntime.DHCPAddressScope, sources []string) []resolverruntime.RuntimeDHCPHostRecord {
+	var out []resolverruntime.RuntimeDHCPHostRecord
+	seen := map[string]struct{}{}
+	for index, router := range []*api.Router{c.Router, c.DeclaredRouter} {
+		if router == nil || index == 1 && router == c.Router {
+			continue
+		}
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind != "DHCPv4Reservation" {
+				continue
+			}
+			spec, err := resource.DHCPv4ReservationSpec()
+			if err != nil || index == 1 && resourcequery.ResourceWhenPresent(spec.When) {
+				continue
+			}
+			server := spec.Server
+			if server == "" {
+				server = spec.Scope
+			}
+			source := "DHCPv4Server/" + server
+			if server == "" || spec.Hostname == "" || spec.MACAddress == "" || spec.IPAddress == "" || !slices.Contains(sources, source) || !hasDHCPSource(scopes, source) {
+				continue
+			}
+			record := resolverruntime.RuntimeDHCPHostRecord{Hostname: spec.Hostname, IP: spec.IPAddress, MAC: spec.MACAddress, Source: source, Origin: resolverruntime.DHCPAssignmentReservation}
+			key := dhcpAssignmentKey(record)
+			if _, found := seen[key]; found {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func mergeDHCPAssignments(groups ...[]resolverruntime.RuntimeDHCPHostRecord) []resolverruntime.RuntimeDHCPHostRecord {
+	seen := map[string]struct{}{}
+	var out []resolverruntime.RuntimeDHCPHostRecord
+	for _, records := range groups {
+		for _, record := range records {
+			key := dhcpAssignmentKey(record)
+			if _, found := seen[key]; found {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, record)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return dhcpAssignmentKey(out[i]) < dhcpAssignmentKey(out[j]) })
+	return out
+}
+
 func readDHCPHosts(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {

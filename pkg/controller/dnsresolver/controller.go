@@ -301,7 +301,10 @@ func (c Controller) runtimeConfig(ctx context.Context, name string, spec api.DNS
 		zones = append(zones, preparedZone{Name: resource.Metadata.Name, Zone: zoneSpec.Zone, Records: len(zoneSpec.Records), PendingRecords: pendingRecords})
 		runtimeZone := dnsresolver.RuntimeZone{Name: resource.Metadata.Name, Spec: zoneSpec, DHCPScopes: scopes}
 		if len(zoneSpec.DHCPDerived.Sources) > 0 {
-			runtimeZone.DHCPHostRecords = assignmentsForSources(dhcpHostRecords, zoneSpec.DHCPDerived.Sources)
+			runtimeZone.DHCPHostRecords = mergeDHCPAssignments(
+				assignmentsForSources(dhcpHostRecords, zoneSpec.DHCPDerived.Sources),
+				c.declaredReservationAssignments(scopes, zoneSpec.DHCPDerived.Sources),
+			)
 			for _, observation := range leaseObservations {
 				if slices.Contains(zoneSpec.DHCPDerived.Sources, observation.Source) {
 					runtimeZone.LeaseObservations = append(runtimeZone.LeaseObservations, observation)
