@@ -1051,6 +1051,14 @@ func vrrpStatusSubscriptions(router *api.Router) []bus.Subscription {
 	})
 }
 
+func linkStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return append(statusSubscriptionsWithWhen(router, []string{"Interface"},
+		"Interface", "VirtualAddress", "Bridge", "VRF", "VXLANSegment", "VXLANTunnel",
+		"WireGuardInterface", "DSLiteTunnel", "TunnelInterface", "PPPoESession"), bus.Subscription{
+		Topics: []string{daemonapi.EventVRRPRoleTransition},
+	})
+}
+
 func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
 	// ServiceUnit results are outputs of this worker. Explicit When references
 	// below still wake dependent units without feeding failed removals back.
@@ -2869,7 +2877,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "link", Every: 30 * time.Second, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "link", EventLockKey: "link", Every: time.Second, Subs: linkStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			observation, err := effectiveForReconcile()
 			if err != nil {
 				return false, err
