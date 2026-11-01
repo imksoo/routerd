@@ -30,6 +30,16 @@ or cross-version migration path.
 - After `systemctl restart routerd`, delegation, the LAN address, router
   advertisement route and independent HTTP traffic recovered. The final status
   query reported `Healthy` with 26 resources.
+- A Kea configuration reload changed the delegated pool from
+  `2001:db8:1500::/60` to `2001:db8:1510::/60`. The DHCPv6 server retained
+  the same process PID and continued to renew the new prefix.
+- routerd observed `2001:db8:1510::/60` in `Bound` state, configured
+  `2001:db8:1510::1/64` on the LAN, and removed
+  `2001:db8:1500::1/64` from the router LAN interface.
+- The independent client retained a non-tentative address in the new prefix
+  and its RA default route. Its old address was present only as deprecated
+  with preferred lifetime zero. The upstream HTTP server observed the new
+  client source address.
 
 One immediate status read during the restart sequence reported `ERROR` before
 the subsequent reconciliations completed. A later JSON status query reported
@@ -38,6 +48,6 @@ determined by this check.
 
 ## Unverified scope
 
-This check does not establish prefix renumbering, lease expiry withdrawal,
-upstream loss and return, high availability, target-device qualification, or
-FreeBSD behavior. Those cases remain separate Linux-first work.
+This check does not establish lease expiry withdrawal, upstream loss and
+return, high availability, target-device qualification, or FreeBSD behavior.
+Those cases remain separate Linux-first work.
