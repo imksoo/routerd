@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-10-31",
+  "updated_date": "2026-11-01",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -1115,6 +1115,23 @@
       "excludes": [
         "Installer clean-install path, DNS answers, IPv4 NAT, forwarding and reboot recovery",
         "DHCPv6 stateless DNS options, expiry, FreeBSD runtime or complete 1.0 function preservation"
+      ]
+    },
+    "linux-dhcp-family-isolation-2f9534d7": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "2f9534d78d13d6c6703fc7ecd4c406a2819d1b95",
+      "reference": "tests/netns/README.md#dhcp-address-family-isolation",
+      "environment": "Linux 6.8.0-136-generic KVM guest; private network namespaces/veth, dnsmasq 2.90, nftables and an independent Python DHCPv4/DHCPv6/RA client.",
+      "reproduction": "go run ./tests/netns/dhcp-family-render >RULES; sudo ./tests/netns/dhcp-family-isolation.sh /usr/sbin/dnsmasq RULES",
+      "checks": [
+        "Independent DHCPv4 Offer/ACK and stateless DHCPv6 Information-Reply containing the requested DNS server completed before and after applying the renderer-generated family guard.",
+        "The independent client received a positive-lifetime RA; both unwanted DHCPv4 copies incremented the guard counter and no longer reached dnsmasq on the IPv6-only listener.",
+        "The isolated namespaces, veth, firewall state and successful temporary output were removed."
+      ],
+      "excludes": [
+        "routerd daemon/service supervision, DHCPv6 lease renewal/expiry and restart",
+        "IPv6 forwarding, prefix delegation, FreeBSD runtime or complete DHCPv6 server qualification"
       ]
     },
     "dhcpv6-partial-recovery-87761c0e": {
@@ -2497,6 +2514,9 @@
         "related_test_files": [
           "pkg/render/dnsmasq_test.go",
           "pkg/controller/chain/dnsmasq_ipv4_only_test.go",
+          "tests/netns/dhcp-family-isolation.sh",
+          "tests/netns/dhcp-family-client.py",
+          "tests/netns/dhcp-family-render/main.go",
           "tests/netns/dhcpv6-stateful.sh",
           "tests/netns/dhcpv6-stateful-render/main.go"
         ]
@@ -2506,7 +2526,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-dhcpv6-server-ia-na-f6be5a58",
-          "linux-dhcpv6-server-packaged-lifecycle-038381c2"
+          "linux-dhcpv6-server-packaged-lifecycle-038381c2",
+          "linux-dhcp-family-isolation-2f9534d7"
         ]
       },
       "freebsd": {
@@ -2514,8 +2535,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent client coverage for rendered stateless information and DNS options",
-        "Renewal, expiry, RA interaction, family isolation and restart"
+        "DHCPv6 renewal/expiry and restart through full routerd supervision",
+        "Routed IPv6 client behavior across prefix changes, withdrawal and failure recovery"
       ]
     },
     {
