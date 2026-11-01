@@ -777,6 +777,12 @@ func outboundAliasesForOS(router *api.Router, targetOS platform.OS, intents []dy
 				return nil, err
 			}
 			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
+		case "VRF":
+			spec, err := res.VRFSpec()
+			if err != nil {
+				return nil, err
+			}
+			aliases[res.Metadata.Name] = defaultString(spec.IfName, res.Metadata.Name)
 		case "VXLANSegment":
 			spec, err := res.VXLANSegmentSpec()
 			if err != nil {
