@@ -254,9 +254,9 @@ the default upstream rule.
 
 Successful raw output is deleted automatically; retain the revision and verdict,
 this procedure, its fixture and the regression tests. Failures stop the product
-and peers and retain the exact fixture path for diagnosis. Reproduce a product
-failure locally before another native run, and remove retained output after the
-failure is resolved. WAN transit and its return route are fixture scaffolding:
+and peers, print the captured diagnostics to the invoking console, then remove
+the fixture output. Reproduce a product failure locally before another native
+run. WAN transit and its return route are fixture scaffolding:
 this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, overlapping multi-prefix renumbering,
 reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
 
