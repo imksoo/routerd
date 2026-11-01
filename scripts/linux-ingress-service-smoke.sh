@@ -16,7 +16,7 @@ done
 for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
  if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then echo "existing namespace: $ns" >&2; exit 1; fi
 done
-for unit in rd15-ingress-backend-a rd15-ingress-backend-b; do
+for unit in rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b; do
  test "$(systemctl show -p LoadState --value "$unit.service")" = not-found
 done
 if nft -j list tables | jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")' >/dev/null; then
@@ -37,7 +37,7 @@ finish() {
  trap - EXIT
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
-  for event_log in "$work"/backend-*.events; do
+  for event_log in "$work"/*.events; do
    test -e "$event_log" || continue
    printf '%s\n' "backend observation: $(basename "$event_log")" >&2
    cat "$event_log" >&2
@@ -45,8 +45,8 @@ finish() {
   nft list ruleset >&2 || true
  fi
  /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
- systemctl stop rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
- systemctl reset-failed rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
+ systemctl stop rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
+ systemctl reset-failed rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
  for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
   ip netns del "$ns" >/dev/null 2>&1 || true
  done
@@ -107,6 +107,8 @@ ip -n rd15-ing-backend-a route add default via 198.18.50.1
 ip -n rd15-ing-backend-b addr add 198.18.50.20/24 dev peer0
 ip -n rd15-ing-backend-b route add default via 198.18.50.1
 
+systemd-run --unit=rd15-ingress-port-forward --property=Type=exec \
+ ip netns exec rd15-ing-backend-a python3 "$work/backend.py" port-forward 198.18.50.10 8081 "$work/port-forward.events"
 systemd-run --unit=rd15-ingress-backend-a --property=Type=exec \
  ip netns exec rd15-ing-backend-a python3 "$work/backend.py" backend-a 198.18.50.10 8080 "$work/backend-a.events"
 systemd-run --unit=rd15-ingress-backend-b --property=Type=exec \
@@ -124,9 +126,10 @@ if got != f"{expected}:{source}":
 PY
 }
 for _ in {1..20}; do
- if probe rd15-ing-backend-a 198.18.50.10 8080 backend-a 198.18.50.10 >/dev/null 2>&1 && probe rd15-ing-backend-b 198.18.50.20 8080 backend-b 198.18.50.20 >/dev/null 2>&1; then break; fi
+ if probe rd15-ing-backend-a 198.18.50.10 8081 port-forward 198.18.50.10 >/dev/null 2>&1 && probe rd15-ing-backend-a 198.18.50.10 8080 backend-a 198.18.50.10 >/dev/null 2>&1 && probe rd15-ing-backend-b 198.18.50.20 8080 backend-b 198.18.50.20 >/dev/null 2>&1; then break; fi
  sleep 1
 done
+probe rd15-ing-backend-a 198.18.50.10 8081 port-forward 198.18.50.10
 probe rd15-ing-backend-a 198.18.50.10 8080 backend-a 198.18.50.10
 probe rd15-ing-backend-b 198.18.50.20 8080 backend-b 198.18.50.20
 
@@ -142,7 +145,7 @@ cat > "$work/base.json" <<'JSON'
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallZone","metadata":{"name":"wan"},"spec":{"role":"untrust","interfaces":["wan"]}},
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallZone","metadata":{"name":"lan"},"spec":{"role":"trust","interfaces":["lan"]}},
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"FirewallPolicy","metadata":{"name":"default"},"spec":{}},
-    {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"PortForward","metadata":{"name":"fixed"},"spec":{"listen":{"interface":"wan","address":"198.18.52.2","protocol":"tcp","port":18080},"target":{"address":"198.18.50.10","port":8080},"hairpin":{"enabled":true,"interfaces":["lan"]}}},
+    {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"PortForward","metadata":{"name":"fixed"},"spec":{"listen":{"interface":"wan","address":"198.18.52.2","protocol":"tcp","port":18080},"target":{"address":"198.18.50.10","port":8081},"hairpin":{"enabled":true,"interfaces":["lan"]}}},
     {"apiVersion":"firewall.routerd.net/v1alpha1","kind":"IngressService","metadata":{"name":"edge"},"spec":{"listen":{"interface":"wan","address":"198.18.52.2","protocol":"tcp","port":18081},"backends":[{"name":"backend-a","address":"198.18.50.10","port":8080},{"name":"backend-b","address":"198.18.50.20","port":8080}],"hairpin":{"enabled":true,"interfaces":["lan"]},"healthCheck":{"protocol":"tcp","interval":"1s","timeout":"500ms","healthyThreshold":1,"unhealthyThreshold":1},"policy":{"selection":"failover","onNoHealthyBackends":"reject"}}}
   ]}
 }
@@ -195,8 +198,8 @@ nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed hairpin'
 nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge hairpin'
 
 stage='port-forward-dnat-and-hairpin'
-probe rd15-ing-external 198.18.52.2 18080 backend-a 198.18.52.1
-probe rd15-ing-client 198.18.52.2 18080 backend-a 198.18.50.1
+probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1
+probe rd15-ing-client 198.18.52.2 18080 port-forward 198.18.50.1
 stage='ingress-dnat-and-hairpin'
 probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 probe rd15-ing-client 198.18.52.2 18081 backend-a 198.18.50.1
@@ -206,7 +209,7 @@ import pathlib, socket, sys, time
 work = pathlib.Path(sys.argv[1])
 with socket.create_connection(('198.18.52.2', 18080), timeout=3) as conn:
     first = conn.recv(256).decode().strip()
-    if first != 'backend-a:198.18.52.1':
+    if first != 'port-forward:198.18.52.1':
         raise SystemExit(f'initial response={first!r}')
     (work / 'persistent.ready').touch()
     deadline = time.monotonic() + 30
@@ -216,7 +219,7 @@ with socket.create_connection(('198.18.52.2', 18080), timeout=3) as conn:
         time.sleep(.05)
     conn.sendall(b'old-flow\n')
     got = conn.recv(256).decode().strip()
-    if got != 'backend-a:old-flow':
+    if got != 'port-forward:old-flow':
         raise SystemExit(f'old flow response={got!r}')
 PY
 ip netns exec rd15-ing-external python3 "$work/persistent.py" "$work" & persistent_pid=$!
@@ -231,7 +234,7 @@ if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed'; then
 fi
 touch "$work/persistent.release"
 wait "$persistent_pid"
-if probe rd15-ing-external 198.18.52.2 18080 backend-a 198.18.52.1; then
+if probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1; then
  echo 'withdrawn PortForward admitted a new flow' >&2
  exit 1
 fi
