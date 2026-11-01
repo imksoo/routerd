@@ -1,0 +1,38 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: pve07-routerd15-ha-current-a
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: lan}
+      spec: {ifname: ens19, adminUp: true, managed: true, owner: routerd}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: {name: lan-address}
+      spec: {interface: lan, address: 172.18.0.2/16}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: VirtualAddress
+      metadata: {name: lan-vip}
+      spec:
+        interface: lan
+        address: 172.18.0.1/32
+        family: ipv4
+        mode: vrrp
+        vrrp:
+          virtualRouterID: 51
+          priority: 150
+          preempt: false
+          peers: [172.18.0.3]
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Server
+      metadata: {name: lan-dhcpv4}
+      spec:
+        interface: lan
+        addressPool: {start: 172.18.1.100, end: 172.18.1.199, leaseTime: 12h}
+        gateway: 172.18.0.1
+        dnsSource: none
+        when:
+          state:
+            VirtualAddress/lan-vip.role: {equals: master}
