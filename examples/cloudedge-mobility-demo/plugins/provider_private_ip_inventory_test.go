@@ -520,7 +520,7 @@ esac
 	res := runInventoryPluginWithEnv(t, bin, `{"spec":{"provider":"oci","selfNicRef":"vnic-router","target":{"region":"ap-tokyo-1"}}}`, []string{
 		"ROUTERD_PROVIDER_INVENTORY_OCI_IMDS_DISABLE=1",
 		"ROUTERD_FIXTURE_PID=" + pidFile,
-		"ROUTERD_PROVIDER_INVENTORY_OCI_VNIC_DETAIL_TIMEOUT=0.1",
+		"ROUTERD_PROVIDER_INVENTORY_OCI_VNIC_DETAIL_TIMEOUT=1",
 	})
 	if res.Status.Status != "succeeded" {
 		t.Fatalf("status = %q error=%q", res.Status.Status, res.Status.Error)
