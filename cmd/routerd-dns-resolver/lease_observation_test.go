@@ -133,8 +133,9 @@ func TestConfiguredAssignmentIsNotAnObservedLease(t *testing.T) {
 	config := testResolverConfig(nil)
 	config.Zones[0].DHCPHostRecords = []resolvercfg.RuntimeDHCPHostRecord{{Hostname: "reservation", IP: "192.0.2.55", MAC: "reserved-client", Source: "DHCPv4Server/dhcpv4", Origin: resolvercfg.DHCPAssignmentReservation}}
 	table := newZoneTable(config.Zones)
-	// Another client's callback cannot steal a configured reservation or erase it.
-	lease := observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, Hostname: "other", IP: "192.0.2.55"})
+	// The reservation's own callback cannot turn its configured DNS name into a
+	// removable observed lease.
+	lease := observedLeaseForTest(dhcpLeaseEvent{Action: daemonapi.DHCPLeaseActionAdded, MAC: "reserved-client", Hostname: "reservation", IP: "192.0.2.55"})
 	if err := table.ApplyLease(lease); err != nil {
 		t.Fatal(err)
 	}
