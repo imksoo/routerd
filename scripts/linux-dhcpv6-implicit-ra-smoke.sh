@@ -29,7 +29,10 @@ cat >"$work/empty.json" <<'JSON'
 JSON
 # A prior failed gate may have committed a candidate. Clear it before opening the
 # receiver so a boot-time RA cannot be mistaken for this candidate's output.
-systemctl start routerd.service
+# The candidate may have replaced the on-disk daemon while an older process is
+# still running. Restart before reset so the observed control plane is the
+# deployed candidate, not that inherited process.
+systemctl restart routerd.service
 # A stale RA socket from an interrupted older gate can make the first empty
 # reconcile fail after canonical replacement. Restart only in that recovery
 # case, then require the clean runtime before observing the candidate.
