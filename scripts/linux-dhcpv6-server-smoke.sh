@@ -36,7 +36,9 @@ finish() {
   fi
   # RA final withdrawal owns the live interface; stop it before removing the veth.
   systemctl stop routerd.service >/dev/null 2>&1 || cleanup_rc=1
-  ip netns exec "$client_ns" dhcpcd -x "$client_if" >/dev/null 2>&1 || cleanup_rc=1
+  # dhcpcd -1 may already have exited after delivering the lease; removing the
+  # namespace below is the authoritative cleanup in either case.
+  ip netns exec "$client_ns" dhcpcd -x "$client_if" >/dev/null 2>&1 || true
   ip netns del "$client_ns" >/dev/null 2>&1 || cleanup_rc=1
   ip link del "$router_if" >/dev/null 2>&1 || cleanup_rc=1
   rm -f -- "$dhcpcd_lease" || cleanup_rc=1
