@@ -269,20 +269,25 @@ changes the guest's router configuration, so it must have independent management
 access and no production traffic.
 
 ```sh
+# Stateful address assignment plus other-configuration RA flag.
 sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
   "$PWD/tests/fixtures/linux-dhcpv6-server-smoke.json"
+
+# Stateless Information-Request: no IA_NA may be received.
+sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcpv6-server-stateless-smoke.json"
 ```
 
-routerd supplies the static RA and manages dnsmasq for `DHCPv6Server.mode: both`.
-The gate first requires the independent client namespace to receive routerd's
-M/O RA and complete SLAAC DAD. It then runs dhcpcd, which obtains a stateful
-IA_NA and receives DNS, SNTP and domain-search options. After a routerd service
-restart, dhcpcd confirms the prior lease. The empty configuration must then
-reach Healthy with zero resources and no phase issues. dhcpcd uses a unique
-test interface and the gate deletes its exact lease state; successful raw output
-is deleted.
+routerd supplies the static RA and manages dnsmasq. The `both` fixture requires
+the independent client namespace to receive routerd's M/O RA, complete SLAAC
+DAD, obtain a stateful IA_NA, and receive DNS, SNTP and domain-search options.
+The `stateless` fixture requires an Information-Request with those options and
+rejects any IA_NA. In both cases, the check repeats after a routerd service
+restart and requires the empty configuration to reach Healthy with zero
+resources and no phase issues. dhcpcd uses a unique test interface and the gate
+deletes its exact lease state; successful raw output is deleted.
 
-This is not evidence for `stateless` or `ra-only`, lease renewal/expiry,
+This is not evidence for `stateful` M-only or `ra-only`, lease renewal/expiry,
 DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
 or complete routerd 1.0 functional parity. A failure stops routerd and preserves
 the exact fixture directory for local reproduction; delete it once resolved.
