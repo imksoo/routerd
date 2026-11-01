@@ -1780,6 +1780,23 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-pppoe-nat-lifecycle-eca0cf08": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "eca0cf0888459d98cfb0f79519274a34120b3d3a",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh state. Independent VM220 used VLAN 3132 as an rp-pppoe PAP/IPCP access concentrator and HTTP peer; independent VM224 used VLAN 3131 as the static IPv4 client.",
+      "checks": [
+        "VM219 established PAP/IPCP, received 198.18.10.2 on ppp-lab and installed the PPP default route. VM224 reached the VM220 HTTP peer, whose response recorded the NAT44 source 198.18.10.2.",
+        "Stopping the independent access concentrator removed ppp-lab and the PPP default route while routerd stayed active; VM224 HTTP failed. Restarting it automatically re-established PPPoE and the forwarded HTTP path.",
+        "A routerd restart re-established PPPoE and restored the VM224 HTTP path. Applying an empty 1.5 resource list reached Healthy after removing a pre-existing foreign dnsmasq service; ppp-lab, the default route and VM224 HTTP were absent.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "IPv6 PPP, CHAP, physical access loops, other access-concentrator implementations, credential rotation and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2113,7 +2130,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pve-pppoe-nat-lifecycle-eca0cf08"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -4263,8 +4282,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Independent PPPoE access concentrator exchange and IPv4/IPv6 traffic",
-        "Credential/session identity, renewal/loss/recovery, restart and withdrawal"
+        "IPv6 PPP and interoperability with another access concentrator implementation",
+        "Credential rotation and extended session-loss recovery"
       ]
     }
   ],
