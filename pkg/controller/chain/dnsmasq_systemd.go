@@ -73,7 +73,7 @@ func systemdDnsmasqProcess(ctx context.Context, spec dnsmasqProcessSpec) (dnsmas
 	if err != nil || pid <= 1 || pid == os.Getpid() {
 		return missing, errors.New("dnsmasq service has no valid native main process")
 	}
-	process, err := readNativeDnsmasqProcess(ctx, pid)
+	process, err := readSystemdDnsmasqProcess(ctx, pid, spec)
 	if err != nil {
 		return missing, err
 	}

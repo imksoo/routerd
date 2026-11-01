@@ -16,6 +16,9 @@ func checkNativeDnsmasqDescriptorView() error {
 func readNativeDnsmasqProcess(context.Context, int) (dnsmasqNativeProcess, error) {
 	return dnsmasqNativeProcess{}, errors.New("native dnsmasq process observation requires Linux or FreeBSD")
 }
+func readSystemdDnsmasqProcess(ctx context.Context, pid int, _ dnsmasqProcessSpec) (dnsmasqNativeProcess, error) {
+	return readNativeDnsmasqProcess(ctx, pid)
+}
 func listNativeDnsmasqProcesses(context.Context, dnsmasqProcessSpec) ([]dnsmasqNativeProcess, error) {
 	return nil, errors.New("native dnsmasq process observation requires Linux or FreeBSD")
 }

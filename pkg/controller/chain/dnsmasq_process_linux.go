@@ -16,6 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var readNativeDnsmasqExecutable = os.Readlink
+
 func checkNativeDnsmasqDescriptorView() error { return nil }
 
 func dnsmasqLinuxProcLocalPID(base string) (int, error) {
@@ -155,6 +157,19 @@ func nativeDnsmasqProcessExited(ctx context.Context, expected dnsmasqNativeProce
 }
 
 func readNativeDnsmasqProcess(ctx context.Context, pid int) (dnsmasqNativeProcess, error) {
+	return readLinuxDnsmasqProcess(ctx, pid, "")
+}
+
+// systemd has already verified the exact generated unit, its unmodified
+// fragment, and its MainPID before calling this observer.  A service with the
+// routerd capability set can be denied /proc/<pid>/exe after dnsmasq drops its
+// UID.  Keep the strict executable proof for all other callers, but let this
+// narrowly scoped systemd path use that verified ExecStart executable.
+func readSystemdDnsmasqProcess(ctx context.Context, pid int, spec dnsmasqProcessSpec) (dnsmasqNativeProcess, error) {
+	return readLinuxDnsmasqProcess(ctx, pid, spec.Command)
+}
+
+func readLinuxDnsmasqProcess(ctx context.Context, pid int, verifiedExecutable string) (dnsmasqNativeProcess, error) {
 	var absent dnsmasqNativeProcess
 	if err := ctx.Err(); err != nil {
 		return absent, err
@@ -195,12 +210,15 @@ func readNativeDnsmasqProcess(ctx context.Context, pid int) (dnsmasqNativeProces
 	if err != nil {
 		return absent, err
 	}
-	executable, err := os.Readlink(filepath.Join(base, "exe"))
+	executable, err := readNativeDnsmasqExecutable(filepath.Join(base, "exe"))
 	if errors.Is(err, os.ErrNotExist) && dnsmasqLinuxProcessExited(fd) {
 		return absent, nil
 	}
 	if err != nil {
-		return absent, err
+		if verifiedExecutable == "" || !errors.Is(err, os.ErrPermission) {
+			return absent, err
+		}
+		executable = verifiedExecutable
 	}
 	scope, err := dnsmasqProcessScope(ctx)
 	if err != nil {

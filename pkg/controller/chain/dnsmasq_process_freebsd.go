@@ -129,6 +129,10 @@ func readNativeDnsmasqProcess(ctx context.Context, pid int) (dnsmasqNativeProces
 	return dnsmasqNativeProcess{PID: pid, Birth: birth, Scope: scope, Executable: strings.TrimRight(string(path), "\x00"), Args: strings.Split(strings.TrimRight(string(args), "\x00"), "\x00")}, nil
 }
 
+func readSystemdDnsmasqProcess(ctx context.Context, pid int, _ dnsmasqProcessSpec) (dnsmasqNativeProcess, error) {
+	return readNativeDnsmasqProcess(ctx, pid)
+}
+
 func nativeDnsmasqProcessExited(ctx context.Context, expected dnsmasqNativeProcess) (bool, error) {
 	scope, err := dnsmasqProcessScope(ctx)
 	if err != nil {
