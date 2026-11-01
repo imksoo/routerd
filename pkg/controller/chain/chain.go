@@ -1059,6 +1059,18 @@ func linkStatusSubscriptions(router *api.Router) []bus.Subscription {
 	})
 }
 
+func dhcpv6ServerStatusSubscriptions(router *api.Router) []bus.Subscription {
+	return append(statusSubscriptionsWithWhen(router, []string{"DHCPv6Server", "IPv6RouterAdvertisement"},
+		"DHCPv6PrefixDelegation", "IPv6DelegatedAddress", "DNSZone", "Interface"),
+		bus.Subscription{Topics: []string{
+			daemonapi.EventDHCPLeaseAdded,
+			daemonapi.EventDHCPLeaseRenewed,
+			daemonapi.EventDHCPLeaseRemoved,
+		}},
+		bus.Subscription{Topics: []string{daemonapi.EventVRRPRoleTransition}},
+	)
+}
+
 func serviceUnitStatusSubscriptions(router *api.Router) []bus.Subscription {
 	// ServiceUnit results are outputs of this worker. Explicit When references
 	// below still wake dependent units without feeding failed removals back.
@@ -3105,7 +3117,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			current.LocalCaptureIntents = view.MobilityDataplane.Captures
 			return didWorkError(current.Reconcile(ctx))
 		}},
-		framework.FuncController{ControllerName: "dhcpv6-server", Every: 30 * time.Second, Subs: []bus.Subscription{{Topics: []string{"routerd.resource.status.changed", daemonapi.EventDHCPLeaseAdded, daemonapi.EventDHCPLeaseRenewed, daemonapi.EventDHCPLeaseRemoved}}}, PeriodicFunc: func(ctx context.Context) (bool, error) {
+		framework.FuncController{ControllerName: "dhcpv6-server", EventLockKey: "dhcpv6-server", Every: 30 * time.Second, Subs: dhcpv6ServerStatusSubscriptions(r.currentRouter()), PeriodicFunc: func(ctx context.Context) (bool, error) {
 			prepared, err := r.currentPreparedRouter()
 			if err != nil {
 				return false, err
