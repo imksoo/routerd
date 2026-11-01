@@ -140,6 +140,30 @@ func TestVirtualAddressIPv4ArtifactIntentsUseFreeBSDCARP(t *testing.T) {
 	}
 }
 
+func TestFreeBSDArtifactPlanOmitsForeignPackageAndSystemdAdoptionArtifacts(t *testing.T) {
+	packageResource := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Package"},
+		Metadata: api.ObjectMeta{Name: "router-runtime"},
+		Spec: api.PackageSpec{Packages: []api.OSPackageSetSpec{
+			{OS: "ubuntu", Manager: "apt", Names: []string{"dnsmasq-base"}},
+			{OS: "freebsd", Manager: "pkg", Names: []string{"dnsmasq"}},
+		}},
+	}
+	intents := resourceArtifactIntentsForPlatform(packageResource, nil, platform.OSFreeBSD, platform.Features{HasRCD: true})
+	if len(intents) != 1 || intents[0].Artifact.Kind != "host.package" || intents[0].Artifact.Name != "freebsd/dnsmasq" || intents[0].ApplyWith != "pkg" {
+		t.Fatalf("FreeBSD package intents = %+v, want only the pkg-managed FreeBSD package", intents)
+	}
+
+	adoption := api.Resource{
+		TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "NetworkAdoption"},
+		Metadata: api.ObjectMeta{Name: "lan-networkd-owned-by-routerd"},
+		Spec:     api.NetworkAdoptionSpec{IfName: "vtnet1", SystemdNetworkd: api.NetworkAdoptionNetworkdSpec{DisableDHCPv4: true}},
+	}
+	if intents := resourceArtifactIntentsForPlatform(adoption, nil, platform.OSFreeBSD, platform.Features{HasRCD: true}); len(intents) != 0 {
+		t.Fatalf("FreeBSD network adoption invents systemd artifacts: %+v", intents)
+	}
+}
+
 func TestPPPoESessionArtifactIntentsDeclareGeneratedFilesAndRuntime(t *testing.T) {
 	res := api.Resource{
 		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"},
