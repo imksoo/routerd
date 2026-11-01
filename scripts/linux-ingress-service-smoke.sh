@@ -162,11 +162,24 @@ stage='initial-apply'
 active_backend() {
  /usr/local/sbin/routerctl get IngressService/edge -o json | jq -r '.items[0].status.activeBackend.name // empty'
 }
+await_backend() {
+ local expected=$1 actual=''
+ for _ in {1..30}; do
+  actual=$(active_backend 2>/dev/null || true)
+  if [ "$actual" = "$expected" ]; then return 0; fi
+  sleep 1
+ done
+ printf 'active backend=%q; expected=%q\n' "$actual" "$expected" >&2
+ /usr/local/sbin/routerctl get IngressService/edge -o json >&2 || true
+ return 1
+}
+await_backend backend-a
 for _ in {1..30}; do
- if [ "$(active_backend)" = backend-a ] && nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed' && nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'; then break; fi
+ if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed' && nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'; then break; fi
  sleep 1
 done
-test "$(active_backend)" = backend-a
+nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed'
+nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'
 nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed hairpin'
 nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge hairpin'
 
@@ -214,33 +227,29 @@ fi
 
 stage='ingress-health-failover'
 systemctl stop rd15-ingress-backend-a
-for _ in {1..30}; do [ "$(active_backend)" = backend-b ] && break; sleep 1; done
-test "$(active_backend)" = backend-b
+await_backend backend-b
 probe rd15-ing-external 198.18.52.2 18081 backend-b 198.18.52.1
 probe rd15-ing-client 198.18.52.2 18081 backend-b 198.18.50.1
 
 stage='ingress-backend-recovery'
 systemctl start rd15-ingress-backend-a
-for _ in {1..30}; do [ "$(active_backend)" = backend-a ] && break; sleep 1; done
-test "$(active_backend)" = backend-a
+await_backend backend-a
 probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 
 stage='ingress-drain'
 /usr/local/sbin/routerctl ingress drain ingress/edge backend=backend-a --duration=2m >/dev/null
-for _ in {1..30}; do [ "$(active_backend)" = backend-b ] && break; sleep 1; done
-test "$(active_backend)" = backend-b
+await_backend backend-b
 probe rd15-ing-external 198.18.52.2 18081 backend-b 198.18.52.1
 /usr/local/sbin/routerctl ingress undrain ingress/edge backend=backend-a >/dev/null
-for _ in {1..30}; do [ "$(active_backend)" = backend-a ] && break; sleep 1; done
-test "$(active_backend)" = backend-a
+await_backend backend-a
 
 stage='ingress-service-restart'
 systemctl restart routerd
 for _ in {1..30}; do
- if [ "$(active_backend)" = backend-a ] && probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1 >/dev/null 2>&1; then break; fi
+ if actual=$(active_backend 2>/dev/null) && [ "$actual" = backend-a ] && probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1 >/dev/null 2>&1; then break; fi
  sleep 1
 done
-test "$(active_backend)" = backend-a
+await_backend backend-a
 probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 
 stage='full-withdrawal'
