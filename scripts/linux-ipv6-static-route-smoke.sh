@@ -72,6 +72,9 @@ for _ in {1..30}; do
 done
 ip -j -d -6 route show fd42:150::99/128 | jq -e '
  .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
+stage=fixture-connectivity
+ping -6 -c 1 -W 2 fd42:149::2 >/dev/null
+ip netns exec rd15-v6r-peer ping -6 -c 1 -W 2 fd42:149::1 >/dev/null
 stage=forwarding
 ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
 stage=restart-reconcile
