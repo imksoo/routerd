@@ -123,6 +123,19 @@ DISCOVER、OFFER、REQUEST、ACK を完了し、`198.18.15.104/24` と既定経�
 応答 4 パケットを受信し、後続の既定破棄規則は 0 パケットでした。検証後は元の実行物、
 設定、状態領域を復元し、検証専用の ISO、VLAN、クライアントリンク、上流サーバーを削除しました。
 
+Linux の二重 WAN 健全性連動ルーティングを、`f4308787` の候補実行物で隔離 PVE にて
+確認しました。候補は空の 1.5 状態領域から起動し、systemd の二つの HealthCheck
+ワーカー、優先 EgressRoutePolicy、二つの専用 IPv4 経路表、NAT 規則を稼働させました。
+VLAN 分離したクライアントから独立 HTTP 宛先へ送った初期通信は WAN-A を通り、上流側では
+変換後の送信元 `198.18.16.2` を捕捉しました。
+
+WAN-A 専用の健全性サービスを停止すると、選択規則は WAN-B のマーク `0x120` へ更新され、
+クライアント HTTP 通信は継続しました。上流側で捕捉した WAN-B の送信元は
+`198.18.18.2` です。WAN-A の健全性サービスを再開すると、手動の再適用やルーター再起動なしで
+選択規則は WAN-A のマーク `0x110` へ戻り、送信元 `198.18.16.2` の通信を再確認しました。
+本試験は固定の切替時間を要件にしていません。検証後は候補の状態、経路規則、nftables 表、
+VLAN、HTTP サーバー、検証メディアを削除し、元の実行物・設定・状態領域を復元しました。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing

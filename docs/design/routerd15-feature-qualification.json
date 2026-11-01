@@ -1836,6 +1836,25 @@
         "異なる DHCP サーバー実装、追加オプション、サーバー識別子変更、複数上流および物理回線の相互運用性。",
         "設定撤去時の中継停止、FreeBSD、および DHCPv4 リレー全体または routerd 1.0 全機能の合格判定。"
       ]
+    },
+    "linux-health-pbr-pve-f4308787": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "f4308787d37790b1010701f3f45527b9b79bc38e",
+      "routerd_sha256": "6959a288929db37a7f2c831ea8560fb85686b7f28cfd22b3e4ddc8555c9a0ee5",
+      "reference": "docs/design/routerd15-plan.md",
+      "environment": "隔離 PVE 上の Linux ルーター、VLAN 分離した Linux クライアント、二つの独立上流経路と HTTP 宛先。候補は空の 1.5 状態領域から起動し、検証後に元の状態領域を復元しました。",
+      "checks": [
+        "systemd の二つの HealthCheck ワーカー、優先 EgressRoutePolicy、二つの専用 IPv4 経路表、NAT 規則を実行しました。",
+        "初期のクライアント HTTP 通信は WAN-A を通り、上流で変換後送信元 198.18.16.2 を捕捉しました。",
+        "WAN-A の健全性サービス停止後は選択規則が WAN-B のマークへ更新され、HTTP 通信と変換後送信元 198.18.18.2 を確認しました。",
+        "WAN-A の健全性サービス再開後は、手動再適用やルーター再起動なしで WAN-A の選択と 198.18.16.2 の通信へ復帰しました。",
+        "元の実行物、設定、状態領域を復元し、候補の経路規則、nftables 表、VLAN、HTTP サーバー、検証メディアを削除しました。"
+      ],
+      "excludes": [
+        "固定の切替時間、物理 WAN 障害、再起動または再起動後の永続性、IPv6、VRRP、ハッシュ選択、動的ゲートウェイおよび送信元モード。",
+        "FreeBSD、および健全性連動ルーティング全体または routerd 1.0 全機能の合格判定。"
+      ]
     }
   },
   "features": [
@@ -3325,7 +3344,8 @@
           "linux-health-pbr-native-58bef4e9",
           "linux-vlan-clients-39156bb6",
           "linux-vlan-ha-direct-r2-88927a4a",
-          "linux-vlan-ha-dslite-c-r3-88927a4a"
+          "linux-vlan-ha-dslite-c-r3-88927a4a",
+          "linux-health-pbr-pve-f4308787"
         ]
       },
       "freebsd": {
@@ -3336,9 +3356,9 @@
         ]
       },
       "required_remaining_checks": [
-        "Systemd Health activation and package/reboot composition on the final integration",
-        "Independent native IPv6 policy forwarding/withdrawal/recovery",
-        "Hash/mark policies, dynamic gateway/source modes, VRRP and physical WAN link failure"
+        "パッケージおよび再起動を含む最終統合での HealthCheck 構成",
+        "独立した IPv6 方針ルーティングの転送、撤去、復旧",
+        "ハッシュまたはマーク方式、動的ゲートウェイまたは送信元、VRRP、物理 WAN 障害"
       ]
     },
     {
