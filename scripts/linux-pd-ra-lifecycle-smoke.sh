@@ -42,6 +42,7 @@ done
 sysctl -n net.ipv6.conf.all.forwarding > "$work/forward.before"
 finish() {
  rc=$?
+ cleanup_rc=0
  trap - EXIT
  if [ "$rc" -ne 0 ]; then
    # Capture the actual failure state before stopping any participant.
@@ -52,12 +53,26 @@ finish() {
  fi
  systemctl stop rd15-peer-kea.service rd15-peer-http6.service rd15-peer-dns6.service >/dev/null 2>&1 || true
  if [ "$rc" -ne 0 ]; then
-   systemctl stop routerd.service
-   printf 'FAIL: preserved fixture/output for local reproduction at %s\n' "$work" >&2
- else
-   # The procedure and verdict are durable; successful raw output is temporary.
-   rm -r -- "$work"
+   systemctl stop routerd.service >/dev/null 2>&1 || cleanup_rc=1
+   printf 'FAIL: fixture diagnostics follow; removing temporary output.\n' >&2
+   for diagnostic in "$work"/failure-*; do
+    [ -e "$diagnostic" ] || continue
+    printf '%s:\n' "${diagnostic##*/}" >&2
+    cat "$diagnostic" >&2 || cleanup_rc=1
+   done
  fi
+ # The script owns both namespaces and the forwarding setting after preflight.
+ # Remove them on every exit, including a failed assertion.
+ for ns in "$lan_ns" "$wan_ns"; do
+  if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then
+   ip netns del "$ns" >/dev/null 2>&1 || cleanup_rc=1
+  fi
+ done
+ if [ -f "$work/forward.before" ]; then
+  sysctl -w "net.ipv6.conf.all.forwarding=$(cat "$work/forward.before")" >/dev/null 2>&1 || cleanup_rc=1
+ fi
+ rm -rf -- "$work" || cleanup_rc=1
+ if [ "$rc" -eq 0 ] && [ "$cleanup_rc" -ne 0 ]; then rc=$cleanup_rc; fi
  exit "$rc"
 }
 trap finish EXIT
@@ -124,19 +139,26 @@ client_ready() {
  ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -e --arg prefix "$active_prefix:" 'any(.[0].addr_info[]; (.local | startswith($prefix)) and .preferred_life_time>0 and .tentative!=true and .dadfailed!=true and ((.flags // []) | index("tentative") | not))' >/dev/null &&
  ip netns exec "$lan_ns" ip -6 route show default | grep -q 'proto ra'
 }
+await_client_ready() {
+ for _ in {1..30}; do
+  if client_ready; then return; fi
+  sleep 1
+ done
+ client_ready
+}
 for _ in {1..45}; do
  if pdstatus > "$work/pd.json" && jq -e '.resources[0].phase == "Bound"' "$work/pd.json" >/dev/null && ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then break; fi
  sleep 1
 done
 jq -e '.resources[0].phase == "Bound" and .resources[0].observed.currentPrefix == "2001:db8:1500::/60"' "$work/pd.json" >/dev/null
 ip -6 addr show dev rd15-lan | grep '2001:db8:1500::1/64'
-for _ in {1..30}; do
- if client_ready; then break; fi
- sleep 1
-done
-# rdisc6 is an independent RS/RA decoder, Linux kernel handles SLAAC itself.
+await_client_ready
+# rdisc6 independently decodes the RA. Its solicitation may overlap the
+# kernel's deprecation and replacement processing, so require convergence
+# again before the HTTP and DNS assertions below.
 ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra.txt"
 grep '2001:db8:1500::/64' "$work/ra.txt"
+await_client_ready
 probe() {
  local source answer
  source=$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --show-error --max-time 3 'http://[2001:db8:17::1]:8080/')
@@ -183,6 +205,7 @@ test "$(systemctl show -p MainPID --value routerd)" = "$router_pid"
 test "$(systemctl show -p MainPID --value rd15-peer-kea)" = "$kea_pid"
 ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra-renumber.txt"
 grep '2001:db8:1501::/64' "$work/ra-renumber.txt"
+await_client_ready
 if ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then echo 'revoked router address remains' >&2; exit 1; fi
 # A short-lived SLAAC address can remain until its original expiry under the
 # RFC 4862 two-hour rule, but must no longer be preferred for new connections.
@@ -240,7 +263,4 @@ done
 jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and ((.status.resourcePhaseIssues // []) | length) == 0 and all(.status.controllers[]?; (.currentError // "") == "")' "$work/empty-status.json" >/dev/null
 printf 'PASS: empty apply after expiry leaves no stale phase issues or controller errors\n'
 systemctl stop rd15-peer-http6.service rd15-peer-dns6.service
-ip netns del "$lan_ns"
-ip netns del "$wan_ns"
-sysctl -w "net.ipv6.conf.all.forwarding=$(cat "$work/forward.before")"
 printf 'PASS: PD acquisition, SLAAC, DNS, routed peer, renewal, renumber, daemon restart, expiry, upstream return and withdrawal\n'
