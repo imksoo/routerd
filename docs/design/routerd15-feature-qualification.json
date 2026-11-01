@@ -469,6 +469,27 @@
         "FreeBSD、物理回線および完全な WireGuard 機能認定"
       ]
     },
+    "linux-vrf-pve-c6b42c1c": {
+      "level": "independent-client",
+      "outcome": "pass",
+      "revision": "c6b42c1ceedbe3ab5711a468746ab58856ce749a",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": {
+        "routerd_sha256": "93d89cec18dc3adace7cb1f55b8554c3574baba994ea1ba3d39da64131440176",
+        "routerctl_sha256": "227c0c8f1b632ff7e47bfa4f43ba2783ce92e2927d785041efc1daadfad6274e"
+      },
+      "environment": "隔離 PVE の VLAN 3131。VM219 は空の 1.5 状態領域で候補 routerd を稼働し、VM224 は VLAN 子インターフェースを持つ独立 Linux クライアントです。",
+      "checks": [
+        "VRF 親、メンバー、IPv4 アドレス、経路表および VRF 名を参照する信頼ゾーンを候補 routerd が生成した",
+        "生成規則は if_tenant に vrf-pve を含み、独立クライアントからの ICMP は 3 回すべて成功し、tenant_to_self のカウンターが受信を記録した",
+        "候補 routerd 再起動後も状態と規則が存在し、独立クライアントの ICMP は 3 回すべて成功した",
+        "VRF、アドレスおよびゾーンを含まない構成への置換でカーネル状態と nftables 表が消え、独立クライアントの ICMP は 3 回すべて失敗した",
+        "候補構成の再適用で状態と規則を回復し、独立クライアントの ICMP は 3 回すべて成功した"
+      ],
+      "excludes": [
+        "複数 VRF 間の分離または転送、IPv6、FreeBSD および完全な VRF 機能認定"
+      ]
+    },
     "linux-vrf-withdraw-review-9735f25e": {
       "level": "code-passed",
       "outcome": "pass",
@@ -2445,6 +2466,7 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
+          "linux-vrf-pve-c6b42c1c",
           "linux-vrf-withdraw-review-9735f25e",
           "linux-vrf-peer-9735f25e",
           "linux-combined-native-3e58c93a"
@@ -2455,8 +2477,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Native parent and child ownership",
-        "Independent per-VRF forwarding/isolation, restart and withdrawal"
+        "Independent per-VRF forwarding/isolation"
       ],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"

@@ -161,6 +161,22 @@ IPv4Route、および `wg-pve` の信頼ゾーンを適用しました。VLAN 31
 完了しました。FreeBSD は未確認です。検証後は VM219/220 の元の実行物・設定・状態領域を
 復元し、試験用 ISO、VLAN リンク、インターフェース、秘密鍵を含む一時領域を削除しました。
 
+Linux VRF の隔離 PVE 試験では、`c6b42c1c` の候補 routerd を VM219 の空の 1.5 状態領域から
+起動しました。`FirewallZone` が VRF 名を参照するとき、`when` 条件の選択後にその参照が
+誤って空になる不具合を修正しています。候補は VLAN 3131 上で `vrf-pve`、経路表 110、
+メンバー `rd15-lan`、`198.18.15.1/24`、および `if_tenant = { "vrf-pve" }` を実際に生成
+しました。独立 VM224 は同じ VLAN に `198.18.15.2/24` を持ち、候補への ICMP は 3 回すべて
+成功しました。入力規則の `tenant_to_self` カウンターも受信を記録しました。
+
+候補 routerd を再起動しても、VRF、メンバー、IPv4 アドレス、経路表およびゾーン規則は残り、
+独立 VM224 の ICMP は再び 3 回すべて成功しました。次に VRF、アドレスおよびゾーンを含まない
+構成へ置換すると、それらのカーネル状態と nftables 表は消え、VM224 からの ICMP は 3 回すべて
+失敗しました。候補構成を再適用すると状態と規則は戻り、ICMP は 3 回すべて成功しました。
+検証後は VM219 の元の実行物、設定、状態領域と VM224 の元のネットワーク状態を復元し、候補
+ISO、VLAN 子インターフェースおよび一時領域を削除しました。この結果は単一 IPv4 接続網の
+VRF 親子、再起動、設定撤去および復旧を示します。複数 VRF 間の分離・転送、IPv6 および FreeBSD
+は未確認です。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
