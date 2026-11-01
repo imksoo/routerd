@@ -689,3 +689,22 @@ func TestRAInactiveReceiptChecksKernelBeforeOpeningInterface(t *testing.T) {
 		})
 	}
 }
+
+func TestRAInactiveReceiptForDeletedInterfaceRetiresWithoutError(t *testing.T) {
+	service, store, router, endpoint, _, _ := raServiceFixture(t)
+	if err := service.transmit(t.Context(), "ra-test-lan", endpoint, false); err != nil {
+		t.Fatal(err)
+	}
+	_, missing := net.InterfaceByName("routerd-ra-interface-that-does-not-exist")
+	if missing == nil {
+		t.Fatal("expected a missing interface error")
+	}
+	service.open = func(string) (ra.Endpoint, error) { return ra.Endpoint{}, missing }
+	if err := service.Reconcile(t.Context(), router, &api.Router{}, store); err != nil {
+		t.Fatalf("deleted interface receipt should retire: %v", err)
+	}
+	journal, err := readRAJournal(store)
+	if err != nil || len(journal) != 0 {
+		t.Fatalf("deleted interface receipt retained: %+v %v", journal, err)
+	}
+}
