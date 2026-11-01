@@ -73,14 +73,21 @@ ip -n rd15-fph-server addr add 198.18.61.10/24 dev peer0
 ip -n rd15-fph-server route add 198.18.60.0/24 via 198.18.61.1
 
 cat > "$work/server.py" <<'PY'
-import socket, sys
+import select, socket
 request = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 request.bind(('198.18.61.10', 32100))
 reply = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 reply.bind(('198.18.61.10', 32099))
+control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+control.bind(('198.18.61.10', 32101))
 while True:
-    data, peer = request.recvfrom(1024)
-    reply.sendto(b'opened:' + data, peer)
+    readable, _, _ = select.select([request, control], [], [])
+    if request in readable:
+        data, peer = request.recvfrom(1024)
+        reply.sendto(b'opened:' + data, peer)
+    if control in readable:
+        data, _ = control.recvfrom(1024)
+        reply.sendto(data, ('198.18.60.100', 40000))
 PY
 ip netns exec rd15-fph-server python3 "$work/server.py" &
 echo "$!" > "$work/server.pid"
@@ -173,9 +180,7 @@ send_server() {
 import socket, sys
 address, port, payload = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('198.18.61.10', 32099))
-s.sendto(payload, (address, port))
+s.sendto(payload, ('198.18.61.10', 32101))
 PY
 }
 expect_server_drop() {
