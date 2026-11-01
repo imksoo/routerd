@@ -159,6 +159,50 @@ func TestSysctlControllerDoesNotRestoreRemovedKeyOwnedByCurrentResource(t *testi
 	}
 }
 
+func TestSysctlControllerRemovesRetiredProfileSettings(t *testing.T) {
+	const (
+		profileName = "router-runtime"
+		key         = "net.ipv4.ip_forward"
+	)
+	store := mapStore{}
+	baseDir := t.TempDir()
+	controller := SysctlController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "SysctlProfile"}, Metadata: api.ObjectMeta{Name: profileName}, Spec: api.SysctlProfileSpec{
+				Profile:    "router-linux",
+				Runtime:    boolPtr(false),
+				Persistent: true,
+			}},
+		}}},
+		Store:   store,
+		BaseDir: baseDir,
+		Command: func(_ context.Context, command string, args ...string) ([]byte, error) {
+			t.Fatalf("unexpected runtime command %s %v for runtime-disabled profile", command, args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	settingName := profileName + "-" + safeSysctlName(key)
+	persistentPath := filepath.Join(baseDir, "90-routerd-"+safeSysctlName(settingName)+".conf")
+	if _, err := os.Stat(persistentPath); err != nil {
+		t.Fatalf("profile setting file missing before removal: %v", err)
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(persistentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("retired profile setting file remained: %v", err)
+	}
+	for _, name := range []string{profileName, settingName} {
+		if _, exists := store[api.SystemAPIVersion+"/SysctlProfile/"+name]; exists {
+			t.Fatalf("retired profile status %q remained", name)
+		}
+	}
+}
+
 func TestSysctlControllerDryRunRendersWithoutRuntimeOrPersistentEffects(t *testing.T) {
 	const name = "ipv4-forwarding"
 	staleStatusKey := api.SystemAPIVersion + "/Sysctl/sam-proxy-arp-ens19"
