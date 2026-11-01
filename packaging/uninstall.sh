@@ -210,6 +210,9 @@ do
     rm_path "${prefix}/sbin/${binary}"
 done
 
+# dnsmasq invokes this compatibility link rather than the sbin binary.
+rm_path "${prefix}/libexec/routerd/dhcp-event-relay"
+
 # Remove only the plugin payload paths shipped by routerd.  In particular, do
 # not remove the plugins directory: operators may install additional trusted
 # local plugins there.

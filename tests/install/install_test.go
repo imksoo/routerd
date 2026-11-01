@@ -58,6 +58,38 @@ echo native-agent
 	}
 }
 
+func TestInstallPublishesDHCPEventRelayHook(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\nexit 0\n")
+	relay := filepath.Join(pkg, "bin", "routerd-dhcp-event-relay")
+	writeExecutable(t, relay, "#!/bin/sh\nexit 0\n")
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	info, err := os.Lstat(hook)
+	if err != nil {
+		t.Fatalf("DHCP event hook is missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("DHCP event hook mode = %v, want symlink", info.Mode())
+	}
+	if got, err := os.Readlink(hook); err != nil || got != "../../sbin/routerd-dhcp-event-relay" {
+		t.Fatalf("DHCP event hook target = %q, err=%v", got, err)
+	}
+	resolved, err := filepath.EvalSymlinks(hook)
+	if err != nil {
+		t.Fatalf("resolve DHCP event hook: %v", err)
+	}
+	if want := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay"); resolved != want {
+		t.Fatalf("resolved DHCP event hook = %q, want %q", resolved, want)
+	}
+}
+
 func TestInstallRecordsFirewallHandoffOnlyForPinnedRouterdV1(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
@@ -796,6 +828,7 @@ func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
 				"sbin/routerd-arp-observer",
 				"sbin/routerd-eventd",
 				"sbin/routerd-vrrp-vmac",
+				"libexec/routerd/dhcp-event-relay",
 				"libexec/routerd/plugins/aws-provider-executor/bin/aws-provider-executor",
 				"libexec/routerd/plugins/aws-provider-executor/plugin.yaml",
 				"libexec/routerd/plugins/azure-provider-executor/bin/azure-provider-executor",

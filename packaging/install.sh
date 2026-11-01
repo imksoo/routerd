@@ -231,6 +231,30 @@ atomic_install()
     mv -f "${tmp}" "${target}"
 }
 
+atomic_symlink()
+{
+    target=$1
+    link_target=$2
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: ln -s ${link_target} ${target}"
+        return 0
+    fi
+    install -d -m 0755 "$(dirname "${target}")"
+    backup_target "${target}"
+    tmp="${target}.tmp.$$"
+    rm -f "${tmp}"
+    ln -s "${link_target}" "${tmp}"
+    mv -f "${tmp}" "${target}"
+}
+
+install_dhcp_event_relay_hook()
+{
+    [ -x "${bindir}/routerd-dhcp-event-relay" ] || return 0
+    # dnsmasq executes this stable libexec path. Keep the binary in sbin with
+    # the other routerd helpers and make the hook path relative to the prefix.
+    atomic_symlink "${prefix}/libexec/routerd/dhcp-event-relay" "../../sbin/routerd-dhcp-event-relay"
+}
+
 disk_available_kb()
 {
     path=$1
@@ -2066,6 +2090,7 @@ for binary in bin/*; do
     [ -f "${binary}" ] || continue
     install_binary "${binary}"
 done
+install_dhcp_event_relay_hook
 install_libexec_payload
 install_ndpi_agent_archive
 verify_ndpi_agent_install
