@@ -83,9 +83,12 @@ while True:
     with conn:
         with open(events, 'a') as output:
             output.write(f"accepted {peer[0]}\n")
-        conn.sendall((f"{label}:{peer[0]}\n").encode())
-        while data := conn.recv(1024):
-            conn.sendall((f"{label}:{data.decode().strip()}\n").encode())
+        try:
+            conn.sendall((f"{label}:{peer[0]}\n").encode())
+            while data := conn.recv(1024):
+                conn.sendall((f"{label}:{data.decode().strip()}\n").encode())
+        except ConnectionResetError:
+            pass
 PY
 
 for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
