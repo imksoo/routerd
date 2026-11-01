@@ -71,7 +71,7 @@ delegated-prefix forwarding, expiry and recovery are recorded at their executed
 revisions. The IPsec provider-restart repair is also recorded at its executed
 revision.
 
-The current PVE BGP result is recorded at `570606b7`. VM219 and VM220 formed
+The current PVE BGP result is recorded at `29aa0ee8`. VM219 and VM220 formed
 an eBGP session on VLAN 3132. A peer-advertised prefix entered the VM219 kernel
 FIB as `proto bgp`, was withdrawn while the TCP session remained established,
 and returned when the peer resumed advertisement. This does not qualify
@@ -88,20 +88,21 @@ configuration explicitly permits the required inbound UDP/3784 control packets.
 This does not qualify a non-routerd BFD peer, IPv6 BGP, ECMP, or physical-network
 behavior.
 
-The Linux PPPoE PVE result is recorded at `6f67e4fb`. The supervised PPPoE
-client now passes the configured PPP interface name and default-route intent to
-its helper, and the Linux peer file renders both `defaultroute` and
-`replacedefaultroute`. VM219 established PAP/IPCP with an independent VM220
-access concentrator on VLAN 3132. A VLAN 3131 client VM reached VM220's HTTP
-server through VM219, and VM220 recorded the router's PPP address rather than
-the client address. Access-concentrator loss removed the PPP interface and
-default route; its return and a routerd restart restored both and repeated the
-client transfer. Replacing the PPPoE configuration with the base configuration
-removed the PPP daemon/interface and restored the base route. The first
-replacement reported a route-ownership `Drifted` result before convergence; a
-second identical apply reached `Healthy`. That replacement behavior remains an
-open production-path finding. IPv6 PPP traffic and physical/cross-vendor access
-concentrator qualification remain unrun.
+Linux PPPoE の PVE 試験は `6f67e4fb` と `59681ef4` に記録しています。監督側は
+設定済みの PPP インターフェース名と既定経路の意図を補助プログラムへ渡し、Linux の
+peer 設定は `defaultroute` と `replacedefaultroute` を出力します。VM219 は VLAN
+3132 上の独立 VM220 アクセスコンセントレーターと PAP/IPCP を確立しました。VLAN
+3131 のクライアント VM224 は VM219 経由で VM220 の HTTP サーバーへ到達し、VM220
+はクライアントではなくルーターの PPP アドレスを送信元として記録しました。
+
+アクセスコンセントレーターの停止により PPP インターフェースと既定経路が消え、再開と
+routerd 再起動によりクライアント通信まで復旧しました。初回の基準設定への置換では、
+終了待ちの PPP 常駐プロセスが既定経路の所有権確認と競合して `Drifted` になりました。
+`59681ef4` は、厳密置換の経路制御より先に不要な PPPoE 常駐プロセスを停止し、設定済み
+PPP インターフェース名を現在状態へ反映します。修正後の PVE 再試験では、有効な PPPoE
+接続から基準設定を一回だけ適用し、世代 46、21 リソースすべて `Healthy`、
+`ppp-lab` 不在、`rd15-wan` 経由の基準既定経路復帰を確認しました。IPv6 PPP、CHAP、
+物理回線および異なる実装のアクセスコンセントレーターは未検証です。
 
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet

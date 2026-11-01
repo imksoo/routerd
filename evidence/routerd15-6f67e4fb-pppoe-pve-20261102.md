@@ -83,8 +83,23 @@ VM220 は PAP secrets、routerd サービス、入力規則、VLAN、PPPoE
 アクセスコンセントレーターを基準状態へ戻しました。VM224 は停止しました。試験用
 CD-ROM、ISO、作業ディレクトリを削除しました。
 
+## 後続の置換修正
+
+この試験で記録した初回置換の `Drifted` は、`59681ef4` で修正済みです。厳密な設定
+置換では、経路制御を開始する前に不要になった PPPoE 常駐プロセスを停止するように
+しました。さらに、`--ifname` の値を PPPoE の現在状態へ反映します。
+
+修正後は、有効な PPPoE 接続から同じ基準設定を一回だけ適用し、世代 46、21
+リソースすべて `Healthy` を確認しました。`ppp-lab` は消え、既定経路は
+`default via 198.18.16.1 dev rd15-wan` へ戻りました。復元後の VM219 では
+`/usr/local/sbin/routerd` の SHA-256 が
+`a1cbdd287e777d9eb090512ec7b7fb69f2340f0f12a71ed5567a8e2dcd2626f8`、
+`/usr/local/sbin/routerd-pppoe-client` の SHA-256 が
+`689e5ea589d0e4e43b0a74c3edbfac31d26e363c4c9b4b5d3799936f4f266246` であり、
+routerd は稼働中でした。詳細は
+`evidence/routerd15-59681ef4-pppoe-withdrawal-pve-20261102.md` に記録します。
+
 ## 未検証範囲
 
 - IPv6 PPP、CHAP、物理回線、異なる実装のアクセスコンセントレーター
 - PPPoE の認証失敗、MTU 境界、複数同時セッション、長時間の更新・リース挙動
-- 初回の PPPoE 撤去と基準既定経路作成が、`Drifted` なしに一回で完了すること

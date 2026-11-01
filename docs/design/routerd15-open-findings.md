@@ -59,7 +59,7 @@ Implemented in the daemon policy/path checkpoint:
   Control requests and acknowledgements use complete, bounded typed decoding.
 
 Loopback GoBGP export, edit/withdraw and exact-source recovery regressions pass.
-At `570606b7`, an isolated PVE eBGP pair also established over VLAN 3132. The
+At `29aa0ee8`, an isolated PVE eBGP pair also established over VLAN 3132. The
 VM219 kernel received `198.18.50.0/24` as `proto bgp`; disabling the peer's
 advertisement removed the exact kernel route while the BGP session remained
 established, and restoring the advertisement reinstalled it. This is a separate
@@ -228,23 +228,6 @@ address/default-route/resolved-DNS withdrawal and automatic recovery also pass
 at `31d5f4d4` with fixture `670992a3`. This includes LAN UDP/TCP DNS and
 peer-observed NAT traffic. Other platform/client modes, physical WAN and the
 complete 1.0 functional scope remain unqualified; see the revision-bound audit.
-
-## PPPoE replacement route ownership
-
-At `6f67e4fb`, an isolated PVE Linux test replaced a live PPPoE configuration
-with the VM219 base configuration. The first apply durably replaced the
-canonical configuration and stopped the supervised PPPoE client, but returned
-`Drifted` because `IPv4Route/default-v4` observed the still-present PPP default
-route without a matching ownership receipt. The stale PPP interface then exited
-and the base default route appeared. A second identical apply reached generation
-44 with all 21 base resources `Healthy`.
-
-This is not an old-format migration issue. The production route and PPPoE
-owners must coordinate replacement so that a normal removal/recreation sequence
-does not report a failed apply after the requested configuration has converged.
-Reproduce it with the product daemon, repair the ownership handoff, and repeat
-PPPoE withdrawal and base-configuration recovery before treating this path as
-qualified.
 
 ## Command/control plane
 
