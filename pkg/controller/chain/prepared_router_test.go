@@ -45,7 +45,7 @@ func TestPreparedRouterReusesStaticSAMAcrossConfigurationObservations(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if observation.DeclaredRouter != router || observation.EffectiveRouter.Metadata.Name != router.Metadata.Name {
+		if observation.DeclaredRouter == router || observation.DeclaredRouter.Metadata.Name != router.Metadata.Name || observation.EffectiveRouter.Metadata.Name != router.Metadata.Name {
 			t.Fatal("observation mixed static preparation and declared configuration")
 		}
 		peer := mustWireGuardPeer(t, observation.EffectiveRouter, "peer")
@@ -56,6 +56,28 @@ func TestPreparedRouterReusesStaticSAMAcrossConfigurationObservations(t *testing
 		if current, err := runner.currentPreparedRouter(); err != nil || current != prepared {
 			t.Fatalf("observation replaced configuration preparation: %v", err)
 		}
+	}
+}
+
+func TestPreparedRouterOwnsDeclaredConfiguration(t *testing.T) {
+	router := staticPreparationRouter("accepted")
+	if err := config.Validate(router); err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Router: router, Store: mapStore{}, Bus: bus.New()}
+	if _, err := runner.currentPreparedRouter(); err != nil {
+		t.Fatal(err)
+	}
+	// The caller's request object is not a reconciliation input after it has
+	// been admitted. Simulate a concurrent request-side mutation that removes
+	// the resource a periodic controller must continue to see.
+	router.Spec.Resources = nil
+	observation, err := runner.effectiveRouterForReconcile(eventedStore{Store: runner.Store, Bus: runner.Bus})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observation.DeclaredRouter.Spec.Resources) == 0 || len(observation.EffectiveRouter.Spec.Resources) == 0 {
+		t.Fatalf("prepared configuration followed caller mutation: declared=%+v effective=%+v", observation.DeclaredRouter.Spec.Resources, observation.EffectiveRouter.Spec.Resources)
 	}
 }
 
@@ -115,7 +137,7 @@ func TestPreparedRouterPublishesConsistentConfigurationAndRestoresPreparation(t 
 	if !errors.Is(err, failure) || !restored {
 		t.Fatalf("rollback outcome: restored=%t err=%v", restored, err)
 	}
-	if current, err := rollbackRunner.currentPreparedRouter(); err != nil || current != previous || current.declared != old {
+	if current, err := rollbackRunner.currentPreparedRouter(); err != nil || current != previous || current.declared != previous.declared {
 		t.Fatalf("rollback rebuilt or replaced the prior preparation: %+v %v", current, err)
 	}
 	rollbackRunner.closeControllerGeneration(generation)

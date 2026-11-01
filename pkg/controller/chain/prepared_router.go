@@ -72,7 +72,12 @@ func prepareRouterConfig(router *api.Router, targetOS platform.OS) (*preparedRou
 	if err != nil {
 		return nil, err
 	}
-	prepared := &preparedRouterConfig{declared: router, startup: startup, staticSAM: startup.Router(), targetOS: targetOS}
+	// The caller retains router for its own request lifecycle. All reconciliation
+	// inputs, including the declared view supplied to controllers, must instead
+	// use the preparation-owned copy. A later in-place mutation of a request
+	// must not make a periodic reconcile silently forget configured resources.
+	declared := startup.Router()
+	prepared := &preparedRouterConfig{declared: declared, startup: startup, staticSAM: declared, targetOS: targetOS}
 	for _, resource := range startup.Router().Spec.Resources {
 		if resource.Kind != "WireGuardInterface" {
 			continue
