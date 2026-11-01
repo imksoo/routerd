@@ -70,6 +70,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 				return err
 			}
 			for _, setting := range settings {
+				desired["SysctlProfile/"+resource.Metadata.Name+"-"+safeSysctlName(setting.Key)] = true
 				if api.BoolDefault(setting.Runtime, true) {
 					desiredRuntimeKeys[setting.Key] = true
 				}
@@ -323,10 +324,10 @@ func (c SysctlController) cleanupRemovedSysctls(ctx context.Context, desired, de
 		command = runOutputCommandContext
 	}
 	for _, status := range statuses {
-		if status.APIVersion != api.SystemAPIVersion || status.Kind != "Sysctl" {
+		if status.APIVersion != api.SystemAPIVersion || (status.Kind != "Sysctl" && status.Kind != "SysctlProfile") {
 			continue
 		}
-		if desired["Sysctl/"+status.Name] {
+		if desired[status.Kind+"/"+status.Name] {
 			continue
 		}
 		if managed, known := statusvalue.ExtendedBool(status.Status["managed"]); known && !managed {
@@ -335,6 +336,11 @@ func (c SysctlController) cleanupRemovedSysctls(ctx context.Context, desired, de
 		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
 		value := strings.TrimSpace(fmt.Sprint(status.Status["value"]))
 		if key == "" || key == "<nil>" || value == "" || value == "<nil>" {
+			if status.Kind == "SysctlProfile" && strings.TrimSpace(fmt.Sprint(status.Status["profile"])) != "" {
+				if err := deleter.DeleteObject(api.SystemAPIVersion, status.Kind, status.Name); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		previous := strings.TrimSpace(fmt.Sprint(status.Status["previousValue"]))
@@ -355,12 +361,12 @@ func (c SysctlController) cleanupRemovedSysctls(ctx context.Context, desired, de
 				return fmt.Errorf("remove retired sysctl configuration %s: %w", path, err)
 			}
 		}
-		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {
+		if err := deleter.DeleteObject(api.SystemAPIVersion, status.Kind, status.Name); err != nil {
 			return err
 		}
 		if c.Bus != nil {
 			event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.sysctl.removed", daemonapi.SeverityInfo)
-			event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: "Sysctl", Name: status.Name}
+			event.Resource = &daemonapi.ResourceRef{APIVersion: api.SystemAPIVersion, Kind: status.Kind, Name: status.Name}
 			event.Attributes = map[string]string{"key": key}
 			if err := c.Bus.Publish(ctx, event); err != nil {
 				return err
