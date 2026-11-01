@@ -2548,9 +2548,9 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-        "linux-ipv6-static-route-e6f52a72",
-        "linux-ipv6-static-route-default-metric-da62b761"
-      ]
+          "linux-ipv6-static-route-e6f52a72",
+          "linux-ipv6-static-route-default-metric-da62b761"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
