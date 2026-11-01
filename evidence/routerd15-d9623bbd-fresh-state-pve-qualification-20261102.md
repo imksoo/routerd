@@ -52,6 +52,10 @@ After an actual `systemctl restart routerd`, the router again reported Healthy
 with 21 resources. The same independent DHCP, DNS UDP/TCP, NAT, management,
 and isolation checks passed.
 
+The independent ordinary DHCP client retained `198.18.15.107` and recorded an
+actual `renew` with a 120-second lease after that restart and the reservation
+exercise.
+
 The router test VM was left running on `d9623bbd`. The legacy cutback ISO,
 legacy state archives, and package transfer ISO were detached and removed after
 the check.
