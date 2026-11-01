@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -18,7 +19,6 @@ import (
 	"github.com/imksoo/routerd/pkg/conntracktuning"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/hostdeps"
-	"github.com/imksoo/routerd/pkg/lifecycle"
 	"github.com/imksoo/routerd/pkg/logstore"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 	"github.com/imksoo/routerd/pkg/sysctlprofile"
@@ -39,6 +39,7 @@ type SysctlController struct {
 
 func (c SysctlController) Reconcile(ctx context.Context) error {
 	desired := map[string]bool{}
+	desiredRuntimeKeys := map[string]bool{}
 	for _, resource := range hostdeps.SysctlResources(c.Router) {
 		desired[resource.Kind+"/"+resource.Metadata.Name] = true
 		switch resource.Kind {
@@ -46,6 +47,9 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			spec, err := resource.SysctlSpec()
 			if err != nil {
 				return err
+			}
+			if api.BoolDefault(spec.Runtime, true) {
+				desiredRuntimeKeys[spec.Key] = true
 			}
 			result, err := c.applyOne(ctx, resource.Metadata.Name, "Sysctl", sysctlSetting{Key: spec.Key, Value: spec.Value, ExpectedValue: spec.ExpectedValue, Compare: spec.Compare, Runtime: spec.Runtime, Persistent: spec.Persistent, Optional: spec.Optional})
 			if err != nil {
@@ -64,6 +68,11 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			settings, err := sysctlProfileSettings(spec)
 			if err != nil {
 				return err
+			}
+			for _, setting := range settings {
+				if api.BoolDefault(setting.Runtime, true) {
+					desiredRuntimeKeys[setting.Key] = true
+				}
 			}
 			var applied, skipped, changed []string
 			for _, setting := range settings {
@@ -112,7 +121,7 @@ func (c SysctlController) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := c.cleanupRemovedSAMProxyARP(ctx, desired); err != nil {
+	if err := c.cleanupRemovedSysctls(ctx, desired, desiredRuntimeKeys); err != nil {
 		return err
 	}
 	return nil
@@ -269,8 +278,19 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 		"dryRun":        c.DryRun,
 		"updatedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if runtimeChanged && currentErr == nil {
-		status["previousValue"] = normalizeSysctlRuntimeValue(string(currentOut))
+	if runtime && currentErr == nil {
+		previousStatus, err := c.Store.ReadObjectStatus(api.SystemAPIVersion, kind, name)
+		if err != nil {
+			return sysctlApplyResult{}, err
+		}
+		if previousKey, _ := previousStatus["key"].(string); previousKey == spec.Key {
+			if previous, _ := previousStatus["previousValue"].(string); previous != "" {
+				status["previousValue"] = previous
+			}
+		}
+		if _, retained := status["previousValue"]; !retained && runtimeChanged {
+			status["previousValue"] = normalizeSysctlRuntimeValue(string(currentOut))
+		}
 	}
 	if err := c.Store.SaveObjectStatus(api.SystemAPIVersion, kind, name, status); err != nil {
 		return sysctlApplyResult{}, err
@@ -278,7 +298,7 @@ func (c SysctlController) applyOne(ctx context.Context, name, kind string, spec 
 	return sysctlApplyResult{changed: changed}, nil
 }
 
-func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired map[string]bool) error {
+func (c SysctlController) cleanupRemovedSysctls(ctx context.Context, desired, desiredRuntimeKeys map[string]bool) error {
 	if c.DryRun || c.Store == nil {
 		return nil
 	}
@@ -302,31 +322,37 @@ func (c SysctlController) cleanupRemovedSAMProxyARP(ctx context.Context, desired
 	if command == nil {
 		command = runOutputCommandContext
 	}
-	desiredStatusIDs := map[string]bool{}
-	for key := range desired {
-		name := strings.TrimPrefix(key, "Sysctl/")
-		if name != key && name != "" {
-			desiredStatusIDs[lifecycle.OwnerKey(api.SystemAPIVersion, "Sysctl", name)] = true
-		}
-	}
-	plan := lifecycle.PlanResourceTeardownGC(desiredStatusIDs, statuses)
-	for _, action := range plan.Actions {
-		if action.Type != lifecycle.GCActionTeardownResource {
-			continue
-		}
-		status := action.Status
+	for _, status := range statuses {
 		if status.APIVersion != api.SystemAPIVersion || status.Kind != "Sysctl" {
 			continue
 		}
-		if !strings.HasPrefix(status.Name, "sam-proxy-arp-") {
+		if desired["Sysctl/"+status.Name] {
+			continue
+		}
+		if managed, known := statusvalue.ExtendedBool(status.Status["managed"]); known && !managed {
 			continue
 		}
 		key := strings.TrimSpace(fmt.Sprint(status.Status["key"]))
+		value := strings.TrimSpace(fmt.Sprint(status.Status["value"]))
+		if key == "" || key == "<nil>" || value == "" || value == "<nil>" {
+			continue
+		}
 		previous := strings.TrimSpace(fmt.Sprint(status.Status["previousValue"]))
-		changed, _ := statusvalue.ExtendedBool(status.Status["changed"])
-		if changed && key != "" && key != "<nil>" && previous != "" && previous != "<nil>" && previous != "1" {
+		runtime, _ := statusvalue.ExtendedBool(status.Status["runtime"])
+		if runtime && key != "" && key != "<nil>" && previous != "" && previous != "<nil>" && !desiredRuntimeKeys[key] {
 			if out, err := command(ctx, "sysctl", "-w", key+"="+previous); err != nil {
-				return fmt.Errorf("restore removed SAM proxy_arp sysctl %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+				return fmt.Errorf("restore removed sysctl %s: %w: %s", key, err, strings.TrimSpace(string(out)))
+			}
+		}
+		baseDir := c.BaseDir
+		if baseDir == "" {
+			baseDir = "/etc/sysctl.d"
+		}
+		path := strings.TrimSpace(fmt.Sprint(status.Status["path"]))
+		expectedPath := filepath.Join(baseDir, "90-routerd-"+safeSysctlName(status.Name)+".conf")
+		if path == expectedPath {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove retired sysctl configuration %s: %w", path, err)
 			}
 		}
 		if err := deleter.DeleteObject(api.SystemAPIVersion, "Sysctl", status.Name); err != nil {

@@ -5,6 +5,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,106 @@ func TestSysctlControllerAppliesRuntimeValue(t *testing.T) {
 	status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", "ipv4-forwarding")
 	if status["phase"] != "Applied" || status["currentValue"] != "1" || status["changed"] != true {
 		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestSysctlControllerRestoresRemovedRuntimeAndPersistentSetting(t *testing.T) {
+	const (
+		name = "ipv6-forwarding"
+		key  = "net.ipv6.conf.all.forwarding"
+	)
+	store := mapStore{}
+	values := map[string]string{key: "0"}
+	baseDir := t.TempDir()
+	commands := []string{}
+	controller := SysctlController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"}, Metadata: api.ObjectMeta{Name: name}, Spec: api.SysctlSpec{Key: key, Value: "1", Persistent: true}},
+		}}},
+		Store:   store,
+		BaseDir: baseDir,
+		Command: func(_ context.Context, command string, args ...string) ([]byte, error) {
+			commands = append(commands, strings.Join(append([]string{command}, args...), " "))
+			if command == "sysctl" && len(args) == 2 && args[0] == "-n" {
+				return []byte(values[args[1]] + "\n"), nil
+			}
+			if command == "sysctl" && len(args) == 2 && args[0] == "-w" {
+				parts := strings.SplitN(args[1], "=", 2)
+				values[parts[0]] = parts[1]
+				return []byte(args[1] + "\n"), nil
+			}
+			return nil, fmt.Errorf("unexpected command %s %v", command, args)
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	status := store.ObjectStatus(api.SystemAPIVersion, "Sysctl", name)
+	if status["previousValue"] != "0" {
+		t.Fatalf("initial runtime value was not retained: %#v", status)
+	}
+	if status["value"] != "1" || status["runtime"] != true {
+		t.Fatalf("runtime setting status is incomplete: %#v", status)
+	}
+	persistentPath := filepath.Join(baseDir, "90-routerd-"+safeSysctlName(name)+".conf")
+	if _, err := os.Stat(persistentPath); err != nil {
+		t.Fatalf("persistent file missing before removal: %v", err)
+	}
+	controller.Router = &api.Router{}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if values[key] != "0" || !strings.Contains(strings.Join(commands, "\n"), "sysctl -w "+key+"=0") {
+		t.Fatalf("removed setting did not restore runtime value: values=%#v commands=%q", values, commands)
+	}
+	if _, err := os.Stat(persistentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("persistent file remained after removal: %v", err)
+	}
+	if status, exists := store[api.SystemAPIVersion+"/Sysctl/"+name]; exists {
+		t.Fatalf("removed setting status remained: %#v", status)
+	}
+}
+
+func TestSysctlControllerDoesNotRestoreRemovedKeyOwnedByCurrentResource(t *testing.T) {
+	const key = "net.ipv6.conf.all.forwarding"
+	store := mapStore{
+		api.SystemAPIVersion + "/Sysctl/retired": {
+			"key":           key,
+			"value":         "1",
+			"previousValue": "0",
+			"changed":       true,
+			"runtime":       true,
+		},
+	}
+	values := map[string]string{key: "1"}
+	controller := SysctlController{
+		Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "Sysctl"}, Metadata: api.ObjectMeta{Name: "current"}, Spec: api.SysctlSpec{Key: key, Value: "2"}},
+		}}},
+		Store: store,
+		Command: func(_ context.Context, command string, args ...string) ([]byte, error) {
+			if command == "sysctl" && len(args) == 2 && args[0] == "-n" {
+				return []byte(values[args[1]] + "\n"), nil
+			}
+			if command == "sysctl" && len(args) == 2 && args[0] == "-w" {
+				parts := strings.SplitN(args[1], "=", 2)
+				values[parts[0]] = parts[1]
+				return []byte(args[1] + "\n"), nil
+			}
+			return nil, fmt.Errorf("unexpected command %s %v", command, args)
+		},
+	}
+	if err := controller.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if values[key] != "2" {
+		t.Fatalf("retired setting restored over current owner: %#v", values)
+	}
+	if status, exists := store[api.SystemAPIVersion+"/Sysctl/retired"]; exists {
+		t.Fatalf("retired setting status remained: %#v", status)
 	}
 }
 
