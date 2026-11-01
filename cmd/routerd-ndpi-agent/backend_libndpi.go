@@ -6,18 +6,19 @@ package main
 
 /*
 #cgo pkg-config: libndpi
+#cgo freebsd CFLAGS: -DROUTERD_NDPI_MODERN_API
 #include <stdlib.h>
 #include <ndpi_api.h>
 
 static struct ndpi_detection_module_struct* routerd_ndpi_init(void) {
-#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
-	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(NULL);
+#if defined(ROUTERD_NDPI_MODERN_API) || (defined(NDPI_MAJOR) && NDPI_MAJOR >= 5)
+	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(NULL, NDPI_LICENSE_FOR_PROFIT_LGPL);
 #else
 	NDPI_PROTOCOL_BITMASK all;
 	struct ndpi_detection_module_struct *mod = ndpi_init_detection_module(ndpi_no_prefs);
 #endif
 	if(mod == NULL) return NULL;
-#if !defined(NDPI_MAJOR) || NDPI_MAJOR < 5
+#if !defined(ROUTERD_NDPI_MODERN_API) && (!defined(NDPI_MAJOR) || NDPI_MAJOR < 5)
 	NDPI_BITMASK_SET_ALL(all);
 	ndpi_set_protocol_detection_bitmask2(mod, &all);
 #endif
@@ -34,7 +35,7 @@ static ndpi_protocol routerd_ndpi_process(struct ndpi_detection_module_struct *m
 					  const unsigned char *packet,
 					  unsigned short packetlen,
 					  unsigned long long now_ms) {
-#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+#if defined(ROUTERD_NDPI_MODERN_API) || (defined(NDPI_MAJOR) && NDPI_MAJOR >= 5)
 	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms, NULL);
 #else
 	return ndpi_detection_process_packet(mod, flow, packet, packetlen, now_ms);
@@ -43,7 +44,7 @@ static ndpi_protocol routerd_ndpi_process(struct ndpi_detection_module_struct *m
 
 static ndpi_protocol routerd_ndpi_giveup(struct ndpi_detection_module_struct *mod,
 					 struct ndpi_flow_struct *flow) {
-#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+#if defined(ROUTERD_NDPI_MODERN_API) || (defined(NDPI_MAJOR) && NDPI_MAJOR >= 5)
 	return ndpi_detection_giveup(mod, flow);
 #else
 	u_int8_t guessed = 0;
@@ -52,7 +53,7 @@ static ndpi_protocol routerd_ndpi_giveup(struct ndpi_detection_module_struct *mo
 }
 
 static u_int16_t routerd_ndpi_master_protocol(ndpi_protocol proto) {
-#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+#if defined(ROUTERD_NDPI_MODERN_API) || (defined(NDPI_MAJOR) && NDPI_MAJOR >= 5)
 	return proto.proto.master_protocol;
 #else
 	return proto.master_protocol;
@@ -60,7 +61,7 @@ static u_int16_t routerd_ndpi_master_protocol(ndpi_protocol proto) {
 }
 
 static u_int16_t routerd_ndpi_app_protocol(ndpi_protocol proto) {
-#if defined(NDPI_MAJOR) && NDPI_MAJOR >= 5
+#if defined(ROUTERD_NDPI_MODERN_API) || (defined(NDPI_MAJOR) && NDPI_MAJOR >= 5)
 	return proto.proto.app_protocol;
 #else
 	return proto.app_protocol;
