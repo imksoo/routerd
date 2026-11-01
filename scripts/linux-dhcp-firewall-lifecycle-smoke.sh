@@ -122,6 +122,9 @@ reservation_declared() {
   .[0].spec.macAddress == "02:00:00:15:00:01" and
   .[0].spec.server == "lan"' >/dev/null
 }
+reservation_runtime() {
+ jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
+}
 stage=baseline
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
 stage=reservation-declared
@@ -211,6 +214,8 @@ probe
 systemctl restart routerd
 stage=service-restart
 jq -e '.spec.resources[] | select(.kind == "DHCPv4Reservation" and .metadata.name == "printer" and .spec.ipAddress == "198.18.15.150")' /usr/local/etc/routerd/router.yaml >/dev/null
+stage=service-restart-runtime
+reservation_runtime
 probe
 isolation
 stage=firewall-exception
@@ -228,6 +233,10 @@ test "$(http lan 198.18.17.2 filter-withdrawn-lan-admin)" = "$client"
 # A RELEASE must not erase a configured reservation. After its config is removed,
 # the same physical client becomes an ordinary named lease whose removal must be
 # durable across a service restart.
+stage=reservation-before-release-declared
+reservation_declared
+stage=reservation-before-release-runtime
+reservation_runtime
 stage=reservation-release
 systemctl stop rd15-dhcp-client
 # udhcpc removes its address on RELEASE. Keep the probe in the same LAN
