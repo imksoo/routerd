@@ -210,9 +210,12 @@ await_address() {
  ip -4 addr show dev "$device" >&2 || true
  return 1
 }
+stage='initial-ingress-health'
 await_backend backend-a
+stage='initial-listener-addresses'
 await_address rd15-ing-wan 198.18.52.2
 await_address rd15-ing-lan 198.18.50.1
+stage='initial-nat-render'
 for _ in {1..30}; do
  if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed' && nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'; then break; fi
  sleep 1
