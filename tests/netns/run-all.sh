@@ -13,6 +13,7 @@ scripts=(
   keepalived-no-spurious-restart.sh
   graceful-vrrp-activation.sh
   ingress-conntrack-survive.sh
+  firewall-policy-dataplane.sh
   forcefrag-df-forward.sh
   arp-observer-ignore-member-mac.sh
   sam-proxy-arp-garp-transition.sh
