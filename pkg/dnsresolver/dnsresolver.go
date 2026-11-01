@@ -107,12 +107,22 @@ func ParseDNSMasqHostRecords(data []byte) []RuntimeDHCPHostRecord {
 		if hostname == "" {
 			continue
 		}
+		origin := ""
+		for _, field := range fields[1:ipIndex] {
+			if strings.HasPrefix(strings.ToLower(field), "set:") {
+				// routerd emits set:<reservation-name> only for a fixed
+				// DHCP reservation. Preserve that renderer fact so a later
+				// lease release cannot turn it into a removable observation.
+				origin = DHCPAssignmentReservation
+				break
+			}
+		}
 		key := strings.ToLower(hostname) + "|" + ip
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip, MAC: fields[0]})
+		records = append(records, RuntimeDHCPHostRecord{Hostname: hostname, IP: ip, MAC: fields[0], Origin: origin})
 	}
 	sort.Slice(records, func(i, j int) bool {
 		left := strings.ToLower(records[i].Hostname) + "|" + records[i].IP

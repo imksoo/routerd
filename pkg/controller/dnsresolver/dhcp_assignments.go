@@ -92,8 +92,11 @@ func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverr
 			continue
 		}
 		record.Source = source
-		reservation := false
+		reservation := record.Origin == resolverruntime.DHCPAssignmentReservation
 		for _, resource := range c.Router.Spec.Resources {
+			if reservation {
+				break
+			}
 			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DHCPv4Reservation" {
 				continue
 			}

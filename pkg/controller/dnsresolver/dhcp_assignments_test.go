@@ -37,6 +37,19 @@ func TestSidecarRequiresCurrentAssignmentEvidenceAndNamedSource(t *testing.T) {
 	}
 }
 
+func TestReservationTaggedSidecarRemainsFixedWhenRouterViewIsStale(t *testing.T) {
+	controller := Controller{Router: &api.Router{}, StateDir: t.TempDir()}
+	parsed := runtime.ParseDNSMasqHostRecords([]byte("02:00:00:00:00:01,set:printer,printer,192.0.2.150\n"))
+	records, err := controller.namedDHCPAssignments(t.Context(), parsed, []runtime.DHCPAddressScope{{Source: "DHCPv4Server/lan", Start: "192.0.2.100", End: "192.0.2.199"}})
+	if err != nil || len(records) != 1 {
+		t.Fatalf("tagged reservation missing: %+v %v", records, err)
+	}
+	record := records[0]
+	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "192.0.2.150" || record.MAC != "02:00:00:00:00:01" {
+		t.Fatalf("tagged reservation = %+v", record)
+	}
+}
+
 func TestExpiredStickyAssignmentCannotBeRecoveredAsInfinite(t *testing.T) {
 	controller := Controller{Router: &api.Router{}, StateDir: t.TempDir()}
 	store, err := logstore.OpenDHCPStickyLog(filepath.Join(controller.StateDir, "dhcp-sticky.db"))
