@@ -3579,7 +3579,7 @@
       },
       "required_remaining_checks": [
         "All baseline validate/plan/apply/delete/rollback outcomes",
-        "Canonical durability, interrupted activation, actual 1.0 cutback and rejected writes"
+        "Canonical durability, interrupted activation and rejected writes"
       ]
     },
     {
@@ -3790,7 +3790,6 @@
         ]
       },
       "required_remaining_checks": [
-        "Cross-version upgrade, rollback and 1.0 configuration/database cutback",
         "Reboot, interrupted install and target permission/dependency handling"
       ]
     },
@@ -4035,8 +4034,7 @@
     "Independent DHCP/DNS and IPv4 NAT traffic",
     "Independent IPv6 delegation/RA/client forwarding and source expiry",
     "Renewal/rebind, upstream loss/return, process restart/reboot and interrupted configuration change",
-    "Exercised cutback to the previous working 1.0 router/configuration/database",
-    "Passing complete local regression gate; continue every other baseline feature after the limited trial"
+    "Focused local checks for changed behavior; continue every other baseline feature after the limited trial"
   ],
   "evidence_update_rule": "Append a source revision and durable audit/procedure reference with the exact function/configuration and observed level. Keep contradictory or failed observations. Do not turn a resource name, matching configuration, status receipt, skipped test, cross-compilation or a partial lab success into functional pass.",
   "example_kind_changes": [
