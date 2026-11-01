@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-01",
+  "updated_date": "2026-11-02",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -433,6 +433,24 @@
         "Every WireGuard endpoint, roaming or failure combination",
         "Bridge/VXLAN forwarding inferred from this WireGuard peer result",
         "A packaged routerd service, production deployment, FreeBSD or complete WireGuard qualification"
+      ]
+    },
+    "linux-wireguard-pve-b1ae8709": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "b1ae870979695461e01b9b12ff0f569e8b0e191c",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "隔離 PVE の VLAN 3132。VM219 は空の 1.5 状態領域で候補 routerd を稼働し、VM220 は独立した Linux WireGuard ピアです。",
+      "checks": [
+        "WireGuardInterface、WireGuardPeer、IPv4StaticAddress、IPv4Route、信頼ゾーンを候補 routerd へ適用し、全リソースが Healthy になった",
+        "独立 VM220 ピアとのハンドシェイクおよび双方の送受信量増加を観測した",
+        "10.210.0.1 と 10.210.0.2 の双方向 ICMP は各 3 回すべて成功した",
+        "外部ピアの WireGuard インターフェース停止中は候補から到達不能となり、再開後に外部ピアの試験用経路を復元すると双方の 3 回 ICMP が復帰した",
+        "候補側のトンネル、IPv4 アドレス、経路および信頼ゾーンは外部ピア停止後も維持された"
+      ],
+      "excludes": [
+        "鍵ローテーション、routerd プロセス再起動、設定撤去時のトンネル・アドレス・経路の消去",
+        "FreeBSD、物理回線および完全な WireGuard 機能認定"
       ]
     },
     "linux-vrf-withdraw-review-9735f25e": {
@@ -2291,7 +2309,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-wireguard-peer-f54ceecb",
-          "linux-combined-native-3e58c93a"
+          "linux-combined-native-3e58c93a",
+          "linux-wireguard-pve-b1ae8709"
         ]
       },
       "freebsd": {
@@ -2299,8 +2318,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Native parent proof, address/route/RA children at the pinned revision",
-        "Independent tunnel handshake/traffic, key rotation, restart and withdrawal"
+        "鍵ローテーション、routerd プロセス再起動、設定撤去時のトンネル・アドレス・経路の消去"
       ],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"

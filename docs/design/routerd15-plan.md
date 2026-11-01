@@ -136,6 +136,19 @@ WAN-A 専用の健全性サービスを停止すると、選択規則は WAN-B �
 本試験は固定の切替時間を要件にしていません。検証後は候補の状態、経路規則、nftables 表、
 VLAN、HTTP サーバー、検証メディアを削除し、元の実行物・設定・状態領域を復元しました。
 
+Linux の WireGuard を、`b1ae8709` の候補実行物で隔離 PVE にて確認しました。VM219 の
+候補 routerd は空の 1.5 状態領域から WireGuardInterface、WireGuardPeer、IPv4StaticAddress、
+IPv4Route、および `wg-pve` の信頼ゾーンを適用しました。VLAN 3132 上の独立 VM220 ピアと
+ハンドシェイクし、双方の WireGuard 送受信量が増加しました。`10.210.0.1` と `10.210.0.2`
+の間では、両方向の ICMP を各 3 回すべて受信しました。
+
+独立ピアの WireGuard インターフェースを停止すると、候補からの到達確認は失敗しました。
+再開後、外部ピア側で停止により消えた試験用経路を復元すると、ハンドシェイクと両方向の
+3 回の ICMP 到達確認が復帰しました。候補側のトンネル、IPv4 アドレス、経路および信頼
+ゾーンは維持されました。鍵ローテーション、routerd 再起動、設定撤去、および FreeBSD は
+未確認です。検証後は VM219/220 の元の実行物・設定・状態領域を復元し、試験用 ISO、VLAN
+リンク、インターフェース、秘密鍵を含む一時領域を削除しました。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
