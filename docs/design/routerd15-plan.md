@@ -62,6 +62,27 @@ affect Linux, including cancellation, storage and process ownership. A Linux
 acceptance result does not establish whole-platform completion; retain the
 remaining FreeBSD functions in the final 1.0 preservation scope.
 
+## Current Linux execution checkpoint, 2026-11-02
+
+The active branch records the current PVE VLAN results rather than treating
+earlier branch history as current qualification. DHCPv4 acquisition plus DNS
+UDP/TCP answers and IPv4 NAT with a separate cloned client have passed and are
+recorded at the executed revisions. The IPsec provider-restart repair is also
+recorded at its executed revision.
+
+The separate client has received an IPv6 router advertisement, completed DAD,
+installed the advertised on-link and default routes, and exchanged ICMPv6 with
+the router's link-local address. That is RA/SLAAC evidence only. It does not
+qualify DHCPv6 prefix delegation, delegated-prefix installation, IPv6 traffic
+forwarding to an independent upstream, renewal, expiry, renumbering, upstream
+loss/return, or restart recovery.
+
+The next Linux work is therefore to record the RA/SLAAC result, then exercise
+the actual DHCPv6-PD path with the dedicated client and an independent VLAN
+upstream. The test must observe the delegated prefix, client route, forwarded
+traffic, and withdrawal/recovery behavior. No timing threshold or compatibility
+requirement beyond the stated product function is introduced by this checkpoint.
+
 ## Work sequence
 
 1. **Health to PBR (initial implementation).** Decode current status at its
