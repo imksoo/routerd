@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/platform"
 	routerstate "github.com/imksoo/routerd/pkg/state"
 )
 
@@ -613,6 +614,9 @@ func ordinaryMutationCommands(commands [][]string) [][]string {
 }
 
 func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux route-command contract; FreeBSD native lifecycle is covered by freebsd-ipv6-static-route-smoke")
+	}
 	route := ipv6StaticRoute{Destination: "2001:db8:10::/64", Gateway: "fe80::1", Device: "lan0", Metric: "42"}
 	installed := false
 	var commands [][]string
