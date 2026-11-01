@@ -126,19 +126,8 @@ source = source.replace(needle, replacement, 1)
 # post-boot owned marker through the same SSH channel.
 needle = '                    debuglog(config[\'debug\'], "[trace] final-SSH returned rc={}".format(rc))'
 replacement = '''                    debuglog(config['debug'], "[trace] final-SSH returned rc={}".format(rc))
-                    evidence_dir = os.environ.get("ROUTERD_ANYVM_EVIDENCE_DIR")
-                    if evidence_dir:
-                        evidence_path = os.path.join(evidence_dir, "native-child-evidence.tar.gz")
-                        with open(evidence_path, "wb") as evidence_stream:
-                            try:
-                                evidence_rc = subprocess.call(ssh_base_cmd + ["cat", "/var/tmp/routerd-native-evidence.tar.gz"], stdout=evidence_stream, timeout=30)
-                            except subprocess.TimeoutExpired:
-                                evidence_rc = 124
-                        debuglog(config['debug'], "native evidence copy rc={}".format(evidence_rc))
-                        with open(os.path.join(evidence_dir, "native-evidence-copy.log"), "w") as evidence_status:
-                            evidence_status.write("guest_exit={} evidence_copy_exit={}\\n".format(rc, evidence_rc))
-                        if evidence_rc != 0 and rc == 0:
-                            rc = 2
+                    # The guest prints its final cleanup disposition. Do not copy
+                    # raw child logs or runtime evidence into CI artifacts.
                     if rc != 0:
                         raise SystemExit(rc)
                     reboot_marker = os.environ.get("ROUTERD_ANYVM_REBOOT_MARKER")

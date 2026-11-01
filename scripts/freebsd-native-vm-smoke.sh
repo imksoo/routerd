@@ -182,26 +182,14 @@ cleanup() {
   fi
   restore_native_descriptors >>"$work/cleanup.log" 2>&1 || cleanup_rc=2
   printf 'test_exit=%s\ncleanup_exit=%s\n' "$test_rc" "$cleanup_rc" >>"$work/cleanup.log"
-  # Save child JSON/logs and cleanup evidence, without archiving helper binaries
-  # or fixture credential/config files. The existing CI console artifact collects it.
-  archive=/var/tmp/routerd-native-evidence.tar.gz
-  list="$work/evidence-files"
-  (cd "$work" && find . -type f \( -name '*.json' -o -name '*.jsonl' -o -name '*.log' -o -name '*.meta' -o -name '*.result' -o -name result -o -name cleanup.log \) -print) >"$list"
-  archive_rc=$?
-  if [ "$archive_rc" -eq 0 ]; then
-    tar -czf "$archive" -C "$work" -T "$list"
-    archive_rc=$?
-  fi
-  printf 'evidence_archive=%s archive_exit=%s\n' "$archive" "$archive_rc" >&2
-  if [ "$archive_rc" -eq 0 ] && [ "$cleanup_rc" -eq 0 ]; then
-    rm -rf "$work"
-    remove_rc=$?
-    printf 'workdir_remove_exit=%s\n' "$remove_rc" >&2
-    [ "$remove_rc" -eq 0 ] || cleanup_rc=2
-  else
-    echo "native evidence retained at $work" >&2
-    cleanup_rc=2
-  fi
+  # Procedures and PASS/FAIL criteria are versioned with this runner. Raw
+  # child logs are diagnostic input only: print the cleanup disposition, then
+  # remove them instead of retaining a guest archive or CI artifact.
+  cat "$work/cleanup.log" >&2
+  rm -rf "$work"
+  remove_rc=$?
+  printf 'workdir_remove_exit=%s\n' "$remove_rc" >&2
+  [ "$remove_rc" -eq 0 ] || cleanup_rc=2
   [ "$test_rc" -ne 0 ] || test_rc=$cleanup_rc
   exit "$test_rc"
 }
