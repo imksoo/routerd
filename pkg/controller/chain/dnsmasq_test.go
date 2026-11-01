@@ -189,7 +189,7 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DSLiteTunnel"}, Metadata: api.ObjectMeta{Name: "ds-lite"}, Spec: api.DSLiteTunnelSpec{TunnelName: "dslite0", MTU: 1454}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
 		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"ds-lite"}}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "lan", LocalAddress: "192.168.10.1"}}, Upstream: "192.0.2.53"}},
 	}}}
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2001:db8::53"}},
@@ -218,7 +218,7 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v6,option6:sntp-server,[2001:db8::123]",
 		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
 		"dhcp-option=tag:lan-v6,option6:rapid-commit",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-relay=192.168.10.1,192.0.2.53",
 	} {
 		if !containsLine(got, want) {
 			t.Fatalf("dnsmasq LAN service lines missing %q:\n%#v", want, got)

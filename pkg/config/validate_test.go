@@ -1174,12 +1174,31 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 					{Name: "default", Kind: "upstream", Match: []string{"."}, Upstreams: []string{"udp://192.0.2.53:53"}},
 				},
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "lan", LocalAddress: "192.0.2.1"}}, Upstream: "192.0.2.53"}},
 		}},
 	}
 
 	if err := Validate(router); err != nil {
 		t.Fatalf("validate Phase 1.5 LAN service kinds: %v", err)
+	}
+}
+
+func TestValidateDHCPv4RelayRejectsUnspecifiedListenerAddress(t *testing.T) {
+	router := &api.Router{
+		TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"},
+		Metadata: api.ObjectMeta{Name: "test"},
+		Spec: api.RouterSpec{Resources: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{
+				Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "lan", LocalAddress: "0.0.0.0"}},
+				Upstream:  "192.0.2.53",
+			}},
+		}},
+	}
+
+	err := Validate(router)
+	if err == nil || !strings.Contains(err.Error(), "localAddress") {
+		t.Fatalf("Validate() error = %v, want localAddress validation failure", err)
 	}
 }
 

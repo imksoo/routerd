@@ -691,15 +691,22 @@ func (e *Engine) observeDHCPv4Relay(res api.Resource, aliases map[string]string,
 		rr.Warnings = append(rr.Warnings, err.Error())
 		return
 	}
-	var ifnames []string
-	for _, name := range spec.Interfaces {
-		ifnames = append(ifnames, aliases[name])
+	var interfaces, ifnames, localAddresses []string
+	for _, listener := range spec.Listeners {
+		interfaces = append(interfaces, listener.Interface)
+		ifnames = append(ifnames, aliases[listener.Interface])
+		localAddresses = append(localAddresses, listener.LocalAddress)
 	}
-	rr.Observed["interfaces"] = strings.Join(spec.Interfaces, ",")
+	rr.Observed["interfaces"] = strings.Join(interfaces, ",")
 	rr.Observed["ifnames"] = strings.Join(ifnames, ",")
+	rr.Observed["localAddresses"] = strings.Join(localAddresses, ",")
 	rr.Observed["upstream"] = spec.Upstream
+	if spec.UpstreamInterface != "" {
+		rr.Observed["upstreamInterface"] = spec.UpstreamInterface
+		rr.Observed["upstreamIfname"] = aliases[spec.UpstreamInterface]
+	}
 	if includePlan {
-		rr.Plan = append(rr.Plan, fmt.Sprintf("relay DHCP from %s to %s", strings.Join(ifnames, ","), spec.Upstream))
+		rr.Plan = append(rr.Plan, fmt.Sprintf("relay DHCP from %s to %s", strings.Join(localAddresses, ","), spec.Upstream))
 	}
 }
 

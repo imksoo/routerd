@@ -1614,9 +1614,15 @@ type NAT44SessionSyncTargetSpec struct {
 	RestoreCommand []string `yaml:"restoreCommand,omitempty" json:"restoreCommand,omitempty"`
 }
 
+type DHCPv4RelayListenerSpec struct {
+	Interface    string `yaml:"interface" json:"interface"`
+	LocalAddress string `yaml:"localAddress" json:"localAddress"`
+}
+
 type DHCPv4RelaySpec struct {
-	Interfaces []string `yaml:"interfaces" json:"interfaces"`
-	Upstream   string   `yaml:"upstream" json:"upstream"`
+	Listeners         []DHCPv4RelayListenerSpec `yaml:"listeners" json:"listeners"`
+	Upstream          string                    `yaml:"upstream" json:"upstream"`
+	UpstreamInterface string                    `yaml:"upstreamInterface,omitempty" json:"upstreamInterface,omitempty"`
 }
 
 type ResourceWhenSpec struct {

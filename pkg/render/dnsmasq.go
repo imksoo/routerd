@@ -365,9 +365,9 @@ func directDnsmasqIfnames(router *api.Router, aliases map[string]string) []strin
 		case "DHCPv4Relay":
 			spec, err := res.DHCPv4RelaySpec()
 			if err == nil {
-				for _, iface := range spec.Interfaces {
-					if aliases[iface] != "" {
-						ifnames = append(ifnames, aliases[iface])
+				for _, listener := range spec.Listeners {
+					if aliases[listener.Interface] != "" {
+						ifnames = append(ifnames, aliases[listener.Interface])
 					}
 				}
 			}
@@ -492,10 +492,20 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 		if res.Kind == "DHCPv4Relay" {
 			spec, err := res.DHCPv4RelaySpec()
 			if err == nil {
-				for _, iface := range spec.Interfaces {
-					if ifname := aliases[iface]; ifname != "" {
-						buf.WriteString(fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s\n", spec.Upstream, ifname))
+				upstreamIfname := aliases[spec.UpstreamInterface]
+				for _, listener := range spec.Listeners {
+					if aliases[listener.Interface] == "" {
+						return fmt.Errorf("%s references interface with empty ifname", res.ID())
 					}
+					local, err := netip.ParseAddr(listener.LocalAddress)
+					if err != nil || !local.Is4() || local.IsUnspecified() {
+						return fmt.Errorf("%s listener %q has invalid IPv4 localAddress %q", res.ID(), listener.Interface, listener.LocalAddress)
+					}
+					line := fmt.Sprintf("dhcp-relay=%s,%s", local, spec.Upstream)
+					if upstreamIfname != "" {
+						line += "," + upstreamIfname
+					}
+					buf.WriteString(line + "\n")
 				}
 			}
 		}

@@ -541,8 +541,16 @@ func validateDHCPResource(res api.Resource, targetOS platform.OS) (bool, error) 
 		if err != nil {
 			return true, err
 		}
-		if len(spec.Interfaces) == 0 {
-			return true, fmt.Errorf("%s spec.interfaces is required", res.ID())
+		if len(spec.Listeners) == 0 {
+			return true, fmt.Errorf("%s spec.listeners is required", res.ID())
+		}
+		for i, listener := range spec.Listeners {
+			if listener.Interface == "" {
+				return true, fmt.Errorf("%s spec.listeners[%d].interface is required", res.ID(), i)
+			}
+			if addr, err := netip.ParseAddr(listener.LocalAddress); err != nil || !addr.Is4() || addr.IsUnspecified() {
+				return true, fmt.Errorf("%s spec.listeners[%d].localAddress must be an IPv4 address", res.ID(), i)
+			}
 		}
 		if spec.Upstream == "" {
 			return true, fmt.Errorf("%s spec.upstream is required", res.ID())

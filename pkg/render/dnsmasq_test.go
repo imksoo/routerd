@@ -277,6 +277,9 @@ func TestDnsmasqConfigRendersVirtualAddressSourcesForDirectDHCPv4(t *testing.T) 
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "dhcp-relay=0.0.0.0") {
+		t.Fatalf("dnsmasq output must use the listener local IPv4 address:\n%s", got)
+	}
 }
 
 func TestDnsmasqConfigRendersDHCPv4Reservation(t *testing.T) {
@@ -336,6 +339,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-v4-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
@@ -372,7 +376,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 				ValidLifetime:     "7200",
 				PreferredLifetime: "3600",
 			}},
-			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "lan", LocalAddress: "192.168.10.1"}}, Upstream: "192.0.2.53", UpstreamInterface: "lan"}},
 		}},
 	}
 
@@ -388,7 +392,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 		"dhcp-range=tag:ens19,set:lan-v6,::100,::1ff,constructor:ens19,64,6h",
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
 		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-relay=192.168.10.1,192.0.2.53,ens19",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)

@@ -43,7 +43,7 @@ func TestNftablesIPv6OnlyDHCPListener(t *testing.T) {
 			}
 
 			if tc.relay {
-				resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"v6"}, Upstream: "192.0.2.1"}})
+				resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "v6", LocalAddress: "192.0.2.1"}}, Upstream: "192.0.2.1"}})
 			}
 			if !tc.raOnly {
 				resources = append(resources, api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "v6"}, Spec: api.DHCPv6ServerSpec{Interface: "v6", Mode: "stateless"}})

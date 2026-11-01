@@ -25,7 +25,7 @@ func TestDnsmasqIPv4OnlyInterfaces(t *testing.T) {
 		{"pending delegated IPv6", []api.Resource{resource("IPv6DelegatedAddress", "pd", api.IPv6DelegatedAddressSpec{Interface: "same", PrefixDelegation: "pending"}), resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{DelegatedAddress: "pd"})}, nil},
 		{"unresolved delegated IPv6", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{DelegatedAddress: "missing"})}, nil},
 		{"explicit v6 listener", []api.Resource{resource("DHCPv6Server", "v6", api.DHCPv6ServerSpec{ListenInterfaces: []string{"same"}})}, nil},
-		{"relay and sorted deduplication", []api.Resource{resource("DHCPv4Relay", "relay", api.DHCPv4RelaySpec{Interfaces: []string{"other", "lan", "other"}})}, []string{"ens18", "ens19"}},
+		{"relay and sorted deduplication", []api.Resource{resource("DHCPv4Relay", "relay", api.DHCPv4RelaySpec{Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "other", LocalAddress: "192.0.2.2"}, {Interface: "lan", LocalAddress: "192.0.2.1"}, {Interface: "other", LocalAddress: "192.0.2.3"}}})}, []string{"ens18", "ens19"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &api.Router{Spec: api.RouterSpec{Resources: append([]api.Resource{resource("DHCPv4Server", "v4", api.DHCPv4ServerSpec{Interface: "lan"})}, tc.extra...)}}

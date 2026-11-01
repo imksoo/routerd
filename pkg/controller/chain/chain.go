@@ -6541,12 +6541,21 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		for _, iface := range spec.Interfaces {
-			ifname := aliases[iface]
+		upstreamIfname := aliases[spec.UpstreamInterface]
+		for _, listener := range spec.Listeners {
+			ifname := aliases[listener.Interface]
 			if ifname == "" {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
+			local, err := netip.ParseAddr(listener.LocalAddress)
+			if err != nil || !local.Is4() || local.IsUnspecified() {
+				return nil, fmt.Errorf("%s listener %q has invalid IPv4 localAddress %q", resource.ID(), listener.Interface, listener.LocalAddress)
+			}
+			line := fmt.Sprintf("dhcp-relay=%s,%s", local, spec.Upstream)
+			if upstreamIfname != "" {
+				line += "," + upstreamIfname
+			}
+			lines = append(lines, line)
 		}
 	}
 	return lines, nil

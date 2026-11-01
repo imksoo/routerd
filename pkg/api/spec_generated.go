@@ -1030,9 +1030,9 @@ func cloneDHCPv4ClientSpec(s DHCPv4ClientSpec) DHCPv4ClientSpec {
 }
 func cloneDHCPv4RelaySpec(s DHCPv4RelaySpec) DHCPv4RelaySpec {
 	out := s
-	if s.Interfaces != nil {
-		out.Interfaces = make([]string, len(s.Interfaces))
-		copy(out.Interfaces, s.Interfaces)
+	if s.Listeners != nil {
+		out.Listeners = make([]DHCPv4RelayListenerSpec, len(s.Listeners))
+		copy(out.Listeners, s.Listeners)
 	}
 	return out
 }

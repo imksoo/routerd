@@ -217,6 +217,27 @@ the DHCPv6 client identity must stay fixed across HA nodes.
 | `DNSForwarder` | Declares one DNS match rule for a resolver. It either serves one or more `DNSZone` resources or forwards to named `DNSUpstream` resources. |
 | `DNSUpstream` | Declares one reusable upstream endpoint using `udp`, `tcp`, `dot`, or `doh`, with optional status-derived addresses, bootstrap resolvers, TLS name, and source interface. |
 
+### DHCPv4Relay
+
+`listeners` は、リレー元の論理インターフェースと、そのインターフェースへ実際に
+割り当てた IPv4 アドレスの組です。dnsmasq の `dhcp-relay` は、このアドレスを
+`giaddr` として上流 DHCP サーバーへ送ります。`upstreamInterface` は任意です。
+指定すると、dnsmasq は上流からの DHCP 応答をその論理インターフェースでだけ
+受け付けます。
+
+```yaml
+apiVersion: net.routerd.net/v1alpha1
+kind: DHCPv4Relay
+metadata:
+  name: lan-relay
+spec:
+  upstream: 198.51.100.10
+  upstreamInterface: wan
+  listeners:
+    - interface: lan
+      localAddress: 192.0.2.1
+```
+
 Android does not use DHCPv6 DNS configuration, so IPv6 LANs should publish
 RDNSS through `IPv6RouterAdvertisement.spec.rdnss`.
 

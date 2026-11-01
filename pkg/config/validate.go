@@ -418,10 +418,13 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 			if err != nil {
 				return err
 			}
-			for i, name := range spec.Interfaces {
-				if !idx.Interfaces[name] {
-					return fmt.Errorf("%s spec.idx.Interfaces[%d] references missing Interface %q", res.ID(), i, name)
+			for i, listener := range spec.Listeners {
+				if !idx.Interfaces[listener.Interface] {
+					return fmt.Errorf("%s spec.listeners[%d].interface references missing Interface %q", res.ID(), i, listener.Interface)
 				}
+			}
+			if spec.UpstreamInterface != "" && !idx.Interfaces[spec.UpstreamInterface] {
+				return fmt.Errorf("%s spec.upstreamInterface references missing Interface %q", res.ID(), spec.UpstreamInterface)
 			}
 		}
 		if res.Kind == "IPv6DelegatedAddress" {

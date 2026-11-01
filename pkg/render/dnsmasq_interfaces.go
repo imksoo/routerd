@@ -61,8 +61,8 @@ func dnsmasqInterfaceFamilies(router *api.Router, aliases map[string]string) (ma
 		case "DHCPv4Relay":
 			spec, err := resource.DHCPv4RelaySpec()
 			if err == nil {
-				for _, iface := range spec.Interfaces {
-					v4[aliases[iface]] = true
+				for _, listener := range spec.Listeners {
+					v4[aliases[listener.Interface]] = true
 				}
 			}
 		case "DHCPv6Server":
