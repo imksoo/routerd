@@ -1817,6 +1817,24 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-home-integration-2a43a0e8": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "2a43a0e8e9b54053d9de3ad5d7ee48ed95f18454",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "Authorized PVE VLANs. VM219 ran a fresh-state Linux candidate. Independent VM224 used VLAN 3131 as the DHCPv4 and IPv6 LAN client; independent VM220 used VLAN 3132 as the upstream IPv4 HTTP endpoint. Endpoint routerd services were stopped only while their temporary VLAN children and test service were active.",
+      "checks": [
+        "VM224 received 198.18.15.104/24, the gateway and DNS server from DHCPv4. Its query to 198.18.15.1 resolved router.pve.test from the candidate local DNS zone.",
+        "VM224 HTTP traffic to VM220 198.18.16.1:8080 completed. A VM220 tcpdump captured the TCP SYN source as VM219 WAN address 198.18.16.2, proving NAT44 masquerade.",
+        "VM224 captured the candidate Router Advertisement from VM219, configured fd31:15::/64 SLAAC addresses, and installed the advertised link-local default route.",
+        "Removing DHCPv4, DNS, NAT44 and Router Advertisement resources removed the candidate service listeners. DNS was refused, HTTP timed out, VM220 captured the non-masqueraded source 198.18.15.104, and an eight-second capture observed zero Router Advertisements. Restoring the configuration renewed DHCP, restored DNS and NAT44 source 198.18.16.2, and emitted Router Advertisement again."
+      ],
+      "excludes": [
+        "IPv6 prefix delegation, routed IPv6 upstream traffic, DNS forwarding and transport coverage, DHCP/DNS lease persistence, NAT pinholes, redirects, port forwards, expiry and conflict behavior.",
+        "FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcpv6-server-8e8783e3": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2898,7 +2916,8 @@
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
-          "linux-dhcpv4-reservation-pve-2c3fe143"
+          "linux-dhcpv4-reservation-pve-2c3fe143",
+          "linux-pve-home-integration-2a43a0e8"
         ]
       },
       "freebsd": {
@@ -2970,7 +2989,8 @@
           "linux-dhcpv6-associations-ede8dbf2",
           "dhcpv6-partial-recovery-87761c0e",
           "linux-dhcpv6-native-d05524de",
-          "linux-pd-ra-lifecycle-1ff438ee"
+          "linux-pd-ra-lifecycle-1ff438ee",
+          "linux-pve-home-integration-2a43a0e8"
         ]
       },
       "freebsd": {
@@ -3187,7 +3207,8 @@
           "linux-vlan-clients-39156bb6",
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
-          "linux-dhcpv4-reservation-lifecycle-329dfd9c"
+          "linux-dhcpv4-reservation-lifecycle-329dfd9c",
+          "linux-pve-home-integration-2a43a0e8"
         ]
       },
       "freebsd": {
@@ -3566,7 +3587,8 @@
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-ingress-service-ad5bcd47",
-          "linux-nat44-flow-dnat-pinhole-3587ac28"
+          "linux-nat44-flow-dnat-pinhole-3587ac28",
+          "linux-pve-home-integration-2a43a0e8"
         ]
       },
       "freebsd": {

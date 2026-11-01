@@ -71,6 +71,19 @@ delegated-prefix forwarding, expiry and recovery are recorded at their executed
 revisions. The IPsec provider-restart repair is also recorded at its executed
 revision.
 
+Linux 宅内ルーター統合の PVE 試験は `2a43a0e8` に記録しています。VM219 を候補ルーター、
+VLAN 3131 の VM224 を独立クライアント、VLAN 3132 の VM220 を上流 HTTP 端点として、
+DHCPv4、ローカル DNS、NAT44、IPv6 ルーター広告（Router Advertisement）を同時に構成しました。VM224 は
+`198.18.15.104/24`、既定ゲートウェイ、DNS を取得し、`router.pve.test` を候補のローカル
+ゾーンから解決しました。VM220 のパケット捕捉では HTTP の送信元が VM219 WAN 側の
+`198.18.16.2` となり、NAT44 を確認しました。
+
+VM224 はルーター広告を捕捉し、`fd31:15::/64` のステートレス自動設定（SLAAC）アドレスとリンクローカル
+既定経路を設定しました。DHCPv4、DNS、NAT44、ルーター広告を外すと、待受は消え、
+DNS は拒否、HTTP はタイムアウト、上流の TCP 接続開始パケットは変換前アドレス、8 秒間のルーター広告の捕捉は 0 件でした。
+設定を戻すと DHCP 更新、DNS、NAT44、ルーター広告が復旧しました。IPv6 プレフィックス
+委任、上流 IPv6 転送、DNS の外部転送、NAT のポート転送とピンホールは未試験です。
+
 Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
 VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
 VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
