@@ -131,7 +131,10 @@ for _ in {1..30}; do
  sleep 1
 done
 # rdisc6 is an independent RS/RA decoder, Linux kernel handles SLAAC itself.
-ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra.txt"
+# ndisc6 can return a non-zero status after it has decoded an advertisement.
+# The decoded prefix below, rather than that implementation-specific status,
+# is the assertion for this independent observer.
+ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra.txt" || true
 grep '2001:db8:1500::/64' "$work/ra.txt"
 probe() {
  local source answer
@@ -177,7 +180,7 @@ for _ in {1..30}; do
 done
 test "$(systemctl show -p MainPID --value routerd)" = "$router_pid"
 test "$(systemctl show -p MainPID --value rd15-peer-kea)" = "$kea_pid"
-ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra-renumber.txt"
+ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra-renumber.txt" || true
 grep '2001:db8:1501::/64' "$work/ra-renumber.txt"
 if ip -6 addr show dev rd15-lan | grep -q '2001:db8:1500::1/64'; then echo 'revoked router address remains' >&2; exit 1; fi
 # A short-lived SLAAC address can remain until its original expiry under the
