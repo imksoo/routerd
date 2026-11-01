@@ -280,6 +280,25 @@ func TestReconcileMarksDegradedWhenReloadFails(t *testing.T) {
 	}
 }
 
+func TestReconcileKeepsNewSupervisedWorkerPendingUntilSocketExists(t *testing.T) {
+	dir := t.TempDir()
+	store := mapStore{}
+	controller := Controller{
+		Router:              dnsResolverRouter([]string{"127.0.0.1"}, nil),
+		Store:               store,
+		AllowStartingWorker: true,
+		RuntimeDir:          filepath.Join(dir, "run"),
+		StateDir:            filepath.Join(dir, "state"),
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("new supervised worker returned a terminal error: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DNSResolver", "lan-resolver")
+	if status["phase"] != "Pending" || status["reason"] != "WorkerStarting" {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
 func withResolverHTTPClient(t *testing.T, handler http.Handler) {
 	t.Helper()
 	old := newResolverHTTPClient

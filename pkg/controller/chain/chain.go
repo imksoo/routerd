@@ -2549,7 +2549,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return nil, DaemonStatusController{}, lifetimes, err
 		}
 	}
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, AllowStartingWorker: opts.SuperviseClientDaemons, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync, Logger: logger}
 	nat44SessionSync := NAT44SessionSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunNAT44SessionSync}

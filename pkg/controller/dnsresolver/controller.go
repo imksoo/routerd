@@ -45,7 +45,11 @@ type Controller struct {
 	Bus            *bus.Bus
 	Store          Store
 	DryRun         bool
-	Binary         string
+	// AllowStartingWorker keeps a newly declared, supervised resolver pending
+	// while its control socket is being created.  It is intentionally opt-in:
+	// an unmanaged or already-running resolver still reports a reload failure.
+	AllowStartingWorker bool
+	Binary              string
 
 	RuntimeDir    string
 	StateDir      string
@@ -199,9 +203,14 @@ func (c Controller) Reconcile(ctx context.Context) (reconcileErr error) {
 			if err != nil {
 				var reloadErr resolverReloadError
 				if errors.As(err, &reloadErr) {
-					phase = "Degraded"
-					message = err.Error()
-					reconcileErr = errors.Join(reconcileErr, fmt.Errorf("DNSResolver/%s: %w", resolver.name, err))
+					if c.AllowStartingWorker && reloadErr.status == "worker unavailable" {
+						phase = "Pending"
+						message = "WorkerStarting"
+					} else {
+						phase = "Degraded"
+						message = err.Error()
+						reconcileErr = errors.Join(reconcileErr, fmt.Errorf("DNSResolver/%s: %w", resolver.name, err))
+					}
 				} else {
 					phase = "Pending"
 					if err := c.saveStatus(resolver.name, spec, phase, err.Error(), waiting); err != nil {
