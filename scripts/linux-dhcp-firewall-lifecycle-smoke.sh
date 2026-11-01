@@ -210,16 +210,20 @@ test "$(http lan 198.18.17.2 filter-withdrawn-lan-admin)" = "$client"
 # durable across a service restart.
 stage=reservation-release
 systemctl stop rd15-dhcp-client
+# udhcpc removes its address on RELEASE. Keep the probe in the same LAN
+# namespace with a non-pool address so this asserts DNS state, not a lost route.
+ip netns exec rd15-lan-peer ip addr add 198.18.15.151/24 dev peer0
 for _ in {1..20}; do
  reservation_present=true
  for mode in +notcp +tcp; do
-  if [ "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" != "$client" ]; then reservation_present=false; break; fi
+  if [ "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" != "$client" ]; then reservation_present=false; break; fi
  done
  [ "$reservation_present" = true ] && break
  sleep 1
 done
 [ "$reservation_present" = true ]
 /usr/local/sbin/routerctl apply -f "$work/dynamic.json" --replace > "$work/dynamic-apply.txt"
+ip netns exec rd15-lan-peer ip -4 addr flush dev peer0
 ip netns exec rd15-lan-peer ip link set peer0 down
 ip netns exec rd15-lan-peer ip link set dev peer0 address 02:00:00:15:00:02
 ip netns exec rd15-lan-peer ip link set peer0 up
@@ -243,9 +247,10 @@ done
 [ "$dynamic_present" = true ]
 stage=dynamic-release
 systemctl stop rd15-dhcp-client
+ip netns exec rd15-lan-peer ip addr add 198.18.15.151/24 dev peer0
 absent() {
  for mode in +notcp +tcp; do
-  test -z "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)"
+  test -z "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)"
  done
 }
 for _ in {1..20}; do if absent; then break; fi; sleep 1; done
