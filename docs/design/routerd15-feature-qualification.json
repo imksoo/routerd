@@ -1694,6 +1694,23 @@
         "All DNS source/query policies, transports, tombstone/negative reply recovery, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-dhcpv6-server-8e8783e3": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8e8783e3b9b6890fa41718f3150f98c3fa69ffa0",
+      "reference": "docs/operations/development.md#linux-dhcpv6-server-vm-gate",
+      "environment": "Authorized dedicated Linux VM; checksum-verified make dist archive through the actual systemd service; routerd-owned dnsmasq and native RA service on an isolated veth LAN; independent dhcpcd client namespace.",
+      "checks": [
+        "The stateful fixture with an explicit M-only RA completed kernel SLAAC DAD; independent dhcpcd obtained an IA_NA plus the configured DNS, SNTP and domain-search DHCPv6 options before and after routerd systemd restart.",
+        "The both fixture with explicit M/O RA flags independently obtained an IA_NA plus the configured DNS, SNTP and domain-search DHCPv6 options before and after routerd systemd restart.",
+        "The stateless fixture made independent dhcpcd complete an Information-Request with no IA_NA and receive the configured DNS, SNTP and domain-search DHCPv6 options before and after routerd systemd restart.",
+        "Every mode applied an empty Router configuration without restarting routerd and reached Healthy with zero resources and no phase issues. The exact veth, network namespace, dhcpcd lease and temporary output were removed."
+      ],
+      "excludes": [
+        "natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2768,7 +2785,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-dhcpv6-server-b961e45c"
+          "linux-dhcpv6-server-b961e45c",
+          "linux-dhcpv6-server-8e8783e3"
         ]
       },
       "freebsd": {
