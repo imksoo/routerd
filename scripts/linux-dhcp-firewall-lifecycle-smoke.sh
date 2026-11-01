@@ -115,6 +115,8 @@ systemctl start routerd
 reservation_declared() {
  /usr/local/sbin/routerctl get DHCPv4Reservation/printer -o json | jq -e '
   .items | length == 1 and
+  .[0].apiVersion == "net.routerd.net/v1alpha1" and
+  .[0].kind == "DHCPv4Reservation" and
   .[0].spec.hostname == "printer" and
   .[0].spec.ipAddress == "198.18.15.150" and
   .[0].spec.macAddress == "02:00:00:15:00:01" and
