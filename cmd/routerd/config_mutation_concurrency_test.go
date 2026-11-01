@@ -3,7 +3,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -114,6 +117,43 @@ func TestConfigMutationDryRunDoesNotAcquireMutationGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConfigMutationCompletesAfterClientRequestCancellation(t *testing.T) {
+	m := concurrentMutationFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, controlapi.Prefix+"/apply", nil).WithContext(ctx)
+	candidate := `apiVersion: routerd.net/v1alpha1
+kind: Router
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Hostname
+      metadata: {name: alpha}
+      spec: {hostname: alpha.example}
+`
+
+	// A disconnected client has no reliable result. The daemon transaction owns
+	// its own bounded lifetime and must reach a durable outcome that an operator
+	// can inspect, rather than leaving a partial mutation behind.
+	result, err := m.apply(request, controlapi.ApplyRequest{CandidateYAML: candidate})
+	if err != nil {
+		t.Fatalf("apply after client cancellation: %v", err)
+	}
+	if result == nil || result.Result.Phase == "" {
+		t.Fatalf("apply result = %+v", result)
+	}
+	committed, err := config.Load(m.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range committed.Spec.Resources {
+		if resource.Kind == "Hostname" && resource.Metadata.Name == "alpha" {
+			return
+		}
+	}
+	t.Fatal("canceled client request left no durable alpha mutation")
 }
 
 func concurrentMutationFixture(t *testing.T) serveConfigMutator {
