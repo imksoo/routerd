@@ -10,6 +10,7 @@ fi
 test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
+if [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
 for dev in rd15-ing-lan rd15-ing-wan; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
@@ -27,6 +28,7 @@ fi
 work=$(mktemp -d /var/tmp/routerd15-ingress.XXXXXX)
 stage='setup'
 forward_before=$(sysctl -n net.ipv4.ip_forward)
+capture_pid=''
 empty="$work/empty.json"
 cat > "$empty" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"ingress-smoke"},"spec":{"resources":[]}}
@@ -35,13 +37,18 @@ JSON
 finish() {
  rc=$?
  trap - EXIT
+ if [ -n "$capture_pid" ]; then kill "$capture_pid" >/dev/null 2>&1 || true; wait "$capture_pid" >/dev/null 2>&1 || true; capture_pid=''; fi
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
   for event_log in "$work"/*.events; do
    test -e "$event_log" || continue
    printf '%s\n' "backend observation: $(basename "$event_log")" >&2
-   cat "$event_log" >&2
+  cat "$event_log" >&2
   done
+  if test -f "$work/ingress-packets.txt"; then
+   echo 'ingress packet observation:' >&2
+   cat "$work/ingress-packets.txt" >&2
+  fi
   nft list ruleset >&2 || true
  fi
  /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
@@ -125,6 +132,11 @@ if got != f"{expected}:{source}":
     raise SystemExit(f"response={got!r}; want {expected}:{source}")
 PY
 }
+capture_ingress_packets() {
+ [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ] || return 0
+ timeout 5 tcpdump -nn -l -i rd15-ing-lan 'tcp port 8080' > "$work/ingress-packets.txt" 2>&1 & capture_pid=$!
+ sleep .2
+}
 for _ in {1..20}; do
  if probe rd15-ing-backend-a 198.18.50.10 8081 port-forward 198.18.50.10 >/dev/null 2>&1 && probe rd15-ing-backend-a 198.18.50.10 8080 backend-a 198.18.50.10 >/dev/null 2>&1 && probe rd15-ing-backend-b 198.18.50.20 8080 backend-b 198.18.50.20 >/dev/null 2>&1; then break; fi
  sleep 1
@@ -201,7 +213,9 @@ stage='port-forward-dnat-and-hairpin'
 probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1
 probe rd15-ing-client 198.18.52.2 18080 port-forward 198.18.50.1
 stage='ingress-dnat-and-hairpin'
+capture_ingress_packets
 probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
+if [ -n "$capture_pid" ]; then wait "$capture_pid" || true; capture_pid=''; fi
 probe rd15-ing-client 198.18.52.2 18081 backend-a 198.18.50.1
 
 cat > "$work/persistent.py" <<'PY'
