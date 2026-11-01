@@ -13,6 +13,12 @@ for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
 if [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
 management=rd15-ing-mgmt
 host_management=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
+if [ -z "$host_management" ]; then
+ host_management=$(ip -6 route show default | awk 'NR == 1 { print $5 }')
+fi
+if [ -z "$host_management" ]; then
+ host_management=$(ip -6 route show | awk '$1 == "fe80::/64" { print $3; exit }')
+fi
 test -n "$host_management"
 ip link show "$host_management" >/dev/null
 for dev in rd15-ing-lan rd15-ing-wan "$management"; do
