@@ -168,6 +168,20 @@ controller or service manager. DHCP-derived lease changes/tombstones, negative
 replies, DoT/DoH, controller-driven configuration changes and FreeBSD runtime
 remain outside this check.
 
+## Linux PortForward DNAT and hairpin check
+
+Run `sudo ./tests/netns/nat44-portforward.sh` on an isolated Linux host with
+iproute2, nftables, curl, Python 3, Go and network-namespace support. The test
+validates a prepared routerd 1.5 YAML config and runs the production NAT44
+controller inside a private router namespace. Independent WAN, LAN server and
+LAN client namespaces check WAN DNAT, LAN hairpin source translation and
+direct-LAN source preservation. Withdrawing the rule must reset the established
+WAN TCP flow, remove the routerd NAT table and prevent new WAN flows from
+reaching the backend. Successful temporary state and logs are deleted; failures
+retain the temporary directory for diagnosis. This is not a 1.0 configuration
+or state import, packaged install, service-manager test, or qualification of
+pinholes, session synchronization, multi-backend ingress or FreeBSD.
+
 ## Linux packaged DHCPv6 server lifecycle VM gate
 
 Build the candidate with `make dist`, extract its Linux archive on a dedicated,

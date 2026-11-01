@@ -92,3 +92,12 @@ sudo ./tests/netns/dns-resolver-runtime.sh
 必须返回新 zone 答案；停止并重启 worker 后，本地答案和 TCP 转发也必须恢复。成功时删除临时状态和日志，
 失败时保留临时目录供诊断。此项只检查 resolver 进程，不覆盖 routerd controller 或 service manager；
 也不覆盖 DHCP lease 更新或 tombstone、negative reply、DoT/DoH、controller 驱动的配置更新或 FreeBSD runtime。
+
+## Linux PortForward DNAT 与 hairpin 检查
+
+在具备 iproute2、nftables、curl、Python 3、Go 和 network namespace 的隔离 Linux 环境中运行
+`sudo ./tests/netns/nat44-portforward.sh`。测试先验证准备好的 routerd 1.5 YAML，再在私有 router namespace 中运行实际的 NAT44 controller。
+独立 WAN、LAN server 和 LAN client namespace 检查 WAN DNAT、LAN hairpin 源地址转换以及直接 LAN 通信的源地址保留。
+撤销规则后，已有 WAN TCP 连接必须 reset，routerd NAT table 必须删除，新的 WAN 连接不能到达 backend。成功时删除临时状态和日志，
+失败时保留临时目录供诊断。此测试不导入 1.0 配置或状态，也不覆盖 package install、service manager、pinhole、session 同步、
+多 backend ingress 或 FreeBSD。

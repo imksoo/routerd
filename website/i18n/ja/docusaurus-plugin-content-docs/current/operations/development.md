@@ -145,6 +145,16 @@ worker 再起動後に local answer と TCP forwarding が復旧することも�
 失敗時は調査用 directory を残します。この試験は resolver process のみを対象とし、routerd controller や
 service manager、DHCP lease 由来の更新・tombstone、negative reply、DoT/DoH、FreeBSD runtime は含みません。
 
+## Linux PortForward DNAT と hairpin 試験
+
+iproute2、nftables、curl、Python 3、Go と network namespace 機能を備えた隔離 Linux 環境で
+`sudo ./tests/netns/nat44-portforward.sh` を実行します。用意済みの routerd 1.5 YAML を validate し、
+private router namespace 内で実際の NAT44 controller を動かします。独立した WAN、LAN server、LAN client の namespace から、
+WAN DNAT、LAN hairpin の送信元変換、直接 LAN 通信の送信元保持を確認します。ルール撤去後は既存 WAN TCP 接続が reset され、
+routerd NAT table が消え、新しい WAN 接続が backend に届かないことを確認します。成功時は一時 state と log を削除し、
+失敗時は調査用 directory を残します。1.0 設定や state の import、package install、service manager、pinhole、session 同期、
+複数 backend の ingress、FreeBSD は対象外です。
+
 ## Linux の packaged DHCPv6 server lifecycle VM 試験
 
 `make dist` で candidate を build し、専用の破棄可能な systemd Linux VM に展開してから実行します。

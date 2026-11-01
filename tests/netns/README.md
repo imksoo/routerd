@@ -16,6 +16,7 @@ namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case
 | `keepalived-vip-failover`, `keepalived-no-spurious-restart` | keepalived; the latter also builds with Go |
 | `graceful-vrrp-activation` | arping; Go or `ROUTERD_GRACEFUL_VRRP_DRIVER` |
 | `ingress-conntrack-survive`, `forcefrag-df-forward`, `vxlan-l2-mss-clamp` | nftables; forcefrag also needs ping |
+| `nat44-portforward` | curl; Go builds the current routerd validator and NAT controller |
 | `sam-empty-forward-chain` | iptables/nftables; Go or `ROUTERD_SAM_FORWARD_PROBE` |
 | `arp-observer-ignore-member-mac`, standalone `vxlan-when-ha-active-standby` | Go builds the observer/controller |
 | `sam-proxy-arp-garp-transition`, `vxlan-l2-control-plane-transparency` | Common iproute2/Python/timeout and corresponding kernel facilities |
@@ -41,6 +42,7 @@ sudo ./keepalived-vip-failover.sh
 sudo ./keepalived-no-spurious-restart.sh
 sudo ./graceful-vrrp-activation.sh
 sudo ./ingress-conntrack-survive.sh
+sudo ./nat44-portforward.sh
 sudo ./forcefrag-df-forward.sh
 sudo ./sam-empty-forward-chain.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
@@ -61,6 +63,7 @@ The scripts cover:
 | `graceful-vrrp-activation.sh` | An elected router withholds its IPv4 VIP until a readiness status matches, sends gratuitous ARP on activation, and removes the VIP again on BACKUP. |
 | `vrrp-vmac-lan-address-lifecycle.sh` | The role hook retains staged delegated IPv6 addresses, records graceful election ownership, removes the deferred VIP before BACKUP, and never publishes it directly on MASTER. |
 | `ingress-conntrack-survive.sh` | Existing DNAT conntrack flows stay on the old backend while new flows use the new backend. |
+| `nat44-portforward.sh` | A prepared 1.5 config passes validation; the production NAT controller serves WAN DNAT and LAN hairpin traffic, then withdrawal resets an existing flow and blocks new flows. |
 | `forcefrag-df-forward.sh` | Linux nftables `routerd_forcefrag` clears IPv4 DF on an oversized forwarded packet before a low-MTU egress link. |
 | `sam-empty-forward-chain.sh` | The real SAM controller treats an absent forwarding chain as a no-op, preserves incompatible existing chains as errors, and removes stale owned forwarding rules and `accept_local`. Run with both Ubuntu 22.04 iptables-nft 1.8.7 and a newer backend. |
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |
@@ -143,6 +146,25 @@ Successful runs remove temporary state and logs; failures retain the current
 temporary directory for diagnosis. This check does not cover DHCP-derived
 lease updates or tombstones, negative replies, DoT/DoH, controller-driven
 configuration changes, service-manager supervision or FreeBSD runtime.
+
+## PortForward DNAT and hairpin
+
+`nat44-portforward.sh` validates a prepared routerd 1.5 YAML config, then runs
+the production NAT44 controller and nftables inside a private router namespace.
+Independent WAN, LAN server and LAN client namespaces verify WAN DNAT, LAN
+hairpin source translation and direct-LAN source preservation. Withdrawing the
+rule must reset the established WAN TCP flow, remove the routerd NAT table and
+prevent new WAN flows from reaching the backend. The test does not import 1.0
+configuration or state, install a package, exercise the service manager, or
+qualify pinholes, session synchronization, multi-backend ingress, or FreeBSD.
+
+```sh
+sudo ./tests/netns/nat44-portforward.sh
+```
+
+The test needs Linux network namespaces, iproute2, nftables, curl, Python 3 and
+Go. Successful runs remove temporary state and logs; failures retain the
+temporary directory for local diagnosis.
 
 ## Stateful DHCPv6 server
 
