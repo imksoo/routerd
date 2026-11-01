@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-10-31",
+  "updated_date": "2026-11-01",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -1568,6 +1568,24 @@
         "A permanent DAD cycle, missing parent-owned /32 source, or controller-error-free final status as proof of continuity",
         "The subsequent VRRP event-lock repair or its planned native replay has not passed this trial"
       ]
+    },
+    "linux-two-vm-recovery-0cb82866": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0cb82866eca298a166036b49072c85c91153e700",
+      "reference": "docs/operations/development.md#two-vm-reboot-and-interrupted-apply-gate",
+      "environment": "Authorized isolated two-VM PVE fixture; a formal Linux archive was checksum-verified and installed with --no-install-deps after the fixture commands were confirmed present. The independent peer remained separate from the router.",
+      "checks": [
+        "Independent DHCPv4 lease and repeated renewal; local and forwarded DNS over UDP and TCP; peer-observed IPv4 NAT; management positive control; and WAN/LAN/management isolation.",
+        "After canonical replacement, the ApplyAPI client was still in flight when pidfd SIGKILL terminated the original routerd process. The client did not acknowledge success; systemd restarted routerd Healthy, and the independent peer resolved the committed recovery DNS record before repeating traffic and isolation checks.",
+        "Routerd main-process SIGKILL recovered to a new PID without reboot; the peer DHCP process identity was unchanged and traffic/isolation checks passed.",
+        "A router VM reboot produced a new boot ID and routerd PID while the peer DHCP process identity was unchanged; traffic/isolation checks passed after recovery."
+      ],
+      "excludes": [
+        "Default installer dependency download/provisioning: the isolated fixture intentionally had no package-network access and used --no-install-deps after explicit command checks.",
+        "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, cross-version cutback, power-loss durability, and complete 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2481,7 +2499,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
@@ -2759,7 +2778,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-vlan-clients-39156bb6"
+          "linux-vlan-clients-39156bb6",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
@@ -3133,7 +3153,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-vlan-ha-9a90c9b3",
           "linux-vlan-ha-direct-r2-88927a4a",
-          "linux-vlan-ha-dslite-c-r3-88927a4a"
+          "linux-vlan-ha-dslite-c-r3-88927a4a",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
@@ -3226,7 +3247,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-two-vm-recovery-0cb82866"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -3307,7 +3330,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
@@ -3389,7 +3413,8 @@
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
           "linux-serviceunit-feedback-919499c4",
-          "linux-vlan-package-coldboot-88927a4a"
+          "linux-vlan-package-coldboot-88927a4a",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
@@ -3517,7 +3542,8 @@
           "linux-packaged-service-6135bb03",
           "linux-nonresource-code-c7f89dda",
           "linux-vlan-clients-39156bb6",
-          "linux-vlan-package-coldboot-88927a4a"
+          "linux-vlan-package-coldboot-88927a4a",
+          "linux-two-vm-recovery-0cb82866"
         ]
       },
       "freebsd": {
