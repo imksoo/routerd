@@ -17,20 +17,36 @@ operating system and architecture archives and publishes GitHub Release assets.
 
 ## Mandatory test and harness design rules
 
-These rules apply to unit tests, offline fixtures, runtime smoke, release qualification and reusable old helpers, templates and copy sources, including code without a current caller. Every test change must identify its product requirement, required direct evidence and observation limits.
+These rules apply to unit tests, offline fixtures, runtime smoke and reusable
+helpers. Keep the product requirement, reproducible test procedure and direct
+pass/fail assertions. A test should answer whether the required behavior works,
+not whether its diagnostic output looks complete.
 
-- Preserve observations and diagnostic logs; separate them from product acceptance. Journal text, progress counters, latency statistics and whole-host diagnostics must not become acceptance conditions without a concrete product requirement.
-- Judge PASS or product FAIL using completed, attributable direct evidence of that requirement. API/SSH instability, acquisition failure, missing or malformed input, incomplete guest commands and timeouts must remain observation or infrastructure outcomes. Never convert them into zero, no violation, successful rejection or measured product failure.
-- Reduce arbitrary speed assertions, repeated probes and duplicate gates. Keep contractual deadlines and a bounded watchdog to stop hung work; distinguish watchdogs from product performance measurements.
-- Before deleting temporary data, retain raw failed attempts, source identity, exits, timestamps and cleanup outcomes. Continue cleanup only for resources this invocation owns. Keep cleanup failure visible and preserve product evidence.
-- Do not repeat a failed real trial without investigating its cause. Stop at the existing retry, time or cost budget; report failure, uncertainty, remaining budget and proposed fix before further trials. Reacquire only justified failed or missing observations, with bounds and retained attempts.
-- Audit the actual entry, selected source paths and hashes, dependencies and final result propagation. Candidate and mock validation proves that scope; it cannot prove that a running entry selects the candidate or that real forwarding works.
-- Distinguish implementation, prepared candidate, deployed code, saved-original replay, deliberately modified fixture and unverified behavior. Preserve original negative evidence; never rewrite a historical failure as PASS.
-- Apply these rules before reusing old or unconnected code. Keep sealed historical evidence unchanged; repair reusable sources. An absent current caller does not excuse a defect.
+- Use completed, attributable observations for product PASS/FAIL. API/SSH
+  instability, incomplete commands, missing input and watchdog timeouts are
+  observation or infrastructure outcomes until product behavior is directly
+  established.
+- Keep deadlines that are part of the product contract. Use bounded watchdogs
+  only to stop hung work; do not turn them into latency requirements.
+- Successful routine tests delete temporary logs, captures and generated state.
+  Retain the test procedure, expected behavior and concise result, not a bundle
+  of successful run output.
+- When a test fails, keep only temporary output needed to reproduce and diagnose
+  that unresolved failure. Fix it through a local reproduction and product/test
+  changes, rerun the relevant path, then delete the temporary output when the
+  failure is resolved. Never let a one-off artifact become a permanent
+  acceptance condition.
+- Audit the actual entry and selected source path when that affects behavior.
+  Candidate or mock checks establish only their stated scope; they do not prove
+  real forwarding or packaged-service behavior.
+- Do not preserve an old failure as a permanent log to prove that it happened.
+  Keep a regression test for repaired behavior and a concise note only when a
+  future operator needs the procedure or an unresolved limitation.
 
-These rules do not weaken real functional requirements, safety or ownership checks, or spending limits. Missing necessary evidence cannot establish PASS. Keep proof of normal communication and direct violations; remove only unjustified coupling to diagnostics.
-
-Good: curl exit 0 and HTTP 200 with required body/path evidence can PASS when optional latency is missing; record the omission. Bad: a failed WireGuard read proves no forbidden AllowedIP; a forced invalid-apply timeout counts as successful rejection; a same-stack ping proves tunnel forwarding.
+These rules do not weaken functional requirements, safety, ownership or cost
+limits. Missing direct observations cannot establish PASS. For example, a
+failed WireGuard read does not prove that no forbidden AllowedIP exists, and a
+same-stack ping does not prove tunnel forwarding.
 
 ## CI workflow
 
@@ -110,6 +126,18 @@ are private test files, not the host's `/etc/hostname` or `/etc/sysctl.d`.
 
 This is a Linux kernel/controller check. It does not qualify boot-time loading,
 package installation, all SysctlProfile values or another operating system.
+
+## Linux DHCPv6 server IA_NA check
+
+Run `sudo ./tests/netns/dhcpv6-stateful.sh` on an isolated Linux host with
+iproute2, dnsmasq, dhcpcd, Go and network-namespace support. The script renders
+the current `DHCPv6Server` configuration, starts the rendered dnsmasq service
+and uses dhcpcd as an independent client in private namespaces. Both
+`stateful` and `both` modes must complete Solicit/Advertise/Request/Reply and
+assign an address from the configured pool. Success prints those two results
+and deletes temporary namespace state and logs. The test does not start an RA
+service, so it does not use a ping or claim to qualify default-route or
+forwarding behavior; those are covered by separate RA/client lifecycle gates.
 
 ## Pre-commit hook
 

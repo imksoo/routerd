@@ -26,7 +26,8 @@ namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case
 cases.
 
 Every script requires explicit root privileges and cleans up its namespaces and
-temporary files with a trap:
+temporary files with a trap. Successful runs remove temporary output. A failed
+run retains only a temporary diagnostic directory until its cause is resolved.
 
 ```sh
 cd tests/netns
@@ -44,6 +45,7 @@ sudo ./forcefrag-df-forward.sh
 sudo ./sam-empty-forward-chain.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
 sudo ./vxlan-l2-mss-clamp.sh
+sudo ./dhcpv6-stateful.sh
 sudo ROUTERD_RUN_NETNS=1 ./vrrp-vmac-lan-address-lifecycle.sh
 ./render-compatibility.sh
 ```
@@ -64,6 +66,7 @@ The scripts cover:
 | `arp-observer-ignore-member-mac.sh` | `routerd-arp-observer` ignores configured SAM member sender MACs while preserving real-client observations on passive packet and ARP table scan paths. |
 | `vxlan-l2-control-plane-transparency.sh` | A unicast-peer `VXLANTunnel` bridge carries ARP, DHCPv4 Discover/Offer, IPv6 RS/RA/NS/NA, and DHCPv6 Solicit/Reply between isolated endpoint namespaces. |
 | `vxlan-l2-mss-clamp.sh` | A/B proves bridge-family IPv4/IPv6 SYN MSS lowering across a VXLAN bridge, preserves smaller MSS and non-TCP Ethernet frames, then removes the owned policy. |
+| `dhcpv6-stateful.sh` | The rendered DHCPv6 server completes IA_NA Solicit/Advertise/Request/Reply with independent `dhcpcd` clients in `stateful` and `both` modes and assigns from the configured pool. |
 | `render-compatibility.sh` | Non-root render golden compatibility check for Linux and FreeBSD/rc.d output snapshots. |
 
 Do not add tests here that mutate the default host namespace. New scenarios must
@@ -88,15 +91,28 @@ RA, and the guard counter are required. Missing replies are acquisition failures
 the log's absence alone cannot establish success. No production network is used.
 
 ```sh
-go run ./tests/netns/dhcp-family-render > /tmp/routerd-dhcp-family.nft
-sudo ./tests/netns/dhcp-family-isolation.sh /usr/sbin/dnsmasq /tmp/routerd-dhcp-family.nft
+rules="$(mktemp /tmp/routerd-dhcp-family.XXXXXX)"
+trap 'rm -f -- "$rules"' EXIT
+go run ./tests/netns/dhcp-family-render > "$rules"
+sudo ./tests/netns/dhcp-family-isolation.sh /usr/sbin/dnsmasq "$rules"
 ```
 
 The test needs `ip`, `nft`, `tcpdump`, Python 3 and an explicit dnsmasq binary.
-Its printed evidence directory retains source hashes, exchanges, packet capture,
-configuration, counters and cleanup results on success and failure. It never
-installs a daemon or writes network state outside its own namespaces/veth pair.
-The client emits finite test exchanges; waits are bounded acquisition watchdogs,
-not performance requirements. This covers DHCP/RA preservation, not HA failover
-or production application connectivity. Do not add `no-dhcpv4-interface`: in
+Successful runs print the asserted result and delete temporary output. A failed
+run prints a diagnostic path; remove it once the cause is understood and fixed.
+The test never installs a daemon or writes network state outside its own
+namespaces/veth pair. Its waits are bounded acquisition watchdogs, not
+performance requirements. This covers DHCP/RA preservation, not HA failover or
+production application connectivity. Do not add `no-dhcpv4-interface`: in
 dnsmasq 2.90 it also suppresses IPv6 prefix construction.
+
+## Stateful DHCPv6 server
+
+`dhcpv6-stateful.sh` requires `dnsmasq`, `dhcpcd`, Go and the common Linux
+namespace tools. It uses the repository renderer and actual dnsmasq process;
+`dhcpcd` supplies an independent DHCPv6 client. It asserts the complete IA_NA
+exchange and an assigned address inside the configured range in both
+`stateful` and `both` modes. It does not start an RA service, so it deliberately
+does not assert a default route or routed ping. Those behaviors belong to the
+separate RA and forwarding tests. Successful output and generated state are
+removed; failure output remains temporary until diagnosis is complete.
