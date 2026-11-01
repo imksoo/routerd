@@ -25,7 +25,7 @@ fi
 work=$(mktemp -d /var/tmp/routerd15-flow-dnat.XXXXXX)
 stage=setup
 forward_before=$(sysctl -n net.ipv4.ip_forward)
-capture_pid=''
+capture_pids=()
 empty="$work/empty.json"
 cat > "$empty" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"flow-dnat-smoke"},"spec":{"resources":[]}}
@@ -33,10 +33,11 @@ JSON
 finish() {
  rc=$?
  trap - EXIT
- if [ -n "$capture_pid" ]; then kill "$capture_pid" >/dev/null 2>&1 || true; wait "$capture_pid" >/dev/null 2>&1 || true; capture_pid=''; fi
+ for capture_pid in "${capture_pids[@]}"; do kill "$capture_pid" >/dev/null 2>&1 || true; wait "$capture_pid" >/dev/null 2>&1 || true; done
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
   if test -f "$work/packets.txt"; then echo 'packet observation:' >&2; cat "$work/packets.txt" >&2; fi
+  if test -f "$work/nft-trace.txt"; then echo 'nft trace:' >&2; cat "$work/nft-trace.txt" >&2; fi
   nft list map ip routerd_nat flow_dnat_camera >&2 || true
   iptables -S FORWARD >&2 || true
   nft list ruleset >&2 || true
@@ -180,8 +181,11 @@ PY
 }
 capture_dnat_packets() {
  [ "${ROUTERD_FLOW_DNAT_DEBUG:-}" = 1 ] || return 0
+ nft add rule ip routerd_nat prerouting iifname rd15-fdnat-wan udp sport 32099 meta nftrace set 1
+ timeout 5 nft monitor trace > "$work/nft-trace.txt" 2>&1 &
+ capture_pids+=("$!")
  timeout 5 tcpdump -nn -l -i any 'udp and (port 32099 or port 32100 or port 40000)' > "$work/packets.txt" 2>&1 &
- capture_pid=$!
+ capture_pids+=("$!")
  sleep .2
 }
 
