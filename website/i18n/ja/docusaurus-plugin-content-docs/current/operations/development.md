@@ -357,6 +357,9 @@ archiveのchecksumを検証します。peer VMとDHCPプロセスは動かし続
 3. 新規の状態ディレクトリと検証済み1.5設定を選び、候補archive内から
    `sudo ./install.sh --no-install-deps --no-restart --no-config-update`を実行します。
    起動前にunitの再生成、`CAP_SYS_PTRACE`・`CAP_KILL`、サービス停止を確認して再起動します。
+   installerが固定した1.0 binaryを識別した場合だけ、一回限りのfirewall handoffを記録します。
+   候補版は観測済みのlegacy table handleを自分のmarker付きtableへ置換する時だけこれを消費します。
+   記録のない同名tableはforeignとして撤去を拒否します。
 4. 期待する版、routerのboot ID変更、systemd `running`、Healthy・controller errorなしを
    確認します。peerの両試験と、再取得後の実際のDHCPタイマー更新も必要です。
    peerのboot ID・DHCP PIDが変わっていないこと、現在のbootでhelperの所有・権限エラーが

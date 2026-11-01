@@ -535,6 +535,10 @@ reuse a 1.0 state database in 1.5 or assume a binary-only downgrade is sufficien
    `sudo ./install.sh --no-install-deps --no-restart --no-config-update`.
    Require successful unit regeneration before boot, both `CAP_SYS_PTRACE` and
    `CAP_KILL` in its capability set, and an inactive service. Reboot the router.
+   When the installer identifies the pinned 1.0 binary, it records a one-time
+   firewall handoff. The candidate consumes it only while replacing the observed
+   legacy table handle with its own marked table; an unrecorded same-named table
+   remains foreign and blocks withdrawal.
 4. Require the expected version and a changed router boot ID, systemd `running`,
    Healthy status and no controller errors. Repeat both peer roles and wait for
    an actual DHCP timer renewal after any reacquisition. The peer boot ID and

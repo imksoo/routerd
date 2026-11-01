@@ -2018,8 +2018,10 @@ record_legacy_firewall_handoff()
     fi
     install -d -m 0700 "${handoff_dir}"
     handoff_tmp="${handoff_path}.tmp.$$"
+    handoff_umask=$(umask)
     umask 077
     printf '%s\n' '{"version":"routerd-v1-firewall-handoff/v1","sourceCommit":"e3b49dbb"}' > "${handoff_tmp}"
+    umask "${handoff_umask}"
     mv -f "${handoff_tmp}" "${handoff_path}"
     echo "recorded verified routerd 1.0 firewall handoff: ${handoff_path}"
 }
