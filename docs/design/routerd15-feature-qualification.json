@@ -1620,6 +1620,23 @@
         "Delegated prefixes, RDNSS/DNSSL, RA lifetime renewal/withdrawal, DHCPv6 server exchange, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "Whole-feature or whole-platform qualification."
       ]
+    },
+    "linux-pd-ra-lifecycle-1ff438ee": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1ff438ee7e117ab7537374e724cf4d1d766d68b2",
+      "reference": "docs/operations/development.md#linux-pdra-lifecycle-vm-gate",
+      "environment": "Authorized dedicated Linux VM; checksum-verified current make dist archive through the actual systemd service, separate upstream and LAN network namespaces, independent Kea 2.4.1, rdisc6, DNS and HTTP peers.",
+      "checks": [
+        "DHCPv6 PD acquisition of an independent /60; product-owned delegated LAN address; independent rdisc6 PIO receipt; kernel SLAAC/default route; local and forwarded DNS over UDP/TCP; and HTTP peer-observed delegated source.",
+        "Natural Renew advanced the recorded lease timestamp. An independent Kea pool change renumbered the PD from 2001:db8:1500::/60 to 2001:db8:1501::/60 without restarting routerd or Kea; the new PIO/address/DNS source worked and the old router address and DNS endpoint were withdrawn.",
+        "routerd systemd restart retained the active PD and restored peer forwarding/DNS. Independent upstream loss twice expired the delegated router address, client default route and traffic while routerd stayed active; upstream return reacquired them automatically.",
+        "After expiry, applying an empty configuration without restarting routerd reached Healthy with zero resources, no resource phase issues and no controller current errors. Test namespaces, transient peers and the original forwarding setting were removed or restored."
+      ],
+      "excludes": [
+        "WAN RA/default-route discovery, DHCPv6 IA_NA, DHCPv6 server modes, overlapping multi-prefix renumbering, reboot/crash durability, firewall isolation, FreeBSD, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2606,7 +2623,8 @@
           "linux-wan-ra-recovery-2b8ad068",
           "linux-dhcpv6-associations-ede8dbf2",
           "dhcpv6-partial-recovery-87761c0e",
-          "linux-dhcpv6-native-d05524de"
+          "linux-dhcpv6-native-d05524de",
+          "linux-pd-ra-lifecycle-1ff438ee"
         ]
       },
       "freebsd": {
@@ -2648,7 +2666,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pd-ra-lifecycle-1ff438ee"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
