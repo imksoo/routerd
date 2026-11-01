@@ -300,8 +300,8 @@ deletes its exact lease state; successful raw output is deleted.
 
 This is not evidence for implicit DHCPv6 RA flags, lease renewal/expiry,
 DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
-or complete routerd 1.0 functional parity. A failure stops routerd and preserves
-the exact fixture directory for local reproduction; delete it once resolved.
+or complete routerd 1.0 functional parity. A failure stops routerd, prints the
+captured diagnostics to the invoking console, then removes the fixture output.
 
 ## Linux DHCPv6 implicit-RA VM gate
 
