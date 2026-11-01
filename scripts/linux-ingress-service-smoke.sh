@@ -173,7 +173,18 @@ await_backend() {
  /usr/local/sbin/routerctl get IngressService/edge -o json >&2 || true
  return 1
 }
+await_address() {
+ local device=$1 address=$2
+ for _ in {1..30}; do
+  if ip -4 -j addr show dev "$device" | jq -e --arg address "$address" '.[0].addr_info | any(.local == $address)' >/dev/null; then return 0; fi
+  sleep 1
+ done
+ ip -4 addr show dev "$device" >&2 || true
+ return 1
+}
 await_backend backend-a
+await_address rd15-ing-wan 198.18.52.2
+await_address rd15-ing-lan 198.18.50.1
 for _ in {1..30}; do
  if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed' && nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'; then break; fi
  sleep 1
