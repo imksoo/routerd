@@ -69,6 +69,7 @@ ip -n rd15-fdnat-client addr add 198.18.70.100/24 dev peer0
 ip -n rd15-fdnat-client route add default via 198.18.70.1
 ip -n rd15-fdnat-peer link set peer0 up
 ip -n rd15-fdnat-peer addr add 198.18.71.10/24 dev peer0
+ip -n rd15-fdnat-peer addr add 198.18.71.11/24 dev peer0
 ip -n rd15-fdnat-peer route add 198.18.70.0/24 via 198.18.71.1
 
 cat > "$work/peer.py" <<'PY'
@@ -77,6 +78,8 @@ request = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 request.bind(('198.18.71.10', 32100))
 reply = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 reply.bind(('198.18.71.10', 32099))
+alternate_reply = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+alternate_reply.bind(('198.18.71.11', 32099))
 control = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 control.bind(('198.18.71.10', 32101))
 while True:
@@ -86,7 +89,9 @@ while True:
         reply.sendto(b'opened:' + data, ('198.18.71.1', peer[1]))
     if control in readable:
         data, _ = control.recvfrom(1024)
-        reply.sendto(data, ('198.18.71.1', 40000))
+        name, port, source = data.decode().split(':')
+        sender = reply if source == '198.18.71.10' else alternate_reply
+        sender.sendto(name.encode(), ('198.18.71.1', int(port)))
 PY
 ip netns exec rd15-fdnat-peer python3 "$work/peer.py" &
 echo "$!" > "$work/peer.pid"
@@ -126,12 +131,14 @@ nft list table ip routerd_nat | grep -F 'flow_dnat_camera' >/dev/null
 
 expect_peer_drop() {
  local name=$1
- ip netns exec rd15-fdnat-client python3 - "$work/$name.ready" <<'PY' &
+ local local_port=$2
+ local source_address=$3
+ ip netns exec rd15-fdnat-client python3 - "$work/$name.ready" "$local_port" <<'PY' &
 import pathlib, socket, sys
 ready = pathlib.Path(sys.argv[1])
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('198.18.70.100', 40000))
+s.bind(('198.18.70.100', int(sys.argv[2])))
 s.settimeout(1)
 ready.touch()
 try:
@@ -143,20 +150,20 @@ PY
  local receiver_pid=$!
  for _ in {1..20}; do test -e "$work/$name.ready" && break; sleep .1; done
  test -e "$work/$name.ready"
- ip netns exec rd15-fdnat-peer python3 - "$name" <<'PY'
+ ip netns exec rd15-fdnat-peer python3 - "$name" "$local_port" "$source_address" <<'PY'
 import socket, sys
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.sendto(sys.argv[1].encode(), ('198.18.71.10', 32101))
+s.sendto(':'.join(sys.argv[1:]).encode(), ('198.18.71.10', 32101))
 PY
  wait "$receiver_pid"
 }
 request_reply() {
  ip netns exec rd15-fdnat-client python3 - "$@" <<'PY'
 import socket, sys
-address, port, payload = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+address, port, payload, local_port = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode(), int(sys.argv[4])
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('198.18.70.100', 40000))
+s.bind(('198.18.70.100', local_port))
 s.settimeout(2)
 s.sendto(payload, (address, port))
 got, peer = s.recvfrom(1024)
@@ -167,10 +174,10 @@ PY
 expect_request_drop() {
  ip netns exec rd15-fdnat-client python3 - "$@" <<'PY'
 import socket, sys
-address, port, payload = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
+address, port, payload, local_port = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode(), int(sys.argv[4])
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('198.18.70.100', 40000))
+s.bind(('198.18.70.100', local_port))
 s.settimeout(1)
 s.sendto(payload, (address, port))
 try:
@@ -191,13 +198,13 @@ capture_dnat_packets() {
 }
 
 stage=unsolicited-inbound
-expect_peer_drop unsolicited
+expect_peer_drop unsolicited 40001 198.18.71.10
 stage=learn-and-dnat
 capture_dnat_packets
-request_reply 198.18.71.10 32100 opened
+request_reply 198.18.71.10 32100 opened 40000
 stage=expiry
 sleep 6
-expect_peer_drop expired
+expect_peer_drop expired 40000 198.18.71.11
 stage=source-change
 /usr/local/sbin/routerctl apply -f "$work/source-change.json" --replace >/dev/null
 for _ in {1..20}; do
@@ -205,7 +212,7 @@ for _ in {1..20}; do
  sleep 1
 done
 nft list table ip routerd_nat | grep -F '198.18.70.101' >/dev/null
-expect_request_drop 198.18.71.10 32100 source-changed
+expect_request_drop 198.18.71.10 32100 source-changed 40002
 stage=withdrawal
 /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null
 for _ in {1..20}; do
@@ -216,5 +223,5 @@ if nft -j list tables | jq -e '[.nftables[].table? | select(.family=="ip" and .n
  echo 'empty apply retained routerd_nat' >&2
  exit 1
 fi
-expect_peer_drop withdrawn
+expect_peer_drop withdrawn 40003 198.18.71.10
 printf '%s\n' 'PASS: NAT44FlowDNATPinhole learns, DNATs, expires, source updates, and withdraws on the installed service'
