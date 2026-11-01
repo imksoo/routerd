@@ -229,3 +229,29 @@ func TestDnsmasqNoDHCPControllerWithdrawsOwnedProcess(t *testing.T) {
 		t.Fatalf("no-DHCP early return retained old RA daemon: %+v %v", live, err)
 	}
 }
+
+func TestDnsmasqNoDHCPControllerLeavesStaleSystemdReceiptUntouched(t *testing.T) {
+	binary := buildDnsmasqProcessFixture(t)
+	spec, _, _ := dnsmasqSystemdFixture(t, binary)
+	if err := ensureDnsmasqFixture(t.Context(), spec, false); err != nil {
+		t.Fatal(err)
+	}
+	ownerPath := dnsmasqOwnerPath(spec.PIDFile)
+	owner, err := os.ReadFile(ownerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stopNativeDnsmasq(t.Context(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ownerPath, owner, 0600); err != nil {
+		t.Fatal(err)
+	}
+	controller := DHCPv6ServerController{Router: &api.Router{}, Store: mapStore{}, Command: binary, ConfigPath: spec.Config, PIDFile: spec.PIDFile}
+	if err := controller.reconcile(t.Context()); err != nil {
+		t.Fatalf("stale systemd receipt blocked unrelated no-DHCP reconcile: %v", err)
+	}
+	if got, err := os.ReadFile(ownerPath); err != nil || string(got) != string(owner) {
+		t.Fatalf("stale receipt was claimed or rewritten: %q %v", got, err)
+	}
+}

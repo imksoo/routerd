@@ -524,6 +524,23 @@ func stopOwnedDnsmasq(ctx context.Context, command, configPath, pidFile string) 
 		}
 	}
 	if features.HasSystemd {
+		// A cutover that no longer declares DHCP/DNS must not claim an
+		// inherited systemd unit merely because its stale PID receipt remains
+		// under /run.  Retire a service only while the exact receipt still
+		// identifies a live native process.  A missing process is already an
+		// absent service effect; leave the unverified unit and receipt for its
+		// prior owner rather than turning an unrelated configuration apply into
+		// a failure.
+		if owner == nil {
+			return nil
+		}
+		process, err := observedDnsmasqProcess(ctx, owner.Spec, owner)
+		if err != nil {
+			return err
+		}
+		if process.PID == 0 {
+			return nil
+		}
 		if err := stopSystemdDnsmasq(ctx, filepath.Join(defaults.SystemdSystemDir, "routerd-dnsmasq.service"), configPath, configErr == nil || owner != nil); err != nil {
 			return err
 		}
