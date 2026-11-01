@@ -531,6 +531,14 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		}
 		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, ParentToken: parentToken, PeerAddress: observed.peerAddress()}
 		status["legacyV1NativeAdopted"] = true
+		// The digest-bound handoff authorizes this exact native tuple, but it
+		// does not make an in-memory receipt durable. Persist the adopted
+		// identity before later ownership fences re-read the status row.
+		// Otherwise a restarted daemon treats its own adopted address as a
+		// concurrent ownership change and never converges.
+		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
+			return err
+		}
 	}
 	if receipt != nil && observed.has(spec.Address) && !observed.owns(*receipt) {
 		return errors.New("static address native peer differs from its ownership receipt")
