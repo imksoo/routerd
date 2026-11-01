@@ -77,6 +77,24 @@ func TestWireGuardListenPortOpensUntrustToSelfHole(t *testing.T) {
 	}
 }
 
+func TestDHCPv4RelayOpensUpstreamInterfaceToSelf(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Upstream: "192.0.2.53", UpstreamInterface: "wan", Listeners: []api.DHCPv4RelayListenerSpec{{Interface: "lan", LocalAddress: "192.0.2.1"}}}},
+	}}}
+
+	holes := render.InternalFirewallHoles(router, platform.OSLinux)
+	for _, hole := range holes {
+		if hole.Name == "relay-dhcpv4-relay" && hole.FromZone == "wan" && hole.ToZone == "self" && hole.Protocol == "udp" && hole.Port == 67 && len(hole.IfNames) == 1 && hole.IfNames[0] == "ens18" {
+			return
+		}
+	}
+	t.Fatalf("missing DHCPv4 relay upstream hole: %#v", holes)
+}
+
 func TestFirewallControllerPropagatesBackendApplyErrorToStatusAndBus(t *testing.T) {
 	if runtime.GOOS == "freebsd" {
 		t.Skip("Linux nft backend fixture; native PF behavior is covered separately")

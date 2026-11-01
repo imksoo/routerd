@@ -54,6 +54,15 @@ func InternalFirewallHoles(router *api.Router, targetOS platform.OS) []FirewallH
 		case "DHCPv4Client":
 			spec, _ := resource.DHCPv4ClientSpec()
 			add(resource.Metadata.Name+"-dhcpv4-client", zones.byResource(spec.Interface), "self", "udp", 68, resource.ID(), zones.ifNameByResource(spec.Interface))
+		case "DHCPv4Relay":
+			spec, _ := resource.DHCPv4RelaySpec()
+			if spec.UpstreamInterface != "" {
+				add(resource.Metadata.Name+"-dhcpv4-relay", zones.byResource(spec.UpstreamInterface), "self", "udp", 67, resource.ID(), zones.ifNameByResource(spec.UpstreamInterface))
+				continue
+			}
+			for _, zone := range zones.nonSelfZones() {
+				add(resource.Metadata.Name+"-dhcpv4-relay-"+zone, zone, "self", "udp", 67, resource.ID(), zones.firstIfName(zone))
+			}
 		case "DSLiteTunnel":
 			spec, _ := resource.DSLiteTunnelSpec()
 			if !api.BoolDefault(spec.Enabled, true) {
