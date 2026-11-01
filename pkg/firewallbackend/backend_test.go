@@ -480,7 +480,7 @@ func pfBespokeRouter() *api.Router {
 func TestNftablesBackendAdoptsRecordedRouterdV1FirewallBeforeLoading(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "firewall.nft")
 	handoff := filepath.Join(t.TempDir(), "routerd-v1-firewall-handoff.json")
-	if err := os.WriteFile(handoff, []byte(`{"version":"routerd-v1-firewall-handoff/v1","sourceCommit":"e3b49dbb"}\n`), 0600); err != nil {
+	if err := os.WriteFile(handoff, []byte("{\"version\":\"routerd-v1-firewall-handoff/v1\",\"sourceCommit\":\"e3b49dbb\"}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var calls []string

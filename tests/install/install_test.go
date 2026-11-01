@@ -58,6 +58,30 @@ echo native-agent
 	}
 }
 
+func TestInstallRecordsFirewallHandoffOnlyForPinnedRouterdV1(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	handoff := filepath.Join(dir, "state", "routerd-v1-firewall-handoff.json")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\necho routerd-new\n")
+	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), "#!/bin/sh\necho 'routerd v20261027.1620 (e3b49dbb)'\n")
+
+	out, err := runInstallWithEnv(t, pkg, prefix, []string{"ROUTERD_INSTALL_LEGACY_FIREWALL_HANDOFF_PATH=" + handoff}, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(handoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "{\"version\":\"routerd-v1-firewall-handoff/v1\",\"sourceCommit\":\"e3b49dbb\"}\n"; got != want {
+		t.Fatalf("handoff = %q, want %q", got, want)
+	}
+	if info, err := os.Stat(handoff); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("handoff mode = %v, err=%v, want 0600", info.Mode(), err)
+	}
+}
+
 func TestInstallDoesNotExcludeBGPOrDNSResolverHelpersFromStaleRestart(t *testing.T) {
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "install.sh"))
 	if err != nil {

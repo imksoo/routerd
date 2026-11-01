@@ -2003,6 +2003,27 @@ else
 fi
 new_version=$(bin/routerd --version 2>/dev/null || true)
 
+record_legacy_firewall_handoff()
+{
+    [ "${os}" = "Linux" ] || return 0
+    case "${old_version}" in
+        *"(e3b49dbb)"*) ;;
+        *) return 0 ;;
+    esac
+    handoff_path=${ROUTERD_INSTALL_LEGACY_FIREWALL_HANDOFF_PATH:-/var/lib/routerd/migrations/routerd-v1-firewall-handoff.json}
+    handoff_dir=$(dirname "${handoff_path}")
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: record verified routerd 1.0 firewall handoff at ${handoff_path}"
+        return 0
+    fi
+    install -d -m 0700 "${handoff_dir}"
+    handoff_tmp="${handoff_path}.tmp.$$"
+    umask 077
+    printf '%s\n' '{"version":"routerd-v1-firewall-handoff/v1","sourceCommit":"e3b49dbb"}' > "${handoff_tmp}"
+    mv -f "${handoff_tmp}" "${handoff_path}"
+    echo "recorded verified routerd 1.0 firewall handoff: ${handoff_path}"
+}
+
 echo "routerd install mode: ${mode}"
 if [ -n "${old_version}" ]; then
     echo "existing: ${old_version}"
@@ -2073,6 +2094,11 @@ elif [ "${config_update}" -eq 0 ] && [ -f "${sysconfdir}/router.yaml" ]; then
 else
     echo "create ${sysconfdir}/router.yaml before starting routerd"
 fi
+
+# The current package consumes this record before it reloads firewall state.
+# It is deliberately written only for the pinned 1.0 binary, never for an
+# arbitrary same-named nftables table.
+record_legacy_firewall_handoff
 
 case "${os}" in
     Linux)

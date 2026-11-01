@@ -29,6 +29,9 @@ type Controller struct {
 	DryRun       bool
 	NftablesPath string
 	NftCommand   string
+	// LegacyFirewallHandoffPath is written only by a verified 1.0-to-1.5
+	// installer handoff. It never grants ownership to an arbitrary table.
+	LegacyFirewallHandoffPath string
 	Interval     time.Duration
 	Logger       *slog.Logger
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
@@ -85,6 +88,10 @@ func (c Controller) Reconcile(ctx context.Context) error {
 		return nil
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
+	if nft, ok := backend.(firewallbackend.Nftables); ok {
+		nft.LegacyFirewallHandoffPath = c.LegacyFirewallHandoffPath
+		backend = nft
+	}
 	ruleset, err := backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
 	if err != nil {
 		_ = c.saveErrorStatuses(ctx, backend.Name(), c.NftablesPath, "RenderFailed", err)
