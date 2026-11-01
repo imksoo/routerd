@@ -297,6 +297,12 @@ case "$dynamic" in
   198.18.15.10[0-9]|198.18.15.110) ;;
   *) echo "dynamic DHCP address outside the configured pool: $dynamic" >&2; exit 1 ;;
 esac
+stage=dynamic-lease-event
+for _ in {1..20}; do
+ if /usr/local/sbin/routerctl get events --topic routerd.dhcp.lease.added --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select(.attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+/usr/local/sbin/routerctl get events --topic routerd.dhcp.lease.added --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select(.attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null
 stage=dynamic-lease
 for _ in {1..20}; do
  dynamic_present=true
