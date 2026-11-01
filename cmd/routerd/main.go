@@ -78,6 +78,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return rollbackCommand(args[1:], stdout, stderr)
 	case "validate":
 		return validateCommand(args[1:], stdout)
+	case "migrate":
+		return migrateCommand(args[1:], stdout)
 	case "check":
 		return checkCommand(args[1:], stdout)
 	case "render":
@@ -100,6 +102,8 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "  apply --config <path> --once      apply config once")
 	fmt.Fprintln(w, "  rollback --list|--to <generation> list or re-apply saved config generations")
 	fmt.Fprintln(w, "  validate --config <path>          validate config")
+	fmt.Fprintln(w, "  migrate --config <path> --out <path>  convert and validate a legacy config without modifying it")
+	fmt.Fprintln(w, "  migrate --config <path> --out <path>  convert and validate a legacy config without modifying it")
 	fmt.Fprintln(w, "  check --config <path>             run preflight check")
 	fmt.Fprintln(w, "  render freebsd --config <path> [--out-dir <dir>]  render FreeBSD config files")
 	fmt.Fprintln(w, "  render systemd-service --config <path>            render routerd.service without changing the host")
