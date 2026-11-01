@@ -153,6 +153,12 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		var intents []resource.Intent
 		for _, set := range spec.Packages {
+			if targetOS == platform.OSFreeBSD && set.OS != "freebsd" {
+				continue
+			}
+			if targetOS != platform.OSFreeBSD && set.OS == "freebsd" {
+				continue
+			}
 			manager := set.Manager
 			if manager == "" {
 				manager = "package-manager"
@@ -163,6 +169,9 @@ func resourceArtifactIntentsForPlatform(res api.Resource, aliases map[string]str
 		}
 		return intents
 	case "NetworkAdoption":
+		if !features.HasSystemd {
+			return nil
+		}
 		spec, err := res.NetworkAdoptionSpec()
 		if err != nil {
 			return nil
