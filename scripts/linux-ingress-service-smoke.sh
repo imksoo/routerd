@@ -12,6 +12,9 @@ systemd-detect-virt --vm --quiet
 for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
 if [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
 management=rd15-ing-mgmt
+host_management=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
+test -n "$host_management"
+ip link show "$host_management" >/dev/null
 for dev in rd15-ing-lan rd15-ing-wan "$management"; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
@@ -191,13 +194,14 @@ router = json.load(open(sys.argv[1]))
 router['spec']['resources'] = [r for r in router['spec']['resources'] if r['kind'] != 'PortForward']
 json.dump(router, open(sys.argv[2], 'w'))
 PY
-python3 - "$work/base.json" "$management" <<'PY'
+python3 - "$work/base.json" "$management" "$host_management" <<'PY'
 import json, sys
-path, ifname = sys.argv[1:]
+path, ifname, host_ifname = sys.argv[1:]
 router = json.load(open(path))
 resources = router['spec']['resources']
 resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'management'},'spec':{'ifname':ifname,'managed':False,'owner':'external'}})
-resources.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallZone','metadata':{'name':'management'},'spec':{'role':'mgmt','interfaces':['management']}})
+resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'host-management'},'spec':{'ifname':host_ifname,'managed':False,'owner':'external'}})
+resources.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallZone','metadata':{'name':'management'},'spec':{'role':'mgmt','interfaces':['management','host-management']}})
 resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'IPv4StaticAddress','metadata':{'name':'management-v4'},'spec':{'interface':'management','address':'198.18.53.2/24'}})
 json.dump(router, open(path, 'w'))
 PY
