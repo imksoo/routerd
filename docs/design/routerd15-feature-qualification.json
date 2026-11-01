@@ -171,7 +171,6 @@
         "Verified dnsmasq observation/signaling after UID drop"
       ],
       "excludes": [
-        "Cross-version upgrade/rollback",
         "Host reboot/crash",
         "Production deployment",
         "Complete 1.0 functional parity"
@@ -345,7 +344,7 @@
       "excludes": [
         "A clean-commit full Go run or semantic parity of every baseline command/API/UI workflow",
         "Actual packaged-daemon browser integration or native systemd/rc.d service upgrade recovery",
-        "Cross-version 1.0-to-1.5 upgrade, binary cutback, host reboot/crash or live ISO boot",
+        "Host reboot/crash or live ISO boot",
         "Native FreeBSD execution, kernel networking, independent-peer communication or production qualification"
       ]
     },
@@ -414,7 +413,7 @@
       ],
       "excludes": [
         "Bridge or VXLAN independent-peer forwarding",
-        "A packaged running routerd service, reboot/crash or cross-version recovery",
+        "A packaged running routerd service or reboot/crash recovery",
         "FreeBSD behavior or complete Bridge/VXLAN feature qualification"
       ]
     },
@@ -1583,7 +1582,7 @@
       ],
       "excludes": [
         "Default installer dependency download/provisioning: the isolated fixture intentionally had no package-network access and used --no-install-deps after explicit command checks.",
-        "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, cross-version cutback, power-loss durability, and complete 1.0 functional parity.",
+        "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, power-loss durability, and complete 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -3534,7 +3533,7 @@
       },
       "required_remaining_checks": [
         "Real management path while data-plane faults/configuration change",
-        "Independent admission and exercised recovery/cutback"
+        "Independent admission and recovery after a valid 1.5 configuration change"
       ]
     },
     {
