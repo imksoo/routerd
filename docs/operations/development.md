@@ -550,6 +550,25 @@ deletes its raw output on both success and failure. This is a scoped Linux
 ingress result, not proof of FreeBSD behavior, dynamic distribution modes,
 flow-pinhole expiry, or complete routerd 1.0 parity.
 
+## Linux FirewallFlowPinhole lifecycle gate
+
+`scripts/linux-firewall-flow-pinhole-smoke.sh` runs the installed package
+through its actual systemd service in a dedicated, empty disposable Linux VM.
+It creates independent LAN-client and WAN-peer namespaces, then verifies the
+kernel nft timeout map rather than a rendered rule alone.
+
+```sh
+sudo scripts/linux-firewall-flow-pinhole-smoke.sh --disposable-vm
+```
+
+The gate requires an unsolicited reverse UDP packet to be dropped, permits the
+configured reverse source port only after the LAN client creates the pinhole,
+requires expiry to close it again, changes the referenced `IPAddressSet`, and
+withdraws the whole firewall with an empty apply. Keep the procedure, candidate
+revision, and concise pass/fail verdict; raw output is removed on either result.
+It does not qualify NAT44 flow DNAT pinholes, other correlation/selection modes,
+FreeBSD behavior, or complete routerd 1.0 parity.
+
 ## Two-VM reboot and interrupted-apply gate
 
 `scripts/linux-router-reboot-fixture.sh` uses two dedicated disposable Linux VMs

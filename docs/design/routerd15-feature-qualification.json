@@ -1744,7 +1744,25 @@
         "The observed stale filter target after failover was fixed in ad5bcd47; final cleanup left an empty configuration, no routerd nft table or test namespace/interface, no retained raw output, and the VM stopped."
       ],
       "excludes": [
-        "NAT44Rule, NAT44FlowDNATPinhole, NAT44SessionSync, LocalServiceRedirect, source-hash/random backend selection, and all flow-pinhole expiry paths.",
+        "NAT44Rule, NAT44FlowDNATPinhole, NAT44SessionSync, LocalServiceRedirect, source-hash/random backend selection, and NAT flow-pinhole expiry paths.",
+        "FreeBSD behavior, production topology, performance, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-firewall-flow-pinhole-ad5bcd47": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ad5bcd47303dec8105d7077b648f66b66f7c346b",
+      "gate_script_revision": "1f99ddafc9f8cdddd1d4a6758345baf9e57f8856",
+      "reference": "docs/operations/development.md#linux-firewallflowpinhole-lifecycle-gate",
+      "environment": "Authorized dedicated Linux VM; CGO_ENABLED=0 make dist package through the actual systemd service; independent LAN client and WAN UDP peer namespaces.",
+      "checks": [
+        "An unsolicited reverse UDP packet was dropped; the configured source port reached the LAN client only after its matching outbound packet created the nft timeout-map entry.",
+        "The two-second entry expiry, referenced IPAddressSet update, and empty-config withdrawal each closed the reverse path.",
+        "Final cleanup left an empty configuration, no routerd nft table or test namespace/interface, no retained raw output, and the VM stopped."
+      ],
+      "excludes": [
+        "NAT44FlowDNATPinhole, localEndpoint correlation, other source/destination sets and port combinations, and non-UDP traffic.",
         "FreeBSD behavior, production topology, performance, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
@@ -3375,7 +3393,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-ingress-service-ad5bcd47"
+          "linux-ingress-service-ad5bcd47",
+          "linux-firewall-flow-pinhole-ad5bcd47"
         ]
       },
       "freebsd": {
