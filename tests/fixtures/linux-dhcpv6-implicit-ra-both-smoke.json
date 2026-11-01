@@ -1,0 +1,41 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {
+    "name": "dhcpv6-implicit-ra-both-smoke"
+  },
+  "spec": {
+    "resources": [
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "Interface",
+        "metadata": {
+          "name": "lan"
+        },
+        "spec": {
+          "ifname": "rd15-lan",
+          "managed": false,
+          "owner": "external"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv6Server",
+        "metadata": {
+          "name": "lan-dhcpv6"
+        },
+        "spec": {
+          "interface": "lan",
+          "mode": "both",
+          "defaultRoute": true,
+          "dnsSource": "none",
+          "addressPool": {
+            "start": "fd00:1234::100",
+            "end": "fd00:1234::10f",
+            "leaseTime": "60s"
+          }
+        }
+      }
+    ]
+  }
+}
