@@ -109,7 +109,7 @@ func renderPF(router *api.Router, holes []FirewallHole, intents []dynamicconfig.
 	sort.Slice(clientPolicies, func(i, j int) bool { return clientPolicies[i].Metadata.Name < clientPolicies[j].Metadata.Name })
 	sort.Slice(egressPolicies, func(i, j int) bool { return egressPolicies[i].Metadata.Name < egressPolicies[j].Metadata.Name })
 
-	zoneMap, err := nftFirewallZones(aliases, zones)
+	zoneMap, err := nftFirewallZones(router, aliases, zones)
 	if err != nil {
 		return nil, err
 	}

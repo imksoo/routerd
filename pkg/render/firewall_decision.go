@@ -70,7 +70,7 @@ func NftablesNewFlowDecision(router *api.Router, query FirewallNewFlowQuery) (Fi
 			return unknown(resource.ID(), "address translation and ingress packet selectors are unavailable")
 		}
 	}
-	zoneMap, err := nftFirewallZones(aliases, zones)
+	zoneMap, err := nftFirewallZones(router, aliases, zones)
 	if err != nil {
 		return FirewallDecision{}, err
 	}

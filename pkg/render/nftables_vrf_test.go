@@ -55,7 +55,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `elements = { "vrf-pve" }`) {
-		t.Fatalf("parsed VRF parent is absent from the firewall zone:\n%s", data)
+	if !strings.Contains(string(data), `elements = { "rd15-lan", "vrf-pve" }`) {
+		t.Fatalf("parsed VRF parent and member are absent from the firewall zone:\n%s", data)
 	}
 }
