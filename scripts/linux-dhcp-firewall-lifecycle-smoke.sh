@@ -125,6 +125,9 @@ reservation_declared() {
 reservation_runtime() {
  jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
 }
+reservation_rendered() {
+ grep -Fx '02:00:00:15:00:01,set:printer,printer,198.18.15.150' /run/routerd/dnsmasq-hosts.hosts >/dev/null
+}
 stage=baseline
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
 stage=reservation-declared
@@ -245,12 +248,14 @@ ip netns exec rd15-lan-peer ip addr add 198.18.15.151/24 dev peer0
 stage=reservation-post-release-declared
 for _ in {1..20}; do if reservation_declared; then break; fi; sleep 1; done
 reservation_declared
-stage=reservation-post-release-runtime
+stage=reservation-post-release-rendered
+for _ in {1..20}; do if reservation_rendered; then break; fi; sleep 1; done
+reservation_rendered
+stage=reservation-post-release-source
 for _ in {1..20}; do
  if jq -e '.zones[] | select(.name == "home") | .dhcpScopes[] | select(.source == "DHCPv4Server/lan")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
  sleep 1
 done
-stage=reservation-post-release-source
 jq -e '.zones[] | select(.name == "home") | .dhcpScopes[] | select(.source == "DHCPv4Server/lan")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
 stage=reservation-post-release-runtime
 for _ in {1..20}; do
