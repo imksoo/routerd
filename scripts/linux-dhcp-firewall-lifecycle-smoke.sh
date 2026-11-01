@@ -284,7 +284,11 @@ for _ in {1..20}; do
  sleep 1
 done
 dynamic=$(awk '$1 == "bound" {ip=$2} END {print ip}' "$work/udhcpc-hook.events")
-test "$dynamic" = 198.18.15.100
+stage=dynamic-lease-acquisition
+case "$dynamic" in
+  198.18.15.10[0-9]|198.18.15.110) ;;
+  *) echo "dynamic DHCP address outside the configured pool: $dynamic" >&2; exit 1 ;;
+esac
 stage=dynamic-lease
 for _ in {1..20}; do
  dynamic_present=true
