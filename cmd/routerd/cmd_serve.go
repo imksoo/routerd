@@ -708,7 +708,13 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 			return err
 		}
 		if servers := httpServers.Load(); servers != nil {
-			return servers.reconcile(observation)
+			if err := servers.reconcile(observation); err != nil {
+				if errors.Is(err, syscall.EADDRNOTAVAIL) {
+					logger.Emit(eventlog.LevelWarning, "serve", "HTTP listeners remain deferred until their declared address is ready", map[string]string{"error": err.Error()})
+					return nil
+				}
+				return err
+			}
 		}
 		return nil // the control handler is constructed after bootstrap
 	}
