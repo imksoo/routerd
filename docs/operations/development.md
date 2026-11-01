@@ -66,6 +66,20 @@ with privilege:
 ```sh
 go test -tags routerd_native -c -o /tmp/routeradvertisement-native.test ./pkg/routeradvertisement
 sudo unshare --net sh -ec 'ip link set lo up; exec /tmp/routeradvertisement-native.test -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v'
+# A veth peer proves the actual all-nodes multicast transmit path. Disable
+# automatic link-local generation and add DAD-complete test addresses so the
+# test does not mistake an unusable tentative address for a sender failure.
+sudo unshare --net sh -ec '
+  ip link set lo up
+  ip link add ra-router type veth peer name ra-peer
+  ip link set dev ra-router addrgenmode none
+  ip link set dev ra-peer addrgenmode none
+  ip link set ra-router up; ip link set ra-peer up
+  ip -6 addr add fe80::1/64 dev ra-router nodad
+  ip -6 addr add fe80::2/64 dev ra-peer nodad
+  ROUTERD_RA_NATIVE_ROUTER_IF=ra-router ROUTERD_RA_NATIVE_PEER_IF=ra-peer \
+    exec /tmp/routeradvertisement-native.test -test.run="^TestAdvertisementWriteAcrossVeth$" -test.v
+'
 ```
 
 On a disposable FreeBSD VM, build with the same tag and execute the test binary

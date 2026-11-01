@@ -92,6 +92,19 @@ FreeBSD native VM のゲートで明示的に実行します。有効化した�
 ```sh
 go test -tags routerd_native -c -o /tmp/routeradvertisement-native.test ./pkg/routeradvertisement
 sudo unshare --net sh -ec 'ip link set lo up; exec /tmp/routeradvertisement-native.test -test.run="^TestSolicitationWildcardReceiverOnActualSocket$" -test.v'
+# veth 対向で all-nodes multicast の実送信を検査する。tentative な自動
+# link-local を送信失敗と取り違えないよう、DAD 完了済みの test address を使う。
+sudo unshare --net sh -ec '
+  ip link set lo up
+  ip link add ra-router type veth peer name ra-peer
+  ip link set dev ra-router addrgenmode none
+  ip link set dev ra-peer addrgenmode none
+  ip link set ra-router up; ip link set ra-peer up
+  ip -6 addr add fe80::1/64 dev ra-router nodad
+  ip -6 addr add fe80::2/64 dev ra-peer nodad
+  ROUTERD_RA_NATIVE_ROUTER_IF=ra-router ROUTERD_RA_NATIVE_PEER_IF=ra-peer \
+    exec /tmp/routeradvertisement-native.test -test.run="^TestAdvertisementWriteAcrossVeth$" -test.v
+'
 ```
 
 隔離 FreeBSD VM でも同じ tag でコンパイルし、テストバイナリを root で実行します。
