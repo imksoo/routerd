@@ -48,6 +48,8 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 响应中应包含 `"libndpiLoaded": true`。
 
+nDPI 6 及更高版本中，routerd 以仅限商业 LGPL 的模式初始化 libndpi。该模式可能排除双重许可的 dissector，因此原生后端已加载并不保证能分类所有 nDPI 协议。`selftest` 使用 HTTP 请求验证此模式中可用的分类器，并包含观测结果供诊断；安装判定仍以 `"libndpiLoaded": true` 为准。
+
 ## Upgrade note
 
 一般 routerd 归档内含默认的静态版 `routerd-ndpi-agent`。

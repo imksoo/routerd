@@ -48,6 +48,8 @@ sudo curl --silent --unix-socket /run/routerd/ndpi-agent/default.sock \
 
 応答に `"libndpiLoaded": true` が含まれているはずです。
 
+nDPI 6 以降では、routerd は libndpi を商用 LGPL 限定モードで初期化します。このモードでは nDPI がデュアルライセンスの dissector を除外することがあるため、ネイティブバックエンドが読み込めたことは全 nDPI プロトコルの分類を保証しません。`selftest` はこのモードで利用可能な分類器を HTTP リクエストで検証し、観測結果を診断用に含めます。インストール時の判定基準は引き続き `"libndpiLoaded": true` です。
+
 ## アップグレード時の注意
 
 通常の routerd アーカイブには、既定の静的な `routerd-ndpi-agent` が含まれます。

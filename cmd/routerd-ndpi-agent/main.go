@@ -218,7 +218,7 @@ func runSelftest(args []string, stdout io.Writer) error {
 	agent := newAgent(opts, nil)
 	defer agent.Close()
 	resp := agent.Status()
-	selftest := agent.Observe(context.Background(), dpi.ClassifyRequest{Packet: selftestTLSPacket("routerd-ndpi-selftest.example")}, time.Now().UTC())
+	selftest := agent.Observe(context.Background(), dpi.ClassifyRequest{Packet: selftestHTTPPacket("routerd-ndpi-selftest.example")}, time.Now().UTC())
 	resp.Selftest = &selftest
 	return json.NewEncoder(stdout).Encode(resp)
 }
@@ -525,13 +525,13 @@ func removeStaleSocket(path string) error {
 	return err
 }
 
-func selftestTLSPacket(host string) []byte {
-	payload := dpi.MinimalTLSClientHello(host)
+func selftestHTTPPacket(host string) []byte {
+	payload := []byte("GET /routerd-ndpi-selftest HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n")
 	packet := append([]byte{
 		0x45, 0x00, 0x00, 0x00, 0, 0, 0, 0, 64, 6, 0, 0,
 		192, 0, 2, 10,
 		198, 51, 100, 10,
-		0xcf, 0xb0, 0x01, 0xbb,
+		0xcf, 0xb0, 0x00, 0x50,
 		0, 0, 0, 0,
 		0, 0, 0, 0,
 		0x50, 0x18, 0, 0, 0, 0, 0, 0,

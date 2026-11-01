@@ -58,6 +58,9 @@ func TestSelftestReportsBackendStatus(t *testing.T) {
 	if resp.Selftest == nil || resp.Selftest.Engine != "ndpi-agent" {
 		t.Fatalf("selftest = %+v", resp.Selftest)
 	}
+	if backendExpectedLoaded() && resp.Selftest.AppName == "unknown" {
+		t.Fatalf("loaded libndpi selftest did not classify the LGPL-safe HTTP probe: %+v", resp.Selftest)
+	}
 }
 
 func TestDaemonReturnsUnavailableClassification(t *testing.T) {
