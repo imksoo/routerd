@@ -40,6 +40,15 @@ or cross-version migration path.
   and its RA default route. Its old address was present only as deprecated
   with preferred lifetime zero. The upstream HTTP server observed the new
   client source address.
+- Stopping the independent Kea service caused the delegated prefix to expire.
+  The routerd DHCPv6 client entered `Acquiring`; the router LAN had no
+  delegated address; and the independent client had neither a delegated
+  address nor an RA default route. Its upstream HTTP request failed.
+- Recreating the same independent Kea service restored the prefix without a
+  routerd restart or configuration apply. routerd returned to `Bound` for
+  `2001:db8:1510::/60`; the independent client regained an RA default route;
+  and the upstream HTTP server observed the new delegated client source.
+  The final router status was `Healthy` with 26 resources.
 
 One immediate status read during the restart sequence reported `ERROR` before
 the subsequent reconciliations completed. A later JSON status query reported
@@ -48,6 +57,5 @@ determined by this check.
 
 ## Unverified scope
 
-This check does not establish lease expiry withdrawal, upstream loss and
-return, high availability, target-device qualification, or FreeBSD behavior.
-Those cases remain separate Linux-first work.
+This check does not establish high availability, target-device qualification,
+or FreeBSD behavior. Those cases remain separate Linux-first work.
