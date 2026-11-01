@@ -245,10 +245,15 @@ See [doctor operations](../operations/routerctl-doctor.md). Neighbor/conntrack
 packet probing, native forwarding/failover and independent client qualification
 remain unexecuted. The scoped Linux IPsec package/systemd/IKE/ESP gate at
 `dc14c486` passes acquisition, unchanged SA retention and foreign-safe withdrawal.
-Complete provider-crash recovery remains open: after SIGKILL, the new provider
-has no established SA while ordinary traffic continues over old kernel SAs.
-Natural expiry/rekey and baseline comparison are unverified. See the
-[executed provider gate](routerd15-audit.md#linux-ipsec-package-ownership-and-provider-recovery-gate).
+The provider-crash recovery failure was repaired at `8b80a174`: Linux records
+the device/inode identity of the VICI socket after a successful reconciliation.
+Only a changed identity proves a replacement provider, so routerd withdraws its
+recorded SAs before loading the owned connection again. An unchanged socket does
+not claim provider continuity or trigger deletion. The isolated PVE VLAN result
+has independent bidirectional traffic after a forced systemd restart and no
+retained router-side old SPI. Natural expiry/rekey, an unchanged-inode provider
+replacement, multi-peer recovery and baseline comparison remain unverified. See
+the [PVE provider recovery result](../../evidence/routerd15-8b80a174-ipsec-provider-recovery-pve-20261102.md).
 SAM tests do not establish independent RR/leaf interoperability.
 
 ## Build, release and isolated lab tools

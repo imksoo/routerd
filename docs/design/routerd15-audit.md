@@ -2532,6 +2532,33 @@ binary/config/unit/stopped-state hashes matched. The installed routerd returned
 Healthy with no controller errors. This does not qualify all IPsec modes,
 platforms, algorithms, certificate authentication or complete 1.0 preservation.
 
+### Linux IPsec provider restart recovery on isolated PVE, 2026-11-02
+
+Commit `8b80a174892f470ab4b5f66cabaea605b5985984` records the VICI socket
+device/inode identity in the owned IPsec receipt. A changed identity is direct
+evidence of a replacement endpoint, and only then does the reconciliation
+withdraw recorded router-owned SAs before restoring the connection. An unchanged
+identity is intentionally treated as unknown continuity and does not authorise
+deletion.
+
+The Linux static binary SHA256
+`a1cbdd287e777d9eb090512ec7b7fb69f2340f0f12a71ed5567a8e2dcd2626f8` ran
+on PVE VM219 against independent VM220 over VLAN 3132. The first IKEv2/ESP
+exchange and bidirectional protected ICMP passed. SIGKILL of the strongSwan main
+process changed its `MainPID` from `4668` to `6544`, increased `NRestarts` from
+one to two, and changed the VICI identity from `25:1995` to `25:2200`. The
+re-applied router declaration removed the two old router-side ESP SPIs. It then
+created a disjoint pair of ESP SPIs, and both directions again returned two of
+two ICMP replies. VM219 returned to 21 resources and VM220 to 13 resources;
+both routerd and strongswan services were active, with no temporary VLAN,
+protected address, IPsec connection, or router-side XFRM state. The temporary
+transfer ISO was detached and removed. See the
+[PVE provider recovery evidence](../../evidence/routerd15-8b80a174-ipsec-provider-recovery-pve-20261102.md).
+
+This closes the observed changed-VICI-inode restart failure. It does not qualify
+provider replacement with an unchanged socket identity, rekey/expiry recovery,
+certificate authentication, multiple peers, or whole-function parity.
+
 
 ## Linux live ISO boot and ServiceUnit recovery, 2026-10-31
 
