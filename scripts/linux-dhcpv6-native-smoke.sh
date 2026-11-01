@@ -193,7 +193,10 @@ for _ in {1..110}; do
  if ! ip -6 -o addr show dev wan0 scope global | grep -q inet6 && state | jq -e '.phase!="Applied" and (.nativeState.leases|length)==0' >/dev/null; then break; fi
  kill -0 "$client"; sleep 1
 done
-! ip -6 -o addr show dev wan0 scope global | grep -q inet6
+if ip -6 -o addr show dev wan0 scope global | grep -q inet6; then
+ echo 'expired DHCPv6 address remains on wan0' >&2
+ exit 1
+fi
 state | jq -e '.phase!="Applied" and (.nativeState.leases|length)==0' >/dev/null
 kill -CONT "$server"
 await_applied

@@ -1310,6 +1310,53 @@
         "Physical failure domains and complete tunnel/static-address qualification"
       ]
     },
+    "linux-dhcpv6-native-1392082f": {
+      "level": "native-kernel-independent-peer",
+      "outcome": "pass",
+      "revision": "1392082fd634ebd26ca0a06b0edc6315411b7a60",
+      "reference": "docs/design/routerd15-audit.md#dhcpv6-native-address-ownership-and-dad",
+      "product_version": "v20261101.4",
+      "archive_sha256": "98f473ab80706cac727d2cd3e71d850cc5ac8022b2a0c3928a4f68632788a0a7",
+      "script_sha256": "16a7118726869a7f0653901e2f3bfaf07f25b02a9f9b2b762cc38e13d27019f2",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-117-generic; formal static make dist routerd; private network/mount namespaces, independent Kea 2.4.1 peer.",
+      "reproduction": "scripts/linux-dhcpv6-native-smoke.sh --disposable-vm ARCHIVE SHA256 KEA_PACKAGE_ROOT",
+      "checks": [
+        "DHCPv6Address through the actual routerd supervisor acquired a Kea lease and installed a finite /128 after DAD; three packets passed each way",
+        "Isolated routerd stop/restart preserved the SQLite acquisition without extending its lifetime; natural T1 Renew refreshed the native lifetime",
+        "Stopping Kea caused actual address expiry and lease-authority withdrawal; peer-only resumption reacquired; config removal withdrew the owned /128 and receipt",
+        "An independent duplicate address caused DAD failure, server-observed Decline and native withdrawal; combined PD/NA used one worker and retained native /128 ownership",
+        "Expiry assertion was made fatal explicitly; bash syntax and ShellCheck passed. Private namespaces, peers and successful output were removed; installed service remained Healthy and unchanged"
+      ],
+      "excludes": [
+        "WAN route learning, transit forwarding and remaining DHCPv6 source modes",
+        "Multiple-prefix and multiple-server lifecycle qualification",
+        "FreeBSD native DHCPv6Address ownership/DAD/Decline",
+        "Complete routerd 1.0 functional preservation or production readiness"
+      ]
+    },
+    "linux-pd-ra-lifecycle-1392082f": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "1392082fd634ebd26ca0a06b0edc6315411b7a60",
+      "reference": "docs/design/routerd15-audit.md#linux-delegated-ipv6-lifecycle-checkpoint",
+      "product_version": "v20261101.3",
+      "routerd_sha256": "7138296c801131d97c9b3b0b5c1880d35c37dc44a6d781b1c23ca454f9897180",
+      "script_sha256": "5a9bd4d1ea52a234834ed24803a091b0bd70a9e5ff06b956d8cb8cc059502bbe",
+      "fixture_sha256": "ef0ce2387d26497d18f141c183f7ad6cd2d7b4540a6f8308a9a0846c7333d407",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-117-generic; installed static make dist routerd service; Kea 2.4.1, SLAAC client, HTTP and DNS peers in separate network namespaces.",
+      "reproduction": "scripts/linux-pd-ra-lifecycle-smoke.sh --disposable-vm tests/fixtures/linux-pd-ra-lifecycle.json /opt/routerd15-fixtures/kea",
+      "checks": [
+        "Live PD /60 produced the LAN address and PIO; an independent client completed SLAAC/default-route setup and forwarded HTTP exposed its delegated source",
+        "IPv6 DNS UDP/TCP and actual Renew passed; Kea pool renumbering changed router/client source and DNS without restarting routerd or Kea, and withdrew the old router address and DNS endpoint",
+        "Systemd restart passed; real lease expiry withdrew router address and client default route and stopped traffic; Kea-only return restored PD, DNS and forwarding",
+        "A second expiry followed by empty apply left Healthy status, zero resources and no controller errors; forwarding returned to its original value and namespaces, peer services and temporary output were removed"
+      ],
+      "excludes": [
+        "WAN RA/default-route discovery and DHCPv6 IA_NA source mode",
+        "Overlapping multi-prefix lifetimes and IPv6 reboot/crash recovery",
+        "FreeBSD runtime and complete routerd 1.0 feature preservation"
+      ]
+    },
     "linux-dhcpv6-native-d05524de": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2492,6 +2539,8 @@
           "linux-wan-ra-recovery-2b8ad068",
           "linux-dhcpv6-associations-ede8dbf2",
           "dhcpv6-partial-recovery-87761c0e",
+          "linux-dhcpv6-native-1392082f",
+          "linux-pd-ra-lifecycle-1392082f",
           "linux-dhcpv6-native-d05524de"
         ]
       },
@@ -2500,7 +2549,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent DHCPv6/RA server exchange for each source mode and WAN route/forwarding composition",
+        "Independent DHCPv6/RA server exchange for remaining source modes and WAN route/forwarding compositions",
         "Multiple-prefix renewal/rebind/expiry, restart and source withdrawal",
         "FreeBSD native DHCPv6Address ownership, DAD/Decline, expiry withdrawal and recovery through full routerd"
       ]
@@ -2534,15 +2583,17 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pd-ra-lifecycle-1392082f"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent IPv6 clients, delegated addresses and forwarded packets",
-        "Prefix/DNS lifetime, renewal, expiry, restart and withdrawal",
+        "Additional IPv6 source modes and multi-prefix/overlap forwarding beyond the tested single-prefix Linux path",
+        "Native FreeBSD IPv6 forwarding, delegated address and RA lifecycle",
         "Fragmented solicitation provenance remains a documented API limitation"
       ]
     },

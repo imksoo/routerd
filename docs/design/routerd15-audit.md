@@ -1292,8 +1292,21 @@ nine without tests. Schema/examples, website schema copies and all four website
 locales passed. The trial's preparation errors (Kea runtime directory, extracted
 rdisc6 ownership and DNS forwarder order) were corrected; those failed attempts
 were not counted as pass. WAN transit and return routing are fixture scaffolding.
-WAN RA/IA_NA, prefix renumbering, DHCPv4 renewal, firewall isolation, reboot/crash,
-FreeBSD client parity and the remaining 1.0 inventory stay open.
+At that checkpoint WAN RA/IA_NA, prefix renumbering, DHCPv4 renewal, firewall
+isolation, reboot/crash, FreeBSD client parity and the remaining 1.0 inventory
+stayed open.
+
+The lifecycle gate was rerun at product revision
+`1392082fd634ebd26ca0a06b0edc6315411b7a60`, using the installed static package
+`v20261101.3` on Ubuntu 24.04.4 / Linux 6.8.0-117-generic. Independent Kea
+renewal and pool renumbering, LAN SLAAC/default route, IPv6 DNS UDP/TCP, forwarded
+HTTP, old-prefix withdrawal, systemd restart, real expiry, Kea-only recovery and
+second-expiry empty apply all passed. Final status was Healthy with zero resources
+or controller errors; temporary peers/namespaces/output were removed and the
+original forwarding value was restored. Exact binary, procedure and fixture
+hashes are recorded as `linux-pd-ra-lifecycle-1392082f` in the qualification
+ledger. WAN RA discovery, IA_NA, overlapping multi-prefix behavior, FreeBSD and
+the remaining 1.0 inventory remain open.
 
 ## Linux DHCP renewal and firewall withdrawal checkpoint
 
@@ -2356,6 +2369,17 @@ combined PD/NA configuration must acquire both associations through its shared
 worker and retain native address ownership. All these checks passed; post-run
 inspection found no fixture namespaces or Kea process and the installed router
 remained Healthy. Successful output and resolved failure output were removed.
+
+This native gate was rerun at product revision
+`1392082fd634ebd26ca0a06b0edc6315411b7a60` with formal static package
+`v20261101.4`. The current run passed IA_NA acquisition, finite `/128`, DAD,
+bidirectional traffic, isolated daemon restart, Renew, expiry/reacquisition,
+withdrawal, duplicate-address Decline and combined PD/NA ownership. Its expiry
+assertion was corrected to fail explicitly on a surviving address after
+ShellCheck identified that a standalone negated pipeline could bypass `set -e`;
+`bash -n` and ShellCheck now pass. The installed service stayed unchanged and
+Healthy. Archive/script hashes and the scoped result are in ledger entry
+`linux-dhcpv6-native-1392082f`; successful temporary output was deleted.
 
 Two failed gates were diagnosed before retrying qualification. The first fixture
 used a global peer source while assuming `/128` acquisition also installed an
