@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/netip"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,10 @@ import (
 
 var allRouters = netip.MustParseAddr("ff02::2")
 var allNodes = netip.MustParseAddr("ff02::1")
+
+// ErrInterfaceNotFound marks a listener request whose interface has gone away.
+// Callers may discard a persisted withdrawal receipt only for this condition.
+var ErrInterfaceNotFound = errors.New("RA interface not found")
 
 const MinDelay = 3 * time.Second
 
@@ -62,6 +67,9 @@ type Loop struct {
 func Listen(ifname string) (Endpoint, error) {
 	ifi, err := net.InterfaceByName(ifname)
 	if err != nil {
+		if IsInterfaceNotFound(err) {
+			return Endpoint{}, fmt.Errorf("%w: %s: %v", ErrInterfaceNotFound, ifname, err)
+		}
 		return Endpoint{}, err
 	}
 	addrs, err := ifi.Addrs()
@@ -77,6 +85,21 @@ func Listen(ifname string) (Endpoint, error) {
 		return Endpoint{}, err
 	}
 	return Endpoint{Conn: c, Source: source, Index: ifi.Index, MTU: ifi.MTU, HardwareAddress: ifi.HardwareAddr}, nil
+}
+
+// IsInterfaceNotFound reports whether an error means the requested network
+// interface is absent. net.InterfaceByName exposes this as a platform-specific
+// net.OpError, so preserve a stable package-level classification for callers.
+func IsInterfaceNotFound(err error) bool {
+	if errors.Is(err, ErrInterfaceNotFound) {
+		return true
+	}
+	var op *net.OpError
+	if !errors.As(err, &op) || op.Op != "route" || op.Net != "ip+net" || op.Err == nil {
+		return false
+	}
+	message := strings.ToLower(op.Err.Error())
+	return strings.Contains(message, "no such network interface") || strings.Contains(message, "no such device") || strings.Contains(message, "interface not found")
 }
 
 func linkLocalSource(addrs []net.Addr, ifname string) (netip.Addr, error) {

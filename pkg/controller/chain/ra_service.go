@@ -243,6 +243,13 @@ func (s *RouterAdvertisementService) Reconcile(ctx context.Context, declared, ef
 		}
 		endpoint, err := s.open(ifname)
 		if err != nil {
+			if _, active := plans[ifname]; !active && ra.IsInterfaceNotFound(err) {
+				delete(journal, ifname)
+				if saveErr := saveRAJournal(s.store, journal); saveErr != nil {
+					outcomes = append(outcomes, saveErr)
+				}
+				continue
+			}
 			outcomes = append(outcomes, fmt.Errorf("open RA interface %s: %w", ifname, err))
 			continue
 		}

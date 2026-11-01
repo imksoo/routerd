@@ -28,6 +28,13 @@ func solicitation(t *testing.T, source netip.Addr, code int, body []byte) []byte
 	return packet
 }
 
+func TestListenClassifiesAbsentInterface(t *testing.T) {
+	_, err := Listen("routerd-ra-interface-that-does-not-exist")
+	if !errors.Is(err, ErrInterfaceNotFound) || !IsInterfaceNotFound(err) {
+		t.Fatalf("missing interface error=%v", err)
+	}
+}
+
 func TestSolicitationValidationPreservesRFCOptionalInput(t *testing.T) {
 	source := netip.MustParseAddr("2001:db8::2")
 	cm := &ipv6.ControlMessage{HopLimit: 255, IfIndex: 7, Dst: allRouters.AsSlice()}
