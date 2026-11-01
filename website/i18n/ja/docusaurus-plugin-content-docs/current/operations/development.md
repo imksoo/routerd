@@ -364,10 +364,12 @@ archiveのchecksumを検証します。peer VMとDHCPプロセスは動かし続
    確認します。peerの両試験と、再取得後の実際のDHCPタイマー更新も必要です。
    peerのboot ID・DHCP PIDが変わっていないこと、現在のbootでhelperの所有・権限エラーが
    ないことを確認します。通信が通るだけでは合格にしません。
-5. 同じサービスを停止して1.5の復旧用データを保存し、1.0の設定・状態を復元します。
-   元の1.0 archiveを同じ停止オプションで導入し、保存したunitとactivation receiptも
-   復元します。`sudo systemctl daemon-reload`後に再起動し、手順4を1.0で繰り返します。
-   正本設定が保存ファイルと一致することも確認します。
+5. 同じサービスを停止して1.5の復旧用データを保存します。保存した候補版だけを起動して
+   空設定をapplyし、自身が所有するfirewall tableの撤去を確認してから、再び停止します。
+   次に1.0の設定・状態を復元します。元の1.0 archiveを同じ停止オプションで導入し、
+   保存したunitとactivation receiptも復元します。`sudo systemctl daemon-reload`後に再起動し、
+   手順4を1.0で繰り返します。正本設定が保存ファイルと一致することも確認します。
+   nftables stateを手作業で削除してはいけません。
 6. 保存した1.5の設定・状態と対応する候補packageへ戻し、起動・peer試験を繰り返します。
    全段階の合格後、fixtureのcleanupを実行し、一時archive・snapshot・生ログを削除します。
    残すのはソース版、再現手順、合否です。

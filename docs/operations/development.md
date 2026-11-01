@@ -544,12 +544,14 @@ reuse a 1.0 state database in 1.5 or assume a binary-only downgrade is sufficien
    an actual DHCP timer renewal after any reacquisition. The peer boot ID and
    DHCP PID must be unchanged. Inspect the current boot for helper ownership or
    permission errors. A responsive data path alone does not pass this gate.
-5. For cutback, stop the same services, save the stopped 1.5 recovery set, and
-   restore the saved 1.0 configuration and state directories. Install the exact
-   baseline archive with the same no-restart options. Restore its saved unit and
-   activation receipt, run `sudo systemctl daemon-reload`, then reboot. Repeat
-   all step 4 checks against the 1.0 version and verify the restored canonical
-   configuration equals the saved file.
+5. For cutback, stop the same services and save the stopped 1.5 recovery set.
+   Start that same candidate only long enough to apply the empty configuration
+   and require its owned firewall table to withdraw, then stop it again. Restore
+   the saved 1.0 configuration and state directories. Install the exact baseline
+   archive with the same no-restart options. Restore its saved unit and activation
+   receipt, run `sudo systemctl daemon-reload`, then reboot. Repeat all step 4
+   checks against the 1.0 version and verify the restored canonical configuration
+   equals the saved file. Do not delete nftables state by hand.
 6. Restore the stopped 1.5 configuration/state with its matching candidate
    package and repeat the cold boot and peer checks. Only after all gates pass,
    run the fixture cleanup roles and remove this campaign's temporary archives,
