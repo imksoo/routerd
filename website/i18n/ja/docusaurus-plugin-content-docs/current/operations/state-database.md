@@ -20,6 +20,12 @@ routerd は状態とイベントを SQLite に永続化します。各デーモ�
 | HealthCheck 状態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
 | デーモン別イベント | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
+## routerd 1.5 の新規導入
+
+1.0 からのインプレース更新、設定・DB の import はサポートしません。導入前に設定を 1.5 形式へ変換し、
+1.5 の `routerd validate` で検証してから、新規導入と新しい state DB を使用します。変換は routerd の機能ではありません。
+以前の ownership ledger、未完了の provider action、DHCP callback queue、履歴も引き継ぎません。
+
 ## events テーブル
 
 イベントバスはイベントを SQLite に永続化します。`EventRule` はその履歴を入力にします。`DerivedEvent` は参照先の現在の status を評価し、asserted/retracted への遷移を記録します。

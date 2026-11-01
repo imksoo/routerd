@@ -27,19 +27,18 @@ This proposal branch uses one new schema, identified by SQLite `user_version`
 SQLite; the old JSON backend and prototype migrations are removed. Opening an
 older database fails with an explicit format error. No automatic reset occurs.
 
-For an authorized cutover, stop the old daemons, retain a complete backup if
-needed, select a fresh DB path, and start all routerd/worker binaries from the
-same revision with the rewritten configuration. Do not mix old and new workers:
-Health IPC now includes a typed `routing` observation required by the consumer.
-A Health worker restart restores display history and re-probes before declaring
-reachability. DHCP worker stop commands cancel the owning daemon; configuration
-changes are applied by the supervisor restarting workers with new arguments. Keep independent console access during network qualification.
+There is no in-place upgrade or 1.0 configuration/database import path. Before
+the first 1.5 installation, prepare the configuration in the 1.5 format using an
+external conversion process if needed, then validate it with `routerd validate`
+from the 1.5 build before a clean install with fresh state. The product does not
+convert 1.0 configuration or transfer the old ownership ledger, pending provider
+actions, DHCP callback queue, or history.
 
-The fresh database does not contain the old ownership ledger, pending provider
-actions, DHCP callback queue, or historical events. Resolve or explicitly retire
-those operations before switching; config alone cannot reconstruct unfinished
-external effects. Existing ownership must be inventoried so removal or adoption
-is deliberate. This is an operator cutover procedure, not a daemon migration.
+Run all routerd and worker binaries from the same revision. Do not mix revisions:
+Health IPC includes a typed `routing` observation required by its consumer. A
+Health worker restart restores display history and re-probes before declaring
+reachability. DHCP worker stop commands cancel the owning daemon; configuration
+changes are applied by the supervisor restarting workers with new arguments.
 
 State-variable writes now report persistence errors to their operation owner.
 PD observation saves and ingress drain/undrain requests fail when their change
@@ -56,8 +55,8 @@ derived views for LAN renumbering. The old single-prefix snapshot is not a
 supported restart format on this branch. The supported PD client is
 `routerd-dhcpv6-client`, also selected when `client` is omitted. External-client
 selectors such as `networkd`, `dhcp6c` and `dhcpcd` are rejected: they did not
-select an external lifecycle in the existing implementation. Rewrite those
-selectors at cutover; this revision does not infer lease authority from an OS
+select an external lifecycle in the existing implementation. Use the supported
+selector in the prepared 1.5 configuration; this revision does not infer lease authority from an OS
 address or a client-name label.
 
 The controller stores one typed PD
@@ -97,15 +96,15 @@ The BGP helper's applied-state journal is version 3 on this branch. Static and d
 additions persist their source and native GoBGP identifier before the live add;
 the returned UUID is acknowledged only after the final save. A restart can
 complete or withdraw an interrupted add without treating the path as absent.
-Earlier versions are rejected. At an authorized cutover, stop the old helper and
-retire its old journal before starting the matching new binaries; do not replace
-a journal while its helper is running or discard pending effects during repair.
+Earlier journal versions are rejected and are not imported. Start the version-3
+helper with its matching 1.5 binaries on a clean installation; do not replace a
+journal while its helper is running or discard pending effects during repair.
 Complete static/dynamic policy intent and pending policy replacement are owned
 by that same daemon; see [BGP ownership](../reference/bgp-ownership.md).
 
 The separate traffic-log database requires `traffic_log_format` version 1.
 Earlier databases that encoded missing counters as zero are rejected without
-modifying their rows; select a fresh traffic database at cutover. A missing
+modifying their rows; use a fresh traffic database on clean installation. A missing
 per-flow or directional counter is `null`/unobserved, while a measured zero is
 `0`. Client and aggregate incomplete flags mark a known partial sum as a lower
 bound; the console shows `≥` for that sum. Neither a missing flow nor a failed
@@ -184,9 +183,9 @@ handover completion events are not yet proven in a real environment.
 The YAML configuration holds operator intent. The state database also holds
 required ownership and unfinished operations, alongside observations and history.
 Preserve that state while repairing the same running router: restoring YAML alone
-cannot identify every external effect that needs cleanup. Rebuilding on a fresh
-host uses rewritten configuration and an explicit inventory and retirement of
-old effects, as described in the cutover procedure above.
+cannot identify every external effect that needs cleanup. A clean 1.5 install
+starts from prepared configuration and fresh state; it does not transfer or
+retire effects owned by the previous system.
 
 If you want history of operational events for forensic purposes, export or take periodic snapshots of `routerd.db`, `dns-queries.db`, `traffic-flows.db`, and `firewall-logs.db`. The controller event journal currently lives in `routerd.db`; preserve the complete database when event history is required.
 

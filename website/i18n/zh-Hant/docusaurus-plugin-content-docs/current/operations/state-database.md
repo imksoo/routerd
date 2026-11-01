@@ -20,6 +20,12 @@ routerd 將狀態與事件持久化至 SQLite。每個常駐程式除此之外�
 | HealthCheck 狀態 | `/var/lib/routerd/healthcheck/<name>/state.json` |
 | 常駐程式別事件 | `/var/lib/routerd/<daemon>/<name>/events.jsonl` |
 
+## routerd 1.5 全新安裝
+
+不支援從 1.0 原地升級，也不匯入舊設定或資料庫。安裝前先將設定轉換為 1.5 格式，並用 1.5 的 `routerd validate` 檢查；
+之後在乾淨目標上全新安裝並使用新的狀態資料庫。設定轉換不由 routerd 執行。舊 ownership ledger、未完成的 provider action、
+DHCP callback queue 和歷史記錄也不會轉移。
+
 ## events 資料表
 
 事件匯流排會將事件持久化至 SQLite。`EventRule` 以這些歷史記錄為輸入；`DerivedEvent` 則評估所參照物件的目前 status，並記錄 asserted/retracted 狀態轉換。

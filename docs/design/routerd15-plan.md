@@ -8,10 +8,11 @@ Baseline: routerd `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 Improve routerd in place on a separate branch. Preserve its useful networking
 behavior while removing duplicate state, conversions, unused execution paths,
 and unnecessary abstractions. Configuration and event/state database compatibility
-are explicitly not required. Cutover uses rewritten config and a fresh chosen DB;
-there is no old-format import or in-place upgrade project. Convert any retained
-operator configuration to the routerd 1.5 format and validate it with routerd 1.5
-before a clean install. Existing features are not implicitly removed. A new
+are explicitly not required. Initial installation uses rewritten config and a
+fresh database; there is no old-format import or in-place upgrade project.
+Convert any retained operator configuration to the routerd 1.5 format and
+validate it with routerd 1.5 before a clean install. Existing features are not
+implicitly removed. A new
 package/process/framework is justified only by the feature's needs.
 
 ## Completion and first live-use milestone
