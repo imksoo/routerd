@@ -281,6 +281,7 @@ for _ in {1..20}; do
 done
 [ "$reservation_present" = true ]
 /usr/local/sbin/routerctl apply -f "$work/dynamic.json" --replace > "$work/dynamic-apply.txt"
+dynamic_event_cursor=$(/usr/local/sbin/routerctl get events --limit 100 -o json | jq '[.events[]?.id] | max // 0')
 ip netns exec rd15-lan-peer ip -4 addr flush dev peer0
 ip netns exec rd15-lan-peer ip link set peer0 down
 ip netns exec rd15-lan-peer ip link set dev peer0 address 02:00:00:15:00:02
@@ -299,10 +300,10 @@ case "$dynamic" in
 esac
 stage=dynamic-lease-event
 for _ in {1..20}; do
- if /usr/local/sbin/routerctl get events --topic routerd.dhcp.lease.added --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select(.attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null 2>&1; then break; fi
+ if /usr/local/sbin/routerctl get events --since "$dynamic_event_cursor" --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select((.topic == "routerd.dhcp.lease.added" or .topic == "routerd.dhcp.lease.renewed") and .attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null 2>&1; then break; fi
  sleep 1
 done
-/usr/local/sbin/routerctl get events --topic routerd.dhcp.lease.added --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select(.attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null
+/usr/local/sbin/routerctl get events --since "$dynamic_event_cursor" --resource DHCPv4Server/lan --limit 100 -o json | jq -e --arg ip "$dynamic" '.events[] | select((.topic == "routerd.dhcp.lease.added" or .topic == "routerd.dhcp.lease.renewed") and .attributes.ip == $ip and .attributes.hostname == "transient")' >/dev/null
 stage=dynamic-lease
 for _ in {1..20}; do
  dynamic_present=true
