@@ -268,6 +268,31 @@ func TestZeroTimersAndInfinityDoNotCreateImmediateRetryLoop(t *testing.T) {
 	}
 }
 
+func TestRenewMarginKeepsHalfOfShortServerTimer(t *testing.T) {
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	c, transport := testClient(t, &now)
+	acquire(t, c, prefix("2001:db8:1::/56", 60, 90))
+	c.Lease.T1 = 20 * time.Second
+	c.Lease.T2 = 40 * time.Second
+	count := len(transport.sent)
+
+	now = now.Add(9 * time.Second)
+	if err := c.TickWithMargin(context.Background(), 30*time.Second, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.sent) != count || c.State != StateBound {
+		t.Fatalf("short lease renewed before bounded margin: state=%s sent=%d", c.State, len(transport.sent)-count)
+	}
+
+	now = now.Add(time.Second)
+	if err := c.TickWithMargin(context.Background(), 30*time.Second, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if c.State != StateRenewing || transport.last().Message.Type != MessageRenew {
+		t.Fatalf("short lease did not renew at bounded margin: state=%s message=%+v", c.State, transport.last().Message)
+	}
+}
+
 func TestInformationRequestLossRetryStatusAndRefresh(t *testing.T) {
 	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
 	c, transport := testClient(t, &now)

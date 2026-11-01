@@ -27,7 +27,11 @@ func (l Lease) associationDeadline(rebind bool, margin time.Duration) time.Time 
 		if rebind {
 			timer = t2
 		}
-		at := maxTime(lifetimeDeadline(acquired, timer).Add(-max(time.Duration(0), margin)), acquired.Add(time.Second))
+		// Preserve room for a real lease lifetime when an operator uses a
+		// short server timer. A larger fixed margin must not cause immediate
+		// renew/rebind exchanges after every successful Reply.
+		early := min(max(time.Duration(0), margin), timer/2)
+		at := maxTime(lifetimeDeadline(acquired, timer).Add(-early), acquired.Add(time.Second))
 		if result.IsZero() || at.Before(result) {
 			result = at
 		}
