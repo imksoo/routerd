@@ -91,6 +91,7 @@ func TestInstallPublishesDHCPEventRelayHook(t *testing.T) {
 }
 
 func TestInstallRecordsFirewallHandoffOnlyForPinnedRouterdV1(t *testing.T) {
+	requireLinuxSystemdFixture(t)
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
 	prefix := filepath.Join(dir, "prefix")
