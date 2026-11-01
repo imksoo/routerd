@@ -1641,7 +1641,7 @@
     "linux-dhcpv6-server-b961e45c": {
       "level": "independent-peer",
       "outcome": "pass",
-      "revision": "b961e45ca0bca51aeb54e038eb8add7b973e8d49",
+      "revision": "e72a309c90d3ee6d4641b9789b128c36900590bb",
       "reference": "docs/operations/development.md#linux-dhcpv6-server-vm-gate",
       "environment": "Authorized dedicated Linux VM; checksum-verified make dist archive through the actual systemd service; routerd-owned dnsmasq and native RA service on an isolated veth LAN; independent dhcpcd client namespace.",
       "checks": [
@@ -1650,10 +1650,11 @@
         "The stateful fixture, paired with an explicit M-only RA, made dhcpcd obtain an IA_NA and the configured DNS, SNTP and domain-search options; it confirmed that lease after routerd systemd restart.",
         "The stateless fixture made dhcpcd send an Information-Request with no IA_NA and independently receive the configured DNS, SNTP and domain-search options; the same result held after routerd systemd restart.",
         "The ra-only fixture received the native routerd RA through an independent rdisc6 decoder while routerd-dnsmasq remained inactive; DHCPv6Server status was Applied with mode ra-only, and an empty configuration withdrew the service.",
+        "Fixtures without an explicit IPv6RouterAdvertisement used an independent raw ICMPv6 receiver to verify native implicit RA flags and PIO autonomy: stateful M/O true/autonomous false; both true/true/true; stateless false/true/true; ra-only false/false/true. Each run verified the matching service state and empty-apply withdrawal.",
         "After routerd systemd restart, dhcpcd confirmed the prior lease. Applying an empty configuration reached Healthy with zero resources and no phase issues; test netns and exact dhcpcd lease state were removed."
       ],
       "excludes": [
-        "implicit DHCPv6 RA flags, natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
+        "natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
     }

@@ -261,6 +261,28 @@ dhcpcd の試験用 interface 名と lease state は毎回固有にし、成功�
 委譲アドレス、転送、FreeBSD、routerd 1.0 全機能の合格を示しません。失敗時は routerd を停止して
 正確な fixture directory をローカル再現用に保持し、解消後に削除します。
 
+## Linux の DHCPv6 implicit RA VM 試験
+
+`scripts/linux-dhcpv6-implicit-ra-smoke.sh` は、明示的な
+`IPv6RouterAdvertisement` を置かない `DHCPv6Server` が送る native RA を検査します。
+server 試験と同じ隔離済み使い捨て Linux VM だけで、`make dist` による候補導入後に実行します。
+前回候補の process を観測しないよう、reset 前に `routerd.service` を再起動します。
+
+```sh
+for mode in stateful both stateless ra-only; do
+  sudo scripts/linux-dhcpv6-implicit-ra-smoke.sh --disposable-vm \
+    "$PWD/tests/fixtures/linux-dhcpv6-implicit-ra-${mode}-smoke.json"
+done
+```
+
+独立した raw ICMPv6 receiver が最初の unsolicited RA を受信します。`stateful` は M/O を
+set し PIO autonomous flag を clear、`both` は M/O と autonomous を set、`stateless` は
+O のみを set して autonomous を維持、`ra-only` は M/O を clear して autonomous を維持する
+ことを必須とします。対応する `DHCPv6Server` status、dnsmasq の状態（`ra-only` は inactive）、
+空設定適用後の Healthy・宣言 resource なし・phase issue なしも確認します。成功時の一時出力は
+削除します。この試験は Renew/expiry、lease sync、転送、FreeBSD、routerd 1.0 全機能の合格を
+示しません。
+
 ## Linux の DHCPv6 アドレス・プレフィックス client 試験
 
 iproute2、util-linux、curl、jq、Python 3、展開済み Kea 2.4.1 package を用意した

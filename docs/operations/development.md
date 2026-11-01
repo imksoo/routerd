@@ -303,6 +303,31 @@ DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
 or complete routerd 1.0 functional parity. A failure stops routerd and preserves
 the exact fixture directory for local reproduction; delete it once resolved.
 
+## Linux DHCPv6 implicit-RA VM gate
+
+`scripts/linux-dhcpv6-implicit-ra-smoke.sh` verifies the native RA that a
+`DHCPv6Server` creates without an explicit `IPv6RouterAdvertisement` resource.
+Run it only in the same isolated disposable Linux VM conditions as the server
+gate, after installing the candidate with `make dist`. The gate restarts
+`routerd.service` before its reset so it cannot inspect a process left over from
+a previous candidate.
+
+```sh
+for mode in stateful both stateless ra-only; do
+  sudo scripts/linux-dhcpv6-implicit-ra-smoke.sh --disposable-vm \
+    "$PWD/tests/fixtures/linux-dhcpv6-implicit-ra-${mode}-smoke.json"
+done
+```
+
+An independent raw ICMPv6 receiver observes the initial unsolicited RA. It
+requires `stateful` to set M/O and clear the PIO autonomous flag; `both` to set
+M/O and retain autonomy; `stateless` to set O only and retain autonomy; and
+`ra-only` to clear M/O and retain autonomy. It also checks the matching
+`DHCPv6Server` status, dnsmasq activity (inactive for `ra-only`), and an empty
+apply reaching Healthy with no declared resources or phase issues. Successful
+temporary output is deleted. This gate does not establish renewal/expiry,
+lease synchronization, forwarding, FreeBSD, or complete routerd 1.0 parity.
+
 ## Linux WAN RA/SLAAC lifecycle gate
 
 Use `scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm` only in a dedicated,
