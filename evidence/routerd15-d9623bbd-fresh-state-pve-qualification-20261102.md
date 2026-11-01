@@ -42,6 +42,12 @@ PASS: live lease, DNS UDP/TCP, NAT and management positive control
 PASS: WAN/LAN/management and DNS isolation
 ```
 
+For the configured DHCP reservation, the independent client was temporarily
+given the reservation MAC address. It received `198.18.15.150`, and
+`printer.home.arpa` resolved to that address over both UDP and TCP. The client
+then returned to its original MAC address and reacquired the ordinary dynamic
+lease `198.18.15.107`.
+
 The router test VM was left running on `d9623bbd`. The legacy cutback ISO,
 legacy state archives, and package transfer ISO were detached and removed after
 the check.
@@ -49,5 +55,6 @@ the check.
 ## Unverified scope
 
 This is evidence for the listed Linux DHCP, DNS, IPv4 NAT, management, and
-isolation paths only. It does not establish every routerd 1.0 function, IPv6
-functions, all WAN modes, high availability behavior, or FreeBSD behavior.
+isolation paths only. DHCP lease expiry, conflicts, and DHCP server restart
+remain unverified. This record does not establish every routerd 1.0 function,
+IPv6 functions, all WAN modes, high availability behavior, or FreeBSD behavior.
