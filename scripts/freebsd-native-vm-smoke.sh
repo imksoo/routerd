@@ -285,6 +285,7 @@ echo "freebsd-native-libndpi=ok"
 
 sh scripts/freebsd-native-observer-smoke.sh
 sh scripts/freebsd-bgp-ipv6-fib-smoke.sh
+sh scripts/freebsd-ipv6-static-route-smoke.sh --routerd "$routerd"
 
 if [ "${ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME:-false}" = true ]; then
   clientpolicy_evidence="$work/clientpolicy-identity-vnet"
