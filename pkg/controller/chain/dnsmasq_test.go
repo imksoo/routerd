@@ -790,13 +790,18 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	}}
 	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true, ConfigPath: configPath, PIDFile: pidFile}
 
-	effective := mustDHCPWhenRouter(t, controller)
-	if err := controller.reconcile(context.Background()); err != nil {
-		t.Fatalf("reconcile backup DHCP service: %v", err)
+	backupOnly := *router
+	backupOnly.Spec.Resources = append([]api.Resource(nil), router.Spec.Resources[:2]...)
+	backupController := controller
+	backupController.Router = &backupOnly
+	if err := backupController.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile backup-only DHCP service: %v", err)
 	}
 	if _, err := os.Stat(configPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("backup reconcile created dnsmasq configuration, stat err=%v", err)
+		t.Fatalf("backup-only reconcile created dnsmasq configuration, stat err=%v", err)
 	}
+
+	effective := mustDHCPWhenRouter(t, controller)
 	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
