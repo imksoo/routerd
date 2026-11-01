@@ -33,6 +33,20 @@ routerd 1.0 (`e3b49dbb`) が作成した IPv4 静的アドレスと IPv4 経路�
    `PASS: WAN/LAN/management and DNS isolation`
 8. VM 219 の `routerd.service` 再起動後、3 から 7 を再確認。
 
+## 更新後の再検証
+
+`0e7d27eb` の更新試験では、移管済みアドレスの所有証跡を保存する前に再照合する不具合を検出しました。この版は実機合格にしていません。
+
+`58b66728` で、ハッシュ束縛済み移管を採用した直後に所有証跡を保存するよう修正し、再現単体試験を追加しました。専用ビルドの SHA-256 は `997af0127a5ced70ae446285c5d541e276861bfa54edd75cb47795495aa26bc6` です。
+
+VM 219 を `58b66728` へ更新後、次を確認しました。
+
+1. `IPv4StaticAddress/lan-v4` に `nativeReceipt` が保存され、`pending: false` でした。
+2. `routerd.service` の再起動後、21資源、`Healthy`、現在エラーなしでした。
+3. VM 220 の `probe` は DHCP、DNS の UDP/TCP、NAT、管理到達性で合格しました。
+4. VM 220 の `isolation` は WAN/LAN/管理/DNS の VLAN 分離で合格しました。
+5. `GOMAXPROCS=2 go test -p 2 -count=1 ./pkg/controller/chain` は 103.683秒で合格しました。
+
 ## 判定範囲
 
 この記録は、routerd 1.0 から 1.5 への IPv4 静的アドレス・IPv4 経路の移管と、
