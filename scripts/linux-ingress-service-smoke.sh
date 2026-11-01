@@ -17,9 +17,6 @@ done
 for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
  if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then echo "existing namespace: $ns" >&2; exit 1; fi
 done
-for unit in rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b; do
- test "$(systemctl show -p LoadState --value "$unit.service")" = not-found
-done
 if nft -j list tables | jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")' >/dev/null; then
  echo 'existing product firewall; empty dedicated guest required' >&2
  exit 1
@@ -29,6 +26,9 @@ work=$(mktemp -d /var/tmp/routerd15-ingress.XXXXXX)
 stage='setup'
 forward_before=$(sysctl -n net.ipv4.ip_forward)
 capture_pid=''
+port_forward_pid=''
+backend_a_pid=''
+backend_b_pid=''
 empty="$work/empty.json"
 cat > "$empty" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"ingress-smoke"},"spec":{"resources":[]}}
@@ -52,8 +52,12 @@ finish() {
   nft list ruleset >&2 || true
  fi
  /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
- systemctl stop rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
- systemctl reset-failed rd15-ingress-port-forward rd15-ingress-backend-a rd15-ingress-backend-b >/dev/null 2>&1 || true
+ for pid in "$port_forward_pid" "$backend_a_pid" "$backend_b_pid"; do
+  test -z "$pid" || kill "$pid" >/dev/null 2>&1 || true
+ done
+ for pid in "$port_forward_pid" "$backend_a_pid" "$backend_b_pid"; do
+  test -z "$pid" || wait "$pid" >/dev/null 2>&1 || true
+ done
  for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
   ip netns del "$ns" >/dev/null 2>&1 || true
  done
@@ -114,12 +118,18 @@ ip -n rd15-ing-backend-a route add default via 198.18.50.1
 ip -n rd15-ing-backend-b addr add 198.18.50.20/24 dev peer0
 ip -n rd15-ing-backend-b route add default via 198.18.50.1
 
-systemd-run --unit=rd15-ingress-port-forward --property=Type=exec \
- ip netns exec rd15-ing-backend-a python3 "$work/backend.py" port-forward 198.18.50.10 8081 "$work/port-forward.events"
-systemd-run --unit=rd15-ingress-backend-a --property=Type=exec \
- ip netns exec rd15-ing-backend-a python3 "$work/backend.py" backend-a 198.18.50.10 8080 "$work/backend-a.events"
-systemd-run --unit=rd15-ingress-backend-b --property=Type=exec \
- ip netns exec rd15-ing-backend-b python3 "$work/backend.py" backend-b 198.18.50.20 8080 "$work/backend-b.events"
+start_port_forward() {
+ ip netns exec rd15-ing-backend-a python3 "$work/backend.py" port-forward 198.18.50.10 8081 "$work/port-forward.events" & port_forward_pid=$!
+}
+start_backend_a() {
+ ip netns exec rd15-ing-backend-a python3 "$work/backend.py" backend-a 198.18.50.10 8080 "$work/backend-a.events" & backend_a_pid=$!
+}
+start_backend_b() {
+ ip netns exec rd15-ing-backend-b python3 "$work/backend.py" backend-b 198.18.50.20 8080 "$work/backend-b.events" & backend_b_pid=$!
+}
+start_port_forward
+start_backend_a
+start_backend_b
 
 probe() {
  local ns=$1 address=$2 port=$3 expected=$4 expected_source=$5
@@ -254,13 +264,15 @@ if probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1; then
 fi
 
 stage='ingress-health-failover'
-systemctl stop rd15-ingress-backend-a
+kill "$backend_a_pid"
+wait "$backend_a_pid" || true
+backend_a_pid=''
 await_backend backend-b
 probe rd15-ing-external 198.18.52.2 18081 backend-b 198.18.52.1
 probe rd15-ing-client 198.18.52.2 18081 backend-b 198.18.50.1
 
 stage='ingress-backend-recovery'
-systemctl start rd15-ingress-backend-a
+start_backend_a
 await_backend backend-a
 probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 
