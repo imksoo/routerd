@@ -38,6 +38,7 @@ finish() {
   echo "FAIL at $stage; live state follows before cleanup" >&2
   if test -f "$work/packets.txt"; then echo 'packet observation:' >&2; cat "$work/packets.txt" >&2; fi
   if test -f "$work/nft-trace.txt"; then echo 'nft trace:' >&2; cat "$work/nft-trace.txt" >&2; fi
+  if [ "${ROUTERD_FLOW_DNAT_DEBUG:-}" = 1 ] && command -v conntrack >/dev/null; then echo 'UDP conntrack entries:' >&2; conntrack -L -p udp >&2 || true; fi
   nft list map ip routerd_nat flow_dnat_camera >&2 || true
   iptables -S FORWARD >&2 || true
   nft list ruleset >&2 || true
