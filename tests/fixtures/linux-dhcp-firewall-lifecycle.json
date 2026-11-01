@@ -162,7 +162,12 @@
               "hostname": "router",
               "ipv4": "198.18.15.1"
             }
-          ]
+          ],
+          "dhcpDerived": {
+            "sources": [
+              "DHCPv4Server/lan"
+            ]
+          }
         }
       },
       {
