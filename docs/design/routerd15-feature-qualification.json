@@ -1604,6 +1604,22 @@
         "WAN routing and forwarding, RA/DNS lifetime behavior, DHCPv6 server modes, FreeBSD, and complete routerd 1.0 functional parity.",
         "Whole-feature or whole-platform qualification."
       ]
+    },
+    "linux-router-advertisement-static-8705b506": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8705b5065d8c9080b6bd06b74cdf06a4f2458c96",
+      "reference": "docs/operations/development.md#native-socket-checks",
+      "environment": "Authorized isolated Linux VM. routerd ran in a private network namespace on one end of a veth pair; independent rdisc6 ran in the peer namespace.",
+      "checks": [
+        "routerd DHCPv6-server controller emitted a static-prefix RA over the real all-nodes multicast path.",
+        "rdisc6 independently received the advertised 2001:db8:15::/64 prefix.",
+        "The VM service which initially owned native operations was stopped for the gate and restored during cleanup."
+      ],
+      "excludes": [
+        "Delegated prefixes, RDNSS/DNSSL, RA lifetime renewal/withdrawal, DHCPv6 server exchange, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
+        "Whole-feature or whole-platform qualification."
+      ]
     }
   },
   "features": [
