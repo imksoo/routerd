@@ -12,7 +12,11 @@ systemd-detect-virt --vm --quiet
 candidate=${1:?candidate config}
 fixture=${2:?extracted Kea and ndisc6 package root}
 test "$(id -u)" = 0
-for x in ip curl jq python3 dig; do command -v "$x" >/dev/null; done
+for x in ip curl jq python3 dig modprobe; do command -v "$x" >/dev/null; done
+# ConntrackObserver is part of routerd runtime status even after the candidate
+# resources are withdrawn. Load its Linux dependency in this disposable VM.
+modprobe nf_conntrack
+test -r /proc/sys/net/netfilter/nf_conntrack_count
 export LD_LIBRARY_PATH="$fixture/usr/lib/x86_64-linux-gnu"
 kea=$fixture/usr/sbin/kea-dhcp6
 rdisc=$fixture/usr/bin/rdisc6
