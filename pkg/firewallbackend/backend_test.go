@@ -512,3 +512,47 @@ func TestNftablesBackendAdoptsRecordedRouterdV1FirewallBeforeLoading(t *testing.
 		t.Fatalf("successful legacy adoption retained handoff: %v", err)
 	}
 }
+
+func TestNftablesLegacyFirewallHandoffRejectsInvalidOrUnacknowledgedStates(t *testing.T) {
+	valid := []byte(`{"version":"routerd-v1-firewall-handoff/v1","sourceCommit":"e3b49dbb"}`)
+	for _, tc := range []struct {
+		name      string
+		record    []byte
+		dryRun    bool
+		inventory string
+		deleteErr bool
+		wantAdopt bool
+		wantErr   bool
+	}{
+		{name: "invalid record", record: []byte(`{}`), wantErr: true},
+		{name: "dry run", record: valid, dryRun: true, wantAdopt: true},
+		{name: "already owned", record: valid, inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","comment":"routerd.owner=routerd routerd.generation=1"}}]}`, wantAdopt: true},
+		{name: "no legacy table", record: valid, inventory: `{"nftables":[]}`, wantAdopt: true},
+		{name: "delete failed", record: valid, inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42}}]}`, deleteErr: true, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "handoff.json")
+			if err := os.WriteFile(path, tc.record, 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			backend := Nftables{LegacyFirewallHandoffPath: path, Run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				calls++
+				if strings.Join(args, " ") == "-j list tables" {
+					return []byte(tc.inventory), nil
+				}
+				if tc.deleteErr {
+					return nil, errors.New("native delete failed")
+				}
+				return nil, nil
+			}}
+			adopted, err := backend.adoptRecordedLegacyFirewall(t.Context(), tc.dryRun)
+			if (err != nil) != tc.wantErr || adopted != tc.wantAdopt {
+				t.Fatalf("adopted=%v err=%v", adopted, err)
+			}
+			if tc.dryRun && calls != 0 {
+				t.Fatalf("dry run invoked native commands: %d", calls)
+			}
+		})
+	}
+}
