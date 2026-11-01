@@ -83,7 +83,7 @@ func ensureFreeBSDStrongSwan(ctx context.Context) error {
 	// The OS supervisor retains it for the provider lifetime. A competing
 	// package/routerd start cannot create another supervisor under that lease.
 	// Calling the rc start hook would also perform a destructive global load-all.
-	output, err := runIPsecCommand(serviceCtx, "/usr/sbin/daemon", "-f", "-S", "-P", filepath.Join(filepath.Dir(platformDefaults.RuntimeDir), "daemon-charon.pid"), "/usr/local/libexec/ipsec/charon", "--use-syslog")
+	output, err := runDetachedIPsecCommand(serviceCtx, "/usr/sbin/daemon", "-f", "-S", "-P", filepath.Join(filepath.Dir(platformDefaults.RuntimeDir), "daemon-charon.pid"), "/usr/local/libexec/ipsec/charon", "--use-syslog")
 	if err != nil {
 		var exitError *exec.ExitError
 		if !errors.As(err, &exitError) || exitError.ExitCode() != 3 {
@@ -129,6 +129,21 @@ func runIPsecCommand(ctx context.Context, name string, args ...string) ([]byte, 
 	command := exec.CommandContext(ctx, name, args...)
 	command.Stdout, command.Stderr = stdout, stderr
 	err := subprocessio.Run(command)
+	err = errors.Join(err, subprocessio.LimitError(stdout, stderr), ctx.Err())
+	output := append([]byte(nil), stdout.Bytes()...)
+	output = append(output, stderr.Bytes()...)
+	return output, err
+}
+
+// runDetachedIPsecCommand launches FreeBSD daemon(8), whose child must outlive
+// its short-lived launcher. Do not use subprocessio.Run here: its parent-death
+// signal and process-group cleanup intentionally terminate ordinary command
+// descendants, which would kill charon as daemon detaches it.
+func runDetachedIPsecCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	stdout, stderr := subprocessio.NewCapture(subprocessio.StdoutLimit), subprocessio.NewCapture(subprocessio.StderrLimit)
+	command := exec.CommandContext(ctx, name, args...)
+	command.Stdout, command.Stderr = stdout, stderr
+	err := command.Run()
 	err = errors.Join(err, subprocessio.LimitError(stdout, stderr), ctx.Err())
 	output := append([]byte(nil), stdout.Bytes()...)
 	output = append(output, stderr.Bytes()...)

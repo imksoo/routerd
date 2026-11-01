@@ -26,6 +26,22 @@ func TestIPsecCommandCancellationBoundsInheritedChildPipes(t *testing.T) {
 	}
 }
 
+func TestDetachedIPsecProviderStartDoesNotKillDaemonChild(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "provider-started")
+	script := fmt.Sprintf("(sleep 0.1; : > %q) >/dev/null 2>&1 &", marker)
+	if _, err := runDetachedIPsecCommand(t.Context(), "sh", "-c", script); err != nil {
+		t.Fatalf("start detached provider: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("detached provider child did not survive its launcher exit")
+}
+
 func TestFreeBSDUnknownStrongSwanStatusPreservesExistingOwnerEndpoints(t *testing.T) {
 	for _, endpoint := range []string{"charon.pid", "charon.vici"} {
 		t.Run(endpoint, func(t *testing.T) {
