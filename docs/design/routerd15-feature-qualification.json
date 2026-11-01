@@ -1676,6 +1676,24 @@
         "Port forwards, pinholes, session synchronization, address sets, client policy, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-dhcpv4-reservation-lifecycle-329dfd9c": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "329dfd9cf3d745ea29893451cd47b6229c72a501",
+      "procedure_revision": "a52588f0abb7269d3de27e14fbb6355f7be6cfcc",
+      "reference": "docs/operations/development.md#linux-dhcp-and-firewall-withdrawal-gate",
+      "environment": "Authorized dedicated Linux VM; checksum-verified make dist package through the actual systemd service; independent BusyBox client with a fixed MAC plus LAN, WAN and management peers in separate namespaces.",
+      "checks": [
+        "Reservation MAC received its configured IPv4 address outside the dynamic pool with the configured gateway and DNS options.",
+        "DHCP-derived printer record answered over UDP and TCP through DNSResolver, then continued through the existing timer-driven DHCP renewal and routerd service restart checks.",
+        "The complete DHCP/DNS/NAT/firewall lifecycle completed empty withdrawal; routerd remained Healthy with no test namespaces, interfaces, firewall table or temporary output."
+      ],
+      "excludes": [
+        "Reservation conflict handling, lease expiry, profile matching, WAN DHCP client, reboot and interrupted apply.",
+        "All DNS source/query policies, transports, tombstone/negative reply recovery, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2591,7 +2609,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-two-vm-recovery-0cb82866",
-          "linux-dhcp-firewall-lifecycle-5431ad2a"
+          "linux-dhcp-firewall-lifecycle-5431ad2a",
+          "linux-dhcpv4-reservation-lifecycle-329dfd9c"
         ]
       },
       "freebsd": {
@@ -2876,7 +2895,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-vlan-clients-39156bb6",
           "linux-two-vm-recovery-0cb82866",
-          "linux-dhcp-firewall-lifecycle-5431ad2a"
+          "linux-dhcp-firewall-lifecycle-5431ad2a",
+          "linux-dhcpv4-reservation-lifecycle-329dfd9c"
         ]
       },
       "freebsd": {
