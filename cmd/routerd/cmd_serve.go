@@ -1046,11 +1046,12 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	initialServers, err := servers.prepare(initialObservation.EffectiveRouter)
 	if err != nil {
-		return fmt.Errorf("prepare HTTP servers: %w", err)
-	}
-	defer initialServers.close()
-	if err := initialServers.publish(); err != nil {
-		return err
+		logger.Emit(eventlog.LevelWarning, "serve", "HTTP listeners deferred until their declared address is ready", map[string]string{"error": err.Error()})
+	} else {
+		defer initialServers.close()
+		if err := initialServers.publish(); err != nil {
+			return err
+		}
 	}
 	httpServers.Store(servers)
 	statusListener, err := listenUnixSocket(*statusSocketPath, 0o660)
