@@ -63,6 +63,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 	defer telemetry.ShutdownGracefully()
 	slog.SetDefault(telemetry.Logger)
+	ctx, span := telemetry.Tracer.Start(context.Background(), "routerd.run")
+	defer span.End()
+	telemetry.Counter("routerd.process.starts").Add(ctx, 1)
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")
