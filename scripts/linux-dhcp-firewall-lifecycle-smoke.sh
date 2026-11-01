@@ -12,6 +12,12 @@ management=$2
 test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in conntrack dnsmasq nft dig busybox curl python3 jq ip; do command -v "$x" >/dev/null; done
+relay=/usr/local/sbin/routerd-dhcp-event-relay
+hook=/usr/local/libexec/routerd/dhcp-event-relay
+test -x "$relay"
+test -L "$hook"
+test "$(readlink "$hook")" = "$relay"
+test -x "$hook"
 ip link show "$management" >/dev/null
 for dev in rd15-lan rd15-wan rd15-admin; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
@@ -97,6 +103,12 @@ done
 test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1
 systemctl start routerd
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
+lease_events() {
+ # The event query topic is an exact match, not a glob. Filter the bounded
+ # source history by topic in jq below instead.
+ /usr/local/sbin/routerctl get events --resource DHCPv4Server/lan --limit 100 -o json
+}
+lease_event_cursor=$(lease_events | jq '[.events[]?.id] | max // 0')
 cat > "$work/udhcpc-hook" <<'HOOK'
 #!/bin/sh
 set -eu
@@ -118,6 +130,14 @@ done
 grep '^bound ' "$work/udhcpc-hook.events"
 client=$(awk '$1 == "bound" {print $2; exit}' "$work/udhcpc-hook.events")
 [[ "$client" =~ ^198\.18\.15\.(10[0-9]|110)$ ]]
+added_event_seen() {
+ lease_events > "$work/dhcp-events-added.json"
+ jq -e --arg ip "$client" --argjson cursor "$lease_event_cursor" \
+  'any(.events[]?; .id > $cursor and .topic == "routerd.dhcp.lease.added" and .resourceKind == "DHCPv4Server" and .resourceName == "lan" and .attributes.ip == $ip and .attributes.interface == "rd15-lan")' \
+  "$work/dhcp-events-added.json" >/dev/null
+}
+for _ in {1..20}; do added_event_seen && break; sleep 1; done
+added_event_seen || { echo 'DHCP acquisition callback did not reach routerd event history' >&2; exit 1; }
 http() { ip netns exec "rd15-$1-peer" curl --noproxy '*' --fail --silent --show-error --max-time 3 "http://$2:8080/$3"; }
 probe() {
  for mode in +notcp +tcp; do
@@ -155,6 +175,7 @@ isolation() {
 probe
 isolation
 # Wait for the independent client's timer-driven DHCPREQUEST/ACK, not SIGUSR1.
+lease_event_cursor=$(lease_events | jq '[.events[]?.id] | max // 0')
 for _ in {1..130}; do
  if grep -q '^renew ' "$work/udhcpc-hook.events"; then break; fi
  sleep 1
@@ -162,6 +183,14 @@ done
 grep '^renew ' "$work/udhcpc-hook.events"
 if grep -q bad-options "$work/udhcpc-hook.events"; then echo 'DHCP options changed unexpectedly' >&2; exit 1; fi
 awk -v ip="$client" '$1=="renew" && $2==ip && $3>0 {found=1} END{exit !found}' "$work/udhcpc-hook.events"
+renewed_event_seen() {
+ lease_events > "$work/dhcp-events-renewed.json"
+ jq -e --arg ip "$client" --argjson cursor "$lease_event_cursor" \
+  'any(.events[]?; .id > $cursor and .topic == "routerd.dhcp.lease.renewed" and .resourceKind == "DHCPv4Server" and .resourceName == "lan" and .attributes.ip == $ip and .attributes.interface == "rd15-lan")' \
+  "$work/dhcp-events-renewed.json" >/dev/null
+}
+for _ in {1..20}; do renewed_event_seen && break; sleep 1; done
+renewed_event_seen || { echo 'DHCP renewal callback did not reach routerd event history' >&2; exit 1; }
 probe
 systemctl restart routerd
 probe
