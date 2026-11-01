@@ -400,7 +400,7 @@ echo static-archive-agent
 	}
 }
 
-func TestInstallPreservesOperatorConfigWithoutMigration(t *testing.T) {
+func TestInstallPreservesPreconvertedOperatorConfig(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
 	prefix := filepath.Join(dir, "prefix")
@@ -418,26 +418,28 @@ exit 0
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	legacyConfig := `apiVersion: routerd.net/v1alpha1
+	preconvertedConfig := `apiVersion: routerd.net/v1alpha1
 kind: Router
 metadata:
-  name: legacy
+  name: dhcp-router
 spec:
   resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
       metadata:
-        name: routerd.service
+        name: wan
       spec:
-        execStart: /usr/local/sbin/routerd serve --controller-chain
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Hostname
+        ifname: ens1p1
+        adminUp: true
+        managed: true
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv4Client
       metadata:
-        name: router
+        name: wan-dhcpv4
       spec:
-        hostname: router01
+        interface: wan
 `
-	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(preconvertedConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -450,7 +452,7 @@ spec:
 		t.Fatal(err)
 	}
 	got := string(data)
-	if got != legacyConfig {
+	if got != preconvertedConfig {
 		t.Fatalf("installer rewrote operator config:\n%s", got)
 	}
 }
