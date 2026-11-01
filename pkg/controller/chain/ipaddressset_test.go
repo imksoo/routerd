@@ -373,12 +373,13 @@ func TestIPAddressSetControllerSkipsBeforeDueWhenNftSetContainsCachedElements(t 
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	store := mapStore{}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "dns-google", map[string]any{
-		"phase":         "Applied",
-		"addresses":     []any{"8.8.8.8"},
-		"ipv4Addresses": []any{"8.8.8.8"},
-		"nextRefreshAt": now.Add(time.Hour).Format(time.RFC3339Nano),
-		"nftVerifiedAt": now.Add(-time.Minute).Format(time.RFC3339Nano),
-		"targets":       []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
+		"phase":           "Applied",
+		"addresses":       []any{"8.8.8.8"},
+		"ipv4Addresses":   []any{"8.8.8.8"},
+		"nextRefreshAt":   now.Add(time.Hour).Format(time.RFC3339Nano),
+		"nftVerifiedAt":   now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"targets":         []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
+		"specFingerprint": ipAddressSetSpecFingerprint(api.IPAddressSetSpec{Names: []string{"dns.google"}}),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -399,6 +400,59 @@ func TestIPAddressSetControllerSkipsBeforeDueWhenNftSetContainsCachedElements(t 
 	}
 	if err := controller.Reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile: %v", err)
+	}
+}
+
+func TestIPAddressSetControllerReconcilesChangedStaticAddressesBeforeRefreshDue(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPAddressSet"}, Metadata: api.ObjectMeta{Name: "clients"}, Spec: api.IPAddressSetSpec{Addresses: []string{"198.18.70.101"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44FlowDNATPinhole"}, Metadata: api.ObjectMeta{Name: "camera"}, Spec: api.NAT44FlowDNATPinholeSpec{Outbound: api.NAT44FlowDNATPinholeOutboundSpec{SourceSetRef: "IPAddressSet/clients"}}},
+	}}}
+	now := time.Date(2026, 11, 1, 15, 0, 0, 0, time.UTC)
+	store := mapStore{}
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "clients", map[string]any{
+		"phase":           "Applied",
+		"addresses":       []any{"198.18.70.100"},
+		"ipv4Addresses":   []any{"198.18.70.100"},
+		"nextRefreshAt":   now.Add(time.Hour).Format(time.RFC3339Nano),
+		"nftVerifiedAt":   now.Add(-time.Minute).Format(time.RFC3339Nano),
+		"targets":         []any{"ip/routerd_nat/ip_address_set_clients"},
+		"specFingerprint": "old-static-addresses",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	controller := IPAddressSetController{
+		Router: router, Store: store, RuntimeDir: t.TempDir(), NftCommand: "nft-test", Now: func() time.Time { return now },
+		Command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name != "nft-test" {
+				t.Fatalf("command name = %s", name)
+			}
+			if strings.Join(args, " ") == "list set ip routerd_nat ip_address_set_clients" {
+				return []byte("set ip_address_set_clients { type ipv4_addr; elements = { 198.18.70.100 } }"), nil
+			}
+			if len(args) == 2 && args[0] == "-f" {
+				data, err := os.ReadFile(args[1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				script += string(data)
+				return nil, nil
+			}
+			t.Fatalf("unexpected nft args: %v", args)
+			return nil, nil
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for _, want := range []string{
+		"delete element ip routerd_nat ip_address_set_clients { 198.18.70.100 }",
+		"add element ip routerd_nat ip_address_set_clients { 198.18.70.101 }",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("nft script missing %q:\n%s", want, script)
+		}
 	}
 }
 

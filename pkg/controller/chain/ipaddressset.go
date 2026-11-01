@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/netip"
@@ -69,6 +70,7 @@ resources:
 		if err != nil {
 			return err
 		}
+		specFingerprint := ipAddressSetSpecFingerprint(spec)
 		setName := render.NftIPAddressSetName(resource.Metadata.Name)
 		targets := referenced[resource.Metadata.Name]
 		activeTargets := c.activeIPAddressSetTargets(targets)
@@ -83,7 +85,8 @@ resources:
 		}
 		current := c.Store.ObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name)
 		if len(activeTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
-			if _, ok := cachedIPAddressSetResult(current); ok && ipAddressSetStatusTargetsCover(current, activeTargets) && !ipAddressSetNftVerifyDue(current, now) {
+			_, cached := cachedIPAddressSetResult(current)
+			if current["specFingerprint"] == specFingerprint && cached && ipAddressSetStatusTargetsCover(current, activeTargets) && !ipAddressSetNftVerifyDue(current, now) {
 				continue
 			}
 		}
@@ -99,13 +102,15 @@ resources:
 			}
 		}
 		if len(activeTargets) > 0 && len(existingTargets) > 0 && !ipAddressSetRefreshDue(current, now) {
-			if cached, ok := cachedIPAddressSetResult(current); ok && ipAddressSetTargetsCurrent(cached, activeTargets, existingOutputs) {
-				next := copyStatusMap(current)
-				next["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
-				if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, next); err != nil {
-					return err
+			if current["specFingerprint"] == specFingerprint {
+				if cached, ok := cachedIPAddressSetResult(current); ok && ipAddressSetTargetsCurrent(cached, activeTargets, existingOutputs) {
+					next := copyStatusMap(current)
+					next["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
+					if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", resource.Metadata.Name, next); err != nil {
+						return err
+					}
+					continue
 				}
-				continue
 			}
 		}
 		result, err := resolveIPAddressSet(ctx, resolver, spec)
@@ -194,6 +199,7 @@ resources:
 			"resolvedAt":        now.Format(time.RFC3339Nano),
 			"dryRun":            len(activeTargets) == 0,
 			"runtimeController": len(activeTargets) > 0,
+			"specFingerprint":   specFingerprint,
 		}
 		if len(activeTargets) > 0 {
 			status["nftVerifiedAt"] = now.Format(time.RFC3339Nano)
@@ -203,6 +209,29 @@ resources:
 		}
 	}
 	return nil
+}
+
+func ipAddressSetSpecFingerprint(spec api.IPAddressSetSpec) string {
+	addresses := normalizedIPAddressSetSpecValues(spec.Addresses)
+	names := normalizedIPAddressSetSpecValues(spec.Names)
+	value := strings.Join([]string{
+		"addresses=" + strings.Join(addresses, "\x00"),
+		"names=" + strings.Join(names, "\x00"),
+		"refreshInterval=" + strings.TrimSpace(spec.RefreshInterval),
+	}, "\x00")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+}
+
+func normalizedIPAddressSetSpecValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 type ipAddressSetResolveResult struct {
