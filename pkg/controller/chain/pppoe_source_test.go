@@ -27,7 +27,7 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	}
 	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ethernet"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.PPPoESessionSpec{Interface: "ethernet", Username: "subscriber", Password: "private"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.PPPoESessionSpec{Interface: "ethernet", IfName: "ppp-configured", Username: "subscriber", Password: "private"}},
 	}}}
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -51,7 +51,7 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	}
 	evented := eventedStore{Store: store, Router: declared}
 	source, ready, err := runner.currentPPPoESource(declared, "wan", evented)
-	if err != nil || !ready || source.SupervisorOwner != "current-owner" || source.Interface != "ens18" || source.Device != "ppp-wan" {
+	if err != nil || !ready || source.SupervisorOwner != "current-owner" || source.Interface != "ens18" || source.Device != "ppp-configured" {
 		t.Fatalf("current source not accepted: %+v ready=%v err=%v", source, ready, err)
 	}
 	readFailure = true
@@ -91,5 +91,32 @@ func TestPPPoEClientDaemonSpecPassesInterfaceNameAndDefaultRoute(t *testing.T) {
 		if !strings.Contains(args, want) {
 			t.Fatalf("daemon args missing %q: %#v", want, specs[0].Args)
 		}
+	}
+}
+
+func TestStrictGenerationStopsRemovedPPPoEClientBeforeRouteControllers(t *testing.T) {
+	useSupervisedDaemonMarkerTestRoot(t)
+	done := make(chan struct{})
+	close(done)
+	canceled := false
+	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}}
+	runner := &Runner{
+		Router: router,
+		Store:  mapStore{},
+		Opts:   Options{SuperviseClientDaemons: true},
+		clientDaemonStates: map[string]supervisedDaemonState{
+			supervisedDaemonKey("routerd-pppoe-client", "removed-wan"): {
+				Spec:   supervisedDaemonSpec{ResourceName: "removed-wan", Binary: "routerd-pppoe-client"},
+				Cancel: func() { canceled = true },
+				Done:   done,
+			},
+		},
+	}
+	store := eventedStore{Store: runner.Store, Router: router}
+	if err := runner.reconcileStrictGenerationClientDaemons(t.Context(), store, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !canceled || len(runner.clientDaemonStates) != 0 {
+		t.Fatalf("strict generation retained removed PPPoE client: canceled=%t states=%#v", canceled, runner.clientDaemonStates)
 	}
 }

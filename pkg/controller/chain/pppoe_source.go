@@ -45,9 +45,11 @@ func (r *Runner) currentPPPoESource(declared *api.Router, name string, store eve
 		}
 	}
 	for i := 0; i+1 < len(wanted.Args); i++ {
-		if wanted.Args[i] == "--interface" {
+		switch wanted.Args[i] {
+		case "--interface":
 			source.Interface = wanted.Args[i+1]
-			break
+		case "--ifname":
+			source.Device = wanted.Args[i+1]
 		}
 	}
 	if source.Interface == "" {

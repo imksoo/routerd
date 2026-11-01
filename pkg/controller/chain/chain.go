@@ -2046,6 +2046,12 @@ func (r *Runner) prepareControllerGenerationOwned(ctx, requestCtx context.Contex
 			return nil, err
 		}
 	}
+	if strict {
+		if err := r.reconcileStrictGenerationClientDaemons(generationCtx, store, logger); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	builder := r.frameworkControllers
 	if r.generationBuilder != nil {
 		builder = r.generationBuilder
@@ -3694,6 +3700,21 @@ func (r *Runner) reconcileSupervisedClientDaemons(ctx context.Context, router *a
 		return err
 	}
 	return r.cleanupRemovedDaemonStatuses()
+}
+
+// A strict configuration apply must finish withdrawal of stale client daemons
+// before route controllers observe or acquire the new generation's routes.
+// Otherwise a removed PPP session can leave its kernel default route in place
+// while the replacement route is checked for foreign ownership.
+func (r *Runner) reconcileStrictGenerationClientDaemons(ctx context.Context, store eventedStore, logger *slog.Logger) error {
+	if !r.Opts.SuperviseClientDaemons {
+		return nil
+	}
+	router, err := r.daemonSupervisionRouter(store)
+	if err != nil {
+		return err
+	}
+	return r.reconcileSupervisedClientDaemons(ctx, router, logger)
 }
 
 func (r *Runner) daemonSupervisionRouter(store eventedStore) (*api.Router, error) {
