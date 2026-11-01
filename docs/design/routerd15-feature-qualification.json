@@ -453,6 +453,22 @@
         "FreeBSD、物理回線および完全な WireGuard 機能認定"
       ]
     },
+    "linux-wireguard-pve-8e732fe2": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8e732fe2199a28792c34abfff94d4ee6cbcf27b3",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": "候補 routerd の SHA-256 は 6959a288929db37a7f2c831ea8560fb85686b7f28cfd22b3e4ddc8555c9a0ee5 です。",
+      "environment": "隔離 PVE の VLAN 3132。VM219 は空の 1.5 状態領域で候補 routerd を稼働し、VM220 は独立した Linux WireGuard ピアです。",
+      "checks": [
+        "候補 routerd 再起動後もトンネルの IPv4 アドレスと経路が存在し、独立ピアとの双方向 ICMP は各 3 回すべて成功した",
+        "独立ピアの鍵と候補の WireGuardPeer 公開鍵を更新した後、新しいハンドシェイクと双方の 3 回 ICMP が成功した",
+        "WireGuard 資源を含まない設定へ置換すると、残る 6 リソースが Healthy になり、トンネル、IPv4 アドレス、経路、独立ピアからの到達性が消えた"
+      ],
+      "excludes": [
+        "FreeBSD、物理回線および完全な WireGuard 機能認定"
+      ]
+    },
     "linux-vrf-withdraw-review-9735f25e": {
       "level": "code-passed",
       "outcome": "pass",
@@ -2310,16 +2326,15 @@
         "scoped_evidence": [
           "linux-wireguard-peer-f54ceecb",
           "linux-combined-native-3e58c93a",
-          "linux-wireguard-pve-b1ae8709"
+          "linux-wireguard-pve-b1ae8709",
+          "linux-wireguard-pve-8e732fe2"
         ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
-      "required_remaining_checks": [
-        "鍵ローテーション、routerd プロセス再起動、設定撤去時のトンネル・アドレス・経路の消去"
-      ],
+      "required_remaining_checks": [],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
       ]

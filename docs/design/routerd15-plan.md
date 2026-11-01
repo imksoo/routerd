@@ -149,6 +149,18 @@ IPv4Route、および `wg-pve` の信頼ゾーンを適用しました。VLAN 31
 未確認です。検証後は VM219/220 の元の実行物・設定・状態領域を復元し、試験用 ISO、VLAN
 リンク、インターフェース、秘密鍵を含む一時領域を削除しました。
 
+同じ Linux WireGuard 構成を `8e732fe2` の候補実行物で再試験しました。候補 routerd を
+再起動した後も、トンネルの IPv4 アドレスと経路が存在し、独立ピアとの双方向 ICMP は各
+3 回すべて成功しました。独立ピアの鍵を新しい鍵へ変更し、候補の WireGuardPeer 公開鍵を
+置換すると、新しいハンドシェイクと双方の 3 回 ICMP が成功しました。
+
+最後に WireGuardInterface、WireGuardPeer、WireGuard 用 IPv4 アドレス・経路・信頼ゾーンを
+含まない設定へ置換しました。候補は残る 6 リソースを Healthy として適用し、`wg-pve`、
+`10.210.0.1/32`、`10.210.0.2/32` 宛て経路は存在せず、独立ピアからの通信は失敗しました。
+この確認で Linux の WireGuard に残していた鍵ローテーション、routerd 再起動、設定撤去を
+完了しました。FreeBSD は未確認です。検証後は VM219/220 の元の実行物・設定・状態領域を
+復元し、試験用 ISO、VLAN リンク、インターフェース、秘密鍵を含む一時領域を削除しました。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
