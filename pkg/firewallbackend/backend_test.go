@@ -476,3 +476,39 @@ func pfBespokeRouter() *api.Router {
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "NAT44Rule"}, Metadata: api.ObjectMeta{Name: "dynamic"}, Spec: api.NAT44RuleSpec{EgressPolicyRef: "EgressRoutePolicy/default", SourceRanges: []string{"172.18.0.0/16"}}},
 	}}}
 }
+
+func TestNftablesBackendAdoptsRecordedRouterdV1FirewallBeforeLoading(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall.nft")
+	handoff := filepath.Join(t.TempDir(), "routerd-v1-firewall-handoff.json")
+	if err := os.WriteFile(handoff, []byte(`{"version":"routerd-v1-firewall-handoff/v1","sourceCommit":"e3b49dbb"}\n`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	backend := Nftables{LegacyFirewallHandoffPath: handoff, Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		switch strings.Join(args, " ") {
+		case "-j list tables":
+			return []byte(`{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42}}]}`), nil
+		case "delete table inet handle 42", "-c -f " + path, "-f " + path:
+			return nil, nil
+		default:
+			return nil, errors.New("unexpected command: " + strings.Join(args, " "))
+		}
+	}}
+	changed, err := backend.Apply(t.Context(), Ruleset{Path: path, Data: []byte("table inet routerd_filter {}\n")}, false)
+	if err != nil || !changed {
+		t.Fatalf("Apply = changed=%v err=%v", changed, err)
+	}
+	want := []string{
+		"nft -j list tables",
+		"nft delete table inet handle 42",
+		"nft -c -f " + path,
+		"nft -f " + path,
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+	if _, err := os.Stat(handoff); !os.IsNotExist(err) {
+		t.Fatalf("successful legacy adoption retained handoff: %v", err)
+	}
+}
