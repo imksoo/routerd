@@ -615,6 +615,15 @@ func writeNftTablePreamble(buf *bytes.Buffer, family, name string) {
 	buf.WriteString("flush table " + family + " " + name + "\n")
 }
 
+// writeNftTableReplacementPreamble removes the prior routerd-owned filter
+// table before creating its replacement. A flush removes rules but retains
+// named sets and chains, which would otherwise leave withdrawn firewall zones
+// visible in the kernel. nft applies this batch atomically.
+func writeNftTableReplacementPreamble(buf *bytes.Buffer, family, name string) {
+	buf.WriteString("destroy table " + family + " " + name + "\n")
+	buf.WriteString("add table " + family + " " + name + " { comment " + nftQuote(NftablesRouterdOwnerMarker) + "; }\n")
+}
+
 func writeNftTableOwnerMarker(buf *bytes.Buffer) {
 	buf.WriteString("  comment " + nftQuote(NftablesRouterdOwnerMarker) + "\n")
 }
@@ -929,7 +938,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, aliases map[string]string, zone
 	logging := firewallLogOptions(logs)
 	sortedZones := sortedFirewallZones(zoneMap)
 	firewallAddressSets := referencedFirewallIPAddressSets(rules, flowPinholes, addressSetMap)
-	writeNftTablePreamble(buf, "inet", "routerd_filter")
+	writeNftTableReplacementPreamble(buf, "inet", "routerd_filter")
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) > 0 {
 			writeNftSetReset(buf, "inet", "routerd_filter", nftSetName("if_"+zone.Name))

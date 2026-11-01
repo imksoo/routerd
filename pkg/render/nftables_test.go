@@ -443,7 +443,7 @@ func TestNftablesVXLANUnderlayUDPAcceptInputChain(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"add table inet routerd_filter",
-		"flush table inet routerd_filter",
+		"destroy table inet routerd_filter",
 		"destroy set inet routerd_filter if_wan",
 		"table inet routerd_filter",
 		`udp dport 4789 counter accept comment "net.routerd.net/v1alpha1/VXLANSegment/home-vxlan"`,
@@ -1075,7 +1075,7 @@ func TestNftablesFirewallHomeRouter(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"add table inet routerd_filter",
-		"flush table inet routerd_filter",
+		"destroy table inet routerd_filter",
 		"destroy set inet routerd_filter if_lan",
 		"destroy set inet routerd_filter if_wan",
 		"table inet routerd_filter",
@@ -1806,7 +1806,7 @@ func TestNftablesAllowsWANIPv6ClientControlPlane(t *testing.T) {
 	got := string(data)
 	for _, want := range []string{
 		"add table inet routerd_filter",
-		"flush table inet routerd_filter",
+		"destroy table inet routerd_filter",
 		"meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept",
 		`udp dport 546 counter accept`,
 	} {
