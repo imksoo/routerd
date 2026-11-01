@@ -240,6 +240,14 @@ stage=reservation-before-release-declared
 reservation_declared
 stage=reservation-before-release-runtime
 reservation_runtime
+# Cross the DNS controller periodic interval. A fixed reservation is declared
+# intent and must not disappear from the runtime configuration while no lease
+# transition is occurring.
+stage=reservation-before-release-runtime-stable
+for _ in {1..35}; do
+ sleep 1
+ reservation_runtime
+done
 stage=reservation-release
 systemctl stop rd15-dhcp-client
 # udhcpc removes its address on RELEASE. Keep the probe in the same LAN
