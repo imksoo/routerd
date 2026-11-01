@@ -78,3 +78,17 @@ ROUTERD_SKIP_PRE_COMMIT=1 git commit
 
 請僅在後續修正明確的情況下使用。
 push 分支後，CI 仍會執行。
+
+## Linux DNS resolver runtime 檢查
+
+在具備 iproute2、dnsmasq、`dig`、curl、Go 和 network namespace 的隔離 Linux 環境中執行：
+
+```sh
+sudo ./tests/netns/dns-resolver-runtime.sh
+```
+
+測試使用準備好的 1.5 runtime 設定啟動實際的 `routerd-dns-resolver`，再由獨立 `dig` 用戶端查詢。
+本機 zone 和條件 upstream 轉送必須透過 UDP 與 TCP 傳回預期結果。傳送 SIGHUP 重新載入變更後的設定後，
+必須傳回新的 zone 答案；停止並重新啟動 worker 後，本機答案和 TCP 轉送也必須恢復。成功時刪除暫存狀態和記錄，
+失敗時保留暫存目錄供診斷。此項只檢查 resolver 程序，不涵蓋 routerd controller 或 service manager；
+也不涵蓋 DHCP lease 更新或 tombstone、negative reply、DoT/DoH、controller 驅動的設定更新或 FreeBSD runtime。

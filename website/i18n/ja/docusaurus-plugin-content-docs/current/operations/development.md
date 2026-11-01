@@ -135,6 +135,16 @@ renderer で生成し、private router namespace 内の dnsmasq と独立した 
 log を削除し、失敗時は原因調査用の一時 directory を残します。package install、service manager の監督、
 lease expiry、address conflict、DNS 応答、NAT、FreeBSD の検査は含みません。
 
+## Linux DNS resolver runtime 試験
+
+iproute2、dnsmasq、`dig`、curl、Go と network namespace 機能を備えた隔離 Linux 環境で
+`sudo ./tests/netns/dns-resolver-runtime.sh` を実行します。現在の1.5 runtime 設定を用いて
+実際の `routerd-dns-resolver` を起動し、独立した `dig` client から local zone と条件付き upstream
+forwarding を UDP/TCP の両方で確認します。設定を変更して SIGHUP を送った後に新しい zone answer が返ること、
+worker 再起動後に local answer と TCP forwarding が復旧することも確認します。成功時は一時 state と log を削除し、
+失敗時は調査用 directory を残します。この試験は resolver process のみを対象とし、routerd controller や
+service manager、DHCP lease 由来の更新・tombstone、negative reply、DoT/DoH、FreeBSD runtime は含みません。
+
 ## Linux の packaged DHCPv6 server lifecycle VM 試験
 
 `make dist` で candidate を build し、専用の破棄可能な systemd Linux VM に展開してから実行します。

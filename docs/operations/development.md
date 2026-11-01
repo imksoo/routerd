@@ -153,6 +153,21 @@ deleted. A failure retains its current temporary directory for local diagnosis.
 This check does not exercise package installation, service-manager supervision,
 lease expiry, address-conflict handling, DNS answers, NAT, or FreeBSD behavior.
 
+## Linux DNS resolver runtime check
+
+Run `sudo ./tests/netns/dns-resolver-runtime.sh` on an isolated Linux host with
+iproute2, dnsmasq, `dig`, curl and Go. The test starts the actual
+`routerd-dns-resolver` binary with a prepared 1.5 runtime configuration, then
+queries it from an independent client. A local-zone answer and conditional
+upstream answers must work over UDP and TCP. After changing the prepared zone
+and sending SIGHUP, the new answer must appear; after stopping and restarting
+the worker, local and TCP-forwarded answers must recover. Successful temporary
+state and logs are deleted; a failed run retains its temporary directory for
+diagnosis. This check covers the resolver process only, not the routerd
+controller or service manager. DHCP-derived lease changes/tombstones, negative
+replies, DoT/DoH, controller-driven configuration changes and FreeBSD runtime
+remain outside this check.
+
 ## Linux packaged DHCPv6 server lifecycle VM gate
 
 Build the candidate with `make dist`, extract its Linux archive on a dedicated,

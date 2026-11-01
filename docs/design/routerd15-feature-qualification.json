@@ -1150,6 +1150,22 @@
         "FreeBSD runtime or complete routerd 1.0 function qualification"
       ]
     },
+    "linux-dns-resolver-runtime-4ed306f9": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "4ed306f940b5e319107e37dc2885ad94df2ce618",
+      "reference": "tests/netns/README.md#dns-resolver-runtime",
+      "environment": "Linux 6.8.0-136-generic; private network namespaces/veth; routerd-dns-resolver; dnsmasq 2.90 upstream; BIND dig 9.18.39 client; Go 1.25.9.",
+      "reproduction": "sudo ./tests/netns/dns-resolver-runtime.sh",
+      "checks": [
+        "An independent client received the configured local-zone A record over UDP and TCP and conditional upstream A records through UDP and TCP forwarding.",
+        "After SIGHUP with an updated 1.5 runtime config, the client received the new local-zone address; after worker restart, local-zone and TCP-forwarded answers recovered. Successful temporary state and logs were removed."
+      ],
+      "excludes": [
+        "DHCP-derived lease updates/tombstones, negative replies, DoT/DoH, controller-driven configuration changes, routerd service-manager supervision and FreeBSD runtime",
+        "Complete DNS source-policy or routerd 1.0 function qualification"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -2662,14 +2678,17 @@
         ],
         "related_test_files": [
           "pkg/dnsresolver/dnsresolver_test.go",
-          "pkg/controller/dnsresolver/controller_test.go"
+          "pkg/controller/dnsresolver/controller_test.go",
+          "tests/netns/dns-resolver-runtime.sh",
+          "tests/netns/dns-resolver-runtime-render/main.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-dns-resolver-runtime-4ed306f9"
         ]
       },
       "freebsd": {
@@ -2680,8 +2699,8 @@
         ]
       },
       "required_remaining_checks": [
-        "All baseline source/query policies, private containment and DNS transports",
-        "Lease update/tombstone/negative replies, runtime changes and restart"
+        "Baseline source/query policy coverage, private containment, and DoT/DoH transports",
+        "DHCP-derived lease update/tombstone and negative replies, controller-driven config changes, routerd service-manager supervision and FreeBSD runtime"
       ]
     },
     {

@@ -125,6 +125,25 @@ The test needs Linux network namespaces, iproute2, dnsmasq, BusyBox and Go.
 Successful runs remove temporary state and logs; failures retain the current
 temporary directory for local diagnosis.
 
+## DNS resolver runtime
+
+`dns-resolver-runtime.sh` starts the actual `routerd-dns-resolver` binary in a
+private router namespace. A separate `dig` client checks a local zone and
+conditional upstream forwarding over both UDP and TCP, then checks that a
+configuration reload and worker restart serve the current answer. The test
+uses a separate dnsmasq process as the upstream; it does not exercise the
+routerd controller or service manager.
+
+```sh
+sudo ./tests/netns/dns-resolver-runtime.sh
+```
+
+The test needs Linux network namespaces, iproute2, dnsmasq, `dig`, curl and Go.
+Successful runs remove temporary state and logs; failures retain the current
+temporary directory for diagnosis. This check does not cover DHCP-derived
+lease updates or tombstones, negative replies, DoT/DoH, controller-driven
+configuration changes, service-manager supervision or FreeBSD runtime.
+
 ## Stateful DHCPv6 server
 
 `dhcpv6-stateful.sh` requires `dnsmasq`, `dhcpcd`, Go and the common Linux
