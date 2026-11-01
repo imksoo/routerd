@@ -1730,6 +1730,24 @@
         "DHCPv6 client exchange, natural renewal/rebind/expiry, lease synchronization, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-ingress-service-ad5bcd47": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ad5bcd47303dec8105d7077b648f66b66f7c346b",
+      "gate_script_revision": "876322e6662aac48d0f337451f39ed5da05a1f2e",
+      "reference": "docs/operations/development.md#linux-portforward-and-ingressservice-lifecycle-gate",
+      "environment": "Authorized dedicated Linux VM; CGO_ENABLED=0 make dist package through the actual systemd service; independent external/LAN clients and two backend namespaces.",
+      "checks": [
+        "PortForward external DNAT and LAN hairpin passed; withdrawal rejected a new flow while an established flow continued on its original backend.",
+        "IngressService external and hairpin delivery, TCP health failover, backend recovery, operator drain/undrain, service restart and full nftables withdrawal passed.",
+        "The observed stale filter target after failover was fixed in ad5bcd47; final cleanup left an empty configuration, no routerd nft table or test namespace/interface, no retained raw output, and the VM stopped."
+      ],
+      "excludes": [
+        "NAT44Rule, NAT44FlowDNATPinhole, NAT44SessionSync, LocalServiceRedirect, source-hash/random backend selection, and all flow-pinhole expiry paths.",
+        "FreeBSD behavior, production topology, performance, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -3310,7 +3328,8 @@
           "linux-vlan-ha-direct-r2-88927a4a",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
           "linux-two-vm-recovery-0cb82866",
-          "linux-dhcp-firewall-lifecycle-5431ad2a"
+          "linux-dhcp-firewall-lifecycle-5431ad2a",
+          "linux-ingress-service-ad5bcd47"
         ]
       },
       "freebsd": {
@@ -3321,8 +3340,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Independent DNAT, hairpin, pinhole and synchronized state paths",
-        "All configured backends, expiry, rule withdrawal/new versus existing flows"
+        "Independent pinhole and synchronized state paths",
+        "Local redirect, configured backends, expiry, and rule withdrawal/new versus existing flows outside the scoped PortForward path"
       ]
     },
     {
@@ -3355,15 +3374,17 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ingress-service-ad5bcd47"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent client/backend failover and drain behavior",
-        "Target/source changes, dynamic flow expiry, restart and withdrawal"
+        "Source-hash/random selection and independent flow-pinhole behavior",
+        "Target/source changes and dynamic flow expiry"
       ]
     },
     {
