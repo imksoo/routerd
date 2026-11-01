@@ -1711,6 +1711,25 @@
         "natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-dhcpv6-implicit-ra-c42359bd-5018cee9": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "c42359bd454a4fdc44f0d58c87e9723f0125a783",
+      "gate_script_revision": "5018cee9f9c0091d1d92e0941baf68f123b6f43a",
+      "reference": "docs/operations/development.md#linux-dhcpv6-implicit-ra-vm-gate",
+      "environment": "Authorized dedicated Linux VM; checksum-verified c42359bd make dist archive through the actual systemd service; isolated veth LAN; independent raw ICMPv6 receiver. The later 5018cee9 revision changes only gate cleanup verification, not packaged product source.",
+      "checks": [
+        "Without an explicit IPv6RouterAdvertisement resource, the stateful DHCPv6Server emitted an RA with M/O true and PIO autonomous false; its matching status was Applied and empty apply withdrew it.",
+        "Without an explicit IPv6RouterAdvertisement resource, the both DHCPv6Server emitted an RA with M/O true and PIO autonomous true; its matching dnsmasq service was active and empty apply withdrew it.",
+        "Without an explicit IPv6RouterAdvertisement resource, the stateless DHCPv6Server emitted an RA with M false/O true and PIO autonomous true; its matching dnsmasq service was active and empty apply withdrew it.",
+        "Without an explicit IPv6RouterAdvertisement resource, the ra-only DHCPv6Server emitted an RA with M/O false and PIO autonomous true; routerd-dnsmasq stayed inactive and empty apply withdrew it.",
+        "Every successful run removed its exact veth, namespace and temporary output; the disposable VM was stopped after the sequence."
+      ],
+      "excludes": [
+        "DHCPv6 client exchange, natural renewal/rebind/expiry, lease synchronization, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2786,7 +2805,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-dhcpv6-server-b961e45c",
-          "linux-dhcpv6-server-8e8783e3"
+          "linux-dhcpv6-server-8e8783e3",
+          "linux-dhcpv6-implicit-ra-c42359bd-5018cee9"
         ]
       },
       "freebsd": {
