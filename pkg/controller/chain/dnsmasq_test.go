@@ -585,6 +585,9 @@ func TestWriteDnsmasqConfigDisablesDNSPort(t *testing.T) {
 	if !strings.Contains(string(data), "port=0\n") {
 		t.Fatalf("dnsmasq config did not disable DNS serving:\n%s", data)
 	}
+	if !strings.Contains(string(data), "script-on-renewal\n") {
+		t.Fatalf("dnsmasq config did not report lease renewals to the callback:\n%s", data)
+	}
 	if strings.Contains(string(data), "listen-address=") {
 		t.Fatalf("dnsmasq config should not own DNS listen addresses:\n%s", data)
 	}

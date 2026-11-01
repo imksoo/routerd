@@ -6184,7 +6184,7 @@ func writeDnsmasqConfig(router *api.Router, store Store, path, pidFile string, p
 	}
 	var b strings.Builder
 	b.WriteString(routerdGeneratedDNSMasqMarker)
-	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=%s\ndhcp-leasefile=%s\n", pidFile, leaseFile)
+	fmt.Fprintf(&b, "port=0\nno-resolv\nno-hosts\nbind-dynamic\npid-file=%s\ndhcp-leasefile=%s\nscript-on-renewal\n", pidFile, leaseFile)
 	hostsFile := dnsmasqHostsFile(path)
 	lines, err := dnsmasqLANServiceLines(router, store)
 	if err != nil {
