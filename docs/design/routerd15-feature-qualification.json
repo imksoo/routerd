@@ -1586,6 +1586,23 @@
         "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, cross-version cutback, power-loss durability, and complete 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-two-vm-crossversion-firewall-handoff-d91882df": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d91882df773000384455a28a44023309edbdf879",
+      "reference": "docs/operations/development.md#two-vm-reboot-and-interrupted-apply-gate",
+      "environment": "Authorized isolated two-VM Linux fixture. Both formal archives were checksum-verified before installation; the router and independent peer used separate guests and no production network.",
+      "checks": [
+        "Baseline routerd 1.0 (e3b49dbb) established an independent DHCPv4 lease, renewed it, served local and forwarded DNS over UDP/TCP, performed IPv4 NAT, retained a management positive control, and enforced WAN/LAN/management isolation.",
+        "The candidate archive (d91882df) was installed over the baseline, consumed the installer-created one-time routerd 1.0 firewall-handoff receipt, rebooted, and repeated the same lease, renewal, DNS, NAT, management, and isolation checks.",
+        "Before candidate-to-baseline cutback, the candidate withdrew its owned firewall table through an empty desired configuration. Baseline restored its saved state, rebooted, and repeated the same checks.",
+        "Candidate return restored its saved state, consumed a newly recorded handoff receipt, rebooted, and repeated the same checks. The fixture cleanup withdrew managed state on both guests."
+      ],
+      "excludes": [
+        "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, provider mutation, power-loss durability, and complete routerd 1.0 functional parity.",
+        "Whole-feature or whole-platform qualification."
+      ]
     }
   },
   "features": [
