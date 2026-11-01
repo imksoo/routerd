@@ -63,8 +63,11 @@ func TestObserverActualControlSocketStopJoinsWorkers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("actual orderly shutdown failed: %v", err)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("stop was accepted but daemon workers did not join")
+	// run gives worker shutdown a five-second production budget. The fixture can
+	// be stopped while FreeBSD tcpdump is still returning its pcap header, so
+	// its assertion must cover that contract rather than impose a shorter one.
+	case <-time.After(6 * time.Second):
+		t.Fatal("stop was accepted but daemon workers did not join within the production shutdown budget")
 	}
 	data, err := os.ReadFile(events)
 	if err != nil || !strings.Contains(string(data), "QueuedBeforeStop") {
