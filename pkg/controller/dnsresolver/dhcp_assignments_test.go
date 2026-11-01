@@ -61,3 +61,20 @@ func TestExpiredStickyAssignmentCannotBeRecoveredAsInfinite(t *testing.T) {
 		t.Fatal("unbounded sidecar accepted")
 	}
 }
+
+func TestConfiguredReservationDoesNotRequireDNSMasqSidecar(t *testing.T) {
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "192.0.2.1"})
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.100", End: "192.0.2.110"}}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan", MACAddress: "02:00:00:00:00:01", Hostname: "printer", IPAddress: "192.0.2.150"}},
+	)
+	controller := Controller{Router: router, StateDir: t.TempDir()}
+	records, err := controller.namedDHCPAssignments(t.Context(), nil, runtime.DHCPScopes(router))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("configured reservation missing without sidecar: %+v %v", records, err)
+	}
+	record := records[0]
+	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "192.0.2.150" || record.MAC != "02:00:00:00:00:01" {
+		t.Fatalf("configured reservation = %+v", record)
+	}
+}
