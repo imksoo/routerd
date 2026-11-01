@@ -1657,6 +1657,25 @@
         "natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-dhcp-firewall-lifecycle-5431ad2a": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "5431ad2ab5e49e12dd68fb452068e85fedeb915d",
+      "reference": "docs/operations/development.md#linux-dhcp-and-firewall-withdrawal-gate",
+      "environment": "Authorized dedicated Linux VM; checksum-verified make dist archive through the actual systemd service; independent BusyBox DHCP client plus LAN, WAN and management peers in separate namespaces.",
+      "checks": [
+        "DHCPv4 address, gateway and DNS acquisition followed by timer-driven renewal of the two-minute lease.",
+        "Local and upstream DNS answers over UDP and TCP, plus HTTP peer observation of the NAT44 translated source.",
+        "WAN-to-LAN, LAN-to-management and WAN-to-router-DNS denial with destination non-arrival and nft counter checks; management-to-LAN remained allowed.",
+        "routerd service restart, explicit LAN-to-management exception add/removal, firewall-only withdrawal restoring the proven baseline paths, and empty apply.",
+        "Success cleanup left routerd active with an empty Healthy configuration, no test namespaces/interfaces or routerd_filter table, and no retained temporary output."
+      ],
+      "excludes": [
+        "DHCPv4 reservations, lease expiry/conflict handling, WAN DHCP client, reboot and interrupted apply.",
+        "Port forwards, pinholes, session synchronization, address sets, client policy, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -2571,7 +2590,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-two-vm-recovery-0cb82866"
+          "linux-two-vm-recovery-0cb82866",
+          "linux-dhcp-firewall-lifecycle-5431ad2a"
         ]
       },
       "freebsd": {
@@ -2855,7 +2875,8 @@
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
           "linux-vlan-clients-39156bb6",
-          "linux-two-vm-recovery-0cb82866"
+          "linux-two-vm-recovery-0cb82866",
+          "linux-dhcp-firewall-lifecycle-5431ad2a"
         ]
       },
       "freebsd": {
@@ -3230,7 +3251,8 @@
           "linux-vlan-ha-9a90c9b3",
           "linux-vlan-ha-direct-r2-88927a4a",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
-          "linux-two-vm-recovery-0cb82866"
+          "linux-two-vm-recovery-0cb82866",
+          "linux-dhcp-firewall-lifecycle-5431ad2a"
         ]
       },
       "freebsd": {
@@ -3324,7 +3346,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-two-vm-recovery-0cb82866"
+          "linux-two-vm-recovery-0cb82866",
+          "linux-dhcp-firewall-lifecycle-5431ad2a"
         ]
       },
       "freebsd": {
