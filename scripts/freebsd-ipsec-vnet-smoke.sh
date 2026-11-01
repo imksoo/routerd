@@ -57,6 +57,7 @@ emit_failure_diagnostics() {
     "$evidence/strongswan-before.log" \
     "$evidence/strongswan-status.before" \
     "$evidence/strongswan-enable.before.stderr" \
+    "$evidence/host-provider-after-valid-apply.log" \
     "$peer/peer-charon.log" \
     "$evidence/peer-load.log" \
     "$evidence/apply-invalid.log" \
@@ -72,6 +73,26 @@ emit_failure_diagnostics() {
       sed "s/$psk/[REDACTED]/g" "$log" >&3
     fi
   done
+}
+
+snapshot_host_provider() {
+  label=$1
+  log="$evidence/host-provider-$label.log"
+  {
+    printf 'provider_snapshot=%s\n' "$label"
+    for path in /var/run/charon.vici /var/run/charon.pid /var/run/daemon-charon.pid; do
+      if [ -e "$path" ]; then
+        printf '%s=' "$path"
+        cat "$path" 2>/dev/null || true
+      else
+        printf '%s=absent\n' "$path"
+      fi
+    done
+    # shellcheck disable=SC2009 # Preserve PID, parent, and state in one snapshot.
+    ps -axww -o pid= -o ppid= -o state= -o command= | grep '[c]haron' || true
+    /usr/local/sbin/swanctl --stats || true
+    /usr/local/sbin/swanctl --list-conns || true
+  } >"$log" 2>&1
 }
 
 cleanup() {
@@ -404,6 +425,7 @@ fi
 valid_apply_finished=$(date +%s)
 printf 'ipsec-vnet valid-production-apply rc=%s elapsed=%ss\n' "$valid_apply_rc" "$((valid_apply_finished - valid_apply_started))" >&3
 [ "$valid_apply_rc" -eq 0 ]
+snapshot_host_provider after-valid-apply
 
 # path=/ VNET jails share charon's compile-time PID file. Qualify routerd's
 # host service/load first, then temporarily relocate its live PID while the
