@@ -1783,6 +1783,23 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-ipv6-static-route-default-metric-da62b761": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "da62b761df031856b8f682ff61caa9ff8644a2cf",
+      "gate_script_revision": "6d46b9460b48867197d9ea30de67bcfd3de1859b",
+      "reference": "scripts/linux-ipv6-static-route-smoke.sh",
+      "environment": "Dedicated disposable PVE Linux VM; prior package/config/state purged and rebooted before the CGO_ENABLED=0 make dist package was installed through the actual systemd service; isolated veth and independent peer namespace.",
+      "checks": [
+        "Explicit metric 77 and omitted metric (Linux native 1024) were read back with the expected gateway, device and boot protocol.",
+        "Independent peer traffic passed through both routes before and after systemd restart; empty configuration withdrew both routes and forwarding stopped.",
+        "Cleanup left Healthy empty configuration and no fixture routes, namespace, interface or raw logs; the temporary VM and disk were removed."
+      ],
+      "excludes": [
+        "FreeBSD behavior, non-host-prefix routes beyond the exercised configuration, production topology, performance, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-nat44-flow-dnat-pinhole-3587ac28": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2531,8 +2548,9 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-ipv6-static-route-e6f52a72"
-        ]
+        "linux-ipv6-static-route-e6f52a72",
+        "linux-ipv6-static-route-default-metric-da62b761"
+      ]
       },
       "freebsd": {
         "qualification": "unknown",
