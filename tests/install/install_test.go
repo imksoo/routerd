@@ -378,6 +378,29 @@ printf '%s\n' "$*"
 	}
 }
 
+func TestUninstallRemovesOwnedRelativeDHCPEventRelayHook(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	relay := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	writeExecutable(t, relay, "#!/bin/sh\nexit 0\n")
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../sbin/routerd-dhcp-event-relay", hook); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, out)
+	}
+	for _, path := range []string{hook, relay} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("owned DHCP event artifact remains: %s (err=%v)", path, err)
+		}
+	}
+}
+
 func TestInstallRefusesToReplaceForeignDHCPEventHook(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")

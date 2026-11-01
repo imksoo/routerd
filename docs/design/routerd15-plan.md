@@ -33,7 +33,10 @@ IPv4 NAT and IPv6. Its admission checks are:
   using a routerd 1.5 configuration prepared before the test and validated by
   routerd 1.5, with fresh 1.5 state and management access independent of the
   tested WAN/LAN. The test starts from a clean install; it does not import 1.0
-  configuration/state or upgrade an installed 1.0 system.
+  configuration/state or upgrade an installed 1.0 system. The combined clean-
+  install procedure is in `docs/operations/development.md`, under “Linux home-
+  router clean-install lifecycle gate”; its precondition requires old binaries,
+  config and state to be absent.
 - Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
   IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
   upstream mode selected for the actual deployment.

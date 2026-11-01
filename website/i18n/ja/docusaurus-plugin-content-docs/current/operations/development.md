@@ -209,6 +209,34 @@ daemon の ACK 受信だけでは libpcap のカーネルバッファから保�
 失敗時は製品と peer を停止し、当該 fixture をローカル再現・修正まで保持します。
 物理 WAN 機器、別 DHCP サーバー、VM 再起動、FreeBSD はこの試験の保証範囲に含みません。
 
+## Linux ホームルーターのクリーン導入ライフサイクル試験
+
+専用 Linux VM で `scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm` を実行します。
+引数は、事前に用意した routerd 1.5 JSON 設定、Linux `make dist` パッケージの展開先、
+Kea/ndisc6 パッケージの展開先です。VM には独立した管理経路と、`ip`、`ss`、systemd、
+`nft`、`dnsmasq`、BusyBox、`curl`、`dig`、`jq`、Python 3、`timeout`、
+`/proc/sys/net/netfilter/nf_conntrack_count` が必要です。
+
+routerd の既存バイナリ、正規設定、`/var/lib/routerd`、service、試験用 interface/netns が
+残っていれば開始しません。パッケージ内の routerd で設定を検証し、新しい 1.5 パッケージを
+導入して実 systemd service で同じ設定を試験します。旧設定・DBは読み込まず、routerd 1.0 の
+アップグレード試験もしません。成功時はパッケージ、状態DB、一時出力を削除します。
+失敗時は fixture を撤去し、原因を再現できる上限付き診断情報と設定だけを残します。
+
+```sh
+sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
+  tests/fixtures/linux-home-router-lifecycle.json \
+  /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea
+```
+
+Kea 展開先には `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、
+`usr/lib/x86_64-linux-gnu` が必要です。`rdisc6` は root 所有にしてください。
+この同一設定の統合試験は、DHCPv4 取得・更新、IPv4/IPv6 クライアントからの DNS A/AAAA
+UDP/TCP、IPv4 NAT の対向送信元確認、WAN から LAN への未要求通信拒否、DHCPv6-PD の
+更新・prefix 変更・期限切れ・再取得、RA/SLAAC、委譲 IPv6 を使った転送、service 再起動、
+WAN 断・復帰、managed resource の撤去を確認します。物理 ISP との相互接続、WAN 発見・
+PPPoE・DS-Lite、再起動復旧、FreeBSD 全機能、routerd 1.0 の全機能維持を証明する試験ではありません。
+
 ## Linux の PD・RA ライフサイクル VM 試験
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` は `make dist` から導入した製品を
