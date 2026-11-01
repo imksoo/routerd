@@ -11,13 +11,11 @@ test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
 if [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
-management=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
-test -n "$management"
-ip link show "$management" >/dev/null
-for dev in rd15-ing-lan rd15-ing-wan; do
+management=rd15-ing-mgmt
+for dev in rd15-ing-lan rd15-ing-wan "$management"; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
-for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
+for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b rd15-ing-management; do
  if ip netns list | awk '{print $1}' | grep -Fxq "$ns"; then echo "existing namespace: $ns" >&2; exit 1; fi
 done
 if nft -j list tables | jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")' >/dev/null; then
@@ -61,7 +59,7 @@ finish() {
  for pid in "$port_forward_pid" "$backend_a_pid" "$backend_b_pid"; do
   test -z "$pid" || wait "$pid" >/dev/null 2>&1 || true
  done
- for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
+ for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b rd15-ing-management; do
   ip netns del "$ns" >/dev/null 2>&1 || true
  done
  ip link del rd15-ing-wan >/dev/null 2>&1 || true
@@ -94,7 +92,7 @@ while True:
             pass
 PY
 
-for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b; do
+for ns in rd15-ing-external rd15-ing-client rd15-ing-backend-a rd15-ing-backend-b rd15-ing-management; do
  ip netns add "$ns"
  ip -n "$ns" link set lo up
 done
@@ -117,6 +115,11 @@ ip link set rd15-ing-wan up
 ip -n rd15-ing-external link set peer0 up
 ip -n rd15-ing-external addr add 198.18.52.1/24 dev peer0
 ip -n rd15-ing-external route add default via 198.18.52.2
+ip link add "$management" type veth peer name peer0 netns rd15-ing-management
+ip link set "$management" up
+ip -n rd15-ing-management link set peer0 up
+ip addr add 198.18.53.2/24 dev "$management"
+ip -n rd15-ing-management addr add 198.18.53.1/24 dev peer0
 ip -n rd15-ing-client addr add 198.18.50.100/24 dev peer0
 ip -n rd15-ing-client route add default via 198.18.50.1
 ip -n rd15-ing-backend-a addr add 198.18.50.10/24 dev peer0
@@ -196,6 +199,7 @@ router = json.load(open(path))
 resources = router['spec']['resources']
 resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'management'},'spec':{'ifname':ifname,'managed':False,'owner':'external'}})
 resources.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallZone','metadata':{'name':'management'},'spec':{'role':'mgmt','interfaces':['management']}})
+resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'IPv4StaticAddress','metadata':{'name':'management-v4'},'spec':{'interface':'management','address':'198.18.53.2/24'}})
 json.dump(router, open(path, 'w'))
 PY
 # Keep the no-PortForward candidate otherwise identical, including its
@@ -240,6 +244,8 @@ await_backend backend-a
 stage='initial-listener-addresses'
 await_address rd15-ing-wan 198.18.52.2
 await_address rd15-ing-lan 198.18.50.1
+await_address "$management" 198.18.53.2
+ip netns exec rd15-ing-management ping -c 1 -W 2 198.18.53.2 >/dev/null
 stage='initial-nat-render'
 for _ in {1..30}; do
  if nft_nat_has 'routerd PortForward fixed' && nft_nat_has 'routerd IngressService edge'; then break; fi
