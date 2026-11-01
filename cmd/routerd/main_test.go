@@ -1366,6 +1366,61 @@ func TestControlAPIAdmissionUsesRemoteAddrOnly(t *testing.T) {
 	}
 }
 
+func TestWebConsoleAdmissionEnforcesManagementAccessSource(t *testing.T) {
+	allowed := true
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "ens18", Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "mgmt-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "Interface/mgmt", Address: "198.18.52.2/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"}, Metadata: api.ObjectMeta{Name: "restricted"}, Spec: api.ManagementAccessSpec{Interfaces: []string{"Interface/mgmt"}, AllowSourceCIDRs: []string{"198.18.52.0/24"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.SystemAPIVersion, Kind: "WebConsole"}, Metadata: api.ObjectMeta{Name: "console"}, Spec: api.WebConsoleSpec{Enabled: &allowed, ListenAddress: "198.18.52.2", Port: 18080}},
+	}}}
+	called := 0
+	handler := webConsoleAdmissionHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called++
+		w.WriteHeader(http.StatusNoContent)
+	}), api.WebConsoleSpec{ListenAddress: "198.18.52.2"}, func() *api.Router { return router })
+
+	request := httptest.NewRequest(http.MethodGet, "http://routerd.test/", nil)
+	request.RemoteAddr = "198.18.52.10:45678"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || called != 1 {
+		t.Fatalf("allowed request = status %d calls %d, want 204 and 1", response.Code, called)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "http://routerd.test/", nil)
+	request.RemoteAddr = "198.18.50.100:45678"
+	request.Header.Set("X-Forwarded-For", "198.18.52.10")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || called != 1 {
+		t.Fatalf("forged request = status %d calls %d, want 403 and 1", response.Code, called)
+	}
+}
+
+func TestWebConsoleManagementAccessPolicyMatchesOnlyBoundInterface(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "mgmt-v4"}, Spec: api.IPv4StaticAddressSpec{Interface: "mgmt", Address: "198.18.52.2/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.ManagementAccessSpec{Interfaces: []string{"mgmt"}, AllowSourceCIDRs: []string{"198.18.52.0/24"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.ManagementAccessSpec{Interfaces: []string{"lan"}, AllowSourceCIDRs: []string{"198.18.50.0/24"}}},
+	}}}
+	prefixes, restricted, err := webConsoleManagementAccessPolicy(router, api.WebConsoleSpec{ListenAddress: "198.18.52.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restricted || len(prefixes) != 1 || prefixes[0].String() != "198.18.52.0/24" {
+		t.Fatalf("policy = restricted %t prefixes %v", restricted, prefixes)
+	}
+	_, restricted, err = webConsoleManagementAccessPolicy(router, api.WebConsoleSpec{ListenAddress: "198.18.99.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restricted {
+		t.Fatal("unbound WebConsole address unexpectedly inherited a ManagementAccess policy")
+	}
+}
+
 func TestControlAPIAdmissionRequiresBearerTokenWhenConfigured(t *testing.T) {
 	prefixes, err := parseControlAPIAllowCIDRs([]string{"127.0.0.1/32"})
 	if err != nil {

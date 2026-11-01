@@ -1767,7 +1767,7 @@ func parseControlAPIAllowCIDRs(cidrs []string) ([]netip.Prefix, error) {
 func controlAPIAdmissionHandler(next http.Handler, allowPrefixes []netip.Prefix, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr, err := remoteAddrIP(r.RemoteAddr)
-		if err != nil || !controlAPISourceAllowed(addr, allowPrefixes) {
+		if err != nil || !sourceAllowed(addr, allowPrefixes) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -1803,6 +1803,10 @@ func remoteAddrIP(remoteAddr string) (netip.Addr, error) {
 }
 
 func controlAPISourceAllowed(addr netip.Addr, allowPrefixes []netip.Prefix) bool {
+	return sourceAllowed(addr, allowPrefixes)
+}
+
+func sourceAllowed(addr netip.Addr, allowPrefixes []netip.Prefix) bool {
 	addr = addr.Unmap()
 	for _, prefix := range allowPrefixes {
 		if prefix.Contains(addr) {
@@ -2209,7 +2213,7 @@ func statusAddressValue(value string) string {
 }
 
 func webConsoleHTTPHandler(spec api.WebConsoleSpec, router *api.Router, currentRouter func() *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) http.Handler {
-	return webconsole.New(webconsole.Options{
+	handler := webconsole.New(webconsole.Options{
 		Router:                 router,
 		CurrentRouter:          currentRouter,
 		Store:                  store,
@@ -2228,6 +2232,136 @@ func webConsoleHTTPHandler(spec api.WebConsoleSpec, router *api.Router, currentR
 		ControllerStatuses:     controllerStatuses,
 		Bus:                    eventBus,
 	})
+	return webConsoleAdmissionHandler(handler, spec, currentRouter)
+}
+
+// webConsoleAdmissionHandler applies ManagementAccess allowSourceCIDRs to a
+// console bound to an address owned by a declared management interface. The
+// effective router is read for every request so a source-policy-only reload
+// does not leave an old handler authorizing requests after configuration
+// publication.
+func webConsoleAdmissionHandler(next http.Handler, spec api.WebConsoleSpec, currentRouter func() *api.Router) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prefixes, restricted, err := webConsoleManagementAccessPolicy(currentRouter(), spec)
+		addr, addrErr := remoteAddrIP(r.RemoteAddr)
+		if err != nil || addrErr != nil || (restricted && !sourceAllowed(addr, prefixes)) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// webConsoleManagementAccessPolicy returns the explicit source allow list for
+// the management interface that owns the WebConsole listening address. An
+// empty allowSourceCIDRs list keeps the historic unrestricted behavior; a
+// non-management console binding is likewise outside ManagementAccess scope.
+func webConsoleManagementAccessPolicy(router *api.Router, spec api.WebConsoleSpec) ([]netip.Prefix, bool, error) {
+	interfaces := webConsoleManagementInterfaces(router, spec)
+	if len(interfaces) == 0 {
+		return nil, false, nil
+	}
+
+	var cidrs []string
+	matched := false
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "ManagementAccess" || resource.APIVersion != api.NetAPIVersion {
+			continue
+		}
+		access, err := resource.ManagementAccessSpec()
+		if err != nil {
+			return nil, false, err
+		}
+		for _, ref := range access.Interfaces {
+			if interfaces[managementInterfaceName(ref)] {
+				matched = true
+				cidrs = append(cidrs, access.AllowSourceCIDRs...)
+				break
+			}
+		}
+	}
+	if !matched || len(cidrs) == 0 {
+		return nil, false, nil
+	}
+
+	prefixes := make([]netip.Prefix, 0, len(cidrs))
+	seen := map[netip.Prefix]struct{}{}
+	for i, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+		if err != nil {
+			return nil, false, fmt.Errorf("ManagementAccess allowSourceCIDRs[%d]: %w", i, err)
+		}
+		prefix = prefix.Masked()
+		if _, exists := seen[prefix]; exists {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, true, nil
+}
+
+func webConsoleManagementInterfaces(router *api.Router, spec api.WebConsoleSpec) map[string]bool {
+	interfaces := map[string]bool{}
+	if router == nil {
+		return interfaces
+	}
+	addResourceInterface := func(kind, name string) {
+		for _, resource := range router.Spec.Resources {
+			if resource.Kind != kind || resource.Metadata.Name != name {
+				continue
+			}
+			switch kind {
+			case "IPv4StaticAddress":
+				address, err := resource.IPv4StaticAddressSpec()
+				if err == nil {
+					interfaces[managementInterfaceName(address.Interface)] = true
+				}
+			case "VirtualAddress":
+				address, err := resource.VirtualAddressSpec()
+				if err == nil {
+					interfaces[managementInterfaceName(address.Interface)] = true
+				}
+			}
+			return
+		}
+	}
+	if kind, name, ok := resourcequery.SplitResource(strings.TrimSpace(spec.ListenAddressFrom.Resource)); ok {
+		switch kind {
+		case "Interface":
+			interfaces[name] = true
+		case "IPv4StaticAddress", "VirtualAddress":
+			addResourceInterface(kind, name)
+		}
+	}
+
+	listen := statusAddressValue(spec.ListenAddress)
+	if listen == "" {
+		return interfaces
+	}
+	for _, resource := range router.Spec.Resources {
+		switch resource.Kind {
+		case "IPv4StaticAddress":
+			address, err := resource.IPv4StaticAddressSpec()
+			if err == nil && statusAddressValue(address.Address) == listen {
+				interfaces[managementInterfaceName(address.Interface)] = true
+			}
+		case "VirtualAddress":
+			address, err := resource.VirtualAddressSpec()
+			if err == nil && statusAddressValue(address.Address) == listen {
+				interfaces[managementInterfaceName(address.Interface)] = true
+			}
+		}
+	}
+	return interfaces
+}
+
+func managementInterfaceName(reference string) string {
+	reference = strings.TrimSpace(reference)
+	if kind, name, ok := resourcequery.SplitResource(reference); ok && kind == "Interface" {
+		return name
+	}
+	return reference
 }
 
 func webConsoleLinks(links []api.WebConsoleLinkSpec) []webconsole.ConsoleLink {
