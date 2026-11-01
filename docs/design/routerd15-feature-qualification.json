@@ -490,6 +490,31 @@
         "複数 VRF 間の分離または転送、IPv6、FreeBSD および完全な VRF 機能認定"
       ]
     },
+    "linux-vrf-isolation-pve-d9ed53a1": {
+      "level": "independent-client",
+      "outcome": "pass",
+      "revision": "d9ed53a192f50a7c15aef01ce90d164f4ca61fea",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": {
+        "routerd_sha256": "e97924c98425b9934b407d384f1ad59e179f6b11502f98e9ab4d3577467b6774",
+        "routerctl_sha256": "7d36c2e5508dd5288bb1265816af5f8224c4cb03db784cbc93f64fd7a154f689",
+        "candidate_config_sha256": "2b051c6187761dc72981045aa836b0d561eed1ca5db0e91ad9a2ae6dc3525a68"
+      },
+      "environment": "隔離 PVE の VLAN 3131 と 3132。VM219 は空の 1.5 状態領域で候補実行物を稼働し、VM224 と VM220 はそれぞれ VLAN 子インターフェースを持つ独立 Linux クライアントです。",
+      "checks": [
+        "`vrf-a`、`vrf-b`、各メンバー、IPv4 アドレスおよび経路表を生成し、各防火壁ゾーン集合は親とメンバー側の実際のインターフェースを含んだ",
+        "VM224 の 198.18.17.2 と VM220 の 198.18.15.3 は `vrf-a` 内で両方向の ICMP を各 3 回すべて成功した",
+        "VM220 の `vrf-b` 側からゲートウェイ 198.18.16.1 への ICMP は 3 回すべて成功した",
+        "送信元は `vrf-a`、宛先は `vrf-b` の ICMP、および送信元を `vrf-b` に固定した逆方向の ICMP は各 3 回すべて失敗し、`vrf-a` 側は Destination Net Unreachable を返した",
+        "候補実行物の再起動後も親、メンバー、アドレス、経路表および両ゾーン集合を再生成し、`vrf-a` 内の 3 回 ICMP 成功と仮想ルーティング・転送間の 3 回 ICMP 失敗を再確認した",
+        "`vrf-a` を含まない構成へ置換すると、そのアドレスおよびゾーン集合が消え、VM224 からのゲートウェイ宛て 3 回 ICMP はすべて失敗した一方、`vrf-b` のゲートウェイは 3 回すべて応答した",
+        "完全な候補構成を再適用すると `vrf-a` の状態とゾーン集合を再生成し、同一仮想ルーティング・転送内の転送、`vrf-b` のゲートウェイ到達および仮想ルーティング・転送間分離を再確認した",
+        "試験後は VM219 の元の実行物、設定、状態領域、VM220 の元の routerd、VM224 の停止状態を復元し、候補 ISO、VLAN 子インターフェースおよび一時資材を削除した"
+      ],
+      "excludes": [
+        "IPv6、FreeBSD、物理ネットワークおよび完全な VRF 機能認定"
+      ]
+    },
     "linux-vrf-withdraw-review-9735f25e": {
       "level": "code-passed",
       "outcome": "pass",
@@ -2467,6 +2492,7 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-vrf-pve-c6b42c1c",
+          "linux-vrf-isolation-pve-d9ed53a1",
           "linux-vrf-withdraw-review-9735f25e",
           "linux-vrf-peer-9735f25e",
           "linux-combined-native-3e58c93a"
@@ -2476,9 +2502,7 @@
         "qualification": "unknown",
         "scoped_evidence": []
       },
-      "required_remaining_checks": [
-        "Independent per-VRF forwarding/isolation"
-      ],
+      "required_remaining_checks": [],
       "finding_references": [
         "docs/design/routerd15-open-findings.md#native-effects-and-lifetime"
       ]
