@@ -64,24 +64,25 @@ remaining FreeBSD functions in the final 1.0 preservation scope.
 
 ## Current Linux execution checkpoint, 2026-11-02
 
-The active branch records the current PVE VLAN results rather than treating
-earlier branch history as current qualification. DHCPv4 acquisition plus DNS
-UDP/TCP answers and IPv4 NAT with a separate cloned client have passed and are
-recorded at the executed revisions. The IPsec provider-restart repair is also
-recorded at its executed revision.
+The active branch records current PVE VLAN results rather than treating earlier
+branch history as current qualification. DHCPv4 acquisition plus DNS UDP/TCP
+answers, IPv4 NAT with a separate cloned client, RA/SLAAC, and DHCPv6-PD with
+delegated-prefix forwarding, expiry and recovery are recorded at their executed
+revisions. The IPsec provider-restart repair is also recorded at its executed
+revision.
 
-The separate client has received an IPv6 router advertisement, completed DAD,
-installed the advertised on-link and default routes, and exchanged ICMPv6 with
-the router's link-local address. That is RA/SLAAC evidence only. It does not
-qualify DHCPv6 prefix delegation, delegated-prefix installation, IPv6 traffic
-forwarding to an independent upstream, renewal, expiry, renumbering, upstream
-loss/return, or restart recovery.
+The current PVE BGP result is recorded at `570606b7`. VM219 and VM220 formed
+an eBGP session on VLAN 3132. A peer-advertised prefix entered the VM219 kernel
+FIB as `proto bgp`, was withdrawn while the TCP session remained established,
+and returned when the peer resumed advertisement. This does not qualify BFD,
+IPv6 BGP, ECMP, a peer implementation other than routerd, or a downstream
+endpoint behind the peer.
 
-The next Linux work is therefore to record the RA/SLAAC result, then exercise
-the actual DHCPv6-PD path with the dedicated client and an independent VLAN
-upstream. The test must observe the delegated prefix, client route, forwarded
-traffic, and withdrawal/recovery behavior. No timing threshold or compatibility
-requirement beyond the stated product function is introduced by this checkpoint.
+The next Linux work selects the highest remaining product function with a
+concrete independent peer or client. It must record actual kernel and packet
+effects, withdrawal and recovery where the function requires them. No timing
+threshold or compatibility requirement beyond the stated product function is
+introduced by this checkpoint.
 
 ## Work sequence
 

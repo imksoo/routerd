@@ -59,18 +59,25 @@ Implemented in the daemon policy/path checkpoint:
   Control requests and acknowledgements use complete, bounded typed decoding.
 
 Loopback GoBGP export, edit/withdraw and exact-source recovery regressions pass.
-These are production-server tests, not independent-peer qualification. Native
-kernel FIB ownership now uses one typed SQL receipt owner, exclusive add/exact
-withdrawal, current RIB/Mobility/native rechecks after persistence and explicit
-unknown-present fencing for both operations. Watcher and in-flight mutation exit
-are acknowledged before connection replacement. Protocol-only adoption, display
-fallback and duplicate retention caches are removed. Actual kernel qualification
-remains unqualified. The SQL journal is now keyed by the current kernel scope,
-including the actual FreeBSD FIB; old worlds and pending operations remain
-untouched, while the new world can acquire only through exclusive native add.
-A present foreign route is not adopted. Real SQL two-world/reopen regressions
-pass, but actual reboot/forwarding qualification remains unrun. FreeBSD's delete
-API also lacks an atomic full-tuple CAS against unrelated external writers.
+At `570606b7`, an isolated PVE eBGP pair also established over VLAN 3132. The
+VM219 kernel received `198.18.50.0/24` as `proto bgp`; disabling the peer's
+advertisement removed the exact kernel route while the BGP session remained
+established, and restoring the advertisement reinstalled it. This is a separate
+VM and process, but both endpoints use routerd. Cross-vendor interoperability,
+an endpoint behind the peer, BFD, IPv6 BGP, ECMP and physical-network behavior
+remain unqualified.
+
+Native kernel FIB ownership now uses one typed SQL receipt owner, exclusive
+add/exact withdrawal, current RIB/Mobility/native rechecks after persistence and
+explicit unknown-present fencing for both operations. Watcher and in-flight
+mutation exit are acknowledged before connection replacement. Protocol-only
+adoption, display fallback and duplicate retention caches are removed. The SQL
+journal is keyed by the current kernel scope, including the actual FreeBSD FIB;
+old worlds and pending operations remain untouched, while the new world can
+acquire only through exclusive native add. A present foreign route is not
+adopted. Real SQL two-world/reopen regressions pass, but actual reboot/forwarding
+qualification remains unrun. FreeBSD's delete API also lacks an atomic full-tuple
+CAS against unrelated external writers.
 
 ## Native effects and lifetime
 
