@@ -171,7 +171,7 @@
         "Verified dnsmasq observation/signaling after UID drop"
       ],
       "excludes": [
-        "Cross-version upgrade/rollback",
+        "Cross-version 1.0 configuration/database import or binary cutback",
         "Host reboot/crash",
         "Production deployment",
         "Complete 1.0 functional parity"
@@ -344,8 +344,8 @@
       ],
       "excludes": [
         "A clean-commit full Go run or semantic parity of every baseline command/API/UI workflow",
-        "Actual packaged-daemon browser integration or native systemd/rc.d service upgrade recovery",
-        "Cross-version 1.0-to-1.5 upgrade, binary cutback, host reboot/crash or live ISO boot",
+        "Actual packaged-daemon browser integration or native systemd/rc.d clean-install activation",
+        "Cross-version configuration/database import or binary cutback, host reboot/crash or live ISO boot",
         "Native FreeBSD execution, kernel networking, independent-peer communication or production qualification"
       ]
     },
@@ -898,7 +898,7 @@
         "Candidate is separate from shared proposal integration",
         "Real DHCP expiry and different-device/platform interoperability",
         "Complete TunnelInterface preservation or qualification",
-        "Installed daemon upgrade or full daemon integration at this candidate revision"
+        "Full packaged-daemon integration at this candidate revision"
       ],
       "provided_binary_sha256": "b9801292e8c8b0563d44716003a8fc23fa508b61d469841452161046708eb281"
     },
@@ -1098,6 +1098,23 @@
       "excludes": [
         "Rendered stateless-information/DNS response, RA/default route, renewal/expiry, restart and forwarding",
         "Full routerd supervision and FreeBSD runtime"
+      ]
+    },
+    "linux-dhcpv6-server-packaged-lifecycle-038381c2": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "038381c2d2fdb317c9eb01d70bec32c7a42451df",
+      "reference": "docs/operations/development.md#linux-packaged-dhcpv6-server-lifecycle-vm-gate",
+      "environment": "Disposable Ubuntu 24.04.4 systemd VM; make dist package, package routerd serve, systemd-managed dnsmasq and independent dhcpcd client over a private veth/network namespace.",
+      "reproduction": "sudo scripts/linux-dhcpv6-server-lifecycle-smoke.sh --disposable-vm PACKAGE_ROOT",
+      "checks": [
+        "Packaged routerd validated the prepared 1.5 test configuration; independent client completed IA_NA acquisition from the configured pool and DAD.",
+        "Independent client renewed the same IA_NA address; the RA Managed flag and RA-installed default route were observed.",
+        "Successful temporary config, state and logs were removed; the pre-existing service was active after restart."
+      ],
+      "excludes": [
+        "Installer clean-install path, DNS answers, IPv4 NAT, forwarding and reboot recovery",
+        "DHCPv6 stateless DNS options, expiry, FreeBSD runtime or complete 1.0 function preservation"
       ]
     },
     "dhcpv6-partial-recovery-87761c0e": {
@@ -2488,7 +2505,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-dhcpv6-server-ia-na-f6be5a58"
+          "linux-dhcpv6-server-ia-na-f6be5a58",
+          "linux-dhcpv6-server-packaged-lifecycle-038381c2"
         ]
       },
       "freebsd": {
@@ -3325,11 +3343,11 @@
       },
       "required_remaining_checks": [
         "All baseline artifacts/architectures and retained notices",
-        "Release provenance and target install/update qualification"
+        "Release provenance and target-package clean-install qualification using a validated routerd 1.5 configuration"
       ]
     },
     {
-      "id": "packaged-install-update-and-rollback",
+      "id": "packaged-clean-install-and-recovery",
       "scope": "non-resource",
       "baseline_resource_kinds": [],
       "baseline": {

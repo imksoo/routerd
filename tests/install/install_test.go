@@ -368,61 +368,6 @@ echo static-archive-agent
 	}
 }
 
-func TestInstallPreservesOperatorConfigWithoutMigration(t *testing.T) {
-	dir := t.TempDir()
-	pkg := filepath.Join(dir, "package")
-	prefix := filepath.Join(dir, "prefix")
-	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
-if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
-exit 0
-`)
-	if err := os.MkdirAll(filepath.Join(pkg, "etc", "routerd"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pkg, "etc", "routerd", "router.yaml.sample"), []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\nmetadata:\n  name: sample\nspec: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(prefix, "etc", "routerd", "router.yaml")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	legacyConfig := `apiVersion: routerd.net/v1alpha1
-kind: Router
-metadata:
-  name: legacy
-spec:
-  resources:
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: SystemdUnit
-      metadata:
-        name: routerd.service
-      spec:
-        execStart: /usr/local/sbin/routerd serve --controller-chain
-    - apiVersion: system.routerd.net/v1alpha1
-      kind: Hostname
-      metadata:
-        name: router
-      spec:
-        hostname: router01
-`
-	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
-	if err != nil {
-		t.Fatalf("install failed: %v\n%s", err, out)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(data)
-	if got != legacyConfig {
-		t.Fatalf("installer rewrote operator config:\n%s", got)
-	}
-}
-
 func TestInstallFailsWhenServiceRecoveryFails(t *testing.T) {
 	requireLinuxSystemdFixture(t)
 	for _, scenario := range []string{"missing-status-socket", "scheduled-restart-timeout", "helper-restart-failure", "primary-restart-failure", "post-restart-reload-failure"} {

@@ -139,6 +139,33 @@ and deletes temporary namespace state and logs. The test does not start an RA
 service, so it does not use a ping or claim to qualify default-route or
 forwarding behavior; those are covered by separate RA/client lifecycle gates.
 
+## Linux packaged DHCPv6 server lifecycle VM gate
+
+Build the candidate with `make dist`, extract its Linux archive on a dedicated,
+disposable systemd Linux VM, then run the packaged-daemon check:
+
+```sh
+sudo scripts/linux-dhcpv6-server-lifecycle-smoke.sh --disposable-vm \
+  /path/to/extracted/package
+```
+
+The extracted package root must contain `bin/routerd` and `bin/routerctl`. The
+VM must already have a healthy `routerd.service` with no active resources, an
+installed `/usr/local/sbin/routerctl`, and `ip`, `jq`, `dhcpcd`, `tcpdump`,
+`timeout`, `journalctl` and systemd tools. The check validates its temporary
+routerd 1.5 configuration, then runs the candidate package's `routerd serve`,
+its systemd-managed dnsmasq and an independent dhcpcd client over a private veth
+and client namespace. The client wait is bounded at 150 seconds and renewal
+observation at 90 seconds. PASS requires an IA_NA address from the configured
+pool, completed client DAD, a DHCPv6 renew reply with the same address, an RA
+Managed flag and an RA-installed default route. The existing router config and
+state are left untouched; the baseline service is restarted after the candidate
+exits. Successful runs delete their temporary output. On failure, the script
+stops its candidate and peers, restarts the baseline service and retains only
+the current temporary fixture path for local reproduction. This gate does not
+establish DNS responses, IPv4 NAT, forwarding, reboot recovery, clean package
+installation or complete router qualification.
+
 ## Pre-commit hook
 
 The repository includes an optional pre-commit hook script:

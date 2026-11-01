@@ -9,8 +9,10 @@ Improve routerd in place on a separate branch. Preserve its useful networking
 behavior while removing duplicate state, conversions, unused execution paths,
 and unnecessary abstractions. Configuration and event/state database compatibility
 are explicitly not required. Cutover uses rewritten config and a fresh chosen DB;
-there is no old-format migration project. Existing features are not implicitly
-removed. A new package/process/framework is justified only by the feature's needs.
+there is no old-format import or in-place upgrade project. Convert any retained
+operator configuration to the routerd 1.5 format and validate it with routerd 1.5
+before a clean install. Existing features are not implicitly removed. A new
+package/process/framework is justified only by the feature's needs.
 
 ## Completion and first live-use milestone
 
@@ -25,10 +27,10 @@ The first live-use configuration is a home/site main router with DHCP/DNS,
 IPv4 NAT and IPv6. Its admission checks are:
 
 - Clean package installation and startup through the actual service manager,
-  with management access independent of the tested WAN/LAN.
-- Prepare the desired configuration in the routerd 1.5 format before
-  installation and validate it with 1.5. Install with fresh 1.5 state; importing
-  routerd 1.0 configuration or databases is outside the scope.
+  using a routerd 1.5 configuration prepared (converted if needed) and validated
+  by routerd 1.5 before installation, with fresh 1.5 state and management access
+  independent of the tested WAN/LAN. Importing routerd 1.0 configuration or
+  databases and upgrading an installed 1.0 system are outside the scope.
 - Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
   IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
   upstream mode selected for the actual deployment.

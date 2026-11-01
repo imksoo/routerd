@@ -124,6 +124,27 @@ Solicit/Advertise/Request/Reply が完了し、pool 内の address が割り当�
 成功時は2件の結果を表示し、一時 namespace、state、log を削除します。この試験は RA service を起動しません。
 そのため ping や default route、forwarding を合格条件にせず、これらは別の RA/client lifecycle 試験で確認します。
 
+## Linux の packaged DHCPv6 server lifecycle VM 試験
+
+`make dist` で candidate を build し、専用の破棄可能な systemd Linux VM に展開してから実行します。
+
+```sh
+sudo scripts/linux-dhcpv6-server-lifecycle-smoke.sh --disposable-vm \
+  /path/to/extracted/package
+```
+
+展開先には `bin/routerd` と `bin/routerctl` が必要です。VM には resource がない Healthy な
+`routerd.service`、導入済み `/usr/local/sbin/routerctl`、`ip`、`jq`、`dhcpcd`、`tcpdump`、
+`timeout`、`journalctl` と systemd tools が必要です。試験は一時的な routerd 1.5 設定を validate し、
+package 内の `routerd serve`、systemd 管理の dnsmasq、独立した dhcpcd client を private veth と
+client namespace で動かします。client の待機は最大150秒、renewal 観測は最大90秒です。
+pool 内の IA_NA address、client の DAD 完了、同じ address の DHCPv6 renewal reply、RA Managed flag、
+RA で設定された default route を合格条件にします。既存の router 設定と state は変更せず、
+candidate 終了後に元の service を再開します。成功時は一時出力を削除します。失敗時は candidate と
+peer を停止し、元の service を再開したうえで、ローカル再現に必要な今回の fixture だけを保持します。
+この gate は DNS 応答、IPv4 NAT、forwarding、reboot recovery、package の clean install、
+router 全体の qualification を証明しません。
+
 ## Linux の WAN DHCPv4 ライフサイクル VM 試験
 
 `scripts/linux-wan-dhcpv4-lifecycle-smoke.sh` は `make dist` で導入した製品を
