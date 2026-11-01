@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/config"
 	runtime "github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/logstore"
 )
@@ -138,5 +139,34 @@ func TestRuntimeConfigKeepsUnconditionalDeclaredReservationWhenEffectiveViewOmit
 	record := config.Zones[0].DHCPHostRecords[0]
 	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "192.0.2.150" || record.MAC != "02:00:00:00:00:01" {
 		t.Fatalf("runtime DHCP host record = %+v", record)
+	}
+}
+
+func TestRuntimeConfigExportsFixtureReservationAfterConfigDecode(t *testing.T) {
+	router, err := config.Load("../../../tests/fixtures/linux-dhcp-firewall-lifecycle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolverSpec api.DNSResolverSpec
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "DNSResolver" || resource.Metadata.Name != "lan" {
+			continue
+		}
+		resolverSpec, err = resource.DNSResolverSpec()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	controller := Controller{Router: router, DeclaredRouter: router, Store: mapStore{}, RuntimeDir: t.TempDir(), StateDir: t.TempDir()}
+	config, _, err := controller.runtimeConfig(t.Context(), "lan", runtime.NormalizeSpec(resolverSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].DHCPHostRecords) != 1 {
+		t.Fatalf("fixture runtime DHCP host records = %+v", config.Zones)
+	}
+	record := config.Zones[0].DHCPHostRecords[0]
+	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "198.18.15.150" || record.MAC != "02:00:00:15:00:01" {
+		t.Fatalf("fixture runtime DHCP host record = %+v", record)
 	}
 }

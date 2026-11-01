@@ -112,8 +112,19 @@ for _ in {1..10}; do
 done
 test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1
 systemctl start routerd
+reservation_declared() {
+ /usr/local/sbin/routerctl get DHCPv4Reservation/printer -o json | jq -e '
+  .items | length == 1 and
+  .[0].spec.hostname == "printer" and
+  .[0].spec.ipAddress == "198.18.15.150" and
+  .[0].spec.macAddress == "02:00:00:15:00:01" and
+  .[0].spec.server == "lan"' >/dev/null
+}
 stage=baseline
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
+stage=reservation-declared
+for _ in {1..20}; do if reservation_declared; then break; fi; sleep 1; done
+reservation_declared
 stage=reservation-runtime
 for _ in {1..20}; do
  if jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
@@ -219,6 +230,9 @@ systemctl stop rd15-dhcp-client
 # udhcpc removes its address on RELEASE. Keep the probe in the same LAN
 # namespace with a non-pool address so this asserts DNS state, not a lost route.
 ip netns exec rd15-lan-peer ip addr add 198.18.15.151/24 dev peer0
+stage=reservation-post-release-declared
+for _ in {1..20}; do if reservation_declared; then break; fi; sleep 1; done
+reservation_declared
 stage=reservation-post-release-runtime
 for _ in {1..20}; do
  if jq -e '.zones[] | select(.name == "home") | .dhcpScopes[] | select(.source == "DHCPv4Server/lan")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
