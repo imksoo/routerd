@@ -2574,7 +2574,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			return nil, DaemonStatusController{}, lifetimes, err
 		}
 	}
-	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
+	dnsResolver := dnsresolvercontroller.Controller{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDNSResolver, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir, DHCPHostsPath: dnsmasqHostsFile(opts.DnsmasqConfig)}
 	eventFederation := eventfederationcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunEventFederation, RuntimeDir: defaults.RuntimeDir, StateDir: defaults.StateDir}
 	var leaseSyncRolesObserved atomic.Pointer[leaseSyncRoleProof]
 	leaseSync := FileSyncController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunLeaseSync, Logger: logger}
@@ -3155,7 +3155,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
-			current.DeclaredRouter = observation.DeclaredRouter
+			// Keep the declaration captured by this controller generation while
+			// it drains already queued lease events. The runner-wide declaration
+			// may already belong to a replacement generation.
+			current.DeclaredRouter = dnsResolver.DeclaredRouter
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
@@ -3166,7 +3169,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 			effective := observation.EffectiveRouter
 			current := dnsResolver
 			current.Router = effective
-			current.DeclaredRouter = observation.DeclaredRouter
+			current.DeclaredRouter = dnsResolver.DeclaredRouter
 			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
