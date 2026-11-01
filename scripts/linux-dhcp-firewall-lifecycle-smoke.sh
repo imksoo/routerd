@@ -114,6 +114,12 @@ test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 pee
 systemctl start routerd
 stage=baseline
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
+stage=reservation-runtime
+for _ in {1..20}; do
+ if jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
 cat > "$work/udhcpc-hook" <<'HOOK'
 #!/bin/sh
 set -eu
@@ -213,6 +219,19 @@ systemctl stop rd15-dhcp-client
 # udhcpc removes its address on RELEASE. Keep the probe in the same LAN
 # namespace with a non-pool address so this asserts DNS state, not a lost route.
 ip netns exec rd15-lan-peer ip addr add 198.18.15.151/24 dev peer0
+stage=reservation-post-release-runtime
+for _ in {1..20}; do
+ if jq -e '.zones[] | select(.name == "home") | .dhcpScopes[] | select(.source == "DHCPv4Server/lan")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+stage=reservation-post-release-source
+jq -e '.zones[] | select(.name == "home") | .dhcpScopes[] | select(.source == "DHCPv4Server/lan")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
+stage=reservation-post-release-runtime
+for _ in {1..20}; do
+ if jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null 2>&1; then break; fi
+ sleep 1
+done
+jq -e '.zones[] | select(.name == "home") | .dhcpHostRecords[] | select(.hostname == "printer" and .ip == "198.18.15.150" and .mac == "02:00:00:15:00:01" and .source == "DHCPv4Server/lan" and .origin == "reservation")' /var/lib/routerd/dns-resolver/lan/config.json >/dev/null
 for _ in {1..20}; do
  reservation_present=true
  for mode in +notcp +tcp; do

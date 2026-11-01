@@ -16,6 +16,7 @@ import (
 	"github.com/imksoo/routerd/pkg/api"
 	resolverruntime "github.com/imksoo/routerd/pkg/dnsresolver"
 	"github.com/imksoo/routerd/pkg/logstore"
+	"github.com/imksoo/routerd/pkg/resourcequery"
 )
 
 // The hosts sidecar describes intended DHCP assignments. It carries neither a
@@ -47,25 +48,43 @@ func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverr
 	}
 	var out []resolverruntime.RuntimeDHCPHostRecord
 	configured := make(map[string]struct{})
-	for _, resource := range c.Router.Spec.Resources {
-		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DHCPv4Reservation" {
+	// Runtime selection normally supplies every active reservation through Router.
+	// Retain a declaration without a when condition from DeclaredRouter as well:
+	// a lease callback may arrive while the effective view is being refreshed, but
+	// it must not turn an unconditional fixed assignment into a removable name.
+	// The selected DHCP source remains the authority, so a withdrawn server never
+	// receives a record from this fallback.
+	for index, router := range []*api.Router{c.Router, c.DeclaredRouter} {
+		if router == nil || index == 1 && router == c.Router {
 			continue
 		}
-		spec, err := resource.DHCPv4ReservationSpec()
-		if err != nil {
-			return nil, err
+		for _, resource := range router.Spec.Resources {
+			if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DHCPv4Reservation" {
+				continue
+			}
+			spec, err := resource.DHCPv4ReservationSpec()
+			if err != nil {
+				return nil, err
+			}
+			if index == 1 && resourcequery.ResourceWhenPresent(spec.When) {
+				continue
+			}
+			server := spec.Server
+			if server == "" {
+				server = spec.Scope
+			}
+			source := "DHCPv4Server/" + server
+			if server == "" || spec.Hostname == "" || spec.MACAddress == "" || spec.IPAddress == "" || !hasDHCPSource(scopes, source) {
+				continue
+			}
+			record := resolverruntime.RuntimeDHCPHostRecord{Hostname: spec.Hostname, IP: spec.IPAddress, MAC: spec.MACAddress, Source: source, Origin: resolverruntime.DHCPAssignmentReservation}
+			key := dhcpAssignmentKey(record)
+			if _, found := configured[key]; found {
+				continue
+			}
+			configured[key] = struct{}{}
+			out = append(out, record)
 		}
-		server := spec.Server
-		if server == "" {
-			server = spec.Scope
-		}
-		source := "DHCPv4Server/" + server
-		if server == "" || spec.Hostname == "" || spec.MACAddress == "" || spec.IPAddress == "" || !hasDHCPSource(scopes, source) {
-			continue
-		}
-		record := resolverruntime.RuntimeDHCPHostRecord{Hostname: spec.Hostname, IP: spec.IPAddress, MAC: spec.MACAddress, Source: source, Origin: resolverruntime.DHCPAssignmentReservation}
-		configured[dhcpAssignmentKey(record)] = struct{}{}
-		out = append(out, record)
 	}
 	for _, record := range parsed {
 		source := resolverruntime.DHCPSourceForAddress(scopes, record.IP)

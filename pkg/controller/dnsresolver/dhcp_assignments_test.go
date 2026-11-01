@@ -78,3 +78,65 @@ func TestConfiguredReservationDoesNotRequireDNSMasqSidecar(t *testing.T) {
 		t.Fatalf("configured reservation = %+v", record)
 	}
 }
+
+func TestRuntimeConfigIncludesConfiguredReservationWithoutDNSMasqSidecar(t *testing.T) {
+	router := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "192.0.2.1"})
+	zone, err := router.Spec.Resources[0].DNSZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone.DHCPDerived.Sources = []string{"DHCPv4Server/lan"}
+	router.Spec.Resources[0].Spec = zone
+	router.Spec.Resources = append(router.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.100", End: "192.0.2.110"}}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan", MACAddress: "02:00:00:00:00:01", Hostname: "printer", IPAddress: "192.0.2.150"}},
+	)
+	resolverSpec, err := router.Spec.Resources[1].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Router: router, Store: mapStore{}, RuntimeDir: t.TempDir(), StateDir: t.TempDir()}
+	config, _, err := controller.runtimeConfig(t.Context(), "lan-resolver", runtime.NormalizeSpec(resolverSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].DHCPHostRecords) != 1 {
+		t.Fatalf("runtime DHCP host records = %+v", config.Zones)
+	}
+	record := config.Zones[0].DHCPHostRecords[0]
+	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "192.0.2.150" || record.MAC != "02:00:00:00:00:01" {
+		t.Fatalf("runtime DHCP host record = %+v", record)
+	}
+}
+
+func TestRuntimeConfigKeepsUnconditionalDeclaredReservationWhenEffectiveViewOmitsIt(t *testing.T) {
+	declared := dnsResolverRouterWithZone(api.DNSZoneRecordSpec{Hostname: "router", IPv4: "192.0.2.1"})
+	zone, err := declared.Spec.Resources[0].DNSZoneSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	zone.DHCPDerived.Sources = []string{"DHCPv4Server/lan"}
+	declared.Spec.Resources[0].Spec = zone
+	declared.Spec.Resources = append(declared.Spec.Resources,
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.DHCPv4ServerSpec{AddressPool: api.DHCPAddressPoolSpec{Start: "192.0.2.100", End: "192.0.2.110"}}},
+		api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan", MACAddress: "02:00:00:00:00:01", Hostname: "printer", IPAddress: "192.0.2.150"}},
+	)
+	effective := declared.Clone()
+	effective.Spec.Resources = effective.Spec.Resources[:len(effective.Spec.Resources)-1]
+	resolverSpec, err := effective.Spec.Resources[1].DNSResolverSpec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Router: &effective, DeclaredRouter: declared, Store: mapStore{}, RuntimeDir: t.TempDir(), StateDir: t.TempDir()}
+	config, _, err := controller.runtimeConfig(t.Context(), "lan-resolver", runtime.NormalizeSpec(resolverSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Zones) != 1 || len(config.Zones[0].DHCPHostRecords) != 1 {
+		t.Fatalf("runtime DHCP host records = %+v", config.Zones)
+	}
+	record := config.Zones[0].DHCPHostRecords[0]
+	if record.Origin != runtime.DHCPAssignmentReservation || record.Source != "DHCPv4Server/lan" || record.Hostname != "printer" || record.IP != "192.0.2.150" || record.MAC != "02:00:00:00:00:01" {
+		t.Fatalf("runtime DHCP host record = %+v", record)
+	}
+}
