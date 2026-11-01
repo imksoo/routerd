@@ -27,14 +27,17 @@ finish() {
   rc=$?
   trap - EXIT
   set +e
+  if [ "$rc" -ne 0 ]; then
+    timeout 5 /usr/local/sbin/routerctl get status -o json >"$work/failure-status.json" 2>&1
+    journalctl -u routerd.service --since "$(date --iso-8601=seconds -d '10 minutes ago')" --no-pager >"$work/failure-routerd.log" 2>&1
+  fi
+  # RA final withdrawal owns the live interface; stop it before removing the veth.
+  systemctl stop routerd.service >/dev/null 2>&1
   ip netns exec "$client_ns" dhcpcd -x "$client_if" >/dev/null 2>&1
   ip netns del "$client_ns" >/dev/null 2>&1
   ip link del "$router_if" >/dev/null 2>&1
   rm -f -- "$dhcpcd_lease"
   if [ "$rc" -ne 0 ]; then
-    timeout 5 /usr/local/sbin/routerctl get status -o json >"$work/failure-status.json" 2>&1
-    journalctl -u routerd.service --since "$(date --iso-8601=seconds -d '10 minutes ago')" --no-pager >"$work/failure-routerd.log" 2>&1
-    systemctl stop routerd.service
     printf 'FAIL: preserved fixture/output for local reproduction at %s\n' "$work" >&2
   else
     rm -r -- "$work"
