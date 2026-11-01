@@ -383,6 +383,24 @@ func configuredResourceStatusKeys(router *api.Router) map[string]bool {
 	return out
 }
 
+// currentResourceStatuses filters persisted rows before they participate in
+// current health and controller summaries. External interface observations can
+// legitimately outlive a configuration replacement; they must not keep a
+// removed resource in Degraded state.
+func currentResourceStatuses(router *api.Router, store resourcequery.StateStore, statuses []routerstate.ObjectStatus) ([]routerstate.ObjectStatus, error) {
+	desired, err := desiredObjectStatusKeysForOS(router, store, time.Now().UTC(), platform.CurrentOS())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]routerstate.ObjectStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if desired[lifecycle.ObjectStatusID(status)] || lifecycle.SyntheticObjectStatus(status) {
+			out = append(out, status)
+		}
+	}
+	return out, nil
+}
+
 func staleStateCleanupSnapshotPath(statePath string, now time.Time) string {
 	base := filepath.Base(statePath)
 	if base == "." || base == string(filepath.Separator) || base == "" {

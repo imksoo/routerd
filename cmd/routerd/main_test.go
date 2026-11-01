@@ -1697,6 +1697,34 @@ func TestResourcePhaseIssuesReportsNonHealthyStatuses(t *testing.T) {
 	}
 }
 
+func TestCurrentResourceStatusesExcludesRemovedExternalInterface(t *testing.T) {
+	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "Interface", "removed-lan", map[string]any{"phase": "Down", "reason": "InterfaceNotFound", "managedBy": "external"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveObjectStatus(api.RouterAPIVersion, "Router", "derived-path-mtu", map[string]any{"phase": "Skipped"}); err != nil {
+		t.Fatal(err)
+	}
+	statuses, err := store.ListObjectStatuses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := currentResourceStatuses(&api.Router{}, store, statuses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issues := resourcePhaseIssues(current); len(issues) != 0 {
+		t.Fatalf("removed external interface degraded current status: %+v", issues)
+	}
+	if len(current) != 1 || current[0].Kind != "Router" {
+		t.Fatalf("current statuses = %+v, want only synthetic Router status", current)
+	}
+}
+
 func TestListenUnixSocketSetsMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routerd-status.sock")
 	listener, err := listenUnixSocket(path, 0o666)

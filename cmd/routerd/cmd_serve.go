@@ -804,6 +804,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		if err != nil {
 			return nil, err
 		}
+		resources, err = currentResourceStatuses(currentRouter(), stateStore, resources)
+		if err != nil {
+			return nil, err
+		}
 		status := controlapi.NewStatus(resultWithLatestGeneration(cache.Load(), stateStore), currentRouter())
 		status.Status.Phase = overallStatusPhase(status.Status.Phase, resources)
 		status.Status.Phase = statusPhaseForRuntime(status.Status.Phase, chainRunner.ActiveRuntimeSnapshot(), chainRunner.RuntimeMutationError())
@@ -818,6 +822,10 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 	}
 	controllersHandler := func(r *http.Request) (*controlapi.Controllers, error) {
 		resources, err := stateStore.ListObjectStatuses()
+		if err != nil {
+			return nil, err
+		}
+		resources, err = currentResourceStatuses(currentRouter(), stateStore, resources)
 		if err != nil {
 			return nil, err
 		}
