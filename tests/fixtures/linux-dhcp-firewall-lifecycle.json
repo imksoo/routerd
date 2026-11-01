@@ -113,6 +113,19 @@
       },
       {
         "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "DHCPv4Reservation",
+        "metadata": {
+          "name": "printer"
+        },
+        "spec": {
+          "server": "lan",
+          "macAddress": "02:00:00:15:00:01",
+          "hostname": "printer",
+          "ipAddress": "198.18.15.150"
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "DNSResolver",
         "metadata": {
           "name": "lan"

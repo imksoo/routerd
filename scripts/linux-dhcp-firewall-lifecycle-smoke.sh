@@ -74,6 +74,7 @@ for side in lan wan admin; do
  ip link add "rd15-$side" type veth peer name peer0 netns "$ns"
  ip link set "rd15-$side" up
  ip netns exec "$ns" ip link set lo up
+ if [ "$side" = lan ]; then ip netns exec "$ns" ip link set dev peer0 address 02:00:00:15:00:01; fi
  ip netns exec "$ns" ip link set peer0 up
 done
 ip netns exec rd15-wan-peer ip addr add 198.18.16.1/24 dev peer0
@@ -129,15 +130,17 @@ for _ in {1..20}; do
 done
 grep '^bound ' "$work/udhcpc-hook.events"
 client=$(awk '$1 == "bound" {print $2; exit}' "$work/udhcpc-hook.events")
-[[ "$client" =~ ^198\.18\.15\.(10[0-9]|110)$ ]]
+test "$client" = 198.18.15.150
 http() { ip netns exec "rd15-$1-peer" curl --noproxy '*' --fail --silent --show-error --max-time 3 "http://$2:8080/$3"; }
 probe() {
  for mode in +notcp +tcp; do
   test "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa A)" = 198.18.15.1
+  test "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" = "$client"
   test "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 peer.test A)" = 198.18.16.1
  done
  test "$(http lan 198.18.16.1 allowed-egress)" = 198.18.16.2
 }
+for _ in {1..20}; do if probe; then break; fi; sleep 1; done
 probe
 # Establish that the prospective denied paths actually work before filtering.
 test "$(http wan "$client" baseline-wan-lan)" = 198.18.16.1
