@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -21,9 +22,6 @@ import (
 // named source nor a lease deadline, so it cannot itself become a live lease.
 // Join it to current configured reservations or still-held sticky DB rows.
 func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverruntime.RuntimeDHCPHostRecord, scopes []resolverruntime.DHCPAddressScope) ([]resolverruntime.RuntimeDHCPHostRecord, error) {
-	if len(parsed) == 0 {
-		return nil, nil
-	}
 	now := time.Now().UTC()
 	var held []logstore.DHCPStickyLease
 	_, stateDir := c.dirs()
@@ -48,6 +46,27 @@ func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverr
 		return nil, err
 	}
 	var out []resolverruntime.RuntimeDHCPHostRecord
+	configured := make(map[string]struct{})
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.NetAPIVersion || resource.Kind != "DHCPv4Reservation" {
+			continue
+		}
+		spec, err := resource.DHCPv4ReservationSpec()
+		if err != nil {
+			return nil, err
+		}
+		server := spec.Server
+		if server == "" {
+			server = spec.Scope
+		}
+		source := "DHCPv4Server/" + server
+		if server == "" || spec.Hostname == "" || spec.MACAddress == "" || spec.IPAddress == "" || !hasDHCPSource(scopes, source) {
+			continue
+		}
+		record := resolverruntime.RuntimeDHCPHostRecord{Hostname: spec.Hostname, IP: spec.IPAddress, MAC: spec.MACAddress, Source: source, Origin: resolverruntime.DHCPAssignmentReservation}
+		configured[dhcpAssignmentKey(record)] = struct{}{}
+		out = append(out, record)
+	}
 	for _, record := range parsed {
 		source := resolverruntime.DHCPSourceForAddress(scopes, record.IP)
 		if source == "" {
@@ -75,7 +94,9 @@ func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverr
 		}
 		if reservation {
 			record.Origin = resolverruntime.DHCPAssignmentReservation
-			out = append(out, record)
+			if _, found := configured[dhcpAssignmentKey(record)]; !found {
+				out = append(out, record)
+			}
 			continue
 		}
 		for _, row := range held {
@@ -87,7 +108,16 @@ func (c Controller) namedDHCPAssignments(ctx context.Context, parsed []resolverr
 			}
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return dhcpAssignmentKey(out[i]) < dhcpAssignmentKey(out[j]) })
 	return out, nil
+}
+
+func hasDHCPSource(scopes []resolverruntime.DHCPAddressScope, source string) bool {
+	return slices.ContainsFunc(scopes, func(scope resolverruntime.DHCPAddressScope) bool { return scope.Source == source })
+}
+
+func dhcpAssignmentKey(record resolverruntime.RuntimeDHCPHostRecord) string {
+	return strings.ToLower(strings.TrimSpace(record.Source)) + "\x00" + strings.ToLower(strings.TrimSpace(record.Hostname)) + "\x00" + strings.TrimSpace(record.IP) + "\x00" + strings.ToLower(strings.TrimSpace(record.MAC))
 }
 
 func assignmentsForSources(records []resolverruntime.RuntimeDHCPHostRecord, sources []string) []resolverruntime.RuntimeDHCPHostRecord {
