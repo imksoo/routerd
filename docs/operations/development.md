@@ -528,6 +528,28 @@ An unmarked table from an older build is not automatically adopted for deletion.
 Resolve such a table explicitly during isolated-environment preparation; a manual
 cleanup is not a passing product withdrawal result.
 
+## Linux PortForward and IngressService lifecycle gate
+
+`scripts/linux-ingress-service-smoke.sh` runs the installed package through its
+actual systemd service in a dedicated, empty disposable Linux VM. It creates an
+external client, LAN client, and two independent LAN backends, replaces the
+guest configuration, changes test interfaces and IPv4 forwarding, then removes
+all of them. The guest needs systemd, iproute2, nftables, jq, and Python 3.
+
+```sh
+sudo scripts/linux-ingress-service-smoke.sh --disposable-vm
+```
+
+The gate requires PortForward DNAT and LAN hairpin source translation, then
+withdraws that rule while proving an already-established TCP flow remains on
+its original backend and a new flow is rejected. It separately requires
+IngressService external and hairpin delivery, TCP-health failover, recovery,
+operator drain/undrain, daemon restart, and full nftables withdrawal. Keep the
+procedure, candidate revision, and concise pass/fail verdict; the fixture
+deletes its raw output on both success and failure. This is a scoped Linux
+ingress result, not proof of FreeBSD behavior, dynamic distribution modes,
+flow-pinhole expiry, or complete routerd 1.0 parity.
+
 ## Two-VM reboot and interrupted-apply gate
 
 `scripts/linux-router-reboot-fixture.sh` uses two dedicated disposable Linux VMs
