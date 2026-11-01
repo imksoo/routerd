@@ -906,8 +906,12 @@ Preflight checks:
 The same checks are surfaced by `routerctl doctor mgmt`, which never
 applies anything.
 
-`spec.allowSourceCIDRs` is informational today (recorded in status and
-shown by doctor) and is not yet enforced by the firewall guard.
+When `spec.allowSourceCIDRs` contains one or more CIDRs, routerd enforces the
+union of those CIDRs at the WebConsole request boundary. Requests whose
+transport peer is outside the declared prefixes receive HTTP 403. routerd does
+not trust `X-Forwarded-For` for this decision. An empty list leaves WebConsole
+source access unrestricted, retaining the explicit opt-in behavior for this
+additional service guard.
 
 `--allow-mgmt-lockout` is an **emergency override**, intended for the case
 where you must apply a config that would otherwise be blocked and have a

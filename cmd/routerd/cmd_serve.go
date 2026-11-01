@@ -1777,6 +1777,61 @@ func controlAPIAdmissionHandler(next http.Handler, allowPrefixes []netip.Prefix,
 	})
 }
 
+// managementWebConsoleAdmissionHandler applies the source restriction declared
+// for the management plane to the WebConsole itself. This service-boundary
+// check holds even when the listener is reached through an unexpected path.
+//
+// An absent allowSourceCIDRs list retains unrestricted WebConsole behavior.
+// Once a ManagementAccess resource provides a source CIDR, every WebConsole
+// request must originate from the union of all declared CIDRs.
+func managementWebConsoleAdmissionHandler(next http.Handler, fallback *api.Router, currentRouter func() *api.Router) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		router := fallback
+		if currentRouter != nil {
+			if current := currentRouter(); current != nil {
+				router = current
+			}
+		}
+		prefixes, restricted, err := managementWebConsoleAllowPrefixes(router)
+		addr, addrErr := remoteAddrIP(r.RemoteAddr)
+		if err != nil || addrErr != nil || (restricted && !sourceAllowedByPrefixes(addr, prefixes)) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func managementWebConsoleAllowPrefixes(router *api.Router) ([]netip.Prefix, bool, error) {
+	if router == nil {
+		return nil, false, errors.New("management access router is unavailable")
+	}
+	seen := make(map[netip.Prefix]struct{})
+	var prefixes []netip.Prefix
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "ManagementAccess" {
+			continue
+		}
+		spec, err := res.ManagementAccessSpec()
+		if err != nil {
+			return nil, false, err
+		}
+		for _, text := range spec.AllowSourceCIDRs {
+			prefix, err := netip.ParsePrefix(strings.TrimSpace(text))
+			if err != nil {
+				return nil, false, fmt.Errorf("%s allowSourceCIDRs: %w", res.ID(), err)
+			}
+			prefix = prefix.Masked()
+			if _, ok := seen[prefix]; ok {
+				continue
+			}
+			seen[prefix] = struct{}{}
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return prefixes, len(prefixes) > 0, nil
+}
+
 func controlAPITokenAllowed(r *http.Request, want string) bool {
 	auth := strings.TrimSpace(r.Header.Get("Authorization"))
 	const prefix = "Bearer "
@@ -1800,6 +1855,10 @@ func remoteAddrIP(remoteAddr string) (netip.Addr, error) {
 }
 
 func controlAPISourceAllowed(addr netip.Addr, allowPrefixes []netip.Prefix) bool {
+	return sourceAllowedByPrefixes(addr, allowPrefixes)
+}
+
+func sourceAllowedByPrefixes(addr netip.Addr, allowPrefixes []netip.Prefix) bool {
 	addr = addr.Unmap()
 	for _, prefix := range allowPrefixes {
 		if prefix.Contains(addr) {
@@ -2206,7 +2265,7 @@ func statusAddressValue(value string) string {
 }
 
 func webConsoleHTTPHandler(spec api.WebConsoleSpec, router *api.Router, currentRouter func() *api.Router, store routerstate.Store, eventBus *bus.Bus, cache *resultCache, configPath string, controllerStatuses func() []controlapi.ControllerStatus, dhcpLeasePaths []string) http.Handler {
-	return webconsole.New(webconsole.Options{
+	handler := webconsole.New(webconsole.Options{
 		Router:                 router,
 		CurrentRouter:          currentRouter,
 		Store:                  store,
@@ -2225,6 +2284,7 @@ func webConsoleHTTPHandler(spec api.WebConsoleSpec, router *api.Router, currentR
 		ControllerStatuses:     controllerStatuses,
 		Bus:                    eventBus,
 	})
+	return managementWebConsoleAdmissionHandler(handler, router, currentRouter)
 }
 
 func webConsoleLinks(links []api.WebConsoleLinkSpec) []webconsole.ConsoleLink {
