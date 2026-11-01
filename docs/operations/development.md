@@ -280,6 +280,10 @@ sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
 # Stateless Information-Request: no IA_NA may be received.
 sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
   "$PWD/tests/fixtures/linux-dhcpv6-server-stateless-smoke.json"
+
+# Native RA only: no dnsmasq DHCPv6 listener may start.
+sudo scripts/linux-dhcpv6-ra-only-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcpv6-ra-only-smoke.json"
 ```
 
 routerd supplies the static RA and manages dnsmasq. The `stateful` and `both`
@@ -287,12 +291,14 @@ fixtures require the independent client namespace to complete SLAAC DAD, obtain
 a stateful IA_NA, and receive DNS, SNTP and domain-search options. Each fixture
 uses an explicit RA so that the DHCPv6 exchange is independently testable. The
 `stateless` fixture requires an Information-Request with those options and
-rejects any IA_NA. In both cases, the check repeats after a routerd service
-restart and requires the empty configuration to reach Healthy with zero
-resources and no phase issues. dhcpcd uses a unique test interface and the gate
+rejects any IA_NA. The `ra-only` fixture receives the native RA through an
+independent rdisc6 decoder, requires the routerd-dnsmasq service to remain
+inactive, and verifies its `DHCPv6Server` status. Every gate requires the empty
+configuration to reach Healthy with zero resources and no phase issues; the
+stateful, both, and stateless checks also repeat after a routerd service restart. dhcpcd uses a unique test interface and the gate
 deletes its exact lease state; successful raw output is deleted.
 
-This is not evidence for implicit DHCPv6 RA flags or `ra-only`, lease renewal/expiry,
+This is not evidence for implicit DHCPv6 RA flags, lease renewal/expiry,
 DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
 or complete routerd 1.0 functional parity. A failure stops routerd and preserves
 the exact fixture directory for local reproduction; delete it once resolved.

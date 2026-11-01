@@ -241,17 +241,23 @@ sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
 # Stateless Information-Request。IA_NA を受けてはならない。
 sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
   "$PWD/tests/fixtures/linux-dhcpv6-server-stateless-smoke.json"
+
+# Native RA のみ。dnsmasq DHCPv6 listener は起動してはならない。
+sudo scripts/linux-dhcpv6-ra-only-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcpv6-ra-only-smoke.json"
 ```
 
 routerd が静的 RA を送信し、dnsmasq を管理します。`stateful` と `both` fixture は、独立
 client netns が SLAAC の DAD を完了し、stateful IA_NA、DNS、SNTP、domain-search option を
 取得することを必須とします。DHCPv6 exchange を独立に検査するため、各 fixture は明示的な RA を
 用います。`stateless` fixture は Information-Request で同じ option を取得し、IA_NA が含まれない
-ことを必須とします。いずれも routerd service
-再起動後に再実行し、最後の空設定適用で資源数ゼロ・phase 問題なしの Healthy を確認します。
+ことを必須とします。`ra-only` fixture は独立した rdisc6 decoder で native RA を受信し、
+routerd-dnsmasq service が inactive のままであることと `DHCPv6Server` status を確認します。
+すべての gate は最後の空設定適用で資源数ゼロ・phase 問題なしの Healthy を確認します。stateful、
+both、stateless は routerd service 再起動後にも再実行します。
 dhcpcd の試験用 interface 名と lease state は毎回固有にし、成功時の生出力は削除します。
 
-この試験は DHCPv6 の implicit RA flag と `ra-only`、lease の Renew/expiry、DHCPv6 lease sync、
+この試験は DHCPv6 の implicit RA flag、lease の Renew/expiry、DHCPv6 lease sync、
 委譲アドレス、転送、FreeBSD、routerd 1.0 全機能の合格を示しません。失敗時は routerd を停止して
 正確な fixture directory をローカル再現用に保持し、解消後に削除します。
 
