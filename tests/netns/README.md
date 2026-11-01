@@ -20,6 +20,7 @@ namespace/veth/VXLAN/bridge/firewall kernel facilities used by the selected case
 | `arp-observer-ignore-member-mac`, standalone `vxlan-when-ha-active-standby` | Go builds the observer/controller |
 | `sam-proxy-arp-garp-transition`, `vxlan-l2-control-plane-transparency` | Common iproute2/Python/timeout and corresponding kernel facilities |
 | Standalone `vrrp-vmac-lan-address-lifecycle` | Explicit `ROUTERD_RUN_NETNS=1`; built vmac helper or `ROUTERD_VRRP_VMAC_BIN`; unshare/mount/ip/grep/sha256sum |
+| Standalone `dhcpv6-server-lifecycle` | dnsmasq 2.90 or later and Go; it renders the actual routerd dnsmasq configuration |
 | `render-compatibility` | make/Go; render golden target without root |
 
 `run-all.sh` selects its listed scenarios. It does not implicitly run standalone
@@ -45,6 +46,7 @@ sudo ./sam-empty-forward-chain.sh
 sudo ./vxlan-l2-control-plane-transparency.sh
 sudo ./vxlan-l2-mss-clamp.sh
 sudo ROUTERD_RUN_NETNS=1 ./vrrp-vmac-lan-address-lifecycle.sh
+sudo ./dhcpv6-server-lifecycle.sh
 ./render-compatibility.sh
 ```
 
@@ -100,3 +102,13 @@ The client emits finite test exchanges; waits are bounded acquisition watchdogs,
 not performance requirements. This covers DHCP/RA preservation, not HA failover
 or production application connectivity. Do not add `no-dhcpv4-interface`: in
 dnsmasq 2.90 it also suppresses IPv6 prefix construction.
+
+## DHCPv6 stateful server lifecycle
+
+`dhcpv6-server-lifecycle.sh` builds the product's direct `DHCPv6Server`
+renderer and starts dnsmasq in a router namespace. Its separate raw DHCPv6
+client performs Solicit, Request, Renew, and Release for each of `stateful` and
+`both`, and requires the finite IA_NA lease plus DNS, SNTP, and domain-search
+options. It does not configure an address in the client kernel, qualify routerd
+service supervision, verify RA, or cover expiry. Successful raw output is
+removed; a failure retains its exact namespace-test directory for diagnosis.
