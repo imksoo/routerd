@@ -47,6 +47,24 @@ func TestIPv4RouteControllerRendersBlackholeRouteInDryRun(t *testing.T) {
 	}
 }
 
+func TestIPv4RouteControllerRendersIPv6StaticRouteInDryRun(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{
+			Interface: "lan", Destination: "2001:db8:10::/64", Via: "fe80::1", Metric: 42,
+		}},
+	}}}
+	store := mapStore{}
+	controller := IPv4RouteController{Router: router, Store: store, DryRun: true}
+
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6StaticRoute", "lan-v6")
+	if status["phase"] != "Rendered" || status["destination"] != "2001:db8:10::/64" || status["gateway"] != "fe80::1" || status["interface"] != "lan" || status["metric"] != 42 {
+		t.Fatalf("IPv6StaticRoute was not rendered through the route controller: %#v", status)
+	}
+}
+
 func TestIPv4RouteControllerMarksDisabledDependencyNotApplicable(t *testing.T) {
 	enabled := false
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
