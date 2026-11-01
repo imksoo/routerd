@@ -181,7 +181,7 @@ PY
 }
 capture_dnat_packets() {
  [ "${ROUTERD_FLOW_DNAT_DEBUG:-}" = 1 ] || return 0
- nft add rule ip routerd_nat prerouting iifname rd15-fdnat-wan udp sport 32099 meta nftrace set 1
+ nft insert rule ip routerd_nat prerouting iifname rd15-fdnat-wan udp sport 32099 meta nftrace set 1
  timeout 5 nft monitor trace > "$work/nft-trace.txt" 2>&1 &
  capture_pids+=("$!")
  timeout 5 tcpdump -nn -l -i any 'udp and (port 32099 or port 32100 or port 40000)' > "$work/packets.txt" 2>&1 &
