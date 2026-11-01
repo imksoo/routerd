@@ -11,6 +11,9 @@ test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
 if [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
+management=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
+test -n "$management"
+ip link show "$management" >/dev/null
 for dev in rd15-ing-lan rd15-ing-wan; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
@@ -180,6 +183,23 @@ import json, sys
 router = json.load(open(sys.argv[1]))
 router['spec']['resources'] = [r for r in router['spec']['resources'] if r['kind'] != 'PortForward']
 json.dump(router, open(sys.argv[2], 'w'))
+PY
+python3 - "$work/base.json" "$management" <<'PY'
+import json, sys
+path, ifname = sys.argv[1:]
+router = json.load(open(path))
+resources = router['spec']['resources']
+resources.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'management'},'spec':{'ifname':ifname,'managed':False,'owner':'external'}})
+resources.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallZone','metadata':{'name':'management'},'spec':{'role':'mgmt','interfaces':['management']}})
+json.dump(router, open(path, 'w'))
+PY
+# Keep the no-PortForward candidate otherwise identical, including its
+# management-zone safety path.
+python3 - "$work/base.json" "$work/no-port-forward.json" <<'PY'
+import json, sys
+base = json.load(open(sys.argv[1]))
+base['spec']['resources'] = [r for r in base['spec']['resources'] if r['kind'] != 'PortForward']
+json.dump(base, open(sys.argv[2], 'w'))
 PY
 /usr/local/sbin/routerd validate --config "$work/base.json"
 /usr/local/sbin/routerd validate --config "$work/no-port-forward.json"
