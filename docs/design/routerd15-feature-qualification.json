@@ -1134,6 +1134,22 @@
         "IPv6 forwarding, prefix delegation, FreeBSD runtime or complete DHCPv6 server qualification"
       ]
     },
+    "linux-dhcpv4-reservation-82f2d159": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "82f2d1597dd5f966436b883fd7b40ebadc8fb3f0",
+      "reference": "tests/netns/README.md#dhcpv4-reservation-and-dynamic-pool",
+      "environment": "Linux 6.8.0-136-generic KVM guest; private network namespaces/veth; dnsmasq 2.90; independent BusyBox udhcpc 1.36.1 clients.",
+      "reproduction": "sudo ./tests/netns/dhcpv4-reservation.sh",
+      "checks": [
+        "The current DHCPv4 renderer assigned the configured address to the reserved MAC and an address in the configured dynamic pool to a second client; both applied the configured router and DNS options.",
+        "After dnsmasq restarted with the existing lease file, both clients renewed the same address; namespaces and successful temporary output were removed."
+      ],
+      "excludes": [
+        "Lease expiry/conflict handling, routerd/systemd packaged supervision, DNS answers and NAT/forwarding",
+        "FreeBSD runtime or complete routerd 1.0 function qualification"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -2365,7 +2381,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-dhcpv4-reservation-82f2d159"
         ]
       },
       "freebsd": {
