@@ -1797,6 +1797,24 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-port-forward-withdrawal-409719ba": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "409719ba03303f594c92d2d75d5b8a776860555a",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": "routerd SHA-256 576c8bf4bc84db56740c21d5e7a63878b6a35699a2a9330e7a7b14fffb9bf177; routerctl SHA-256 010b38c5492cc037862cdddc9e1bf84665802069f73b3f8e0009e8de0cc5739c.",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh test state. Independent VM220 used VLAN 3132 as the WAN-side HTTP requester; independent VM224 used VLAN 3131 as the LAN-side HTTP server.",
+      "checks": [
+        "A TCP PortForward from 198.18.53.2:18080 to VM224 198.18.51.10:8080 reached the independent HTTP server from VM220.",
+        "Replacing the configuration without the PortForward reached Healthy and the VM220 connection timed out.",
+        "Replacing the configuration with the same PortForward reached Healthy and restored the VM220 HTTP response.",
+        "The no-DHCP path ignored only a stale receipt whose owned dnsmasq process was already absent. It preserved normal owned-process withdrawal. VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "Pinhole and session synchronization, local redirects, configured backends, non-TCP protocols, IPv6 NAT, restart persistence and existing-flow behavior.",
+        "DNS forwarding, firewall policy parity, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3645,7 +3663,8 @@
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-ingress-service-ad5bcd47",
           "linux-nat44-flow-dnat-pinhole-3587ac28",
-          "linux-pve-home-integration-2a43a0e8"
+          "linux-pve-home-integration-2a43a0e8",
+          "linux-pve-port-forward-withdrawal-409719ba"
         ]
       },
       "freebsd": {
