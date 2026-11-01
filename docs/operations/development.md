@@ -692,3 +692,21 @@ setup with its own configuration and state, or restores a verified system
 snapshot. Convert the intended configuration before installation and start
 routerd 1.5 with fresh state. Configuration or database compatibility with 1.0
 is outside the product contract.
+
+## Linux IPv6 static-route smoke
+
+Run `scripts/linux-ipv6-static-route-smoke.sh --disposable-vm` only in a
+dedicated disposable Linux VM with systemd, iproute2 and `jq`, after installing
+the checksum-identified routerd 1.5 package against fresh 1.5 state. Keep
+management access independent of the VM's test interfaces. The script creates
+an isolated peer namespace and a veth pair; do not run it on a production or
+shared router.
+
+The smoke validates an explicit route metric and an omitted metric through the
+installed daemon. Pass requires Linux to report metric 77 for the explicit
+route and 1024 for the omitted metric, peer traffic to pass before and after a
+real service restart, and both owned routes and forwarding paths to disappear
+after empty configuration is applied. The script removes its temporary
+interfaces, namespace and scratch files on exit. Keep the source revision and
+this procedure with the qualification verdict; successful raw output is not a
+release artifact.

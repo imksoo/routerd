@@ -10,9 +10,10 @@ fi
 test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in ip jq ping systemctl; do command -v "$x" >/dev/null; done
-for dev in rd15-v6r-host; do
- if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
-done
+if ip link show rd15-v6r-host >/dev/null 2>&1; then
+ echo 'existing interface: rd15-v6r-host' >&2
+ exit 1
+fi
 if ip netns list | awk '{print $1}' | grep -Fxq rd15-v6r-peer; then
  echo 'existing namespace: rd15-v6r-peer' >&2
  exit 1
@@ -30,7 +31,9 @@ finish() {
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
   ip -j -d -6 route show fd42:150::99/128 >&2 || true
+  ip -j -d -6 route show fd42:150::100/128 >&2 || true
   ip -6 route get fd42:150::99 >&2 || true
+  ip -6 route get fd42:150::100 >&2 || true
   systemctl status routerd --no-pager >&2 || true
  fi
  install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml >/dev/null 2>&1 || true
@@ -51,13 +54,15 @@ ip -6 addr add fd42:149::1/64 nodad dev rd15-v6r-host
 ip -n rd15-v6r-peer link set peer0 up
 ip -n rd15-v6r-peer addr add fd42:149::2/64 nodad dev peer0
 ip -n rd15-v6r-peer addr add fd42:150::99/128 nodad dev lo
+ip -n rd15-v6r-peer addr add fd42:150::100/128 nodad dev lo
 
 cat > "$work/route.json" <<'JSON'
 {
   "apiVersion":"routerd.net/v1alpha1", "kind":"Router", "metadata":{"name":"ipv6-static-route-smoke"},
   "spec":{"resources":[
     {"apiVersion":"net.routerd.net/v1alpha1","kind":"Interface","metadata":{"name":"upstream"},"spec":{"ifname":"rd15-v6r-host","managed":false,"owner":"external"}},
-    {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv6StaticRoute","metadata":{"name":"peer-loopback"},"spec":{"interface":"upstream","destination":"fd42:150::99/128","via":"fd42:149::2","metric":77}}
+    {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv6StaticRoute","metadata":{"name":"peer-loopback-explicit-metric"},"spec":{"interface":"upstream","destination":"fd42:150::99/128","via":"fd42:149::2","metric":77}},
+    {"apiVersion":"net.routerd.net/v1alpha1","kind":"IPv6StaticRoute","metadata":{"name":"peer-loopback-default-metric"},"spec":{"interface":"upstream","destination":"fd42:150::100/128","via":"fd42:149::2"}}
   ]}
 }
 JSON
@@ -67,35 +72,52 @@ systemctl restart routerd
 stage=initial-apply
 for _ in {1..30}; do
  if ip -j -d -6 route show fd42:150::99/128 | jq -e '
-   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
+   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null &&
+    ip -j -d -6 route show fd42:150::100/128 | jq -e '
+   .[] | select((.dst == "fd42:150::100" or .dst == "fd42:150::100/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 1024 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
  sleep 1
 done
 ip -j -d -6 route show fd42:150::99/128 | jq -e '
  .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
+ip -j -d -6 route show fd42:150::100/128 | jq -e '
+ .[] | select((.dst == "fd42:150::100" or .dst == "fd42:150::100/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 1024 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
 stage=fixture-connectivity
 ping -6 -c 1 -W 2 fd42:149::2 >/dev/null
 ip netns exec rd15-v6r-peer ping -6 -c 1 -W 2 fd42:149::1 >/dev/null
 stage=forwarding
 ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
+ping -6 -c 1 -W 2 fd42:150::100 >/dev/null
 stage=restart-reconcile
 systemctl restart routerd
 systemctl is-active --quiet routerd
 ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
+ping -6 -c 1 -W 2 fd42:150::100 >/dev/null
 stage=withdrawal
 install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml
 systemctl restart routerd
 for _ in {1..30}; do
  if ! ip -j -d -6 route show fd42:150::99/128 | jq -e '
-   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then break; fi
+   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null &&
+    ! ip -j -d -6 route show fd42:150::100/128 | jq -e '
+   .[] | select((.dst == "fd42:150::100" or .dst == "fd42:150::100/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 1024)' >/dev/null; then break; fi
  sleep 1
 done
 if ip -j -d -6 route show fd42:150::99/128 | jq -e '
  .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then
- echo 'empty apply retained the IPv6StaticRoute' >&2
+ echo 'empty apply retained the explicitly-metric IPv6StaticRoute' >&2
+ exit 1
+fi
+if ip -j -d -6 route show fd42:150::100/128 | jq -e '
+ .[] | select((.dst == "fd42:150::100" or .dst == "fd42:150::100/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 1024)' >/dev/null; then
+ echo 'empty apply retained the default-metric IPv6StaticRoute' >&2
  exit 1
 fi
 if ping -6 -c 1 -W 1 fd42:150::99 >/dev/null 2>&1; then
- echo 'withdrawn IPv6StaticRoute still forwarded traffic' >&2
+ echo 'withdrawn explicitly-metric IPv6StaticRoute still forwarded traffic' >&2
  exit 1
 fi
-printf '%s\n' 'PASS: IPv6StaticRoute installs, forwards, survives service restart, and withdraws on the installed service'
+if ping -6 -c 1 -W 1 fd42:150::100 >/dev/null 2>&1; then
+ echo 'withdrawn default-metric IPv6StaticRoute still forwarded traffic' >&2
+ exit 1
+fi
+printf '%s\n' 'PASS: explicit and default-metric IPv6StaticRoute install, forward, survive service restart, and withdraw on the installed service'
