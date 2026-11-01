@@ -33,7 +33,8 @@ finish() {
   ip -6 route get 2001:db8:150::99 >&2 || true
   systemctl status routerd --no-pager >&2 || true
  fi
- /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
+ install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml >/dev/null 2>&1 || true
+ systemctl restart routerd >/dev/null 2>&1 || true
  ip netns del rd15-v6route-peer >/dev/null 2>&1 || true
  ip link del rd15-v6route-host >/dev/null 2>&1 || true
  rm -rf -- "$work"
@@ -61,9 +62,9 @@ cat > "$work/route.json" <<'JSON'
 }
 JSON
 /usr/local/sbin/routerd validate --config "$work/route.json"
-systemctl start routerd
+install -m 0600 "$work/route.json" /usr/local/etc/routerd/router.yaml
+systemctl restart routerd
 stage=initial-apply
-/usr/local/sbin/routerctl apply -f "$work/route.json" --replace >/dev/null
 for _ in {1..30}; do
  if ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
    .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
@@ -78,7 +79,8 @@ systemctl restart routerd
 systemctl is-active --quiet routerd
 ping -6 -c 1 -W 2 2001:db8:150::99 >/dev/null
 stage=withdrawal
-/usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null
+install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml
+systemctl restart routerd
 for _ in {1..30}; do
  if ! ip -j -d -6 route show 2001:db8:150::99/128 | jq -e '
    .[] | select(.dst == "2001:db8:150::99/128" and .gateway == "2001:db8:149::2" and .dev == "rd15-v6route-host" and .metric == 77)' >/dev/null; then break; fi
