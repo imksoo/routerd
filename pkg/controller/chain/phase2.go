@@ -469,18 +469,30 @@ func (c IPv4RouteController) reconcile(ctx context.Context) error {
 	if err := c.cleanupRemovedRoutes(ctx); err != nil {
 		return err
 	}
+	if err := c.cleanupRemovedIPv6StaticRoutes(ctx); err != nil {
+		return err
+	}
 	var failures []string
 	for _, resource := range c.Router.Spec.Resources {
-		if resource.Kind != "IPv4Route" {
-			continue
-		}
-		spec, err := resource.IPv4RouteSpec()
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
-			continue
-		}
-		if err := c.reconcileOrdinaryRoute(ctx, resource, spec); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+		switch resource.Kind {
+		case "IPv4Route":
+			spec, err := resource.IPv4RouteSpec()
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+				continue
+			}
+			if err := c.reconcileOrdinaryRoute(ctx, resource, spec); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+			}
+		case "IPv6StaticRoute":
+			spec, err := resource.IPv6StaticRouteSpec()
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+				continue
+			}
+			if err := c.reconcileIPv6StaticRoute(ctx, resource, spec); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", resource.Metadata.Name, err))
+			}
 		}
 	}
 	if len(failures) > 0 {

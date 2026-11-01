@@ -222,7 +222,7 @@ var declarations = []Declaration{
 	declare(api.MobilityAPIVersion, "SAMTransportProfile", ClassDynamicSource, "generates transport TunnelInterface/BGPPeer resources", noHostTeardown("generated transport resources own teardown through the effective view")),
 	declare(api.MobilityAPIVersion, "SAMSubnetPolicy", ClassController, "shard distribution controller for subnet-level mobility", noHostTeardown("controller emits federation events without owning host artifacts")),
 	declare(api.NetAPIVersion, "IPv4Route", ClassManagedHost, "IPv4 route", resourceLifecycle()),
-	declare(api.NetAPIVersion, "IPv6StaticRoute", ClassRendererInput, "static IPv6 route rendered by the platform network backend", noHostTeardown("route is rendered into platform network configuration; there is no standalone native IPv6 static-route actor")),
+	declare(api.NetAPIVersion, "IPv6StaticRoute", ClassManagedHost, "static IPv6 route with exact native ownership and withdrawal", resourceLifecycle()),
 	declare(api.NetAPIVersion, "HealthCheck", ClassManagedHost, "health check service/socket artifacts", resourceLifecycle()),
 	declare(api.NetAPIVersion, "EgressRoutePolicy", ClassManagedHost, "policy routing and nft mark artifacts", artifacts("nft.table")),
 	declare(api.NetAPIVersion, "EventRule", ClassController, "local event derivation rule", noHostTeardown("controller derives daemon events without owning host artifacts")),
