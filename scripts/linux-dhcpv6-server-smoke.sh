@@ -12,7 +12,9 @@ shift
 candidate=${1:?candidate config}
 systemd-detect-virt --vm --quiet
 test "$(id -u)" = 0
-for command in ip jq dhcpcd; do command -v "$command" >/dev/null; done
+for command in ip jq dhcpcd modprobe; do command -v "$command" >/dev/null; done
+modprobe nf_conntrack
+test -r /proc/sys/net/netfilter/nf_conntrack_count
 /usr/local/sbin/routerd validate --config "$candidate"
 mode=$(jq -r '[.spec.resources[] | select(.kind == "DHCPv6Server") | (.spec.mode // "stateless")] | if length == 1 then .[0] else error("fixture must declare exactly one DHCPv6Server") end' "$candidate")
 case "$mode" in stateful|both|stateless) ;; *) echo "unsupported smoke mode: $mode" >&2; exit 2;; esac
