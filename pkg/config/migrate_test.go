@@ -66,3 +66,35 @@ spec:
 		t.Fatalf("error = %v, want missing FirewallZone rejection", err)
 	}
 }
+
+func TestMigrateLegacyYAMLRenamesFirewallSourceCIDRsWithoutBroadening(t *testing.T) {
+	input := []byte(`apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: test
+spec:
+  resources:
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata:
+        name: restricted
+      spec:
+        fromZone: lan
+        toZone: management
+        sourceCIDRs: [192.0.2.0/24]
+        action: accept
+`)
+	output, changes, err := MigrateLegacyYAML(input, "legacy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Resource != "FirewallRule/restricted" || changes[0].Field != "spec.sourceCIDRs" {
+		t.Fatalf("changes = %#v", changes)
+	}
+	if strings.Contains(string(output), "sourceCIDRs") || !strings.Contains(string(output), "srcCIDRs: [192.0.2.0/24]") {
+		t.Fatalf("source restriction was not preserved:\n%s", output)
+	}
+	if _, err := LoadBytes(output, "migrated.yaml"); err != nil {
+		t.Fatalf("migrated YAML is not admitted: %v", err)
+	}
+}

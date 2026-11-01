@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/netip"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -82,6 +83,33 @@ func MigrateLegacyYAML(data []byte, source string) ([]byte, []Migration, error) 
 		yamlRemoveMappingKey(spec, "role")
 		changes = append(changes, Migration{Resource: "Interface/" + name, Field: "spec.role", Reason: "FirewallZone preserves the role"})
 	}
+	for _, resource := range resources.Content {
+		if yamlMappingScalar(resource, "kind") != "FirewallRule" {
+			continue
+		}
+		name := yamlMappingScalar(yamlMappingValue(resource, "metadata"), "name")
+		spec := yamlMappingValue(resource, "spec")
+		legacyCIDRs := yamlMappingValue(spec, "sourceCIDRs")
+		if legacyCIDRs == nil {
+			continue
+		}
+		if yamlMappingValue(spec, "srcCIDRs") != nil {
+			return nil, nil, fmt.Errorf("legacy config %s: FirewallRule/%s specifies both sourceCIDRs and srcCIDRs", source, name)
+		}
+		if legacyCIDRs.Kind != yaml.SequenceNode {
+			return nil, nil, fmt.Errorf("legacy config %s: FirewallRule/%s sourceCIDRs must be a sequence", source, name)
+		}
+		for index, cidr := range legacyCIDRs.Content {
+			if cidr.Kind != yaml.ScalarNode {
+				return nil, nil, fmt.Errorf("legacy config %s: FirewallRule/%s sourceCIDRs[%d] must be a CIDR", source, name, index)
+			}
+			if _, err := netip.ParsePrefix(cidr.Value); err != nil {
+				return nil, nil, fmt.Errorf("legacy config %s: FirewallRule/%s sourceCIDRs[%d] is invalid: %w", source, name, index, err)
+			}
+		}
+		yamlRenameMappingKey(spec, "sourceCIDRs", "srcCIDRs")
+		changes = append(changes, Migration{Resource: "FirewallRule/" + name, Field: "spec.sourceCIDRs", Reason: "srcCIDRs preserves every source CIDR"})
+	}
 
 	output, err := yaml.Marshal(&document)
 	if err != nil {
@@ -117,6 +145,18 @@ func yamlRemoveMappingKey(node *yaml.Node, key string) {
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		if node.Content[i].Value == key {
 			node.Content = append(node.Content[:i], node.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+func yamlRenameMappingKey(node *yaml.Node, oldKey, newKey string) {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == oldKey {
+			node.Content[i].Value = newKey
 			return
 		}
 	}
