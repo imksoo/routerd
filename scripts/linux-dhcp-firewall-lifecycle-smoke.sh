@@ -28,16 +28,27 @@ if jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter
 work=$(mktemp -d /var/tmp/routerd15-dhcp-firewall.XXXXXX)
 printf '%s\n' "$work"
 sysctl -n net.ipv4.ip_forward > "$work/forward.before"
+cat > "$work/empty.json" <<'JSON'
+{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-readiness"},"spec":{"resources":[]}}
+JSON
+stage=setup
 finish() {
  rc=$?
  trap - EXIT
  systemctl stop "${units[@]}" >/dev/null 2>&1 || true
  if [ "$rc" -ne 0 ]; then
-  systemctl stop routerd
-  printf 'FAIL: fixture retained at %s; reproduce product failures locally before rerun\n' "$work" >&2
- else
-  rm -r -- "$work"
+  # A disposable-VM failure must not strand the fixture or require a manual
+  # cleanup before a locally repaired candidate can be checked again.
+  /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace >/dev/null 2>&1 || true
+  systemctl stop routerd >/dev/null 2>&1 || true
  fi
+ for side in lan wan admin; do
+  ip netns del "rd15-$side-peer" >/dev/null 2>&1 || true
+  ip link del "rd15-$side" >/dev/null 2>&1 || true
+ done
+ sysctl -w "net.ipv4.ip_forward=$(cat "$work/forward.before")" >/dev/null 2>&1 || true
+ rm -r -- "$work"
+ if [ "$rc" -ne 0 ]; then printf 'FAIL at %s: temporary fixture and output removed; reproduce locally before rerun\n' "$stage" >&2; fi
  exit "$rc"
 }
 trap finish EXIT
@@ -96,6 +107,7 @@ for _ in {1..10}; do
 done
 test "$(ip netns exec rd15-wan-peer dig +time=1 +tries=1 +short @198.18.16.1 peer.test A)" = 198.18.16.1
 systemctl start routerd
+stage=baseline
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/base-apply.txt"
 cat > "$work/udhcpc-hook" <<'HOOK'
 #!/bin/sh
@@ -132,6 +144,7 @@ test "$(http wan "$client" baseline-wan-lan)" = 198.18.16.1
 test "$(http lan 198.18.17.2 baseline-lan-admin)" = "$client"
 test "$(ip netns exec rd15-wan-peer dig +time=2 +tries=1 +short @198.18.15.1 router.home.arpa A)" = 198.18.15.1
 /usr/local/sbin/routerctl apply -f "$work/filtered.json" --replace > "$work/filter-apply.txt"
+stage=firewall-isolation
 nft -j list table inet routerd_filter > "$work/filter.json"
 jq -e '.nftables[].table? | select(.family=="inet" and .name=="routerd_filter") | .comment=="routerd.owner=routerd routerd.generation=1"' "$work/filter.json" >/dev/null
 deny_http() {
@@ -155,6 +168,7 @@ isolation() {
 probe
 isolation
 # Wait for the independent client's timer-driven DHCPREQUEST/ACK, not SIGUSR1.
+stage=dhcp-renewal
 for _ in {1..130}; do
  if grep -q '^renew ' "$work/udhcpc-hook.events"; then break; fi
  sleep 1
@@ -164,27 +178,25 @@ if grep -q bad-options "$work/udhcpc-hook.events"; then echo 'DHCP options chang
 awk -v ip="$client" '$1=="renew" && $2==ip && $3>0 {found=1} END{exit !found}' "$work/udhcpc-hook.events"
 probe
 systemctl restart routerd
+stage=service-restart
 probe
 isolation
+stage=firewall-exception
 /usr/local/sbin/routerctl apply -f "$work/exception.json" --replace > "$work/exception-apply.txt"
 test "$(http lan 198.18.17.2 explicit-exception)" = "$client"
 /usr/local/sbin/routerctl apply -f "$work/filtered.json" --replace > "$work/exception-withdraw.txt"
 deny_http lan 198.18.17.2 admin deny-removed-exception
 # Removing only the firewall must restore the already-proven paths.
+stage=firewall-withdrawal
 /usr/local/sbin/routerctl apply -f "$work/base.json" --replace > "$work/filter-withdraw.txt"
 nft -j list tables > "$work/tables-withdrawn.json"
 jq -e '[.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")] | length==0' "$work/tables-withdrawn.json" >/dev/null
 test "$(http wan "$client" filter-withdrawn-wan-lan)" = 198.18.16.1
 test "$(http lan 198.18.17.2 filter-withdrawn-lan-admin)" = "$client"
-cat > "$work/empty.json" <<'JSON'
-{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-readiness"},"spec":{"resources":[]}}
-JSON
+stage=empty-withdrawal
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
 for dev in rd15-lan rd15-wan rd15-admin; do
  ip -4 addr show dev "$dev" > "$work/$dev-addresses.txt"
  if grep -q 'inet 198.18.' "$work/$dev-addresses.txt"; then echo "address survived withdrawal: $dev" >&2; exit 1; fi
 done
-systemctl stop "${units[@]}"
-for side in lan wan admin; do ip netns del "rd15-$side-peer"; done
-sysctl -w "net.ipv4.ip_forward=$(cat "$work/forward.before")"
 printf 'PASS: DHCP renewal, DNS UDP/TCP, NAT, firewall isolation/counters, service restart, exception removal and withdrawal\n'

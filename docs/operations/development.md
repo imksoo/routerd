@@ -502,9 +502,10 @@ matching nft chain counters. A management-to-LAN positive control must continue.
 An explicit LAN-to-management exception must work and stop working after removal.
 Removing all firewall resources must remove `inet routerd_filter` and restore
 the original positive controls. Empty apply must withdraw managed addresses.
-Successful output is deleted; failed output is retained only until the failure
-is reproduced locally and resolved. A VM reboot, DHCP WAN client, rebind/expiry
-and production WAN behavior are separate gates.
+The procedure, revision and scoped verdict are durable; raw output is removed on
+both success and failure. Diagnose a failed stage from its direct command output,
+repair it locally, then run one new disposable-VM attempt. A VM reboot, DHCP WAN
+client, rebind/expiry and production WAN behavior are separate gates.
 
 The focused native withdrawal regression runs locally in a separate network
 namespace and is skipped by ordinary `go test`:
