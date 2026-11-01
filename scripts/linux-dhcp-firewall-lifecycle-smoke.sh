@@ -210,6 +210,7 @@ awk -v ip="$client" '$1=="renew" && $2==ip && $3>0 {found=1} END{exit !found}' "
 probe
 systemctl restart routerd
 stage=service-restart
+jq -e '.spec.resources[] | select(.kind == "DHCPv4Reservation" and .metadata.name == "printer" and .spec.ipAddress == "198.18.15.150")' /usr/local/etc/routerd/router.yaml >/dev/null
 probe
 isolation
 stage=firewall-exception
