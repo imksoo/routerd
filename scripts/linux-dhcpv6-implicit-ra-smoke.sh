@@ -30,13 +30,18 @@ JSON
 # A prior failed gate may have committed a candidate. Clear it before opening the
 # receiver so a boot-time RA cannot be mistaken for this candidate's output.
 systemctl start routerd.service
-/usr/local/sbin/routerctl apply -f "$work/empty.json" --replace >"$work/reset.txt"
+# A stale RA socket from an interrupted older gate can make the first empty
+# reconcile fail after canonical replacement. Restart only in that recovery
+# case, then require the clean runtime before observing the candidate.
+if ! /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace >"$work/reset.txt"; then
+  systemctl restart routerd.service
+fi
 for _ in {1..30}; do
   /usr/local/sbin/routerctl get status -o json >"$work/reset-status.json"
-  if jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0' "$work/reset-status.json" >/dev/null; then break; fi
+  if jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0 and all(.status.controllers[]?; .currentError != true)' "$work/reset-status.json" >/dev/null; then break; fi
   sleep 1
 done
-jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0' "$work/reset-status.json" >/dev/null
+jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0 and all(.status.controllers[]?; .currentError != true)' "$work/reset-status.json" >/dev/null
 client_ns=rd15-implicit-ra-client
 router_if=rd15-lan
 client_if=rd15i${work##*.}
