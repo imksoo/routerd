@@ -148,6 +148,11 @@ if got != f"{expected}:{source}":
     raise SystemExit(f"response={got!r}; want {expected}:{source}")
 PY
 }
+nft_nat_has() {
+ # Do not use grep -q in a pipe under pipefail: it closes early and makes nft
+ # report SIGPIPE even when the requested rule is present.
+ nft list table ip routerd_nat | grep -F "$1" >/dev/null
+}
 capture_ingress_packets() {
  [ "${ROUTERD_INGRESS_DEBUG:-}" = 1 ] || return 0
  timeout 5 tcpdump -nn -l -i rd15-ing-lan 'tcp port 8080' > "$work/ingress-packets.txt" 2>&1 & capture_pid=$!
@@ -237,13 +242,13 @@ await_address rd15-ing-wan 198.18.52.2
 await_address rd15-ing-lan 198.18.50.1
 stage='initial-nat-render'
 for _ in {1..30}; do
- if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed' && nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'; then break; fi
+ if nft_nat_has 'routerd PortForward fixed' && nft_nat_has 'routerd IngressService edge'; then break; fi
  sleep 1
 done
-nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed'
-nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge'
-nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed hairpin'
-nft list table ip routerd_nat | grep -Fq 'routerd IngressService edge hairpin'
+nft_nat_has 'routerd PortForward fixed'
+nft_nat_has 'routerd IngressService edge'
+nft_nat_has 'routerd PortForward fixed hairpin'
+nft_nat_has 'routerd IngressService edge hairpin'
 
 stage='port-forward-dnat-and-hairpin'
 probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1
@@ -277,8 +282,8 @@ for _ in {1..30}; do test -e "$work/persistent.ready" && break; sleep .1; done
 test -e "$work/persistent.ready"
 stage='port-forward-withdrawal-preserves-existing-flow'
 /usr/local/sbin/routerctl apply -f "$work/no-port-forward.json" --replace >/dev/null
-for _ in {1..20}; do if ! nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed'; then break; fi; sleep 1; done
-if nft list table ip routerd_nat | grep -Fq 'routerd PortForward fixed'; then
+for _ in {1..20}; do if ! nft_nat_has 'routerd PortForward fixed'; then break; fi; sleep 1; done
+if nft_nat_has 'routerd PortForward fixed'; then
  echo 'withdrawn PortForward remains in nftables' >&2
  exit 1
 fi
