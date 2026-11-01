@@ -304,7 +304,7 @@ if nft_nat_has 'routerd PortForward fixed'; then
 fi
 touch "$work/persistent.release"
 wait "$persistent_pid"
-if probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1; then
+if probe rd15-ing-external 198.18.52.2 18080 port-forward 198.18.52.1 >/dev/null 2>&1; then
  echo 'withdrawn PortForward admitted a new flow' >&2
  exit 1
 fi
@@ -345,7 +345,7 @@ for _ in {1..20}; do
  sleep 1
 done
 nft -j list tables | jq -e '[.nftables[].table? | select(.name=="routerd_nat" or .name=="routerd_filter")] | length == 0' >/dev/null
-if probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1; then
+if probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1 >/dev/null 2>&1; then
  echo 'withdrawn IngressService admitted a new flow' >&2
  exit 1
 fi
