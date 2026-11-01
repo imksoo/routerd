@@ -124,6 +124,17 @@ Solicit/Advertise/Request/Reply が完了し、pool 内の address が割り当�
 成功時は2件の結果を表示し、一時 namespace、state、log を削除します。この試験は RA service を起動しません。
 そのため ping や default route、forwarding を合格条件にせず、これらは別の RA/client lifecycle 試験で確認します。
 
+## Linux の DHCPv4 reservation・dynamic pool 試験
+
+iproute2、dnsmasq、BusyBox、Go と network namespace 機能を備えた隔離 Linux 環境で、
+`sudo ./tests/netns/dhcpv4-reservation.sh` を実行します。現在の1.5 DHCPv4設定を実際の
+renderer で生成し、private router namespace 内の dnsmasq と独立した BusyBox client 2台で検査します。
+予約 client には指定アドレス、もう一方には設定 pool 内のアドレスが割り当てられること、
+両 client が router と DNS option を適用し、dnsmasq の再起動後も同じ address を renewal することを
+確認します。renewal の待機時間は停止用の上限であり、性能要件ではありません。成功時は一時 state と
+log を削除し、失敗時は原因調査用の一時 directory を残します。package install、service manager の監督、
+lease expiry、address conflict、DNS 応答、NAT、FreeBSD の検査は含みません。
+
 ## Linux の packaged DHCPv6 server lifecycle VM 試験
 
 `make dist` で candidate を build し、専用の破棄可能な systemd Linux VM に展開してから実行します。

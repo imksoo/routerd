@@ -2356,7 +2356,9 @@
         ],
         "related_test_files": [
           "pkg/lan/dhcpv4server/dnsmasq_test.go",
-          "pkg/controller/chain/dnsmasq_test.go"
+          "pkg/controller/chain/dnsmasq_test.go",
+          "tests/netns/dhcpv4-reservation.sh",
+          "tests/netns/dhcpv4-reservation-render/main.go"
         ]
       },
       "preservation_verdict": "unknown",
@@ -2371,8 +2373,9 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Reservation-specific client matching",
-        "Lease renewal/expiry, conflict handling and server restart"
+        "Lease expiry and conflict handling",
+        "routerd-supervised dnsmasq lifecycle and recovery",
+        "FreeBSD native runtime"
       ]
     },
     {

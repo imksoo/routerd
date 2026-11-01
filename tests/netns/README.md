@@ -106,6 +106,25 @@ performance requirements. This covers DHCP/RA preservation, not HA failover or
 production application connectivity. Do not add `no-dhcpv4-interface`: in
 dnsmasq 2.90 it also suppresses IPv6 prefix construction.
 
+## DHCPv4 reservation and dynamic pool
+
+`dhcpv4-reservation.sh` renders the production DHCPv4 configuration, starts
+dnsmasq in a private router namespace, and uses two independent BusyBox DHCP
+clients. One client must receive its MAC reservation; the other may receive
+any address in the configured dynamic pool. Both must receive the configured
+router and DNS options, then renew the same address after dnsmasq restarts.
+This covers reservation matching, pool allocation and lease-file recovery with
+the actual renderer and daemon. It does not qualify package installation,
+service-manager supervision, lease expiry, conflict handling, NAT or other OSes.
+
+```sh
+sudo ./tests/netns/dhcpv4-reservation.sh
+```
+
+The test needs Linux network namespaces, iproute2, dnsmasq, BusyBox and Go.
+Successful runs remove temporary state and logs; failures retain the current
+temporary directory for local diagnosis.
+
 ## Stateful DHCPv6 server
 
 `dhcpv6-stateful.sh` requires `dnsmasq`, `dhcpcd`, Go and the common Linux

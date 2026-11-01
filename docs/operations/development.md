@@ -139,6 +139,20 @@ and deletes temporary namespace state and logs. The test does not start an RA
 service, so it does not use a ping or claim to qualify default-route or
 forwarding behavior; those are covered by separate RA/client lifecycle gates.
 
+## Linux DHCPv4 reservation and dynamic pool check
+
+Run `sudo ./tests/netns/dhcpv4-reservation.sh` on an isolated Linux host with
+iproute2, dnsmasq, BusyBox and Go. The test renders the current 1.5 DHCPv4
+configuration, starts the actual dnsmasq process in a private router namespace,
+and uses two independent BusyBox clients. The reserved client must receive its
+configured address; the other must receive an address in the dynamic pool. Both
+must install the configured router and DNS options and renew the same address
+after dnsmasq restarts with its lease file. The renewal wait is a bounded
+watchdog; it is not a latency target. Successful temporary state and logs are
+deleted. A failure retains its current temporary directory for local diagnosis.
+This check does not exercise package installation, service-manager supervision,
+lease expiry, address-conflict handling, DNS answers, NAT, or FreeBSD behavior.
+
 ## Linux packaged DHCPv6 server lifecycle VM gate
 
 Build the candidate with `make dist`, extract its Linux archive on a dedicated,
