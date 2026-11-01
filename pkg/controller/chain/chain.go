@@ -3153,21 +3153,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return err
 			}
 			effective := observation.EffectiveRouter
-			declared := observation.DeclaredRouter
-			// A shape-preserving runtime apply updates the confirmed snapshot in
-			// place. Lease delivery must use that same configured declaration,
-			// rather than a concurrently prepared runner view.
-			if active := r.ActiveRuntimeSnapshot(); active.Known && active.Available && active.Router != nil {
-				declared = active.Router
-				effective, err = resourcequery.FilterRouterByWhen(declared, store.withRouter(declared))
-				if err != nil {
-					return err
-				}
-			}
 			current := dnsResolver
 			current.Router = effective
-			current.DeclaredRouter = declared
-			current.Store = store.withRouter(declared)
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return current.HandleEvent(ctx, event)
 		}, PeriodicFunc: func(ctx context.Context) (bool, error) {
 			observation, err := effectiveForReconcile()
@@ -3175,18 +3164,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 				return false, err
 			}
 			effective := observation.EffectiveRouter
-			declared := observation.DeclaredRouter
-			if active := r.ActiveRuntimeSnapshot(); active.Known && active.Available && active.Router != nil {
-				declared = active.Router
-				effective, err = resourcequery.FilterRouterByWhen(declared, store.withRouter(declared))
-				if err != nil {
-					return false, err
-				}
-			}
 			current := dnsResolver
 			current.Router = effective
-			current.DeclaredRouter = declared
-			current.Store = store.withRouter(declared)
+			current.DeclaredRouter = observation.DeclaredRouter
+			current.Store = store.withRouter(observation.DeclaredRouter)
 			return didWorkError(current.Reconcile(ctx))
 		}},
 		framework.FuncController{ControllerName: "event-federation", Subs: withDynamicConfigPartSubscriptions([]bus.Subscription{{Topics: []string{"routerd.resource.status.changed"}}}), ReconcileFunc: func(ctx context.Context, event daemonapi.DaemonEvent) error {
