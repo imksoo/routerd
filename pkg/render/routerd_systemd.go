@@ -9,6 +9,9 @@ const RouterdUnitName = "routerd.service"
 // The native dnsmasq owner must inspect and signal its helper after the helper
 // drops UID. CAP_SYS_PTRACE permits exact procfs identity checks; CAP_KILL
 // permits pidfd signaling across UIDs. Neither bypasses the ownership checks.
+// CAP_DAC_OVERRIDE lets the BFD controller's vtysh subprocess read FRR's
+// protected configuration and reach its control socket; without it an active
+// bfdd is falsely reported as unavailable.
 func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 	noNewPrivileges := false
 	enabled := true
@@ -24,8 +27,8 @@ func RouterdServiceSystemdSpec() api.SystemdUnitSpec {
 		RuntimeDirectoryPreserve: "yes",
 		StateDirectory:           []string{"routerd"},
 		LogsDirectory:            []string{"routerd"},
-		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL"},
-		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_SYS_PTRACE", "CAP_KILL"},
+		AmbientCapabilities:      []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_SYS_PTRACE", "CAP_KILL"},
+		CapabilityBoundingSet:    []string{"CAP_NET_ADMIN", "CAP_NET_RAW", "CAP_NET_BIND_SERVICE", "CAP_SETUID", "CAP_SETGID", "CAP_CHOWN", "CAP_DAC_OVERRIDE", "CAP_SYS_PTRACE", "CAP_KILL"},
 		NoNewPrivileges:          &noNewPrivileges,
 		Enabled:                  &enabled,
 		Started:                  &started,

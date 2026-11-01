@@ -23,7 +23,7 @@ func TestRouterdServiceSystemdSpecDoesNotConstrainWritePaths(t *testing.T) {
 		"ExecStart=/usr/local/sbin/routerd serve",
 		"RuntimeDirectory=routerd routerd/bgp routerd/dhcpv6-client routerd/dhcpv4-client routerd/pppoe-client routerd/dns-resolver",
 		"StateDirectory=routerd",
-		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN",
+		"AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID CAP_CHOWN CAP_DAC_OVERRIDE CAP_SYS_PTRACE CAP_KILL",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("routerd.service missing %q:\n%s", want, unit)
