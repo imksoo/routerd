@@ -1815,6 +1815,24 @@
         "DNS forwarding, firewall policy parity, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dns-forward-withdrawal-409719ba": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "409719ba03303f594c92d2d75d5b8a776860555a",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": "routerd SHA-256 576c8bf4bc84db56740c21d5e7a63878b6a35699a2a9330e7a7b14fffb9bf177; routerctl SHA-256 010b38c5492cc037862cdddc9e1bf84665802069f73b3f8e0009e8de0cc5739c.",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh test state. Independent VM220 used VLAN 3132 as a dnsmasq upstream; independent VM224 used VLAN 3131 as the DNS client.",
+      "checks": [
+        "VM224 resolved test.upstream.example through VM219 to VM220 over UDP and TCP.",
+        "Stopping the VM220 upstream returned SERVFAIL for a new uncached name over both client transports. Restarting the upstream restored both answers.",
+        "Replacing the configuration without DNS resources reached Healthy and removed the VM219 listener; VM224 received connection refused over UDP and TCP. Reapplying DNS resources reached Healthy and restored both answers.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "DNSSEC, DoT, DoH, negative answers, lease-derived names, restart behavior, IPv6 and full DNS policy coverage.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3283,7 +3301,8 @@
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
-          "linux-pve-home-integration-2a43a0e8"
+          "linux-pve-home-integration-2a43a0e8",
+          "linux-pve-dns-forward-withdrawal-409719ba"
         ]
       },
       "freebsd": {
