@@ -24,6 +24,19 @@ esac
 autonomous=true
 [ "$mode" = stateful ] && autonomous=false
 work=$(mktemp -d /var/tmp/routerd15-dhcpv6-implicit-ra.XXXXXX)
+cat >"$work/empty.json" <<'JSON'
+{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"dhcpv6-implicit-ra-smoke"},"spec":{"resources":[]}}
+JSON
+# A prior failed gate may have committed a candidate. Clear it before opening the
+# receiver so a boot-time RA cannot be mistaken for this candidate's output.
+systemctl start routerd.service
+/usr/local/sbin/routerctl apply -f "$work/empty.json" --replace >"$work/reset.txt"
+for _ in {1..30}; do
+  /usr/local/sbin/routerctl get status -o json >"$work/reset-status.json"
+  if jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0' "$work/reset-status.json" >/dev/null; then break; fi
+  sleep 1
+done
+jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0' "$work/reset-status.json" >/dev/null
 client_ns=rd15-implicit-ra-client
 router_if=rd15-lan
 client_if=rd15i${work##*.}
@@ -76,9 +89,6 @@ jq -e '.status.phase == "Healthy" and (.status.resourcePhaseIssues // [] | lengt
 /usr/local/sbin/routerctl describe DHCPv6Server/lan-dhcpv6 -o json >"$work/server-status.json"
 jq -e --arg mode "$mode" '.resource.status.mode == $mode and .resource.status.phase == "Applied"' "$work/server-status.json" >/dev/null
 if [ "$mode" = ra-only ]; then ! systemctl is-active --quiet routerd-dnsmasq.service; else systemctl is-active --quiet routerd-dnsmasq.service; fi
-cat >"$work/empty.json" <<'JSON'
-{"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"dhcpv6-implicit-ra-smoke"},"spec":{"resources":[]}}
-JSON
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace >"$work/withdraw.txt"
 for _ in {1..30}; do
   /usr/local/sbin/routerctl get status -o json >"$work/empty-status.json"
