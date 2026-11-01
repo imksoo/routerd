@@ -679,6 +679,7 @@ func serveCommand(args []string, stdout, stderr io.Writer) (err error) {
 		}
 	}
 	controllerOpts = controllerchain.Options{
+		ConfigPath:             *configPath,
 		SuperviseClientDaemons: true,
 		SuperviseDNSResolvers:  false,
 		DnsmasqCommand:         "dnsmasq",
