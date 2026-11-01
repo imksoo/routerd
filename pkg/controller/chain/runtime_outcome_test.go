@@ -6,15 +6,21 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/imksoo/routerd/pkg/api"
 	"github.com/imksoo/routerd/pkg/bus"
 	"github.com/imksoo/routerd/pkg/controller/framework"
 	"github.com/imksoo/routerd/pkg/daemonapi"
 	"github.com/imksoo/routerd/pkg/ha"
 )
+
+func sameRouterConfig(got, want *api.Router) bool {
+	return reflect.DeepEqual(got, want)
+}
 
 // This regression uses the original public API, so its RED result establishes
 // the accepted-request bug independently of the new outcome API.
@@ -27,7 +33,7 @@ func TestFaultRuntimeAcceptedCancellationPropagatesBeforeAck(t *testing.T) {
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
 	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-		if store.Router == next {
+		if sameRouterConfig(store.Router, next) {
 			close(entered)
 			select {
 			case <-ctx.Done():
@@ -106,10 +112,10 @@ func TestFaultRuntimeReloadConfirmedOutcomes(t *testing.T) {
 			runner := &Runner{Router: initial, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 			var injected bool
 			runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-				if injected && store.Router == requested && tc.failRequested {
+				if injected && sameRouterConfig(store.Router, requested) && tc.failRequested {
 					return nil, DaemonStatusController{}, controllerLifetimes{}, requestedFailure
 				}
-				if injected && store.Router == initial && tc.failRestore {
+				if injected && sameRouterConfig(store.Router, initial) && tc.failRestore {
 					return nil, DaemonStatusController{}, controllerLifetimes{}, restoreFailure
 				}
 				return nil, DaemonStatusController{}, controllerLifetimes{}, nil
@@ -117,7 +123,7 @@ func TestFaultRuntimeReloadConfirmedOutcomes(t *testing.T) {
 			stop, done := startFaultRuntime(t, runner)
 			defer stop()
 			before := runner.ActiveRuntimeSnapshot()
-			if !before.Known || !before.Available || before.Router != initial || before.Epoch == 0 {
+			if !before.Known || !before.Available || !sameRouterConfig(before.Router, initial) || before.Epoch == 0 {
 				t.Fatalf("initial active = %+v", before)
 			}
 			injected = true // Only the idle supervisor's next build reads this, after channel handoff.
@@ -140,7 +146,7 @@ func TestFaultRuntimeReloadConfirmedOutcomes(t *testing.T) {
 				if tc.failRequested {
 					want = initial
 				}
-				if !outcome.Active.Known || !outcome.Active.Available || outcome.Active.Router != want || outcome.Active.Epoch <= before.Epoch || outcome.Restored != tc.failRequested {
+				if !outcome.Active.Known || !outcome.Active.Available || !sameRouterConfig(outcome.Active.Router, want) || outcome.Active.Epoch <= before.Epoch || outcome.Restored != tc.failRequested {
 					t.Fatalf("confirmed active = %+v, want router %s", outcome, want.Metadata.Name)
 				}
 			}
@@ -176,7 +182,7 @@ func TestFaultRuntimeNonCooperativeBuilderFencesUntilAck(t *testing.T) {
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
 	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-		if store.Router == next {
+		if sameRouterConfig(store.Router, next) {
 			close(entered)
 			<-release
 		}
@@ -246,7 +252,7 @@ func TestFaultRuntimeSuccessfulGenerationOutlivesRequest(t *testing.T) {
 	runner := &Runner{Router: old, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 	contexts := make(chan context.Context, 2)
 	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-		if store.Router == next {
+		if sameRouterConfig(store.Router, next) {
 			contexts <- ctx
 		}
 		return nil, DaemonStatusController{}, controllerLifetimes{}, nil
@@ -275,7 +281,7 @@ func TestFaultRuntimeServeStopDuringReloadAcknowledgesFailure(t *testing.T) {
 	runner := &Runner{Router: old, Bus: bus.New(), Store: mapStore{}, Opts: Options{EnabledControllers: []string{"test"}}}
 	entered := make(chan struct{})
 	runner.generationBuilder = func(ctx context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-		if store.Router == next {
+		if sameRouterConfig(store.Router, next) {
 			close(entered)
 			<-ctx.Done()
 		}
@@ -324,7 +330,7 @@ func TestFaultRuntimeSnapshotUpdatesKeepEpochAndRejectUnavailable(t *testing.T) 
 	if err := runner.UpdateRuntimeRouter(next); err != nil {
 		t.Fatal(err)
 	}
-	if got := runner.ActiveRuntimeSnapshot(); !got.Known || !got.Available || got.Router != next || got.Epoch != before.Epoch {
+	if got := runner.ActiveRuntimeSnapshot(); !got.Known || !got.Available || !sameRouterConfig(got.Router, next) || got.Epoch != before.Epoch {
 		t.Fatalf("same generation update = %+v", got)
 	}
 	stop()
@@ -344,7 +350,7 @@ func TestFaultRuntimeOldMutationStopsBeforeNewGeneration(t *testing.T) {
 	var enteredOnce, canceledOnce, exitedOnce, releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
 	runner.generationBuilder = func(_ context.Context, _ *slog.Logger, store eventedStore, _ bool, _ ha.Decision) ([]framework.Controller, DaemonStatusController, controllerLifetimes, error) {
-		if store.Router == next {
+		if sameRouterConfig(store.Router, next) {
 			select {
 			case <-exited:
 			default:

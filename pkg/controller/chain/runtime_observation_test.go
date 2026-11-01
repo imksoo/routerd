@@ -53,7 +53,7 @@ func TestRuntimeObservationUsesCurrentWhenAndExpiryWithoutWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.DeclaredRouter != router || store.reads != 1 || len(view.RouteRouter.Spec.Resources) != 1 || view.RouteRouter.Spec.Resources[0].Metadata.Name != "dynamic" {
+	if !sameRouterConfig(view.DeclaredRouter, router) || view.DeclaredRouter == router || store.reads != 1 || len(view.RouteRouter.Spec.Resources) != 1 || view.RouteRouter.Spec.Resources[0].Metadata.Name != "dynamic" {
 		t.Fatalf("backup observation: view=%+v reads=%d", view.RouteRouter, store.reads)
 	}
 	statuses, err := store.ListObjectStatuses()

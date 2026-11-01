@@ -75,7 +75,7 @@ func TestRuntimeGenerationReloadActivatesLifecycleChangeWithoutOverlap(t *testin
 	gate.Unlock()
 	waitForActivation(t, activated, "dns-new")
 
-	if runner.Router != newRouter {
+	if !sameRouterConfig(runner.Router, newRouter) {
 		t.Fatal("running Runner did not switch to the new Router")
 	}
 	if overlap := log.firstOverlap(); overlap != nil {
@@ -135,7 +135,7 @@ func TestRuntimeReloadQueuedBetweenGenerationsPreemptsGatedPrepare(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("queued reload deadlocked behind the mutation gate")
 	}
-	if runner.Router != newRouter {
+	if !sameRouterConfig(runner.Router, newRouter) {
 		t.Fatal("queued reload did not replace the Router before prepare")
 	}
 	cancel()

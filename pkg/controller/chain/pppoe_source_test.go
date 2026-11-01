@@ -39,6 +39,7 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.publishPreparedRouter(prepared)
+	declared := prepared.declared
 	wanted := runner.clientDaemonSpecs(prepared.startup.Router())[0]
 	wanted.OwnerToken = "current-owner"
 	done := make(chan struct{})
@@ -47,13 +48,13 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	if err := writeSupervisedDaemonMarker(marker); err != nil {
 		t.Fatal(err)
 	}
-	evented := eventedStore{Store: store, Router: router}
-	source, ready, err := runner.currentPPPoESource(router, "wan", evented)
+	evented := eventedStore{Store: store, Router: declared}
+	source, ready, err := runner.currentPPPoESource(declared, "wan", evented)
 	if err != nil || !ready || source.SupervisorOwner != "current-owner" || source.Interface != "ens18" || source.Device != "ppp-wan" {
 		t.Fatalf("current source not accepted: %+v ready=%v err=%v", source, ready, err)
 	}
 	readFailure = true
-	if _, _, err := runner.currentPPPoESource(router, "wan", evented); !errors.Is(err, failure) {
+	if _, _, err := runner.currentPPPoESource(declared, "wan", evented); !errors.Is(err, failure) {
 		t.Fatalf("native read failure became missing worker: %v", err)
 	}
 	readFailure = false
@@ -67,10 +68,10 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner.publishPreparedRouter(prepared)
-	if _, ready, err := runner.currentPPPoESource(router, "wan", evented); err != nil || ready {
+	if _, ready, err := runner.currentPPPoESource(declared, "wan", evented); err != nil || ready {
 		t.Fatalf("old operation accepted after configuration publication: ready=%v err=%v", ready, err)
 	}
-	if _, ready, err := runner.currentPPPoESource(&updated, "wan", evented); err != nil || ready {
+	if _, ready, err := runner.currentPPPoESource(prepared.declared, "wan", evented); err != nil || ready {
 		t.Fatalf("old supervisor hash/token accepted new configuration: ready=%v err=%v", ready, err)
 	}
 }

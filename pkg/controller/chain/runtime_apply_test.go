@@ -94,7 +94,7 @@ func TestRuntimeApplyActualLeaderApplyRetainsItsSoleHALease(t *testing.T) {
 				return err
 			})
 			gate.Unlock()
-			if err != nil || outcome.Standby || !outcome.Active.Known || !outcome.Active.Available || outcome.Active.Router != next {
+			if err != nil || outcome.Standby || !outcome.Active.Known || !outcome.Active.Available || !sameRouterConfig(outcome.Active.Router, next) {
 				t.Fatalf("actual selected leader failed apply: %+v %v", outcome, err)
 			}
 			if data, err := os.ReadFile(canonical); err != nil || string(data) != "next\n" {
@@ -120,7 +120,7 @@ func TestRuntimeApplyRejectedCommitReleasesOnlyNewHALease(t *testing.T) {
 	gate.Lock()
 	outcome, err := runner.ApplyRuntimeWithOutcome(t.Context(), next, true, func() error { return failure })
 	gate.Unlock()
-	if !errors.Is(err, failure) || outcome.Active.Router != old || !outcome.Active.Known || !outcome.Active.Available {
+	if !errors.Is(err, failure) || !sameRouterConfig(outcome.Active.Router, old) || !outcome.Active.Known || !outcome.Active.Available {
 		t.Fatalf("rejected commit damaged active owner: %+v %v", outcome, err)
 	}
 	if decision := runtimeApplyCompetingLease(t, oldPath); decision.Leader {
@@ -143,7 +143,7 @@ func TestRuntimeApplyActualStandbyNeverCallsCanonicalCommit(t *testing.T) {
 	gate.Lock()
 	outcome, err := runner.ApplyRuntimeWithOutcome(t.Context(), next, false, func() error { t.Error("actual standby called canonical commit"); return nil })
 	gate.Unlock()
-	if err != nil || !outcome.Standby || runner.ActiveRuntimeSnapshot().Router != old {
+	if err != nil || !outcome.Standby || !sameRouterConfig(runner.ActiveRuntimeSnapshot().Router, old) {
 		t.Fatalf("standby changed active generation: %+v %v", outcome, err)
 	}
 }
@@ -161,7 +161,7 @@ func TestRuntimeApplyActualLeaderCanEditTTLWithoutSelfStandby(t *testing.T) {
 	gate.Lock()
 	outcome, err := runner.ApplyRuntimeWithOutcome(t.Context(), next, true, func() error { _, err := config.AtomicWriteFileWithOutcome(canonical, []byte("TTL=2m\n")); return err })
 	gate.Unlock()
-	if err != nil || outcome.Standby || outcome.Active.Router != next {
+	if err != nil || outcome.Standby || !sameRouterConfig(outcome.Active.Router, next) {
 		t.Fatalf("selected lease owner cannot edit TTL: %+v %v", outcome, err)
 	}
 	if data, err := os.ReadFile(canonical); err != nil || string(data) != "TTL=2m\n" {
@@ -314,7 +314,7 @@ func TestRuntimeApplyNewLeaseReplacementCannotActivateCandidate(t *testing.T) {
 		return os.WriteFile(nextPath, data, 0600)
 	})
 	gate.Unlock()
-	if err == nil || outcome.Active.Router == next && outcome.Active.Available {
+	if err == nil || sameRouterConfig(outcome.Active.Router, next) && outcome.Active.Available {
 		t.Fatalf("candidate activated after its pre-acquired lease pathname was replaced: %+v %v", outcome, err)
 	}
 }
@@ -433,7 +433,7 @@ func TestRuntimeApplyHALeaderProjectionFailurePreventsEffects(t *testing.T) {
 				gate.Lock()
 				outcome, err := r.ApplyRuntimeWithOutcome(t.Context(), next, true, func() error { _, err := config.AtomicWriteFileWithOutcome(canonical, []byte("next\n")); return err })
 				gate.Unlock()
-				if err == nil || outcome.Active.Router != old || !outcome.Active.Available {
+				if err == nil || !sameRouterConfig(outcome.Active.Router, old) || !outcome.Active.Available {
 					t.Fatalf("HA projection failure activated candidate or lost prior owner: %+v %v", outcome, err)
 				}
 				if data, err := os.ReadFile(canonical); err != nil || string(data) != "next\n" {
