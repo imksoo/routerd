@@ -45,6 +45,8 @@ type ipv6StaticRoutePremise struct {
 	ParentToken string
 }
 
+const linuxDefaultIPv6RouteMetric = "1024"
+
 func normalizeIPv6StaticRoute(route ipv6StaticRoute) (ipv6StaticRoute, error) {
 	destination := strings.TrimSpace(route.Destination)
 	prefix, err := netip.ParsePrefix(destination)
@@ -88,6 +90,12 @@ func (c IPv4RouteController) ipv6StaticRoutePremise(ctx context.Context, spec ap
 	})
 	if err != nil {
 		return ipv6StaticRoutePremise{}, err
+	}
+	// Linux reports its native default route metric as 1024 even when the
+	// declaration omits it. Keep the receipt and read-back comparison in that
+	// native form so the exact route can be owned and withdrawn.
+	if platform.CurrentOS() == platform.OSLinux && route.Metric == "0" {
+		route.Metric = linuxDefaultIPv6RouteMetric
 	}
 	result := ipv6StaticRoutePremise{Route: route}
 	if c.DryRun {

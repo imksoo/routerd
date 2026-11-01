@@ -678,6 +678,39 @@ func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
 	}
 }
 
+func TestIPv6StaticRoutePremiseUsesLinuxDefaultMetric(t *testing.T) {
+	if platform.CurrentOS() == platform.OSFreeBSD {
+		t.Skip("Linux kernel route metric behavior")
+	}
+	resource := api.Resource{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv6StaticRoute"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.IPv6StaticRouteSpec{Interface: "lan", Destination: "2001:db8:17::/64", Via: "2001:db8:16::1"}}
+	controller := IPv4RouteController{Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}}, resource,
+	}}}, DryRun: true}
+	premise, err := controller.ipv6StaticRoutePremise(context.Background(), resource.Spec.(api.IPv6StaticRouteSpec))
+	if err != nil {
+		t.Fatalf("premise: %v", err)
+	}
+	if premise.Route.Metric != linuxDefaultIPv6RouteMetric {
+		t.Fatalf("premise metric = %q, want Linux native default %q", premise.Route.Metric, linuxDefaultIPv6RouteMetric)
+	}
+	_, args := ipv6StaticRouteApplyCommand(premise.Route)
+	want := []string{"-6", "route", "add", "2001:db8:17::/64", "via", "2001:db8:16::1", "dev", "lan0", "metric", linuxDefaultIPv6RouteMetric, "proto", "boot"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("apply args = %v, want %v", args, want)
+	}
+	controller.DryRun = false
+	controller.Command = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "ip" || !reflect.DeepEqual(args, []string{"-j", "-d", "-6", "route", "show", premise.Route.Destination}) {
+			t.Fatalf("observation command = %s %v", name, args)
+		}
+		return []byte(`[{"dst":"2001:db8:17::/64","gateway":"2001:db8:16::1","dev":"lan0","metric":1024,"protocol":"boot"}]`), nil
+	}
+	matching, _, err := controller.observeIPv6StaticRoute(context.Background(), premise.Route)
+	if err != nil || !matching {
+		t.Fatalf("native default metric read-back: matching=%t err=%v", matching, err)
+	}
+}
+
 func TestNormalizeIPv6StaticRouteAcceptsKernelHostDestination(t *testing.T) {
 	route, err := normalizeIPv6StaticRoute(ipv6StaticRoute{Destination: "fd42:150::99", Gateway: "fd42:149::2", Device: "rd15-v6r-host", Metric: "77"})
 	if err != nil {
