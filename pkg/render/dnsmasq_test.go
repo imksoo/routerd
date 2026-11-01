@@ -130,6 +130,7 @@ func TestDnsmasqConfigRendersStickyHostsInScope(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-ipv4"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.3/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "dhcpv4"}, Spec: api.DHCPv4ServerSpec{Server: "dnsmasq", Managed: true, ListenInterfaces: []string{"lan"}}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-dhcpv4"}, Spec: api.DHCPv4ServerSpec{Interface: "lan", RangeStart: "192.168.10.130", RangeEnd: "192.168.10.139", LeaseTime: "12h", RouterSource: "none", DNSSource: "none"}},
@@ -336,6 +337,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
@@ -389,7 +391,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
 		"ra-param=ens19,mtu:1500,high,0,7200",
 		"dhcp-option=option6:domain-search,lan",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-relay=192.168.10.1,192.0.2.53",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
