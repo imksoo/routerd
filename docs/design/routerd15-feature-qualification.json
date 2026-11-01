@@ -1817,6 +1817,22 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-dhcpv4-expiry-conflict-pve-6420b8ba": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "6420b8ba9718ef430c090af17defc4f12d4d86ea",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "Authorized PVE VLAN 3131. VM219 ran the checksum-verified Linux candidate from fresh candidate state. Independent VM224 held 198.18.15.100 statically. Independent VM220 used a different MAC address and a temporary VLAN child. Endpoint routerd services were stopped only for the isolated test interfaces.",
+      "checks": [
+        "VM220 requested the occupied 198.18.15.100 address. The DHCP service offered and acknowledged 198.18.15.107 instead; VM220 completed ARP duplicate-address detection and installed the 120-second lease, gateway and route.",
+        "Stopping routerd stopped routerd-dnsmasq.service and removed UDP/67. At 118 seconds after that withdrawal, VM220 reported only carrier state: its dynamic 198.18.15.107 address and DHCP default route had both been removed naturally.",
+        "Restarting routerd restored routerd-dnsmasq.service and UDP/67. VM220 then received 198.18.15.107 again and reached the candidate gateway with 3/3 ICMP replies."
+      ],
+      "excludes": [
+        "DHCP-derived DNS updates, WAN DHCP client behavior, router-host reboot and interrupted-apply recovery, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-home-integration-2a43a0e8": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2917,6 +2933,7 @@
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
           "linux-dhcpv4-reservation-pve-2c3fe143",
+          "linux-dhcpv4-expiry-conflict-pve-6420b8ba",
           "linux-pve-home-integration-2a43a0e8"
         ]
       },
@@ -2925,7 +2942,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Lease expiry and actual address-conflict handling"
+        "Router-host reboot and interrupted-apply recovery with active dynamic leases",
+        "DHCP-derived DNS updates and WAN DHCP client behavior"
       ]
     },
     {
