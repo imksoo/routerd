@@ -1742,6 +1742,24 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-pd-ra-lifecycle-905e0537": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "905e053715215dc1bbbf9e0e5ede25dc4c4d0bda",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh state. Independent VM220 used VLAN 3132 as the Kea DHCPv6-PD and IPv6 HTTP peer; independent VM224 used VLAN 3131 as a kernel RA/SLAAC client. Endpoint routerd services were stopped only for their temporary test VLAN children.",
+      "checks": [
+        "Kea delegated 2001:db8:1500::/60 with T1 20 seconds, T2 40 seconds, preferred 60 seconds and valid 90 seconds. VM219 bound the prefix, configured 2001:db8:1500::1/64, and advertised it. VM224 completed SLAAC and installed the RA default route.",
+        "VM224 completed HTTP to VM220 2001:db8:17::1:8080; the peer response recorded VM224's SLAAC source, proving forwarded IPv6 traffic.",
+        "The short-T1 observation found that the former 30-second early-renew margin caused immediate repeated renewal. Revision 905e0537 bounds that margin to half of each timer; focused Go checks passed and the PVE Kea updates changed from about three seconds to about twelve seconds.",
+        "After stopping independent Kea, the bound prefix became deprecated then expired. VM219 returned to soliciting with no delegated address; VM224 had no delegated address or default route and HTTP failed while routerd remained active. Restarting Kea automatically restored the PD, RA/SLAAC and HTTP forwarding.",
+        "routerctl apply --replace with an empty 1.5 resource list reported Healthy and zero resources. The delegated router address disappeared and VM224 HTTP failed."
+      ],
+      "excludes": [
+        "DHCPv6 information/DNS options, RDNSS/DNSSL consumption, prefix-pool renumbering, routerd service restart or host reboot, WAN RA discovery, firewall policy isolation, FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcpv6-server-b961e45c": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3008,6 +3026,7 @@
           "dhcpv6-partial-recovery-87761c0e",
           "linux-dhcpv6-native-d05524de",
           "linux-pd-ra-lifecycle-1ff438ee",
+          "linux-pve-pd-ra-lifecycle-905e0537",
           "linux-pve-home-integration-2a43a0e8"
         ]
       },
@@ -3016,8 +3035,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent DHCPv6/RA server exchange for each source mode and WAN route/forwarding composition",
-        "Multiple-prefix renewal/rebind/expiry, restart and source withdrawal",
+        "Independent DHCPv6/RA server exchange for source modes not covered by the PVE Kea PD fixture, including WAN route/forwarding composition",
+        "Multiple-prefix renewal/rebind/expiry, routerd restart and source withdrawal",
         "FreeBSD native DHCPv6Address ownership, DAD/Decline, expiry withdrawal and recovery through full routerd"
       ]
     },
@@ -3051,7 +3070,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-pd-ra-lifecycle-1ff438ee"
+          "linux-pd-ra-lifecycle-1ff438ee",
+          "linux-pve-pd-ra-lifecycle-905e0537"
         ]
       },
       "freebsd": {
@@ -3059,8 +3079,8 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent IPv6 clients, delegated addresses and forwarded packets",
-        "Prefix/DNS lifetime, renewal, expiry, restart and withdrawal",
+        "Prefix renumbering, DNS lifetime/withdrawal and routerd restart",
+        "Remaining IPv6 source modes and FreeBSD delegated-address ownership, withdrawal and recovery",
         "Fragmented solicitation provenance remains a documented API limitation"
       ]
     },
