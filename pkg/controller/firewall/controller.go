@@ -15,6 +15,7 @@ import (
 	"github.com/imksoo/routerd/pkg/dynamicconfig"
 	"github.com/imksoo/routerd/pkg/firewallbackend"
 	"github.com/imksoo/routerd/pkg/platform"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 type Store interface {
@@ -32,8 +33,8 @@ type Controller struct {
 	// LegacyFirewallHandoffPath is written only by a verified 1.0-to-1.5
 	// installer handoff. It never grants ownership to an arbitrary table.
 	LegacyFirewallHandoffPath string
-	Interval     time.Duration
-	Logger       *slog.Logger
+	Interval                  time.Duration
+	Logger                    *slog.Logger
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
 	// plan. It matters to the PF backend, where path-MTU rules live in the
 	// native firewall ruleset rather than a separate nftables table.
@@ -90,6 +91,7 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
 	if nft, ok := backend.(firewallbackend.Nftables); ok {
 		nft.LegacyFirewallHandoffPath = c.LegacyFirewallHandoffPath
+		nft.IngressStates = c.ingressServiceStates()
 		backend = nft
 	}
 	ruleset, err := backend.Render(c.Router, c.NftablesPath, c.LocalCaptureIntents)
@@ -186,6 +188,70 @@ func hasPFTranslations(router *api.Router) bool {
 		}
 	}
 	return false
+}
+
+// ingressServiceStates supplies the firewall with the selected ingress targets.
+// NAT and filtering must move together when health or draining changes a target.
+func (c Controller) ingressServiceStates() []render.IngressServiceState {
+	if c.Router == nil || c.Store == nil {
+		return nil
+	}
+	states := make([]render.IngressServiceState, 0)
+	for _, resource := range c.Router.Spec.Resources {
+		if resource.APIVersion != api.FirewallAPIVersion || resource.Kind != "IngressService" {
+			continue
+		}
+		state := render.IngressServiceState{Name: resource.Metadata.Name}
+		status := c.Store.ObjectStatus(api.FirewallAPIVersion, "IngressService", resource.Metadata.Name)
+		selection := strings.TrimSpace(fmt.Sprint(status["effectiveSelection"]))
+		if selection == "sourceHash" || selection == "random" {
+			state.Backends = ingressActiveBackends(status["activeBackends"])
+			state.Selection = selection
+		} else if name, address, port := ingressActiveBackend(status["activeBackend"]); address != "" && port != 0 {
+			state.Backends = []api.IngressBackendSpec{{Name: name, Address: address, Port: port}}
+			state.Selection = "failover"
+		}
+		states = append(states, state)
+	}
+	return states
+}
+
+func ingressActiveBackends(value any) []api.IngressBackendSpec {
+	var values []any
+	switch typed := value.(type) {
+	case []any:
+		values = typed
+	case []map[string]any:
+		values = make([]any, 0, len(typed))
+		for _, item := range typed {
+			values = append(values, item)
+		}
+	}
+	out := make([]api.IngressBackendSpec, 0, len(values))
+	for _, item := range values {
+		name, address, port := ingressActiveBackend(item)
+		if address != "" && port != 0 {
+			out = append(out, api.IngressBackendSpec{Name: name, Address: address, Port: port})
+		}
+	}
+	return out
+}
+
+func ingressActiveBackend(value any) (string, string, int) {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return "", "", 0
+	}
+	port := 0
+	switch typed := item["port"].(type) {
+	case int:
+		port = typed
+	case int64:
+		port = int(typed)
+	case float64:
+		port = int(typed)
+	}
+	return strings.TrimSpace(fmt.Sprint(item["name"])), strings.TrimSpace(fmt.Sprint(item["address"])), port
 }
 
 func firewallRuleCount(router *api.Router) int {

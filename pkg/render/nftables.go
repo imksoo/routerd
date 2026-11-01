@@ -857,7 +857,7 @@ type FirewallHole struct {
 	Comment   string
 }
 
-func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) {
+func NftablesFirewall(router *api.Router, holes []FirewallHole, states ...IngressServiceState) ([]byte, error) {
 	aliases, err := nftOutboundAliases(router)
 	if err != nil {
 		return nil, err
@@ -887,7 +887,7 @@ func NftablesFirewall(router *api.Router, holes []FirewallHole) ([]byte, error) 
 			clientPolicies = append(clientPolicies, res)
 		}
 	}
-	ingressRules, err := ingressNATRules(router, aliases)
+	ingressRules, err := ingressNATRules(router, aliases, states...)
 	if err != nil {
 		return nil, err
 	}

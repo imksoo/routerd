@@ -43,13 +43,14 @@ type Nftables struct {
 	Command                   string
 	Run                       CommandFunc
 	LegacyFirewallHandoffPath string
+	IngressStates             []render.IngressServiceState
 }
 
 func (b Nftables) Name() string { return "nftables" }
 
 func (b Nftables) Render(router *api.Router, path string, _ []dynamicconfig.LocalCaptureIntent) (Ruleset, error) {
 	holes := render.InternalFirewallHoles(router, platform.OSLinux)
-	data, err := render.NftablesFirewall(router, holes)
+	data, err := render.NftablesFirewall(router, holes, b.IngressStates...)
 	if err != nil {
 		return Ruleset{}, err
 	}

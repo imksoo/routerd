@@ -2101,3 +2101,23 @@ func TestNftablesClientPolicyExcludeTrustedMACs(t *testing.T) {
 		}
 	}
 }
+func TestNftablesFirewallUsesObservedIngressBackend(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.FirewallZoneSpec{Role: "untrust", Interfaces: []string{"wan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.FirewallZoneSpec{Role: "trust", Interfaces: []string{"lan"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "edge"}, Spec: api.IngressServiceSpec{
+			Listen:   api.IngressListenSpec{Interface: "wan", Address: "198.18.52.2", Protocol: "tcp", Port: 8080},
+			Backends: []api.IngressBackendSpec{{Name: "a", Address: "198.18.50.10", Port: 8080}, {Name: "b", Address: "198.18.50.20", Port: 8080}},
+		}},
+	}}}
+	data, err := NftablesFirewall(router, nil, IngressServiceState{Name: "edge", Selection: "failover", Backends: []api.IngressBackendSpec{{Name: "b", Address: "198.18.50.20", Port: 8080}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "ip daddr 198.18.50.20 tcp dport 8080 counter accept") || strings.Contains(got, "ip daddr 198.18.50.10 tcp dport 8080 counter accept") {
+		t.Fatalf("firewall did not follow the observed ingress backend:\n%s", got)
+	}
+}

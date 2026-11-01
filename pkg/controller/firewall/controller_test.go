@@ -157,3 +157,23 @@ func statusString(value any) string {
 	}
 	return ""
 }
+func TestIngressServiceStatesUseObservedActiveBackends(t *testing.T) {
+	store := firewallMapStore{}
+	if err := store.SaveObjectStatus(api.FirewallAPIVersion, "IngressService", "edge", map[string]any{
+		"effectiveSelection": "failover",
+		"activeBackend":      map[string]any{"name": "b", "address": "198.18.50.20", "port": float64(8080)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Store: store, Router: &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "IngressService"}, Metadata: api.ObjectMeta{Name: "edge"}},
+	}}}}
+	states := controller.ingressServiceStates()
+	if len(states) != 1 || states[0].Name != "edge" || states[0].Selection != "failover" || len(states[0].Backends) != 1 {
+		t.Fatalf("states = %#v", states)
+	}
+	backend := states[0].Backends[0]
+	if backend.Name != "b" || backend.Address != "198.18.50.20" || backend.Port != 8080 {
+		t.Fatalf("backend = %#v", backend)
+	}
+}
