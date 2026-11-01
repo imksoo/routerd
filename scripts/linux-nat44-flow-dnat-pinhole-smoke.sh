@@ -10,6 +10,7 @@ fi
 test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
 for x in ip nft jq python3 systemctl; do command -v "$x" >/dev/null; done
+if [ "${ROUTERD_FLOW_DNAT_DEBUG:-}" = 1 ]; then command -v tcpdump >/dev/null; fi
 for dev in rd15-fdnat-lan rd15-fdnat-wan; do
  if ip link show "$dev" >/dev/null 2>&1; then echo "existing interface: $dev" >&2; exit 1; fi
 done
@@ -24,6 +25,7 @@ fi
 work=$(mktemp -d /var/tmp/routerd15-flow-dnat.XXXXXX)
 stage=setup
 forward_before=$(sysctl -n net.ipv4.ip_forward)
+capture_pid=''
 empty="$work/empty.json"
 cat > "$empty" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"flow-dnat-smoke"},"spec":{"resources":[]}}
@@ -31,8 +33,10 @@ JSON
 finish() {
  rc=$?
  trap - EXIT
-if [ "$rc" -ne 0 ]; then
+ if [ -n "$capture_pid" ]; then kill "$capture_pid" >/dev/null 2>&1 || true; wait "$capture_pid" >/dev/null 2>&1 || true; capture_pid=''; fi
+ if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
+  if test -f "$work/packets.txt"; then echo 'packet observation:' >&2; cat "$work/packets.txt" >&2; fi
   nft list map ip routerd_nat flow_dnat_camera >&2 || true
   iptables -S FORWARD >&2 || true
   nft list ruleset >&2 || true
@@ -174,10 +178,17 @@ except TimeoutError:
 raise SystemExit('unexpected DNAT UDP reply')
 PY
 }
+capture_dnat_packets() {
+ [ "${ROUTERD_FLOW_DNAT_DEBUG:-}" = 1 ] || return 0
+ timeout 5 tcpdump -nn -l -i any 'udp and (port 32099 or port 32100 or port 40000)' > "$work/packets.txt" 2>&1 &
+ capture_pid=$!
+ sleep .2
+}
 
 stage=unsolicited-inbound
 expect_peer_drop unsolicited
 stage=learn-and-dnat
+capture_dnat_packets
 request_reply 198.18.71.10 32100 opened
 stage=expiry
 sleep 6
