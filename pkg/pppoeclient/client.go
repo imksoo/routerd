@@ -88,6 +88,9 @@ func LinuxPeer(cfg Config) []byte {
 		b.WriteString("password " + strconv.Quote(password) + "\n")
 	}
 	b.WriteString("noauth\nhide-password\nnoipdefault\nusepeerdns\n")
+	if spec.DefaultRoute {
+		b.WriteString("defaultroute\nreplacedefaultroute\n")
+	}
 	b.WriteString("nodetach\n")
 	if api.BoolDefault(spec.Persist, true) {
 		b.WriteString("persist\nmaxfail 0\n")

@@ -40,6 +40,14 @@ func TestStartSessionFailsClosedWhenFreeBSDPPPoEModuleLoadFails(t *testing.T) {
 	}
 }
 
+func TestDaemonConfigUsesConfiguredPPPInterfaceAndDefaultRoute(t *testing.T) {
+	d := newDaemon(options{resource: "wan", ifname: "ens18", pppIfName: "ppp-lab", username: "subscriber", password: "secret", defaultRoute: true}, nil)
+	cfg := d.config()
+	if cfg.IfName != "ppp-lab" || cfg.Spec.IfName != "ppp-lab" || !cfg.Spec.DefaultRoute {
+		t.Fatalf("daemon config = %+v", cfg)
+	}
+}
+
 func TestStartSessionRefusesPreexistingFreeBSDPPPoEInterface(t *testing.T) {
 	previousOS := currentPPPoEOS
 	previousModules := ensureFreeBSDPPPoEModule

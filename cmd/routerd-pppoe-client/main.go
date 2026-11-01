@@ -42,6 +42,7 @@ type options struct {
 	supervisorOwner  string
 	resource         string
 	ifname           string
+	pppIfName        string
 	username         string
 	password         string
 	passwordFile     string
@@ -52,6 +53,7 @@ type options struct {
 	acName           string
 	lcpEchoInterval  int
 	lcpEchoFailure   int
+	defaultRoute     bool
 	runtimeDir       string
 	socketPath       string
 	stateFile        string
@@ -166,6 +168,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.resource, "resource", "wan-pppoe", "resource name")
 	fs.StringVar(&opts.supervisorOwner, "supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "underlying Ethernet interface name")
+	fs.StringVar(&opts.pppIfName, "ifname", "", "PPP network interface name")
 	fs.StringVar(&opts.username, "username", "", "PPPoE username")
 	fs.StringVar(&opts.password, "password", "", "PPPoE password")
 	fs.StringVar(&opts.passwordFile, "password-file", "", "file containing PPPoE password")
@@ -176,6 +179,7 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.acName, "ac-name", "", "PPPoE access concentrator name")
 	fs.IntVar(&opts.lcpEchoInterval, "lcp-echo-interval", 30, "LCP echo interval")
 	fs.IntVar(&opts.lcpEchoFailure, "lcp-echo-failure", 4, "LCP echo failures before down")
+	fs.BoolVar(&opts.defaultRoute, "default-route", false, "install the PPP peer as the IPv4 default route")
 	fs.StringVar(&opts.runtimeDir, "runtime-dir", "", "runtime work directory")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.stateFile, "state-file", "", "state JSON path")
@@ -276,8 +280,13 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 	}
 	telemetry.ServiceName = daemonKind
 	telemetry.Ensure()
+	pppIfName := opts.pppIfName
+	if pppIfName == "" {
+		pppIfName = pppoeclient.DefaultIfName(opts.resource)
+	}
 	spec := api.PPPoESessionSpec{
 		Interface:       opts.ifname,
+		IfName:          pppIfName,
 		AuthMethod:      opts.authMethod,
 		Username:        opts.username,
 		Password:        opts.password,
@@ -287,6 +296,7 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 		ACName:          opts.acName,
 		LCPEchoInterval: opts.lcpEchoInterval,
 		LCPEchoFailure:  opts.lcpEchoFailure,
+		DefaultRoute:    opts.defaultRoute,
 	}
 	identity := pppoeclient.IdentityForSpec(spec)
 	spec.AuthMethod = identity.AuthMethod
@@ -297,7 +307,7 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 		opts:          opts,
 		spec:          spec,
 		startedAt:     now,
-		snapshot:      pppoeclient.Snapshot{Resource: opts.resource, Interface: opts.ifname, IfName: pppoeclient.DefaultIfName(opts.resource), Phase: pppoeclient.PhaseIdle, UpdatedAt: now},
+		snapshot:      pppoeclient.Snapshot{Resource: opts.resource, Interface: opts.ifname, IfName: pppIfName, Phase: pppoeclient.PhaseIdle, UpdatedAt: now},
 		telemetry:     telemetry,
 		phaseGauge:    telemetry.Gauge("routerd.pppoe.client.session.state"),
 		bytesCounter:  telemetry.Counter("routerd.pppoe.client.bytes"),
@@ -642,7 +652,7 @@ func (d *daemon) renderRuntimeConfig() error {
 }
 
 func (d *daemon) config() pppoeclient.Config {
-	return pppoeclient.Config{Resource: d.opts.resource, Interface: d.opts.ifname, IfName: pppoeclient.DefaultIfName(d.opts.resource), Spec: d.spec, Password: d.opts.password, RuntimeDir: d.opts.runtimeDir}
+	return pppoeclient.Config{Resource: d.opts.resource, Interface: d.opts.ifname, IfName: d.spec.IfName, Spec: d.spec, Password: d.opts.password, RuntimeDir: d.opts.runtimeDir}
 }
 
 func (d *daemon) prepareFilesystem() error {

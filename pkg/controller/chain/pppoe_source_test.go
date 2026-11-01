@@ -5,6 +5,7 @@ package chain
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -73,5 +74,22 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	}
 	if _, ready, err := runner.currentPPPoESource(prepared.declared, "wan", evented); err != nil || ready {
 		t.Fatalf("old supervisor hash/token accepted new configuration: ready=%v err=%v", ready, err)
+	}
+}
+
+func TestPPPoEClientDaemonSpecPassesInterfaceNameAndDefaultRoute(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ethernet"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.PPPoESessionSpec{Interface: "ethernet", IfName: "ppp-lab", Username: "subscriber", Password: "secret", DefaultRoute: true}},
+	}}}
+	specs := (&Runner{}).clientDaemonSpecs(router)
+	if len(specs) != 1 {
+		t.Fatalf("daemon specs = %#v", specs)
+	}
+	args := strings.Join(specs[0].Args, "\x00")
+	for _, want := range []string{"--interface\x00ens18", "--ifname\x00ppp-lab", "--default-route"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("daemon args missing %q: %#v", want, specs[0].Args)
+		}
 	}
 }

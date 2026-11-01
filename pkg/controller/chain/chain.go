@@ -3758,6 +3758,12 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 				ifname = spec.Interface
 			}
 			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname, "--username", spec.Username}
+			if spec.IfName != "" {
+				args = append(args, "--ifname", spec.IfName)
+			}
+			if spec.DefaultRoute {
+				args = append(args, "--default-route")
+			}
 			if spec.PasswordFile != "" {
 				args = append(args, "--password-file", spec.PasswordFile)
 			} else if spec.Password != "" {

@@ -41,6 +41,22 @@ func TestLinuxPeerRendersSoftEtherCredential(t *testing.T) {
 	}
 }
 
+func TestLinuxPeerUsesConfiguredInterfaceAndDefaultRoute(t *testing.T) {
+	peer := string(LinuxPeer(Config{
+		Resource:  "wan",
+		Interface: "ens18",
+		IfName:    "ppp-lab",
+		Spec: api.PPPoESessionSpec{
+			DefaultRoute: true,
+		},
+	}))
+	for _, want := range []string{"ifname ppp-lab", "defaultroute", "replacedefaultroute"} {
+		if !strings.Contains(peer, want) {
+			t.Fatalf("Linux peer missing %q:\n%s", want, peer)
+		}
+	}
+}
+
 func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 	cfg := Config{
 		Resource:   "wan-pppoe",
