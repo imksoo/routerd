@@ -1603,6 +1603,24 @@
         "IPv6, PPPoE, DS-Lite, BGP, IPsec, port forwarding, provider mutation, power-loss durability, and complete routerd 1.0 functional parity.",
         "Whole-feature or whole-platform qualification."
       ]
+    },
+    "linux-dhcpv6-native-ee260320": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "ee260320a16b51c8ed9414f01d09a0f0a81b321c",
+      "reference": "docs/operations/development.md#linux-native-dhcpv6-address-gate",
+      "environment": "Authorized isolated Linux VM. Current checksum-verified formal archive ran in private network and mount namespaces against an independent Kea 2.4.1 DHCPv6 server.",
+      "checks": [
+        "Independent IA_NA allocation and exact finite /128 native ownership after DAD; bidirectional peer traffic.",
+        "Router process stop/restart retained SQLite acquisition and finite kernel lifetime; timed Renew refreshed acquisition.",
+        "Peer outage expired the real kernel address; peer recovery reacquired autonomously.",
+        "Declaration removal withdrew native ownership and retired the receipt; an independent duplicate address caused server-observed Decline and local withdrawal.",
+        "A shared PD/NA worker retained independent associations and native /128 ownership; fixture cleanup completed."
+      ],
+      "excludes": [
+        "WAN routing and forwarding, RA/DNS lifetime behavior, DHCPv6 server modes, FreeBSD, and complete routerd 1.0 functional parity.",
+        "Whole-feature or whole-platform qualification."
+      ]
     }
   },
   "features": [
