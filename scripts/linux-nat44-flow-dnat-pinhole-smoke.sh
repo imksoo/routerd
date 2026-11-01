@@ -31,10 +31,12 @@ JSON
 finish() {
  rc=$?
  trap - EXIT
- if [ "$rc" -ne 0 ]; then
+if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
+  nft list map ip routerd_nat flow_dnat_camera >&2 || true
+  iptables -S FORWARD >&2 || true
   nft list ruleset >&2 || true
- fi
+fi
  /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
  pkill -F "$work/peer.pid" >/dev/null 2>&1 || true
  ip netns del rd15-fdnat-client >/dev/null 2>&1 || true
