@@ -26,6 +26,9 @@ IPv4 NAT and IPv6. Its admission checks are:
 
 - Clean package installation and startup through the actual service manager,
   with management access independent of the tested WAN/LAN.
+- Prepare the desired configuration in the routerd 1.5 format before
+  installation and validate it with 1.5. Install with fresh 1.5 state; importing
+  routerd 1.0 configuration or databases is outside the scope.
 - Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
   IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
   upstream mode selected for the actual deployment.
@@ -33,9 +36,8 @@ IPv4 NAT and IPv6. Its admission checks are:
   host reboot and interrupted configuration changes without manual repair of
   the product's state. Check withdrawal and absence of traffic leaks as well as
   successful traffic.
-- Configuration rejection, replacement and withdrawal; an exercised return to
-  the previous working router. Because 1.5 changes configuration/database formats,
-  binary-only rollback must not be assumed to restore 1.0 service.
+- Reject invalid 1.5 configuration, replace and withdraw valid 1.5 configuration,
+  and verify recovery from an interrupted 1.5 activation.
 - The complete local regression gate remains passing. Newly discovered failures
   stay open until reproduced, repaired and rechecked; a limited trial cannot
   reclassify other features as unnecessary.

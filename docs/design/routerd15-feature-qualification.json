@@ -3098,7 +3098,7 @@
       },
       "required_remaining_checks": [
         "Real management path while data-plane faults/configuration change",
-        "Independent admission and exercised recovery/cutback"
+        "Independent admission and management recovery after a data-plane fault"
       ]
     },
     {
@@ -3142,7 +3142,7 @@
       },
       "required_remaining_checks": [
         "All baseline validate/plan/apply/delete/rollback outcomes",
-        "Canonical durability, interrupted activation, actual 1.0 cutback and rejected writes"
+        "Canonical durability, interrupted activation, 1.5 rollback and rejected writes"
       ]
     },
     {
@@ -3346,7 +3346,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Cross-version upgrade, rollback and 1.0 configuration/database cutback",
+        "Clean 1.5 install and service activation",
         "Reboot, interrupted install and target permission/dependency handling"
       ]
     },
@@ -3586,10 +3586,10 @@
   ],
   "next_live_trial_requirements": [
     "Clean packaged installation/service lifecycle with independent management/recovery",
+    "Desired configuration prepared in 1.5 format and validated before a clean install",
     "Independent DHCP/DNS and IPv4 NAT traffic",
     "Independent IPv6 delegation/RA/client forwarding and source expiry",
     "Renewal/rebind, upstream loss/return, process restart/reboot and interrupted configuration change",
-    "Exercised cutback to the previous working 1.0 router/configuration/database",
     "Passing complete local regression gate; continue every other baseline feature after the limited trial"
   ],
   "evidence_update_rule": "Append a source revision and durable audit/procedure reference with the exact function/configuration and observed level. Keep contradictory or failed observations. Do not turn a resource name, matching configuration, status receipt, skipped test, cross-compilation or a partial lab success into functional pass.",

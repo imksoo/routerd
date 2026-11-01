@@ -253,9 +253,9 @@ SAM tests do not establish independent RR/leaf interoperability.
 
 ## Build, release and isolated lab tools
 
-- Installer stop/restart/rollback ordering and retained recovery backups are
-  implemented with subprocess regressions. Packaged Linux clean installation and service restart now pass;
-  cross-version upgrade and native rollback qualification remain unexecuted.
+- Installer stop/restart ordering and retained recovery backups are implemented
+  with subprocess regressions. Packaged Linux clean installation and service
+  restart now pass; cross-version 1.0 migration is outside qualification scope.
 - Live ISO builder uses a private mount namespace, exact workdir ownership,
   pre-walk mount refusal and error-preserving owned unmounts. Recursive chown and
   all-root image rewriting are removed; old mode-damaged caches are rejected.
