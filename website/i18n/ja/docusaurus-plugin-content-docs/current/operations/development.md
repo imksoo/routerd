@@ -222,6 +222,29 @@ WAN の中継経路と戻り経路は試験用の事前設定です。
 WAN でのルーター広告、DHCPv6 の IA_NA、複数プレフィックスの重複期間を伴う変更は、別の検証対象です。
 再起動・異常終了からの復旧、ファイアウォール、FreeBSD、routerd 1.0 全機能の合格とも区別します。
 
+## Linux の DHCPv6 server VM 試験
+
+`scripts/linux-dhcpv6-server-smoke.sh` は、`make dist` で導入した製品を実 systemd service
+経由で検査します。iproute2、jq、dhcpcd を備え、独立した管理経路と本番通信のない専用の
+使い捨て Linux VM だけで実行してください。付属設定は外部所有の veth LAN を作り、
+ゲストの router 設定を置き換えます。
+
+```sh
+sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcpv6-server-smoke.json"
+```
+
+routerd が静的 RA を送信し、`DHCPv6Server.mode: both` 用の dnsmasq を管理します。
+独立 client netns が routerd の M/O RA を受信して SLAAC の DAD を完了した後、dhcpcd が
+stateful IA_NA、DNS、SNTP、domain-search option を取得することを必須とします。
+routerd service 再起動後は dhcpcd が既存 lease を Confirm します。最後に空設定の適用後、
+資源数ゼロ・phase 問題なしで Healthy になることを確認します。dhcpcd の試験用 interface
+名と lease state は毎回固有にし、成功時の生出力は削除します。
+
+この試験は `stateless`・`ra-only`、lease の Renew/expiry、DHCPv6 lease sync、委譲アドレス、
+転送、FreeBSD、routerd 1.0 全機能の合格を示しません。失敗時は routerd を停止して正確な
+fixture directory をローカル再現用に保持し、解消後に削除します。
+
 ## Linux の DHCPv6 アドレス・プレフィックス client 試験
 
 iproute2、util-linux、curl、jq、Python 3、展開済み Kea 2.4.1 package を用意した

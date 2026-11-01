@@ -260,6 +260,33 @@ failure is resolved. WAN transit and its return route are fixture scaffolding:
 this gate does not qualify WAN RA discovery, DHCPv6 IA_NA, overlapping multi-prefix renumbering,
 reboot/crash recovery, firewall isolation, FreeBSD or all routerd 1.0 functions.
 
+## Linux DHCPv6 server VM gate
+
+`scripts/linux-dhcpv6-server-smoke.sh` runs an installed `make dist` product
+through its actual systemd service in a dedicated disposable Linux VM. It needs
+iproute2, jq and dhcpcd. The supplied fixture creates an external veth LAN and
+changes the guest's router configuration, so it must have independent management
+access and no production traffic.
+
+```sh
+sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
+  "$PWD/tests/fixtures/linux-dhcpv6-server-smoke.json"
+```
+
+routerd supplies the static RA and manages dnsmasq for `DHCPv6Server.mode: both`.
+The gate first requires the independent client namespace to receive routerd's
+M/O RA and complete SLAAC DAD. It then runs dhcpcd, which obtains a stateful
+IA_NA and receives DNS, SNTP and domain-search options. After a routerd service
+restart, dhcpcd confirms the prior lease. The empty configuration must then
+reach Healthy with zero resources and no phase issues. dhcpcd uses a unique
+test interface and the gate deletes its exact lease state; successful raw output
+is deleted.
+
+This is not evidence for `stateless` or `ra-only`, lease renewal/expiry,
+DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
+or complete routerd 1.0 functional parity. A failure stops routerd and preserves
+the exact fixture directory for local reproduction; delete it once resolved.
+
 ## Linux WAN RA/SLAAC lifecycle gate
 
 Use `scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm` only in a dedicated,
