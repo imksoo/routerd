@@ -149,6 +149,13 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	providerLostConnection := map[string]bool{}
+	for _, old := range previous.Connections {
+		current := desiredByName(desired, old.Name)
+		if old.Acknowledged && current != nil && old.Hash == current.Hash && !slices.Contains(loaded, old.Name) {
+			providerLostConnection[old.Name] = true
+		}
+	}
 	for i := range desired {
 		desired[i].Scope = operationScope
 	}
@@ -189,6 +196,11 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 			continue // An unacknowledged intent grants no VICI/kernel mutation authority.
 		}
 		if current != nil && old.Hash == current.Hash {
+			if providerLostConnection[old.Name] {
+				if err := c.withdrawRecordedSAs(ctx, old, pending.Connections); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		// Stop admission under the old configuration before terminating its SAs.
