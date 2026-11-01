@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -61,6 +62,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer telemetry.ShutdownGracefully()
+	slog.SetDefault(telemetry.Logger)
 	if len(args) == 0 {
 		usage(stderr)
 		return errors.New("missing command")
