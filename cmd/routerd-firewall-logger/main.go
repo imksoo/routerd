@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -236,6 +237,7 @@ func recordFirewallEntryWithRecorder(ctx context.Context, recorder firewallEntry
 	if err := recorder.Record(ctx, entry); err != nil {
 		return err
 	}
+	recordDenyLog(ctx, telemetry, entry)
 	recordDenyMetric(ctx, telemetry, entry)
 	return nil
 }
@@ -716,6 +718,34 @@ func dpiHintMetadata(hint string) map[string]string {
 		return nil
 	}
 	return metadata
+}
+
+func recordDenyLog(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {
+	if telemetry == nil || telemetry.Logger == nil || !isDenyAction(entry.Action) {
+		return
+	}
+	attrs := []slog.Attr{
+		slog.String("routerd.firewall.action", entry.Action),
+		slog.String("routerd.firewall.rule", entry.RuleName),
+		slog.String("source.address", entry.SrcAddress),
+		slog.Int("source.port", entry.SrcPort),
+		slog.String("destination.address", entry.DstAddress),
+		slog.Int("destination.port", entry.DstPort),
+		slog.String("network.transport", entry.Protocol),
+		slog.String("network.type", entry.L3Proto),
+		slog.String("network.protocol.name", firewallDPIProtocol(entry)),
+		slog.String("routerd.firewall.correlation", firewallCorrelation(entry)),
+	}
+	if entry.DPIApp != "" {
+		attrs = append(attrs, slog.String("routerd.dpi.application", entry.DPIApp))
+	}
+	if entry.DPITLSSNI != "" {
+		attrs = append(attrs, slog.String("tls.server.name", entry.DPITLSSNI))
+	}
+	if entry.DPIHTTPHost != "" {
+		attrs = append(attrs, slog.String("server.address", entry.DPIHTTPHost))
+	}
+	telemetry.Logger.LogAttrs(ctx, slog.LevelWarn, "firewall packet denied", attrs...)
 }
 
 func recordDenyMetric(ctx context.Context, telemetry *routerotel.Runtime, entry logstore.FirewallLogEntry) {

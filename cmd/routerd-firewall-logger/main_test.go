@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/imksoo/routerd/pkg/dpi"
 	"github.com/imksoo/routerd/pkg/logstore"
+	routerotel "github.com/imksoo/routerd/pkg/otel"
 	"github.com/imksoo/routerd/pkg/platform"
 )
 
@@ -101,6 +103,43 @@ func TestDaemonReadsKeyValueLines(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].RuleName != "test" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestRecordFirewallEntryEmitsDenyLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "firewall-logs.db")
+	store, err := logstore.OpenFirewallLog(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var output bytes.Buffer
+	telemetry := &routerotel.Runtime{Logger: slog.New(slog.NewTextHandler(&output, nil))}
+	entry := logstore.FirewallLogEntry{
+		Action:     "drop",
+		RuleName:   "default-deny",
+		SrcAddress: "198.18.52.10",
+		SrcPort:    53000,
+		DstAddress: "198.18.50.20",
+		DstPort:    443,
+		Protocol:   "tcp",
+		L3Proto:    "ipv4",
+		DPIApp:     "tls",
+		DPITLSSNI:  "blocked.example.test",
+	}
+	if err := recordFirewallEntry(context.Background(), store, entry, telemetry, options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"msg=\"firewall packet denied\"",
+		"routerd.firewall.rule=default-deny",
+		"source.address=198.18.52.10",
+		"destination.address=198.18.50.20",
+		"tls.server.name=blocked.example.test",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("log = %q, missing %q", output.String(), want)
+		}
 	}
 }
 
