@@ -1553,6 +1553,29 @@
         "A corrected image clean-boot pass; runtime replacement was manual and the original ISO commit marker remains dc14c486",
         "Whole Linux or ServiceUnit dependency qualification"
       ]
+    },
+    "linux-wan-ra-lifecycle-1392082f": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "1392082fd634ebd26ca0a06b0edc6315411b7a60",
+      "reference": "docs/design/routerd15-audit.md#wan-raslaac-lifecycle-recheck-at-1392082f-2026-11-01",
+      "product_version": "v20261101.3",
+      "routerd_sha256": "7138296c801131d97c9b3b0b5c1880d35c37dc44a6d781b1c23ca454f9897180",
+      "script_sha256": "6e53c0dc1cea2d9928a76d678783f16c702cfc4cef8863d58c44a3693cd6d12b",
+      "environment": "Isolated Ubuntu 24.04.4 VM, Linux 6.8.0-117-generic; installed static make dist routerd; actual systemd-networkd-managed trial WAN interface; dnsmasq RA sender and HTTP peer in a separate network namespace; rdisc6 packet decoder.",
+      "reproduction": "scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm",
+      "checks": [
+        "Fresh observe-only intent left RA acceptance disabled, without networkd adoption or a default route; managed intent acquired SLAAC and a proto-ra default route",
+        "Independent off-link HTTP peer observed the SLAAC source",
+        "Planned systemd restart retained intent and traffic; SIGKILL recovered through exactly one automatic systemd restart and traffic remained available",
+        "Stopping the RA sender led to natural route/address lifetime expiry and failed traffic; resuming only the peer restored traffic with the same routerd PID and no controller errors",
+        "Empty apply and fixture cleanup passed"
+      ],
+      "excludes": [
+        "RDNSS/DNSSL, DHCPv6 IA_NA and LAN forwarding",
+        "Host reboot, storage loss, other platforms, and automatic restoration of host settings on intent removal",
+        "1.0 configuration/database import, installed-system upgrade, complete routerd 1.0 parity or release qualification"
+      ]
     }
   },
   "features": [
@@ -2541,7 +2564,8 @@
           "dhcpv6-partial-recovery-87761c0e",
           "linux-dhcpv6-native-1392082f",
           "linux-pd-ra-lifecycle-1392082f",
-          "linux-dhcpv6-native-d05524de"
+          "linux-dhcpv6-native-d05524de",
+          "linux-wan-ra-lifecycle-1392082f"
         ]
       },
       "freebsd": {
@@ -3379,7 +3403,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
-          "linux-serviceunit-feedback-919499c4"
+          "linux-serviceunit-feedback-919499c4",
+          "linux-wan-ra-lifecycle-1392082f"
         ]
       },
       "freebsd": {

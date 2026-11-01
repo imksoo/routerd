@@ -2030,6 +2030,33 @@ the new commit extends the test and its documented acceptance criteria. The
 ledger separately binds package revision/hash and executed fixture revision/hash.
 
 
+### WAN RA/SLAAC lifecycle recheck at 1392082f, 2026-11-01
+
+The installed static `make dist` package `v20261101.3`, built from product
+revision `1392082fd634ebd26ca0a06b0edc6315411b7a60`, passed the same gate on
+the isolated Ubuntu 24.04.4 / Linux 6.8.0-117-generic VM. The product binary
+SHA-256 was `7138296c801131d97c9b3b0b5c1880d35c37dc44a6d781b1c23ca454f9897180`;
+the executed fixture SHA-256 was
+`6e53c0dc1cea2d9928a76d678783f16c702cfc4cef8863d58c44a3693cd6d12b`.
+
+Fresh observe-only intent left RA acceptance disabled, with no adopted
+networkd drop-in or default route. Managed intent enabled kernel SLAAC and a
+`proto ra` default route; an independent off-link HTTP peer observed the
+learned SLAAC source. A planned systemd restart preserved intent and traffic.
+SIGKILL recovered through exactly one automatic systemd restart, again with
+traffic. Freezing the RA sender led to natural route and address lifetime
+expiry and failed traffic; resuming only the peer restored traffic with the
+same routerd PID and no controller errors. Empty apply and fixture cleanup
+passed. No 1.0 configuration, database or installed system was imported or
+upgraded in this test.
+
+This is a scoped WAN `IPv6RAAddress` and Linux service-recovery result, not
+complete IPv6 or routerd 1.0 qualification. RDNSS/DNSSL, DHCPv6 IA_NA, LAN
+forwarding, host reboot/storage loss, other platforms, and automatic restoration
+of host settings on intent removal remain outside this check. The procedure is
+`scripts/linux-wan-ra-lifecycle-smoke.sh --disposable-vm`.
+
+
 ### Integrated native Go and expanded peer checks, 2026-10-31
 
 The clean combined source `f294bb23e42f6d3a552d340779a3af1dca88f147`
