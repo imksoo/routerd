@@ -1085,6 +1085,21 @@
         "Complete 1.0 function preservation or release qualification"
       ]
     },
+    "linux-dhcpv6-server-ia-na-f6be5a58": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "f6be5a586c6c60f7a9d80fae2d0b1fad4aba695d",
+      "reference": "tests/netns/README.md#stateful-dhcpv6-server",
+      "environment": "Linux network namespaces and veth; repository DHCPv6 renderer, dnsmasq 2.90 and independent dhcpcd 10.0.6 client.",
+      "reproduction": "sudo ./tests/netns/dhcpv6-stateful.sh",
+      "checks": [
+        "In stateful and both modes, IA_NA Solicit/Advertise/Request/Reply completed and the client received an address from the configured pool."
+      ],
+      "excludes": [
+        "Rendered stateless-information/DNS response, RA/default route, renewal/expiry, restart and forwarding",
+        "Full routerd supervision and FreeBSD runtime"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -2464,20 +2479,24 @@
         ],
         "related_test_files": [
           "pkg/render/dnsmasq_test.go",
-          "pkg/controller/chain/dnsmasq_ipv4_only_test.go"
+          "pkg/controller/chain/dnsmasq_ipv4_only_test.go",
+          "tests/netns/dhcpv6-stateful.sh",
+          "tests/netns/dhcpv6-stateful-render/main.go"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-dhcpv6-server-ia-na-f6be5a58"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent DHCPv6 clients for supported address/DNS modes",
+        "Independent client coverage for rendered stateless information and DNS options",
         "Renewal, expiry, RA interaction, family isolation and restart"
       ]
     },
