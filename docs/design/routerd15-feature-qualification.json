@@ -1766,6 +1766,24 @@
         "FreeBSD behavior, production topology, performance, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
+    },
+    "linux-nat44-flow-dnat-pinhole-3587ac28": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3587ac2820249ed5dbfdaa81b5e8d5011a59a408",
+      "gate_script_revision": "0a47368863ceb0c490c6e2faaeb1782cd448f401",
+      "reference": "docs/operations/development.md#linux-nat44flowdnatpinhole-lifecycle-gate",
+      "environment": "Authorized dedicated Linux VM; CGO_ENABLED=0 make dist package through the actual systemd service; independent LAN client and WAN UDP peer namespaces.",
+      "checks": [
+        "A matching reverse UDP source was dropped while no dynamic map entry existed; the configured LAN source then opened an nft timeout-map entry and a distinct reverse flow was DNATed to that client.",
+        "A distinct reverse flow after timeout expiry was dropped. Replacing the referenced IPAddressSet removed the old source immediately, so a new flow from that source could not learn or DNAT.",
+        "Empty-config withdrawal removed the routerd NAT table; final cleanup left no test namespace, interface, temporary output or routerd NAT table."
+      ],
+      "excludes": [
+        "NAT44SessionSync, other NAT44Rule/PortForward/LocalServiceRedirect behavior, other pinhole selection modes, and non-UDP traffic.",
+        "FreeBSD behavior, production topology, performance, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
     }
   },
   "features": [
@@ -3347,7 +3365,8 @@
           "linux-vlan-ha-dslite-c-r3-88927a4a",
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
-          "linux-ingress-service-ad5bcd47"
+          "linux-ingress-service-ad5bcd47",
+          "linux-nat44-flow-dnat-pinhole-3587ac28"
         ]
       },
       "freebsd": {

@@ -569,6 +569,26 @@ revision, and concise pass/fail verdict; raw output is removed on either result.
 It does not qualify NAT44 flow DNAT pinholes, other correlation/selection modes,
 FreeBSD behavior, or complete routerd 1.0 parity.
 
+## Linux NAT44FlowDNATPinhole lifecycle gate
+
+`scripts/linux-nat44-flow-dnat-pinhole-smoke.sh` runs the installed package
+through its actual systemd service in a dedicated, empty disposable Linux VM.
+It uses independent client and peer namespaces, and uses a distinct UDP flow
+for each lifecycle assertion so conntrack state cannot make a later assertion
+pass or fail accidentally.
+
+```sh
+sudo scripts/linux-nat44-flow-dnat-pinhole-smoke.sh --disposable-vm
+```
+
+The gate requires a matching reverse source port to be dropped without a
+learned mapping, then verifies outbound learning and dynamic DNAT, timeout
+expiry, an immediate referenced `IPAddressSet` replacement, and empty-config
+withdrawal. Keep the procedure, candidate revision, and concise pass/fail
+verdict; raw output is removed on either result. It does not qualify
+`NAT44SessionSync`, other NAT44/redirect behavior, FreeBSD behavior, or
+complete routerd 1.0 parity.
+
 ## Two-VM reboot and interrupted-apply gate
 
 `scripts/linux-router-reboot-fixture.sh` uses two dedicated disposable Linux VMs
