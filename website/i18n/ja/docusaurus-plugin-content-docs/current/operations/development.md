@@ -230,7 +230,7 @@ WAN でのルーター広告、DHCPv6 の IA_NA、複数プレフィックスの
 ゲストの router 設定を置き換えます。
 
 ```sh
-# M-only の stateful address assignment。
+# 明示的 M-only RA を併用した stateful DHCPv6 address assignment。
 sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
   "$PWD/tests/fixtures/linux-dhcpv6-server-stateful-smoke.json"
 
@@ -245,12 +245,13 @@ sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
 
 routerd が静的 RA を送信し、dnsmasq を管理します。`stateful` と `both` fixture は、独立
 client netns が SLAAC の DAD を完了し、stateful IA_NA、DNS、SNTP、domain-search option を
-取得することを必須とします。RA flag はそれぞれ M-only と M/O です。`stateless` fixture は
-Information-Request で同じ option を取得し、IA_NA が含まれないことを必須とします。いずれも routerd service
+取得することを必須とします。DHCPv6 exchange を独立に検査するため、各 fixture は明示的な RA を
+用います。`stateless` fixture は Information-Request で同じ option を取得し、IA_NA が含まれない
+ことを必須とします。いずれも routerd service
 再起動後に再実行し、最後の空設定適用で資源数ゼロ・phase 問題なしの Healthy を確認します。
 dhcpcd の試験用 interface 名と lease state は毎回固有にし、成功時の生出力は削除します。
 
-この試験は `ra-only`、lease の Renew/expiry、DHCPv6 lease sync、
+この試験は DHCPv6 の implicit RA flag と `ra-only`、lease の Renew/expiry、DHCPv6 lease sync、
 委譲アドレス、転送、FreeBSD、routerd 1.0 全機能の合格を示しません。失敗時は routerd を停止して
 正確な fixture directory をローカル再現用に保持し、解消後に削除します。
 

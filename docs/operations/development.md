@@ -269,7 +269,7 @@ changes the guest's router configuration, so it must have independent management
 access and no production traffic.
 
 ```sh
-# M-only stateful address assignment.
+# Stateful DHCPv6 address assignment with an explicit M-only RA.
 sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
   "$PWD/tests/fixtures/linux-dhcpv6-server-stateful-smoke.json"
 
@@ -284,14 +284,15 @@ sudo scripts/linux-dhcpv6-server-smoke.sh --disposable-vm \
 
 routerd supplies the static RA and manages dnsmasq. The `stateful` and `both`
 fixtures require the independent client namespace to complete SLAAC DAD, obtain
-a stateful IA_NA, and receive DNS, SNTP and domain-search options; their RA
-flags are M-only and M/O respectively. The `stateless` fixture requires an
-Information-Request with those options and rejects any IA_NA. In both cases, the check repeats after a routerd service
+a stateful IA_NA, and receive DNS, SNTP and domain-search options. Each fixture
+uses an explicit RA so that the DHCPv6 exchange is independently testable. The
+`stateless` fixture requires an Information-Request with those options and
+rejects any IA_NA. In both cases, the check repeats after a routerd service
 restart and requires the empty configuration to reach Healthy with zero
 resources and no phase issues. dhcpcd uses a unique test interface and the gate
 deletes its exact lease state; successful raw output is deleted.
 
-This is not evidence for `ra-only`, lease renewal/expiry,
+This is not evidence for implicit DHCPv6 RA flags or `ra-only`, lease renewal/expiry,
 DHCPv6 lease synchronization, delegated addresses, packet forwarding, FreeBSD,
 or complete routerd 1.0 functional parity. A failure stops routerd and preserves
 the exact fixture directory for local reproduction; delete it once resolved.

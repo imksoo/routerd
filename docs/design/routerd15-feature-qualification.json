@@ -1647,12 +1647,12 @@
       "checks": [
         "The client kernel received routerd static RA M/O flags, completed SLAAC DAD, and dhcpcd obtained a stateful IA_NA from DHCPv6Server.mode both.",
         "dhcpcd independently observed the configured DNS, SNTP and domain-search DHCPv6 options.",
-        "The stateful fixture made dhcpcd obtain an IA_NA and the configured DNS, SNTP and domain-search options after an M-only RA; it confirmed that lease after routerd systemd restart.",
+        "The stateful fixture, paired with an explicit M-only RA, made dhcpcd obtain an IA_NA and the configured DNS, SNTP and domain-search options; it confirmed that lease after routerd systemd restart.",
         "The stateless fixture made dhcpcd send an Information-Request with no IA_NA and independently receive the configured DNS, SNTP and domain-search options; the same result held after routerd systemd restart.",
         "After routerd systemd restart, dhcpcd confirmed the prior lease. Applying an empty configuration reached Healthy with zero resources and no phase issues; test netns and exact dhcpcd lease state were removed."
       ],
       "excludes": [
-        "ra-only mode, natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
+        "implicit DHCPv6 RA flags and ra-only mode, natural renew/rebind/expiry, DHCPv6 lease synchronization, delegated addresses, forwarding, FreeBSD, and complete routerd 1.0 functional parity.",
         "A whole-feature or whole-platform qualification verdict."
       ]
     }
