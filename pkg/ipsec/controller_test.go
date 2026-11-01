@@ -34,6 +34,7 @@ type viciEndpoint struct {
 	lieUnload       bool
 	omitACK         bool
 	blockLoad       bool
+	failInitiate    bool
 	directory       string
 	pendingObserved bool
 	loseObservation bool
@@ -155,6 +156,16 @@ func (e *viciEndpoint) reply(command string, body []byte) ([]byte, []byte) {
 		if e.loseObservation {
 			e.observationLost = true
 		}
+	case "initiate":
+		e.recordPending()
+		if e.failInitiate {
+			return append(viciValue("success", "no"), viciValue("errmsg", "initiate rejected")...), nil
+		}
+		name := viciRequestValue(body, "ike")
+		if _, exists := e.connections[name]; !exists || viciRequestValue(body, "child") != "net" {
+			return append(viciValue("success", "no"), viciValue("errmsg", "unknown connection or child")...), nil
+		}
+		e.active[name] = true
 	case "unload-conn":
 		e.recordPending()
 		if !e.lieUnload {
@@ -256,14 +267,27 @@ func TestScopedVICIReconcileFailureRecoveryFreshDaemonAndLastWithdrawal(t *testi
 	if endpoint.active["routerd-site"] || !bytes.Contains(endpoint.connections["routerd-site"], []byte("203.0.113.2")) || !bytes.Contains(endpoint.keys["routerd-site"], []byte("replacement-secret")) {
 		t.Error("configuration-only update did not replace native config/secret and terminate old SA")
 	}
+	if slices.Contains(endpoint.calls, "initiate") {
+		t.Error("ordinary configuration admission or replacement initiated an IPsec SA")
+	}
 	// A charon restart loses native state while the durable receipt is unchanged.
 	delete(endpoint.connections, "routerd-site")
 	delete(endpoint.keys, "routerd-site")
+	endpoint.calls = nil
 	endpoint.mu.Unlock()
 	if err := controller.Reconcile(t.Context(), router); err != nil {
 		t.Fatal(err)
 	}
 	endpoint.mu.Lock()
+	initiations := 0
+	for _, command := range endpoint.calls {
+		if command == "initiate" {
+			initiations++
+		}
+	}
+	if !endpoint.active["routerd-site"] || initiations != 1 {
+		t.Fatalf("provider restart did not initiate exactly once: active=%v calls=%v", endpoint.active["routerd-site"], endpoint.calls)
+	}
 	endpoint.active["routerd-site"] = true
 	endpoint.lieUnload = true
 	endpoint.mu.Unlock()
@@ -297,6 +321,39 @@ func TestScopedVICIReconcileFailureRecoveryFreshDaemonAndLastWithdrawal(t *testi
 	}
 	if needed, err := Needed(empty, directory); err != nil || needed {
 		t.Fatalf("completed withdrawal still requires charon: %v %v", needed, err)
+	}
+}
+
+func TestScopedVICIProviderRestartRetainsPendingReceiptUntilInitiationAcknowledges(t *testing.T) {
+	directory := t.TempDir()
+	endpoint, session := newVICIEndpoint(t, directory)
+	controller := Controller{Session: session, Directory: directory}
+	router := ipsecTestRouter("203.0.113.1", "secret")
+	if err := controller.Reconcile(t.Context(), router); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.mu.Lock()
+	delete(endpoint.connections, "routerd-site")
+	delete(endpoint.keys, "routerd-site")
+	endpoint.failInitiate = true
+	endpoint.mu.Unlock()
+	if err := controller.Reconcile(t.Context(), router); err == nil || !strings.Contains(err.Error(), "IPsec initiate routerd-site") {
+		t.Fatalf("rejected restart initiation = %v", err)
+	}
+	state, err := readReceipt(directory)
+	if err != nil || !state.Pending {
+		t.Fatalf("rejected restart initiation lost pending receipt: %+v %v", state, err)
+	}
+	endpoint.mu.Lock()
+	endpoint.failInitiate = false
+	endpoint.mu.Unlock()
+	if err := controller.Reconcile(t.Context(), router); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if !endpoint.active["routerd-site"] {
+		t.Fatal("acknowledged restart initiation did not establish the test SA")
 	}
 }
 

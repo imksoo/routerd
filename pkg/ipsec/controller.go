@@ -24,8 +24,9 @@ import (
 const ReceiptName = "routerd-ipsec.json"
 
 type connectionReceipt struct {
-	Name string `json:"name"`
-	Hash string `json:"hash,omitempty"`
+	Name    string `json:"name"`
+	Hash    string `json:"hash,omitempty"`
+	Recover bool   `json:"recover,omitempty"`
 }
 
 // A pending receipt is written before sending any mutation. It retains every
@@ -94,6 +95,12 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	pendingRecovery := make(map[string]bool, len(previous.Connections))
+	for _, conn := range previous.Connections {
+		if conn.Recover {
+			pendingRecovery[conn.Name] = true
+		}
+	}
 	if previous.Pending {
 		// An interrupted request may have loaded a different configuration before
 		// losing its final acknowledgement. Its old content hash proves nothing
@@ -114,6 +121,25 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	recoveredConnections := make(map[string]bool, len(desired))
+	for _, conn := range desired {
+		if pendingRecovery[conn.Name] {
+			recoveredConnections[conn.Name] = true
+			continue
+		}
+		if previous.Pending {
+			continue
+		}
+		for _, old := range previous.Connections {
+			if old.Name == conn.Name && old.Hash == conn.Hash && !slices.Contains(loaded, conn.Name) {
+				// A completed receipt proves that routerd owned this unchanged
+				// connection. Its absence from a fresh provider is therefore a
+				// provider-state loss, not a new configuration admission.
+				recoveredConnections[conn.Name] = true
+				break
+			}
+		}
+	}
 	pending := receipt{Version: 1, Pending: true, Connections: slices.Clone(previous.Connections), SharedKeys: slices.Clone(previous.SharedKeys)}
 	for _, conn := range desired {
 		if !ownsConnection(previous, conn.Name) && slices.Contains(loaded, conn.Name) {
@@ -121,6 +147,14 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		}
 		if !ownsConnection(pending, conn.Name) {
 			pending.Connections = append(pending.Connections, connectionReceipt{Name: conn.Name})
+		}
+		if recoveredConnections[conn.Name] {
+			for i := range pending.Connections {
+				if pending.Connections[i].Name == conn.Name {
+					pending.Connections[i].Recover = true
+					break
+				}
+			}
 		}
 		if conn.spec.PreSharedKey != "" {
 			if !slices.Contains(previous.SharedKeys, conn.Name) && slices.Contains(shared, conn.Name) {
@@ -195,6 +229,11 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		response, err := c.Session.Call(ctx, "load-conn", message)
 		if err := checkAck("load-conn", response, err); err != nil {
 			return err
+		}
+		if recoveredConnections[conn.Name] {
+			if err := initiateConnection(ctx, c.Session, conn.Name); err != nil {
+				return err
+			}
 		}
 		final.Connections = append(final.Connections, conn.connectionReceipt)
 	}
@@ -451,6 +490,22 @@ func terminateConnection(ctx context.Context, session *vici.Session, name string
 	}
 	if active {
 		return fmt.Errorf("IPsec connection %s still has active SAs after termination", name)
+	}
+	return nil
+}
+
+func initiateConnection(ctx context.Context, session *vici.Session, name string) error {
+	request, err := vici.MarshalMessage(struct {
+		IKE   string `vici:"ike"`
+		Child string `vici:"child"`
+	}{name, "net"})
+	if err != nil {
+		return err
+	}
+	for _, err := range session.CallStreaming(ctx, "initiate", "control-log", request) {
+		if err != nil {
+			return fmt.Errorf("IPsec initiate %s: %w", name, err)
+		}
 	}
 	return nil
 }
