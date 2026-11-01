@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Run the pinned anyvm source with its normal SLIRP net0 plus one disposable
-# TAP-backed net1.  net0 stays responsible for SSH/rsync; net1 is the isolated
-# IPsec underlay created by freebsd-ipsec-linux-peer.sh.
+# Run the pinned anyvm source with its normal SLIRP net0.  The peer-integration
+# path adds a disposable TAP-backed net1; focused provider tests use net0 only.
 set -euo pipefail
 
-tap=${ROUTERD_IPSEC_TAP:?ROUTERD_IPSEC_TAP is required}
-peer_addr=${ROUTERD_IPSEC_PEER_ADDR:?ROUTERD_IPSEC_PEER_ADDR is required}
-guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:?ROUTERD_IPSEC_GUEST_ADDR is required}
+provider_only=${ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY:-false}
+tap=${ROUTERD_IPSEC_TAP:-}
+peer_addr=${ROUTERD_IPSEC_PEER_ADDR:-}
+guest_addr=${ROUTERD_IPSEC_GUEST_ADDR:-}
 workspace=${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}
+if [[ "$provider_only" != true ]]; then
+  [[ -n "$tap" && -n "$peer_addr" && -n "$guest_addr" ]] || {
+    echo 'IPsec topology variables are required for the peer integration smoke' >&2
+    exit 2
+  }
+fi
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
 ipv6_candidate=${ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE:-false}
@@ -29,8 +35,10 @@ arch=${ROUTERD_ANYVM_ARCH:-x86_64}
 qemu_binary=
 tcg_args=()
 
-[[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
-[[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
+if [[ "$provider_only" != true ]]; then
+  [[ "$tap" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 2
+  [[ "$peer_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ && "$guest_addr" =~ ^198\.18\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || exit 2
+fi
 case "$arch" in
 x86_64) qemu_binary=qemu-system-x86_64 ;;
 aarch64) qemu_binary=qemu-system-aarch64 ;;
@@ -88,8 +96,8 @@ printf '%s  %s\n' \
   '0b2e5b20879d83ff7d07fc09649e9b3576825b35c8106e2354e5cf3d0d78be06' \
   "$work/anyvm.py" | sha256sum -c -
 
-# Keep the pinned net0 string untouched.  This is the smallest source patch:
-# append a net1 TAP netdev and the matching architecture virtio device.
+# Keep the pinned net0 string untouched.  The normal integration job appends a
+# private TAP net1; the focused provider job deliberately uses only net0.
 python3 - "$work/anyvm.py" "$tap" "$arch" <<'PY'
 import pathlib
 import sys
@@ -98,27 +106,28 @@ path = pathlib.Path(sys.argv[1])
 tap = sys.argv[2]
 arch = sys.argv[3]
 source = path.read_text()
-needle = '        "-netdev", netdev_args,\n    ])'
-replacement = '''        "-netdev", netdev_args,
+if tap:
+    needle = '        "-netdev", netdev_args,\n    ])'
+    replacement = '''        "-netdev", netdev_args,
     ])
     args_qemu.extend(["-netdev", "tap,id=net1,ifname={},script=no,downscript=no".format({!r})])'''.format(tap, tap)
-if source.count(needle) != 1:
-    raise SystemExit("pinned anyvm netdev anchor mismatch")
-source = source.replace(needle, replacement, 1)
-if arch == "aarch64":
-    needle = '            "-device", "qemu-xhci",\n            "-device", "{},netdev=net0".format(net_card),\n            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'
-    replacement = '''            "-device", "qemu-xhci",
+    if source.count(needle) != 1:
+        raise SystemExit("pinned anyvm netdev anchor mismatch")
+    source = source.replace(needle, replacement, 1)
+    if arch == "aarch64":
+        needle = '            "-device", "qemu-xhci",\n            "-device", "{},netdev=net0".format(net_card),\n            "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'
+        replacement = '''            "-device", "qemu-xhci",
             "-device", "{},netdev=net0".format(net_card),
             "-device", "{},netdev=net1".format(net_card),
             "-drive", "if=pflash,format=raw,readonly=on,file={}".format(efi_path),'''
-else:
-    needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
-    replacement = '''            "-device", "{},netdev=net0".format(net_card),
+    else:
+        needle = '            "-device", "{},netdev=net0".format(net_card),\n            "-device", "virtio-balloon-pci",'
+        replacement = '''            "-device", "{},netdev=net0".format(net_card),
             "-device", "{},netdev=net1".format(net_card),
             "-device", "virtio-balloon-pci",'''
-if source.count(needle) != 1:
-    raise SystemExit("pinned anyvm {} NIC anchor mismatch".format(arch))
-source = source.replace(needle, replacement, 1)
+    if source.count(needle) != 1:
+        raise SystemExit("pinned anyvm {} NIC anchor mismatch".format(arch))
+    source = source.replace(needle, replacement, 1)
 
 # Pinned anyvm logs the final SSH status but otherwise exits zero.  CI must
 # fail when the guest smoke command fails.  The optional KernelModule smoke
@@ -157,4 +166,4 @@ fi
 ROUTERD_ANYVM_EVIDENCE_DIR="$artifact_dir" ROUTERD_ANYVM_REBOOT_MARKER="$reboot_marker" python3 "$work/anyvm.py" \
   --os freebsd --release 14.3 --arch "$arch" "${tcg_args[@]}" --mem 6144 --snapshot \
   --sync rsync -v "$workspace:/home/runner/work/routerd/routerd" \
-  -- "cd /home/runner/work/routerd/routerd && pkg install -y $guest_packages && if [ '$lifecycle_runtime' = true ]; then pkg install -y kea; fi && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME=$tunnelinterface_runtime ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME=$package_lifecycle ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=$lifecycle_runtime ROUTERD_FREEBSD_PPPOE_RUNTIME=$pppoe_runtime ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME=$wireguard_vxlan_runtime ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME=$tailscale_boundary_runtime ROUTERD_FREEBSD_CARP_RUNTIME=$carp_runtime sh scripts/freebsd-native-vm-smoke.sh"
+  -- "cd /home/runner/work/routerd/routerd && pkg install -y $guest_packages && if [ '$lifecycle_runtime' = true ]; then pkg install -y kea; fi && ROUTERD_FREEBSD_EXPECTED_ARCH=$arch ROUTERD_IPSEC_TOPOLOGY=tap ROUTERD_IPSEC_UNDERLAY_IF=vtnet1 ROUTERD_IPSEC_PEER_ADDR=$peer_addr ROUTERD_IPSEC_GUEST_ADDR=$guest_addr ROUTERD_IPV6_ROUTE_TO_CONSOLE_CANDIDATE=$ipv6_candidate ROUTERD_FREEBSD_TUNNELINTERFACE_RUNTIME=$tunnelinterface_runtime ROUTERD_FREEBSD_KERNELMODULE_PERSISTENCE_RUNTIME=$kernelmodule_persistence ROUTERD_FREEBSD_CLIENTPOLICY_IDENTITY_RUNTIME=$clientpolicy_identity ROUTERD_FREEBSD_PACKAGE_LIFECYCLE_RUNTIME=$package_lifecycle ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=$lifecycle_runtime ROUTERD_FREEBSD_PPPOE_RUNTIME=$pppoe_runtime ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME=$wireguard_vxlan_runtime ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME=$tailscale_boundary_runtime ROUTERD_FREEBSD_CARP_RUNTIME=$carp_runtime ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY=$provider_only sh scripts/freebsd-native-vm-smoke.sh"

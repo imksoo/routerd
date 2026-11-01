@@ -197,6 +197,18 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 prepare_native_descriptors
+if [ "${ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY:-false}" = true ]; then
+  # This focused acceptance path establishes whether routerd itself can keep a
+  # FreeBSD provider alive and reconcile its definition. Peer topology, traffic,
+  # and rekey are separate integration checks and must not mask this result.
+  go test ./cmd/routerd -run '^(TestDetachedIPsecProviderStartDoesNotKillDaemonChild|TestFreeBSDUnknownStrongSwanStatusPreservesExistingOwnerEndpoints|TestFreeBSDStrongSwanStatusTimeoutCannotStartProvider)$' -count=1
+  go build -o "$routerd" ./cmd/routerd
+  ipsec_provider_evidence="$work/ipsec-provider-lifecycle"
+  sh scripts/freebsd-ipsec-provider-smoke.sh --routerd "$routerd" --evidence-dir "$ipsec_provider_evidence"
+  cat "$ipsec_provider_evidence/summary.log"
+  cat "$ipsec_provider_evidence/result"
+  exit 0
+fi
 # This is the native package gate. Do not narrow it to selected packages: a
 # FreeBSD-only build or runtime dependency failure must be visible in CI.
 go test ./...

@@ -69,6 +69,11 @@ on:
         required: false
         default: false
         type: boolean
+      ipsec_provider_runtime:
+        description: Run only the FreeBSD IPsec provider lifecycle acceptance
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -101,6 +106,7 @@ jobs:
       ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME: ${{ inputs.wireguard_vxlan_runtime || 'false' }}
       ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME: ${{ inputs.tailscale_boundary_runtime || 'false' }}
       ROUTERD_FREEBSD_CARP_RUNTIME: ${{ inputs.carp_runtime || 'false' }}
+      ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY: ${{ inputs.ipsec_provider_runtime || 'false' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -108,13 +114,14 @@ jobs:
           fetch-depth: 0
 
       - name: Start Linux strongSwan peer
+        if: ${{ inputs.ipsec_provider_runtime != true }}
         run: scripts/ci/freebsd-ipsec-linux-peer.sh start
 
-      - name: Run native smoke with TAP IPsec underlay
+      - name: Run native smoke
         run: scripts/ci/freebsd-anyvm-tap.sh
 
       - name: Stop Linux strongSwan peer
-        if: always()
+        if: ${{ always() && inputs.ipsec_provider_runtime != true }}
         run: scripts/ci/freebsd-ipsec-linux-peer.sh stop
 
       - name: Upload native console evidence
