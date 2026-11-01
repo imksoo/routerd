@@ -46,6 +46,10 @@ test "$(systemctl show -p LoadState --value routerd.service)" = not-found
 package_version=$("$package_root/bin/routerd" --version)
 work=$(mktemp -d /var/tmp/routerd15-home.XXXXXX)
 active_prefix=2001:db8:1500
+# Keep the independent Kea peer's PID and logging lock files inside this
+# fixture; the extracted package has no host-wide /run/kea service directory.
+export KEA_PIDFILE_DIR="$work"
+export KEA_LOCKFILE_DIR="$work"
 printf '%s\n' "$work"
 printf '%s\n' "$package_version" > "$work/package-version.txt"
 sysctl -n net.ipv4.ip_forward > "$work/forward4.before"
