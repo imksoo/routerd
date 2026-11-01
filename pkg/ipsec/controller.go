@@ -37,10 +37,11 @@ type connectionReceipt struct {
 // A pending receipt is written before sending any mutation. It retains every
 // possibly loaded name until a successful native withdrawal or replacement.
 type receipt struct {
-	Version     int                 `json:"version"`
-	Pending     bool                `json:"pending"`
-	Connections []connectionReceipt `json:"connections"`
-	SharedKeys  []string            `json:"sharedKeys"`
+	Version            int                 `json:"version"`
+	Pending            bool                `json:"pending"`
+	ProviderGeneration string              `json:"providerGeneration,omitempty"`
+	Connections        []connectionReceipt `json:"connections"`
+	SharedKeys         []string            `json:"sharedKeys"`
 }
 
 type nativeCredential struct {
@@ -60,9 +61,10 @@ type desiredConnection struct {
 // shared-key IDs. Public certificates and content-addressed private keys may be
 // shared by other users of charon, so they are never globally cleared/unloaded.
 type Controller struct {
-	Session   *vici.Session
-	Directory string
-	nativeSAs nativeSAStore
+	Session        *vici.Session
+	Directory      string
+	ProviderSocket string
+	nativeSAs      nativeSAStore
 }
 
 // Needed avoids requiring charon on routers which have never owned IPsec.
@@ -101,6 +103,11 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err != nil {
 		return err
 	}
+	providerInstance, err := providerGeneration(c.ProviderSocket)
+	if err != nil {
+		return fmt.Errorf("observe IPsec provider generation: %w", err)
+	}
+	providerChanged := previous.ProviderGeneration != "" && previous.ProviderGeneration != providerInstance
 	native := c.kernelSAs()
 	operationScope := ""
 	if native != nil {
@@ -122,6 +129,16 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		}
 		if current != operationScope {
 			return errors.New("IPsec kernel scope changed during reconciliation")
+		}
+		return nil
+	}
+	checkProviderGeneration := func() error {
+		current, err := providerGeneration(c.ProviderSocket)
+		if err != nil {
+			return fmt.Errorf("observe IPsec provider generation: %w", err)
+		}
+		if current != providerInstance {
+			return errors.New("IPsec provider generation changed during reconciliation")
 		}
 		return nil
 	}
@@ -152,7 +169,7 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	for i := range desired {
 		desired[i].Scope = operationScope
 	}
-	pending := receipt{Version: 1, Pending: true, Connections: slices.Clone(previous.Connections), SharedKeys: slices.Clone(previous.SharedKeys)}
+	pending := receipt{Version: 1, Pending: true, ProviderGeneration: providerInstance, Connections: slices.Clone(previous.Connections), SharedKeys: slices.Clone(previous.SharedKeys)}
 	for _, conn := range desired {
 		if !ownsAcknowledgedConnection(previous, conn.Name) && slices.Contains(loaded, conn.Name) {
 			return fmt.Errorf("refuse to replace unowned IPsec connection %s", conn.Name)
@@ -172,6 +189,9 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 	if err := checkScope(); err != nil {
 		return err
 	}
+	if err := checkProviderGeneration(); err != nil {
+		return err
+	}
 	if err := writeReceipt(c.Directory, pending); err != nil {
 		return err
 	}
@@ -188,7 +208,7 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 			}
 			continue // An unacknowledged intent grants no VICI/kernel mutation authority.
 		}
-		if current != nil && old.Hash == current.Hash {
+		if current != nil && old.Hash == current.Hash && !providerChanged {
 			continue
 		}
 		// Stop admission under the old configuration before terminating its SAs.
@@ -223,7 +243,7 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 			return err
 		}
 	}
-	final := receipt{Version: 1, Connections: []connectionReceipt{}, SharedKeys: []string{}}
+	final := receipt{Version: 1, ProviderGeneration: providerInstance, Connections: []connectionReceipt{}, SharedKeys: []string{}}
 	for _, conn := range desired {
 		if conn.spec.PreSharedKey != "" {
 			request, err := vici.MarshalMessage(struct {
@@ -306,6 +326,9 @@ func (c Controller) Reconcile(ctx context.Context, router *api.Router) error {
 		return err
 	}
 	if err := checkScope(); err != nil {
+		return err
+	}
+	if err := checkProviderGeneration(); err != nil {
 		return err
 	}
 	return writeReceipt(c.Directory, final)

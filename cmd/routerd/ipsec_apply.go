@@ -38,7 +38,7 @@ func applyIPsecConnections(ctx context.Context, router *api.Router) error {
 		return fmt.Errorf("connect to IPsec daemon: %w", err)
 	}
 	defer session.Close()
-	return (ipsec.Controller{Session: session, Directory: directory}).Reconcile(operation, router)
+	return (ipsec.Controller{Session: session, Directory: directory, ProviderSocket: ipsecVICISocketPath()}).Reconcile(operation, router)
 }
 
 func ensureFreeBSDStrongSwan(ctx context.Context) error {

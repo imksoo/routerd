@@ -5,6 +5,8 @@ package ipsec
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -96,10 +98,14 @@ func viciSAEvent(local, remote string, in, out uint32) []byte {
 
 func TestScopedVICIRecordsObservedSAsAcrossReopenAndProviderGeneration(t *testing.T) {
 	directory := t.TempDir()
+	providerSocket := filepath.Join(directory, "charon.vici")
+	if err := os.WriteFile(providerSocket, []byte("first-provider"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	endpoint, session := newVICIEndpoint(t, directory)
 	native := &recordedNativeSAs{}
 	router := ipsecTestRouter("203.0.113.1", "first-secret")
-	controller := Controller{Session: session, Directory: directory, nativeSAs: native}
+	controller := Controller{Session: session, Directory: directory, ProviderSocket: providerSocket, nativeSAs: native}
 	if err := controller.Reconcile(t.Context(), router); err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +130,23 @@ func TestScopedVICIRecordsObservedSAsAcrossReopenAndProviderGeneration(t *testin
 	delete(endpoint.keys, "routerd-site")
 	delete(endpoint.saEvents, "routerd-site")
 	endpoint.mu.Unlock()
-	reopened := Controller{Session: session, Directory: directory, nativeSAs: native}
+	replacement := filepath.Join(directory, "charon.vici.replacement")
+	if err := os.WriteFile(replacement, []byte("replacement-provider"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, providerSocket); err != nil {
+		t.Fatal(err)
+	}
+	reopened := Controller{Session: session, Directory: directory, ProviderSocket: providerSocket, nativeSAs: native}
 	if err := reopened.Reconcile(t.Context(), router); err != nil {
 		t.Fatal(err)
 	}
 	state, err = readReceipt(directory)
-	if err != nil || len(state.Connections[0].SAs) != 2 {
-		t.Fatalf("provider restart forgot old kernel SAs: %+v %v", state, err)
+	if err != nil || len(state.Connections[0].SAs) != 0 {
+		t.Fatalf("provider restart retained old kernel SAs: %+v %v", state, err)
+	}
+	if len(native.deleted) != 2 || len(native.states) != 0 {
+		t.Fatalf("provider restart did not withdraw old kernel SAs: deleted=%+v states=%+v", native.deleted, native.states)
 	}
 	nextIn, nextOut := oldIn, oldOut
 	nextIn.ID.SPI, nextOut.ID.SPI = 0xc2e2705c, 0xcf14a1ba
@@ -144,8 +160,8 @@ func TestScopedVICIRecordsObservedSAsAcrossReopenAndProviderGeneration(t *testin
 		t.Fatal(err)
 	}
 	state, err = readReceipt(directory)
-	if err != nil || len(state.Connections[0].SAs) != 4 {
-		t.Fatalf("new provider replaced old native authority: %+v %v", state, err)
+	if err != nil || len(state.Connections[0].SAs) != 2 {
+		t.Fatalf("new provider native receipt=%+v %v", state, err)
 	}
 	if err := reopened.Reconcile(t.Context(), &api.Router{}); err != nil {
 		t.Fatal(err)
