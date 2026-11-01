@@ -110,6 +110,26 @@ func MigrateLegacyYAML(data []byte, source string) ([]byte, []Migration, error) 
 		yamlRenameMappingKey(spec, "sourceCIDRs", "srcCIDRs")
 		changes = append(changes, Migration{Resource: "FirewallRule/" + name, Field: "spec.sourceCIDRs", Reason: "srcCIDRs preserves every source CIDR"})
 	}
+	telemetryLogs := yamlTelemetryLogExports(resources)
+	for index := 0; index < len(resources.Content); {
+		resource := resources.Content[index]
+		if yamlMappingScalar(resource, "kind") != "LogSink" || yamlMappingScalar(yamlMappingValue(resource, "spec"), "type") != "otlp" {
+			index++
+			continue
+		}
+		name := yamlMappingScalar(yamlMappingValue(resource, "metadata"), "name")
+		telemetryRef := yamlMappingScalar(yamlMappingValue(yamlMappingValue(resource, "spec"), "otlp"), "telemetryRef")
+		if !telemetryLogs[telemetryRef] {
+			return nil, nil, fmt.Errorf("legacy config %s: LogSink/%s must reference a Telemetry resource that exports logs", source, name)
+		}
+		reference := "LogSink/" + name
+		migratedLogs := yamlRemoveFirewallLogSinkReferences(resources, reference)
+		if yamlCountScalar(document.Content[0], reference) != 0 {
+			return nil, nil, fmt.Errorf("legacy config %s: LogSink/%s is referenced outside FirewallEventLog.sinks and cannot be migrated safely", source, name)
+		}
+		resources.Content = append(resources.Content[:index], resources.Content[index+1:]...)
+		changes = append(changes, Migration{Resource: "LogSink/" + name, Field: "spec.type", Reason: telemetryRef + " exports logs for " + strings.Join(migratedLogs, ", ")})
+	}
 
 	output, err := yaml.Marshal(&document)
 	if err != nil {
@@ -160,4 +180,66 @@ func yamlRenameMappingKey(node *yaml.Node, oldKey, newKey string) {
 			return
 		}
 	}
+}
+
+func yamlTelemetryLogExports(resources *yaml.Node) map[string]bool {
+	exports := map[string]bool{}
+	for _, resource := range resources.Content {
+		if yamlMappingScalar(resource, "kind") != "Telemetry" {
+			continue
+		}
+		name := yamlMappingScalar(yamlMappingValue(resource, "metadata"), "name")
+		signals := yamlMappingValue(yamlMappingValue(resource, "spec"), "signals")
+		if signals == nil {
+			exports["Telemetry/"+name] = true
+			continue
+		}
+		for _, signal := range signals.Content {
+			if signal.Kind == yaml.ScalarNode && signal.Value == "logs" {
+				exports["Telemetry/"+name] = true
+			}
+		}
+	}
+	return exports
+}
+
+func yamlRemoveFirewallLogSinkReferences(resources *yaml.Node, reference string) []string {
+	var names []string
+	for _, resource := range resources.Content {
+		if yamlMappingScalar(resource, "kind") != "FirewallEventLog" {
+			continue
+		}
+		sinks := yamlMappingValue(yamlMappingValue(resource, "spec"), "sinks")
+		if sinks == nil || sinks.Kind != yaml.SequenceNode {
+			continue
+		}
+		out := sinks.Content[:0]
+		removed := false
+		for _, sink := range sinks.Content {
+			if sink.Kind == yaml.ScalarNode && sink.Value == reference {
+				removed = true
+				continue
+			}
+			out = append(out, sink)
+		}
+		sinks.Content = out
+		if removed {
+			names = append(names, "FirewallEventLog/"+yamlMappingScalar(yamlMappingValue(resource, "metadata"), "name"))
+		}
+	}
+	return names
+}
+
+func yamlCountScalar(node *yaml.Node, value string) int {
+	if node == nil {
+		return 0
+	}
+	count := 0
+	if node.Kind == yaml.ScalarNode && node.Value == value {
+		count++
+	}
+	for _, child := range node.Content {
+		count += yamlCountScalar(child, value)
+	}
+	return count
 }
