@@ -670,6 +670,14 @@ extracting them on the router. Keep the peer VM and its DHCP process running.
 This is a planned outage with lease reacquisition, not a hitless upgrade. Do not
 reuse a 1.0 state database in 1.5 or assume a binary-only downgrade is sufficient.
 
+The fixture configuration must be an explicit per-version transformation for the
+isolated interfaces and management network. Do not restore a source host's raw
+configuration when its interface names, management bind address, or source-CIDR
+policy do not exist on the fixture. Preserve the intended management access
+restriction and service exposure in the transformed configuration; adding the
+source host's address to the fixture only to make a listener bind is not a valid
+qualification.
+
 1. On 1.0, validate the fixture configuration, require Healthy status without
    controller errors, and run the peer's `probe` and `isolation` roles. Record the
    version, boot ID, peer DHCP PID, address and a timer renewal.
@@ -694,8 +702,13 @@ reuse a 1.0 state database in 1.5 or assume a binary-only downgrade is sufficien
    permission errors. A responsive data path alone does not pass this gate.
 5. For cutback, stop the same services and save the stopped 1.5 recovery set.
    Start that same candidate only long enough to apply the empty configuration
-   and require its owned firewall table to withdraw, then stop it again. Restore
-   the saved 1.0 configuration and state directories. Install the exact baseline
+   and require its owned firewall table to withdraw, then stop it again. Before
+   extracting either recovery set, stop and reset the service, apply a runtime
+   systemd mask, and verify it is inactive. This prevents the service's restart
+   policy from opening or writing the state database while files are restored.
+   Preserve the replaced state directory until the restored archive passes an
+   independent SQLite integrity check. Restore the saved 1.0 configuration and
+   state directories. Install the exact baseline
    archive with the same no-restart options. Restore its saved unit and activation
    receipt, run `sudo systemctl daemon-reload`, then reboot. Repeat all step 4
    checks against the 1.0 version and verify the restored canonical configuration
