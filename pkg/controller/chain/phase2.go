@@ -893,7 +893,11 @@ func (c DHCPv6ServerController) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !routerNeedsDnsmasq(c.Router) && !routerNeedsDnsmasq(effectiveRouter) {
+	// The declared router is retained above so a false condition can withdraw an
+	// already configured service.  The daemon itself must follow the effective
+	// router: keeping an empty dnsmasq process running on a VRRP backup makes
+	// service ownership ambiguous during a handoff.
+	if !routerNeedsDnsmasq(effectiveRouter) {
 		if !c.DryRun {
 			if err := stopOwnedDnsmasq(ctx, c.Command, firstNonEmpty(c.ConfigPath, "/run/routerd/dnsmasq-phase1.conf"), firstNonEmpty(c.PIDFile, "/run/routerd/dnsmasq-phase1.pid")); err != nil {
 				return err

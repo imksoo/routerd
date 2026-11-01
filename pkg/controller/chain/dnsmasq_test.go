@@ -788,9 +788,15 @@ func TestDHCPv4ServerWhenFalseRemovesDnsmasqScope(t *testing.T) {
 	store := statefulDHCPMapStore{mapStore: mapStore{
 		api.NetAPIVersion + "/VirtualAddress/lan-vip": {"role": "backup"},
 	}}
-	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true}
+	controller := DHCPv6ServerController{Router: router, Store: store, DryRun: true, ConfigPath: configPath, PIDFile: pidFile}
 
 	effective := mustDHCPWhenRouter(t, controller)
+	if err := controller.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile backup DHCP service: %v", err)
+	}
+	if _, err := os.Stat(configPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup reconcile created dnsmasq configuration, stat err=%v", err)
+	}
 	if changed, _, err := writeDnsmasqConfig(effective, store, configPath, pidFile, 53, nil); err != nil || !changed {
 		t.Fatalf("write backup config changed=%t err=%v", changed, err)
 	}
