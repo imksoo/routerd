@@ -578,7 +578,7 @@ func retainedFirewallInterfaceAliasNames(retained map[string]map[string]bool) ma
 
 func firewallInterfaceAliasKind(kind string) bool {
 	switch kind {
-	case "Interface", "PPPoESession", "DSLiteTunnel", "Bridge", "VXLANSegment", "WireGuardInterface":
+	case "Interface", "PPPoESession", "DSLiteTunnel", "Bridge", "VRF", "VXLANSegment", "WireGuardInterface":
 		return true
 	default:
 		return false
