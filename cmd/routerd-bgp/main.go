@@ -124,7 +124,7 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 	}()
 	var control *http.Server
 	defer func() {
-		acknowledged := stopBGPDaemon(control, func() {
+		acknowledged := stopBGPDaemon(optionalBGPControl(control), func() {
 			// The management round trip also handles cancellation before Serve
 			// was scheduled: Stop alone would return "not running" too early.
 			_, _ = server.GetBgp(context.Background(), &gobgpapi.GetBgpRequest{})
@@ -153,6 +153,16 @@ func runBGPDaemon(ctx context.Context, runtimeDir, socketPath, controlSocketPath
 type bgpControlShutdowner interface {
 	Shutdown(context.Context) error
 	Close() error
+}
+
+// optionalBGPControl preserves a nil HTTP server as a nil interface.  A direct
+// conversion of a nil *http.Server to bgpControlShutdowner creates a non-nil
+// interface and would panic when the deferred shutdown calls Shutdown.
+func optionalBGPControl(server *http.Server) bgpControlShutdowner {
+	if server == nil {
+		return nil
+	}
+	return server
 }
 
 // stopBGPDaemon gives the control HTTP server a brief graceful drain, then

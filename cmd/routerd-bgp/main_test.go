@@ -139,6 +139,14 @@ func TestStopBGPDaemonAcknowledgesCompletedStop(t *testing.T) {
 	}
 }
 
+func TestOptionalBGPControlKeepsNilHTTPServerNil(t *testing.T) {
+	var server *http.Server
+	stopped := false
+	if !stopBGPDaemon(optionalBGPControl(server), func() { stopped = true }, nil, time.Second, time.Second) || !stopped {
+		t.Fatal("nil HTTP server did not permit the native shutdown to complete")
+	}
+}
+
 func (s *fakePathServer) AddPath(_ context.Context, req *gobgpapi.AddPathRequest) (*gobgpapi.AddPathResponse, error) {
 	if s.addStarted != nil {
 		select {
