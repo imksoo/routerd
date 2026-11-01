@@ -1148,6 +1148,7 @@ func TestValidatePhase15LANServiceKinds(t *testing.T) {
 				DomainFrom:  api.StatusValueSourceSpec{Resource: "DNSZone/local", Field: "zone"},
 				Options:     []api.DHCPv4OptionSpec{{Name: "domain-search", Value: "lan"}},
 			}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Reservation"}, Metadata: api.ObjectMeta{Name: "printer"}, Spec: api.DHCPv4ReservationSpec{Server: "lan-v4", MACAddress: "02:00:00:00:01:50", Hostname: "printer", IPAddress: "192.168.10.150"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Server"}, Metadata: api.ObjectMeta{Name: "lan-v6"}, Spec: api.DHCPv6ServerSpec{
 				Interface:   "lan",
@@ -1581,6 +1582,32 @@ func TestValidateDHCPv4ServerPoolRange(t *testing.T) {
 
 	if err := Validate(router); err == nil {
 		t.Fatal("expected reversed DHCP range to be rejected")
+	}
+}
+
+func TestValidateDHCPv4RelayRequiresUniqueStaticIPv4Address(t *testing.T) {
+	base := []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		addresses []api.Resource
+		want      string
+	}{
+		{name: "missing address", want: "requires exactly one IPv4StaticAddress on \"lan\", found 0"},
+		{name: "multiple addresses", addresses: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-a"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-b"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.11.1/24"}},
+		}, want: "requires exactly one IPv4StaticAddress on \"lan\", found 2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: append(append([]api.Resource{}, base...), tc.addresses...)}}
+			err := Validate(router)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

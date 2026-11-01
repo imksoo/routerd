@@ -6649,22 +6649,11 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 			lines = append(lines, "dhcp-option=option6:domain-search,"+strings.Join(dnssl, ","))
 		}
 	}
-	for _, resource := range router.Spec.Resources {
-		if resource.Kind != "DHCPv4Relay" {
-			continue
-		}
-		spec, err := resource.DHCPv4RelaySpec()
-		if err != nil {
-			continue
-		}
-		for _, iface := range spec.Interfaces {
-			ifname := aliases[iface]
-			if ifname == "" {
-				continue
-			}
-			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
-		}
+	relayLines, err := render.DnsmasqDHCPv4RelayLines(router)
+	if err != nil {
+		return nil, err
 	}
+	lines = append(lines, relayLines...)
 	return lines, nil
 }
 func chainInterfaceAliases(router *api.Router) map[string]string {
