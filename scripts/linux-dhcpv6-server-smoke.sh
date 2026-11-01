@@ -39,8 +39,13 @@ finish() {
   # dhcpcd -1 may already have exited after delivering the lease; removing the
   # namespace below is the authoritative cleanup in either case.
   ip netns exec "$client_ns" dhcpcd -x "$client_if" >/dev/null 2>&1 || true
-  ip netns del "$client_ns" >/dev/null 2>&1 || cleanup_rc=1
-  ip link del "$router_if" >/dev/null 2>&1 || cleanup_rc=1
+  # Deleting a namespace can already remove its veth peer. The desired cleanup
+  # condition is absence after both idempotent attempts, not a particular
+  # intermediate deletion exit status.
+  ip netns del "$client_ns" >/dev/null 2>&1 || true
+  ip link del "$router_if" >/dev/null 2>&1 || true
+  if ip netns list | awk '{print $1}' | grep -Fxq "$client_ns"; then cleanup_rc=1; fi
+  if ip link show "$router_if" >/dev/null 2>&1; then cleanup_rc=1; fi
   rm -f -- "$dhcpcd_lease" || cleanup_rc=1
   if [ "$rc" -ne 0 ]; then
     printf 'FAIL: fixture diagnostics follow; removing temporary output.\n' >&2

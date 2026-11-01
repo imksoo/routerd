@@ -61,8 +61,13 @@ finish() {
   fi
   # RA final withdrawal owns the live interface; stop it before removing the veth.
   systemctl stop routerd.service >/dev/null 2>&1 || cleanup_rc=1
-  ip netns del "$client_ns" >/dev/null 2>&1 || cleanup_rc=1
-  ip link del "$router_if" >/dev/null 2>&1 || cleanup_rc=1
+  # Deleting a namespace can already remove its veth peer. The desired cleanup
+  # condition is absence after both idempotent attempts, not a particular
+  # intermediate deletion exit status.
+  ip netns del "$client_ns" >/dev/null 2>&1 || true
+  ip link del "$router_if" >/dev/null 2>&1 || true
+  if ip netns list | awk '{print $1}' | grep -Fxq "$client_ns"; then cleanup_rc=1; fi
+  if ip link show "$router_if" >/dev/null 2>&1; then cleanup_rc=1; fi
   if [ "$rc" -ne 0 ]; then
     printf 'FAIL: fixture diagnostics follow; removing temporary output.\n' >&2
     for diagnostic in "$work"/failure-*; do
