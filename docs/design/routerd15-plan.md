@@ -74,9 +74,19 @@ revision.
 The current PVE BGP result is recorded at `570606b7`. VM219 and VM220 formed
 an eBGP session on VLAN 3132. A peer-advertised prefix entered the VM219 kernel
 FIB as `proto bgp`, was withdrawn while the TCP session remained established,
-and returned when the peer resumed advertisement. This does not qualify BFD,
+and returned when the peer resumed advertisement. This does not qualify
 IPv6 BGP, ECMP, a peer implementation other than routerd, or a downstream
 endpoint behind the peer.
+
+The BFD result is recorded at `79e947b5`. The Linux systemd unit now grants the
+running routerd process `CAP_DAC_OVERRIDE`, allowing its BFD controller to read
+FRR's protected `vtysh.conf` and access the `frrvty` control socket. In the same
+PVE VLAN 3132 pair, both FRR BFD peers reached `Up`; stopping the independent
+VM220 FRR service produced VM219 BFD `Down` and BGP `Reconverging`; restarting
+that service restored BFD `Up` and BGP `Established`. The VM219 untrusted-zone
+configuration explicitly permits the required inbound UDP/3784 control packets.
+This does not qualify a non-routerd BFD peer, IPv6 BGP, ECMP, or physical-network
+behavior.
 
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet

@@ -63,9 +63,12 @@ At `570606b7`, an isolated PVE eBGP pair also established over VLAN 3132. The
 VM219 kernel received `198.18.50.0/24` as `proto bgp`; disabling the peer's
 advertisement removed the exact kernel route while the BGP session remained
 established, and restoring the advertisement reinstalled it. This is a separate
-VM and process, but both endpoints use routerd. Cross-vendor interoperability,
-an endpoint behind the peer, BFD, IPv6 BGP, ECMP and physical-network behavior
-remain unqualified.
+VM and process, but both endpoints use routerd. At `79e947b5`, the same PVE
+pair established BFD over VLAN 3132 after the VM219 untrusted-zone policy
+explicitly admitted UDP/3784. Stopping the VM220 FRR service produced VM219 BFD
+`Down` and BGP `Reconverging`; restarting it restored BFD `Up` and BGP
+`Established`. Cross-vendor interoperability, an endpoint behind the peer,
+IPv6 BGP, ECMP and physical-network behavior remain unqualified.
 
 Native kernel FIB ownership now uses one typed SQL receipt owner, exclusive
 add/exact withdrawal, current RIB/Mobility/native rechecks after persistence and
