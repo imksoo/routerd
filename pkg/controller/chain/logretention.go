@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
@@ -117,7 +118,7 @@ func (c LogRetentionController) Reconcile(ctx context.Context) error {
 					return archive.EmitRecord(record.Signal, record.Values)
 				}
 			}
-			result, err := logstore.ApplyRetention(ctx, retentionTarget, spec.Vacuum)
+			result, err := applyRetentionWithRetry(ctx, retentionTarget, spec.Vacuum)
 			if err != nil {
 				return err
 			}
@@ -239,6 +240,38 @@ func logRetentionSignalFiles(router *api.Router, signal, stateFile string) []str
 	default:
 		return nil
 	}
+}
+
+const retentionBusyRetryCount = 3
+
+func applyRetentionWithRetry(ctx context.Context, target logstore.RetentionTarget, vacuum bool) (logstore.RetentionResult, error) {
+	var result logstore.RetentionResult
+	var err error
+	for attempt := 0; attempt < retentionBusyRetryCount; attempt++ {
+		result, err = logstore.ApplyRetention(ctx, target, vacuum)
+		if err == nil || !isSQLiteBusy(err) || attempt == retentionBusyRetryCount-1 {
+			return result, err
+		}
+		wait := time.Duration(attempt+1) * 100 * time.Millisecond
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return result, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return result, err
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database is busy")
 }
 
 func retentionDue(status map[string]any, schedule string) bool {
