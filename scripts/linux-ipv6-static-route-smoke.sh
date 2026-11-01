@@ -47,10 +47,10 @@ ip netns add rd15-v6r-peer
 ip -n rd15-v6r-peer link set lo up
 ip link add rd15-v6r-host type veth peer name peer0 netns rd15-v6r-peer
 ip link set rd15-v6r-host up
-ip -6 addr add fd42:149::1/64 dev rd15-v6r-host
+ip -6 addr add fd42:149::1/64 nodad dev rd15-v6r-host
 ip -n rd15-v6r-peer link set peer0 up
-ip -n rd15-v6r-peer addr add fd42:149::2/64 dev peer0
-ip -n rd15-v6r-peer addr add fd42:150::99/128 dev lo
+ip -n rd15-v6r-peer addr add fd42:149::2/64 nodad dev peer0
+ip -n rd15-v6r-peer addr add fd42:150::99/128 nodad dev lo
 
 cat > "$work/route.json" <<'JSON'
 {
@@ -67,11 +67,11 @@ systemctl restart routerd
 stage=initial-apply
 for _ in {1..30}; do
  if ip -j -d -6 route show fd42:150::99/128 | jq -e '
-   .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
+   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null; then break; fi
  sleep 1
 done
 ip -j -d -6 route show fd42:150::99/128 | jq -e '
- .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
+ .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77 and (.protocol == "boot" or .protocol == "3"))' >/dev/null
 stage=forwarding
 ping -6 -c 1 -W 2 fd42:150::99 >/dev/null
 stage=restart-reconcile
@@ -83,11 +83,11 @@ install -m 0600 "$empty" /usr/local/etc/routerd/router.yaml
 systemctl restart routerd
 for _ in {1..30}; do
  if ! ip -j -d -6 route show fd42:150::99/128 | jq -e '
-   .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then break; fi
+   .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then break; fi
  sleep 1
 done
 if ip -j -d -6 route show fd42:150::99/128 | jq -e '
- .[] | select(.dst == "fd42:150::99/128" and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then
+ .[] | select((.dst == "fd42:150::99" or .dst == "fd42:150::99/128") and .gateway == "fd42:149::2" and .dev == "rd15-v6r-host" and .metric == 77)' >/dev/null; then
  echo 'empty apply retained the IPv6StaticRoute' >&2
  exit 1
 fi
