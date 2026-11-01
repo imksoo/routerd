@@ -333,6 +333,82 @@ echo inventory-plugin
 	}
 }
 
+func TestInstallCreatesDHCPEventRelayHookAndUninstallRemovesIt(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd-dhcp-event-relay"), `#!/bin/sh
+printf '%s\n' "$*"
+`)
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err != nil {
+		t.Fatalf("install failed: %v\n%s", err, out)
+	}
+	relay := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	info, err := os.Lstat(hook)
+	if err != nil {
+		t.Fatalf("DHCP event hook missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("DHCP event hook mode = %v, want symlink", info.Mode())
+	}
+	target, err := os.Readlink(hook)
+	if err != nil || target != relay {
+		t.Fatalf("DHCP event hook target = %q, err=%v; want %q", target, err, relay)
+	}
+	callback := exec.Command(hook, "add", "02:00:00:00:00:42", "192.0.2.42", "fixture")
+	if got, err := callback.CombinedOutput(); err != nil || strings.TrimSpace(string(got)) != "add 02:00:00:00:00:42 192.0.2.42 fixture" {
+		t.Fatalf("DHCP event hook invocation = %q, err=%v", got, err)
+	}
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
+	if got, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("uninstall failed: %v\n%s", err, got)
+	}
+	for _, path := range []string{hook, relay} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("managed DHCP event artifact remains: %s (err=%v)", path, err)
+		}
+	}
+}
+
+func TestInstallRefusesToReplaceForeignDHCPEventHook(t *testing.T) {
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "package")
+	prefix := filepath.Join(dir, "prefix")
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), `#!/bin/sh
+if [ "$1" = "--version" ]; then echo routerd-test; exit 0; fi
+exit 0
+`)
+	writeExecutable(t, filepath.Join(pkg, "bin", "routerd-dhcp-event-relay"), "#!/bin/sh\nexit 0\n")
+	hook := filepath.Join(prefix, "libexec", "routerd", "dhcp-event-relay")
+	foreign := "operator-owned hook\n"
+	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hook, []byte(foreign), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runInstall(t, pkg, prefix, "--no-install-deps", "--no-config-update", "--no-restart")
+	if err == nil {
+		t.Fatalf("install succeeded over a foreign DHCP hook:\n%s", out)
+	}
+	got, readErr := os.ReadFile(hook)
+	if readErr != nil || string(got) != foreign {
+		t.Fatalf("foreign DHCP hook changed: %q, err=%v", got, readErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed install left relay binary installed (err=%v)", statErr)
+	}
+}
+
 func TestInstallWithNDPIArchiveRejectsStaticArchive(t *testing.T) {
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "package")
@@ -730,6 +806,8 @@ func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
 			}
 			userPlugin := filepath.Join(prefix, "libexec/routerd/plugins/user-plugin/plugin.yaml")
 			writeExecutable(t, userPlugin, "operator-owned\n")
+			foreignHook := filepath.Join(prefix, "libexec/routerd/dhcp-event-relay")
+			writeExecutable(t, foreignHook, "operator-owned hook\n")
 
 			cmd := exec.Command(filepath.Join(repoRoot(t), "packaging", "uninstall.sh"), "--prefix", prefix, "--yes")
 			cmd.Env = append(os.Environ(), "PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -743,6 +821,9 @@ func TestUninstallRemovesShippedPayloadAndPreservesUserPlugin(t *testing.T) {
 			}
 			if got, err := os.ReadFile(userPlugin); err != nil || string(got) != "operator-owned\n" {
 				t.Errorf("user plugin was not preserved: content=%q err=%v", got, err)
+			}
+			if got, err := os.ReadFile(foreignHook); err != nil || string(got) != "operator-owned hook\n" {
+				t.Errorf("foreign DHCP event hook was not preserved: content=%q err=%v", got, err)
 			}
 		})
 	}

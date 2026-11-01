@@ -494,6 +494,36 @@ install_libexec_payload()
 	done
 }
 
+install_dhcp_event_relay_hook()
+{
+    [ -f bin/routerd-dhcp-event-relay ] || return 0
+    hook="${prefix}/libexec/routerd/dhcp-event-relay"
+    target="${bindir}/routerd-dhcp-event-relay"
+
+    if [ -L "${hook}" ] && [ "$(readlink "${hook}")" = "${target}" ]; then
+        return 0
+    fi
+    if [ -e "${hook}" ] || [ -L "${hook}" ]; then
+        echo "refusing to replace foreign DHCP event hook: ${hook}" >&2
+        return 1
+    fi
+    if [ "${dry_run}" -eq 1 ]; then
+        echo "dry-run: ln -s ${target} ${hook}"
+        return 0
+    fi
+
+    install -d -m 0755 "$(dirname "${hook}")"
+    if ! ln -s "${target}" "${hook}"; then
+        echo "failed to install DHCP event hook: ${hook}" >&2
+        return 1
+    fi
+    if ! printf '%s\n' "${hook}" >> "${backup_dir}/remove.list"; then
+        rm -f "${hook}"
+        echo "failed to register DHCP event hook for rollback: ${hook}" >&2
+        return 1
+    fi
+}
+
 verify_ndpi_agent_install()
 {
     [ "${with_ndpi}" -eq 1 ] || return 0
@@ -2041,6 +2071,7 @@ for binary in bin/*; do
     install_binary "${binary}"
 done
 install_libexec_payload
+install_dhcp_event_relay_hook
 install_ndpi_agent_archive
 verify_ndpi_agent_install
 

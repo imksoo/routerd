@@ -210,6 +210,16 @@ do
     rm_path "${prefix}/sbin/${binary}"
 done
 
+# dnsmasq invokes this managed hook path; remove only the symlink installed by
+# routerd and preserve an operator-owned file or a link to another target.
+dhcp_event_hook="${prefix}/libexec/routerd/dhcp-event-relay"
+dhcp_event_relay="${prefix}/sbin/routerd-dhcp-event-relay"
+if [ -L "${dhcp_event_hook}" ] && [ "$(readlink "${dhcp_event_hook}")" = "${dhcp_event_relay}" ]; then
+    rm_path "${dhcp_event_hook}"
+elif [ -e "${dhcp_event_hook}" ] || [ -L "${dhcp_event_hook}" ]; then
+    echo "preserving foreign DHCP event hook: ${dhcp_event_hook}" >&2
+fi
+
 # Remove only the plugin payload paths shipped by routerd.  In particular, do
 # not remove the plugins directory: operators may install additional trusted
 # local plugins there.

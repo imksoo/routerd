@@ -142,6 +142,10 @@ node が master ではない場合、`routerd serve` は `spec.when` により�
 除外します。master で lease file が存在する場合、status は `Synced` へ進みます。
 lease file がまだ無い場合は、dnsmasq が作成するまで `Pending` のままです。
 
+routerd の installer は dnsmasq 用 hook `/usr/local/libexec/routerd/dhcp-event-relay` を
+`/usr/local/sbin/routerd-dhcp-event-relay` への symlink として作成します。同じパスに
+別のファイルや symlink がある場合は置き換えず、install を失敗させます。
+
 ## 復旧した同期失敗の調査
 
 3種類のリース同期では、既存のサービスログへ `DHCP lease synchronization failed` を記録します。

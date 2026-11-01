@@ -148,8 +148,8 @@ creates it.
 
 ## Callback recovery across routerd restarts
 
-The managed dnsmasq hook is a symlink to `routerd-dhcp-event-relay` with no
-additional arguments. It commits each callback to
+The installer creates the managed dnsmasq hook as a symlink to
+`routerd-dhcp-event-relay` with no additional arguments. It commits each callback to
 `<platform StateDir>/dhcp-events/pending.db` before exiting; it no longer needs
 a running control socket. Linux uses `/var/lib/routerd`, FreeBSD uses
 `/var/db/routerd`, and a serve sandbox uses its own platform state directory.
