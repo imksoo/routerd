@@ -118,7 +118,6 @@ ip -n rd15-ing-external route add default via 198.18.52.2
 ip link add "$management" type veth peer name peer0 netns rd15-ing-management
 ip link set "$management" up
 ip -n rd15-ing-management link set peer0 up
-ip addr add 198.18.53.2/24 dev "$management"
 ip -n rd15-ing-management addr add 198.18.53.1/24 dev peer0
 ip -n rd15-ing-client addr add 198.18.50.100/24 dev peer0
 ip -n rd15-ing-client route add default via 198.18.50.1
