@@ -475,12 +475,13 @@ func TestIPAddressSetControllerVerifiesNftSetAfterVerifyInterval(t *testing.T) {
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	store := mapStore{}
 	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPAddressSet", "dns-google", map[string]any{
-		"phase":         "Applied",
-		"addresses":     []any{"8.8.8.8"},
-		"ipv4Addresses": []any{"8.8.8.8"},
-		"nextRefreshAt": now.Add(time.Hour).Format(time.RFC3339Nano),
-		"nftVerifiedAt": now.Add(-3 * time.Minute).Format(time.RFC3339Nano),
-		"targets":       []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
+		"phase":           "Applied",
+		"addresses":       []any{"8.8.8.8"},
+		"ipv4Addresses":   []any{"8.8.8.8"},
+		"nextRefreshAt":   now.Add(time.Hour).Format(time.RFC3339Nano),
+		"nftVerifiedAt":   now.Add(-3 * time.Minute).Format(time.RFC3339Nano),
+		"targets":         []any{"ip/routerd_nat/ip_address_set_dns_google", "ip6/routerd_nat/ip_address_set_dns_google"},
+		"specFingerprint": ipAddressSetSpecFingerprint(api.IPAddressSetSpec{Names: []string{"dns.google"}}),
 	}); err != nil {
 		t.Fatal(err)
 	}
