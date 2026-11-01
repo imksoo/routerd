@@ -37,6 +37,11 @@ finish() {
  trap - EXIT
  if [ "$rc" -ne 0 ]; then
   echo "FAIL at $stage; live state follows before cleanup" >&2
+  for event_log in "$work"/backend-*.events; do
+   test -e "$event_log" || continue
+   printf '%s\n' "backend observation: $(basename "$event_log")" >&2
+   cat "$event_log" >&2
+  done
   nft list ruleset >&2 || true
  fi
  /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null 2>&1 || true
@@ -57,6 +62,7 @@ trap finish EXIT
 cat > "$work/backend.py" <<'PY'
 import socket, sys
 label = sys.argv[1]
+events = sys.argv[4]
 listener = socket.socket()
 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 listener.bind((sys.argv[2], int(sys.argv[3])))
@@ -64,6 +70,8 @@ listener.listen()
 while True:
     conn, peer = listener.accept()
     with conn:
+        with open(events, 'a') as output:
+            output.write(f"accepted {peer[0]}\n")
         conn.sendall((f"{label}:{peer[0]}\n").encode())
         while data := conn.recv(1024):
             conn.sendall((f"{label}:{data.decode().strip()}\n").encode())
@@ -100,9 +108,9 @@ ip -n rd15-ing-backend-b addr add 198.18.50.20/24 dev peer0
 ip -n rd15-ing-backend-b route add default via 198.18.50.1
 
 systemd-run --unit=rd15-ingress-backend-a --property=Type=exec \
- ip netns exec rd15-ing-backend-a python3 "$work/backend.py" backend-a 198.18.50.10 8080
+ ip netns exec rd15-ing-backend-a python3 "$work/backend.py" backend-a 198.18.50.10 8080 "$work/backend-a.events"
 systemd-run --unit=rd15-ingress-backend-b --property=Type=exec \
- ip netns exec rd15-ing-backend-b python3 "$work/backend.py" backend-b 198.18.50.20 8080
+ ip netns exec rd15-ing-backend-b python3 "$work/backend.py" backend-b 198.18.50.20 8080 "$work/backend-b.events"
 
 probe() {
  local ns=$1 address=$2 port=$3 expected=$4 expected_source=$5
