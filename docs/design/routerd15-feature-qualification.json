@@ -2540,8 +2540,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "FreeBSD native IPv6StaticRoute application, forwarding, withdrawal and reboot behavior",
-        "Linux error-recovery coverage after a failed owned-route application"
+        "FreeBSD native IPv6StaticRoute application, forwarding, withdrawal and reboot behavior"
       ],
       "current_registration_additions": [
         "IPv6StaticRoute"
