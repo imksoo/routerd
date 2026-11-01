@@ -1767,6 +1767,23 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-ipv6-static-route-e6f52a72": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "e6f52a72a6017e8e0be224675ac38a17196079ff",
+      "gate_script_revision": "4bf5e5812e7cbf6cfd1476f62227b6c190bad19b",
+      "reference": "scripts/linux-ipv6-static-route-smoke.sh",
+      "environment": "Authorized dedicated Linux VM; CGO_ENABLED=0 make dist package through the actual systemd service; isolated veth and peer network namespace.",
+      "checks": [
+        "IPv6StaticRoute added the exact gateway, device, metric and boot-protocol route; an independent peer namespace answered traffic through it.",
+        "A systemd service restart retained and reconciled the owned route; an empty configuration withdrew it and new traffic no longer forwarded.",
+        "Final cleanup left an empty valid configuration, no test namespace or interface, no retained raw output, and the VM stopped."
+      ],
+      "excludes": [
+        "FreeBSD behavior, non-host-prefix routes beyond the exercised configuration, production topology, performance, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-nat44-flow-dnat-pinhole-3587ac28": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2501,25 +2518,30 @@
         "body_and_entrypoint_files": [
           "pkg/controller/chain/chain.go",
           "pkg/render/networkd.go",
-          "pkg/render/freebsd.go"
+          "pkg/render/freebsd.go",
+          "pkg/controller/chain/ipv6staticroute.go"
         ],
         "related_test_files": [
           "pkg/render/networkd_test.go",
-          "pkg/render/freebsd_test.go"
+          "pkg/render/freebsd_test.go",
+          "pkg/controller/chain/ipv4route_test.go",
+          "scripts/linux-ipv6-static-route-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-ipv6-static-route-e6f52a72"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Baseline example/runtime IPv6StaticRoute behavior through actual caller",
-        "Native IPv6 route application, forwarding and withdrawal"
+        "FreeBSD native IPv6StaticRoute application, forwarding, withdrawal and reboot behavior",
+        "Linux non-host-prefix and error-recovery coverage"
       ],
       "current_registration_additions": [
         "IPv6StaticRoute"
