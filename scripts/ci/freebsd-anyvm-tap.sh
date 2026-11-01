@@ -14,6 +14,12 @@ if [[ "$provider_only" != true ]]; then
     echo 'IPsec topology variables are required for the peer integration smoke' >&2
     exit 2
   }
+else
+  # The workflow retains integration defaults in its environment. A focused
+  # provider run must not turn those inert values into a QEMU TAP attachment.
+  tap=
+  peer_addr=
+  guest_addr=
 fi
 run_id=${GITHUB_RUN_ID:?GITHUB_RUN_ID is required}
 attempt=${GITHUB_RUN_ATTEMPT:?GITHUB_RUN_ATTEMPT is required}
