@@ -33,9 +33,13 @@ pppoe_runtime=${ROUTERD_FREEBSD_PPPOE_RUNTIME:-false}
 wireguard_vxlan_runtime=${ROUTERD_FREEBSD_WIREGUARD_VXLAN_RUNTIME:-false}
 tailscale_boundary_runtime=${ROUTERD_FREEBSD_TAILSCALE_BOUNDARY_RUNTIME:-false}
 carp_runtime=${ROUTERD_FREEBSD_CARP_RUNTIME:-false}
-guest_packages='go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf python3 strongswan mpd5 wireguard-tools tailscale'
-if [[ "$tunnelinterface_runtime" == true || "$lifecycle_runtime" == true || "$wireguard_vxlan_runtime" == true || "$carp_runtime" == true ]]; then
-  guest_packages+=' sqlite3'
+if [[ "$provider_only" == true ]]; then
+  guest_packages='go strongswan'
+else
+  guest_packages='go dnsmasq git hs-ShellCheck curl jq ndpi pkgconf python3 strongswan mpd5 wireguard-tools tailscale'
+  if [[ "$tunnelinterface_runtime" == true || "$lifecycle_runtime" == true || "$wireguard_vxlan_runtime" == true || "$carp_runtime" == true ]]; then
+    guest_packages+=' sqlite3'
+  fi
 fi
 arch=${ROUTERD_ANYVM_ARCH:-x86_64}
 qemu_binary=

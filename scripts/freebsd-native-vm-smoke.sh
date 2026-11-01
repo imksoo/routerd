@@ -34,15 +34,20 @@ aarch64)
   exit 1
   ;;
 esac
+ipsec_provider_only=${ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY:-false}
 pkg info -e go
-pkg info -e dnsmasq
-pkg info -e git
-pkg info -e hs-ShellCheck
-pkg info -e curl
-pkg info -e jq
-printf 'freebsd-native-runtime expected=%s arch=%s release=%s goarch=%s\n' \
-  "$expected_arch" "$(uname -m)" "$freebsd_release" "$(go env GOARCH)"
-git config --global --add safe.directory "$(pwd)"
+if [ "$ipsec_provider_only" = true ]; then
+  pkg info -e strongswan
+else
+  pkg info -e dnsmasq
+  pkg info -e git
+  pkg info -e hs-ShellCheck
+  pkg info -e curl
+  pkg info -e jq
+  git config --global --add safe.directory "$(pwd)"
+fi
+printf 'freebsd-native-runtime expected=%s arch=%s release=%s goarch=%s focused_ipsec_provider=%s\n' \
+  "$expected_arch" "$(uname -m)" "$freebsd_release" "$(go env GOARCH)" "$ipsec_provider_only"
 # The action shares a checkout into the guest. Test fixtures build temporary
 # helper binaries, so suppress VCS stamping there without narrowing the gate.
 export GOFLAGS="${GOFLAGS:+$GOFLAGS }-buildvcs=false"
@@ -196,8 +201,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
-prepare_native_descriptors
-if [ "${ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY:-false}" = true ]; then
+if [ "$ipsec_provider_only" = true ]; then
   # This focused acceptance path establishes whether routerd itself can keep a
   # FreeBSD provider alive and reconcile its definition. Peer topology, traffic,
   # and rekey are separate integration checks and must not mask this result.
@@ -209,6 +213,7 @@ if [ "${ROUTERD_FREEBSD_IPSEC_PROVIDER_ONLY:-false}" = true ]; then
   cat "$ipsec_provider_evidence/result"
   exit 0
 fi
+prepare_native_descriptors
 # This is the native package gate. Do not narrow it to selected packages: a
 # FreeBSD-only build or runtime dependency failure must be visible in CI.
 go test ./...
