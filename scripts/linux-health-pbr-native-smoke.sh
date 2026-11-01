@@ -95,7 +95,12 @@ ip route add blackhole 203.0.113.0/24 table 999
 ip rule add priority 10999 fwmark 0x999 table 999
 ip -4 rule show priority 10999 > "$work/foreign-rule.txt"
 ip -4 route show table 999 > "$work/foreign-route.txt"
-for path in /run/routerd /var/lib/routerd; do test -d "$path"; mount -t tmpfs tmpfs "$path"; done
+# The isolated gate runs before the package installer or systemd has created
+# these runtime directories. They belong to this private mount namespace.
+for path in /run/routerd /var/lib/routerd; do
+ mkdir -p "$path"
+ mount -t tmpfs tmpfs "$path"
+done
 tar -xzf "$archive" -C "$work" ./bin
 export PATH="$work/bin:$PATH"
 routerd version
