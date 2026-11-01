@@ -1290,6 +1290,7 @@ func becamePhase(event daemonapi.DaemonEvent, phase string) bool {
 type commandFunc func(ctx context.Context, name string, args ...string) error
 
 type Options struct {
+	ConfigPath              string
 	DaemonSockets           map[string]string
 	DryRunAddress           bool
 	DryRunDSLite            bool
@@ -2524,10 +2525,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	nativeMobilityMu := &sync.Mutex{}
 	vxlanParent := &VXLANSegmentController{Store: store, StartedAt: r.startedAt()}
 	dsliteParent := &DSLiteTunnelController{ResolverPort: opts.DnsmasqPort}
-	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
+	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, ConfigPath: opts.ConfigPath, LegacyV1NativeHandoffPath: legacyV1NativeHandoffDefaultPath()}
 	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, Tunnels: &tunnel}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, Tunnels: &tunnel, ConfigPath: opts.ConfigPath, LegacyV1NativeHandoffPath: legacyV1NativeHandoffDefaultPath()}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Logger: logger}
@@ -4757,24 +4758,26 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type IPv4StaticAddressController struct {
-	ParentRouter      *api.Router
-	MobilitySource    dynamicConfigPartLister
-	Router            *api.Router
-	DeclaredRouter    *api.Router
-	WhenRouter        *api.Router
-	Bus               *bus.Bus
-	Store             Store
-	MobilityDataplane dynamicconfig.MobilityDataplanePlan
-	DryRun            bool
-	Logger            *slog.Logger
-	Command           commandFunc
-	DevicePresent     func(context.Context, string) bool
-	ObserveAddresses  func(context.Context, string) (staticAddressSnapshot, error)
-	Segments          *VXLANSegmentController
-	DSLite            *DSLiteTunnelController
-	Bridges           *BridgeController
-	WireGuard         *WireGuardController
-	VRFs              *VRFController
+	ParentRouter              *api.Router
+	MobilitySource            dynamicConfigPartLister
+	Router                    *api.Router
+	DeclaredRouter            *api.Router
+	WhenRouter                *api.Router
+	Bus                       *bus.Bus
+	Store                     Store
+	MobilityDataplane         dynamicconfig.MobilityDataplanePlan
+	DryRun                    bool
+	Logger                    *slog.Logger
+	Command                   commandFunc
+	DevicePresent             func(context.Context, string) bool
+	ObserveAddresses          func(context.Context, string) (staticAddressSnapshot, error)
+	Segments                  *VXLANSegmentController
+	DSLite                    *DSLiteTunnelController
+	Bridges                   *BridgeController
+	WireGuard                 *WireGuardController
+	VRFs                      *VRFController
+	ConfigPath                string
+	LegacyV1NativeHandoffPath string
 }
 
 type DaemonStatusController struct {

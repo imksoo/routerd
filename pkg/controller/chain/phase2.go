@@ -420,24 +420,26 @@ func (c DSLiteTunnelController) resolveRemote(ctx context.Context, spec api.DSLi
 }
 
 type IPv4RouteController struct {
-	ParentRouter      *api.Router
-	Router            *api.Router
-	Segments          *VXLANSegmentController
-	DSLite            *DSLiteTunnelController
-	Bridges           *BridgeController
-	WireGuard         *WireGuardController
-	VRFs              *VRFController
-	Tunnels           *TunnelInterfaceController
-	Bus               *bus.Bus
-	Store             Store
-	MobilityDataplane dynamicconfig.MobilityDataplanePlan
-	MobilitySource    dynamicConfigPartLister
-	DryRun            bool
-	Logger            *slog.Logger
-	Command           func(ctx context.Context, name string, args ...string) ([]byte, error)
-	DevicePresent     func(context.Context, string) bool
-	DeviceLookup      func(context.Context, string) (int, bool, error)
-	NativeScope       func(context.Context) (string, error)
+	ParentRouter              *api.Router
+	Router                    *api.Router
+	Segments                  *VXLANSegmentController
+	DSLite                    *DSLiteTunnelController
+	Bridges                   *BridgeController
+	WireGuard                 *WireGuardController
+	VRFs                      *VRFController
+	Tunnels                   *TunnelInterfaceController
+	Bus                       *bus.Bus
+	Store                     Store
+	MobilityDataplane         dynamicconfig.MobilityDataplanePlan
+	MobilitySource            dynamicConfigPartLister
+	DryRun                    bool
+	Logger                    *slog.Logger
+	Command                   func(ctx context.Context, name string, args ...string) ([]byte, error)
+	DevicePresent             func(context.Context, string) bool
+	DeviceLookup              func(context.Context, string) (int, bool, error)
+	NativeScope               func(context.Context) (string, error)
+	ConfigPath                string
+	LegacyV1NativeHandoffPath string
 }
 
 func (c IPv4RouteController) Start(ctx context.Context) {

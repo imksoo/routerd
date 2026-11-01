@@ -755,6 +755,7 @@ func runApplyChainOnceAttempt(ctx context.Context, router *api.Router, opts appl
 
 func applyChainControllerOptions(opts applyOptions) controllerchain.Options {
 	controllerOpts := controllerchain.Options{
+		ConfigPath:             opts.ConfigPath,
 		SuperviseClientDaemons: false,
 		SkipLegacyClientUnits:  true,
 		SuperviseDNSResolvers:  false,

@@ -522,7 +522,15 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		return errors.New("static address receipt does not prove its current virtual parent")
 	}
 	if receipt == nil && observed.has(spec.Address) {
-		return errors.New("declared address already exists without a native ownership receipt")
+		allowed, err := legacyV1NativeHandoffAllows(c.LegacyV1NativeHandoffPath, c.ConfigPath)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return errors.New("declared address already exists without a native ownership receipt")
+		}
+		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, ParentToken: parentToken, PeerAddress: observed.peerAddress()}
+		status["legacyV1NativeAdopted"] = true
 	}
 	if receipt != nil && observed.has(spec.Address) && !observed.owns(*receipt) {
 		return errors.New("static address native peer differs from its ownership receipt")

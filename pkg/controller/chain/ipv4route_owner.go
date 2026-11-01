@@ -246,7 +246,19 @@ func (c IPv4RouteController) reconcileOrdinaryRoute(ctx context.Context, resourc
 		return c.failOrdinaryRoute(resource.Metadata.Name, status, receipt, "ObserveFailed", err)
 	}
 	if collision {
-		return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "ForeignRoutePreserved", errors.New("existing route has no matching applied ownership"))
+		allowed, handoffErr := legacyV1NativeHandoffAllows(c.LegacyV1NativeHandoffPath, c.ConfigPath)
+		if handoffErr != nil {
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "LegacyHandoffInvalid", handoffErr)
+		}
+		if !allowed {
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "ForeignRoutePreserved", errors.New("existing route has no matching applied ownership"))
+		}
+		receipt = &ipv4RouteReceipt{Route: desired, Scope: premise.Scope, IfIndex: premise.IfIndex, ParentToken: premise.ParentToken}
+		if err := c.verifyOrdinaryRouteIdentity(ctx, *receipt); err != nil {
+			return c.failOrdinaryRoute(resource.Metadata.Name, status, nil, "LegacyHandoffIdentityMismatch", err)
+		}
+		status["legacyV1NativeAdopted"] = true
+		return c.saveOrdinaryRouteStatus(resource.Metadata.Name, status, receipt)
 	}
 	receipt = &ipv4RouteReceipt{Route: desired, Scope: premise.Scope, IfIndex: premise.IfIndex, ParentToken: premise.ParentToken, Pending: true}
 	status["phase"] = "Applying"
