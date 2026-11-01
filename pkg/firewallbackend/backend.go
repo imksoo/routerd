@@ -5,12 +5,10 @@ package firewallbackend
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,10 +38,9 @@ type Backend interface {
 }
 
 type Nftables struct {
-	Command                   string
-	Run                       CommandFunc
-	LegacyFirewallHandoffPath string
-	IngressStates             []render.IngressServiceState
+	Command       string
+	Run           CommandFunc
+	IngressStates []render.IngressServiceState
 }
 
 func (b Nftables) Name() string { return "nftables" }
@@ -73,10 +70,6 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if len(ruleset.Data) == 0 {
 		return b.withdraw(ctx, ruleset, dryRun)
 	}
-	adoptedLegacy, err := b.adoptRecordedLegacyFirewall(ctx, dryRun)
-	if err != nil {
-		return false, err
-	}
 	changed, err := b.Diff(ruleset)
 	if err != nil {
 		return false, err
@@ -92,83 +85,13 @@ func (b Nftables) Apply(ctx context.Context, ruleset Ruleset, dryRun bool) (bool
 	if dryRun {
 		return changed, nil
 	}
-	if !changed && !adoptedLegacy && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
+	if !changed && nftstate.RecentlyVerified(ruleset.Path, time.Now().UTC()) {
 		return false, nil
 	}
 	if err := b.Reload(ctx, ruleset); err != nil {
 		return false, err
 	}
-	if adoptedLegacy {
-		if err := os.Remove(b.LegacyFirewallHandoffPath); err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("remove consumed legacy firewall handoff: %w", err)
-		}
-	}
-	return changed || adoptedLegacy, nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
-}
-
-const legacyFirewallHandoffVersion = "routerd-v1-firewall-handoff/v1"
-const legacyFirewallHandoffCommit = "e3b49dbb"
-
-// adoptRecordedLegacyFirewall transfers the one legacy filter table created by
-// the pinned 1.0 release. It is intentionally unavailable without the
-// installer-written handoff record: a same-named unmarked table is otherwise
-// foreign and must remain untouched.
-func (b Nftables) adoptRecordedLegacyFirewall(ctx context.Context, dryRun bool) (bool, error) {
-	if b.LegacyFirewallHandoffPath == "" {
-		return false, nil
-	}
-	data, err := os.ReadFile(b.LegacyFirewallHandoffPath)
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("read legacy firewall handoff: %w", err)
-	}
-	var handoff struct {
-		Version      string `json:"version"`
-		SourceCommit string `json:"sourceCommit"`
-	}
-	if err := json.Unmarshal(data, &handoff); err != nil || handoff.Version != legacyFirewallHandoffVersion || handoff.SourceCommit != legacyFirewallHandoffCommit {
-		return false, fmt.Errorf("invalid legacy firewall handoff record")
-	}
-	if dryRun {
-		return true, nil
-	}
-	nft := stringutil.FirstNonEmpty(b.Command, "nft")
-	out, err := b.run(ctx, nft, "-j", "list", "tables")
-	if err != nil {
-		return false, fmt.Errorf("observe legacy firewall handoff: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var inventory struct {
-		Tables []struct {
-			Table *struct {
-				Family  string `json:"family"`
-				Name    string `json:"name"`
-				Handle  uint64 `json:"handle"`
-				Comment string `json:"comment"`
-			} `json:"table"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(out, &inventory); err != nil || inventory.Tables == nil {
-		return false, fmt.Errorf("decode legacy firewall handoff inventory")
-	}
-	for _, entry := range inventory.Tables {
-		table := entry.Table
-		if table == nil || table.Family != "inet" || table.Name != "routerd_filter" {
-			continue
-		}
-		if table.Comment == render.NftablesRouterdOwnerMarker {
-			return true, nil
-		}
-		if table.Handle == 0 {
-			return false, fmt.Errorf("legacy firewall handoff lacks native table handle")
-		}
-		if out, err := b.run(ctx, nft, "delete", "table", "inet", "handle", strconv.FormatUint(table.Handle, 10)); err != nil {
-			return false, fmt.Errorf("handoff delete legacy inet routerd_filter handle %d: %w: %s", table.Handle, err, strings.TrimSpace(string(out)))
-		}
-		return true, nil
-	}
-	return true, nil
+	return changed, nftstate.MarkVerified(ruleset.Path, time.Now().UTC())
 }
 
 func (b Nftables) Reload(ctx context.Context, ruleset Ruleset) error {

@@ -5,7 +5,6 @@ package install_test
 import (
 	"archive/tar"
 	"compress/gzip"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -88,66 +87,6 @@ func TestInstallPublishesDHCPEventRelayHook(t *testing.T) {
 	}
 	if want := filepath.Join(prefix, "sbin", "routerd-dhcp-event-relay"); resolved != want {
 		t.Fatalf("resolved DHCP event hook = %q, want %q", resolved, want)
-	}
-}
-
-func TestInstallRecordsFirewallHandoffOnlyForPinnedRouterdV1(t *testing.T) {
-	requireLinuxSystemdFixture(t)
-	dir := t.TempDir()
-	pkg := filepath.Join(dir, "package")
-	prefix := filepath.Join(dir, "prefix")
-	handoff := filepath.Join(dir, "state", "routerd-v1-firewall-handoff.json")
-	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\necho routerd-new\n")
-	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), "#!/bin/sh\necho 'routerd v20261027.1620 (e3b49dbb)'\n")
-
-	out, err := runInstallWithEnv(t, pkg, prefix, []string{"ROUTERD_INSTALL_LEGACY_FIREWALL_HANDOFF_PATH=" + handoff}, "--no-install-deps", "--no-config-update", "--no-restart")
-	if err != nil {
-		t.Fatalf("install failed: %v\n%s", err, out)
-	}
-	data, err := os.ReadFile(handoff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(data), "{\"version\":\"routerd-v1-firewall-handoff/v1\",\"sourceCommit\":\"e3b49dbb\"}\n"; got != want {
-		t.Fatalf("handoff = %q, want %q", got, want)
-	}
-	if info, err := os.Stat(handoff); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("handoff mode = %v, err=%v, want 0600", info.Mode(), err)
-	}
-}
-
-func TestInstallRecordsDigestBoundNativeHandoffForPinnedRouterdV1(t *testing.T) {
-	requireLinuxSystemdFixture(t)
-	dir := t.TempDir()
-	pkg := filepath.Join(dir, "package")
-	prefix := filepath.Join(dir, "prefix")
-	configPath := filepath.Join(prefix, "etc", "routerd", "router.yaml")
-	config := []byte("apiVersion: routerd.net/v1alpha1\nkind: Router\n")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, config, 0600); err != nil {
-		t.Fatal(err)
-	}
-	handoff := filepath.Join(dir, "state", "routerd-v1-native-handoff.json")
-	writeExecutable(t, filepath.Join(pkg, "bin", "routerd"), "#!/bin/sh\necho routerd-new\n")
-	writeExecutable(t, filepath.Join(prefix, "sbin", "routerd"), "#!/bin/sh\necho 'routerd v20261027.1620 (e3b49dbb)'\n")
-
-	out, err := runInstallWithEnv(t, pkg, prefix, []string{"ROUTERD_INSTALL_LEGACY_FIREWALL_HANDOFF_PATH=" + filepath.Join(dir, "state", "firewall.json"), "ROUTERD_INSTALL_LEGACY_NATIVE_HANDOFF_PATH=" + handoff}, "--no-install-deps", "--no-config-update", "--no-restart")
-	if err != nil {
-		t.Fatalf("install failed: %v\\n%s", err, out)
-	}
-	data, err := os.ReadFile(handoff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(config)
-	want := fmt.Sprintf("{\"version\":\"routerd-v1-native-handoff/v1\",\"sourceCommit\":\"e3b49dbb\",\"configSHA256\":\"%x\"}\n", digest)
-	if got := string(data); got != want {
-		t.Fatalf("handoff = %q, want %q", got, want)
-	}
-	if info, err := os.Stat(handoff); err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("handoff mode = %v, err=%v, want 0600", info.Mode(), err)
 	}
 }
 

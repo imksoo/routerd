@@ -2525,10 +2525,10 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	nativeMobilityMu := &sync.Mutex{}
 	vxlanParent := &VXLANSegmentController{Store: store, StartedAt: r.startedAt()}
 	dsliteParent := &DSLiteTunnelController{ResolverPort: opts.DnsmasqPort}
-	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, ConfigPath: opts.ConfigPath, LegacyV1NativeHandoffPath: legacyV1NativeHandoffDefaultPath()}
+	ipv4Static := IPv4StaticAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), WhenRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
 	lan := LANAddressController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunAddress, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs}
 	dslite := DSLiteTunnelController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunDSLite, ResolverPort: opts.DnsmasqPort, Logger: logger}
-	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, Tunnels: &tunnel, ConfigPath: opts.ConfigPath, LegacyV1NativeHandoffPath: legacyV1NativeHandoffDefaultPath()}
+	route := IPv4RouteController{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, Logger: logger, Segments: vxlanParent, DSLite: dsliteParent, Bridges: &bridge, WireGuard: &wireGuard, VRFs: &vrfs, Tunnels: &tunnel}
 	hybridRoute := HybridRouteController{Router: r.currentRouter(), EffectiveRouter: r.currentRouter(), Store: store}
 	samController := SAMController{Router: r.currentRouter(), Store: store, DryRun: opts.DryRunRoute}
 	policyRoute := IPv4PolicyRouteController{Router: r.currentRouter(), DeclaredRouter: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunRoute, NftCommand: opts.NftCommand, Logger: logger}
@@ -2699,7 +2699,7 @@ func (r *Runner) frameworkControllers(ctx context.Context, logger *slog.Logger, 
 	}
 	vrrp := vrrpcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunVRRP, Logger: logger}
 	ipAddressSet := IPAddressSetController{Router: r.currentRouter(), Store: store, DryRunNAT: opts.DryRunNAT, DryRunRoute: opts.DryRunRoute, DryRunFirewall: opts.DryRunFirewall, NftCommand: opts.NftCommand, RuntimeDir: defaults.RuntimeDir}
-	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, LegacyFirewallHandoffPath: filepath.Join(defaults.StateDir, "migrations", "routerd-v1-firewall-handoff.json"), Logger: logger}
+	firewall := firewallcontroller.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, DryRun: opts.DryRunFirewall, NftablesPath: stringutil.FirstNonEmpty(opts.FirewallPath, "/run/routerd/firewall.nft"), NftCommand: opts.NftCommand, Logger: logger}
 	conntrackObs := conntrackobserver.Controller{Router: r.currentRouter(), Bus: r.Bus, Store: store, Paths: conntrack.DefaultPaths(), Logger: logger}
 	if features.HasPF && !features.HasIproute2 {
 		conntrackObs.SnapshotSource = "pf"
@@ -4758,26 +4758,24 @@ func (c LANAddressController) currentOS() platform.OS {
 }
 
 type IPv4StaticAddressController struct {
-	ParentRouter              *api.Router
-	MobilitySource            dynamicConfigPartLister
-	Router                    *api.Router
-	DeclaredRouter            *api.Router
-	WhenRouter                *api.Router
-	Bus                       *bus.Bus
-	Store                     Store
-	MobilityDataplane         dynamicconfig.MobilityDataplanePlan
-	DryRun                    bool
-	Logger                    *slog.Logger
-	Command                   commandFunc
-	DevicePresent             func(context.Context, string) bool
-	ObserveAddresses          func(context.Context, string) (staticAddressSnapshot, error)
-	Segments                  *VXLANSegmentController
-	DSLite                    *DSLiteTunnelController
-	Bridges                   *BridgeController
-	WireGuard                 *WireGuardController
-	VRFs                      *VRFController
-	ConfigPath                string
-	LegacyV1NativeHandoffPath string
+	ParentRouter      *api.Router
+	MobilitySource    dynamicConfigPartLister
+	Router            *api.Router
+	DeclaredRouter    *api.Router
+	WhenRouter        *api.Router
+	Bus               *bus.Bus
+	Store             Store
+	MobilityDataplane dynamicconfig.MobilityDataplanePlan
+	DryRun            bool
+	Logger            *slog.Logger
+	Command           commandFunc
+	DevicePresent     func(context.Context, string) bool
+	ObserveAddresses  func(context.Context, string) (staticAddressSnapshot, error)
+	Segments          *VXLANSegmentController
+	DSLite            *DSLiteTunnelController
+	Bridges           *BridgeController
+	WireGuard         *WireGuardController
+	VRFs              *VRFController
 }
 
 type DaemonStatusController struct {

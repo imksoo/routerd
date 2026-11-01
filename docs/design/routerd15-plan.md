@@ -33,12 +33,16 @@ IPv4 NAT and IPv6. Its admission checks are:
   host reboot and interrupted configuration changes without manual repair of
   the product's state. Check withdrawal and absence of traffic leaks as well as
   successful traffic.
-- Configuration rejection, replacement and withdrawal; an exercised return to
-  the previous working router. Because 1.5 changes configuration/database formats,
-  binary-only rollback must not be assumed to restore 1.0 service.
-- The complete local regression gate remains passing. Newly discovered failures
-  stay open until reproduced, repaired and rechecked; a limited trial cannot
-  reclassify other features as unnecessary.
+- Prepare the target configuration in the 1.5 format before installation (manual
+  or AI-assisted conversion is an operator preparation step), validate it with
+  1.5, and install against fresh 1.5 state. Do not require an in-place 1.0
+  upgrade, old-config reader, old-database import, or cross-version cutback test.
+  Keep an independently restorable copy of the previous router setup for the
+  trial's operational recovery plan; that copy is not input to routerd 1.5.
+- Configuration rejection, replacement and withdrawal on 1.5. Run focused local
+  checks for the changed behavior. Newly discovered failures stay open until
+  reproduced, repaired and rechecked; a limited trial cannot reclassify other
+  features as unnecessary.
 
 Passing these checks permits a proposal for a bounded real-use trial, not a
 claim that the whole revision is complete. Continue the full 1.0 feature audit,
@@ -87,11 +91,13 @@ remaining FreeBSD functions in the final 1.0 preservation scope.
    and exchange handling in the owning receive path; retain useful optional data.
    Reuse selected routerd2 fixes after reading their full callers. Remove unused
    old paths only after checking references and affected builds.
-6. **Cutover and release.** Run the existing feature inventory against rewritten
-   configuration and independent peers. Exercise restart, loss/return of upstream,
-   renewal/expiry, managed-resource cleanup and management recovery. Record packet,
-   client and kernel evidence. Publish a version only after its stated scope is
-   demonstrated. No production cutover or existing DB deletion occurs implicitly.
+6. **Fresh installation and release.** Run the existing feature inventory with
+   converted 1.5 configuration, fresh 1.5 state and independent peers. Exercise
+   service startup, restart, loss/return of upstream, renewal/expiry,
+   managed-resource cleanup and management recovery. Record packet, client and
+   kernel results. Do not qualify 1.0-to-1.5 in-place upgrade or data/config
+   migration. Publish a version only after its stated scope is demonstrated. No
+   production cutover or existing DB deletion occurs implicitly.
 
 Each step is a complete feature path with its obsolete code removed, not an
 invitation to finish a new framework before trying actual communication.

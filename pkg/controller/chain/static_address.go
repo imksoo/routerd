@@ -522,23 +522,7 @@ func (c IPv4StaticAddressController) reconcileStaticAddress(ctx context.Context,
 		return errors.New("static address receipt does not prove its current virtual parent")
 	}
 	if receipt == nil && observed.has(spec.Address) {
-		allowed, err := legacyV1NativeHandoffAllows(c.LegacyV1NativeHandoffPath, c.ConfigPath)
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return errors.New("declared address already exists without a native ownership receipt")
-		}
-		receipt = &staticAddressReceipt{IfName: ifname, IfIndex: observed.Index, Scope: observed.Scope, Address: spec.Address, ParentToken: parentToken, PeerAddress: observed.peerAddress()}
-		status["legacyV1NativeAdopted"] = true
-		// The digest-bound handoff authorizes this exact native tuple, but it
-		// does not make an in-memory receipt durable. Persist the adopted
-		// identity before later ownership fences re-read the status row.
-		// Otherwise a restarted daemon treats its own adopted address as a
-		// concurrent ownership change and never converges.
-		if err := c.saveStaticAddress(resource.Metadata.Name, status, receipt); err != nil {
-			return err
-		}
+		return errors.New("declared address already exists without a native ownership receipt")
 	}
 	if receipt != nil && observed.has(spec.Address) && !observed.owns(*receipt) {
 		return errors.New("static address native peer differs from its ownership receipt")

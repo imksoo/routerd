@@ -30,11 +30,8 @@ type Controller struct {
 	DryRun       bool
 	NftablesPath string
 	NftCommand   string
-	// LegacyFirewallHandoffPath is written only by a verified 1.0-to-1.5
-	// installer handoff. It never grants ownership to an arbitrary table.
-	LegacyFirewallHandoffPath string
-	Interval                  time.Duration
-	Logger                    *slog.Logger
+	Interval     time.Duration
+	Logger       *slog.Logger
 	// LocalCaptureIntents is the already-decided dynamic Mobility dataplane
 	// plan. It matters to the PF backend, where path-MTU rules live in the
 	// native firewall ruleset rather than a separate nftables table.
@@ -90,7 +87,6 @@ func (c Controller) Reconcile(ctx context.Context) error {
 	}
 	backend := firewallbackend.ForPlatform(targetOS, c.NftCommand)
 	if nft, ok := backend.(firewallbackend.Nftables); ok {
-		nft.LegacyFirewallHandoffPath = c.LegacyFirewallHandoffPath
 		nft.IngressStates = c.ingressServiceStates()
 		backend = nft
 	}
