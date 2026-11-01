@@ -129,8 +129,8 @@ func TestScopedVICIRecordsObservedSAsAcrossReopenAndProviderGeneration(t *testin
 		t.Fatal(err)
 	}
 	state, err = readReceipt(directory)
-	if err != nil || len(state.Connections[0].SAs) != 0 || len(native.deleted) != 2 {
-		t.Fatalf("provider restart retained old kernel SAs: %+v deleted=%+v err=%v", state, native.deleted, err)
+	if err != nil || len(state.Connections[0].SAs) != 2 {
+		t.Fatalf("provider restart forgot old kernel SAs: %+v %v", state, err)
 	}
 	nextIn, nextOut := oldIn, oldOut
 	nextIn.ID.SPI, nextOut.ID.SPI = 0xc2e2705c, 0xcf14a1ba
@@ -144,8 +144,8 @@ func TestScopedVICIRecordsObservedSAsAcrossReopenAndProviderGeneration(t *testin
 		t.Fatal(err)
 	}
 	state, err = readReceipt(directory)
-	if err != nil || len(state.Connections[0].SAs) != 2 {
-		t.Fatalf("new provider SAs were not observed: %+v %v", state, err)
+	if err != nil || len(state.Connections[0].SAs) != 4 {
+		t.Fatalf("new provider replaced old native authority: %+v %v", state, err)
 	}
 	if err := reopened.Reconcile(t.Context(), &api.Router{}); err != nil {
 		t.Fatal(err)
