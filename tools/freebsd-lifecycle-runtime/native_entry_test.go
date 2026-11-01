@@ -144,6 +144,7 @@ fixture=$1
 fail_gate=$2
 native_fd_dir=$fixture/fd
 native_own_fdescfs=0
+ipsec_provider_only=false
 ROUTERD_FREEBSD_LIFECYCLE_RUNTIME=false
 export ROUTERD_FREEBSD_LIFECYCLE_RUNTIME
 mkdir "$native_fd_dir"
