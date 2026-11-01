@@ -390,15 +390,18 @@ sudo scripts/linux-dhcp-firewall-lifecycle-smoke.sh --disposable-vm \
 
 LAN・WAN・管理 zone の独立した peer で、最初に HTTP の正常到達を確認します。
 DHCP の gateway/DNS option、2分 lease のタイマー更新、ローカル・転送 DNS の
-UDP/TCP、NAT 送信元、service 再起動後の維持が合格条件です。
-zone 適用後は WAN→LAN、LAN→管理、WAN→router DNS を遮断します。
+UDP/TCP、NAT 送信元、service 再起動後の維持が合格条件です。DHCP RELEASE の後も
+設定済み予約を名前解決できることを確認します。次に予約を構成から外して名前付き動的
+リースを取得し、DHCP RELEASE 後と routerd 再起動後の両方で DNS レコードが消える
+ことを確認します。zone 適用後は WAN→LAN、LAN→管理、WAN→router DNS を遮断します。
 HTTP の遮断はクライアントの失敗だけでなく、対向ログに届いていないことと
 nft chain counter で判定します。管理→LAN の正常通信も必要です。
 明示的な許可ルールで LAN→管理が通り、ルール撤去で再び遮断されること、
 firewall 全撤去で `inet routerd_filter` が消え、元の正常通信に戻ることを検査します。
-最後に空設定で管理アドレスを撤去します。成功時の生出力は削除し、失敗時だけ
-ローカル再現・修正まで保持します。VM 再起動、WAN DHCP client、rebind・expiry、
-実 WAN の挙動は別の試験です。
+最後に空設定で管理アドレスを撤去します。成功・失敗を問わず生出力は削除します。
+失敗した段階を直接のコマンド出力でローカル再現して修正し、その後に新しい使い捨て
+VMで一度だけ再試験します。VM 再起動、WAN DHCP client、rebind・expiry、実 WAN の
+挙動は別の試験です。
 
 ローカルの撤去回帰テストは通常の `go test` で skip し、明示的な隔離 netns で実行します。
 

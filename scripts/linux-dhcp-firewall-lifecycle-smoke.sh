@@ -59,6 +59,9 @@ base=json.load(open(sys.argv[1])); work=Path(sys.argv[3])
 r=base['spec']['resources']
 r.append({'apiVersion':'net.routerd.net/v1alpha1','kind':'Interface','metadata':{'name':'management'},'spec':{'ifname':sys.argv[2],'managed':False,'owner':'external'}})
 (work/'base.json').write_text(json.dumps(base))
+dynamic=json.loads(json.dumps(base))
+dynamic['spec']['resources']=[resource for resource in dynamic['spec']['resources'] if resource.get('kind') != 'DHCPv4Reservation']
+(work/'dynamic.json').write_text(json.dumps(dynamic))
 for name,role,interfaces in [('lan','trust',['lan']),('wan','untrust',['wan']),('admin','mgmt',['admin','management'])]:
  r.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallZone','metadata':{'name':name},'spec':{'role':role,'interfaces':interfaces}})
 r.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallPolicy','metadata':{'name':'default'},'spec':{}})
@@ -68,6 +71,7 @@ r.append({'apiVersion':'firewall.routerd.net/v1alpha1','kind':'FirewallRule','me
 PY
 /usr/local/sbin/routerd validate --config "$work/filtered.json"
 /usr/local/sbin/routerd validate --config "$work/exception.json"
+/usr/local/sbin/routerd validate --config "$work/dynamic.json"
 for side in lan wan admin; do
  ns=rd15-$side-peer
  ip netns add "$ns"
@@ -120,10 +124,15 @@ case "$1" in
   [ "$router" = 198.18.15.1 ] && [ "$dns" = 198.18.15.1 ] || { echo bad-options >> "$0.events"; exit 1; }
   printf '%s %s %s %s\n' "$1" "$ip" "$lease" "$(date +%s)" >> "$0.events"
   ;;
+ deconfig)
+  ip -4 addr flush dev "$interface"
+  ip route del default dev "$interface" >/dev/null 2>&1 || true
+  printf '%s %s\n' "$1" "$(date +%s)" >> "$0.events"
+  ;;
 esac
 HOOK
 chmod 700 "$work/udhcpc-hook"
-systemd-run --unit=rd15-dhcp-client --property=Type=exec ip netns exec rd15-lan-peer busybox udhcpc -f -n -i peer0 -t 5 -T 2 -s "$work/udhcpc-hook"
+systemd-run --unit=rd15-dhcp-client --property=Type=exec ip netns exec rd15-lan-peer busybox udhcpc -f -n -R -i peer0 -t 5 -T 2 -s "$work/udhcpc-hook"
 for _ in {1..20}; do
  if [ -f "$work/udhcpc-hook.events" ] && grep -q '^bound ' "$work/udhcpc-hook.events"; then break; fi
  sleep 1
@@ -196,10 +205,59 @@ nft -j list tables > "$work/tables-withdrawn.json"
 jq -e '[.nftables[].table? | select(.family=="inet" and .name=="routerd_filter")] | length==0' "$work/tables-withdrawn.json" >/dev/null
 test "$(http wan "$client" filter-withdrawn-wan-lan)" = 198.18.16.1
 test "$(http lan 198.18.17.2 filter-withdrawn-lan-admin)" = "$client"
+# A RELEASE must not erase a configured reservation. After its config is removed,
+# the same physical client becomes an ordinary named lease whose removal must be
+# durable across a service restart.
+stage=reservation-release
+systemctl stop rd15-dhcp-client
+for _ in {1..20}; do
+ reservation_present=true
+ for mode in +notcp +tcp; do
+  if [ "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 printer.home.arpa A)" != "$client" ]; then reservation_present=false; break; fi
+ done
+ [ "$reservation_present" = true ] && break
+ sleep 1
+done
+[ "$reservation_present" = true ]
+/usr/local/sbin/routerctl apply -f "$work/dynamic.json" --replace > "$work/dynamic-apply.txt"
+ip netns exec rd15-lan-peer ip link set peer0 down
+ip netns exec rd15-lan-peer ip link set dev peer0 address 02:00:00:15:00:02
+ip netns exec rd15-lan-peer ip link set peer0 up
+systemd-run --unit=rd15-dhcp-client --property=Type=exec ip netns exec rd15-lan-peer busybox udhcpc -f -n -R -F transient -i peer0 -t 5 -T 2 -s "$work/udhcpc-hook"
+for _ in {1..20}; do
+ dynamic=$(awk '$1 == "bound" {ip=$2} END {print ip}' "$work/udhcpc-hook.events")
+ [ -n "$dynamic" ] && [ "$dynamic" != "$client" ] && break
+ sleep 1
+done
+dynamic=$(awk '$1 == "bound" {ip=$2} END {print ip}' "$work/udhcpc-hook.events")
+test "$dynamic" = 198.18.15.100
+stage=dynamic-lease
+for _ in {1..20}; do
+ dynamic_present=true
+ for mode in +notcp +tcp; do
+  if [ "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)" != "$dynamic" ]; then dynamic_present=false; break; fi
+ done
+ [ "$dynamic_present" = true ] && break
+ sleep 1
+done
+[ "$dynamic_present" = true ]
+stage=dynamic-release
+systemctl stop rd15-dhcp-client
+absent() {
+ for mode in +notcp +tcp; do
+  test -z "$(ip netns exec rd15-lan-peer dig +time=2 +tries=1 +short "$mode" @198.18.15.1 transient.home.arpa A)"
+ done
+}
+for _ in {1..20}; do if absent; then break; fi; sleep 1; done
+absent
+systemctl restart routerd
+stage=dynamic-restart
+for _ in {1..20}; do if absent; then break; fi; sleep 1; done
+absent
 stage=empty-withdrawal
 /usr/local/sbin/routerctl apply -f "$work/empty.json" --replace > "$work/withdraw.txt"
 for dev in rd15-lan rd15-wan rd15-admin; do
  ip -4 addr show dev "$dev" > "$work/$dev-addresses.txt"
  if grep -q 'inet 198.18.' "$work/$dev-addresses.txt"; then echo "address survived withdrawal: $dev" >&2; exit 1; fi
 done
-printf 'PASS: DHCP renewal, DNS UDP/TCP, NAT, firewall isolation/counters, service restart, exception removal and withdrawal\n'
+printf 'PASS: DHCP reservation and dynamic-release DNS lifecycle, renewal, NAT, firewall isolation/counters, service restart, exception removal and withdrawal\n'

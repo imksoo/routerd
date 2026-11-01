@@ -495,8 +495,11 @@ sudo scripts/linux-dhcp-firewall-lifecycle-smoke.sh --disposable-vm \
 Independent LAN, WAN and management-zone peers first establish positive HTTP
 controls. Pass requires DHCP acquisition with the expected gateway/DNS options,
 a timer-driven renewal of its two-minute lease, local/upstream DNS over UDP/TCP,
-NAT source observation and preservation across service restart. Applying zones
-must block WAN-to-LAN, LAN-to-management and WAN-to-router DNS. The HTTP negative
+NAT source observation and preservation across service restart. The configured
+reservation remains resolvable after its client sends DHCP RELEASE. The test then
+removes that reservation, obtains a named dynamic lease, and requires its DNS
+record to disappear after DHCP RELEASE and remain absent after a routerd restart.
+Applying zones must block WAN-to-LAN, LAN-to-management and WAN-to-router DNS. The HTTP negative
 checks require both client failure and absence from the destination log, with
 matching nft chain counters. A management-to-LAN positive control must continue.
 An explicit LAN-to-management exception must work and stop working after removal.
