@@ -1799,6 +1799,24 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-dhcpv4-reservation-pve-2c3fe143": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "2c3fe143583313ccbcfdd904a68092580abc55ce",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "environment": "Authorized PVE VLAN 3131. VM219 ran the checksum-verified 2c3fe143 Linux candidate with fresh candidate state. Independent VM224 used the reserved MAC and VM220 used a different dynamic MAC; their routerd services were stopped only for the temporary DHCP-client VLAN interfaces.",
+      "checks": [
+        "VM224 requested 198.18.15.50 and received its configured reservation, gateway, DNS and domain options. VM220 requested the same address but received a dynamic-pool address (198.18.15.107); both clients reached the gateway with 3/3 ICMP replies.",
+        "Stopping routerd stopped routerd-dnsmasq.service and removed UDP/67. Restarting routerd created a new dnsmasq process, restored UDP/67, renewed the reservation and dynamic lease, and restored 3/3 gateway reachability.",
+        "A configuration with DHCPv4Server and DHCPv4Reservation removed stopped the managed DHCP service and UDP/67; a new VM220 BusyBox request made three discoveries and received no lease. Restoring the DHCP configuration recreated the service and both clients renewed their configured or dynamic address.",
+        "The stop linkage is implemented by PartOf=routerd.service in the generated dnsmasq systemd unit and is covered by focused renderer and daemon-supervisor tests."
+      ],
+      "excludes": [
+        "Natural lease expiry/rebind and actual address-conflict handling.",
+        "DHCP-derived DNS answers, WAN DHCP client behavior, reboot/interrupted-apply recovery, IPv6, FreeBSD and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcpv6-server-8e8783e3": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2879,7 +2897,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-two-vm-recovery-0cb82866",
           "linux-dhcp-firewall-lifecycle-5431ad2a",
-          "linux-dhcpv4-reservation-lifecycle-329dfd9c"
+          "linux-dhcpv4-reservation-lifecycle-329dfd9c",
+          "linux-dhcpv4-reservation-pve-2c3fe143"
         ]
       },
       "freebsd": {
@@ -2887,8 +2906,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Reservation-specific client matching",
-        "Lease renewal/expiry, conflict handling and server restart"
+        "Lease expiry and actual address-conflict handling"
       ]
     },
     {

@@ -71,6 +71,16 @@ delegated-prefix forwarding, expiry and recovery are recorded at their executed
 revisions. The IPsec provider-restart repair is also recorded at its executed
 revision.
 
+Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
+VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
+VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
+動的プールの `198.18.15.107` を取得し、両者は既定ゲートウェイへ 3/3 成功しました。
+
+`routerd` の停止で `routerd-dnsmasq.service` と UDP/67 が消え、再起動後に新しい dnsmasq プロセスで
+待受と両リースの更新が復旧しました。DHCPv4 サーバーと予約を除いた設定ではサービスと UDP/67 が
+消え、VM220 の 3 回の新規要求はリースなしで失敗しました。設定復元後は予約・動的リースと疎通が
+復旧しました。自然なリース期限切れと実アドレス競合は未試験です。
+
 The current PVE BGP result is recorded at `29aa0ee8`. VM219 and VM220 formed
 an eBGP session on VLAN 3132. A peer-advertised prefix entered the VM219 kernel
 FIB as `proto bgp`, was withdrawn while the TCP session remained established,
