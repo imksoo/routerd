@@ -1,0 +1,12 @@
+{
+  "apiVersion": "routerd.net/v1alpha1",
+  "kind": "Router",
+  "metadata": {"name": "dhcpv6-server-stateless-smoke"},
+  "spec": {
+    "resources": [
+      {"apiVersion": "net.routerd.net/v1alpha1", "kind": "Interface", "metadata": {"name": "lan"}, "spec": {"ifname": "rd15-lan", "managed": false, "owner": "external"}},
+      {"apiVersion": "net.routerd.net/v1alpha1", "kind": "IPv6RouterAdvertisement", "metadata": {"name": "lan-ra"}, "spec": {"interface": "lan", "prefix": "fd00:1234::/64", "mFlag": false, "oFlag": true, "rdnss": ["fd00:1234::1"], "dnssl": ["home.arpa"], "routerLifetime": "60"}},
+      {"apiVersion": "net.routerd.net/v1alpha1", "kind": "DHCPv6Server", "metadata": {"name": "lan-dhcpv6"}, "spec": {"interface": "lan", "mode": "stateless", "dnsSource": "static", "dnsServers": ["fd00:1234::1"], "sntpServers": ["fd00:1234::123"], "domainSearch": ["home.arpa"]}}
+    ]
+  }
+}

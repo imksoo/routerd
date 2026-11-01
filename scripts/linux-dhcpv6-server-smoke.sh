@@ -14,6 +14,8 @@ systemd-detect-virt --vm --quiet
 test "$(id -u)" = 0
 for command in ip jq dhcpcd; do command -v "$command" >/dev/null; done
 /usr/local/sbin/routerd validate --config "$candidate"
+mode=$(jq -r '[.spec.resources[] | select(.kind == "DHCPv6Server") | (.spec.mode // "stateless")] | if length == 1 then .[0] else error("fixture must declare exactly one DHCPv6Server") end' "$candidate")
+case "$mode" in stateful|both|stateless) ;; *) echo "unsupported smoke mode: $mode" >&2; exit 2;; esac
 
 work=$(mktemp -d /var/tmp/routerd15-dhcpv6-server.XXXXXX)
 client_ns=rd15-dhcpv6-client
@@ -61,6 +63,28 @@ env | LC_ALL=C sort > "$work/dhcpcd-\$reason.env"
 EOF
 chmod 700 "$work/dhcpcd-hook"
 
+check_dhcpcd_result() {
+  local result
+  case "$mode" in
+    stateful|both)
+      result="$work/dhcpcd-BOUND6.env"
+      test -f "$result"
+      grep -Eq "^new_dhcp6_ia_na[0-9]+_ia_addr[0-9]+=fd00:1234::1(0[0-9a-f]|0[a-f])$" "$result"
+      ;;
+    stateless)
+      result="$work/dhcpcd-INFORM6.env"
+      test -f "$result"
+      if grep -q '^new_dhcp6_ia_na' "$result"; then
+        echo 'stateless DHCPv6 reply unexpectedly contains IA_NA' >&2
+        return 1
+      fi
+      ;;
+  esac
+  grep -Eq '^new_dhcp6_name_servers=.*fd00:1234::1' "$result"
+  grep -Eq '^new_dhcp6_sntp_servers=.*fd00:1234::123' "$result"
+  grep -Eq '^new_dhcp6_domain_search=.*home\.arpa' "$result"
+}
+
 systemctl start routerd.service
 /usr/local/sbin/routerctl apply -f "$candidate" --replace >"$work/apply.txt"
 for _ in {1..30}; do
@@ -84,21 +108,18 @@ jq -e 'any(.[0].addr_info[]; (.local | startswith("fd00:1234:")) and .tentative 
 # records the independently received lease/options; it does not configure the guest.
 ip netns exec "$client_ns" dhcpcd -6 -1 -B -w --waitip=6 -t 30 --noconfigure -c "$work/dhcpcd-hook" \
   -o dhcp6_name_servers -o dhcp6_sntp_servers -o dhcp6_domain_search "$client_if"
-lease=$(find "$work" -maxdepth 1 -name 'dhcpcd-BOUND6.env' -type f -print -quit)
-test -n "$lease"
-grep -Eq "^new_dhcp6_ia_na[0-9]+_ia_addr[0-9]+=fd00:1234::1(0[0-9a-f]|0[a-f])$" "$lease"
-grep -Eq '^new_dhcp6_name_servers=.*fd00:1234::1' "$lease"
-grep -Eq '^new_dhcp6_sntp_servers=.*fd00:1234::123' "$lease"
-grep -Eq '^new_dhcp6_domain_search=.*home\.arpa' "$lease"
+check_dhcpcd_result
 
 router_pid=$(systemctl show -p MainPID --value routerd.service)
 systemctl restart routerd.service
 test "$(systemctl show -p MainPID --value routerd.service)" != "$router_pid"
 ip netns exec "$client_ns" dhcpcd -6 -1 -B -w --waitip=6 -t 30 --noconfigure -c "$work/dhcpcd-hook" \
   -o dhcp6_name_servers -o dhcp6_sntp_servers -o dhcp6_domain_search "$client_if"
-restarted_lease=$(find "$work" -maxdepth 1 -name 'dhcpcd-BOUND6.env' -type f -newer "$work/status.json" -print -quit)
-test -n "$restarted_lease"
-grep -Eq "^new_dhcp6_ia_na[0-9]+_ia_addr[0-9]+=fd00:1234::1(0[0-9a-f]|0[a-f])$" "$restarted_lease"
+check_dhcpcd_result
+case "$mode" in
+  stateful|both) test "$work/dhcpcd-BOUND6.env" -nt "$work/status.json";;
+  stateless) test "$work/dhcpcd-INFORM6.env" -nt "$work/status.json";;
+esac
 
 cat >"$work/empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"dhcpv6-server-smoke"},"spec":{"resources":[]}}
@@ -110,4 +131,4 @@ for _ in {1..30}; do
   sleep 1
 done
 jq -e '.status.phase == "Healthy" and (.status.resourceCount // 0) == 0 and (.status.resourcePhaseIssues // [] | length) == 0' "$work/empty-status.json" >/dev/null
-printf 'PASS: actual routerd DHCPv6 server and RA served independent dhcpcd lease/options before and after service restart; empty apply withdrew service\n'
+printf 'PASS: actual routerd DHCPv6 server mode %s and RA served independent dhcpcd options before and after service restart; empty apply withdrew service\n' "$mode"
