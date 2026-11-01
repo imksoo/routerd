@@ -2541,7 +2541,7 @@
       },
       "required_remaining_checks": [
         "FreeBSD native IPv6StaticRoute application, forwarding, withdrawal and reboot behavior",
-        "Linux non-host-prefix and error-recovery coverage"
+        "Linux error-recovery coverage after a failed owned-route application"
       ],
       "current_registration_additions": [
         "IPv6StaticRoute"
