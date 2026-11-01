@@ -325,7 +325,8 @@ M/O and retain autonomy; `stateless` to set O only and retain autonomy; and
 `ra-only` to clear M/O and retain autonomy. It also checks the matching
 `DHCPv6Server` status, dnsmasq activity (inactive for `ra-only`), and an empty
 apply reaching Healthy with no declared resources or phase issues. Successful
-temporary output is deleted. This gate does not establish renewal/expiry,
+temporary output is deleted. A failure prints captured diagnostics to the
+invoking console, then removes the temporary output. This gate does not establish renewal/expiry,
 lease synchronization, forwarding, FreeBSD, or complete routerd 1.0 parity.
 
 ## Linux WAN RA/SLAAC lifecycle gate

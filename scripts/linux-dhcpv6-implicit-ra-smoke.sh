@@ -51,6 +51,7 @@ client_if=rd15i${work##*.}
 observer=''
 finish() {
   rc=$?
+  cleanup_rc=0
   trap - EXIT
   set +e
   if [ -n "$observer" ]; then kill "$observer" >/dev/null 2>&1; wait "$observer" >/dev/null 2>&1; fi
@@ -59,14 +60,19 @@ finish() {
     journalctl -u routerd.service --since "$(date --iso-8601=seconds -d '10 minutes ago')" --no-pager >"$work/failure-routerd.log" 2>&1
   fi
   # RA final withdrawal owns the live interface; stop it before removing the veth.
-  systemctl stop routerd.service >/dev/null 2>&1
-  ip netns del "$client_ns" >/dev/null 2>&1
-  ip link del "$router_if" >/dev/null 2>&1
+  systemctl stop routerd.service >/dev/null 2>&1 || cleanup_rc=1
+  ip netns del "$client_ns" >/dev/null 2>&1 || cleanup_rc=1
+  ip link del "$router_if" >/dev/null 2>&1 || cleanup_rc=1
   if [ "$rc" -ne 0 ]; then
-    printf 'FAIL: preserved fixture/output for local reproduction at %s\n' "$work" >&2
-  else
-    rm -r -- "$work"
+    printf 'FAIL: fixture diagnostics follow; removing temporary output.\n' >&2
+    for diagnostic in "$work"/failure-*; do
+      [ -e "$diagnostic" ] || continue
+      printf '%s:\n' "${diagnostic##*/}" >&2
+      cat "$diagnostic" >&2 || cleanup_rc=1
+    done
   fi
+  rm -rf -- "$work" || cleanup_rc=1
+  if [ "$rc" -eq 0 ] && [ "$cleanup_rc" -ne 0 ]; then rc=$cleanup_rc; fi
   exit "$rc"
 }
 trap finish EXIT
