@@ -46,8 +46,15 @@ type ipv6StaticRoutePremise struct {
 }
 
 func normalizeIPv6StaticRoute(route ipv6StaticRoute) (ipv6StaticRoute, error) {
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.Destination))
-	if err != nil || !prefix.Addr().Is6() {
+	destination := strings.TrimSpace(route.Destination)
+	prefix, err := netip.ParsePrefix(destination)
+	if err != nil {
+		address, addressErr := netip.ParseAddr(destination)
+		if addressErr != nil || !address.Is6() {
+			return route, fmt.Errorf("invalid IPv6StaticRoute destination %q", route.Destination)
+		}
+		prefix = netip.PrefixFrom(address, 128)
+	} else if !prefix.Addr().Is6() {
 		return route, fmt.Errorf("invalid IPv6StaticRoute destination %q", route.Destination)
 	}
 	gateway, err := netip.ParseAddr(strings.TrimSpace(route.Gateway))

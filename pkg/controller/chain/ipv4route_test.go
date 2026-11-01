@@ -673,3 +673,13 @@ func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
 		t.Fatalf("commands = %#v, want observation, add, readback, delete, readback", commands)
 	}
 }
+
+func TestNormalizeIPv6StaticRouteAcceptsKernelHostDestination(t *testing.T) {
+	route, err := normalizeIPv6StaticRoute(ipv6StaticRoute{Destination: "fd42:150::99", Gateway: "fd42:149::2", Device: "rd15-v6r-host", Metric: "77"})
+	if err != nil {
+		t.Fatalf("normalize kernel host destination: %v", err)
+	}
+	if route.Destination != "fd42:150::99/128" {
+		t.Fatalf("destination = %q, want /128", route.Destination)
+	}
+}
