@@ -9,11 +9,13 @@ Improve routerd in place on a separate branch. Preserve its useful networking
 behavior while removing duplicate state, conversions, unused execution paths,
 and unnecessary abstractions. Configuration and event/state database compatibility
 are explicitly not required. Initial installation uses rewritten config and a
-fresh database; there is no old-format import or in-place upgrade project.
-Convert any retained operator configuration to the routerd 1.5 format and
-validate it with routerd 1.5 before a clean install. Existing features are not
-implicitly removed. A new
-package/process/framework is justified only by the feature's needs.
+fresh database. Preparing a retained operator configuration is a one-time task:
+an operator or external tool, including AI, may rewrite it into routerd 1.5
+format, then routerd 1.5 validates it before installation. Routerd itself has
+no old-format importer, 1.0 state import, in-place 1.0-to-1.5 upgrade, or
+cross-version rollback path, and none is a qualification target. Existing
+features are not implicitly removed. A new package/process/framework is
+justified only by the feature's needs.
 
 ## Completion and first live-use milestone
 
@@ -28,10 +30,10 @@ The first live-use configuration is a home/site main router with DHCP/DNS,
 IPv4 NAT and IPv6. Its admission checks are:
 
 - Clean package installation and startup through the actual service manager,
-  using a routerd 1.5 configuration prepared (converted if needed) and validated
-  by routerd 1.5 before installation, with fresh 1.5 state and management access
-  independent of the tested WAN/LAN. Importing routerd 1.0 configuration or
-  databases and upgrading an installed 1.0 system are outside the scope.
+  using a routerd 1.5 configuration prepared before the test and validated by
+  routerd 1.5, with fresh 1.5 state and management access independent of the
+  tested WAN/LAN. The test starts from a clean install; it does not import 1.0
+  configuration/state or upgrade an installed 1.0 system.
 - Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
   IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
   upstream mode selected for the actual deployment.
