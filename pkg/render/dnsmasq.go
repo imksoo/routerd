@@ -572,19 +572,72 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 			buf.WriteString("dhcp-option=option6:domain-search," + strings.Join(dnssl, ",") + "\n")
 		}
 	}
-	for _, res := range router.Spec.Resources {
-		if res.Kind == "DHCPv4Relay" {
-			spec, err := res.DHCPv4RelaySpec()
-			if err == nil {
-				for _, iface := range spec.Interfaces {
-					if ifname := aliases[iface]; ifname != "" {
-						buf.WriteString(fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s\n", spec.Upstream, ifname))
-					}
-				}
-			}
-		}
+	relayLines, err := DnsmasqDHCPv4RelayLines(router)
+	if err != nil {
+		return err
+	}
+	for _, line := range relayLines {
+		buf.WriteString(line)
+		buf.WriteByte('\n')
 	}
 	return nil
+}
+
+// DnsmasqDHCPv4RelayLines renders DHCPv4 relay directives from declared
+// interface addresses. dnsmasq uses the first field as both its local source
+// address and the relay's giaddr, so a wildcard address cannot relay DHCP.
+func DnsmasqDHCPv4RelayLines(router *api.Router) ([]string, error) {
+	if router == nil {
+		return nil, nil
+	}
+	var lines []string
+	for _, relay := range router.Spec.Resources {
+		if relay.Kind != "DHCPv4Relay" {
+			continue
+		}
+		spec, err := relay.DHCPv4RelaySpec()
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, iface := range spec.Interfaces {
+			if seen[iface] {
+				continue
+			}
+			seen[iface] = true
+			localAddress, err := dnsmasqDHCPv4RelayLocalAddress(router, relay.ID(), iface)
+			if err != nil {
+				return nil, err
+			}
+			lines = append(lines, fmt.Sprintf("dhcp-relay=%s,%s", localAddress, spec.Upstream))
+		}
+	}
+	return lines, nil
+}
+
+func dnsmasqDHCPv4RelayLocalAddress(router *api.Router, relayID, iface string) (string, error) {
+	var addresses []netip.Addr
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil {
+			return "", err
+		}
+		if spec.Interface != iface {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(spec.Address)
+		if err != nil || !prefix.Addr().Is4() {
+			return "", fmt.Errorf("%s has invalid IPv4StaticAddress %s on %s", relayID, resource.ID(), iface)
+		}
+		addresses = append(addresses, prefix.Addr())
+	}
+	if len(addresses) != 1 {
+		return "", fmt.Errorf("%s interface %q requires exactly one IPv4StaticAddress, found %d", relayID, iface, len(addresses))
+	}
+	return addresses[0].String(), nil
 }
 
 func dnsmasqExpandDomainValues(router *api.Router, base []string, sources []api.StatusValueSourceSpec) []string {

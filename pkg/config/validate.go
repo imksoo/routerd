@@ -428,6 +428,16 @@ func validateForOS(router *api.Router, targetOS platform.OS, allowRuntimePayload
 				if !idx.Interfaces[name] {
 					return fmt.Errorf("%s spec.idx.Interfaces[%d] references missing Interface %q", res.ID(), i, name)
 				}
+				addressCount := 0
+				ifname := api.ResolveInterfaceIfName(router, name)
+				for _, address := range idx.StaticIPv4ByName {
+					if address.iface == ifname {
+						addressCount++
+					}
+				}
+				if addressCount != 1 {
+					return fmt.Errorf("%s spec.interfaces[%d] requires exactly one IPv4StaticAddress on %q, found %d", res.ID(), i, name, addressCount)
+				}
 			}
 		}
 		if res.Kind == "IPv6DelegatedAddress" {

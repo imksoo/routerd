@@ -399,6 +399,32 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	}
 }
 
+func TestDnsmasqConfigRejectsRelayWithoutUniqueStaticIPv4Address(t *testing.T) {
+	base := []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+	}
+	for _, tc := range []struct {
+		name      string
+		addresses []api.Resource
+		want      string
+	}{
+		{name: "missing address", want: `DHCPv4Relay/relay interface "lan" requires exactly one IPv4StaticAddress, found 0`},
+		{name: "multiple addresses", addresses: []api.Resource{
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-a"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-b"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.2/24"}},
+		}, want: `DHCPv4Relay/relay interface "lan" requires exactly one IPv4StaticAddress, found 2`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			router := &api.Router{Spec: api.RouterSpec{Resources: append(append([]api.Resource{}, base...), tc.addresses...)}}
+			_, _, err := DnsmasqConfig(router, DnsmasqRuntime{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("DnsmasqConfig error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestDnsmasqConfigResolvesDirectIPv6SourcesFromDelegatedAddress(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
