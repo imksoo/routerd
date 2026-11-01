@@ -215,6 +215,31 @@
         "FreeBSD Bridge child proof"
       ]
     },
+    "linux-bridge-pve-54b27326": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "54b27326ac550caa6e7889e854489389a90ea524",
+      "reference": "docs/design/routerd15-plan.md#current-linux-execution-checkpoint-2026-11-02",
+      "source_binding": {
+        "routerd_sha256": "e97924c98425b9934b407d384f1ad59e179f6b11502f98e9ab4d3577467b6774",
+        "routerctl_sha256": "7d36c2e5508dd5288bb1265816af5f8224c4cb03db784cbc93f64fd7a154f689",
+        "candidate_config_sha256": "184e7138e89b06b05423945272dd08bcccc3245c0567c361d9e7c433612620f4"
+      },
+      "environment": "隔離した PVE 環境の VLAN 3131 と 3132。VM219 は空の 1.5 状態領域で候補実行物を稼働し、VM224 と VM220 は各 VLAN に独立した Linux 端点を持ちます。",
+      "checks": [
+        "`br-pve` を生成し、VLAN 3131 の `rd15-lan` と VLAN 3132 の `rd15-wan` はスパニングツリープロトコル無効の転送状態になった",
+        "端点の IPv4 アドレスは 198.18.31.2/24 と 198.18.31.3/24 であり、候補ブリッジは両端点の MAC アドレスを異なるメンバーで学習した",
+        "端点の既存 routerd 防火壁が VLAN 子インターフェースからの入力を拒否することを確認し、試験中だけ端点の既存 routerd プロセスと生成済み防火壁表を停止した。候補実行物の防火壁構成は変更しなかった",
+        "この条件で両端点の ICMP は各方向 3 回すべて成功した",
+        "候補実行物の再起動後も `br-pve` と両メンバーを再生成し、両方向の ICMP は各 3 回すべて成功した",
+        "ブリッジ資源を含まない構成への置換で `br-pve` とメンバー接続が消え、両方向の ICMP は 3 回すべて失敗した",
+        "完全な候補構成の再適用でブリッジ、両メンバーおよび両方向の ICMP を回復した",
+        "試験後は VM219 の元の実行物、設定、状態領域と IPv4 アドレス、VM220 の元の routerd、VM224 の停止状態を復元し、候補 ISO と一時資材を削除した"
+      ],
+      "excludes": [
+        "FreeBSD、物理ネットワーク、スパニングツリープロトコル有効時および完全なブリッジ機能認定"
+      ]
+    },
     "freebsd-smokes-86ffc265": {
       "level": "native-kernel",
       "outcome": "pass",
@@ -2325,6 +2350,7 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-bridge-aa9f3cac",
+          "linux-bridge-pve-54b27326",
           "linux-bridge-vxlan-native-f54ceecb",
           "linux-combined-native-3e58c93a"
         ]
@@ -2334,7 +2360,6 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Independent bridged peer forwarding",
         "FreeBSD Bridge child proof and equivalent lifecycle"
       ],
       "current_registration_additions": [

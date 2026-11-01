@@ -199,6 +199,25 @@ VM224 から同じゲートウェイへ送った 3 回の ICMP はすべて失�
 複数の仮想ルーティング・転送の転送・分離に関する限定証跡です。再起動、構成撤去および復旧も確認しました。
 IPv6、FreeBSD および全機能認定は未確認です。
 
+Linux 環境のブリッジ（Bridge）試験では、`54b27326` の候補実行物を隔離した PVE 環境で実行しました。
+空の 1.5 状態領域から、VLAN 3131 の `rd15-lan` と VLAN 3132 の `rd15-wan` をメンバーにする
+`br-pve` を作成しました。スパニングツリープロトコルは試験構成で無効にし、二つのメンバーは
+ともに転送状態になりました。VM224 の VLAN 3131 側に `198.18.31.2/24`、独立 VM220 の VLAN 3132 側に
+`198.18.31.3/24` を設定しました。
+
+最初の ICMP は端点 VM の既存防火壁が VLAN 子インターフェースからの入力を拒否したため失敗しました。
+ARP の解決と候補ブリッジの MAC 学習を確認した後、試験中だけ端点の既存 routerd プロセスを停止し、端点側の
+生成済み防火壁表を削除しました。候補実行物の防火壁構成は変更していません。この条件で、両端点の
+ICMP は各方向 3 回すべて成功しました。候補実行物の再起動後も `br-pve` と両メンバーを再生成し、
+両方向の ICMP は各 3 回すべて成功しました。
+
+ブリッジ資源を含まない構成へ置換すると `br-pve` は消え、二つの VLAN 子インターフェースはメンバーでなくなり、
+両方向の ICMP は 3 回すべて失敗しました。完全な候補構成を再適用すると、ブリッジ、メンバー状態および
+両方向の通信を回復しました。試験後は VM219 の元の実行物、設定、状態領域と三つの IPv4 アドレス、
+VM220 の元の routerd、VM224 の停止状態を復元し、候補 ISO と一時資材を削除しました。これは Linux 環境の
+独立ブリッジ転送、再起動、構成撤去および復旧に関する限定証跡です。FreeBSD、物理ネットワークおよび
+全機能認定は未確認です。
+
 The next Linux work selects the highest remaining product function with a
 concrete independent peer or client. It must record actual kernel and packet
 effects, withdrawal and recovery where the function requires them. No timing
