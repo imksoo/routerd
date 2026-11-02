@@ -79,6 +79,42 @@ func TestLANCurrentAddressUsesFiniteRemainingPDLifetimeAndRenews(t *testing.T) {
 	}
 }
 
+func TestLANWithdrawsPublishedAddressWhenFiniteLifetimeRoundsToZero(t *testing.T) {
+	acquired := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	_, store, controller := finiteLANFixture(acquired)
+	address := "2001:db8:1200:1::1/64"
+	if err := store.SaveObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address", map[string]any{
+		"phase": "Applied", "address": address, "interface": "lan", "ifname": "lan0", "prefixSource": "wan-pd",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recordLANReceiptForTest(t, store, "lan-address", "lan0", "wan-pd", address)
+	present := installLANIOFixture(&controller, address)
+	now := acquired.Add(120*time.Second - 500*time.Millisecond)
+	controller.Now = func() time.Time { return now }
+
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatalf("subsecond remaining lifetime became a reconcile error: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
+	receipt, err := delegatedReceipt(status)
+	if err != nil || status["phase"] != "Pending" || status["reason"] != "PDLeaseStale" || status["address"] != nil || receipt == nil || !receipt.has(address) || !present[address] {
+		t.Fatalf("subsecond expiry did not withdraw the published source while preserving native ownership: status=%v receipt=%v present=%v err=%v", status, receipt, present[address], err)
+	}
+
+	// The kernel's finite lifetime reaches zero at the exact authority deadline.
+	now = acquired.Add(120 * time.Second)
+	delete(present, address)
+	if err := controller.reconcile(t.Context(), "wan-pd"); err != nil {
+		t.Fatal(err)
+	}
+	status = store.ObjectStatus(api.NetAPIVersion, "IPv6DelegatedAddress", "lan-address")
+	receipt, err = delegatedReceipt(status)
+	if err != nil || status["address"] != nil || receipt != nil {
+		t.Fatalf("expired native receipt did not retire after kernel expiry: status=%v receipt=%v err=%v", status, receipt, err)
+	}
+}
+
 func TestLANCurrentLifetimeRechecksAfterObservationBeforeWrite(t *testing.T) {
 	acquired := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	now := acquired

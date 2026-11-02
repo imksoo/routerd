@@ -5337,7 +5337,7 @@ func (c LANAddressController) reconcile(ctx context.Context, pdName string) erro
 	if err != nil {
 		return err
 	}
-	activePD := found && lease.Phase == daemonapi.ResourcePhaseBound && lease.HasFreshTransactionEvidence(now)
+	activePD := found && lease.Phase == daemonapi.ResourcePhaseBound && lease.HasFreshTransactionEvidence(now) && remainingPDLifetime(lease.LastReplyAt, lease.ValidSeconds, now) > 0
 	prefix := lease.CurrentPrefix
 	if !activePD {
 		declared := c.DeclaredRouter

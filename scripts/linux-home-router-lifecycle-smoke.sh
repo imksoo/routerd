@@ -313,8 +313,12 @@ ip netns exec "$lan_ns" "$rdisc" -1 -r 5 -w 2000 peer0 > "$work/ra.txt" || true
 grep '2001:db8:1500::/64' "$work/ra.txt"
 cat > "$work/dhcpcd6.conf" <<'EOF'
 interface peer0
+  noipv6rs
   ia_na 42
 EOF
+# dhcpcd handles Router Advertisements by default and removes the SLAAC address
+# and default route it owns when stopped. This client only qualifies DHCPv6
+# IA_NA; the kernel remains the independent SLAAC and RA-route implementation.
 # Keep dhcpcd's pid and lease files private to the client namespace while the
 # real routerd service owns DHCPv6, RA and the dynamic delegated LAN prefix.
 # shellcheck disable=SC2016 # evaluated inside the client's private mount namespace
@@ -371,6 +375,11 @@ dhcp6_pid=
 if ip netns exec "$lan_ns" ip -6 -o addr show dev peer0 | grep -Fq "$assigned_ia_na/64"; then
 	ip -n "$lan_ns" -6 addr del "$assigned_ia_na/64" dev peer0
 fi
+client_ready || {
+	cat "$work/dhcpcd6.log" >&2
+	echo 'DHCPv6 IA_NA client changed the independent kernel SLAAC/default-route state' >&2
+	exit 1
+}
 probe_v4() {
  local source answer
  for mode in +notcp +tcp; do

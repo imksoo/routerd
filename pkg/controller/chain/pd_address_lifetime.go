@@ -108,6 +108,7 @@ func (c LANAddressController) saveAddressPending(name, reason, message string) e
 	for _, key := range []string{"ownerKey", "ownerRef", "ownerRefs", "lifecycleClass"} {
 		delete(next, key)
 	}
+	delete(next, "address")
 	next["phase"] = "Pending"
 	if reason != "" {
 		next["reason"] = reason
