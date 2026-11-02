@@ -2066,6 +2066,22 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dhcp-dns-nat-withdrawal-3763f102": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3763f1025592b3b9b7ffa6aa361e0d87333e99c8",
+      "reference": "evidence/routerd15-3763f102-dhcp-dns-nat-three-vm-vlan-pve-20261102.md",
+      "environment": "Authorized PVE VLANs 3131 and 3132. VM219 ran the candidate; VM224 was an independent BusyBox DHCP client and VM220 was an independent DNS and HTTP upstream peer.",
+      "checks": [
+        "DHCPv4 lease options, lease-derived DNS addition and explicit DHCPRELEASE DNS tombstone were observed from VM224.",
+        "Local and upstream DNS, NAT44 source masquerade, WAN-to-LAN DNS denial, routerd restart, empty configuration withdrawal and configuration recovery were observed over the isolated VLANs.",
+        "The prior exact routerd-generated dnsmasq systemd unit was updated to the PartOf-linked unit without claiming modified foreign units."
+      ],
+      "excludes": [
+        "Router-host reboot or interrupted-apply recovery with active dynamic leases, WAN DHCP client behavior, all DNS policies/transports and negative replies.",
+        "IPv6, FreeBSD, complete routerd 1.0 functional parity, and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-home-integration-2a43a0e8": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3171,6 +3187,7 @@
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
           "linux-dhcpv4-reservation-pve-2c3fe143",
           "linux-dhcpv4-expiry-conflict-pve-6420b8ba",
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
           "linux-pve-home-integration-2a43a0e8"
         ]
       },
@@ -3180,7 +3197,7 @@
       },
       "required_remaining_checks": [
         "Router-host reboot and interrupted-apply recovery with active dynamic leases",
-        "DHCP-derived DNS updates and WAN DHCP client behavior"
+        "WAN DHCP client behavior"
       ]
     },
     {
@@ -3469,7 +3486,8 @@
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-dns-forward-withdrawal-409719ba",
           "linux-pve-dns-forward-withdrawal-5d71ee8c",
-          "linux-pve-dns-three-vm-vlan-485b0f7b"
+          "linux-pve-dns-three-vm-vlan-485b0f7b",
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
         ]
       },
       "freebsd": {
@@ -3481,7 +3499,7 @@
       },
       "required_remaining_checks": [
         "All baseline source/query policies, private containment and DNS transports",
-        "Lease update/tombstone and negative replies"
+        "Negative replies"
       ]
     },
     {
@@ -3851,7 +3869,8 @@
           "linux-nat44-flow-dnat-pinhole-3587ac28",
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-port-forward-withdrawal-409719ba",
-          "linux-pve-nat44-withdrawal-d467ab70"
+          "linux-pve-nat44-withdrawal-d467ab70",
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
         ]
       },
       "freebsd": {
@@ -3952,7 +3971,8 @@
           "linux-dhcp-firewall-lifecycle-5431ad2a",
           "linux-pve-firewall-zone-withdrawal-409719ba",
           "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23",
-          "linux-pve-local-service-redirect-withdrawal-54cc8e23"
+          "linux-pve-local-service-redirect-withdrawal-54cc8e23",
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
         ]
       },
       "freebsd": {
