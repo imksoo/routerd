@@ -425,6 +425,16 @@ effects, withdrawal and recovery where the function requires them. No timing
 threshold or compatibility requirement beyond the stated product function is
 introduced by this checkpoint.
 
+現行リビジョン `81444257` では、IPv6 の `hostTraffic` 方針を PVE の VM219 と独立 VM220 で
+確認しました。候補機自身の HTTP は、優先度 10119 の `main` 経路表抑制規則と、優先度 10120 の
+経路表 120 を通り、VM220 は候補の IPv6 送信元を記録しました。空の新規 1.5 構成への置換では
+所有規則と既定経路が消え、新規 HTTP は接続不能となりました。同じ構成の再適用後は規則、経路、
+HTTP が復旧しました。これは候補機自身が生成する IPv6 通信の限定証跡です。LAN 転送、IPv4 方針、
+ハッシュ方式、マーク方式、動的経路条件、VRRP、物理 WAN 障害、FreeBSD および全機能認定は
+未確認です。詳細は
+[`routerd15-81444257-ipv6-host-policy-pve-20261102.md`](../../evidence/routerd15-81444257-ipv6-host-policy-pve-20261102.md)
+に記録しています。
+
 ## Work sequence
 
 1. **Health to PBR (initial implementation).** Decode current status at its
