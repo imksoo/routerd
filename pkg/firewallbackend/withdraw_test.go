@@ -16,16 +16,16 @@ import (
 
 func TestNftablesWithdrawalRequiresNativeOwnershipAndAcknowledgement(t *testing.T) {
 	for _, tc := range []struct {
-		name, inventory    string
-		readErr, deleteErr bool
-		wantErr            bool
+		name, inventory  string
+		readErr, loadErr bool
+		wantErr          bool
 	}{
 		{name: "owned", inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42,"comment":"routerd.owner=routerd routerd.generation=1"}}]}`},
 		{name: "absent", inventory: `{"nftables":[]}`},
 		{name: "foreign", inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42}}]}`, wantErr: true},
 		{name: "read-failed", readErr: true, wantErr: true},
 		{name: "malformed", inventory: `broken`, wantErr: true},
-		{name: "delete-failed", inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42,"comment":"routerd.owner=routerd routerd.generation=1"}}]}`, deleteErr: true, wantErr: true},
+		{name: "load-failed", inventory: `{"nftables":[{"table":{"family":"inet","name":"routerd_filter","handle":42,"comment":"routerd.owner=routerd routerd.generation=1"}}]}`, loadErr: true, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "firewall.nft")
@@ -46,29 +46,33 @@ func TestNftablesWithdrawalRequiresNativeOwnershipAndAcknowledgement(t *testing.
 						return nil, errors.New("read denied")
 					}
 					return []byte(tc.inventory), nil
-				case "delete table inet handle 42":
-					if tc.deleteErr {
-						return nil, errors.New("delete denied")
+				case "-c -f " + path:
+					return nil, nil
+				case "-f " + path:
+					if tc.loadErr {
+						return nil, errors.New("load denied")
 					}
 					return nil, nil
 				default:
 					return nil, errors.New("unexpected command: " + call)
 				}
 			}}
-			_, err := b.Apply(t.Context(), Ruleset{Path: path}, false)
+			changed, err := b.Apply(t.Context(), Ruleset{Path: path}, false)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err=%v calls=%v", err, calls)
 			}
 			data, readErr := os.ReadFile(path)
-			if tc.wantErr {
+			if tc.wantErr && !tc.loadErr {
 				if readErr != nil || string(data) != string(prior) {
-					t.Fatalf("failed withdrawal lost retry input: %q %v", data, readErr)
+					t.Fatalf("failed observation lost prior rules: %q %v", data, readErr)
 				}
-				if len(calls) > 1 && tc.name != "delete-failed" {
-					t.Fatalf("unsafe deletion: %v", calls)
-				}
-			} else if !os.IsNotExist(readErr) {
-				t.Fatalf("successful withdrawal retained stale rules: %q %v", data, readErr)
+				return
+			}
+			if readErr != nil || !strings.Contains(string(data), "chain forward { type filter hook forward priority filter; policy drop; }") {
+				t.Fatalf("withdrawal did not retain fail-closed retry input: %q %v", data, readErr)
+			}
+			if !tc.wantErr && (!changed || !strings.Contains(strings.Join(calls, "\n"), "-c -f "+path+"\n-f "+path)) {
+				t.Fatalf("successful withdrawal did not validate and load fallback: changed=%v calls=%v", changed, calls)
 			}
 		})
 	}

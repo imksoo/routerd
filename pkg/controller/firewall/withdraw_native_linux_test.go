@@ -60,8 +60,8 @@ func TestFirewallNativeWithdrawal(t *testing.T) {
 			if err := c.Reconcile(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if got := run("-j", "list", "tables"); strings.Contains(got, "routerd_filter") {
-				t.Fatalf("removed configuration left live filter: %s", got)
+			if got := run("list", "table", "inet", "routerd_filter"); !strings.Contains(got, "chain forward") || !strings.Contains(got, "policy drop") {
+				t.Fatalf("removed configuration did not leave a fail-closed live filter: %s", got)
 			}
 			if err := c.Reconcile(t.Context()); err != nil {
 				t.Fatalf("second withdrawal: %v", err)
