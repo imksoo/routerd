@@ -51,8 +51,8 @@ type applyAttemptError struct {
 }
 
 func (e *applyAttemptError) Error() string {
-	phase := "Unknown"
-	if e.Outcome.Result != nil {
+	phase := "Unconfirmed"
+	if e.Outcome.Result != nil && e.Outcome.Stage != "runtime-admission" && e.Outcome.Stage != "runtime-apply" {
 		phase = e.Outcome.Result.Phase
 	}
 	message := fmt.Sprintf("apply failed: stage=%s phase=%s generation=%d canonical=%s durabilityConfirmed=%t terminalAttempted=%t terminalSucceeded=%t runtimeKnown=%t runtimeAvailable=%t activeEpoch=%d operation=%d", e.Outcome.Stage, phase, e.Outcome.Generation, e.Outcome.Canonical, e.Outcome.DurabilityConfirmed, e.Outcome.TerminalAttempted, e.Outcome.TerminalSucceeded, e.Outcome.Runtime.Active.Known, e.Outcome.Runtime.Active.Available, e.Outcome.Runtime.Active.Epoch, e.Outcome.Runtime.OperationID)
