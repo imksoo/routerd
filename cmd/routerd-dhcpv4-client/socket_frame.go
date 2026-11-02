@@ -8,11 +8,17 @@ import (
 	"net"
 )
 
-// ipv4Broadcast keeps the DHCP source in the packet rather than accepting a
-// kernel-selected address from another interface.
-func ipv4Broadcast(packet dhcpv4client.Packet) []byte {
+// Before binding, DHCP must use 0.0.0.0 even if the interface has other IPv4
+// addresses. Broadcast through the link socket instead of kernel source choice.
+func ethernetBroadcast(src net.HardwareAddr, packet dhcpv4client.Packet) []byte {
 	ipLen := 20 + 8 + len(packet.Payload)
-	ip := make([]byte, ipLen)
+	frame := make([]byte, 14+ipLen)
+	for i := 0; i < 6; i++ {
+		frame[i] = 0xff
+	}
+	copy(frame[6:12], src)
+	binary.BigEndian.PutUint16(frame[12:14], 0x0800)
+	ip := frame[14:]
 	ip[0], ip[8], ip[9] = 0x45, 64, 17
 	binary.BigEndian.PutUint16(ip[2:4], uint16(ipLen))
 	copy(ip[12:16], packet.Source.AsSlice())
@@ -23,18 +29,6 @@ func ipv4Broadcast(packet dhcpv4client.Packet) []byte {
 	binary.BigEndian.PutUint16(udp[2:4], 67)
 	binary.BigEndian.PutUint16(udp[4:6], uint16(8+len(packet.Payload)))
 	copy(udp[8:], packet.Payload)
-	return ip
-}
-
-func ethernetBroadcast(src net.HardwareAddr, packet dhcpv4client.Packet) []byte {
-	ip := ipv4Broadcast(packet)
-	frame := make([]byte, 14+len(ip))
-	for i := 0; i < 6; i++ {
-		frame[i] = 0xff
-	}
-	copy(frame[6:12], src)
-	binary.BigEndian.PutUint16(frame[12:14], 0x0800)
-	copy(frame[14:], ip)
 	return frame
 }
 
