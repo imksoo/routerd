@@ -1,0 +1,63 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: pve07-dslite-pd-source-through-traffic
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: lan}
+      spec: {ifname: rd15-lan, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: wan}
+      spec: {ifname: rd15-wan, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv4StaticAddress
+      metadata: {name: lan-v4}
+      spec: {interface: lan, address: 198.18.15.1/24}
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata: {name: forward-v4}
+      spec: {key: net.ipv4.ip_forward, value: "1"}
+    - apiVersion: system.routerd.net/v1alpha1
+      kind: Sysctl
+      metadata: {name: forward-v6}
+      spec: {key: net.ipv6.conf.all.forwarding, value: "1"}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DHCPv6PrefixDelegation
+      metadata: {name: wan-pd}
+      spec: {interface: wan, profile: default, prefixLength: 60}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: IPv6DelegatedAddress
+      metadata: {name: lan-v6}
+      spec: {prefixDelegation: wan-pd, interface: lan, subnetID: "0", addressSuffix: "::1", announce: true}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DSLiteTunnel
+      metadata: {name: isolated-aftr}
+      spec:
+        interface: wan
+        tunnelName: rd15-dslite
+        aftrIPv6: 2001:db8:16::1
+        localAddressSource: delegatedAddress
+        localDelegatedAddress: lan-v6
+        localAddressSuffix: "::100"
+        defaultRoute: true
+        routeMetric: 10
+        mtu: 1454
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: NAT44Rule
+      metadata: {name: lan-to-dslite}
+      spec: {type: masquerade, sourceRanges: [198.18.15.0/24], egressInterface: isolated-aftr}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: lan}
+      spec: {role: trust, interfaces: [lan]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: wan}
+      spec: {role: untrust, interfaces: [wan, isolated-aftr]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata: {name: default}
+      spec: {logDeny: true}

@@ -273,6 +273,10 @@ IPv4/IPv6 の待受を撤回しました。空の既定遮断用 `inet routerd_f
 
 この証跡は静的 IPv6 送信元の DS-Lite、NAT44、TCP MSS、候補再起動、撤回、再適用に限ります。DHCPv6-PD の送信元失効・再取得、AFTR 名解決・冗長化、FreeBSD の PF、物理ネットワークは未確認です。詳細は `evidence/routerd15-7fbafbbc-dslite-nat-restart-withdrawal-pve-20261102.md` に記録します。
 
+現行リビジョン `4655971e` では、同じ三 VM・分離 VLAN 構成で DS-Lite の外側送信元を `DHCPv6PrefixDelegation/wan-pd` の `2001:db8:1500::/60` から生成しました。候補は LAN に `2001:db8:1500::100/128` を設定し、これを外側送信元として `rd15-dslite` を作成しました。VM224 の IPv4 HTTP は VM220 の独立AFTRとHTTP端点に届き、AFTRは変換後の `192.0.0.2` と MSS 1414 を記録しました。
+
+Keaだけを停止して35秒の試験用リースを失効させると、候補は委任送信元、`rd15-dslite`、DS-Lite既定経路を撤回し、VM224の新規HTTPは失敗しました。Keaだけを戻すと、候補プロセスを再起動せず約3秒で委任、トンネル、既定経路、HTTP通信を自動復旧しました。AFTRのFQDN解決・冗長切替、FreeBSD PF、物理ネットワークは未確認です。詳細は `evidence/routerd15-4655971e-dslite-delegated-source-pve-20261102.md` に記録します。
+
 `e83b639b` の候補実行物では、静的な `IPv4Route/private-10-blackhole` を VLAN 3131 と
 VLAN 3132 の独立 VM で確認しました。黒穴経路がある間、VM224 の `10.23.45.67` 宛て ICMP は
 すべて失敗し、VM220 の上流捕捉は 0 でした。黒穴経路を撤回すると同じ要求 1 回を上流で捕捉し、

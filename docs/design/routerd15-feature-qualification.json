@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "7fbafbbc3a2e3ee2ac89243091094865c0352721",
+    "as_of_revision": "4655971e87ca1dcae740dd8d59190a971aab120b",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 173,
+    "scoped_linux_evidence_references": 174,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 94,
+    "open_check_statements": 93,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DS-Lite: 独立 AFTR と IPv4 HTTP、NAT44、TCP MSS、候補再起動、撤回、再適用",
-    "next_scope": "DS-Lite: 委譲 IPv6 送信元の失効と再取得",
+    "last_closed_scope": "DS-Lite: DHCPv6-PD 委譲 IPv6 送信元、自然失効の撤回、Kea 復帰による自動再取得",
+    "next_scope": "DS-Lite: AFTR FQDN 解決と冗長切替",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -2237,6 +2237,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dslite-delegated-source-recovery-4655971e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "4655971e87ca1dcae740dd8d59190a971aab120b",
+      "reference": "evidence/routerd15-4655971e-dslite-delegated-source-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 19f26c7cc938bb98d83ad0e92d0ec7fc289d064403b128c56b2228198484b7c9.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 ran the Linux candidate from a new state directory. Independent VM220 provided Kea DHCPv6-PD, AFTR and HTTP on VLAN 3132; independent VM224 was the IPv4 client on VLAN 3131.",
+      "checks": [
+        "Kea delegated 2001:db8:1500::/60. The candidate derived 2001:db8:1500::100/128 as the DS-Lite outer source, created rd15-dslite and forwarded VM224 HTTP through the independent AFTR.",
+        "VM220 observed the translated inner source 192.0.0.2. The AFTR capture observed MSS 1414 and candidate conntrack retained the original 198.18.15.10 tuple.",
+        "Stopping only Kea expired the delegation and withdrew the dedicated source, DS-Lite device and default route. VM224 new HTTP failed.",
+        "Restarting only Kea recovered delegation, DS-Lite, route and VM224 HTTP automatically; routerd was not restarted and final status was Healthy with 12 resources."
+      ],
+      "excludes": [
+        "AFTR FQDN resolution and redundancy, IPv6 client traffic, multipath, performance, physical access and FreeBSD PF.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4088,7 +4106,8 @@
           "linux-combined-native-3e58c93a",
           "linux-vlan-clients-39156bb6",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
-          "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc"
+          "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc",
+          "linux-pve-dslite-delegated-source-recovery-4655971e"
         ]
       },
       "freebsd": {
@@ -4098,7 +4117,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Delegated IPv6 source expiry and automatic re-acquisition",
+        "AFTR FQDN resolution and redundant endpoint withdrawal/recovery",
         "FreeBSD PF binding and independent packaged traffic"
       ]
     },
