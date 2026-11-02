@@ -762,6 +762,28 @@
         "WAN DHCP reboot/NAK/server identity changes and complete 1.0 parity"
       ]
     },
+    "linux-wan-dhcpv4-1f9fc319": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "1f9fc3190455d61988865aa8fef0233dcb338af2",
+      "fixture_revision": "4ac07b786556a55f1e0daaa4df4bc18973b4d296",
+      "reference": "docs/design/routerd15-audit.md#current-source-wan-dhcpv4-rerun-2026-11-02",
+      "package_sha256": "6b1d36140e2fcc6e6b3a7bd54509f701f361b86c796ac7d5283ee5bf405f8184",
+      "environment": "Dedicated Ubuntu 24.04.4 VM, Linux 6.8.0-124-generic; formal CGO_ENABLED=0 make dist package through systemd; Kea 2.4.1 in a temporary runtime root, with upstream DNS/HTTP and LAN client in separate namespaces.",
+      "reproduction": "sudo bash scripts/linux-wan-dhcpv4-lifecycle-smoke.sh --disposable-vm \"$PWD/tests/fixtures/linux-wan-dhcpv4-lifecycle.json\" /opt/routerd15-wan4/kea",
+      "checks": [
+        "Fresh package install with a prepared empty 1.5 config reaches Healthy before apply; DHCPv4 acquires the configured address, default route and systemd-resolved DNS/domain.",
+        "LAN DNS over UDP/TCP and HTTP pass; upstream HTTP peer observes the leased WAN address after NAT.",
+        "T1 renewal advances the lease epoch; capture verifies unicast Renew, broadcast Rebind with ciaddr and matching server ACK.",
+        "Real lease expiry withdraws the WAN address, default route, learned DNS/domain and forwarding; traffic then fails.",
+        "Kea-only return restores address, route, DNS and NAT without routerd restart; empty apply withdraws the configuration and cleanup restores the guest."
+      ],
+      "excludes": [
+        "IPv6 PD/RA combined with the DHCPv4 WAN path",
+        "Physical/separate-host ISP interoperability, FreeBSD, WAN NAK/server identity changes and multi-WAN failover",
+        "Complete routerd 1.0 function parity or production qualification"
+      ]
+    },
     "linux-wan-first-apply-4ac07b78": {
       "level": "actual-controller",
       "outcome": "fail",
@@ -2521,10 +2543,11 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-wan-dhcpv4-31d5f4d4",
-          "linux-wan-first-apply-4ac07b78",
-          "normal-code-gate-31d5f4d4"
-        ]
+        "linux-wan-dhcpv4-31d5f4d4",
+        "linux-wan-first-apply-4ac07b78",
+        "normal-code-gate-31d5f4d4",
+        "linux-wan-dhcpv4-1f9fc319"
+      ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2876,7 +2899,8 @@
           "linux-dns-resolver-runtime-4ed306f9",
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-dhcp-firewall-1f9fc319"
+          "linux-dhcp-firewall-1f9fc319",
+          "linux-wan-dhcpv4-1f9fc319"
         ]
       },
       "freebsd": {
@@ -3245,7 +3269,8 @@
           "linux-independent-ipv4-6135bb03",
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-dhcp-firewall-1f9fc319"
+          "linux-dhcp-firewall-1f9fc319",
+          "linux-wan-dhcpv4-1f9fc319"
         ]
       },
       "freebsd": {

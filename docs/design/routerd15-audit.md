@@ -1857,6 +1857,20 @@ outputs and superseded duplicate packages are removed after the final pass.
 The ledger binds the package hash and revisions. FreeBSD WAN DHCP, reboot/NAK,
 server identity changes, multi-WAN failover and complete 1.0 parity remain open.
 
+### Current-source WAN DHCPv4 rerun, 2026-11-02
+
+The same complete gate passed again with the formal package built from
+`1f9fc3190455d61988865aa8fef0233dcb338af2` (archive SHA-256
+`6b1d36140e2fcc6e6b3a7bd54509f701f361b86c796ac7d5283ee5bf405f8184`), installed
+cleanly with a prepared empty 1.5 config and fresh state on Ubuntu 24.04.4 /
+Linux 6.8.0-124. It passed DHCP acquisition, actual T1 Renew and captured T2
+Rebind/ACK, metric-qualified route and learned DNS, LAN DNS/NAT traffic, real
+lease-expiry withdrawal, Kea-only recovery without product restart, and empty
+apply. Kea 2.4.1 was unpacked into a temporary runtime root from Ubuntu packages;
+the VM received no Kea package installation. The test and routerd were removed
+afterward and raw output was not retained. This remains IPv4-only coverage; it
+does not combine WAN DHCPv4 with IPv6 PD/RA or qualify an ISP link.
+
 ### Observe-only WAN RA host effects
 
 At `7acdc692`, `IPv6RAAddress.managed: false` still generated an
