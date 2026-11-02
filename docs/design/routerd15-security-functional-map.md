@@ -18,7 +18,7 @@ routerd 1.5 は、旧設定形式を読み込まず、新しい設定で同じ�
 | 公開 DNS/NTP 宛の LAN 通信をローカルサービスへ誘導 | `IPAddressSet/public-dns`、`IPAddressSet/public-ntp`、`LocalServiceRedirect/lan-local-services` | VLAN 3131 の独立 VM224 から、公開宛て相当の UDP DNS と UDP NTP をローカル応答器へ転送し、規則撤回後の DNS 到達不能・NTP タイムアウト、再適用後の両応答復旧を実測済み | 既存通信の扱い |
 | 管理インターフェースを指定 CIDR に限定し、設定変更でのロックアウトを防止 | `ManagementAccess/mgmt-lockout-guard` と管理用 `FirewallZone` | VLAN 3133 で、許可した `198.18.63.10/32` の HTTP 到達、非許可 `198.18.63.11/32` の遮断、制限撤回時の到達、再適用後の再遮断を実測済み | IPv6、SSH と WebConsole、複数 CIDR、データプレーン障害中の管理経路 |
 | BGP の受入・広告範囲を限定 | `BGPRouter` の `importPolicy`、`exportPolicy`、`redistribute` | VLAN 3132 の BGP 経路導入・撤回・復旧は実測済み。接頭辞方針は未検証 | 許可接頭辞、拒否接頭辞、撤回、再広告とカーネル経路 |
-| 私設網宛の不用意な外部転送を防止 | `IPv4Route/private-10-blackhole` と `EgressRoutePolicy` の除外 CIDR | 未検証 | ブラックホール経路、除外先、通常宛先の転送、撤回 |
+| 私設網宛の不用意な外部転送を防止 | `IPv4Route/private-10-blackhole` と `EgressRoutePolicy` の除外 CIDR | VLAN 3131 の要求は黒穴経路で VLAN 3132 へ出ず、経路撤回時だけ上流で捕捉、再投入後は再び未捕捉 | `EgressRoutePolicy` の除外 CIDR、通常宛先の転送 |
 | 防火壁の拒否と通信記録を監査可能にする | `FirewallEventLog/default`、`TrafficFlowLog/default`、`LogSink` | 未検証 | 許可・拒否の記録、対象識別、設定撤回後の停止 |
 
 ## 試験の共通条件
@@ -29,6 +29,17 @@ WAN または管理網の端点を別 VM または別 VLAN に置きます。各
 
 候補試験後は VM219、VM220、VM224 の実行物、設定、状態、起動状態を元へ戻します。
 この復元は試験成功の代替ではなく、隔離試験の終了条件です。
+
+## 私設 IPv4 宛て黒穴経路の実通信記録
+
+`e83b639b` の候補では、VLAN 3131 の VM224 を `198.18.91.10/24`、VLAN 3132 の
+VM220 を上流ゲートウェイ `198.18.92.2/24` としました。候補は通常の既定経路と
+`blackhole 10.0.0.0/8` を同時に適用しました。
+
+VM224 から `10.23.45.67` への ICMP 要求 3 回はすべて失敗し、VM220 の捕捉は待受のままでした。
+黒穴経路を除く厳密置換後、候補の経路検索は上流ゲートウェイを返し、同じ ICMP 要求 1 回を
+VM220 が捕捉しました。黒穴経路の再適用後は要求が再び失敗し、上流捕捉は待受のままでした。
+この記録は静的な黒穴経路を対象とし、`EgressRoutePolicy` の除外 CIDR は未確認です。
 
 ## LocalServiceRedirect の UDP 実通信記録
 
