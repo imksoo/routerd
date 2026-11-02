@@ -1,0 +1,70 @@
+apiVersion: routerd.net/v1alpha1
+kind: Router
+metadata:
+  name: pve07-dns-ipv6-restart
+spec:
+  resources:
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: lan}
+      spec: {ifname: rd15-lan, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: Interface
+      metadata: {name: wan}
+      spec: {ifname: rd15-wan, managed: false, owner: external}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSZone
+      metadata: {name: home}
+      spec:
+        zone: home.test
+        records:
+          - hostname: router
+            ipv4: 198.18.15.1
+            ipv6: 2001:db8:15::1
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSResolver
+      metadata: {name: lan}
+      spec:
+        listen:
+          - name: lan
+            addresses: [198.18.15.1, 2001:db8:15::1]
+            port: 53
+            sources: [home, default]
+        cache: {enabled: true, negativeTTL: 30s}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata: {name: home}
+      spec: {resolver: DNSResolver/lan, match: [home.test], zoneRefs: [DNSZone/home]}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSForwarder
+      metadata: {name: default}
+      spec:
+        resolver: DNSResolver/lan
+        match: ["."]
+        upstreams: [DNSUpstream/peer]
+        queryTimeout: 2s
+        healthcheck: {interval: 1s, timeout: 1s, failThreshold: 1, passThreshold: 1}
+    - apiVersion: net.routerd.net/v1alpha1
+      kind: DNSUpstream
+      metadata: {name: peer}
+      spec: {protocol: udp, address: 2001:db8:16::2, sourceInterface: wan}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: lan}
+      spec: {role: trust, interfaces: [lan]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: wan}
+      spec: {role: untrust, interfaces: [wan]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata: {name: default}
+      spec: {}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata: {name: lan-dns-udp}
+      spec: {fromZone: lan, toZone: self, protocol: udp, destinationPorts: ["53"], action: accept}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata: {name: lan-dns-tcp}
+      spec: {fromZone: lan, toZone: self, protocol: tcp, destinationPorts: ["53"], action: accept}
