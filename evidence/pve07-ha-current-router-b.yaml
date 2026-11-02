@@ -36,3 +36,11 @@ spec:
         when:
           state:
             VirtualAddress/lan-vip.role: {equals: master}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: lan}
+      spec: {role: trust, interfaces: [lan]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata: {name: default}
+      spec: {}
