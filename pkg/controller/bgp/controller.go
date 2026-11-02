@@ -3910,7 +3910,7 @@ func (c *Controller) bgpRouterUsesIPv6(spec routerapi.BGPRouterSpec) bool {
 func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate.Peer {
 	byAddress := map[string]bgpstate.Peer{}
 	for _, peer := range state.Peers {
-		byAddress[peer.Address] = peer
+		byAddress[desiredPeerKey(peer.Address)] = peer
 	}
 	out := map[string][]bgpstate.Peer{}
 	for _, resource := range c.Router.Spec.Resources {
@@ -3922,11 +3922,14 @@ func (c *Controller) peersByResource(state bgpstate.State) map[string][]bgpstate
 			continue
 		}
 		for _, peerAddress := range spec.Peers {
-			peer, ok := byAddress[peerAddress]
+			peer, ok := byAddress[desiredPeerKey(peerAddress)]
 			if !ok {
 				peer = bgpstate.Peer{Address: peerAddress, ASN: spec.PeerASN, State: "Missing"}
-			} else if peer.ASN == 0 {
-				peer.ASN = spec.PeerASN
+			} else {
+				peer.Address = peerAddress
+				if peer.ASN == 0 {
+					peer.ASN = spec.PeerASN
+				}
 			}
 			out[resource.Metadata.Name] = append(out[resource.Metadata.Name], peer)
 		}

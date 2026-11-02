@@ -569,6 +569,27 @@ func TestReconcileExplicitPeerPortKeepsNeighborIdentity(t *testing.T) {
 	}
 }
 
+func TestPeersByResourceMatchesExplicitPeerPort(t *testing.T) {
+	router := bgpRouter()
+	resource := router.Spec.Resources[1]
+	spec, err := resource.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	spec.Peers = []string{"10.0.0.21:179"}
+	resource.Spec = spec
+	router.Spec.Resources[1] = resource
+	peers := (&Controller{Router: router}).peersByResource(bgpstate.State{Peers: []bgpstate.Peer{{
+		Address:     "10.0.0.21",
+		ASN:         64513,
+		State:       "SESSION_STATE_ESTABLISHED",
+		Established: true,
+	}}})["k8s"]
+	if len(peers) != 1 || peers[0].Address != "10.0.0.21:179" || !peers[0].Established {
+		t.Fatalf("explicit-port peer status = %#v", peers)
+	}
+}
+
 func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
 	routerSpec := api.BGPRouterSpec{
 		ConvergenceProfile: "fast",
