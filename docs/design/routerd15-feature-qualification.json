@@ -68,38 +68,38 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "f790fadb519f05d87c7fa770e36b38445243987a",
+    "as_of_revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 155,
+    "scoped_linux_evidence_references": 160,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DHCPv6 information: independent DNS option acquisition, withdrawal and recovery on PVE VLANs",
-    "next_scope": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
+    "last_closed_scope": "Home-router composite: DHCPv4, DNS, NAT44, DHCPv6-PD, RA and IPv6 forwarding on PVE VLANs",
+    "next_scope": "LIN-PD-RENEW-EXPIRY-009",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-DHCPV6-INFO-DNS-WITHDRAW-008",
-        "feature": "DHCPv6-information-and-DNS-forwarding",
+        "id": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
+        "feature": "home-router Linux integration",
         "state": "passed",
-        "objective": "Use an independent DHCPv6 peer and LAN client on PVE VLANs to observe DNS option acquisition, upstream withdrawal and recovery.",
+        "objective": "Run one fresh routerd 1.5 configuration on the three isolated PVE VLAN VMs with DHCPv4, DNS, NAT44, DHCPv6-PD, router advertisements and IPv6 forwarding together.",
         "pass_requires": [
-          "The candidate records the independently supplied DNS option and forwards an independent client query",
-          "Removing the DNS option withdraws the configured upstream and prevents stale forwarding",
-          "Restoring the option restores the upstream and the independent client response"
+          "The independent LAN client acquires IPv4 configuration and reaches the independent WAN service through NAT44",
+          "The same client resolves the candidate DNS service and reaches the independent IPv6 WAN service through delegated-prefix forwarding",
+          "Withdrawing and restoring the WAN DNS service removes and restores only its corresponding DNS path without management loss"
         ]
       },
       "ready_next": [
         {
-          "id": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
-          "feature": "home-router Linux integration",
+          "id": "LIN-PD-RENEW-EXPIRY-009",
+          "feature": "DHCPv6 prefix-delegation lifecycle",
           "state": "ready",
-          "objective": "Run one fresh routerd 1.5 configuration on the three isolated PVE VLAN VMs with DHCPv4, DNS, NAT44, DHCPv6-PD, router advertisements and IPv6 forwarding together.",
+          "objective": "Use the independent PVE Kea peer to observe DHCPv6-PD renewal, expiry withdrawal and automatic recovery through the current routerd 1.5 process.",
           "pass_requires": [
-            "The independent LAN client acquires IPv4 configuration and reaches the independent WAN service through NAT44",
-            "The same client resolves the candidate DNS service and reaches the independent IPv6 WAN service through delegated-prefix forwarding",
-            "Withdrawing and restoring the WAN peer services removes and restores only the corresponding data paths without management loss"
+            "A renewed lease preserves the delegated LAN address and independent IPv6 forwarding",
+            "After the peer becomes unavailable and the lease expires, the candidate withdraws the delegated LAN address and router advertisement",
+            "Restoring the peer automatically reacquires the prefix and restores independent client connectivity"
           ]
         }
       ],
@@ -2399,6 +2399,23 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-home-router-composite-8dc7e08e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
+      "reference": "evidence/routerd15-8dc7e08e-home-router-composite-pve-20261102.md",
+      "environment": "Authorized isolated PVE VLANs. VM219 ran the current Linux package and one new routerd 1.5 configuration. VM220 independently supplied Kea DHCPv6, DNS and HTTP services on VLAN 3132. VM224 independently received DHCPv4 and SLAAC on VLAN 3131.",
+      "checks": [
+        "The independent LAN client received DHCPv4, resolved the candidate local zone and reached the independent IPv4 HTTP service. The peer observed NAT44 source 198.18.16.2.",
+        "The same client received a delegated-prefix SLAAC address, RDNSS and a router-advertised default route. It resolved the candidate local zone and the independently supplied IPv6 DNS service, then reached the independent IPv6 HTTP service with its delegated source address.",
+        "Removing only the independent DHCPv6 DNS option removed the matching IPv6 DNS forwarder and returned NXDOMAIN. IPv4 DNS, NAT44, IPv6 forwarding and all three QGA management responses remained available. Restoring the option restored the DNS forwarder and client answer.",
+        "The dedicated snapshots were restored. The transient data ISO and dedicated snapshots were then removed."
+      ],
+      "excludes": [
+        "DHCPv6-PD renewal, expiry and restart recovery; PPPoE; full routing-policy behavior; redundant failover; exhaustive firewall policy; FreeBSD; and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcpv6-server-8e8783e3": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3493,7 +3510,8 @@
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
           "linux-pve-dhcp-active-lease-reboot-3763f102",
           "linux-pve-dhcp-active-lease-interrupted-apply-59a55f8b",
-          "linux-pve-home-integration-2a43a0e8"
+          "linux-pve-home-integration-2a43a0e8",
+          "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
       "freebsd": {
@@ -3568,7 +3586,8 @@
           "linux-pd-ra-lifecycle-1ff438ee",
           "linux-pve-pd-ra-lifecycle-905e0537",
           "linux-pve-home-integration-2a43a0e8",
-          "linux-pve-dhcpv6-information-dns-883dacbd"
+          "linux-pve-dhcpv6-information-dns-883dacbd",
+          "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
       "freebsd": {
@@ -3792,7 +3811,8 @@
           "linux-pve-dns-forward-withdrawal-409719ba",
           "linux-pve-dns-three-vm-vlan-485b0f7b",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
-          "linux-pve-dns-negative-vlan-883dacbd"
+          "linux-pve-dns-negative-vlan-883dacbd",
+          "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
       "freebsd": {
@@ -4176,7 +4196,8 @@
           "linux-pve-port-forward-withdrawal-409719ba",
           "linux-pve-nat44-withdrawal-d467ab70",
           "linux-pve-portforward-existing-flow-8fd794b1",
-          "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
+          "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
+          "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
       "freebsd": {
@@ -4279,7 +4300,8 @@
           "linux-pve-legacy-cidr-firewall-withdrawal-54cc8e23",
           "linux-pve-local-service-redirect-withdrawal-54cc8e23",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
-          "linux-pve-firewall-vlan-recovery-883dacbd"
+          "linux-pve-firewall-vlan-recovery-883dacbd",
+          "linux-pve-home-router-composite-8dc7e08e"
         ]
       },
       "freebsd": {
