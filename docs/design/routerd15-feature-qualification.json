@@ -1673,6 +1673,24 @@
         "The subsequent VRRP event-lock repair or its planned native replay has not passed this trial"
       ]
     },
+    "linux-pve-vrrp-dhcp-failover-d467ab70": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d467ab70ffff3e1b7763f084a945ea1ba9939db3",
+      "reference": "evidence/routerd15-d467ab70-ha-vlan3152-pve-qualification-20261102.md",
+      "source_binding": "Candidate ISO SHA-256 11fca32ba8886e2ba4f961569ef2a0fe915a09625e70125dac40ae28791f88a8. The current d121dcb9 differs only in qualification documentation.",
+      "environment": "Authorized unused PVE VLAN 3152. VM221 and VM222 were independent Linux routers with VRRP priorities 150 and 100. VM223 was an independent DHCP and ICMP client.",
+      "checks": [
+        "Fresh routerd state on both routers created routerd-owned dnsmasq services. VM221 master provided DHCP and VIP ICMP to VM223.",
+        "Forced VM221 stop transitioned VM222 to master. VM223 received a new DHCP lease from 172.18.0.3 with the VIP gateway and resumed VIP ICMP.",
+        "VM221 restart left VM222 master and VM221 backup with preempt false. VIP ICMP continued from VM223.",
+        "Both routers, VM223 and the temporary ISO were restored to their recorded pre-test state."
+      ],
+      "excludes": [
+        "RouterdCluster election, fencing, split-brain prevention, persistent state synchronization, conntrack synchronization, existing TCP continuity and WAN/NAT/DNS data-plane continuity.",
+        "IPv6, physical failure modes, FreeBSD, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-two-vm-recovery-0cb82866": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -2541,7 +2559,8 @@
           "linux-vlan-ha-9a90c9b3",
           "linux-vlan-package-coldboot-88927a4a",
           "linux-vlan-ha-direct-r2-88927a4a",
-          "linux-vlan-ha-dslite-c-r3-88927a4a"
+          "linux-vlan-ha-dslite-c-r3-88927a4a",
+          "linux-pve-vrrp-dhcp-failover-d467ab70"
         ]
       },
       "freebsd": {
