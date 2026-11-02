@@ -76,7 +76,7 @@
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
     "last_closed_scope": "Firewall zone isolation: PVE VLAN zone permit, established-flow retention, WAN denial, rule withdrawal and recovery",
-    "next_scope": "LIN-FIREWALL-ZONE-ISOLATION-010",
+    "next_scope": "LIN-PORTFORWARD-EXISTING-FLOW-011",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -100,6 +100,17 @@
             "A trusted LAN client reaches only the declared WAN services through the firewall policy",
             "A new connection initiated from the untrusted WAN is denied while an established permitted flow remains observable",
             "Withdrawing and restoring the selected firewall policy changes the matching data path without management loss"
+          ]
+        },
+        {
+          "id": "LIN-PORTFORWARD-EXISTING-FLOW-011",
+          "feature": "NAT port forwarding and redirect",
+          "state": "ready",
+          "objective": "Use independent PVE VLAN WAN and LAN peers to observe PortForward new traffic, established-flow behavior, withdrawal and restoration through the current Linux binary.",
+          "pass_requires": [
+            "WAN peer reaches declared TCP PortForward backend",
+            "After withdrawal, a new WAN connection is denied while the established mapped flow remains observable",
+            "Restoring the PortForward restores new WAN traffic without management loss"
           ]
         }
       ],
