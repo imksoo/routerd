@@ -11,10 +11,10 @@ routerd 1.5 は、旧設定形式を読み込まず、新しい設定で同じ�
 
 | 旧構成の防御目的 | 1.5 の新規構成 | Linux 実通信の状態 | 残る受入試験 |
 | --- | --- | --- | --- |
-| WAN、LAN、管理網の分離と既定拒否 | `FirewallZone` の `untrust`、`trust`、`mgmt` と `FirewallPolicy` | LAN の DNS 到達と WAN 側ポート転送は実測済み。三ゾーンの許可・拒否は未検証 | LAN→管理網の明示許可、WAN→LAN の拒否、規則撤回と再投入 |
-| LAN から管理網への必要な到達だけを許可 | `FirewallRule/allow-lan-to-management` | 未検証 | HTTP の到達、規則撤回後の遮断、再投入後の復旧 |
+| WAN、LAN、管理網の分離と既定拒否 | `FirewallZone` の `untrust`、`trust`、`mgmt` と `FirewallPolicy` | 3 VLAN の PVE 試験で、LAN→管理網の明示許可と WAN→LAN の既定拒否を実測済み | ルーター自身への拒否、UDP、CIDR 選択、管理 CIDR |
+| LAN から管理網への必要な到達だけを許可 | `FirewallRule/allow-lan-to-management` | HTTP は到達し、規則撤回後は遮断、再投入後は復旧 | プロトコル・CIDR 限定、既存通信の扱い |
 | 旧 LAN セグメントから通常 LAN への限定許可 | `FirewallRule/allow-legacy-172-to-lan` | 未検証 | 送信元・宛先 CIDR の一致時だけの到達と、非一致時の拒否 |
-| WAN から LAN、ルーター自身への不要な到達を拒否 | `FirewallZone/wan` と既定 `FirewallPolicy` | ポート転送なしの TCP 到達は遮断済み。一般の WAN→LAN 拒否は未検証 | 独立 WAN クライアントの TCP/UDP 到達不能と LAN 側の受信不在 |
+| WAN から LAN、ルーター自身への不要な到達を拒否 | `FirewallZone/wan` と既定 `FirewallPolicy` | 独立 WAN クライアントから LAN HTTP への TCP は遮断され、`wan_to_lan` の拒否カウンターを確認 | ルーター自身への拒否、UDP、設定撤回後の既存通信 |
 | 公開 DNS/NTP 宛の LAN 通信をローカルサービスへ誘導 | `IPAddressSet/public-dns`、`IPAddressSet/public-ntp`、`LocalServiceRedirect/lan-local-services` | 未検証 | DNS と NTP の転送先、規則撤回、既存通信と新規通信 |
 | 管理インターフェースを指定 CIDR に限定し、設定変更でのロックアウトを防止 | `ManagementAccess/mgmt-lockout-guard` と管理用 `FirewallZone` | 未検証 | 許可 CIDR からの管理到達、非許可 CIDR の拒否、設定撤回時の保護 |
 | BGP の受入・広告範囲を限定 | `BGPRouter` の `importPolicy`、`exportPolicy`、`redistribute` | VLAN 3132 の BGP 経路導入・撤回・復旧は実測済み。接頭辞方針は未検証 | 許可接頭辞、拒否接頭辞、撤回、再広告とカーネル経路 |

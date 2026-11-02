@@ -1833,6 +1833,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-firewall-zone-withdrawal-409719ba": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "409719ba03303f594c92d2d75d5b8a776860555a",
+      "reference": "docs/design/routerd15-security-functional-map.md",
+      "source_binding": "routerd SHA-256 576c8bf4bc84db56740c21d5e7a63878b6a35699a2a9330e7a7b14fffb9bf177; routerctl SHA-256 010b38c5492cc037862cdddc9e1bf84665802069f73b3f8e0009e8de0cc5739c.",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate with fresh test state. VM224 used VLAN 3131 as the LAN HTTP client and server. VM220 used VLAN 3132 as the WAN HTTP client and VLAN 3133 as the management HTTP server.",
+      "checks": [
+        "The LAN-to-management FirewallRule permitted VM224 HTTP to VM220 over distinct VLANs.",
+        "VM220 WAN HTTP to the VM224 LAN server timed out. The VM219 wan_to_lan deny rule counter increased while the LAN server received no connection.",
+        "Replacing the configuration without the LAN-to-management FirewallRule reached Healthy and blocked VM224 HTTP. Reapplying the rule reached Healthy and restored VM224 HTTP.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO and test assets were removed."
+      ],
+      "excludes": [
+        "ManagementAccess CIDR enforcement, UDP, source and destination selectors, LocalServiceRedirect, address sets, logging, existing-flow behavior and all other legacy security rules.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcp-firewall-lifecycle-5431ad2a": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3781,7 +3799,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-two-vm-recovery-0cb82866",
-          "linux-dhcp-firewall-lifecycle-5431ad2a"
+          "linux-dhcp-firewall-lifecycle-5431ad2a",
+          "linux-pve-firewall-zone-withdrawal-409719ba"
         ]
       },
       "freebsd": {
