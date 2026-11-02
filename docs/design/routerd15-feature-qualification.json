@@ -71,12 +71,12 @@
     "as_of_revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 179,
+    "scoped_linux_evidence_references": 180,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 89,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "`EgressRoutePolicy` の DHCPv4 動的ゲートウェイ：独立クライアント実通信、リース失効、復旧",
-    "next_scope": "`HealthCheck` と `EgressRoutePolicy`：VRRP、物理 WAN 障害",
+    "last_closed_scope": "VRRP：独立クライアント実通信、主系停止引継ぎ、構成撤回、再適用復旧",
+    "next_scope": "`HealthCheck` と `EgressRoutePolicy`：物理 WAN 障害",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -2373,6 +2373,22 @@
         "異なるゲートウェイへの切替、送信元選択、VRRP、物理 WAN 障害、IPv6 動的ゲートウェイ、FreeBSD、および全機能認定。"
       ]
     },
+    "linux-pve-vrrp-81444257": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
+      "reference": "evidence/routerd15-81444257-vrrp-pve-20261102.md",
+      "source_binding": "候補配布物 SHA-256 a07047cfc3bc3fc9131fc2bbda7e052bc736f0e52cc1deb7229fafa5cdb039a7。",
+      "environment": "PVE VLAN 3131。VM219 と VM220 の VRRP 候補、独立 VM224 クライアント。",
+      "checks": [
+        "単一主系の仮想 IP と独立クライアント ICMP を確認した。",
+        "主系停止で待機系へ引継ぎ、主系復帰後も非先占を確認した。",
+        "空構成で仮想 IP と通信を撤回し、通常の構成再適用で復旧した。"
+      ],
+      "excludes": [
+        "物理 WAN 障害、既存 TCP 接続、DHCP リース継続、IPv6 VRRP、FreeBSD、および全機能認定。"
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4467,7 +4483,8 @@
           "linux-pve-ipv6-host-policy-81444257",
           "linux-pve-ipv4-mark-policy-81444257",
           "linux-pve-ipv4-hash-policy-81444257",
-          "linux-pve-dhcpv4-policy-81444257"
+          "linux-pve-dhcpv4-policy-81444257",
+          "linux-pve-vrrp-81444257"
         ]
       },
       "freebsd": {
@@ -4478,7 +4495,7 @@
         ]
       },
       "required_remaining_checks": [
-        "VRRP、物理 WAN 障害"
+        "物理 WAN 障害"
       ]
     },
     {
