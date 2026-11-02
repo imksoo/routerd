@@ -2241,6 +2241,9 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 					request.done <- generationReloadResult{outcome: RuntimeReloadOutcome{Active: r.ActiveRuntimeSnapshot(), Accepted: true, OperationID: request.id, Standby: standby}, err: admitErr}
 					goto waitForGeneration
 				}
+				if request.reload {
+					r.clearRuntimeGeneration(false)
+				}
 				stopLoop()
 				<-loopDone
 				pending = &request
@@ -2251,8 +2254,8 @@ func (r *Runner) runControllerGenerations(ctx context.Context, logger *slog.Logg
 				continue
 			}
 			pending = &request
-			stopLoop()
 			r.clearRuntimeGeneration(false)
+			stopLoop()
 			generation.cancel()
 			<-loopDone
 			if err := stopCurrentGeneration(); err != nil {
