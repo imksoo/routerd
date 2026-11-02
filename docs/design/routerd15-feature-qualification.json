@@ -71,11 +71,11 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 150,
+    "scoped_linux_evidence_references": 151,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "IPv4Route: independent VLAN client forwarding, kernel withdrawal and configuration recovery through the candidate router",
+    "last_closed_scope": "Configuration lifecycle: rejected invalid replacement, canonical retention and candidate restart recovery with independent VLAN traffic",
     "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -1996,6 +1996,25 @@
       ],
       "excludes": [
         "NAT44FlowDNATPinhole, NAT44SessionSync, LocalServiceRedirect, UDP, IPv6 NAT, restart persistence and physical access.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-pve-configuration-lifecycle-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-configuration-lifecycle-pve-20261102.md",
+      "source_binding": "routerd and routerctl came from routerd-linux-amd64.tar.gz SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Authorized PVE VLANs. VM219 ran the Linux candidate with an IPv4Route. VM220 was the independent VLAN 3132 HTTP target. VM224 was the independent VLAN 3131 client.",
+      "checks": [
+        "The valid canonical configuration installed the declared route and VM224 HTTP reached the VM220 target through VM219.",
+        "A replacement containing IPv4Route destination not-a-prefix was rejected with spec.destination must be an IPv4 CIDR; the valid canonical configuration SHA-256 did not change.",
+        "After the rejected write, the declared kernel route and VM224 HTTP traffic remained usable.",
+        "Stopping and restarting the candidate process with the same canonical configuration and state restored the declared route and VM224 HTTP traffic.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary ISO, snapshots and staging assets were removed."
+      ],
+      "excludes": [
+        "Interrupted activation during power loss, all command and API operations, deletion and rollback semantics, storage corruption, concurrent writes and FreeBSD.",
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -4279,7 +4298,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-two-vm-recovery-0cb82866"
+          "linux-two-vm-recovery-0cb82866",
+          "linux-pve-configuration-lifecycle-883dacbd"
         ]
       },
       "freebsd": {
