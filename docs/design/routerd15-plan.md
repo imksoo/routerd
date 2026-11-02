@@ -285,6 +285,8 @@ Keaだけを停止して35秒の試験用リースを失効させると、候補
 
 VM220 で AFTR-A のトンネルだけを撤去すると、`through-dslite-a` は `Unhealthy` へ遷移し、候補は `dslite-b`、マーク `0x111` を選択しました。同じ VM224 の新規 HTTP は成功し、接続追跡と VM220 は送信元 `192.0.0.3` を記録しました。AFTR-A を戻すと、候補プロセスの再起動や設定再適用なしで `through-dslite-a` は `Healthy` へ戻り、選択、HTTP、送信元は `dslite-a`、`0x110`、`192.0.0.2` へ復帰しました。固定の切替時間は要件にしていません。詳細は `evidence/routerd15-81444257-dslite-priority-failover-pve-20261102.md` に記録します。
 
+同じ `81444257` の配布物を PVE VM219 へ新規状態領域で導入し、二つの HealthCheck、優先 EgressRoutePolicy、NAT44、二つの DS-Lite を再生成しました。VM224 の HTTP は VM220 で `192.0.0.2` として観測されました。次に `routerd` を再起動すると主プロセスPIDは交代し、`dslite-a`、重み200、固定マーク `0x110`、HealthCheck、独立HTTP、変換後送信元 `192.0.0.2` はすべて復旧しました。詳細は `evidence/routerd15-81444257-health-policy-package-restart-pve-20261102.md` に記録します。
+
 `e83b639b` の候補実行物では、静的な `IPv4Route/private-10-blackhole` を VLAN 3131 と
 VLAN 3132 の独立 VM で確認しました。黒穴経路がある間、VM224 の `10.23.45.67` 宛て ICMP は
 すべて失敗し、VM220 の上流捕捉は 0 でした。黒穴経路を撤回すると同じ要求 1 回を上流で捕捉し、

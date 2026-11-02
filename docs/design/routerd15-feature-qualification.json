@@ -71,12 +71,12 @@
     "as_of_revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 174,
+    "scoped_linux_evidence_references": 175,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 91,
+    "open_check_statements": 90,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DS-Lite: 二経路優先選択、AFTR単独撤去、独立クライアント通信、復旧",
-    "next_scope": "HealthCheck と EgressRoutePolicy: パッケージおよび routerd 再起動を含む最終統合",
+    "last_closed_scope": "HealthCheck と EgressRoutePolicy: 配布物更新、routerd 再起動、独立クライアント通信",
+    "next_scope": "HealthCheck と EgressRoutePolicy: 独立 IPv6 方針ルーティングの転送、撤去、復旧",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -147,7 +147,7 @@
           ]
         }
       ],
-      "backlog_rule": "The remaining 91 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
+      "backlog_rule": "The remaining 90 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
     }
   },
   "examples": [
@@ -2291,6 +2291,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-health-policy-package-restart-81444257": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
+      "reference": "evidence/routerd15-81444257-health-policy-package-restart-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 a07047cfc3bc3fc9131fc2bbda7e052bc736f0e52cc1deb7229fafa5cdb039a7; configuration SHA-256 fab3c33a6fc516f43b67b881132ff695ca45cc27bc27126825aab33e53e2991e.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 installed the Linux candidate from a new state directory. Independent VM220 provided Kea DHCPv6-PD, two AFTR endpoints and HTTP on VLAN 3132; independent VM224 was the IPv4 client on VLAN 3131.",
+      "checks": [
+        "The checksum-verified archive installed revision 81444257. Both DS-Lite HealthCheck resources became Healthy and the priority policy selected DSLite A at weight 200 with mark 272.",
+        "VM224 HTTP reached VM220 with translated source 192.0.0.2 before restart.",
+        "systemctl restart routerd changed the main PID from 5051 to 8062. The service, both HealthCheck resources, policy selection and fixed nftables mark 0x110 recovered.",
+        "VM224 new HTTP after restart reached VM220 with translated source 192.0.0.2."
+      ],
+      "excludes": [
+        "IPv6 policy routing, all hash or mark variants, dynamic gateways or sources, VRRP, physical WAN faults, concurrent failures, performance, physical access and FreeBSD PF.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4380,7 +4398,8 @@
           "linux-vlan-ha-direct-r2-88927a4a",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
           "linux-health-pbr-pve-f4308787",
-          "linux-pve-dslite-priority-failover-81444257"
+          "linux-pve-dslite-priority-failover-81444257",
+          "linux-pve-health-policy-package-restart-81444257"
         ]
       },
       "freebsd": {
@@ -4391,7 +4410,6 @@
         ]
       },
       "required_remaining_checks": [
-        "パッケージおよび再起動を含む最終統合での HealthCheck 構成",
         "独立した IPv6 方針ルーティングの転送、撤去、復旧",
         "ハッシュまたはマーク方式、動的ゲートウェイまたは送信元、VRRP、物理 WAN 障害"
       ]
