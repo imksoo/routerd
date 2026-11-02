@@ -154,6 +154,24 @@ sudo env ROUTERD_DHCPV4_RELAY_RENDERER=/tmp/routerd-dhcpv4-relay-render \
   ./tests/netns/dhcpv4-relay.sh
 ```
 
+## Linux DHCPv4 relay daemon / systemd 試験
+
+製品経路全体は、候補 revision の Linux `make dist` package を展開し、systemd、iproute2、dnsmasq、BusyBox
+`udhcpc`、network namespace を利用できる使い捨て Ubuntu VM で次を実行します。
+
+```sh
+sudo scripts/linux-dhcpv4-relay-daemon-smoke.sh --disposable-vm \
+  /path/to/extracted/linux-amd64-package
+```
+
+script は package 内の binary で新しい routerd 1.5 relay 設定を検証し、実 daemon と systemd 管理下の dnsmasq を
+独立した上流 server / client と接続します。設定済み lease と option、上流停止中および relay 撤去中に lease が
+出ないこと、上流復旧後の再取得、relay 再適用、managed dnsmasq 再起動後の lease を合格条件にします。全体は180秒で
+打ち切ります。既存 routerd state / service がある環境では実行せず、1.0 設定・state の import や upgrade は行いません。
+成功時は一時 state と log を削除し、失敗時は再現に必要な上限付き診断情報だけ残します。この試験は relay controller と
+dnsmasq service lifecycle を対象にします。package install、routerd boot service、firewall policy、reboot recovery、FreeBSD は
+含みません。
+
 ## Linux DNS resolver runtime 試験
 
 iproute2、dnsmasq、`dig`、curl、Go と network namespace 機能を備えた隔離 Linux 環境で

@@ -177,6 +177,29 @@ sudo env ROUTERD_DHCPV4_RELAY_RENDERER=/tmp/routerd-dhcpv4-relay-render \
   ./tests/netns/dhcpv4-relay.sh
 ```
 
+## Linux DHCPv4 relay daemon and systemd check
+
+For the full product path, extract the Linux `make dist` package built from the
+candidate revision, then run this on a disposable Ubuntu VM with systemd,
+iproute2, dnsmasq, BusyBox `udhcpc`, and network-namespace support:
+
+```sh
+sudo scripts/linux-dhcpv4-relay-daemon-smoke.sh --disposable-vm \
+  /path/to/extracted/linux-amd64-package
+```
+
+The script validates a fresh routerd 1.5 relay configuration with that package's
+binary, then starts its actual daemon and systemd-managed dnsmasq against an
+independent upstream server and client. PASS requires the configured lease and
+options, no lease during upstream loss or relay withdrawal, recovery after the
+upstream returns, successful relay reapplication, and a lease after restarting
+the managed dnsmasq service. The entire run is bounded to 180 seconds. It refuses
+existing routerd state or services and does not import or upgrade 1.0
+configuration or state. Success removes temporary state and logs; failure keeps
+only the bounded temporary diagnostics for reproduction. This checks the relay
+controller and dnsmasq service lifecycle, not package installation, routerd
+boot-service installation, firewall policy, reboot recovery, or FreeBSD.
+
 ## Linux DNS resolver runtime check
 
 Run `sudo ./tests/netns/dns-resolver-runtime.sh` on an isolated Linux host with
