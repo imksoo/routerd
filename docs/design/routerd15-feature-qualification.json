@@ -68,34 +68,29 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "baa6c8451fc60f280d63768031cb715850716d75",
+    "as_of_revision": "8fd794b1eda0823a2bfeed6a479e95fd586bc1d7",
     "feature_functions_total": 50,
-    "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 144,
+    "feature_functions_with_scoped_linux_evidence": 42,
+    "scoped_linux_evidence_references": 145,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DHCPv6-PD-derived RDNSS distribution, delegated-prefix expiry withdrawal and recovery through the candidate router on independent PVE VLAN peers",
-    "next_scope": "LIN-NAT-EXISTING-FLOW-004",
+    "last_closed_scope": "PortForward withdrawal with an existing TCP flow, a denied new flow and recovery through the candidate router on independent PVE VLAN peers",
+    "next_scope": "LIN-PPPOE-RECOVERY-005",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-NAT-EXISTING-FLOW-004",
-        "feature": "nat-port-forward-and-redirect",
+        "id": "LIN-PPPOE-RECOVERY-005",
+        "feature": "pppoe",
         "state": "ready",
-        "objective": "Observe configured port-forward withdrawal separately for a pre-existing flow and a new flow on independent VLAN peers.",
+        "objective": "Exercise access-concentrator interoperability and session-loss recovery on Linux before FreeBSD work.",
         "pass_requires": [
-          "An established flow has the expected withdrawal behavior without treating a new flow as equivalent evidence",
-          "A new flow after withdrawal has the expected deny behavior and restoration recreates only the configured forwarding path",
+          "An independent access concentrator and the candidate complete a usable PPPoE session",
+          "Session loss withdraws the owned address and routes, then recovery restores the session through the same independent peer",
           "No unrelated address, route or firewall-policy broadening"
         ]
       },
       "ready_next": [
-        {
-          "id": "LIN-PPPOE-RECOVERY-005",
-          "feature": "pppoe",
-          "objective": "Exercise access-concentrator interoperability and session-loss recovery on Linux before FreeBSD work."
-        },
         {
           "id": "LIN-HA-VIP-TRAFFIC-006",
           "feature": "cluster-ha-and-virtual-address",
@@ -1952,6 +1947,24 @@
       ],
       "excludes": [
         "NAT44FlowDNATPinhole, NAT44SessionSync, PortForward, LocalServiceRedirect, existing-flow withdrawal behavior, static SNAT, IPv6 NAT and physical access.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-pve-portforward-existing-flow-8fd794b1": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8fd794b1eda0823a2bfeed6a479e95fd586bc1d7",
+      "reference": "evidence/routerd15-8fd794b1-portforward-existing-flow-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 9990c2008fab724f92a6b19ab52dff737da652c578c3b070c5c829f4afc85497; routerd reported 8fd794b1.",
+      "environment": "Authorized PVE VLANs. VM219 ran fresh candidate state. Independent VM220 used VLAN 3132 as the WAN TCP requester. Independent VM224 used VLAN 3131 as the LAN TCP responder.",
+      "checks": [
+        "PortForward DNAT from 198.18.53.1:18080 to VM224 198.18.51.10:8080 returned READY to VM220 198.18.53.2.",
+        "With an established TCP flow, replacing the configuration without PortForward left only empty IPv4 NAT hooks. Conntrack remained ESTABLISHED and the existing flow exchanged ECHO old-flow.",
+        "A new TCP flow after withdrawal timed out. No PortForward rule remained. Reapplying the read-only source configuration restored the TCP response.",
+        "The withdrawal state retained the firewall default deny and no PortForward forward-accept rule. Candidate addresses remained limited to the declared WAN and LAN addresses."
+      ],
+      "excludes": [
+        "NAT44FlowDNATPinhole, NAT44SessionSync, LocalServiceRedirect, UDP, IPv6 NAT, restart persistence and physical access.",
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -3987,6 +4000,7 @@
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-port-forward-withdrawal-409719ba",
           "linux-pve-nat44-withdrawal-d467ab70",
+          "linux-pve-portforward-existing-flow-8fd794b1",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102"
         ]
       },
