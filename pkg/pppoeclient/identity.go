@@ -27,5 +27,14 @@ func IdentityForSpec(spec api.PPPoESessionSpec) SessionIdentity {
 	if auth == "" {
 		auth = "both"
 	}
-	return SessionIdentity{Username: spec.Username, AuthMethod: auth, ServiceName: spec.ServiceName, ACName: spec.ACName, MTU: intDefault(spec.MTU, 1454), MRU: intDefault(spec.MRU, 1454), LCPEchoInterval: intDefault(spec.LCPEchoInterval, 30), LCPEchoFailure: intDefault(spec.LCPEchoFailure, 4)}
+	return SessionIdentity{
+		Username:        spec.Username,
+		AuthMethod:      auth,
+		ServiceName:     spec.ServiceName,
+		ACName:          spec.ACName,
+		MTU:             intDefault(spec.MTU, 1492),
+		MRU:             intDefault(spec.MRU, 1492),
+		LCPEchoInterval: effectiveLCPEchoInterval(spec),
+		LCPEchoFailure:  effectiveLCPEchoFailure(spec),
+	}
 }

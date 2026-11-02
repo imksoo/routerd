@@ -159,7 +159,7 @@ func TestPPPoEStatusBindsPublicIdentityWithoutCredentialMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity := status.Resources[0].PPPoEIdentity
-	if identity == nil || identity.Username != "user" || identity.AuthMethod != "chap" || identity.ServiceName != "service" || identity.ACName != "concentrator" || identity.MTU != 1454 || identity.LCPEchoInterval != 30 {
+	if identity == nil || identity.Username != "user" || identity.AuthMethod != "chap" || identity.ServiceName != "service" || identity.ACName != "concentrator" || identity.MTU != 1492 || identity.LCPEchoInterval != 20 {
 		t.Fatalf("effective public identity missing: %+v", identity)
 	}
 	if strings.Contains(response.Body.String(), "never-emit-secret") {

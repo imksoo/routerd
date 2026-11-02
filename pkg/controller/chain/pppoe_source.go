@@ -33,7 +33,7 @@ func (r *Runner) currentPPPoESource(declared *api.Router, name string, store eve
 	if wanted.Binary == "" {
 		return pppoesession.Source{}, false, nil
 	}
-	source := pppoesession.Source{Device: pppoeclient.DefaultIfName(name), ConfigHash: supervisedDaemonSpecHash(wanted)}
+	source := pppoesession.Source{ConfigHash: supervisedDaemonSpecHash(wanted)}
 	for _, resource := range eligible.Spec.Resources {
 		if resource.APIVersion == api.NetAPIVersion && resource.Kind == "PPPoESession" && resource.Metadata.Name == name {
 			spec, err := resource.PPPoESessionSpec()
@@ -41,6 +41,7 @@ func (r *Runner) currentPPPoESource(declared *api.Router, name string, store eve
 				return pppoesession.Source{}, false, err
 			}
 			source.Identity = pppoeclient.IdentityForSpec(spec)
+			source.Device = firstNonEmpty(spec.IfName, pppoeclient.DefaultIfName(name))
 			break
 		}
 	}

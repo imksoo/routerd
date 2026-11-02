@@ -61,17 +61,17 @@ func DefaultIfName(resource string) string {
 
 func LinuxPeer(cfg Config) []byte {
 	spec := cfg.Spec
-	mtu := intDefault(spec.MTU, 1454)
-	mru := intDefault(spec.MRU, 1454)
-	lcpInterval := intDefault(spec.LCPEchoInterval, 30)
-	lcpFailure := intDefault(spec.LCPEchoFailure, 4)
+	mtu := intDefault(spec.MTU, 1492)
+	mru := intDefault(spec.MRU, 1492)
+	lcpInterval := effectiveLCPEchoInterval(spec)
+	lcpFailure := effectiveLCPEchoFailure(spec)
 	ifname := cfg.IfName
 	if ifname == "" {
 		ifname = DefaultIfName(cfg.Resource)
 	}
 	auth := spec.AuthMethod
 	if auth == "" {
-		auth = "chap"
+		auth = "both"
 	}
 
 	var b bytes.Buffer
@@ -87,10 +87,16 @@ func LinuxPeer(cfg Config) []byte {
 	if password != "" {
 		b.WriteString("password " + strconv.Quote(password) + "\n")
 	}
-	b.WriteString("noauth\nhide-password\nnoipdefault\nusepeerdns\n")
+	b.WriteString("noauth\nhide-password\nnoipdefault\n")
+	if spec.DefaultRoute {
+		b.WriteString("defaultroute\nreplacedefaultroute\n")
+	}
+	if spec.UsePeerDNS {
+		b.WriteString("usepeerdns\n")
+	}
 	b.WriteString("nodetach\n")
 	if api.BoolDefault(spec.Persist, true) {
-		b.WriteString("persist\nmaxfail 0\n")
+		b.WriteString("persist\nmaxfail 0\nholdoff 5\n")
 	}
 	switch auth {
 	case "pap":
@@ -106,6 +112,9 @@ func LinuxPeer(cfg Config) []byte {
 	}
 	b.WriteString(fmt.Sprintf("mtu %d\nmru %d\n", mtu, mru))
 	b.WriteString(fmt.Sprintf("lcp-echo-interval %d\nlcp-echo-failure %d\n", lcpInterval, lcpFailure))
+	if spec.IPv6 {
+		b.WriteString("+ipv6\n")
+	}
 	return b.Bytes()
 }
 
@@ -114,10 +123,10 @@ func LinuxPeer(cfg Config) []byte {
 // a routerd private runtime directory.
 func FreeBSDMPDConf(cfg Config) []byte {
 	spec := cfg.Spec
-	mtu := intDefault(spec.MTU, 1454)
-	mru := intDefault(spec.MRU, 1454)
-	lcpInterval := intDefault(spec.LCPEchoInterval, 20)
-	lcpFailure := intDefault(spec.LCPEchoFailure, 3)
+	mtu := intDefault(spec.MTU, 1492)
+	mru := intDefault(spec.MRU, 1492)
+	lcpInterval := effectiveLCPEchoInterval(spec)
+	lcpFailure := effectiveLCPEchoFailure(spec)
 	label := SafeName(cfg.Resource)
 	bundle := "B" + resourceHash(cfg.Resource)
 	link := "L" + resourceHash(cfg.Resource)
@@ -128,6 +137,10 @@ func FreeBSDMPDConf(cfg Config) []byte {
 	b.WriteString(label + ":\n")
 	b.WriteString(" create bundle static " + bundle + "\n")
 	b.WriteString(" set iface name " + cfg.IfName + "\n")
+	if spec.DefaultRoute {
+		b.WriteString(" set iface route default\n")
+	}
+	b.WriteString(" set iface enable tcpmssfix\n")
 	b.WriteString(" set ipcp ranges 0.0.0.0/0 0.0.0.0/0\n")
 	b.WriteString(" create link static " + link + " pppoe\n")
 	b.WriteString(" set link action bundle " + bundle + "\n")
@@ -255,6 +268,14 @@ func intDefault(value, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func effectiveLCPEchoInterval(spec api.PPPoESessionSpec) int {
+	return intDefault(spec.LCPEchoInterval, intDefault(spec.LCPInterval, 20))
+}
+
+func effectiveLCPEchoFailure(spec api.PPPoESessionSpec) int {
+	return intDefault(spec.LCPEchoFailure, intDefault(spec.LCPFailure, 3))
 }
 
 func lastIPv4(line string) string {

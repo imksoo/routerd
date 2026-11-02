@@ -4014,8 +4014,8 @@
         ]
       },
       "required_remaining_checks": [
-        "Independent PPPoE access concentrator exchange and IPv4/IPv6 traffic",
-        "Credential/session identity, renewal/loss/recovery, restart and withdrawal"
+        "Read the routerd 1.0 PPPoE contract and keep its configured option semantics in the routerd 1.5 worker/renderers, with deterministic tests for option projection and disabled sessions",
+        "One basic routerd 1.5 connection to an independent access concentrator; do not require a carrier/authentication matrix, IPv6 traffic, renewal/loss/recovery, restart or withdrawal tests without a demonstrated user scenario"
       ]
     }
   ],

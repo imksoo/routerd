@@ -26,7 +26,7 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	}
 	router := &api.Router{TypeMeta: api.TypeMeta{APIVersion: api.RouterAPIVersion, Kind: "Router"}, Metadata: api.ObjectMeta{Name: "test"}, Spec: api.RouterSpec{Resources: []api.Resource{
 		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "ethernet"}, Spec: api.InterfaceSpec{IfName: "ens18"}},
-		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.PPPoESessionSpec{Interface: "ethernet", Username: "subscriber", Password: "private"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "PPPoESession"}, Metadata: api.ObjectMeta{Name: "wan"}, Spec: api.PPPoESessionSpec{Interface: "ethernet", IfName: "ppp-uplink", Username: "subscriber", Password: "private"}},
 	}}}
 	store, err := routerstate.OpenSQLite(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -49,7 +49,7 @@ func TestPPPoESourceRequiresCurrentSpecAndOwnedWorker(t *testing.T) {
 	}
 	evented := eventedStore{Store: store, Router: router}
 	source, ready, err := runner.currentPPPoESource(router, "wan", evented)
-	if err != nil || !ready || source.SupervisorOwner != "current-owner" || source.Interface != "ens18" || source.Device != "ppp-wan" {
+	if err != nil || !ready || source.SupervisorOwner != "current-owner" || source.Interface != "ens18" || source.Device != "ppp-uplink" {
 		t.Fatalf("current source not accepted: %+v ready=%v err=%v", source, ready, err)
 	}
 	readFailure = true

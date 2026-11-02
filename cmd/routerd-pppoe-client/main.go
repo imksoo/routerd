@@ -42,12 +42,17 @@ type options struct {
 	supervisorOwner  string
 	resource         string
 	ifname           string
+	pppIfName        string
 	username         string
 	password         string
 	passwordFile     string
 	authMethod       string
 	mtu              int
 	mru              int
+	defaultRoute     bool
+	usePeerDNS       bool
+	persist          *bool
+	ipv6             bool
 	serviceName      string
 	acName           string
 	lcpEchoInterval  int
@@ -166,16 +171,23 @@ func parseOptions(name string, args []string) (options, error) {
 	fs.StringVar(&opts.resource, "resource", "wan-pppoe", "resource name")
 	fs.StringVar(&opts.supervisorOwner, "supervisor-owner", "", "internal routerd supervisor ownership token")
 	fs.StringVar(&opts.ifname, "interface", "", "underlying Ethernet interface name")
+	fs.StringVar(&opts.pppIfName, "ifname", "", "PPP interface name")
 	fs.StringVar(&opts.username, "username", "", "PPPoE username")
 	fs.StringVar(&opts.password, "password", "", "PPPoE password")
 	fs.StringVar(&opts.passwordFile, "password-file", "", "file containing PPPoE password")
 	fs.StringVar(&opts.authMethod, "auth-method", "both", "auth method: chap, pap, both")
-	fs.IntVar(&opts.mtu, "mtu", 1454, "PPP MTU")
-	fs.IntVar(&opts.mru, "mru", 1454, "PPP MRU")
+	fs.IntVar(&opts.mtu, "mtu", 1492, "PPP MTU")
+	fs.IntVar(&opts.mru, "mru", 1492, "PPP MRU")
+	fs.BoolVar(&opts.defaultRoute, "default-route", false, "install the PPP default route")
+	fs.BoolVar(&opts.usePeerDNS, "use-peer-dns", false, "accept DNS servers from the PPP peer")
+	defaultPersist := true
+	opts.persist = &defaultPersist
+	fs.BoolVar(opts.persist, "persist", true, "reconnect after the session ends")
+	fs.BoolVar(&opts.ipv6, "ipv6", false, "negotiate IPv6CP")
 	fs.StringVar(&opts.serviceName, "service-name", "", "PPPoE service name")
 	fs.StringVar(&opts.acName, "ac-name", "", "PPPoE access concentrator name")
-	fs.IntVar(&opts.lcpEchoInterval, "lcp-echo-interval", 30, "LCP echo interval")
-	fs.IntVar(&opts.lcpEchoFailure, "lcp-echo-failure", 4, "LCP echo failures before down")
+	fs.IntVar(&opts.lcpEchoInterval, "lcp-echo-interval", 20, "LCP echo interval")
+	fs.IntVar(&opts.lcpEchoFailure, "lcp-echo-failure", 3, "LCP echo failures before down")
 	fs.StringVar(&opts.runtimeDir, "runtime-dir", "", "runtime work directory")
 	fs.StringVar(&opts.socketPath, "socket", "", "Unix socket path")
 	fs.StringVar(&opts.stateFile, "state-file", "", "state JSON path")
@@ -278,11 +290,16 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 	telemetry.Ensure()
 	spec := api.PPPoESessionSpec{
 		Interface:       opts.ifname,
+		IfName:          opts.pppIfName,
 		AuthMethod:      opts.authMethod,
 		Username:        opts.username,
 		Password:        opts.password,
 		MTU:             opts.mtu,
 		MRU:             opts.mru,
+		DefaultRoute:    opts.defaultRoute,
+		UsePeerDNS:      opts.usePeerDNS,
+		Persist:         opts.persist,
+		IPv6:            opts.ipv6,
 		ServiceName:     opts.serviceName,
 		ACName:          opts.acName,
 		LCPEchoInterval: opts.lcpEchoInterval,
@@ -293,11 +310,15 @@ func newDaemon(opts options, telemetry *routerotel.Runtime) *daemon {
 	spec.MTU, spec.MRU = identity.MTU, identity.MRU
 	spec.LCPEchoInterval, spec.LCPEchoFailure = identity.LCPEchoInterval, identity.LCPEchoFailure
 	now := time.Now().UTC()
+	pppIfName := strings.TrimSpace(opts.pppIfName)
+	if pppIfName == "" {
+		pppIfName = pppoeclient.DefaultIfName(opts.resource)
+	}
 	return &daemon{
 		opts:          opts,
 		spec:          spec,
 		startedAt:     now,
-		snapshot:      pppoeclient.Snapshot{Resource: opts.resource, Interface: opts.ifname, IfName: pppoeclient.DefaultIfName(opts.resource), Phase: pppoeclient.PhaseIdle, UpdatedAt: now},
+		snapshot:      pppoeclient.Snapshot{Resource: opts.resource, Interface: opts.ifname, IfName: pppIfName, Phase: pppoeclient.PhaseIdle, UpdatedAt: now},
 		telemetry:     telemetry,
 		phaseGauge:    telemetry.Gauge("routerd.pppoe.client.session.state"),
 		bytesCounter:  telemetry.Counter("routerd.pppoe.client.bytes"),
@@ -642,7 +663,14 @@ func (d *daemon) renderRuntimeConfig() error {
 }
 
 func (d *daemon) config() pppoeclient.Config {
-	return pppoeclient.Config{Resource: d.opts.resource, Interface: d.opts.ifname, IfName: pppoeclient.DefaultIfName(d.opts.resource), Spec: d.spec, Password: d.opts.password, RuntimeDir: d.opts.runtimeDir}
+	return pppoeclient.Config{Resource: d.opts.resource, Interface: d.opts.ifname, IfName: d.pppIfName(), Spec: d.spec, Password: d.opts.password, RuntimeDir: d.opts.runtimeDir}
+}
+
+func (d *daemon) pppIfName() string {
+	if value := strings.TrimSpace(d.opts.pppIfName); value != "" {
+		return value
+	}
+	return pppoeclient.DefaultIfName(d.opts.resource)
 }
 
 func (d *daemon) prepareFilesystem() error {
@@ -790,7 +818,7 @@ func (d *daemon) restoreState() error {
 		return err
 	}
 	d.mu.Lock()
-	if snapshot.Resource != d.opts.resource || snapshot.Interface != d.opts.ifname || snapshot.IfName != pppoeclient.DefaultIfName(d.opts.resource) {
+	if snapshot.Resource != d.opts.resource || snapshot.Interface != d.opts.ifname || snapshot.IfName != d.pppIfName() {
 		d.mu.Unlock()
 		return errors.New("stored PPPoE snapshot does not match configured session identity")
 	}

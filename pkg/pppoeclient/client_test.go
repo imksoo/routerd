@@ -49,9 +49,10 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		Password:   "secret value",
 		RuntimeDir: "/var/run/routerd/pppoe-client/wan-pppoe",
 		Spec: api.PPPoESessionSpec{
-			Username:    "user@example.test",
-			ServiceName: "isp",
-			AuthMethod:  "pap",
+			Username:     "user@example.test",
+			ServiceName:  "isp",
+			AuthMethod:   "pap",
+			DefaultRoute: true,
 		},
 	}
 	name, argv := CommandForOS("freebsd", cfg)
@@ -75,6 +76,8 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		"create bundle static " + bundle,
 		"create link static " + link + " pppoe",
 		"set link action bundle " + bundle,
+		"set iface route default",
+		"set iface enable tcpmssfix",
 		"set link disable pap chap eap",
 		"set link accept pap",
 		`set auth authname "user@example.test"`,
@@ -86,9 +89,6 @@ func TestFreeBSDMPDConfigUsesPrivateRuntimeBackend(t *testing.T) {
 		if !strings.Contains(string(config), want) {
 			t.Fatalf("FreeBSD mpd config missing %q:\n%s", want, config)
 		}
-	}
-	if strings.Contains(string(config), "set iface enable tcpmssfix") {
-		t.Fatalf("FreeBSD mpd config enabled unrequested tcpmssfix:\n%s", config)
 	}
 	if strings.Contains(strings.Join(argv, " "), "-ddial") {
 		t.Fatalf("FreeBSD argv must not use ppp(8) dial mode: %#v", argv)
@@ -136,6 +136,60 @@ func TestParseLogLineExtractsIPCPState(t *testing.T) {
 	}
 	if len(s.DNSServers) != 1 || s.DNSServers[0] != "203.0.113.53" {
 		t.Fatalf("dns servers = %#v", s.DNSServers)
+	}
+}
+
+func TestLinuxPeerPreservesPPPoESessionOptions(t *testing.T) {
+	persist := true
+	got := string(LinuxPeer(Config{
+		Resource:  "wan",
+		Interface: "eth1",
+		IfName:    "ppp-uplink",
+		Spec: api.PPPoESessionSpec{
+			DefaultRoute: true,
+			UsePeerDNS:   true,
+			IPv6:         true,
+			Persist:      &persist,
+			LCPInterval:  17,
+			LCPFailure:   5,
+			Username:     "subscriber",
+			MTU:          1492,
+			MRU:          1492,
+		},
+	}))
+	for _, want := range []string{
+		"ifname ppp-uplink\n",
+		"defaultroute\n",
+		"replacedefaultroute\n",
+		"usepeerdns\n",
+		"persist\n",
+		"maxfail 0\n",
+		"holdoff 5\n",
+		"+ipv6\n",
+		"mtu 1492\n",
+		"mru 1492\n",
+		"lcp-echo-interval 17\n",
+		"lcp-echo-failure 5\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Linux PPPoE peer config missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestLinuxPeerHonorsDisabledSessionOptions(t *testing.T) {
+	persist := false
+	got := string(LinuxPeer(Config{
+		Resource:  "wan",
+		Interface: "eth1",
+		Spec: api.PPPoESessionSpec{
+			Persist: &persist,
+		},
+	}))
+	for _, unwanted := range []string{"defaultroute", "usepeerdns", "+ipv6", "persist\n", "maxfail", "holdoff"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("Linux PPPoE peer unexpectedly contains %q:\n%s", unwanted, got)
+		}
 	}
 }
 

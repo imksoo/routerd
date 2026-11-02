@@ -3725,7 +3725,7 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-dhcpv4-client", Args: args})
 		case "PPPoESession":
 			spec, err := resource.PPPoESessionSpec()
-			if err != nil {
+			if err != nil || pppoeSessionDisabled(spec) {
 				continue
 			}
 			ifname := interfaceIfName(router, spec.Interface)
@@ -3733,6 +3733,9 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 				ifname = spec.Interface
 			}
 			args := []string{"daemon", "--resource", resource.Metadata.Name, "--interface", ifname, "--username", spec.Username}
+			if spec.IfName != "" {
+				args = append(args, "--ifname", spec.IfName)
+			}
 			if spec.PasswordFile != "" {
 				args = append(args, "--password-file", spec.PasswordFile)
 			} else if spec.Password != "" {
@@ -3747,17 +3750,37 @@ func (r *Runner) clientDaemonSpecs(router *api.Router) []supervisedDaemonSpec {
 			if spec.MRU != 0 {
 				args = append(args, "--mru", fmt.Sprintf("%d", spec.MRU))
 			}
+			if spec.DefaultRoute {
+				args = append(args, "--default-route")
+			}
+			if spec.UsePeerDNS {
+				args = append(args, "--use-peer-dns")
+			}
+			if spec.Persist != nil && !*spec.Persist {
+				args = append(args, "--persist=false")
+			}
+			if spec.IPv6 {
+				args = append(args, "--ipv6")
+			}
 			if spec.ServiceName != "" {
 				args = append(args, "--service-name", spec.ServiceName)
 			}
 			if spec.ACName != "" {
 				args = append(args, "--ac-name", spec.ACName)
 			}
-			if spec.LCPEchoInterval != 0 {
-				args = append(args, "--lcp-echo-interval", fmt.Sprintf("%d", spec.LCPEchoInterval))
+			lcpInterval := spec.LCPEchoInterval
+			if lcpInterval == 0 {
+				lcpInterval = spec.LCPInterval
 			}
-			if spec.LCPEchoFailure != 0 {
-				args = append(args, "--lcp-echo-failure", fmt.Sprintf("%d", spec.LCPEchoFailure))
+			if lcpInterval != 0 {
+				args = append(args, "--lcp-echo-interval", fmt.Sprintf("%d", lcpInterval))
+			}
+			lcpFailure := spec.LCPEchoFailure
+			if lcpFailure == 0 {
+				lcpFailure = spec.LCPFailure
+			}
+			if lcpFailure != 0 {
+				args = append(args, "--lcp-echo-failure", fmt.Sprintf("%d", lcpFailure))
 			}
 			out = append(out, supervisedDaemonSpec{ResourceName: resource.Metadata.Name, Binary: "routerd-pppoe-client", Args: args})
 		}
