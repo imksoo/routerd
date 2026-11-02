@@ -68,31 +68,42 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+    "as_of_revision": "f790fadb519f05d87c7fa770e36b38445243987a",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 154,
+    "scoped_linux_evidence_references": 155,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DHCPv6 information: independent DNS option acquisition and candidate DNS forwarding on PVE VLANs",
-    "next_scope": null,
+    "last_closed_scope": "DHCPv6 information: independent DNS option acquisition, withdrawal and recovery on PVE VLANs",
+    "next_scope": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-FIREWALL-VLAN-RECOVERY-007",
-        "feature": "firewall-policy-and-address-sets",
+        "id": "LIN-DHCPV6-INFO-DNS-WITHDRAW-008",
+        "feature": "DHCPv6-information-and-DNS-forwarding",
         "state": "passed",
-        "objective": "Use independent PVE VLAN peers to observe one declared forwarding permission, two denied cross-zone paths, configuration withdrawal and recovery.",
+        "objective": "Use an independent DHCPv6 peer and LAN client on PVE VLANs to observe DNS option acquisition, upstream withdrawal and recovery.",
         "pass_requires": [
-          "The declared LAN-to-WAN path reaches an independent peer through the candidate router",
-          "WAN-to-LAN and LAN-to-management traffic remain denied without reaching their targets",
-          "Withdrawal blocks the declared forwarding path and reapplying the same new configuration restores it"
+          "The candidate records the independently supplied DNS option and forwards an independent client query",
+          "Removing the DNS option withdraws the configured upstream and prevents stale forwarding",
+          "Restoring the option restores the upstream and the independent client response"
         ]
       },
       "ready_next": [
+        {
+          "id": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
+          "feature": "home-router Linux integration",
+          "state": "ready",
+          "objective": "Run one fresh routerd 1.5 configuration on the three isolated PVE VLAN VMs with DHCPv4, DNS, NAT44, DHCPv6-PD, router advertisements and IPv6 forwarding together.",
+          "pass_requires": [
+            "The independent LAN client acquires IPv4 configuration and reaches the independent WAN service through NAT44",
+            "The same client resolves the candidate DNS service and reaches the independent IPv6 WAN service through delegated-prefix forwarding",
+            "Withdrawing and restoring the WAN peer services removes and restores only the corresponding data paths without management loss"
+          ]
+        }
       ],
-      "backlog_rule": "The remaining 96 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
+      "backlog_rule": "The remaining 94 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
     }
   },
   "examples": [
