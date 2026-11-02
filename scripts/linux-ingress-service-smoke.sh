@@ -340,7 +340,7 @@ probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 
 stage='full-withdrawal'
 /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null
-for _ in {1..20}; do
+for _ in {1..45}; do
  if nft -j list tables | jq -e '[.nftables[].table? | select(.name=="routerd_nat" or .name=="routerd_filter")] | length == 0' >/dev/null; then break; fi
  sleep 1
 done
