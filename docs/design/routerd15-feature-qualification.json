@@ -1815,6 +1815,24 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-pppoe-nat-lifecycle-99d44d33": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "99d44d3329a68188ab5f3082213e55888399a88d",
+      "reference": "evidence/routerd15-99d44d33-pppoe-pve-qualification-20261102.md",
+      "source_binding": "routerd SHA-256 5baa537f279d3ef991296009df3190c081b5acdfc043774af912554bf735dab5; routerctl SHA-256 c928c83fd47f474ffdd05b1fb17e5aa0aba3aea36d1714677ffad12d9f02b199; routerd-pppoe-client SHA-256 427a36efe43d54dd576b3c30619fd92460b085199d5bda041d1f5ca9f2736810.",
+      "environment": "Authorized PVE VLANs. VM219 ran the current Linux candidate with fresh state. Independent VM220 used VLAN 3132 as an rp-pppoe PAP/IPCP access concentrator and HTTP peer; independent VM224 used VLAN 3131 as a static IPv4 client.",
+      "checks": [
+        "New 1.5 PPPoE configuration reached generation 1 Healthy. PAP/IPCP assigned ppp-lab 100.64.0.10 and the PPP default route; VM224 ICMP was 3/3 and HTTP was 200. VM220 recorded the NAT44 source as 100.64.0.10.",
+        "Stopping the independent access concentrator and its PPP process removed ppp-lab, restored the rd15-wan default route, published Failed, and made VM224 HTTP return 000. Restarting the concentrator restored PAP/IPCP, the PPP route, ICMP 3/3 and HTTP 200.",
+        "Replacing the configuration without PPPoE reached generation 2 Healthy with six resources. ppp-lab and routerd_nat were absent and VM224 HTTP returned 000. Reapplying PPPoE reached generation 3 Healthy with eight resources and restored HTTP 200.",
+        "A routerd systemd restart restored PPPoE, NAT44, ICMP 3/3 and HTTP 200. The three guests and all test assets were restored to their pre-test state."
+      ],
+      "excludes": [
+        "IPv6 PPP, CHAP, authentication failure, credential rotation, MTU boundaries, concurrent sessions, long-duration failure and other access concentrator implementations.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-port-forward-withdrawal-409719ba": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4446,7 +4464,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-pve-pppoe-nat-lifecycle-99d44d33"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
