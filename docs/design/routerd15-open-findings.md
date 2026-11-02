@@ -176,8 +176,9 @@ Health samples now carry the normalized configured probe identity. Worker
 threshold state resets after a changed probe or expired sample; importer,
 advisory selection and policy routing require that identity and current
 freshness. SQLite reads project stale or identityless reachability to Unknown
-without writing display repairs. Native route/source lifetime authority and
-independent two-WAN failover qualification remain open.
+without writing display repairs. Native route/source lifetime authority remains
+open. Independent two-WAN priority failover is recorded at `53e54d58`; IPv6
+policy forwarding, ECMP and physical WAN failure remain separate work.
 
 EventRule commits its typed correlation checkpoint, sole per-rule cursor,
 public status and local output together. It resumes unchanged rules, retires

@@ -392,8 +392,12 @@ routerd/Health processes, preserve the management path, send traffic, interrupt
 one upstream and restore it. Observe routes/nftables and the traffic path; repeat
 with worker restart and stale observations. Record actual setup and revision.
 The audit records executed isolated Linux/FreeBSD VM paths and their revisions.
-The full two-WAN failover/recovery gate remains separate from the completed
-single-upstream IPv4 and delegated IPv6 client checks.
+The two-WAN failover/recovery gate is recorded for the current Linux revision
+in `53e54d58`. It used an isolated PVE client and two independent upstream
+network namespaces, verified NAT source change from WAN-A to WAN-B during
+upstream withdrawal, recovery to WAN-A, and configuration withdrawal/reapply.
+It remains scoped to IPv4 priority selection; IPv6 policy forwarding, ECMP and
+physical WAN failure remain separate work.
 
 ## Repository-wide implementation checkpoint
 
