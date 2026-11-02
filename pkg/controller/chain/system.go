@@ -2049,8 +2049,13 @@ func (c SystemdUnitController) removeSystemdArtifact(ctx context.Context, path, 
 	if err := beginArtifactRemoval(path); err != nil {
 		return false, err
 	}
-	if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
-		return false, err
+	// A receipt can outlive its unit file after an interrupted prior cleanup.
+	// Do not turn that already-absent unit into a permanent reconcile failure,
+	// but still stop a unit that systemd reports as enabled or active.
+	if present || systemdUnitEnabledOrActive(ctx, command, unitName) {
+		if _, err := command(ctx, "systemctl", "disable", "--now", unitName); err != nil {
+			return false, err
+		}
 	}
 	removed, err := removeFileIfExists(path, false)
 	if err != nil {

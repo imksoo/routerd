@@ -271,6 +271,35 @@ func TestAbsentSystemdArtifactDoesNotAdoptAnUnownedRunningUnit(t *testing.T) {
 	}
 }
 
+func TestRemoveSystemdArtifactClearsReceiptForAbsentUnit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routerd-healthcheck@stale.service")
+	if err := acknowledgeArtifactActivation(path, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	command := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		line := strings.Join(append([]string{name}, args...), " ")
+		commands = append(commands, line)
+		if line == "systemctl is-active --quiet routerd-healthcheck@stale.service" || line == "systemctl is-enabled --quiet routerd-healthcheck@stale.service" {
+			return nil, errors.New("not installed")
+		}
+		return nil, nil
+	}
+	changed, err := (SystemdUnitController{}).removeSystemdArtifact(t.Context(), path, filepath.Base(path), command)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if commandLineContains(commands, "systemctl disable --now routerd-healthcheck@stale.service") {
+		t.Fatalf("absent unit was disabled: %v", commands)
+	}
+	if !commandLineContains(commands, "systemctl daemon-reload") {
+		t.Fatalf("receipt cleanup did not reload systemd: %v", commands)
+	}
+	if _, err := os.Stat(path + activationReceiptSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("receipt remained after cleanup: %v", err)
+	}
+}
+
 func TestStaleSystemdScanDoesNotTreatDirectoryReadFailureAsEmpty(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(path, []byte("unreadable unit catalog"), 0o644); err != nil {
