@@ -341,10 +341,11 @@ probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1
 stage='full-withdrawal'
 /usr/local/sbin/routerctl apply -f "$empty" --replace >/dev/null
 for _ in {1..45}; do
- if nft -j list tables | jq -e '[.nftables[].table? | select(.name=="routerd_nat" or .name=="routerd_filter")] | length == 0' >/dev/null; then break; fi
+ if ! nft list table ip routerd_nat >/dev/null 2>&1 && nft list table inet routerd_filter | grep -F 'policy drop' >/dev/null; then break; fi
  sleep 1
 done
-nft -j list tables | jq -e '[.nftables[].table? | select(.name=="routerd_nat" or .name=="routerd_filter")] | length == 0' >/dev/null
+! nft list table ip routerd_nat >/dev/null 2>&1
+nft list table inet routerd_filter | grep -F 'policy drop' >/dev/null
 if probe rd15-ing-external 198.18.52.2 18081 backend-a 198.18.52.1 >/dev/null 2>&1; then
  echo 'withdrawn IngressService admitted a new flow' >&2
  exit 1
