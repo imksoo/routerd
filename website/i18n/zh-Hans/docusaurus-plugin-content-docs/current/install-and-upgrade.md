@@ -39,6 +39,11 @@ routerd --help
 
 ## 升级
 
+此处的程序包替换仅适用于新版本仍支持现有配置和状态格式的情况。它不是从 routerd 1.0
+原地迁移到 1.5。首次安装 1.5 时，请在 routerd 之外准备 1.5 格式的配置，使用 1.5 版
+`routerd validate` 检查后，以全新状态安装。产品不会导入旧数据库或所有权记录；详情请参阅
+[状态数据库](./operations/state-database.md)。
+
 升级会保留当前 routerd 生成的 `routerd.service`，包括配置中的 Capability 和 Environment。
 `Managed by routerd` 注释本身不表示旧格式；含已移除的 `--controller-chain` 参数的 unit 会被替换。
 运行时配置代际切换会保留配置未变的受管理 DHCP 客户端。

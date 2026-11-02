@@ -281,6 +281,13 @@ The installer checks for the commands but does not install them as packages.
 
 ## Upgrade
 
+This package-replacement procedure applies only when the new build supports the
+existing configuration and state formats. It is not an in-place routerd 1.0 to
+1.5 migration. For the first 1.5 installation, prepare the 1.5 configuration
+outside routerd, validate it with the 1.5 `routerd validate`, and install with
+fresh state. The product does not import the old database or ownership records;
+see [State database](./operations/state-database.md).
+
 Extract the new archive and run the same installer:
 
 ```sh
