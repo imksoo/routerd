@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "4655971e87ca1dcae740dd8d59190a971aab120b",
+    "as_of_revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
     "feature_functions_total": 50,
-    "feature_functions_with_scoped_linux_evidence": 42,
+    "feature_functions_with_scoped_linux_evidence": 41,
     "scoped_linux_evidence_references": 174,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 93,
+    "open_check_statements": 91,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "DS-Lite: DHCPv6-PD 委譲 IPv6 送信元、自然失効の撤回、Kea 復帰による自動再取得",
-    "next_scope": "DS-Lite: AFTR FQDN 解決と冗長切替",
+    "last_closed_scope": "DS-Lite: 二経路優先選択、AFTR単独撤去、独立クライアント通信、復旧",
+    "next_scope": "HealthCheck と EgressRoutePolicy: パッケージおよび routerd 再起動を含む最終統合",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -147,7 +147,7 @@
           ]
         }
       ],
-      "backlog_rule": "The remaining 94 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
+      "backlog_rule": "The remaining 91 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
     }
   },
   "examples": [
@@ -2273,6 +2273,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dslite-priority-failover-81444257": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
+      "reference": "evidence/routerd15-81444257-dslite-priority-failover-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 a07047cfc3bc3fc9131fc2bbda7e052bc736f0e52cc1deb7229fafa5cdb039a7; configuration SHA-256 fab3c33a6fc516f43b67b881132ff695ca45cc27bc27126825aab33e53e2991e.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 ran the Linux candidate from a new state directory. Independent VM220 provided Kea DHCPv6-PD, two AFTR endpoints and HTTP on VLAN 3132; independent VM224 was the IPv4 client on VLAN 3131.",
+      "checks": [
+        "Two DSLiteTunnel resources shared the delegated IPv6 source 2001:db8:1500::100 and both reached the independent HTTP endpoint.",
+        "The priority policy selected DSLite A at weight 200. VM224 HTTP reached VM220 with translated source 192.0.0.2 and conntrack mark 272.",
+        "Removing only AFTR-A made its HealthCheck Unhealthy, selected DSLite B at weight 100, and VM224 new HTTP reached VM220 with translated source 192.0.0.3 and conntrack mark 273.",
+        "Recreating only AFTR-A restored its HealthCheck and DSLite A selection without routerd restart or configuration reapplication; VM224 new HTTP again used source 192.0.0.2 and mark 272."
+      ],
+      "excludes": [
+        "A fixed failover-time objective, combined FQDN answer changes with multipath, concurrent failures, performance, physical access and FreeBSD PF.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4126,7 +4144,8 @@
           "linux-vlan-ha-dslite-c-r3-88927a4a",
           "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc",
           "linux-pve-dslite-delegated-source-recovery-4655971e",
-          "linux-pve-dslite-aftr-fqdn-answer-recovery-623a9082"
+          "linux-pve-dslite-aftr-fqdn-answer-recovery-623a9082",
+          "linux-pve-dslite-priority-failover-81444257"
         ]
       },
       "freebsd": {
@@ -4136,7 +4155,6 @@
         ]
       },
       "required_remaining_checks": [
-        "Multiple DS-Lite path selection and health-based endpoint withdrawal/recovery",
         "FreeBSD PF binding and independent packaged traffic"
       ]
     },
@@ -4361,7 +4379,8 @@
           "linux-vlan-clients-39156bb6",
           "linux-vlan-ha-direct-r2-88927a4a",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
-          "linux-health-pbr-pve-f4308787"
+          "linux-health-pbr-pve-f4308787",
+          "linux-pve-dslite-priority-failover-81444257"
         ]
       },
       "freebsd": {
