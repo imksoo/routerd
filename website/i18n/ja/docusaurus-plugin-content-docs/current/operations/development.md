@@ -166,7 +166,11 @@ sudo scripts/linux-dhcpv4-relay-daemon-smoke.sh --disposable-vm \
 
 script は package 内の binary で新しい routerd 1.5 relay 設定を検証し、実 daemon と systemd 管理下の dnsmasq を
 独立した上流 server / client と接続します。設定済み lease と option、上流停止中および relay 撤去中に lease が
-出ないこと、上流復旧後の再取得、relay 再適用、managed dnsmasq 再起動後の lease を合格条件にします。全体は180秒で
+出ないこと、上流復旧後の再取得、relay 再適用、managed dnsmasq 再起動後の lease を合格条件にします。
+続いて静的 address 宣言を追加せず、外部所有 LAN の address を変更します。生成された relay 送信元と
+所有 dnsmasq PID の両方が変わった後、独立 client が上流 server の option を保持した lease を
+取得することを確認します。設定ファイルの変更だけでは稼働準備完了としません。
+終了時は製品による unit・PID の撤去完了を待ってから fixture を片付けます。全体は180秒で
 打ち切ります。既存 routerd state / service がある環境では実行せず、1.0 設定・state の import や upgrade は行いません。
 成功時は一時 state と log を削除し、失敗時は再現に必要な上限付き診断情報だけ残します。この試験は relay controller と
 dnsmasq service lifecycle を対象にします。package install、routerd boot service、firewall policy、reboot recovery、FreeBSD は

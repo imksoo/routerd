@@ -129,10 +129,26 @@ cleanup() {
 	stop_pid "$upstream_pid"
 	if [[ "$routerd_pid" -gt 0 ]] && kill -0 "$routerd_pid" 2>/dev/null; then
 		if [[ -S "$router_socket" ]]; then
-			"$routerctl" apply --socket "$router_socket" -f "$work/empty.yaml" --replace >"$work/cleanup-apply.log" 2>&1 || {
+			if "$routerctl" apply --socket "$router_socket" -f "$work/empty.yaml" --replace >"$work/cleanup-apply.log" 2>&1; then
+				# Let the product finish withdrawal before fallback cleanup touches its unit.
+				local withdrawn=0
+				for _ in {1..100}; do
+					if [[ ! -e "$unit_file" && ! -e "$activation_file" && ! -L "$unit_wants_link" && ! -e "$dnsmasq_pid_file" && ! -e "$dnsmasq_owner_file" ]] &&
+					   [[ "$(systemctl show -p LoadState --value routerd-dnsmasq.service 2>/dev/null)" == not-found ]]; then
+						withdrawn=1
+						dnsmasq_unit_owned=0
+						break
+					fi
+					sleep 0.2
+				done
+				if [[ "$withdrawn" -ne 1 ]]; then
+					echo 'cleanup failed: product withdrawal did not finish within 20 seconds' >&2
+					cleanup_exit=1
+				fi
+			else
 				echo 'cleanup warning: routerctl could not withdraw the test config' >&2
 				cleanup_exit=1
-			}
+			fi
 		fi
 		stop_pid "$routerd_pid"
 		routerd_pid=0
@@ -498,6 +514,25 @@ run_client relay-reapply 02:00:00:00:15:05
 systemctl restart routerd-dnsmasq.service
 systemctl is-active --quiet routerd-dnsmasq.service
 run_client dnsmasq-service-restart 02:00:00:00:15:06
+
+# A changed config file can precede replacement of the old native process.
+# Observe the replacement before asking the independent client for a new lease.
+previous_relay_pid=$(systemctl show -p MainPID --value routerd-dnsmasq.service)
+ip address del 192.0.2.1/24 dev "$lan_bridge"
+ip address add 192.0.2.254/24 dev "$lan_bridge"
+renumbered=0
+for _ in {1..150}; do
+ current_relay_pid=$(systemctl show -p MainPID --value routerd-dnsmasq.service)
+ if grep -Fqx 'dhcp-relay=192.0.2.254,198.51.100.2' "$work/dnsmasq.conf" &&
+    [[ "$current_relay_pid" =~ ^[0-9]+$ && "$current_relay_pid" -gt 0 && "$current_relay_pid" != "$previous_relay_pid" ]] &&
+    systemctl is-active --quiet routerd-dnsmasq.service; then
+  renumbered=1
+  break
+ fi
+ sleep 0.2
+done
+[[ "$renumbered" -eq 1 ]] || { echo 'observed address change did not replace the owned relay process within 30 seconds' >&2; exit 1; }
+run_client observed-address-change 02:00:00:00:15:07
 
 # Report decisive observations before EXIT cleanup removes all successful-run output.
 printf 'Observed routerd 1.5 relay config: %s\n' "$(grep '^dhcp-relay=' "$work/dnsmasq.conf")"

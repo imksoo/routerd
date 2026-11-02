@@ -193,7 +193,12 @@ binary, then starts its actual daemon and systemd-managed dnsmasq against an
 independent upstream server and client. PASS requires the configured lease and
 options, no lease during upstream loss or relay withdrawal, recovery after the
 upstream returns, successful relay reapplication, and a lease after restarting
-the managed dnsmasq service. The entire run is bounded to 180 seconds. It refuses
+the managed dnsmasq service. It then changes the externally owned LAN address
+without adding a static-address declaration, requires the generated relay source
+and owned dnsmasq PID to change, and requires another independent lease with the
+upstream server's options. A changed file alone is not process readiness.
+Cleanup waits for product-owned unit and PID withdrawal before removing fixture
+resources. The entire run is bounded to 180 seconds. It refuses
 existing routerd state or services and does not import or upgrade 1.0
 configuration or state. Success removes temporary state and logs; failure keeps
 only the bounded temporary diagnostics for reproduction. This checks the relay

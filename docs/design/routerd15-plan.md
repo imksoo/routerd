@@ -33,7 +33,11 @@ routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
   address declaration, so it must not be transplanted without reconciling that
   restriction. The relay observation regression covers validation without a
   static declaration, renumbering, missing source, recovery and removal at the
-  config-generation boundary; live service lifecycle and FreeBSD remain open.
+  config-generation boundary. The Linux single-interface packaged-daemon and
+  systemd lifecycle gate now passes at product `3443ec6f`, including independent
+  lease acquisition, upstream loss/return, withdrawal/reapply, native restart,
+  observed address change and cleanup. Multi-interface and FreeBSD checks remain
+  open.
   Read the other current diffs before selecting integration work.
 - The feature ledger maps 87 baseline resource kinds, 90 example artifacts,
   and 50 feature scopes, including 11 non-resource scopes. Every preservation

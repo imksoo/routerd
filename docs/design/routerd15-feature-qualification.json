@@ -1815,6 +1815,27 @@
         "The candidate snapshots contained an earlier routerd binary, so this is an update/config-state-reset check rather than clean-install evidence.",
         "Split-brain/fencing, PVE-host outage, configuration withdrawal, IPv6 virtual addresses, physical-site failure domains, FreeBSD behavior and complete routerd 1.0 parity."
       ]
+    },
+    "linux-dhcpv4-relay-daemon-3443ec6f": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "3443ec6fdf4aaf71ea2a93bd23f5502ff88bad30",
+      "reference": "docs/operations/development.md#linux-dhcpv4-relay-daemon-and-systemd-check",
+      "harness_sha256": "5edee2b9974bc07b4f315cb2ecb1651d61bf20ccd3005e255d2a11470ee0dd52",
+      "environment": "Disposable Ubuntu 24.04 Linux VM, kernel 6.8.0-124, dnsmasq 2.91 and BusyBox 1.36.1; independent upstream/client namespaces; packaged routerd daemon and systemd-owned dnsmasq.",
+      "checks": [
+        "Fresh 1.5 relay input without static address declarations validated and delivered an independent client lease with the upstream gateway, DNS and server identifier; the client installed its address and default route.",
+        "Upstream loss prevented acquisition; upstream recovery restored it.",
+        "Relay withdrawal removed the owned unit, activation and PID/owner files and prevented acquisition; reapply and dnsmasq service restart restored acquisition.",
+        "Changing the externally owned LAN address from 192.0.2.1 to 192.0.2.254 updated the generated relay source and replaced the native dnsmasq PID before another client acquired a lease.",
+        "Final product withdrawal completed before fixture cleanup; no owned service, runtime/state directories, peers or interfaces remained."
+      ],
+      "excludes": [
+        "Multiple relay interfaces in one resource",
+        "FreeBSD runtime",
+        "Packaged routerd boot-service installation or reboot in this daemon-only harness",
+        "Complete routerd 1.0 functional preservation"
+      ]
     }
   },
   "features": [
@@ -2990,14 +3011,16 @@
           "pkg/controller/chain/dnsmasq_test.go",
           "pkg/controller/chain/dhcpv4_relay_observation_test.go",
           "tests/netns/dhcpv4-relay.sh",
-          "tests/netns/dhcpv4-relay-render/main.go"
+          "tests/netns/dhcpv4-relay-render/main.go",
+          "scripts/linux-dhcpv4-relay-daemon-smoke.sh"
         ]
       },
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-dhcpv4-relay-1195c7fc"
+          "linux-dhcpv4-relay-1195c7fc",
+          "linux-dhcpv4-relay-daemon-3443ec6f"
         ]
       },
       "freebsd": {
@@ -3005,7 +3028,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Routerd-owned dnsmasq configuration application/withdrawal and interface address lifecycle through the service/controller",
+        "Independent client/server exchange with multiple relay interfaces in one DHCPv4Relay resource",
         "FreeBSD independent relay/client/server exchange"
       ]
     },
