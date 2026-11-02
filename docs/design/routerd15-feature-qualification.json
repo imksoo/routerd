@@ -3198,7 +3198,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-pd-ra-lifecycle-1ff438ee",
-          "linux-pve-pd-ra-lifecycle-905e0537"
+          "linux-pve-pd-ra-lifecycle-905e0537",
+          "linux-pve-pd-ra-lifecycle-4f11316e"
         ]
       },
       "freebsd": {
@@ -3206,7 +3207,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Prefix renumbering, DNS lifetime/withdrawal and routerd restart",
+        "DHCPv6-provided DNS lifetime and withdrawal",
         "Remaining IPv6 source modes and FreeBSD delegated-address ownership, withdrawal and recovery",
         "Fragmented solicitation provenance remains a documented API limitation"
       ]
