@@ -9,6 +9,20 @@ shift
 work=/var/tmp/rd15-reboot
 test "$(id -u)" = 0
 systemd-detect-virt --vm --quiet
+wait_for_lease() {
+ client=
+ deadline=$((SECONDS + 45))
+ while (( SECONDS < deadline )); do
+  client=$(awk '$1=="bound"{print $2;exit}' "$work/leases" 2>/dev/null || true)
+  if [[ "$client" =~ ^198\.18\.15\.(10[0-9]|110)$ ]]; then
+   printf '%s\n' "$client"
+   return 0
+  fi
+  sleep 0.5
+ done
+ echo 'DHCP lease was not acquired within 45 seconds' >&2
+ return 1
+}
 case "$role" in
  setup-router|setup-peer)
   management=${1:?management interface}; shift
@@ -23,6 +37,11 @@ esac
 case "$role" in
  setup-router)
   candidate=${1:?candidate JSON}
+  sysctl -n net.ipv4.ip_forward > "$work/ip_forward.before"
+  case "$(cat "$work/ip_forward.before")" in
+   0|1) ;;
+   *) echo 'cannot record the initial IPv4 forwarding value' >&2; exit 1 ;;
+  esac
   test ! -e /etc/systemd/system/rd15-links.service
   test ! -e /etc/systemd/system/routerd.service.d/90-rd15-links.conf
   cat > "$work/links" <<'LINKS'
@@ -122,8 +141,7 @@ HOOK
   ;;
  probe)
   test "$(cat "$work/role")" = setup-peer
-  client=$(awk '$1=="bound"{print $2;exit}' "$work/leases")
-  [[ "$client" =~ ^198\.18\.15\.(10[0-9]|110)$ ]]
+  client=$(wait_for_lease)
   ip netns exec rd15-lan-peer ip -4 -j addr show dev peer0 | jq -e --arg ip "$client" '.[0].addr_info | any(.local==$ip)' >/dev/null
   for mode in +notcp +tcp; do
    test "$(ip netns exec rd15-lan-peer dig +time=1 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa A)" = 198.18.15.1
@@ -134,7 +152,8 @@ HOOK
   echo 'PASS: live lease, DNS UDP/TCP, NAT and management positive control'
   ;;
  isolation)
-  client=$(awk '$1=="bound"{print $2;exit}' "$work/leases")
+  test "$(cat "$work/role")" = setup-peer
+  client=$(wait_for_lease)
   tag="deny-$(date +%s%N)"
   if ip netns exec rd15-wan-peer curl --noproxy '*' --fail --silent --max-time 2 "http://$client:8080/$tag"; then echo 'WAN leaked into LAN' >&2; exit 1; fi
   if grep -Fq "/$tag " "$work/lan-http.log"; then echo 'denied packet reached LAN' >&2; exit 1; fi
@@ -170,11 +189,15 @@ JSON
   systemctl stop rd15-links
   rm -- /etc/systemd/system/rd15-links.service /etc/systemd/system/routerd.service.d/90-rd15-links.conf
   systemctl daemon-reload
-  sysctl -w net.ipv4.ip_forward=0
   # Stopping the fixture unit also stops routerd through Requires=. Once that
   # dependency is gone, leave the product running with its withdrawn config.
   systemctl start routerd
   /usr/local/sbin/routerctl get status -o json | jq -e '.status.phase=="Healthy" and (.status.resourceCount // 0)==0 and ([.status.controllers[] | select(.currentError==true)] | length==0)' >/dev/null
+  forward_before=$(cat "$work/ip_forward.before")
+  case "$forward_before" in
+   0|1) sysctl -w "net.ipv4.ip_forward=$forward_before" ;;
+   *) echo 'recorded IPv4 forwarding value is invalid' >&2; exit 1 ;;
+  esac
   rm -r -- "$work"
   ;;
  *) echo 'unknown role' >&2; exit 2;;

@@ -629,17 +629,24 @@ management access. The fixture changes only guest networking and creates a
 boot unit for the router's external test ports. It does not create hypervisor
 networks. Do not use a segment whose VLAN IDs collide with other work.
 
-Copy the shell script and `tests/fixtures/linux-dhcp-firewall-lifecycle.json`
-to `/home/ubuntu/` on both VMs, and `scripts/linux-interrupted-apply-smoke.py`
-to the router. Below, `router-fixture` and `peer-fixture` are operator-configured
+Extract the current Linux `make dist` package on the router VM and install it
+from that package directory with `sudo ./install.sh --no-install-deps --enable-service`.
+Do this on a clean VM with no existing routerd binary,
+configuration, or database; use a configuration already expressed in routerd
+1.5 format. Copy the shell script and
+`tests/fixtures/linux-dhcp-firewall-lifecycle.json` to
+`/home/ubuntu/` on both VMs, and `scripts/linux-interrupted-apply-smoke.py` to
+the router. Below, `router-fixture` and `peer-fixture` are operator-configured
 SSH aliases with verified keys; `eth0` is the isolated management/trunk port.
 
 ```sh
-ssh router-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo install -m 0600 /var/tmp/rd15-reboot/candidate.json /usr/local/etc/routerd/router.yaml && sudo systemctl start routerd'
 ssh router-fixture 'sudo /usr/local/sbin/routerctl apply -f /var/tmp/rd15-reboot/candidate.json --replace'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
+ssh router-fixture 'sudo /usr/local/sbin/routerctl get status -o json | jq -e ".status.phase==\"Healthy\" and ([.status.controllers[] | select(.currentError==true)] | length==0)"'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
 ```
 
 Before each interruption, record both `/proc/sys/kernel/random/boot_id` values,
@@ -662,7 +669,7 @@ Do not restart the peer or its DHCP process between checks.
 4. Run the following only after the previous configuration is healthy:
 
 ```sh
-ssh router-fixture 'sudo /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm'
+ssh router-fixture 'sudo python3 /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm'
 ```
 
 The helper adds `recovery.home.arpa`, observes canonical file replacement and
@@ -679,6 +686,7 @@ renewal checks. The helper alone does not establish recovery.
 The probe requires local/upstream DNS over UDP/TCP, a WAN HTTP peer observing
 the NAT source, and the management-to-LAN positive control. Isolation requires
 client failure and absence from destination HTTP logs, plus WAN DNS rejection.
+The probe and isolation modes wait up to 45 seconds for the initial DHCP lease.
 The independent peer keeps its processes and lease throughout all interruptions.
 No manual repair of product state is permitted to turn a failed gate into PASS.
 A fixture setup failure is environment preparation, not a product result.
@@ -687,9 +695,8 @@ After a successful campaign, run `cleanup-router` on the router and
 `cleanup-peer` on the peer with the same `--disposable-vm` flag. Router cleanup
 requires empty apply, native firewall absence and address withdrawal before
 removing the fixture ports and unit override. Peer cleanup stops the owned units
-and removes its namespaces. These actions delete the temporary raw output.
+and removes its namespaces. Router setup records the initial
+`net.ipv4.ip_forward` value; cleanup restores that value after withdrawing the
+fixture. These actions delete the temporary raw output.
 Retain the procedure, revisions and verdict instead. This gate does not prove
-power-loss durability, every possible interruption point, IPv6 reboot, or a
-cross-version cutover. Cross-version migration and rollback are not qualification
-gates: prepare and validate the desired configuration in the 1.5 format, then
-test a clean 1.5 installation. Do not import 1.0 configuration or state.
+power-loss durability, every possible interruption point, or IPv6 reboot.

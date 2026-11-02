@@ -1,6 +1,6 @@
 {
   "format": "routerd15-feature-qualification/v1",
-  "updated_date": "2026-11-01",
+  "updated_date": "2026-11-02",
   "purpose": "Track preservation and qualification of every pre-1.5 routerd 1.0 function, including non-resource surfaces. This static design ledger is not a product registry, a release result or proof of functional parity.",
   "baseline_revision": "e3b49dbb69c7de97bab9595884745eb7cbe93d92",
   "inventory_snapshot_revision": "3da8d066e19535d27610d632391807db7968d1fc",
@@ -1576,6 +1576,26 @@
         "Host reboot, storage loss, other platforms, and automatic restoration of host settings on intent removal",
         "1.0 configuration/database import, installed-system upgrade, complete routerd 1.0 parity or release qualification"
       ]
+    },
+    "linux-home-router-recovery-13b7a5b9": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "13b7a5b91a9841d157dbeefcd07e2b04d1bcb359",
+      "reference": "docs/operations/development.md#two-vm-reboot-and-interrupted-apply-gate",
+      "environment": "Clean Ubuntu 24.04.4 router VM 131, independent Ubuntu peer VM 143, isolated tagged VLANs; make dist archive SHA-256 936553ced4c5ef504259c247d8840eec70b6dbc7739caf986c3cf83acf341b9f.",
+      "checks": [
+        "Fresh package install and apply of a prepared routerd 1.5 configuration reached Healthy.",
+        "Independent peer retained DHCP address 198.18.15.102 and continued timer renewals through router reboot, routerd SIGKILL recovery and interrupted apply; peer boot ID and DHCP PID stayed unchanged.",
+        "Peer verified local/upstream DNS over UDP/TCP, outbound IPv4 NAT, management-to-LAN positive control, and WAN/LAN/management/DNS isolation before and after recovery.",
+        "After apply response loss immediately following canonical config replacement, routerd recovered automatically and served recovery.home.arpa; client exited nonzero.",
+        "Cleanup withdrew routerd-owned firewall/address state, removed guest ports and peer namespaces/services, and restored IPv4 forwarding to its initial value of 1."
+      ],
+      "excludes": [
+        "Power-loss durability and interruption points other than the exercised paths",
+        "IPv6 reboot behavior",
+        "Complete routerd 1.0 feature parity",
+        "Production deployment"
+      ]
     }
   },
   "features": [
@@ -2261,7 +2281,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-portforward-f6502ea2"
+          "linux-portforward-f6502ea2",
+          "linux-home-router-recovery-13b7a5b9"
         ]
       },
       "freebsd": {
@@ -2487,7 +2508,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-dhcpv4-reservation-82f2d159"
+          "linux-dhcpv4-reservation-82f2d159",
+          "linux-home-router-recovery-13b7a5b9"
         ]
       },
       "freebsd": {
@@ -2782,7 +2804,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-independent-ipv4-6135bb03",
-          "linux-dns-resolver-runtime-4ed306f9"
+          "linux-dns-resolver-runtime-4ed306f9",
+          "linux-home-router-recovery-13b7a5b9"
         ]
       },
       "freebsd": {
@@ -3148,7 +3171,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-independent-ipv4-6135bb03"
+          "linux-independent-ipv4-6135bb03",
+          "linux-home-router-recovery-13b7a5b9"
         ]
       },
       "freebsd": {
@@ -3241,7 +3265,9 @@
       "preservation_verdict": "unknown",
       "linux": {
         "qualification": "unknown",
-        "scoped_evidence": []
+        "scoped_evidence": [
+          "linux-home-router-recovery-13b7a5b9"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",

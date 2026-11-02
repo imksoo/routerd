@@ -475,17 +475,22 @@ Python HTTP server、curl、dig を使います。両方に iproute2、jq、syst
 管理経路が必要です。ゲストの試験ポート用 boot unit を作成します。hypervisor の
 ネットワーク設定は変更しません。
 
+router VM は routerd の binary・設定・DB がない clean state とし、1.5 形式に整えた設定を
+用意します。現在の Linux `make dist` パッケージを展開して
+`sudo ./install.sh --no-install-deps --enable-service` で導入します。
 両 VM の `/home/ubuntu/` に shell script と
 `tests/fixtures/linux-dhcp-firewall-lifecycle.json` をコピーします。
 router には `scripts/linux-interrupted-apply-smoke.py` もコピーします。
 以下の SSH alias は鍵を確認して operator が設定したもの、eth0 は隔離 trunk です。
 
 ```sh
-ssh router-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-router eth0 /home/ubuntu/linux-dhcp-firewall-lifecycle.json'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm setup-peer eth0'
+ssh router-fixture 'sudo install -m 0600 /var/tmp/rd15-reboot/candidate.json /usr/local/etc/routerd/router.yaml && sudo systemctl start routerd'
 ssh router-fixture 'sudo /usr/local/sbin/routerctl apply -f /var/tmp/rd15-reboot/candidate.json --replace'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
-ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
+ssh router-fixture 'sudo /usr/local/sbin/routerctl get status -o json | jq -e ".status.phase==\"Healthy\" and ([.status.controllers[] | select(.currentError==true)] | length==0)"'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm probe'
+ssh peer-fixture 'sudo bash /home/ubuntu/linux-router-reboot-fixture.sh --disposable-vm isolation'
 ```
 
 両 VM の `/proc/sys/kernel/random/boot_id`、routerd の MainPID、peer の
@@ -503,7 +508,7 @@ ssh peer-fixture 'sudo /home/ubuntu/linux-router-reboot-fixture.sh --disposable-
 4. 正常性を確認した後、router で次を実行します。
 
 ```sh
-sudo /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm
+sudo python3 /home/ubuntu/linux-interrupted-apply-smoke.py --disposable-vm
 ```
 
 helper は `recovery.home.arpa` を追加し、canonical file の置換後、apply client が
@@ -515,14 +520,16 @@ probe・isolation・同じ peer identity・DHCP 更新を再確認してくだ�
 helper の正常終了だけでは復旧の合格になりません。
 
 probe はローカル・転送 DNS UDP/TCP、HTTP 対向が観測した NAT 送信元、管理→LAN の
-正常通信を検査します。isolation は client 失敗と対向 HTTP ログへの非到達、WAN DNS
-遮断を検査します。手動で製品状態を直して合格にしません。fixture 準備の失敗は
+正常通信を検査します。probe と isolation は最初の DHCP lease を最大45秒待ちます。
+isolation は client 失敗と対向 HTTP ログへの非到達、WAN DNS 遮断を検査します。
+手動で製品状態を直して合格にしません。fixture 準備の失敗は
 環境準備として扱い、製品の合格数には含めません。
 
 成功後は同じ flag で router の `cleanup-router`、peer の `cleanup-peer` を実行します。
 空設定、firewall・管理アドレスの撤去を確認してから fixture の port・unit・namespace を
-削除します。一時出力は削除されます。残すのは手順・revision・判定です。
-電源断の永続性、全中断位置、IPv6 再起動、異なる版への切戻しは別の試験です。
+削除します。router setup は開始時の `net.ipv4.ip_forward` を記録し、cleanup で
+fixture を撤去してから同じ値に戻します。一時出力は削除されます。残すのは手順・revision・判定です。
+電源断の永続性、全中断位置、IPv6 再起動はこの試験の対象外です。
 
 
 ## Linux WAN RA/SLAAC ライフサイクル試験
