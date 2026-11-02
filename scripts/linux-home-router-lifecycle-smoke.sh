@@ -36,7 +36,6 @@ kea=$fixture/usr/sbin/kea-dhcp6
 rdisc=$fixture/usr/bin/rdisc6
 "$kea" -v
 test "$(stat -c %u "$rdisc")" = 0
-run_start=$(date --iso-8601=seconds)
 lan_ns=rd15-client
 wan_ns=rd15-upstream
 names=$(ip netns list)
@@ -129,12 +128,26 @@ finish() {
    ip netns exec "$lan_ns" ip -6 route show > "$work/failure-client-routes.txt" 2>&1 || true
    ip netns exec "$wan_ns" ip -6 route show > "$work/failure-upstream-ipv6-routes.txt" 2>&1 || true
    ip netns exec "$wan_ns" ip -6 neigh show dev peer0 > "$work/failure-upstream-ipv6-neighbors.txt" 2>&1 || true
-   timeout 5 /usr/local/sbin/routerctl get status -o json > "$work/failure-status.json" 2>&1 || true
-   journalctl -u routerd.service --since "$run_start" --no-pager -n 100 > "$work/failure-routerd-journal.txt" 2>&1 || true
-   tail -80 "$work/v6-recovery-packets.txt" > "$work/failure-v6-recovery-packets.txt" 2>/dev/null || true
-   tail -100 "$work/kea.log" > "$work/failure-kea.txt" 2>/dev/null || true
-   tail -100 "$work/udhcpc.log" > "$work/failure-dhcpv4.txt" 2>/dev/null || true
-   tail -100 "$work/dhcpcd6.log" > "$work/failure-dhcpv6.txt" 2>/dev/null || true
+   if timeout 5 /usr/local/sbin/routerctl get status -o json > "$work/.status-full.json" 2>/dev/null; then
+     jq '{phase:.status.phase,resourcePhaseIssues:.status.resourcePhaseIssues,controllers:[.status.controllers[]? | select(.name=="lan-address" or .name=="dns-resolver") | {name,lastTrigger,lastReconcileTime,currentError}]}' \
+       "$work/.status-full.json" > "$work/failure-status.json" 2>/dev/null || true
+     rm -f -- "$work/.status-full.json"
+   fi
+   if timeout 10 /usr/local/sbin/routerctl doctor incident --no-host -o json > "$work/.doctor-full.json" 2>/dev/null; then
+     jq '{objectStatuses:[.incident.objectStatuses[]? | select((.kind=="IPv6DelegatedAddress" and .name=="lan-v6") or (.kind=="IPv6RouterAdvertisement" and .name=="lan-v6") or (.kind=="DNSResolver" and .name=="lan") or (.kind=="DNSZone" and .name=="home") or (.kind=="DHCPv6PrefixDelegation" and .name=="wan-pd")) | {kind,name,status}],events:[.incident.events[]? | select((.type=="routerd.resource.status.changed" and ((.resourceKind=="IPv6DelegatedAddress" and .resourceName=="lan-v6") or (.resourceKind=="DNSResolver" and .resourceName=="lan"))) or (.type=="routerd.dns.resolver.configured" and .resourceName=="lan")) | {createdAt,type,resourceKind,resourceName,attributes}]}' \
+       "$work/.doctor-full.json" > "$work/failure-runtime.json" 2>/dev/null || true
+     rm -f -- "$work/.doctor-full.json"
+   fi
+   resolver=$(jq -r '.spec.resources[] | select(.kind=="DNSResolver") | .metadata.name' "$effective_candidate" | head -1)
+   dns_config="/var/lib/routerd/dns-resolver/$resolver/config.json"
+   if [ -n "$resolver" ] && [ -r "$dns_config" ]; then
+     jq '{resource,zones:[.zones[]? | select(.spec.zone=="home.arpa") | {name,records:[.spec.records[]? | select(.hostname=="router") | {hostname,ipv4,ipv6,ipv4From,ipv6From}]}]}' \
+       "$dns_config" > "$work/failure-dns-config.json" 2>/dev/null || true
+   fi
+   dns_state="/var/lib/routerd/dns-resolver/$resolver/state.json"
+   if [ -n "$resolver" ] && [ -r "$dns_state" ]; then
+     jq '{phase,health,listeners,zones}' "$dns_state" > "$work/failure-dns-state.json" 2>/dev/null || true
+   fi
    if [ "$installed" -eq 1 ] && [ -x /usr/local/sbin/routerctl ] && systemctl is-active --quiet routerd.service; then
      cat > "$work/failure-empty.json" <<'JSON'
 {"apiVersion":"routerd.net/v1alpha1","kind":"Router","metadata":{"name":"home-failure-cleanup"},"spec":{"resources":[]}}
@@ -190,6 +203,10 @@ JSON
    rm -r -- "$work"
  else
    cp "$candidate" "$work/failure-candidate.json" 2>/dev/null || true
+   rm -f -- "$work"/*.log "$work"/apply.txt "$work"/renew.txt "$work"/old-dns.txt \
+     "$work"/ra.txt "$work"/ra-renumber.txt "$work"/dhcpv4-events.txt "$work"/dhcpv4-renew.txt \
+     "$work"/v6-recovery-packets.txt "$work"/failure-routerd-journal.txt "$work"/failure-kea.txt \
+     "$work"/failure-dhcpv4.txt "$work"/failure-dhcpv6.txt "$work"/failure-v6-recovery-packets.txt
    printf 'FAIL: fixture cleaned; bounded diagnostics retained at %s\n' "$work" >&2
  fi
  exit "$rc"
