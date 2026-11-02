@@ -110,6 +110,14 @@ DNS 配布、プレフィックス再採番、`routerd` の再起動・ホスト
 [`routerd15-2bb2a6e3-dhcpv6-pd-isolated-pve-20261102.md`](../../evidence/routerd15-2bb2a6e3-dhcpv6-pd-isolated-pve-20261102.md)
 に記録しています。
 
+現行リビジョン `b5ecacd5` では、NAT44 の動的 DNAT ピンホールを隔離 PVE VM219 で確認しました。
+別ネットワーク名前空間の LAN クライアントと WAN 側ピアの間で、未要求の逆方向 UDP を遮断し、
+許可済みの LAN→WAN UDP 通信に対応する逆方向 UDP だけを動的 DNAT しました。期限満了、
+送信元集合の変更、空設定への撤回も確認しました。これは VM220・VM224 と VLAN 3131・3132 を
+使う三 VM 構成ではありません。対象、観測、復元、範囲外は
+[`routerd15-b5ecacd5-nat44-flow-dnat-isolated-pve-20261102.md`](../../evidence/routerd15-b5ecacd5-nat44-flow-dnat-isolated-pve-20261102.md)
+に記録しています。
+
 Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
 VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
 VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
