@@ -71,35 +71,35 @@
     "as_of_revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 160,
+    "scoped_linux_evidence_references": 161,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "Home-router composite: DHCPv4, DNS, NAT44, DHCPv6-PD, RA and IPv6 forwarding on PVE VLANs",
-    "next_scope": "LIN-PD-RENEW-EXPIRY-009",
+    "last_closed_scope": "DHCPv6-PD: independent renewal, expiry withdrawal and automatic recovery on PVE VLANs",
+    "next_scope": "LIN-FIREWALL-ZONE-ISOLATION-010",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
-        "id": "LIN-HOME-ROUTER-PVE-COMPOSITE-008",
-        "feature": "home-router Linux integration",
+        "id": "LIN-PD-RENEW-EXPIRY-009",
+        "feature": "DHCPv6 prefix-delegation lifecycle",
         "state": "passed",
-        "objective": "Run one fresh routerd 1.5 configuration on the three isolated PVE VLAN VMs with DHCPv4, DNS, NAT44, DHCPv6-PD, router advertisements and IPv6 forwarding together.",
+        "objective": "Use the independent PVE Kea peer to observe DHCPv6-PD renewal, expiry withdrawal and automatic recovery through the current routerd 1.5 process.",
         "pass_requires": [
-          "The independent LAN client acquires IPv4 configuration and reaches the independent WAN service through NAT44",
-          "The same client resolves the candidate DNS service and reaches the independent IPv6 WAN service through delegated-prefix forwarding",
-          "Withdrawing and restoring the WAN DNS service removes and restores only its corresponding DNS path without management loss"
+          "A renewed lease preserves the delegated LAN address and independent IPv6 forwarding",
+          "After the peer becomes unavailable and the lease expires, the candidate withdraws the delegated LAN address and router advertisement",
+          "Restoring the peer automatically reacquires the prefix and restores independent client connectivity"
         ]
       },
       "ready_next": [
         {
-          "id": "LIN-PD-RENEW-EXPIRY-009",
-          "feature": "DHCPv6 prefix-delegation lifecycle",
+          "id": "LIN-FIREWALL-ZONE-ISOLATION-010",
+          "feature": "firewall policy and address sets",
           "state": "ready",
-          "objective": "Use the independent PVE Kea peer to observe DHCPv6-PD renewal, expiry withdrawal and automatic recovery through the current routerd 1.5 process.",
+          "objective": "Use isolated PVE VLAN clients and an independent WAN peer to observe declared zone permits, WAN-originated denial, and policy withdrawal without changing management access.",
           "pass_requires": [
-            "A renewed lease preserves the delegated LAN address and independent IPv6 forwarding",
-            "After the peer becomes unavailable and the lease expires, the candidate withdraws the delegated LAN address and router advertisement",
-            "Restoring the peer automatically reacquires the prefix and restores independent client connectivity"
+            "A trusted LAN client reaches only the declared WAN services through the firewall policy",
+            "A new connection initiated from the untrusted WAN is denied while an established permitted flow remains observable",
+            "Withdrawing and restoring the selected firewall policy changes the matching data path without management loss"
           ]
         }
       ],
@@ -2416,6 +2416,23 @@
         "A whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-pd-renew-expiry-8dc7e08e": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
+      "reference": "evidence/routerd15-8dc7e08e-pd-renew-expiry-pve-20261102.md",
+      "environment": "Authorized isolated PVE VLANs. VM219 ran the current Linux package and one new routerd 1.5 configuration. VM220 independently supplied a Kea DHCPv6 prefix-delegation lease with renewal, rebind and expiry timers. VM224 was an independent SLAAC client.",
+      "checks": [
+        "The candidate bound 2001:db8:1500::/60 and emitted multiple PrefixRenewed events while the independent Kea peer remained available. The independent client reached the IPv6 HTTP service with its delegated source address.",
+        "After the independent Kea process stopped, the candidate emitted PrefixExpired and withdrew the delegated LAN address. The client lost its router-advertised default route and could no longer reach the IPv6 HTTP service.",
+        "Restarting Kea made the candidate bind the prefix again. The independent client regained its default route and IPv6 HTTP connectivity. Final router status was Healthy with no current controller error.",
+        "The dedicated snapshots were restored. The transient data ISO and dedicated snapshots were then removed."
+      ],
+      "excludes": [
+        "Multiple prefix renumbering, router process restart during a live lease, PPPoE, routing-policy variants, redundant failover, FreeBSD, and complete routerd 1.0 functional parity.",
+        "A whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-dhcpv6-server-8e8783e3": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3587,7 +3604,8 @@
           "linux-pve-pd-ra-lifecycle-905e0537",
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-dhcpv6-information-dns-883dacbd",
-          "linux-pve-home-router-composite-8dc7e08e"
+          "linux-pve-home-router-composite-8dc7e08e",
+          "linux-pve-pd-renew-expiry-8dc7e08e"
         ]
       },
       "freebsd": {
