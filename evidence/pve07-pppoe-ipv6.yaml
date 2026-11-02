@@ -26,3 +26,20 @@ spec:
         defaultRoute: true
         ipv6: true
         managed: true
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallZone
+      metadata: {name: wan}
+      spec: {role: untrust, interfaces: [wan, wan-pppoe]}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallPolicy
+      metadata: {name: default}
+      spec: {}
+    - apiVersion: firewall.routerd.net/v1alpha1
+      kind: FirewallRule
+      metadata: {name: wan-ipv6-echo}
+      spec:
+        fromZone: wan
+        toZone: self
+        protocol: icmpv6
+        icmpv6Type: echo-request
+        action: accept
