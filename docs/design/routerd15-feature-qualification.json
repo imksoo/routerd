@@ -2255,6 +2255,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dslite-aftr-fqdn-answer-recovery-623a9082": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "623a9082a08dd5e48a1a1e25e8c60e2ba637bc25",
+      "reference": "evidence/routerd15-623a9082-dslite-aftr-fqdn-pve-20261102.md",
+      "source_binding": "Candidate archive SHA-256 c77354adef38df5aa1eeef2ac1c9339c79e409e4f19dab413b8ce187d634e4f0; configuration SHA-256 8f29f207efee041dd290b2d65cef44ab171fed4bfde717cf7261c892019781d4.",
+      "environment": "Authorized PVE VLANs. Snapshot-protected VM219 ran the Linux candidate from a new state directory. Independent VM220 provided Kea DHCPv6-PD, DNS, the initial and replacement AFTR, and HTTP on VLAN 3132; independent VM224 was the IPv4 client on VLAN 3131.",
+      "checks": [
+        "Kea delegated 2001:db8:1500::/60. The candidate derived 2001:db8:1500::100/128 as its DS-Lite outer source and resolved aftr.test through its local DNSResolver.",
+        "The initial independent AAAA answer 2001:db8:16::1 created the first AFTR tunnel and VM224 HTTP reached VM220.",
+        "Changing the independent AAAA answer to 2001:db8:16::2 and removing the old AFTR caused a newly opened VM224 HTTP request to fail immediately.",
+        "Without restarting routerd, the candidate recreated rd15-dslite toward 2001:db8:16::2 about 12 seconds after the answer change, and VM224 HTTP recovered through the replacement AFTR."
+      ],
+      "excludes": [
+        "Multiple simultaneous DS-Lite paths, health-based active/standby behavior, IPv6 client traffic, multipath, performance, physical access and FreeBSD PF.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4107,7 +4125,8 @@
           "linux-vlan-clients-39156bb6",
           "linux-vlan-ha-dslite-c-r3-88927a4a",
           "linux-pve-dslite-nat-restart-withdrawal-7fbafbbc",
-          "linux-pve-dslite-delegated-source-recovery-4655971e"
+          "linux-pve-dslite-delegated-source-recovery-4655971e",
+          "linux-pve-dslite-aftr-fqdn-answer-recovery-623a9082"
         ]
       },
       "freebsd": {
@@ -4117,7 +4136,7 @@
         ]
       },
       "required_remaining_checks": [
-        "AFTR FQDN resolution and redundant endpoint withdrawal/recovery",
+        "Multiple DS-Lite path selection and health-based endpoint withdrawal/recovery",
         "FreeBSD PF binding and independent packaged traffic"
       ]
     },
