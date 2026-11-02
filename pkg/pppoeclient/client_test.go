@@ -191,6 +191,9 @@ func TestLinuxPeerHonorsDisabledSessionOptions(t *testing.T) {
 			t.Fatalf("Linux PPPoE peer unexpectedly contains %q:\n%s", unwanted, got)
 		}
 	}
+	if !strings.Contains(got, "-ipv6\n") {
+		t.Fatalf("Linux PPPoE peer does not disable IPv6:\n%s", got)
+	}
 }
 
 func TestParseLogLineDoesNotTreatGenericIPCPAsNegotiated(t *testing.T) {

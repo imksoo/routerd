@@ -114,6 +114,8 @@ func LinuxPeer(cfg Config) []byte {
 	b.WriteString(fmt.Sprintf("lcp-echo-interval %d\nlcp-echo-failure %d\n", lcpInterval, lcpFailure))
 	if spec.IPv6 {
 		b.WriteString("+ipv6\n")
+	} else {
+		b.WriteString("-ipv6\n")
 	}
 	return b.Bytes()
 }
