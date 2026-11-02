@@ -353,6 +353,12 @@ func (c IPv4RouteController) observeIPv6StaticRoute(ctx context.Context, wanted 
 	}
 	collision := false
 	for _, observed := range routes {
+		// iproute2 omits /128 for host routes and prints ::/0 as default.
+		if observed.Destination == "default" {
+			observed.Destination = "::/0"
+		} else if address, err := netip.ParseAddr(observed.Destination); err == nil && address.Is6() {
+			observed.Destination = netip.PrefixFrom(address, 128).String()
+		}
 		actual, err := normalizeIPv6StaticRoute(ipv6StaticRoute{Destination: observed.Destination, Gateway: observed.Gateway, Device: observed.Device, Metric: strconv.Itoa(observed.Metric)})
 		if err != nil {
 			return false, false, err

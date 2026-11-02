@@ -4,6 +4,7 @@ package chain
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -613,7 +614,20 @@ func ordinaryMutationCommands(commands [][]string) [][]string {
 }
 
 func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
-	route := ipv6StaticRoute{Destination: "2001:db8:10::/64", Gateway: "fe80::1", Device: "lan0", Metric: "42"}
+	for _, tc := range []struct{ name, configured, observed string }{
+		{"prefix", "2001:db8:10::/64", "2001:db8:10::/64"},
+		{"host", "2001:db8:10::99/128", "2001:db8:10::99"},
+		{"default", "::/0", "default"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testIPv6StaticRouteLifecycle(t, tc.configured, tc.observed)
+		})
+	}
+}
+
+func testIPv6StaticRouteLifecycle(t *testing.T, configured, observed string) {
+	t.Helper()
+	route := ipv6StaticRoute{Destination: configured, Gateway: "fe80::1", Device: "lan0", Metric: "42"}
 	installed := false
 	var commands [][]string
 	command := func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -625,7 +639,7 @@ func TestIPv4RouteControllerAppliesAndWithdrawsIPv6StaticRoute(t *testing.T) {
 			if !installed {
 				return []byte("[]"), nil
 			}
-			return []byte(`[{"dst":"2001:db8:10::/64","gateway":"fe80::1","dev":"lan0","metric":42,"protocol":"boot"}]`), nil
+			return []byte(fmt.Sprintf(`[{"dst":%q,"gateway":"fe80::1","dev":"lan0","metric":42,"protocol":"boot"}]`, observed)), nil
 		}
 		if reflect.DeepEqual(args, []string{"-6", "route", "add", route.Destination, "via", route.Gateway, "dev", route.Device, "metric", route.Metric, "proto", "boot"}) {
 			installed = true
