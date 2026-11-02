@@ -47,6 +47,36 @@ func TestDHCPv6InformationWaitsForClientSocket(t *testing.T) {
 	}
 }
 
+func TestDHCPv6InformationWithdrawsStaleDNSWhenPDIsNotBound(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}, Spec: api.DHCPv6PrefixDelegationSpec{Interface: "wan"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information"}, Metadata: api.ObjectMeta{Name: "wan-info"}, Spec: api.DHCPv6InformationSpec{Interface: "wan"}},
+	}}}
+	store := mapStore{
+		api.NetAPIVersion + "/DHCPv6PrefixDelegation/wan-pd": {"phase": daemonapi.ResourcePhaseExpired},
+		api.NetAPIVersion + "/DHCPv6Information/wan-info": {
+			"phase":        "Ready",
+			"source":       "wan-pd",
+			"dnsServers":   []string{"2001:db8::53"},
+			"domainSearch": []string{"example.test"},
+		},
+	}
+	controller := DHCPv6InformationController{Router: router, Store: store}
+
+	if err := controller.reconcile(context.Background(), "wan-pd", true); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	status := store.ObjectStatus(api.NetAPIVersion, "DHCPv6Information", "wan-info")
+	if status["phase"] != "Pending" || status["reason"] != "DHCPv6PrefixDelegationNotBound" || status["source"] != "wan-pd" {
+		t.Fatalf("status = %#v", status)
+	}
+	for _, field := range []string{"dnsServers", "domainSearch", "aftrName", "sntpServers"} {
+		if _, found := status[field]; found {
+			t.Fatalf("stale %s remained in %#v", field, status)
+		}
+	}
+}
+
 func TestDeclaredPrefixDelegationNamesKeepsDeclaredPDWhenEffectiveIsEmpty(t *testing.T) {
 	declared := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv6PrefixDelegation"}, Metadata: api.ObjectMeta{Name: "wan-pd"}}}}}
 	if got := declaredPrefixDelegationNames(&api.Router{}, declared); !reflect.DeepEqual(got, []string{"wan-pd"}) {

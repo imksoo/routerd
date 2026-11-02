@@ -57,10 +57,6 @@ func (c DHCPv6InformationController) Start(ctx context.Context) {
 
 func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName string, request bool) error {
 	pdStatus := c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6PrefixDelegation", pdName)
-	if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
-		return nil
-	}
-	socket := c.socketFor(pdName)
 	for _, resource := range c.Router.Spec.Resources {
 		if resource.Kind != "DHCPv6Information" {
 			continue
@@ -72,6 +68,28 @@ func (c DHCPv6InformationController) reconcile(ctx context.Context, pdName strin
 		if !c.matchesPD(resource, spec, pdName) {
 			continue
 		}
+		if pdStatus["phase"] != daemonapi.ResourcePhaseBound {
+			next := map[string]any{
+				"phase":   "Pending",
+				"reason":  "DHCPv6PrefixDelegationNotBound",
+				"source":  pdName,
+				"message": "waiting for a bound DHCPv6 delegated prefix",
+			}
+			changed := objectStatusChanged("DHCPv6Information", c.Store.ObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name), next)
+			if err := c.Store.SaveObjectStatus(api.NetAPIVersion, "DHCPv6Information", resource.Metadata.Name, next); err != nil {
+				return err
+			}
+			if changed && c.Bus != nil {
+				event := daemonapi.NewEvent(daemonapi.DaemonRef{Name: "routerd", Kind: "routerd", Instance: "controller"}, "routerd.dhcpv6.info.updated", daemonapi.SeverityInfo)
+				event.Resource = &daemonapi.ResourceRef{APIVersion: api.NetAPIVersion, Kind: "DHCPv6Information", Name: resource.Metadata.Name}
+				event.Attributes = map[string]string{"source": pdName}
+				if err := c.Bus.Publish(ctx, event); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		socket := c.socketFor(pdName)
 		if !clientSocketReady(socket) {
 			if err := c.saveDHCPv6InformationPending(resource.Metadata.Name, pdName, socket); err != nil {
 				return err
