@@ -2082,6 +2082,20 @@
         "IPv6, FreeBSD, complete routerd 1.0 functional parity, and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dhcp-active-lease-reboot-3763f102": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "3763f1025592b3b9b7ffa6aa361e0d87333e99c8",
+      "reference": "evidence/routerd15-3763f102-dhcp-active-lease-reboot-pve-20261102.md",
+      "environment": "Authorized PVE VLAN 3131 with VM219 candidate and independent VM224 BusyBox DHCP client.",
+      "checks": [
+        "VM224 held an active dynamic lease while PVE rebooted VM219.",
+        "After the candidate returned, routerd and routerd-dnsmasq were active without current controller error; VM224 reacquired the same address, options and lease-derived DNS record."
+      ],
+      "excludes": [
+        "Interrupted-apply recovery, WAN DHCP client behavior, IPv6, FreeBSD, complete routerd 1.0 functional parity, and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-home-integration-2a43a0e8": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3188,6 +3202,7 @@
           "linux-dhcpv4-reservation-pve-2c3fe143",
           "linux-dhcpv4-expiry-conflict-pve-6420b8ba",
           "linux-pve-dhcp-dns-nat-withdrawal-3763f102",
+          "linux-pve-dhcp-active-lease-reboot-3763f102",
           "linux-pve-home-integration-2a43a0e8"
         ]
       },
@@ -3196,8 +3211,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Router-host reboot and interrupted-apply recovery with active dynamic leases",
-        "WAN DHCP client behavior"
+        "Interrupted-apply recovery with active dynamic leases and WAN DHCP client behavior"
       ]
     },
     {
