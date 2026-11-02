@@ -363,6 +363,12 @@ stub resolver, `resolvectl`, `dnsmasq`, BusyBox, `dhcpcd`, `curl`, `dig`, `jq`,
 Python 3 and `timeout` installed, with `/proc/sys/net/netfilter/nf_conntrack_count`
 available.
 
+When the management NIC also has a DHCP default route, set its route metric in
+the guest network manager above the fixture WAN's 4242 (for example, 65000).
+Keep the management subnet reachable. The gate checks that the test destination
+selects the isolated WAN after DHCP acquisition, before starting client traffic;
+a management default winning instead is a fixture setup error.
+
 The final argument is the VM's independent management interface. The fixture has
 a `management` interface and trust zone; the script substitutes this interface
 name before validating the effective routerd 1.5 config. This keeps the VM's

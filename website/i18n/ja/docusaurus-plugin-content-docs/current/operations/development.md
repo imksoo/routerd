@@ -288,6 +288,11 @@ sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
   /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea eth0
 ```
 
+管理 NIC に DHCP の default route がある場合、ゲストの network manager で、その
+metric を fixture WAN の 4242 より大きくします（例: 65000）。管理サブネットへの経路は
+維持します。試験は WAN DHCP 取得後、クライアント通信を始める前に試験宛先が隔離 WAN を
+選ぶことを確認します。管理側 default を選んだ場合は fixture の準備エラーです。
+
 Ubuntu にインストールした Kea は AppArmor profile により一時設定ファイルの読み取りを
 拒否する場合があります。存在するファイルで `Unable to open file` となったら、kernel の
 監査ログで拒否を確認します。対応するパッケージを root で専用 fixture ディレクトリへ

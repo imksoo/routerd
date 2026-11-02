@@ -328,6 +328,8 @@ ip -4 -j route show default | jq -e 'any(.[]; .gateway == "198.18.16.1" and .dev
 resolvectl dns rd15-wan | grep '198.18.16.1'
 resolvectl domain rd15-wan | grep '~\.'
 wan4_initial_acquired=$(jq -r .acquiredAt "$wan4_lease")
+ip -4 route get 198.18.17.1 > "$work/upstream-ipv4-route.txt"
+grep -F 'via 198.18.16.1 dev rd15-wan' "$work/upstream-ipv4-route.txt"
 printf 'PASS: WAN DHCPv4 acquisition supplies the address, metric-qualified route and DNS to the clean-installed dual-stack router\n'
 cat > "$work/udhcpc-hook" <<EOF
 #!/bin/sh
