@@ -2405,6 +2405,20 @@
         "物理ケーブル、回線終端装置、ISP 網、PPPoE、IPv6 動的経路、ECMP、既存 TCP 接続、同時多重障害、FreeBSD、および全機能認定。"
       ]
     },
+    "linux-pve-dhcpv6-pd-expiry-dns-recovery-4aecd9cb": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "4aecd9cb4f609241ef9edc59f6dfde326f4ca61c",
+      "reference": "evidence/routerd15-4aecd9cb-dhcpv6-pd-expiry-pve-20261102.md",
+      "source_binding": "候補配布物 SHA-256 4c57cdca882fe40cee97c06365e82a1eaa53e5c7c6b1e5e3b1fb4dd5998fd2aa。",
+      "environment": "PVE VLAN 3131、3132。VM219 候補、VM220 独立 Kea と DNS 応答器、VM224 独立 DNS クライアント。",
+      "checks": [
+        "Kea は有効期限 30 秒で 2001:db8:1500::/60 と DNS 2001:db8:16::53 を提供した。VM224 の候補 DNS リゾルバー経由の router.info.test AAAA は応答した。",
+        "Kea DHCPv6 だけを停止すると、PD は PrefixExpired の後に Acquiring となり、候補 LAN のグローバル IPv6 アドレスは撤回された。DHCPv6Information は DNS 値を持たない Pending となり、理由は DHCPv6PrefixDelegationNotBound だった。",
+        "VM224 の同じ問い合わせは到達不能になった。Kea DHCPv6 の再起動後、候補の再起動または設定再適用なしに PD、DNS、LAN アドレスと VM224 の問い合わせが復旧した。"
+      ],
+      "excludes": ["実回線、NTT DHCPv6、物理 WAN 障害、複数プレフィックスの同時失効、FreeBSD、および全機能認定。"]
+    },
     "linux-pve-dhcpv6-information-dns-81444257": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4044,7 +4058,8 @@
           "linux-pd-ra-lifecycle-1ff438ee",
           "linux-pve-pd-ra-lifecycle-905e0537",
           "linux-pve-ipv6-rdnss-withdrawal-recovery-baa6c845",
-          "linux-pve-dhcpv6-information-dns-81444257"
+          "linux-pve-dhcpv6-information-dns-81444257",
+          "linux-pve-dhcpv6-pd-expiry-dns-recovery-4aecd9cb"
         ]
       },
       "freebsd": {
@@ -4052,7 +4067,6 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "DHCPv6-provided DNS lifetime and withdrawal",
         "Remaining IPv6 source modes and FreeBSD delegated-address ownership, withdrawal and recovery",
         "Fragmented solicitation provenance remains a documented API limitation"
       ]
