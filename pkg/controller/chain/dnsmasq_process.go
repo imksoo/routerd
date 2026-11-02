@@ -541,7 +541,18 @@ func stopOwnedDnsmasq(ctx context.Context, command, configPath, pidFile string) 
 		if process.PID == 0 {
 			return nil
 		}
-		if err := stopSystemdDnsmasq(ctx, filepath.Join(defaults.SystemdSystemDir, "routerd-dnsmasq.service"), configPath, configErr == nil || owner != nil); err != nil {
+		unitPath := filepath.Join(defaults.SystemdSystemDir, "routerd-dnsmasq.service")
+		unit, unitErr := readDnsmasqFile(unitPath, subprocessio.StdoutLimit)
+		if unitErr == nil && !dnsmasqSystemdUnitOwnedBy(unit, owner, configPath) {
+			// A no-DHCP configuration has no authority to retire an inherited
+			// service manager unit.  Its matching PID receipt proves only the
+			// native process, not that this revision owns the unit definition.
+			return nil
+		}
+		if unitErr != nil && !errors.Is(unitErr, os.ErrNotExist) {
+			return unitErr
+		}
+		if err := stopSystemdDnsmasq(ctx, unitPath, configPath, configErr == nil || owner != nil); err != nil {
 			return err
 		}
 		owner, err = readDnsmasqOwner(pidFile)
@@ -568,6 +579,14 @@ func stopOwnedDnsmasq(ctx context.Context, command, configPath, pidFile string) 
 		return err
 	}
 	return stopNativeDnsmasq(ctx, spec)
+}
+
+func dnsmasqSystemdUnitOwnedBy(unit []byte, owner *dnsmasqProcessOwner, configPath string) bool {
+	if owner == nil {
+		return false
+	}
+	spec, err := dnsmasqUnitSpec(unit)
+	return err == nil && spec == owner.Spec && spec.Config == configPath
 }
 
 func dnsmasqSystemctl(ctx context.Context, args ...string) ([]byte, error) {

@@ -255,3 +255,26 @@ func TestDnsmasqNoDHCPControllerLeavesStaleSystemdReceiptUntouched(t *testing.T)
 		t.Fatalf("stale receipt was claimed or rewritten: %q %v", got, err)
 	}
 }
+
+func TestDnsmasqSystemdRetirementRequiresCurrentOwnedUnit(t *testing.T) {
+	binary := buildDnsmasqProcessFixture(t)
+	spec, unitPath, dir := dnsmasqSystemdFixture(t, binary)
+	if err := ensureSystemdDnsmasqService(t.Context(), dir, binary, spec.Config, spec.PIDFile, false); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := readDnsmasqOwner(spec.PIDFile)
+	if err != nil || owner == nil {
+		t.Fatalf("read owner = %#v, %v", owner, err)
+	}
+	owned, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dnsmasqSystemdUnitOwnedBy(owned, owner, spec.Config) {
+		t.Fatal("current generated unit did not grant retirement authority")
+	}
+	foreign := []byte(routerdGeneratedDNSMasqMarker + "[Service]\nExecStart=" + binary + " --conf-file=" + spec.Config + "\n")
+	if dnsmasqSystemdUnitOwnedBy(foreign, owner, spec.Config) {
+		t.Fatal("foreign systemd unit granted retirement authority")
+	}
+}
