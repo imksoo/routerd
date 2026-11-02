@@ -1258,6 +1258,23 @@
         "NAT44FlowDNATPinhole, NAT44SessionSync or complete 1.0 function qualification"
       ]
     },
+    "linux-nat44-flow-dnat-pinhole-d4139bd9": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d4139bd9803af31e9fac55d5f4dab707660ebf8c",
+      "reference": "tests/netns/README.md#nat44-dynamic-udp-response-pinhole",
+      "environment": "Ubuntu 24.04.4; Linux 6.8.0-136-generic; private network namespaces/veth; nftables 1.0.9; Python 3; Go 1.25.9.",
+      "reproduction": "sudo ./tests/netns/nat44-flow-dnat-pinhole.sh",
+      "checks": [
+        "Prepared routerd 1.5 YAML passed validation; the production NAT44 controller applied real nftables rules in isolated router, WAN and LAN namespaces.",
+        "Independent UDP peers verified outbound learning, permitted response DNAT, rejected source/destination/interface/port mismatches, and confirmed expiry and withdrawal.",
+        "After changing the referenced source set and re-adding the resource under the same name, the active map did not contain the old client tuple and an injected WAN packet did not reach that former client. Successful temporary namespaces and output were removed."
+      ],
+      "excludes": [
+        "NAT44FlowDNATPinhole localEndpoint correlation, DNS-refreshed IPAddressSet runtime, NAT44SessionSync and FreeBSD runtime",
+        "Complete NAT44 feature or routerd 1.0 function qualification"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
