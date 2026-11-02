@@ -491,16 +491,62 @@ func writeDirectDnsmasqLANService(buf *bytes.Buffer, router *api.Router, aliases
 	for _, res := range router.Spec.Resources {
 		if res.Kind == "DHCPv4Relay" {
 			spec, err := res.DHCPv4RelaySpec()
-			if err == nil {
-				for _, iface := range spec.Interfaces {
-					if ifname := aliases[iface]; ifname != "" {
-						buf.WriteString(fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s\n", spec.Upstream, ifname))
-					}
+			if err != nil {
+				return err
+			}
+			for _, iface := range spec.Interfaces {
+				ifname := aliases[iface]
+				if ifname == "" {
+					return fmt.Errorf("%s references interface %q with empty ifname", res.ID(), iface)
 				}
+				localAddress := firstIPv4Address(runtime.IPv4AddressesByInterface[ifname])
+				if localAddress == "" {
+					localAddress = dnsmasqStaticIPv4Address(router, iface, staticIPv4)
+				}
+				if localAddress == "" {
+					return fmt.Errorf("%s interface %q has no observed or configured IPv4 address for DHCP relay", res.ID(), iface)
+				}
+				buf.WriteString(fmt.Sprintf("dhcp-relay=%s,%s\n", localAddress, spec.Upstream))
 			}
 		}
 	}
 	return nil
+}
+
+func dnsmasqStaticIPv4Address(router *api.Router, interfaceName string, staticIPv4 map[string]netip.Prefix) string {
+	if router == nil {
+		return ""
+	}
+	for _, resource := range router.Spec.Resources {
+		if resource.Kind != "IPv4StaticAddress" {
+			continue
+		}
+		spec, err := resource.IPv4StaticAddressSpec()
+		if err != nil || spec.Interface != interfaceName {
+			continue
+		}
+		if prefix := staticIPv4[resource.Metadata.Name]; prefix.IsValid() && prefix.Addr().Is4() && !prefix.Addr().IsUnspecified() {
+			return prefix.Addr().String()
+		}
+	}
+	return ""
+}
+
+func firstIPv4Address(values []string) string {
+	for _, value := range values {
+		address, err := netip.ParseAddr(strings.TrimSpace(value))
+		if err != nil {
+			prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(value))
+			if prefixErr != nil {
+				continue
+			}
+			address = prefix.Addr()
+		}
+		if address.Is4() && !address.IsUnspecified() && !address.IsMulticast() {
+			return address.String()
+		}
+	}
+	return ""
 }
 
 func dnsmasqExpandDomainValues(router *api.Router, base []string, sources []api.StatusValueSourceSpec) []string {

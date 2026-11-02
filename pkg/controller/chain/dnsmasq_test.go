@@ -194,6 +194,7 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 	store := mapStore{
 		api.NetAPIVersion + "/DHCPv6Information/wan-info": {"dnsServers": []any{"2001:db8::53"}},
 		api.NetAPIVersion + "/IPv4StaticAddress/lan-base": {"address": "192.168.10.1/24"},
+		api.NetAPIVersion + "/Interface/lan":              {"primaryIPv4": "192.168.10.1/24"},
 	}
 
 	got, err := dnsmasqLANServiceLines(router, store)
@@ -218,7 +219,7 @@ func TestDnsmasqLANServiceLines(t *testing.T) {
 		"dhcp-option=tag:lan-v6,option6:sntp-server,[2001:db8::123]",
 		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
 		"dhcp-option=tag:lan-v6,option6:rapid-commit",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-relay=192.168.10.1,192.0.2.53",
 	} {
 		if !containsLine(got, want) {
 			t.Fatalf("dnsmasq LAN service lines missing %q:\n%#v", want, got)
@@ -291,6 +292,30 @@ func TestDnsmasqLANServiceLinesStripIPv6PrefixLengthFromOptions(t *testing.T) {
 	for _, line := range got {
 		if strings.Contains(line, "option6:dns-server,[2409:10:3d60:1271::1/64]") {
 			t.Fatalf("line still contains prefix length: %q", line)
+		}
+	}
+}
+
+func TestDnsmasqLANServiceLinesDHCPv4RelayRequiresObservedIPv4(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "192.0.2.53"}},
+	}}}
+
+	for name, tc := range map[string]struct {
+		status map[string]any
+		want   string
+	}{
+		"missing":     {want: "no observed primary IPv4 address"},
+		"unspecified": {status: map[string]any{"primaryIPv4": "0.0.0.0/0"}, want: "invalid observed primary IPv4 address"},
+		"invalid":     {status: map[string]any{"primaryIPv4": "not-an-ip"}, want: "invalid observed primary IPv4 address"},
+	} {
+		store := mapStore{}
+		if tc.status != nil {
+			store[api.NetAPIVersion+"/Interface/lan"] = tc.status
+		}
+		if _, err := dnsmasqLANServiceLines(router, store); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s relay source address should fail clearly: %v", name, err)
 		}
 	}
 }

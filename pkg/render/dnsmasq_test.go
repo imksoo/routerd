@@ -336,6 +336,7 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "ens19", Managed: true, Owner: "routerd"}},
+			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.168.10.1/24"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DNSZone"}, Metadata: api.ObjectMeta{Name: "lan-zone"}, Spec: api.DNSZoneSpec{Zone: "lan"}},
 			{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Server"}, Metadata: api.ObjectMeta{Name: "lan-v4"}, Spec: api.DHCPv4ServerSpec{
 				Managed:     true,
@@ -388,11 +389,39 @@ func TestDnsmasqConfigRendersDirectLANServiceKinds(t *testing.T) {
 		"dhcp-range=tag:ens19,set:lan-v6,::100,::1ff,constructor:ens19,64,6h",
 		"dhcp-option=tag:lan-v6,option6:dns-server,[2001:db8::53]",
 		"dhcp-option=tag:lan-v6,option6:domain-search,lan",
-		"dhcp-relay=0.0.0.0,192.0.2.53,ens19",
+		"dhcp-relay=192.168.10.1,192.0.2.53",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dnsmasq output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDnsmasqConfigDHCPv4RelayPrefersObservedInterfaceAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "IPv4StaticAddress"}, Metadata: api.ObjectMeta{Name: "lan-address"}, Spec: api.IPv4StaticAddressSpec{Interface: "lan", Address: "192.0.2.1/24"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "198.51.100.2"}},
+	}}}
+
+	data, _, err := DnsmasqConfig(router, DnsmasqRuntime{IPv4AddressesByInterface: map[string][]string{"lan0": {"192.0.2.2/24"}}})
+	if err != nil {
+		t.Fatalf("render dnsmasq: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "dhcp-relay=192.0.2.2,198.51.100.2\n") || strings.Contains(got, "dhcp-relay=192.0.2.1,") {
+		t.Fatalf("relay must use the currently observed interface address:\n%s", got)
+	}
+}
+
+func TestDnsmasqConfigDHCPv4RelayRequiresIPv4InterfaceAddress(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "lan"}, Spec: api.InterfaceSpec{IfName: "lan0"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "DHCPv4Relay"}, Metadata: api.ObjectMeta{Name: "relay"}, Spec: api.DHCPv4RelaySpec{Interfaces: []string{"lan"}, Upstream: "198.51.100.2"}},
+	}}}
+
+	if _, _, err := DnsmasqConfig(router, DnsmasqRuntime{}); err == nil || !strings.Contains(err.Error(), "DHCPv4Relay/relay") || !strings.Contains(err.Error(), "IPv4 address") {
+		t.Fatalf("missing relay interface address should fail clearly: %v", err)
 	}
 }
 

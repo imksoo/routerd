@@ -153,6 +153,30 @@ deleted. A failure retains its current temporary directory for local diagnosis.
 This check does not exercise package installation, service-manager supervision,
 lease expiry, address-conflict handling, DNS answers, NAT, or FreeBSD behavior.
 
+## Linux DHCPv4 relay packet check
+
+Run `sudo ./tests/netns/dhcpv4-relay.sh` on an isolated Linux host with
+iproute2, dnsmasq, BusyBox `udhcpc`, tcpdump, Go and network-namespace support.
+The test renders the current DHCPv4 relay configuration, starts real dnsmasq
+relay and upstream-server processes in separate namespaces, and uses independent
+BusyBox clients. PASS requires a client lease from the upstream pool with the
+configured gateway, DNS server and server identifier; no lease while the
+upstream server is stopped; a lease after server recovery; no lease while the
+relay is withdrawn; and a lease after the relay restarts. Successful runs print
+one result and delete their temporary state and packet captures. A failed run
+retains its bounded temporary diagnostics for local reproduction. The test
+checks the renderer and dnsmasq packet path, not routerd service supervision,
+firewall policy, package installation, reboot recovery or FreeBSD behavior.
+
+For a test VM without Go, build the renderer on a Go-enabled build host and
+provide that static binary to the VM alongside the test script:
+
+```sh
+CGO_ENABLED=0 go build -o /tmp/routerd-dhcpv4-relay-render ./tests/netns/dhcpv4-relay-render
+sudo env ROUTERD_DHCPV4_RELAY_RENDERER=/tmp/routerd-dhcpv4-relay-render \
+  ./tests/netns/dhcpv4-relay.sh
+```
+
 ## Linux DNS resolver runtime check
 
 Run `sudo ./tests/netns/dns-resolver-runtime.sh` on an isolated Linux host with

@@ -6489,9 +6489,24 @@ func dnsmasqLANServiceLines(router *api.Router, store Store) ([]string, error) {
 		for _, iface := range spec.Interfaces {
 			ifname := aliases[iface]
 			if ifname == "" {
-				continue
+				return nil, fmt.Errorf("%s references interface %q with empty ifname", resource.ID(), iface)
 			}
-			lines = append(lines, fmt.Sprintf("dhcp-relay=0.0.0.0,%s,%s", spec.Upstream, ifname))
+			status, err := store.ReadObjectStatus(api.NetAPIVersion, "Interface", iface)
+			if err != nil {
+				return nil, fmt.Errorf("read Interface/%s status for %s DHCP relay address: %w", iface, resource.ID(), err)
+			}
+			localAddress := statusStringPreferObserved(status, "primaryIPv4")
+			if localAddress == "" {
+				return nil, fmt.Errorf("%s interface %q has no observed primary IPv4 address for DHCP relay", resource.ID(), iface)
+			}
+			if prefix, err := netip.ParsePrefix(localAddress); err == nil && prefix.Addr().Is4() && !prefix.Addr().IsUnspecified() && !prefix.Addr().IsMulticast() {
+				localAddress = prefix.Addr().String()
+			} else if address, err := netip.ParseAddr(localAddress); err == nil && address.Is4() && !address.IsUnspecified() && !address.IsMulticast() {
+				localAddress = address.String()
+			} else {
+				return nil, fmt.Errorf("%s interface %q has invalid observed primary IPv4 address %q for DHCP relay", resource.ID(), iface, localAddress)
+			}
+			lines = append(lines, fmt.Sprintf("dhcp-relay=%s,%s", localAddress, spec.Upstream))
 		}
 	}
 	return lines, nil
