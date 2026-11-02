@@ -3,6 +3,7 @@
 package chain
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imksoo/routerd/pkg/api"
+	"github.com/imksoo/routerd/pkg/render"
 )
 
 // The CLI fixture only performs process operations and records their ordering.
@@ -85,6 +87,27 @@ func dnsmasqUnitFixturePID(t *testing.T, spec dnsmasqProcessSpec) int {
 		t.Fatal(err)
 	}
 	return pid
+}
+
+func TestDnsmasqUnitSpecAcceptsExactPrePartOfGeneratedUnit(t *testing.T) {
+	spec := dnsmasqProcessSpec{
+		Command: "/usr/sbin/dnsmasq",
+		Config:  "/run/routerd/dnsmasq.conf",
+		PIDFile: "/run/routerd/dnsmasq.pid",
+	}
+	current := render.DnsmasqServiceUnitWithPID(spec.Config, spec.PIDFile, spec.Command)
+	previous := bytes.Replace(current, []byte("PartOf=routerd.service\n"), nil, 1)
+	parsed, err := dnsmasqUnitSpec(previous)
+	if err != nil {
+		t.Fatalf("exact pre-PartOf generated unit rejected: %v", err)
+	}
+	if parsed != spec {
+		t.Fatalf("parsed spec = %+v, want %+v", parsed, spec)
+	}
+	foreign := bytes.Replace(previous, []byte("RestartSec=2s"), []byte("RestartSec=3s"), 1)
+	if _, err := dnsmasqUnitSpec(foreign); err == nil {
+		t.Fatal("modified predecessor unit granted ownership")
+	}
 }
 
 func TestDnsmasqSystemdActivationAndWithdrawal(t *testing.T) {

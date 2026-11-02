@@ -34,10 +34,23 @@ func dnsmasqUnitSpec(data []byte) (dnsmasqProcessSpec, error) {
 		}
 		spec = dnsmasqProcessSpec{args[0], strings.TrimPrefix(args[2], "--conf-file="), strings.TrimPrefix(args[3], "--pid-file=")}
 	}
-	if !filepath.IsAbs(spec.Command) || !filepath.IsAbs(spec.Config) || !filepath.IsAbs(spec.PIDFile) || !bytes.Equal(data, render.DnsmasqServiceUnitWithPID(spec.Config, spec.PIDFile, spec.Command)) {
+	if !filepath.IsAbs(spec.Command) || !filepath.IsAbs(spec.Config) || !filepath.IsAbs(spec.PIDFile) || !canonicalDnsmasqSystemdUnit(data, spec) {
 		return spec, errors.New("dnsmasq systemd unit is foreign or malformed")
 	}
 	return spec, nil
+}
+
+func canonicalDnsmasqSystemdUnit(data []byte, spec dnsmasqProcessSpec) bool {
+	current := render.DnsmasqServiceUnitWithPID(spec.Config, spec.PIDFile, spec.Command)
+	if bytes.Equal(data, current) {
+		return true
+	}
+	// routerd generated the exact predecessor without PartOf before the
+	// routerd-service lifecycle link was added. It retains the same generated
+	// command, paths, and ownership marker, so accepting only this byte-exact
+	// predecessor lets the new unit replace it without claiming a foreign unit.
+	previous := bytes.Replace(current, []byte("PartOf=routerd.service\n"), nil, 1)
+	return bytes.Equal(data, previous)
 }
 
 func dnsmasqUnitProperty(ctx context.Context, property string) (string, error) {
