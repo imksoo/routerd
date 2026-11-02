@@ -1815,6 +1815,24 @@
         "DNS forwarding, firewall policy parity, complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-nat44-withdrawal-d467ab70": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "d467ab70ffff3e1b7763f084a945ea1ba9939db3",
+      "reference": "evidence/routerd15-d467ab70-nat-pve-qualification-20261102.md",
+      "source_binding": "Candidate ISO SHA-256 11fca32ba8886e2ba4f961569ef2a0fe915a09625e70125dac40ae28791f88a8; running routerd reported d467ab70.",
+      "environment": "Authorized PVE VLANs. VM219 ran the Linux candidate with fresh test state. Independent VM220 used VLAN 3132 as the HTTP peer, and independent VM224 used VLAN 3131 as the static IPv4 client.",
+      "checks": [
+        "VM224 HTTP to VM220 succeeded. VM220 observed the NAT44 source 198.18.16.2, and VM219 conntrack recorded the translated reply destination.",
+        "Replacing the configuration without NAT44Rule removed table ip/routerd_nat and caused a new VM224 HTTP connection to time out without a VM220 request.",
+        "Reapplying NAT44Rule restored the table, routerctl doctor nat, and new VM224 HTTP with the translated source. A routerd restart also restored the same new-flow path.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the candidate ISO and test assets were removed."
+      ],
+      "excludes": [
+        "NAT44FlowDNATPinhole, NAT44SessionSync, PortForward, LocalServiceRedirect, existing-flow withdrawal behavior, static SNAT, IPv6 NAT and physical access.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-dns-forward-withdrawal-409719ba": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3757,7 +3775,8 @@
           "linux-ingress-service-ad5bcd47",
           "linux-nat44-flow-dnat-pinhole-3587ac28",
           "linux-pve-home-integration-2a43a0e8",
-          "linux-pve-port-forward-withdrawal-409719ba"
+          "linux-pve-port-forward-withdrawal-409719ba",
+          "linux-pve-nat44-withdrawal-d467ab70"
         ]
       },
       "freebsd": {
