@@ -1,211 +1,158 @@
-# routerd 1.5 proposal and implementation plan
+# routerd 1.5 completion and qualification plan
 
-Status: proposed on `proposal/routerd15-kiss-runtime`; not a released product.
-Baseline: routerd `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
+Status: active proposal on `proposal/routerd15-kiss-runtime`; not released.
+Plan reset: 2026-11-02 at `2d13bd03704954126d57ad8274dab8f4c589ab1a`.
+routerd 1.0 baseline: `e3b49dbb69c7de97bab9595884745eb7cbe93d92`.
 
-## Product decision
+## Product contract
 
-Improve routerd in place on a separate branch. Preserve its useful networking
-behavior while removing duplicate state, conversions, unused execution paths,
-and unnecessary abstractions. Configuration and event/state database compatibility
-are explicitly not required. Initial installation uses rewritten config and a
-fresh database. Preparing a retained operator configuration is a one-time task:
-an operator or external tool, including AI, may rewrite it into routerd 1.5
-format, then routerd 1.5 validates it before installation. Routerd itself has
-no old-format importer, 1.0 state import, in-place 1.0-to-1.5 upgrade, or
-cross-version rollback path, and none is a qualification target. Existing
-features are not implicitly removed. A new package/process/framework is
-justified only by the feature's needs.
+- Preserve every useful routerd 1.0 function, including resource behavior,
+  protocols, commands, control API, WebConsole, packaging and supported platform
+  behavior. A home/site main-router trial is the first real-use gate; it does
+  not reduce the final scope.
+- Linux is first. Complete the corresponding FreeBSD and NixOS behavior after
+  Linux; do not report whole-project completion while any baseline scope or
+  platform remains unknown or broken.
+- Old configuration and database formats do not need migration or upgrade
+  support. Prepare a routerd 1.5 configuration before a clean installation.
+  This does not authorize deleting data on an operating router during
+  development.
+- Do not merge to `main`, release, or cut over a production router without the
+  user's explicit decision.
 
-## Completion and first live-use milestone
+## Current inventory
 
-The final goal is preservation of **all existing routerd 1.0 functions**, with
-routerd 1.5 ready for actual use. Compare against the pre-1.5 implementation at
-the baseline above, including resource kinds, caller behavior, commands,
-platform support, examples, tests and operational procedures. A renamed or
-replaced implementation must demonstrate the same useful function. Configuration
-and database format changes remain allowed; functional removal is not.
-
-The first live-use configuration is a home/site main router with DHCP/DNS,
-IPv4 NAT and IPv6. Its admission checks are:
-
-- Clean package installation and startup through the actual service manager,
-  using a routerd 1.5 configuration prepared before the test and validated by
-  routerd 1.5, with fresh 1.5 state and management access independent of the
-  tested WAN/LAN. The test starts from a clean install; it does not import 1.0
-  configuration/state or upgrade an installed 1.0 system. The combined clean-
-  install procedure is in `docs/operations/development.md`, under “Linux home-
-  router clean-install lifecycle gate”; its precondition requires old binaries,
-  config and state to be absent.
-- Independent client DHCP acquisition/renewal and DNS UDP/TCP answers, real
-  IPv4 forwarding/NAT, IPv6 delegation/RA and client forwarding; test the
-  upstream mode selected for the actual deployment.
-- Upstream loss/return, lease renewal/expiry and prefix changes, process restart,
-  host reboot and interrupted configuration changes without manual repair of
-  the product's state. Check withdrawal and absence of traffic leaks as well as
-  successful traffic.
-- Reject invalid 1.5 configuration, replace and withdraw valid 1.5 configuration,
-  and verify recovery from an interrupted 1.5 activation.
-- The complete local regression gate remains passing. Newly discovered failures
-  stay open until reproduced, repaired and rechecked; a limited trial cannot
-  reclassify other features as unnecessary.
-
-Passing these checks permits a proposal for a bounded real-use trial, not a
-claim that the whole revision is complete. Continue the full 1.0 feature audit,
-implementation and qualification after that milestone. Production cutover,
-release and main merge remain separate authorization boundaries. Work through
-routine repairs and authorized isolated-VM checks without requesting a new task
-for each failure. Preserve small checkpoints remotely, and keep reproducible
-procedures and verdicts rather than permanent raw-log bundles.
-
-## Current execution priority, 2026-10-31
-
-Complete Linux implementation and qualification first, as requested by the
-operator. Preserve published FreeBSD work and its open findings, but defer
-FreeBSD-only implementation and native execution. Fix shared defects when they
-affect Linux, including cancellation, storage and process ownership. A Linux
-acceptance result does not establish whole-platform completion; retain the
-remaining FreeBSD functions in the final 1.0 preservation scope.
+- `origin/main` is `e3b49dbb69c7de97bab9595884745eb7cbe93d92`; the active proposal
+  is PR #1365. Its checks pass for the submitted revision, but it is a 1,490-file
+  rewrite and is not a functional-parity verdict.
+- Independent open PRs #1366–#1369 cover DHCPv4 relay source selection,
+  PortForward dataplane tests, firewall dataplane tests, and FreeBSD artifact
+  plans. Read their current diffs and avoid duplicating their scope.
+- The feature ledger maps 87 baseline resource kinds, 90 example artifacts,
+  and 50 feature scopes, including 11 non-resource scopes. Every preservation
+  verdict is still `unknown`; `full_feature_pass_count` is 0. This means the
+  whole 1.0 function set has not been audited and qualified end to end, even
+  though many useful scoped tests and VM checks already exist.
+- The current branch has no open GitHub issues. Use the existing feature ledger
+  and open-findings document to select work; do not create parallel plans or
+  branches for the same scope.
+- The Linux IPv6 static host-route readback and independent-client forwarding,
+  withdrawal, reapply and recovery path passed at `4f81296b`. Its reusable
+  procedure is `routerd15-ipv6-route-readback.md`; this scoped pass does not
+  qualify other route kinds or overall parity.
+- The latest home-router reboot run at `2d13bd03` passed clean installation,
+  health, DHCP, local DNS, NAT and firewall/management checks, but one peer
+  upstream-DNS probe failed after router reboot and later succeeded without a
+  configuration change. The capture did not pair the first client query with
+  the corresponding upstream response. Treat this as an unresolved observation,
+  not a confirmed product defect or a pass. The runbook's client probe uses a
+  one-second deadline while the default upstream query timeout is three
+  seconds; determine whether that mismatch explains the observation by
+  measuring the actual exchange before changing either behavior.
 
 ## Work sequence
 
-1. **Health to PBR (initial implementation).** Decode current status at its
-   boundary into a small typed observation. Share the threshold/freshness decision
-   between advisory selection and priority routing, using one captured time.
-   Publish priority routing results after nftables succeeds; report effect and
-   status-write errors. Check stale observations, grace failures, fallback and
-   application failure locally, then demonstrate two-WAN failover on an isolated
-   VM with the product daemon. This first checkpoint retains the existing store
-   and IPC boundaries; it does not claim to finish typed end-to-end transport.
-2. **Typed observation transport.** Follow Health daemon -> status acquisition ->
-   routing through actual callers. Replace string/map round trips with explicit
-   messages and a single owner for each current observation. Update both IPC ends,
-   API consumers and schemas together, deleting replaced representations. Keep
-   validity/restart behavior explicit; do not add old producer support.
-3. **Intent and read-only decisions.** Replace YAML cloning in dynamic config.
-   Prepare static references with configuration and pass current observations to
-   synchronous decisions. Separate effects so plan/dry-run no longer requires a
-   cloned writable DB. Handle expiry, changes during waits and dependent withdrawal
-   at their responsible operation; avoid a universal new resource engine.
-4. **Persistence and recovery.** Choose one new schema for required leases,
-   ownership and pending operations. Separate diagnostic history from control
-   decisions. Preserve EventRule history semantics and DHCP callback recovery if
-   those features remain enabled. Remove discarded readers/migrations and dual
-   paths; test a fresh start and a restart using the new format.
-5. **Protocol and OS feature paths.** Work through DHCPv4, DHCPv6-PD/RA, DS-Lite,
-   PPPoE, DNS, NAT/firewall and the remaining enabled features. Repair packet bounds
-   and exchange handling in the owning receive path; retain useful optional data.
-   Reuse selected routerd2 fixes after reading their full callers. Remove unused
-   old paths only after checking references and affected builds.
-6. **Cutover and release.** Run the existing feature inventory against rewritten
-   configuration and independent peers. Exercise restart, loss/return of upstream,
-   renewal/expiry, managed-resource cleanup and management recovery. Record packet,
-   client and kernel evidence. Publish a version only after its stated scope is
-   demonstrated. No production cutover or existing DB deletion occurs implicitly.
+### 1. Resolve the post-reboot DNS observation
 
-Each step is a complete feature path with its obsolete code removed, not an
-invitation to finish a new framework before trying actual communication.
+Read the current resolver, supervisor, dnsmasq and service-manager paths and
+their tests before changing code. Reproduce the reported case locally with an
+independent upstream and client; distinguish client timeout, resolver response,
+upstream response and service readiness. Use the existing two-VM procedure in
+`docs/operations/development.md` for the actual reboot check.
 
-## Local and VM checks
+Add a focused regression only for a reproduced product failure. If the product
+responds inside its configured deadline and the one-second probe is the sole
+failure, correct the probe to measure the configured contract. If it does not,
+fix the owning production path. Then run one clean, current-revision PVE
+campaign and remove its VMs, media, logs and staging when complete. Keep the
+procedure and pass/fail criteria; retain raw captures only while diagnosing the
+open failure.
 
-`make check-routerd15` runs the affected local Go packages. Ordinary tests must
-not mutate the host network. Focused command fixtures can establish ordering and
-failure propagation; they cannot establish packet forwarding.
+### 2. Qualify the first real-use router path
 
-[routerd15-feature-qualification.json](routerd15-feature-qualification.json)
-maps every baseline resource kind and example artifact to its feature scope,
-and tracks commands, control API, WebConsole and distribution separately.
-Inventory presence is not a parity verdict. The pinned historical evidence
-does not qualify later changes or turn an unknown feature into a pass.
+Use a clean package installation and a 1.5 configuration on isolated Linux
+router and independent-client VMs. Combine the existing clean-install,
+home-router, reboot and interrupted-apply procedures where their setup is
+shared; do not repeat a passing scenario just to produce another report.
 
-`make check-routerd15-wireguard-parent` checks the production WireGuard parent
-and child ownership boundaries with command fixtures. The explicit Linux target
-`make check-routerd15-native-parent-linux` additionally enters fresh user,
-network and mount namespaces. It requires iproute2, WireGuard tools, kernel
-WireGuard/VXLAN support and enabled user namespaces. It exercises native Bridge
-address lifecycle, VXLAN creation/configuration/withdrawal and an independent
-WireGuard peer, including SQLite reopen and owned-interface recovery. These
-checks establish their stated native paths; they do not qualify other protocols,
-FreeBSD, package activation or all WireGuard source integrations.
+Require independent-client DHCP acquisition and renewal, local and upstream
+DNS A/AAAA over UDP/TCP, IPv4 NAT and forwarding, IPv6 delegation/RA and client
+forwarding, firewall isolation and independent management access. Exercise
+upstream loss/return, lease and prefix changes/expiry, service restart, router
+reboot, process crash, interrupted 1.5 apply, configuration withdrawal and
+automatic recovery. Do not repair product state by hand to turn a failure into
+a pass. Use the existing runbook bounds; do not add new latency or recovery
+requirements without an observed operator need.
 
-The VM check needs an isolated Linux VM/netns with CAP_NET_ADMIN/CAP_NET_RAW,
-Unix sockets, two upstreams and an independent TCP/UDP peer. Start the actual
-routerd/Health processes, preserve the management path, send traffic, interrupt
-one upstream and restore it. Observe routes/nftables and the traffic path; repeat
-with worker restart and stale observations. Record actual setup and revision.
-The audit records executed isolated Linux/FreeBSD VM paths and their revisions.
-The full two-WAN failover/recovery gate remains separate from the completed
-single-upstream IPv4 and delegated IPv6 client checks.
+Passing this gate makes a bounded real-use trial ready for an explicit user
+decision. It does not complete or waive any other 1.0 feature.
 
-## Repository-wide implementation checkpoint
+### 3. Complete Linux 1.0 function preservation
 
-The scope is now the whole repository, rather than only Health/PBR. The coverage
-record in [routerd15-audit.md](routerd15-audit.md) explicitly distinguishes source
-inventory, semantic review, implementation and executed checks. Pending packages
-are not declared compliant.
+Work from each `unknown` row in `routerd15-feature-qualification.json`, using
+the pre-1.5 source and its real callers to establish the contract. Prioritize
+actual network effects and failure consequences:
 
-Implemented across existing callers:
+1. Interface/address ownership, static and policy routes, forwarding, MTU and
+   exact withdrawal/recovery.
+2. LAN DHCPv4/DHCPv6, DNS, NAT, port forwarding, firewall, address sets and
+   management access with independent peers.
+3. WAN DHCP/RA, DHCPv6-PD, PPPoE, DS-Lite, WireGuard, IPsec, VRF, VXLAN and
+   hybrid paths, each with the peer and lifecycle the baseline supports.
+4. BGP/BFD/VRRP, lease synchronization, mobility, provider actions, plugins,
+   event rules, derived events, health and policy routing.
+5. CLI, API, WebConsole, diagnostics, system/service behavior, examples,
+   schemas, installers, live ISO, release tools and declarative platform
+   integration.
 
-- Concrete ResourceSpec types at YAML/JSON boundaries, shared generated decoding
-  and ordinary deep copies; no JSON fallback to recover internal spec types.
-- Typed current Health observation from the worker to persistence and routing;
-  one current-status owner; worker restart restores history without asserting
-  previous reachability; failure grace requires a previously healthy path.
-- Explicit MTU resource handling; removal of unreachable standalone IPv4/Health
-  apply paths and obsolete skipped inspection tests.
-- One SQLite schema (user_version 1501) shared by state and the ownership ledger;
-  no JSON persistence backend, migration chain, or no-op Save contract. Closed
-  stores and invalid status encodings report errors.
-- Error-returning state-variable writes, propagated through PD observations and
-  ingress drain operations; expiry observation does not delete drain intent.
-- Read-only apply planning, including dynamic parts and when filtering. Plan does
-  not execute controllers, generate simulated events, create a temporary DB, or
-  open ownership data for writing. Apply reacquires observations before effects.
-- Cancellation passed to policy route observations and delayed derived events.
-- Repository-wide command reachability cleanup, shared IPv4 frame bounds,
-  DHCPv6-PD request retry/identity/timer fixes, validated RA reception and worker
-  stop/signal ownership. The audit lists remaining protocol and state-write gaps.
-- Example inventory tests use their own loopback metadata endpoints and fake
-  provider CLIs; Azure inventory honors its configured metadata endpoint.
+For each path, trace configuration through the actual caller to the native or
+peer effect, status/readback, withdrawal and recovery. Keep small production
+changes and focused regressions. Use unit/package tests for logic, netns for
+isolated Linux kernel behavior, and PVE VMs for clean install, service,
+reboot and independent-peer paths. A fixture, compile, or mock does not qualify
+native forwarding. Reuse existing test procedures and fix real gaps; do not add
+speculative constraints or test-only architecture.
 
-No released version, full semantic audit, or real network qualification is claimed.
+PPPoE remains in the preservation inventory. The user's exercised scenario is
+basic connectivity through the Tokyo SoftEther endpoint; do not invent a
+carrier/authentication test matrix absent a demonstrated use case.
 
-The subsequent failure/recovery pass implements full DHCPv4 exchange ownership,
-multi-prefix DHCPv6 and information requests, error-returning conditional reads,
-serialized partial config updates, truthful nft/PF acknowledgement and withdrawal,
-ICMP exchange correlation, DNS reload/cache/log ownership, current console views
-and non-destructive installer behavior. The audit records the executed checks and
-the remaining feature inventory work. A further pass connects handover release
-to all native owners, journals BGP additions before effects, prepares validated
-static declarations once per update, and gives PD one typed current observation.
-Mutation responses distinguish committed intent from failed or unconfirmed
-effects. These are implementation checkpoints, not completion of steps 3–6.
+### 4. Finish FreeBSD and NixOS preservation
 
-## Validation
+After Linux paths are complete, compare each baseline platform function against
+its native implementation and caller. Run FreeBSD 14.3 and NixOS checks on
+their actual service managers and kernels. Cross-compilation, portable unit
+tests and Linux success do not establish native parity.
 
-Use go.mod's Go 1.25.9 toolchain and the Makefile targets. `check-routerd15`
-retains the complete test/vet gate; `check-routerd15-focused` is a separate local
-regression gate, never a substitute for full acceptance. Current executed results
-and environment restrictions are tracked in the audit record. GitHub Actions
-completion is not awaited.
+### 5. Final qualification
 
-`check-routerd15-recovery` runs the focused ownership, native-effect boundary,
-current-declaration, handover and mutation regressions. It is included in the
-focused gate. Its test-owned kernel-command observations and loopback services
-do not replace the complete native suite or the VM/independent-peer gates.
+Re-run the complete required local gate at the final source revision, then the
+remaining isolated native and independent-peer procedures for every ledger
+scope. Set a feature verdict only when its baseline behavior and required
+withdrawal/recovery checks are demonstrated on the stated platform. Unknown
+rows prevent a whole-project completion claim. Prepare a release or production
+cutover proposal only after qualification; do not execute it without approval.
 
-The second semantic pass extends those same production paths: explicit provider
-uncertainty and operator resolution; atomic subscription output/deduplication;
-authenticated immutable federation facts; bounded worker/exporter shutdown;
-strict configuration and error-bearing source reads; native BFD/VIP ownership;
-and truthful console observations. `check-routerd15-robustness`, included in the
-focused gate, exercises these paths with owned SQLite/process/loopback fixtures.
-The audit record retains the unread scopes, implementation gaps and independent
-peer/platform gates; a successful focused gate does not close them.
+## Execution and retention rules
 
-The next repair batches follow the concrete production findings in
-[routerd15-open-findings.md](routerd15-open-findings.md): provider ambiguity and
-exact identity, one BGP policy owner, ordinary/native address and route ownership,
-current runtime lifetimes, truthful command/control behavior, and durable isolated
-build/lab cleanup. Complete each actual owner/caller path and remove superseded
-branches; do not expand a generic framework or certify an unread scope.
+- Start each change by checking branch, clean diff, current `origin/main`, related
+  PRs, current source, tests, runbooks and recent Git history. Reuse the current
+  proposal branch unless an independent PR is required; do not create another
+  worktree for serial work.
+- Validate locally before a lab run. Use only isolated VMs/netns for network
+  mutation. After a lab run, remove its VMs, disks, media, staging and temporary
+  worktree without waiting for a second cleanup request; preserve unrelated
+  active work.
+- Keep reusable test procedures and acceptance criteria in the existing
+  runbooks. Keep only the temporary output needed to diagnose the current open
+  failure, then delete it. Do not append raw logs, ping output, packet captures
+  or duplicate evidence bundles as routine deliverables. Report the tested
+  revision, path, verdict and remaining unverified scope concisely.
+- For public changes, run the repository secret scan before pushing, push
+  coherent checkpoints without waiting for review, and verify the remote SHA.
+  Push does not authorize merge, release or deployment.
+- Relevant repository checks include `make check-routerd15-focused`,
+  `make check-routerd15`, `make check-schema`, `make validate-example`, and
+  `make website-build`. Run those that cover the changed scope and report every
+  required check that was not run; never claim a skipped or compile-only path
+  passed.
