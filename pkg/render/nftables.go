@@ -2807,6 +2807,16 @@ func writeIPv4PolicyRouteTable(buf *bytes.Buffer, policies []api.Resource, addre
 		}
 		for candidateIndex, candidate := range spec.Candidates {
 			if len(candidate.Targets) > 0 {
+				if spec.Mode == "priority" && len(candidate.Targets) == 1 {
+					target := candidate.Targets[0]
+					for _, match := range matches {
+						buf.WriteString("    " + match + " ct mark != 0x0 meta mark set ct mark\n")
+						prefix := strings.TrimSpace(match + " ct mark 0x0")
+						buf.WriteString("    " + prefix + " meta mark set " + nftMark(target.Mark) + "\n")
+						buf.WriteString("    " + prefix + " ct mark set meta mark\n")
+					}
+					continue
+				}
 				hashExpr, err := nftEgressRoutePolicyHash(res.ID(), spec)
 				if err != nil {
 					return err

@@ -596,6 +596,42 @@ func TestNftablesEgressRoutePolicyHash(t *testing.T) {
 	}
 }
 
+func TestNftablesEgressRoutePolicyPrioritySingleTargetDoesNotRequireHash(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{{
+		TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "EgressRoutePolicy"},
+		Metadata: api.ObjectMeta{Name: "lan-primary"},
+		Spec: api.EgressRoutePolicySpec{
+			Mode:             "priority",
+			SourceCIDRs:      []string{"192.168.10.0/24"},
+			DestinationCIDRs: []string{"0.0.0.0/0"},
+			Candidates: []api.EgressRoutePolicyCandidate{{
+				Name: "primary",
+				Targets: []api.EgressRoutePolicyTarget{{
+					Interface: "transix-a", Table: 100, Priority: 10000, Mark: 256,
+				}},
+			}},
+		},
+	}}}}
+
+	data, err := NftablesIPv4PolicyRoutes(router)
+	if err != nil {
+		t.Fatalf("render priority policy: %v", err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark != 0x0 meta mark set ct mark",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 meta mark set 0x100",
+		"ip saddr 192.168.10.0/24 ip daddr 0.0.0.0/0 ct mark 0x0 ct mark set meta mark",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("nftables output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "jhash") {
+		t.Fatalf("single priority target unexpectedly rendered hash selection:\n%s", got)
+	}
+}
+
 func TestNftablesEgressRoutePolicyHashExcludesDestinations(t *testing.T) {
 	router := &api.Router{
 		Spec: api.RouterSpec{Resources: []api.Resource{
