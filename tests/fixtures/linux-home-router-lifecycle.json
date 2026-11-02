@@ -89,6 +89,20 @@
       },
       {
         "apiVersion": "net.routerd.net/v1alpha1",
+        "kind": "NAT44Rule",
+        "metadata": {
+          "name": "lan-to-wan"
+        },
+        "spec": {
+          "type": "masquerade",
+          "egressInterface": "wan",
+          "sourceRanges": [
+            "198.18.15.0/24"
+          ]
+        }
+      },
+      {
+        "apiVersion": "net.routerd.net/v1alpha1",
         "kind": "DHCPv4Server",
         "metadata": {
           "name": "lan"
@@ -216,18 +230,6 @@
         "spec": {
           "key": "net.ipv6.conf.all.forwarding",
           "value": "1"
-        }
-      },
-      {
-        "apiVersion": "net.routerd.net/v1alpha1",
-        "kind": "IPv6StaticRoute",
-        "metadata": {
-          "name": "peer-v6"
-        },
-        "spec": {
-          "destination": "::/0",
-          "via": "2001:db8:16::1",
-          "interface": "wan"
         }
       },
       {

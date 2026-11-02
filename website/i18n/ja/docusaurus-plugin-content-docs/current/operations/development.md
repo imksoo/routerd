@@ -240,6 +240,10 @@ UDP/TCP、IPv4 NAT の対向送信元確認、WAN から LAN への未要求通�
 WAN 断・復帰、managed resource の撤去を確認します。物理 ISP との相互接続、WAN 発見・
 PPPoE・DS-Lite、再起動復旧、FreeBSD 全機能、routerd 1.0 の全機能維持を証明する試験ではありません。
 
+上流 IPv6 の default route は、上流ルーターから学習済みの状態を模した disposable WAN fixture が
+与えます。この試験はその経路を通る IPv6 転送を確認しますが、`IPv6StaticRoute` の設定レンダリングや
+WAN Router Advertisement の取得までは検証しません。
+
 ## Linux の PD・RA ライフサイクル VM 試験
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` は `make dist` から導入した製品を

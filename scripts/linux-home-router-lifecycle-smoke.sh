@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Isolated disposable VM only: clean-installed make dist product; independent dual-stack peers.
 set -euo pipefail
+set -E
+trap 'rc=$?; printf "FAIL: line %s: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$rc" >&2; exit "$rc"' ERR
 if [ "${1:-}" != --disposable-vm ] || [ "$#" -ne 5 ]; then
  echo "usage: $0 --disposable-vm CANDIDATE_1_5_JSON PACKAGE_ROOT KEA_PACKAGE_ROOT MANAGEMENT_INTERFACE" >&2
  echo 'Dedicated Linux VM only; performs a clean 1.5 package install with a prepared config, never 1.0 migration.' >&2
@@ -90,6 +92,7 @@ peer_kea_pid=
 peer_http_pid=
 peer_dns_pid=
 client_http_pid=
+packet_capture_pid=
 stop_pid() {
  local pid=$1
  [ -n "$pid" ] || return 0
@@ -106,7 +109,9 @@ start_kea() {
 }
 finish() {
  rc=$?
- trap - EXIT
+ trap - EXIT ERR
+ stop_pid "$packet_capture_pid"
+ packet_capture_pid=
  if [ "$rc" -ne 0 ]; then
    # Keep bounded diagnostics from the failing run, then restore the disposable VM.
    cp "$effective_candidate" "$work/failure-candidate.json" 2>/dev/null || true
@@ -114,12 +119,18 @@ finish() {
    ip -j addr show dev rd15-wan > "$work/failure-wan-addresses.json" 2>&1 || true
    ip -4 route show table main | head -40 > "$work/failure-host-ipv4-routes.txt" 2>&1 || true
    ip -6 route show table main | head -40 > "$work/failure-host-ipv6-routes.txt" 2>&1 || true
+   ip -6 neigh show dev rd15-wan > "$work/failure-host-ipv6-neighbors.txt" 2>&1 || true
    timeout 5 nft list table inet routerd_filter | head -200 > "$work/failure-firewall.txt" 2>&1 || true
+   timeout 5 nft list table ip routerd_nat | head -120 > "$work/failure-nat.txt" 2>&1 || true
    ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 > "$work/failure-client-addresses.json" 2>&1 || true
+   ip netns exec "$lan_ns" ip -6 neigh show dev peer0 > "$work/failure-client-ipv6-neighbors.txt" 2>&1 || true
    ip netns exec "$lan_ns" ip -4 -j addr show dev peer0 > "$work/failure-client4-addresses.json" 2>&1 || true
    ip netns exec "$lan_ns" ip -6 route show > "$work/failure-client-routes.txt" 2>&1 || true
+   ip netns exec "$wan_ns" ip -6 route show > "$work/failure-upstream-ipv6-routes.txt" 2>&1 || true
+   ip netns exec "$wan_ns" ip -6 neigh show dev peer0 > "$work/failure-upstream-ipv6-neighbors.txt" 2>&1 || true
    timeout 5 /usr/local/sbin/routerctl get status -o json > "$work/failure-status.json" 2>&1 || true
    journalctl -u routerd.service --since "$run_start" --no-pager -n 100 > "$work/failure-routerd-journal.txt" 2>&1 || true
+   tail -80 "$work/v6-recovery-packets.txt" > "$work/failure-v6-recovery-packets.txt" 2>/dev/null || true
    tail -100 "$work/kea.log" > "$work/failure-kea.txt" 2>/dev/null || true
    tail -100 "$work/udhcpc.log" > "$work/failure-dhcpv4.txt" 2>/dev/null || true
    if [ "$installed" -eq 1 ] && [ -x /usr/local/sbin/routerctl ] && systemctl is-active --quiet routerd.service; then
@@ -147,6 +158,7 @@ JSON
  if [ "$rc" -ne 0 ]; then
    systemctl stop routerd.service >/dev/null 2>&1 || true
  fi
+ ip -6 route del default via 2001:db8:16::1 dev rd15-wan >/dev/null 2>&1 || true
  for ns in "$lan_ns" "$wan_ns"; do ip netns del "$ns" >/dev/null 2>&1 || true; done
  for dev in rd15-lan rd15-wan; do ip link del "$dev" >/dev/null 2>&1 || true; done
  sysctl -w "net.ipv4.ip_forward=$(cat "$work/forward4.before")" >/dev/null 2>&1 || true
@@ -188,13 +200,15 @@ for side in lan wan; do
  ip netns exec "$ns" ip link set lo up
  ip netns exec "$ns" ip link set peer0 up
 done
-# The WAN transit is fixture input; routing, forwarding, NAT, DHCP, DNS, PD and
-# RA must be supplied by the routerd 1.5 candidate.
+# The WAN transit and provider-supplied IPv6 default route are fixture inputs;
+# the candidate supplies routerd-managed addressing, IPv4 routing, forwarding,
+# NAT, DHCP, DNS, PD and LAN RA.
 ip netns exec "$wan_ns" ip -4 addr add 198.18.16.1/24 dev peer0
 ip netns exec "$wan_ns" ip -4 route add 198.18.15.0/24 via 198.18.16.2 dev peer0
 ip netns exec "$wan_ns" ip -4 addr add 198.18.17.1/32 dev lo
 ip -6 addr add 2001:db8:16::2/64 dev rd15-wan
 ip netns exec "$wan_ns" ip -6 addr add 2001:db8:16::1/64 dev peer0
+ip -6 route add default via 2001:db8:16::1 dev rd15-wan
 ip netns exec "$wan_ns" ip -6 addr add 2001:db8:17::1/128 dev lo
 ip netns exec "$wan_ns" ip -6 route add 2001:db8:1500::/60 via 2001:db8:16::2 dev peer0
 ip netns exec "$lan_ns" sysctl -qw net.ipv6.conf.peer0.accept_ra=2 net.ipv6.conf.peer0.autoconf=1
@@ -310,6 +324,22 @@ probe_v4() {
  [ "$source" = 198.18.16.2 ] || { printf 'IPv4 NAT peer observed source %s\n' "$source" >&2; return 1; }
  printf 'PASS: DHCPv4 client, IPv4 DNS UDP/TCP, peer-observed NAT source %s\n' "$source"
 }
+probe_v4_pd_expired() {
+ local source answer
+ for mode in +notcp +tcp; do
+   answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa A)
+   [ "$answer" = 198.18.15.1 ] || { printf "IPv4 local DNS A %s after PD expiry returned: %s\n" "$mode" "$answer" >&2; return 1; }
+   answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @198.18.15.1 router.home.arpa AAAA)
+   [ -z "$answer" ] || { printf "stale local AAAA after PD expiry: %s\n" "$answer" >&2; return 1; }
+   answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @198.18.15.1 peer.test A)
+   [ "$answer" = 198.18.17.1 ] || { printf "IPv4 forwarded DNS A %s after PD expiry returned: %s\n" "$mode" "$answer" >&2; return 1; }
+   answer=$(ip netns exec "$lan_ns" dig +time=2 +tries=1 +short "$mode" @198.18.15.1 peer.test AAAA)
+   [ "$answer" = 2001:db8:17::1 ] || { printf "IPv4 forwarded DNS AAAA %s after PD expiry returned: %s\n" "$mode" "$answer" >&2; return 1; }
+ done
+ source=$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --show-error --max-time 3 http://198.18.17.1:8080/)
+ [ "$source" = 198.18.16.2 ] || { printf 'IPv4 NAT after PD expiry used peer source %s\n' "$source" >&2; return 1; }
+ printf 'PASS: IPv4 DNS/NAT remain active and delegated local AAAA is withdrawn after PD expiry\n'
+}
 probe_v6() {
  local source answer
  source=$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --show-error --max-time 3 'http://[2001:db8:17::1]:8080/')
@@ -326,11 +356,8 @@ probe_v6() {
  done
  printf 'PASS: SLAAC, RA default route, IPv6 DNS UDP/TCP and peer-observed source %s\n' "$source"
 }
-for _ in {1..20}; do
- if ip -6 route get 2001:db8:17::1 > "$work/upstream-route.txt" 2>&1; then break; fi
- sleep 1
-done
 ip -6 route get 2001:db8:17::1 > "$work/upstream-route.txt"
+grep -F 'via 2001:db8:16::1 dev rd15-wan' "$work/upstream-route.txt"
 probe() {
  probe_v4
  probe_v6
@@ -359,8 +386,18 @@ ip netns exec "$lan_ns" python3 "$work/client_http.py" > "$work/client-http.log"
 client_http_pid=$!
 client_v4=$(ip netns exec "$lan_ns" ip -4 -o addr show dev peer0 | awk '{split($4,a,"/");print a[1];exit}')
 client_v6=$(ip netns exec "$lan_ns" ip -6 -j addr show dev peer0 | jq -er --arg prefix "$active_prefix:" '[.[0].addr_info[] | select(.local | startswith($prefix)) | select(.tentative!=true) | .local][0]')
-test "$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 "http://$client_v4:8090/")" = "$client_v4"
-test "$(ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 -g "http://[$client_v6]:8090/")" = "$client_v6"
+client_http_ready=0
+for _ in {1..15}; do
+ if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 "http://$client_v4:8090/" > "$work/client-http-v4.txt" &&
+    ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 -g "http://[$client_v6]:8090/" > "$work/client-http-v6.txt"; then
+   client_http_ready=1
+   break
+ fi
+ sleep 1
+done
+test "$client_http_ready" = 1 || { echo 'test LAN HTTP server did not become ready' >&2; exit 1; }
+test "$(cat "$work/client-http-v4.txt")" = "$client_v4"
+test "$(cat "$work/client-http-v6.txt")" = "$client_v6"
 if ip netns exec "$wan_ns" curl --noproxy '*' --fail --silent --max-time 2 "http://$client_v4:8090/"; then echo 'untrusted IPv4 reached the LAN service' >&2; exit 1; fi
 if ip netns exec "$wan_ns" curl --noproxy '*' --fail --silent --max-time 2 -g "http://[$client_v6]:8090/"; then echo 'untrusted IPv6 reached the LAN service' >&2; exit 1; fi
 printf 'PASS: default firewall policy blocks unsolicited WAN-to-LAN IPv4/IPv6\n'
@@ -379,10 +416,21 @@ sleep 1
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 http://198.18.17.1:8080/; then echo 'IPv4 traffic survived WAN disconnect' >&2; exit 1; fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'IPv6 traffic survived WAN disconnect' >&2; exit 1; fi
 ip netns exec "$wan_ns" ip link set peer0 up
+# Linux drops global IPv6 addresses on an administratively-down interface by
+# default; the namespace also drops its manually installed return route. Restore
+# the independent peer's configured WAN address and route on link return.
+ip netns exec "$wan_ns" ip -6 addr replace 2001:db8:16::1/64 dev peer0
+ip netns exec "$wan_ns" ip -6 route replace 2001:db8:1500::/60 via 2001:db8:16::2 dev peer0
+if command -v tcpdump >/dev/null; then
+ tcpdump -l -n -tttt -i any 'ip6 and host 2001:db8:17::1 and tcp port 8080' > "$work/v6-recovery-packets.txt" 2>&1 &
+ packet_capture_pid=$!
+fi
 for _ in {1..30}; do
  if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 http://198.18.17.1:8080/ > "$work/recovered-v4-source" && ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/' > "$work/recovered-v6-source"; then break; fi
  sleep 1
 done
+stop_pid "$packet_capture_pid"
+packet_capture_pid=
 test "$(cat "$work/recovered-v4-source")" = 198.18.16.2
 [[ "$(cat "$work/recovered-v6-source")" == "$active_prefix:"* ]]
 probe
@@ -450,7 +498,7 @@ if grep -q "$active_prefix::1/64" "$work/expired-router-addresses.txt" || grep -
 fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'traffic survived expiry' >&2; exit 1; fi
 systemctl is-active --quiet routerd
-probe_v4
+probe_v4_pd_expired
 printf 'PASS: expired PD withdrawn from router address, client default route and traffic\n'
 }
 wait_expired
@@ -477,7 +525,7 @@ if ip -4 addr show dev rd15-lan | grep -q '198.18.15.1/'; then echo 'LAN IPv4 ad
 if ip -4 addr show dev rd15-wan | grep -q '198.18.16.2/'; then echo 'WAN IPv4 address survived withdrawal' >&2; exit 1; fi
 if ip -6 addr show dev rd15-lan | grep -q '2001:db8:1501::1/64'; then echo 'LAN IPv6 address survived withdrawal' >&2; exit 1; fi
 if ip -4 route show default | grep -Fq 'via 198.18.16.1'; then echo 'test IPv4 default route survived withdrawal' >&2; exit 1; fi
-if ip -6 route show default | grep -Fq 'via 2001:db8:16::1'; then echo 'test IPv6 default route survived withdrawal' >&2; exit 1; fi
+ip -6 route show default | grep -F 'via 2001:db8:16::1 dev rd15-wan' >/dev/null || { echo 'routerd withdrawal changed the fixture-owned IPv6 upstream route' >&2; exit 1; }
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 http://198.18.17.1:8080/; then echo 'IPv4 traffic survived config withdrawal' >&2; exit 1; fi
 if ip netns exec "$lan_ns" curl --noproxy '*' --fail --silent --max-time 2 'http://[2001:db8:17::1]:8080/'; then echo 'IPv6 traffic survived config withdrawal' >&2; exit 1; fi
 printf 'PASS: 1.5 empty-config withdrawal removes IPv4/IPv6 resources and traffic paths\n'

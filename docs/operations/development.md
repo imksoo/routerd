@@ -316,6 +316,11 @@ is the integrated Linux home-router gate; it does not establish physical ISP
 interoperability, WAN discovery/PPPoE/DS-Lite, reboot recovery, FreeBSD parity or
 the complete routerd 1.0 function inventory.
 
+The upstream IPv6 default route is supplied by the disposable WAN fixture, as
+it would be learned from an upstream router. This gate exercises IPv6 forwarding
+through that route; it does not claim to qualify `IPv6StaticRoute` rendering or
+WAN router-advertisement discovery.
+
 ## Linux PD/RA lifecycle VM gate
 
 `scripts/linux-pd-ra-lifecycle-smoke.sh` exercises an installed `make dist`
