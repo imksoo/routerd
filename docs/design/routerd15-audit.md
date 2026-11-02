@@ -2196,6 +2196,39 @@ payloads. Prepared ng_ether and its baseline module set remain a disposable-VM
 prerequisite; these results do not claim that preparation restored the original
 VM module state or that the full Router resource/installed service is qualified.
 
+#### Linux PPPoE clean install, independent client and recovery, 2026-11-02
+
+Official source `851acc7d8a9d88f4c9d409fbbaa402a20a7474ae` was built with
+`make dist`; the executed Linux archive SHA-256 was
+`1beef2a215d8ceb5edc28dd70c7994d4e4c21e5da4945701d11e44052d33d36b`.
+It was installed from a clean 1.5 configuration and state on a dedicated PVE
+candidate VM. No routerd 1.0 configuration or state was read or imported.
+
+An independent PPPoE access-concentrator VM and an independent LAN-client VM
+were attached through separate PVE VLANs. The candidate established a PAP
+session as `ppp-rd15`, received `203.0.113.2` with peer `203.0.113.1`, and
+installed the PPP default route. The client reached the upstream peer through
+the candidate's IPv4 forwarding and NAT44 path: 3/3 ICMP replies succeeded.
+The rendered `pppd` configuration preserved the selected interface name,
+service and access-concentrator names, PAP selection, 1492 MTU/MRU, default
+route, persistence, and the configured LCP echo values.
+
+The access-concentrator VM was then powered off without restarting the
+candidate. Client traffic failed, and after the configured five unanswered LCP
+echo requests `pppd` reported the disconnect; `ppp-rd15` became down and the
+PPPoE resource published a failed session event. After starting only the
+access-concentrator VM and its PPPoE server, the still-running candidate
+recreated `ppp-rd15`, published a new connected event, restored its default
+route, and the independent client again received 3/3 replies. The observed
+interval follows the explicit LCP configuration and is not an acceptance-time
+target.
+
+This qualifies the observed Linux PPPoE PAP/IPv4/NAT44 transit and
+upstream-withdrawal/recovery path only. It does not qualify CHAP or dual
+authentication, IPv6CP, peer DNS, multi-session or provider interoperability,
+host reboot/power-loss recovery, FreeBSD behavior, or complete routerd 1.0
+PPPoE parity.
+
 #### Plugin process and effective-configuration checks
 
 At `e4097d0b966aeabbbe8fb01eb6d43ab42d5adc3c`, the actual subscription
