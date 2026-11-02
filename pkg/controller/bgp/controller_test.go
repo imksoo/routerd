@@ -532,6 +532,13 @@ func TestNeighborSetAddressUsesHostPartOfExplicitPeerPort(t *testing.T) {
 	}
 }
 
+func TestGoBGPPeerSeparatesExplicitRemotePort(t *testing.T) {
+	peer := goBGPPeer(desiredPeer{Address: "198.18.16.1:179", ASN: 64501, LocalASN: 64500})
+	if peer.GetConf().GetNeighborAddress() != "198.18.16.1" || peer.GetTransport().GetRemotePort() != 179 {
+		t.Fatalf("peer = %#v", peer)
+	}
+}
+
 func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
 	routerSpec := api.BGPRouterSpec{
 		ConvergenceProfile: "fast",

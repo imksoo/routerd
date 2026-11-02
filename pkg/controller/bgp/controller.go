@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2643,6 +2644,7 @@ func bgpListenAddresses(spec routerapi.BGPListenSpec) []string {
 }
 
 func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
+	address, remotePort := goBGPPeerEndpoint(peer.Address)
 	send := peer.SendCommunity
 	if send == 0 {
 		send = 3
@@ -2653,7 +2655,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	}
 	out := &gobgpapi.Peer{
 		Conf: &gobgpapi.PeerConf{
-			NeighborAddress: peer.Address,
+			NeighborAddress: address,
 			PeerAsn:         peer.ASN,
 			AuthPassword:    peer.Password,
 			Type:            peerType,
@@ -2664,7 +2666,7 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 			goBGPAFISAFI(ipv4Family()),
 			goBGPAFISAFI(ipv6Family()),
 		},
-		Transport: goBGPPeerTransport(peer.PassiveMode),
+		Transport: goBGPPeerTransport(peer.PassiveMode, remotePort),
 	}
 	if gr := gobgpPeerGracefulRestart(peer); gr != nil {
 		out.GracefulRestart = gr
@@ -2681,11 +2683,27 @@ func goBGPPeer(peer desiredPeer) *gobgpapi.Peer {
 	return out
 }
 
-func goBGPPeerTransport(passiveMode bool) *gobgpapi.Transport {
-	if !passiveMode {
+func goBGPPeerEndpoint(value string) (string, uint32) {
+	value = strings.TrimSpace(value)
+	if _, err := netip.ParseAddr(value); err == nil {
+		return value, 0
+	}
+	host, service, err := net.SplitHostPort(value)
+	if err != nil {
+		return value, 0
+	}
+	port, err := strconv.ParseUint(service, 10, 16)
+	if err != nil || port == 0 {
+		return value, 0
+	}
+	return host, uint32(port)
+}
+
+func goBGPPeerTransport(passiveMode bool, remotePort uint32) *gobgpapi.Transport {
+	if !passiveMode && remotePort == 0 {
 		return nil
 	}
-	return &gobgpapi.Transport{PassiveMode: true}
+	return &gobgpapi.Transport{PassiveMode: passiveMode, RemotePort: remotePort}
 }
 
 func goBGPDynamicPeerGroup(peer desiredDynamicPeer) *gobgpapi.PeerGroup {
