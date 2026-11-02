@@ -1661,6 +1661,31 @@ func TestNftablesKeepsProtectedZoneSSHOpen(t *testing.T) {
 	}
 }
 
+func TestNftablesManagementAccessRestrictsDeclaredSources(t *testing.T) {
+	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "Interface"}, Metadata: api.ObjectMeta{Name: "mgmt"}, Spec: api.InterfaceSpec{IfName: "ens20"}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.NetAPIVersion, Kind: "ManagementAccess"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.ManagementAccessSpec{Interfaces: []string{"Interface/mgmt"}, AllowSourceCIDRs: []string{"192.168.123.0/24", "2001:db8:123::/64"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallZone"}, Metadata: api.ObjectMeta{Name: "management"}, Spec: api.FirewallZoneSpec{Role: "mgmt", Interfaces: []string{"mgmt"}}},
+		{TypeMeta: api.TypeMeta{APIVersion: api.FirewallAPIVersion, Kind: "FirewallPolicy"}, Metadata: api.ObjectMeta{Name: "home"}, Spec: api.FirewallPolicySpec{LogDeny: true}},
+	}}}
+	data, err := NftablesFirewall(router, nil)
+	if err != nil {
+		t.Fatalf("render nftables: %v", err)
+	}
+	got := string(data)
+	allow4 := `iifname "ens20" ip saddr { 192.168.123.0/24 } counter accept comment "routerd management source allow"`
+	allow6 := `iifname "ens20" ip6 saddr { 2001:db8:123::/64 } counter accept comment "routerd management source allow"`
+	deny := `iifname "ens20" counter log prefix "routerd management source deny " drop comment "routerd management source deny"`
+	for _, want := range []string{allow4, allow6, deny} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("management source rule missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, deny) > strings.Index(got, "iifname @if_management jump management_to_self") {
+		t.Fatalf("management source deny runs after the unrestricted zone chain:\n%s", got)
+	}
+}
+
 func TestNftablesSamplesAcceptedForwardFlows(t *testing.T) {
 	router := &api.Router{Spec: api.RouterSpec{Resources: []api.Resource{
 		{

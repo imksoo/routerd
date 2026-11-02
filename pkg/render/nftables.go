@@ -932,6 +932,10 @@ func writeFirewallFilterTable(buf *bytes.Buffer, router *api.Router, aliases map
 	if err != nil {
 		return err
 	}
+	managementAccessGuards, err := nftManagementAccessGuards(router, aliases)
+	if err != nil {
+		return err
+	}
 	flowPinholes, err := nftFirewallFlowPinholes(flowPinholeResources, addressSetMap)
 	if err != nil {
 		return err
@@ -985,6 +989,7 @@ func writeFirewallFilterTable(buf *bytes.Buffer, router *api.Router, aliases map
 	buf.WriteString("    ct state { established, related } counter accept\n")
 	buf.WriteString("    iifname \"lo\" counter accept\n")
 	buf.WriteString("    meta l4proto ipv6-icmp ip6 hoplimit 255 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } counter accept\n")
+	writeManagementAccessGuardRules(buf, managementAccessGuards, logging)
 	writeClientPolicyInputRules(buf, clientPolicies)
 	for _, zone := range sortedZones {
 		if len(zone.IfNames) == 0 {
@@ -1072,6 +1077,89 @@ type firewallLogging struct {
 	AcceptSampleRate int
 	DropSampleRate   int
 	CopyRange        int
+}
+
+// managementAccessGuard protects one declared management interface.  A guard
+// is present only when the operator declares at least one source prefix; an
+// empty allowSourceCIDRs remains the existing unrestricted-management choice.
+type managementAccessGuard struct {
+	IfName    string
+	IPv4CIDRs []string
+	IPv6CIDRs []string
+}
+
+func nftManagementAccessGuards(router *api.Router, aliases map[string]string) ([]managementAccessGuard, error) {
+	type guardAccumulator struct {
+		ipv4         []string
+		ipv6         []string
+		unrestricted bool
+	}
+	byIfName := map[string]*guardAccumulator{}
+	for _, res := range router.Spec.Resources {
+		if res.APIVersion != api.NetAPIVersion || res.Kind != "ManagementAccess" {
+			continue
+		}
+		spec, err := res.ManagementAccessSpec()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", res.ID(), err)
+		}
+		for _, declared := range spec.Interfaces {
+			name := strings.TrimSpace(declared)
+			if kind, resourceName, ok := strings.Cut(name, "/"); ok {
+				if kind != "Interface" {
+					return nil, fmt.Errorf("%s references unsupported management interface %q", res.ID(), declared)
+				}
+				name = resourceName
+			}
+			ifname := aliases[name]
+			if ifname == "" {
+				return nil, fmt.Errorf("%s references interface with empty ifname %q", res.ID(), declared)
+			}
+			guard := byIfName[ifname]
+			if guard == nil {
+				guard = &guardAccumulator{}
+				byIfName[ifname] = guard
+			}
+			if len(spec.AllowSourceCIDRs) == 0 {
+				guard.unrestricted = true
+				continue
+			}
+			for _, raw := range spec.AllowSourceCIDRs {
+				prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+				if err != nil {
+					return nil, fmt.Errorf("%s has invalid management source CIDR %q: %w", res.ID(), raw, err)
+				}
+				if prefix.Addr().Is4() {
+					guard.ipv4 = append(guard.ipv4, prefix.Masked().String())
+				} else {
+					guard.ipv6 = append(guard.ipv6, prefix.Masked().String())
+				}
+			}
+		}
+	}
+	var guards []managementAccessGuard
+	for ifname, guard := range byIfName {
+		if guard.unrestricted {
+			continue
+		}
+		sort.Strings(guard.ipv4)
+		sort.Strings(guard.ipv6)
+		guards = append(guards, managementAccessGuard{IfName: ifname, IPv4CIDRs: compactStrings(guard.ipv4), IPv6CIDRs: compactStrings(guard.ipv6)})
+	}
+	sort.Slice(guards, func(i, j int) bool { return guards[i].IfName < guards[j].IfName })
+	return guards, nil
+}
+
+func writeManagementAccessGuardRules(buf *bytes.Buffer, guards []managementAccessGuard, logging firewallLogging) {
+	for _, guard := range guards {
+		if len(guard.IPv4CIDRs) > 0 {
+			buf.WriteString("    iifname " + nftQuote(guard.IfName) + " ip saddr { " + strings.Join(guard.IPv4CIDRs, ", ") + " } counter accept comment \"routerd management source allow\"\n")
+		}
+		if len(guard.IPv6CIDRs) > 0 {
+			buf.WriteString("    iifname " + nftQuote(guard.IfName) + " ip6 saddr { " + strings.Join(guard.IPv6CIDRs, ", ") + " } counter accept comment \"routerd management source allow\"\n")
+		}
+		buf.WriteString("    iifname " + nftQuote(guard.IfName) + " counter " + nftSampledLogExpr("routerd management source deny ", logging.DropSampleRate, logging) + " drop comment \"routerd management source deny\"\n")
+	}
 }
 
 type firewallZone struct {
