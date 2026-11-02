@@ -1745,6 +1745,28 @@
         "FreeBSD relay runtime",
         "Complete routerd 1.0 function parity or production qualification"
       ]
+    },
+    "linux-home-router-clean-install-999dfd4": {
+      "level": "packaged-daemon-independent-peer",
+      "outcome": "pass",
+      "revision": "999dfd4a188892cb5bfaf4c3eae599d95aa755e3",
+      "reference": "docs/design/routerd15-audit.md#linux-integrated-home-router-clean-install-gate-2026-11-02",
+      "archive_sha256": "9cef7ed88a4223a3648718aa767efc07404d09d4d07cff9d62437c39bcaffa6e",
+      "fixture_sha256": "d5531ac800fb7ee5fc3983fd58bfe22ce53165f2e9ae285ed365f997622894bc",
+      "environment": "Dedicated Ubuntu 24.04.4 PVE guest, Linux 6.8.0-124-generic; actual systemd service, Kea 2.4.1, ndisc6 1.0.7, and isolated client/upstream network namespaces.",
+      "reproduction": "scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm CANDIDATE_1_5_JSON PACKAGE_ROOT KEA_PACKAGE_ROOT MANAGEMENT_INTERFACE",
+      "checks": [
+        "Fresh 1.5 package install and actual systemd startup with a validated 1.5-only configuration and no prior routerd configuration or state.",
+        "WAN DHCPv4 acquisition, metric-qualified route and DNS; natural WAN and LAN DHCPv4 renewal; DHCPv6 IA_NA.",
+        "DHCPv6-PD renewal, /60 renumbering, expiry withdrawal and automatic reacquisition; RA/SLAAC and delegated IPv6 source forwarding.",
+        "Local/upstream A/AAAA DNS over UDP/TCP from IPv4 and IPv6 clients; peer-observed IPv4 NAT and delegated IPv6 sources.",
+        "Unsolicited WAN-to-LAN IPv4/IPv6 denial, systemd restart, IPv4/IPv6 traffic stop and recovery across upstream loss, and empty-config withdrawal.",
+        "Package uninstall completed; postflight found no routerd service/config/state, test namespaces/interfaces or nftables tables. Raw output and staging were removed."
+      ],
+      "excludes": [
+        "No routerd 1.0 configuration/database import, migration or in-place upgrade was performed or required.",
+        "Physical ISP behavior, WAN IPv6 RA discovery, PPPoE/DS-Lite, overlapping multi-prefix forwarding, host reboot/power-loss recovery, FreeBSD runtime, and complete routerd 1.0 parity or release qualification."
+      ]
     }
   },
   "features": [
@@ -1915,7 +1937,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-system-native-2e99c7e7",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2048,7 +2071,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-serviceunit-feedback-919499c4"
+          "linux-serviceunit-feedback-919499c4",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2612,11 +2636,12 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-        "linux-wan-dhcpv4-31d5f4d4",
-        "linux-wan-first-apply-4ac07b78",
-        "normal-code-gate-31d5f4d4",
-        "linux-wan-dhcpv4-1f9fc319"
-      ]
+          "linux-wan-dhcpv4-31d5f4d4",
+          "linux-wan-first-apply-4ac07b78",
+          "normal-code-gate-31d5f4d4",
+          "linux-wan-dhcpv4-1f9fc319",
+          "linux-home-router-clean-install-999dfd4"
+        ]
       },
       "freebsd": {
         "qualification": "unknown",
@@ -2664,7 +2689,8 @@
           "linux-dhcpv4-reservation-82f2d159",
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-dhcp-firewall-1f9fc319"
+          "linux-dhcp-firewall-1f9fc319",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2743,7 +2769,8 @@
           "linux-pd-ra-lifecycle-1392082f",
           "linux-dhcpv6-native-d05524de",
           "linux-wan-ra-lifecycle-1392082f",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2787,7 +2814,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-pd-ra-lifecycle-1392082f",
-          "linux-home-router-dualstack-57bf7e35"
+          "linux-home-router-dualstack-57bf7e35",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2836,7 +2864,8 @@
         "scoped_evidence": [
           "linux-dhcpv6-server-ia-na-f6be5a58",
           "linux-dhcpv6-server-packaged-lifecycle-038381c2",
-          "linux-dhcp-family-isolation-2f9534d7"
+          "linux-dhcp-family-isolation-2f9534d7",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -2969,7 +2998,8 @@
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
           "linux-dhcp-firewall-1f9fc319",
-          "linux-wan-dhcpv4-1f9fc319"
+          "linux-wan-dhcpv4-1f9fc319",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3351,7 +3381,8 @@
           "linux-portforward-f6502ea2",
           "linux-portforward-b57fc473",
           "linux-nat44-source-snat-fb971db4",
-          "linux-local-service-redirect-3bb5e7c3"
+          "linux-local-service-redirect-3bb5e7c3",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3447,7 +3478,8 @@
         "scoped_evidence": [
           "linux-home-router-recovery-13b7a5b9",
           "linux-home-router-dualstack-57bf7e35",
-          "linux-dhcp-firewall-1f9fc319"
+          "linux-dhcp-firewall-1f9fc319",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3529,7 +3561,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3611,7 +3644,8 @@
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
           "linux-serviceunit-feedback-919499c4",
-          "linux-wan-ra-lifecycle-1392082f"
+          "linux-wan-ra-lifecycle-1392082f",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3696,7 +3730,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-nonresource-code-c7f89dda",
-          "linux-normal-gate-dc14c486"
+          "linux-normal-gate-dc14c486",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {
@@ -3735,7 +3770,8 @@
         "qualification": "unknown",
         "scoped_evidence": [
           "linux-packaged-service-6135bb03",
-          "linux-nonresource-code-c7f89dda"
+          "linux-nonresource-code-c7f89dda",
+          "linux-home-router-clean-install-999dfd4"
         ]
       },
       "freebsd": {

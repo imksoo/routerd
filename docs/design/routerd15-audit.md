@@ -1363,6 +1363,36 @@ and empty-config withdrawal. No raw logs were retained; the package and test
 VM were returned to a clean state. This run does not qualify host reboot, WAN
 DHCP/PPPoE/DS-Lite, IPv6 behavior, or complete routerd 1.0 parity.
 
+## Linux integrated home-router clean-install gate, 2026-11-02
+
+Product revision `999dfd4a188892cb5bfaf4c3eae599d95aa755e3` was built with
+`make dist` as `1.5-dev-999dfd4`; archive SHA-256
+`9cef7ed88a4223a3648718aa767efc07404d09d4d07cff9d62437c39bcaffa6e`.
+The prepared fixture `tests/fixtures/linux-home-router-lifecycle.json` has
+SHA-256 `d5531ac800fb7ee5fc3983fd58bfe22ce53165f2e9ae285ed365f997622894bc`.
+It was installed through the actual systemd service in a dedicated Ubuntu
+24.04.4 PVE guest (Linux 6.8.0-124-generic). The guest started without routerd
+configuration or state; the 1.5 fixture was validated before install. No 1.0
+configuration or database was read or imported.
+
+The [clean-install procedure](../operations/development.md#linux-home-router-clean-install-lifecycle-gate)
+passed WAN DHCPv4 address/metric-qualified route/DNS acquisition and renewal,
+LAN DHCPv4 acquisition and renewal, DHCPv6 IA_NA, DHCPv6-PD renewal and
+renumbering, real expiry and automatic reacquisition, RA/SLAAC, local and
+upstream DNS A/AAAA over UDP/TCP from IPv4 and IPv6 clients, peer-observed
+IPv4 NAT and delegated IPv6 sources, unsolicited WAN-to-LAN denial, systemd
+restart, IPv4/IPv6 forwarding stop and recovery across upstream loss, and
+empty-config withdrawal. Package uninstall completed. Postflight found no
+routerd service/configuration/state, test namespaces/interfaces, or nftables
+tables; the management route and systemd-resolved remained active. Raw output
+and the temporary package staging were removed.
+
+This is an independent-peer check using isolated client/upstream namespaces
+inside the guest. It does not qualify physical ISP behavior, WAN IPv6 RA
+discovery, PPPoE/DS-Lite, overlapping multi-prefix forwarding, host reboot or
+power-loss recovery, FreeBSD runtime, or the remaining routerd 1.0 feature
+inventory. Those whole-feature and platform verdicts remain unknown.
+
 ## Independent Linux peer across VM reboot and interrupted apply
 
 The same formal product `ad686135` passed on the dedicated Ubuntu 24.04.4 router
