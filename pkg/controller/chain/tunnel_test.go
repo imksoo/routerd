@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/imksoo/routerd/internal/statusvalue"
@@ -1213,4 +1214,10 @@ func (n *tunnelUnitIO) Delete(_ context.Context, listener fouListener) error {
 	n.listenerDeletes = append(n.listenerDeletes, listener)
 	delete(n.listeners, listener.Port)
 	return nil
+}
+
+func TestTunnelFOUMissingRecognizesWrappedKernelFamilyAbsence(t *testing.T) {
+	if !tunnelFOUMissing(nil, fmt.Errorf("list FOU family: %w", syscall.ENOENT)) {
+		t.Fatal("wrapped ENOENT must trigger one FOU module-load retry")
+	}
 }

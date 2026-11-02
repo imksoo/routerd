@@ -251,7 +251,7 @@ func listTunnelNativeFOU(ctx context.Context) ([]netlink.Fou, error) {
 		if listErr == nil {
 			return listeners, nil
 		}
-		if attempt != 0 || !errors.Is(listErr, syscall.ENOENT) {
+		if attempt != 0 || !tunnelFOUMissing(nil, listErr) {
 			return nil, listErr
 		}
 		out, modprobeErr := exec.CommandContext(ctx, "modprobe", "fou").CombinedOutput()
