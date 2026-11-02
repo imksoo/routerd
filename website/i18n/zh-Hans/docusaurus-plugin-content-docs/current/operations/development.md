@@ -102,6 +102,13 @@ sudo ./tests/netns/dns-resolver-runtime.sh
 失败时保留临时目录供诊断。此测试不导入 1.0 配置或状态，也不覆盖 package install、service manager、pinhole、session 同步、
 多 backend ingress 或 FreeBSD。
 
+## Linux NAT44 source SNAT 选择器检查
+
+在具备 iproute2、nftables、curl、Python 3、Go 和 network namespace 的隔离 Linux 环境中运行
+`sudo ./tests/netns/nat44-source-snat.sh`。测试先验证准备好的 routerd 1.5 配置，再在私有 router namespace 中运行实际 NAT44 controller 和 nftables。
+独立 WAN HTTP peer 观察转发流量的源地址。只有匹配源和目标 CIDR 的流量会使用配置的 SNAT 地址；被排除的目标及源范围外的客户端必须保留原始地址。
+修改 `snatAddressFrom` 的引用后，新连接必须使用新的源地址；撤销规则后应删除 NAT table 并恢复原始源地址。成功时删除临时输出，失败时仅保留本次诊断目录。
+
 ## Linux LocalServiceRedirect DNS 拦截检查
 
 在具备 iproute2、nftables、dnsmasq、BIND `dig`、Python 3、Go 和 IPv6 内核支持的隔离 Linux 环境中运行

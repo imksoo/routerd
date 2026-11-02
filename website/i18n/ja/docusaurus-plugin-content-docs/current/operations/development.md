@@ -192,6 +192,15 @@ routerd NAT table が消え、新しい WAN 接続が backend に届かないこ
 失敗時は調査用 directory を残します。1.0 設定や state の import、package install、service manager、pinhole、session 同期、
 複数 backend の ingress、FreeBSD は対象外です。
 
+## Linux NAT44 source SNAT selector 試験
+
+iproute2、nftables、curl、Python 3、Go と network namespace 機能を備えた隔離 Linux 環境で
+`sudo ./tests/netns/nat44-source-snat.sh` を実行します。用意済みの routerd 1.5 設定を validate してから、
+private router namespace 内で実際の NAT44 controller と nftables を動かします。独立した WAN 側 HTTP peer が転送 packet の source address を観測します。
+指定した source / destination CIDR だけに SNAT が適用され、除外 destination と source range 外の client は元の source address を保つことを確認します。
+`snatAddressFrom` の参照先を変更すると新しい接続の source が切り替わり、rule 撤去後は NAT table が消えて元の source に戻ることも確認します。
+成功時は一時出力を削除し、失敗時は今回の診断 directory だけを残します。
+
 ## Linux LocalServiceRedirect DNS 振り分け試験
 
 iproute2、nftables、dnsmasq、BIND `dig`、Python 3、Go と IPv6 対応カーネルを備えた隔離 Linux 環境で

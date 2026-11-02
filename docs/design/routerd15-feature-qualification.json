@@ -1241,6 +1241,23 @@
         "NAT44Rule outbound SNAT variants, NAT44FlowDNATPinhole, NAT44SessionSync or complete 1.0 function qualification"
       ]
     },
+    "linux-nat44-source-snat-fb971db4": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "fb971db48f81e141aaa63f0536f13bf0438f07ea",
+      "reference": "tests/netns/README.md#nat44-source-snat-selectors",
+      "environment": "Ubuntu 24.04; Linux 6.8.0-136-generic; private network namespaces/veth; nftables 1.0.9; Python 3; Go 1.25.9; independent HTTP backend.",
+      "reproduction": "sudo ./tests/netns/nat44-source-snat.sh",
+      "checks": [
+        "Prepared routerd 1.5 YAML passed validation; the production NAT44 controller applied real nftables SNAT rules in a private router namespace.",
+        "The independent WAN peer observed the configured SNAT source only for traffic matching the selected source/destination CIDRs; an excluded destination and a client outside the source range retained their original sources.",
+        "Changing the referenced SNAT address changed the source observed for new connections; withdrawing NAT44Rule removed the NAT table and restored the original client source. Successful temporary output was removed."
+      ],
+      "excludes": [
+        "Masquerade, address pools/port mapping, EgressRoutePolicy-selected egress, dynamic address-set updates and FreeBSD runtime",
+        "NAT44FlowDNATPinhole, NAT44SessionSync or complete 1.0 function qualification"
+      ]
+    },
     "dhcpv6-partial-recovery-87761c0e": {
       "level": "ordinary-tests",
       "outcome": "pass",
@@ -3297,6 +3314,8 @@
           "pkg/controller/chain/nat44sessionsync_test.go",
           "tests/netns/nat44-portforward.sh",
           "tests/netns/nat44-portforward-runtime/main.go",
+          "tests/netns/nat44-source-snat.sh",
+          "tests/netns/nat44-source-snat-runtime/config.yaml",
           "tests/netns/local-service-redirect.sh",
           "tests/netns/local-service-redirect-runtime/config.yaml"
         ]
@@ -3312,6 +3331,7 @@
           "linux-wan-dhcpv4-1f9fc319",
           "linux-portforward-f6502ea2",
           "linux-portforward-b57fc473",
+          "linux-nat44-source-snat-fb971db4",
           "linux-local-service-redirect-3bb5e7c3"
         ]
       },
@@ -3323,7 +3343,7 @@
         ]
       },
       "required_remaining_checks": [
-        "NAT44Rule outbound SNAT/masquerade selectors; NAT44FlowDNATPinhole and NAT44SessionSync paths",
+        "Remaining NAT44Rule modes/selectors (including masquerade, pools/port mapping and EgressRoutePolicy-selected egress), NAT44FlowDNATPinhole and NAT44SessionSync paths",
         "FQDN-backed IPAddressSet refresh/expiry, routerd DNSResolver/service integration and the remaining Linux/FreeBSD runtime scope"
       ]
     },

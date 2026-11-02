@@ -229,6 +229,19 @@ retain the temporary directory for diagnosis. This is not a 1.0 configuration
 or state import, packaged install, service-manager test, or qualification of
 pinholes, session synchronization, multi-backend ingress or FreeBSD.
 
+## Linux NAT44 source SNAT selector check
+
+Run `sudo ./tests/netns/nat44-source-snat.sh` on an isolated Linux host with
+iproute2, nftables, curl, Python 3, Go and network-namespace support. A prepared
+routerd 1.5 configuration is validated before the production NAT44 controller
+applies real nftables rules in a private router namespace. An independent WAN
+HTTP peer observes the translated source. Only the selected source and
+destination CIDRs may use the configured SNAT address; an excluded destination
+and a client outside the source range must preserve their original addresses.
+Updating `snatAddressFrom` must affect new connections, and withdrawing the rule
+must remove the NAT table and restore the original source. Successful temporary
+output is deleted; failures retain only the current diagnostic directory.
+
 ## Linux LocalServiceRedirect DNS interception check
 
 Run `sudo ./tests/netns/local-service-redirect.sh` on an isolated Linux host
