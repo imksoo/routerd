@@ -288,6 +288,12 @@ sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
   /path/to/extracted/routerd-package /opt/routerd15-fixtures/kea eth0
 ```
 
+Ubuntu にインストールした Kea は AppArmor profile により一時設定ファイルの読み取りを
+拒否する場合があります。存在するファイルで `Unable to open file` となったら、kernel の
+監査ログで拒否を確認します。対応するパッケージを root で専用 fixture ディレクトリへ
+展開し、routerd 導入・試験前の環境準備で、実際の peer namespace 内から設定を
+読み取れることを確認してください。
+
 Kea 展開先には `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、
 `usr/lib/x86_64-linux-gnu` が必要です。`rdisc6` は root 所有にしてください。
 この同一設定の統合試験は、DHCPv4 取得・更新、実際の委譲 LAN prefix からの DHCPv6 IA_NA
@@ -296,6 +302,10 @@ Kea 展開先には `usr/sbin/kea-dhcp6`、`usr/bin/rdisc6`、
 委譲 IPv6 を使った転送、service 再起動、WAN 断・復帰、managed resource の撤去を確認します。
 物理 ISP との相互接続、WAN 発見・
 PPPoE・DS-Lite、再起動復旧、FreeBSD 全機能、routerd 1.0 の全機能維持を証明する試験ではありません。
+
+fixture の上流 IPv6 default route は metric 50 とし、管理 NIC の metric 100 の RA default
+より優先します。製品導入前に試験宛先が隔離 WAN を選ぶことを確認し、終了時には
+その fixture 所有 route を撤去します。
 
 上流 IPv6 の default route は、上流ルーターから学習済みの状態を模した disposable WAN fixture が
 与えます。この試験はその経路を通る IPv6 転送を確認しますが、`IPv6StaticRoute` の設定レンダリングや

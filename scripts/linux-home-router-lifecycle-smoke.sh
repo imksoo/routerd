@@ -187,7 +187,7 @@ JSON
  if [ "$rc" -ne 0 ]; then
    systemctl stop routerd.service >/dev/null 2>&1 || true
  fi
- ip -6 route del default via 2001:db8:16::1 dev rd15-wan >/dev/null 2>&1 || true
+ ip -6 route del default via 2001:db8:16::1 dev rd15-wan metric 50 >/dev/null 2>&1 || true
  for ns in "$lan_ns" "$wan_ns"; do ip netns del "$ns" >/dev/null 2>&1 || true; done
  for dev in rd15-lan rd15-wan; do ip link del "$dev" >/dev/null 2>&1 || true; done
  sysctl -w "net.ipv4.ip_forward=$(cat "$work/forward4.before")" >/dev/null 2>&1 || true
@@ -241,7 +241,9 @@ ip netns exec "$wan_ns" ip -4 route add 198.18.15.0/24 via 198.18.16.2 dev peer0
 ip netns exec "$wan_ns" ip -4 addr add 198.18.17.1/32 dev lo
 ip -6 addr add 2001:db8:16::2/64 dev rd15-wan
 ip netns exec "$wan_ns" ip -6 addr add 2001:db8:16::1/64 dev peer0
-ip -6 route add default via 2001:db8:16::1 dev rd15-wan
+# Prefer the isolated upstream over a management NIC's RA default (metric 100).
+# This is fixture-owned routing and is removed by the cleanup above.
+ip -6 route add default via 2001:db8:16::1 dev rd15-wan metric 50
 ip netns exec "$wan_ns" ip -6 addr add 2001:db8:17::1/128 dev lo
 ip netns exec "$wan_ns" ip -6 route add 2001:db8:1500::/60 via 2001:db8:16::2 dev peer0
 ip netns exec "$lan_ns" sysctl -qw net.ipv6.conf.peer0.accept_ra=2 net.ipv6.conf.peer0.autoconf=1
@@ -303,6 +305,8 @@ ip netns exec "$wan_ns" curl --noproxy '*' --fail --max-time 2 'http://[2001:db8
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @2001:db8:17::1 peer.test AAAA)" = 2001:db8:17::1
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @198.18.17.1 peer.test A)" = 198.18.17.1
 test "$(ip netns exec "$wan_ns" dig +short +time=2 +tries=1 @198.18.16.1 peer.test A)" = 198.18.17.1
+ip -6 route get 2001:db8:17::1 > "$work/environment-upstream-route.txt"
+grep -F 'via 2001:db8:16::1 dev rd15-wan' "$work/environment-upstream-route.txt"
 printf 'Environment fixtures ready: Kea, dual-stack HTTP/DNS peers, and WAN return routes.\n'
 install -D -m 0600 "$effective_candidate" /usr/local/etc/routerd/router.yaml
 installed=1

@@ -383,7 +383,13 @@ sudo scripts/linux-home-router-lifecycle-smoke.sh --disposable-vm \
 ```
 
 The Kea package root must contain `usr/sbin/kea-dhcp4`, `usr/sbin/kea-dhcp6`,
-`usr/bin/rdisc6` and `usr/lib/x86_64-linux-gnu`; keep `rdisc6` root-owned. The
+`usr/bin/rdisc6` and `usr/lib/x86_64-linux-gnu`; keep `rdisc6` root-owned.
+Ubuntu's installed Kea binaries can have AppArmor profiles that reject the
+fixture's temporary configuration paths. An existing file reported as
+`Unable to open file` needs a kernel audit check for an AppArmor denial.
+Use matching packages extracted as root into the dedicated fixture directory,
+and verify their configuration loading in the intended peer namespace during
+environment preparation, before installing or testing routerd. The
 single config exercises WAN DHCPv4 acquisition, natural T1 renewal and DNS/route
 withdrawal, LAN DHCPv4 acquisition and natural renewal, DHCPv6 IA_NA assignment
 from the active
@@ -397,7 +403,10 @@ interoperability, WAN discovery/PPPoE/DS-Lite, reboot recovery, FreeBSD parity o
 the complete routerd 1.0 function inventory.
 
 The upstream IPv6 default route is supplied by the disposable WAN fixture, as
-it would be learned from an upstream router. This gate exercises IPv6 forwarding
+it would be learned from an upstream router. The fixture gives that default
+metric 50 so a management NIC's metric-100 RA default does not divert the test
+traffic. Before product installation it requires the test destination to select
+the isolated WAN, and cleanup removes that exact fixture route. This gate exercises IPv6 forwarding
 through that route; it does not claim to qualify `IPv6StaticRoute` rendering or
 WAN router-advertisement discovery.
 
