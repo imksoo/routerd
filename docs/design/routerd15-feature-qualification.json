@@ -1905,6 +1905,24 @@
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
+    "linux-pve-dns-three-vm-vlan-485b0f7b": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "485b0f7b3afc3d7926a771325c42a2c2ab970ea2",
+      "reference": "evidence/routerd15-485b0f7b-dns-three-vm-vlan-pve-20261102.md",
+      "source_binding": "routerd SHA-256 22824983fe92f43e489e111ae44661a48ba6755de04597b7a4d9e8cce4177ade; routerctl SHA-256 c928c83fd47f474ffdd05b1fb17e5aa0aba3aea36d1714677ffad12d9f02b199; routerd-dns-resolver SHA-256 323b93ab2975418fa182110e8ee66866898622e77de05518e736af6e9058e4c2.",
+      "environment": "Authorized PVE VLANs. VM219 ran the checksum-verified Linux candidate. Independent VM220 used VLAN 3132 as a dnsmasq upstream; independent VM224 used VLAN 3131 as the DNS client.",
+      "checks": [
+        "VM224 resolved router.home.test locally and fresh.upstream.test through VM219 to VM220 over UDP and TCP.",
+        "Stopping the VM220 upstream returned SERVFAIL for an uncached name. Starting it again restored a new upstream name.",
+        "Restarting routerd preserved the independent DNS path. Applying empty configuration removed routerd-dns-resolver@lan.service and the VM219 listener; reapplying DNS resources restored answers.",
+        "VM219, VM220 and VM224 were restored to their original binaries, configuration, state and run status; the temporary snapshots, ISOs and test assets were removed."
+      ],
+      "excludes": [
+        "DNSSEC, DoT, DoH, private containment, IPv6, lease-derived names, tombstones and negative-answer policy coverage.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
     "linux-pve-firewall-zone-withdrawal-409719ba": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -3450,7 +3468,8 @@
           "linux-dhcpv4-reservation-lifecycle-329dfd9c",
           "linux-pve-home-integration-2a43a0e8",
           "linux-pve-dns-forward-withdrawal-409719ba",
-          "linux-pve-dns-forward-withdrawal-5d71ee8c"
+          "linux-pve-dns-forward-withdrawal-5d71ee8c",
+          "linux-pve-dns-three-vm-vlan-485b0f7b"
         ]
       },
       "freebsd": {
@@ -3462,7 +3481,7 @@
       },
       "required_remaining_checks": [
         "All baseline source/query policies, private containment and DNS transports",
-        "Lease update/tombstone/negative replies and configuration withdrawal"
+        "Lease update/tombstone and negative replies"
       ]
     },
     {
