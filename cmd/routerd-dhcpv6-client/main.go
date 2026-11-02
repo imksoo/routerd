@@ -259,10 +259,10 @@ func newDHCPv6Daemon(opts options) (*dhcpv6Daemon, error) {
 			return nil, fmt.Errorf("client DUID: %w", err)
 		}
 	}
-	// Bind every DHCPv6 client to its selected interface's link-local address.
-	// Config permits UDP/546 per interface; a wildcard socket either prevents
-	// a second resource from binding or can receive its reply under the wrong
-	// resource. An explicit --src-ll remains the operator override.
+	// DHCPv6 マルチキャスト送信の前に、利用可能なリンクローカルアドレスを
+	// 確認します。受信ソケットは下で対象デバイスへ束縛します。Linux の VLAN
+	// デバイスでは、リンクローカルアドレスへの直接束縛が正常な ADVERTISE を
+	// 取りこぼすためです。
 	if opts.srcLL == "" {
 		opts.srcLL, err = interfaceLinkLocalIPv6(ifi)
 		if err != nil || !linkLocalUsable(ifi.Name, opts.srcLL) {
@@ -1067,23 +1067,30 @@ func sendDHCPv6Multicast(conn *net.UDPConn, ifindex, hopLimit int, payload []byt
 }
 
 func listenDHCPv6(srcLL, ifname string, port int) (*net.UDPConn, error) {
-	addr, err := dhcpv6ListenAddr(srcLL, ifname, port)
+	_ = srcLL
+	listen := net.ListenConfig{Control: func(_, _ string, conn syscall.RawConn) error {
+		var bindErr error
+		if err := conn.Control(func(fd uintptr) {
+			bindErr = unix.SetsockoptString(int(fd), unix.SOL_SOCKET, unix.SO_BINDTODEVICE, ifname)
+		}); err != nil {
+			return err
+		}
+		return bindErr
+	}}
+	packet, err := listen.ListenPacket(context.Background(), "udp6", dhcpv6ListenAddr(port).String())
 	if err != nil {
 		return nil, err
 	}
-	return net.ListenUDP("udp6", addr)
+	conn, ok := packet.(*net.UDPConn)
+	if !ok {
+		_ = packet.Close()
+		return nil, fmt.Errorf("DHCPv6 listener is not UDP")
+	}
+	return conn, nil
 }
 
-func dhcpv6ListenAddr(srcLL, ifname string, port int) (*net.UDPAddr, error) {
-	addr := &net.UDPAddr{IP: net.IPv6unspecified, Port: port}
-	if srcLL != "" {
-		ip := net.ParseIP(srcLL)
-		if ip == nil {
-			return nil, fmt.Errorf("--src-ll is not an IP address: %q", srcLL)
-		}
-		addr = &net.UDPAddr{IP: ip, Port: port, Zone: ifname}
-	}
-	return addr, nil
+func dhcpv6ListenAddr(port int) *net.UDPAddr {
+	return &net.UDPAddr{IP: net.IPv6unspecified, Port: port}
 }
 
 func nextReadDeadline(ctx context.Context, now time.Time, interval time.Duration, retryAt time.Time) time.Time {

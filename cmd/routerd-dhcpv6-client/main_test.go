@@ -90,20 +90,10 @@ func TestAddressUsableInIfconfigOutput(t *testing.T) {
 	}
 }
 
-func TestDHCPv6ListenAddressesAreInterfaceScoped(t *testing.T) {
-	first, err := dhcpv6ListenAddr("fe80::10", "wan0", 546)
-	if err != nil {
-		t.Fatalf("first listen address: %v", err)
-	}
-	second, err := dhcpv6ListenAddr("fe80::20", "wan1", 546)
-	if err != nil {
-		t.Fatalf("second listen address: %v", err)
-	}
-	if first.IP.IsUnspecified() || second.IP.IsUnspecified() {
-		t.Fatalf("DHCPv6 client bind must not be wildcard: first=%v second=%v", first, second)
-	}
-	if first.Zone != "wan0" || second.Zone != "wan1" || first.IP.Equal(second.IP) {
-		t.Fatalf("scoped addresses = %v, %v", first, second)
+func TestDHCPv6ListenAddressIsWildcard(t *testing.T) {
+	addr := dhcpv6ListenAddr(546)
+	if !addr.IP.IsUnspecified() || addr.Port != 546 || addr.Zone != "" {
+		t.Fatalf("DHCPv6 listen address = %v", addr)
 	}
 }
 
