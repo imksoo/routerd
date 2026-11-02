@@ -68,15 +68,58 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "59a55f8bf93031e5464b5bd7de3fdfaf362708ac",
+    "as_of_revision": "b380bc12cb072e00e18eb2f5404a8054e59ddc6e",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
     "scoped_linux_evidence_references": 141,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 96,
-    "counting_note": "Open check statements are planning items, not a claim of 96 independent packet-level test cases. They are decomposed further before execution when a statement covers multiple protocol or recovery behaviors.",
-    "last_closed_scope": "DHCPv4 active dynamic lease recovery after an interrupted apply on an independent PVE VLAN client",
-    "next_scope": "WAN DHCP client behavior; Linux IPv6, PPPoE, routing, redundancy, and security behavior remain separately tracked in features[].required_remaining_checks."
+    "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
+    "last_closed_scope": "WAN DHCPv4 initial acquisition through the candidate router's untrusted VLAN, including an independent DHCP server and a firewall count confirming only UDP/68 reply delivery",
+    "next_scope": "LIN-DHCP4-WAN-RENEW-001",
+    "execution_board": {
+      "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
+      "active": {
+        "id": "LIN-DHCP4-WAN-RENEW-001",
+        "feature": "dhcpv4-client",
+        "state": "diagnosing",
+        "objective": "Keep the supervised Linux DHCPv4 client alive through T1 and observe a renewal from the independent PVE VLAN server without reacquiring after a child-process exit.",
+        "observed_blocker": "The integrated client bound once, then its child process ended about ten seconds later and the supervisor started a new acquisition. This is not a renewal pass.",
+        "pass_requires": [
+          "Same client process remains present until the recorded T1 renewal exchange",
+          "Renewal ACK preserves or updates address, default route and DNS as supplied by the independent server",
+          "No unrequested LAN forwarding or firewall-policy broadening"
+        ]
+      },
+      "ready_next": [
+        {
+          "id": "LIN-DHCP4-WAN-RESTART-002",
+          "feature": "dhcpv4-client",
+          "objective": "Withdraw and restore the independent DHCPv4 server, then observe rebind or expiry and address/default-route/DNS recovery."
+        },
+        {
+          "id": "LIN-IPV6-DNS-WITHDRAW-003",
+          "feature": "delegated-ipv6-and-ra",
+          "objective": "Distribute DHCPv6-provided DNS on the PVE VLAN topology, then withdraw and restore it with client-observed resolver behavior."
+        },
+        {
+          "id": "LIN-NAT-EXISTING-FLOW-004",
+          "feature": "nat-port-forward-and-redirect",
+          "objective": "Observe configured port-forward withdrawal separately for a pre-existing flow and a new flow on independent VLAN peers."
+        },
+        {
+          "id": "LIN-PPPOE-RECOVERY-005",
+          "feature": "pppoe",
+          "objective": "Exercise access-concentrator interoperability and session-loss recovery on Linux before FreeBSD work."
+        },
+        {
+          "id": "LIN-HA-VIP-TRAFFIC-006",
+          "feature": "cluster-ha-and-virtual-address",
+          "objective": "Send client traffic through an elected virtual address, then observe failover, restart and withdrawal with two independent routers."
+        }
+      ],
+      "backlog_rule": "The remaining 96 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
+    }
   },
   "examples": [
     "examples/README.md",
