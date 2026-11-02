@@ -71,11 +71,11 @@
     "as_of_revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 151,
+    "scoped_linux_evidence_references": 152,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 96,
+    "open_check_statements": 95,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "Configuration lifecycle: rejected invalid replacement, canonical retention and candidate restart recovery with independent VLAN traffic",
+    "last_closed_scope": "Management access: independent VLAN source admission, valid configuration expansion and strict-configuration recovery",
     "next_scope": null,
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
@@ -2161,6 +2161,24 @@
       ],
       "excludes": [
         "IPv6 source CIDRs, SSH, WebConsole, multiple interfaces or CIDRs, data-plane-fault continuity, existing connections and FreeBSD.",
+        "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
+      ]
+    },
+    "linux-pve-management-vlan-reconfiguration-883dacbd": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "883dacbd3df3f0725e07f2985ccfcf559089b3f4",
+      "reference": "docs/releases/evidence/routerd15-883dacbd-management-vlan-reconfiguration-pve-20261102.md",
+      "source_binding": "routerd Linux package SHA-256 cd763b1a1356053dd6e7400358119a0edfbf23c674a16a4fd07ff580d7de83ad.",
+      "environment": "Isolated PVE VLAN 3133. VM219 ran the candidate with a fresh state area and ManagementAccess on rd15-admin at 198.18.17.1/24. Independent VM220 used rd15-mgmt with source addresses 198.18.17.10/24 and 198.18.17.11/24. The observed listener was 198.18.17.1:18081.",
+      "checks": [
+        "The strict 198.18.17.10/32 configuration validated, then VM220 source 198.18.17.10 received HTTP 200 while 198.18.17.11 timed out. The rendered nftables counters then recorded one allow packet and three deny packets.",
+        "A validated replacement using 198.18.17.0/24 reached Healthy and let the formerly denied 198.18.17.11 source receive HTTP 200.",
+        "Revalidating and reapplying the strict configuration restored HTTP 200 from 198.18.17.10 and a timeout from 198.18.17.11.",
+        "An empty configuration was also applied. It removed the management-specific rules but the default input drop kept 198.18.17.11 unreachable; that result is retained as a test-design correction, not counted as an allow-without-ManagementAccess observation."
+      ],
+      "excludes": [
+        "Data-plane-fault continuity, existing connections, IPv6, SSH, WebConsole, multiple management interfaces, ordinary systemd service operation and FreeBSD.",
         "Complete routerd 1.0 functional parity and a whole-feature or whole-platform qualification verdict."
       ]
     },
@@ -4255,7 +4273,8 @@
       "linux": {
         "qualification": "unknown",
         "scoped_evidence": [
-          "linux-pve-management-source-guard-54cc8e23"
+          "linux-pve-management-source-guard-54cc8e23",
+          "linux-pve-management-vlan-reconfiguration-883dacbd"
         ]
       },
       "freebsd": {
@@ -4263,8 +4282,7 @@
         "scoped_evidence": []
       },
       "required_remaining_checks": [
-        "Real management path while data-plane faults/configuration change",
-        "Independent admission and recovery after a valid 1.5 configuration change"
+        "Real management path while data-plane faults"
       ]
     },
     {
