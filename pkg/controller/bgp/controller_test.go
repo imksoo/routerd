@@ -539,6 +539,36 @@ func TestGoBGPPeerSeparatesExplicitRemotePort(t *testing.T) {
 	}
 }
 
+func TestReconcileExplicitPeerPortKeepsNeighborIdentity(t *testing.T) {
+	router := bgpRouter()
+	resource := router.Spec.Resources[1]
+	spec, err := resource.BGPPeerSpec()
+	if err != nil {
+		t.Fatalf("peer spec: %v", err)
+	}
+	spec.Peers = []string{"10.0.0.21:179"}
+	resource.Spec = spec
+	router.Spec.Resources[1] = resource
+	server := &fakeServer{}
+	controller := Controller{
+		Router: router,
+		Store:  mapStore{},
+		FIB:    &fakeFIB{},
+		NewServer: func() GoBGPServer {
+			return server
+		},
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if err := controller.Reconcile(context.Background()); err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if server.adds != 1 || server.updates != 0 || server.deletes != 0 {
+		t.Fatalf("explicit port caused peer churn: adds=%d updates=%d deletes=%d", server.adds, server.updates, server.deletes)
+	}
+}
+
 func TestApplyRouterBGPDynamicDefaultsInheritsExactRouterImportPolicy(t *testing.T) {
 	routerSpec := api.BGPRouterSpec{
 		ConvergenceProfile: "fast",

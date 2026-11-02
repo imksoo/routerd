@@ -778,12 +778,12 @@ func (c *Controller) hydrateAppliedState(applied bgpdaemon.AppliedConfig) {
 	c.pendingDirectPeerAdditions = map[string]bool{}
 	for _, address := range applied.PendingDirectPeerAdditions {
 		if address = strings.TrimSpace(address); address != "" {
-			c.pendingDirectPeerAdditions[address] = true
+			c.pendingDirectPeerAdditions[desiredPeerKey(address)] = true
 		}
 	}
 	for _, address := range applied.PendingDirectPeerRemovals {
 		if address = strings.TrimSpace(address); address != "" {
-			c.retiringDirectPeerAddresses[address] = true
+			c.retiringDirectPeerAddresses[desiredPeerKey(address)] = true
 		}
 	}
 }
@@ -938,7 +938,8 @@ func (c *Controller) desiredPeers(routerName string, localASN uint32) (map[strin
 		rejectDirectPeerRoutes := directPeer && strings.EqualFold(strings.TrimSpace(resource.Metadata.Annotations[mobilityconfig.SAMTransportDirectPeerRejectRoutesAnnotation]), "true")
 		for _, peer := range spec.Peers {
 			peer = strings.TrimSpace(peer)
-			out[peer] = desiredPeer{
+			key := desiredPeerKey(peer)
+			out[key] = desiredPeer{
 				Address:                 peer,
 				SendCommunity:           send,
 				ASN:                     spec.PeerASN,
@@ -1137,6 +1138,14 @@ func sortedDesiredDynamicPeers(peers map[string]desiredDynamicPeer) []desiredDyn
 func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.AppliedPeer) map[string]desiredPeer {
 	out := map[string]desiredPeer{}
 	for address, peer := range peers {
+		peerAddress := strings.TrimSpace(peer.Address)
+		if peerAddress == "" {
+			peerAddress = strings.TrimSpace(address)
+		}
+		key := desiredPeerKey(peerAddress)
+		if key == "" {
+			continue
+		}
 		gr := disabledGracefulRestartSpec()
 		if peer.GracefulRestart != nil {
 			enabled := peer.GracefulRestart.Enabled
@@ -1144,8 +1153,8 @@ func desiredPeersFromApplied(localASN uint32, peers map[string]bgpdaemon.Applied
 			gr.RestartTime = fmt.Sprintf("%ds", peer.GracefulRestart.RestartTime)
 			gr.StalePathTime = fmt.Sprintf("%ds", peer.GracefulRestart.StaleRoutesTime)
 		}
-		out[address] = desiredPeer{
-			Address:                 peer.Address,
+		out[key] = desiredPeer{
+			Address:                 peerAddress,
 			SendCommunity:           peer.SendCommunity,
 			ASN:                     peer.ASN,
 			LocalASN:                localASN,
@@ -1761,28 +1770,32 @@ func (c *Controller) persistDirectPeerRetirements(ctx context.Context, addresses
 			retiring[address] = true
 		}
 	}
+	runtimeRetiring := map[string]bool{}
 	for _, address := range addresses {
 		address = strings.TrimSpace(address)
 		if address == "" {
 			continue
 		}
-		existing, found := pending.Peers[address]
+		key := desiredPeerKey(address)
+		peer, found := c.desiredPeerKeys[key]
+		if !found || !peer.PreserveImportPrefixes {
+			peer, found = c.appliedPeerKeys[key]
+		}
+		if !found || !peer.PreserveImportPrefixes {
+			return fmt.Errorf("cannot persist direct peer retirement for %s without its direct peer record", address)
+		}
+		storageAddress := strings.TrimSpace(peer.Address)
+		existing, found := pending.Peers[storageAddress]
 		if !found || !existing.PreserveImportPrefixes {
 			// A direct peer can have been successfully updated in GoBGP just
 			// before the normal final applied-state save. In that crash window
 			// pending.Peers still describes the preceding fallback peer. Replace
 			// that stale record with the in-memory direct record so the durable
 			// retirement marker remains valid and restart-safe.
-			peer, found := c.desiredPeerKeys[address]
-			if !found || !peer.PreserveImportPrefixes {
-				peer, found = c.appliedPeerKeys[address]
-			}
-			if !found || !peer.PreserveImportPrefixes {
-				return fmt.Errorf("cannot persist direct peer retirement for %s without its direct peer record", address)
-			}
-			pending.Peers[address] = appliedPeer(peer)
+			pending.Peers[storageAddress] = appliedPeer(peer)
 		}
-		retiring[address] = true
+		retiring[storageAddress] = true
+		runtimeRetiring[key] = true
 	}
 	pending.PendingDirectPeerRemovals = mapKeys(retiring)
 	pending = bgpdaemon.Normalize(pending)
@@ -1793,7 +1806,7 @@ func (c *Controller) persistDirectPeerRetirements(ctx context.Context, addresses
 	if c.retiringDirectPeerAddresses == nil {
 		c.retiringDirectPeerAddresses = map[string]bool{}
 	}
-	for address := range retiring {
+	for address := range runtimeRetiring {
 		c.retiringDirectPeerAddresses[address] = true
 	}
 	return nil
@@ -1815,6 +1828,7 @@ func (c *Controller) persistDirectPeerAddition(ctx context.Context, routerSpec r
 	if pending.Peers == nil {
 		pending.Peers = map[string]bgpdaemon.AppliedPeer{}
 	}
+	key := desiredPeerKey(peer.Address)
 	pending.Peers[peer.Address] = appliedPeer(peer)
 	additions := map[string]bool{}
 	for _, address := range pending.PendingDirectPeerAdditions {
@@ -1832,11 +1846,11 @@ func (c *Controller) persistDirectPeerAddition(ctx context.Context, routerSpec r
 	if c.appliedPeerKeys == nil {
 		c.appliedPeerKeys = map[string]desiredPeer{}
 	}
-	c.appliedPeerKeys[peer.Address] = peer
+	c.appliedPeerKeys[key] = peer
 	if c.pendingDirectPeerAdditions == nil {
 		c.pendingDirectPeerAdditions = map[string]bool{}
 	}
-	c.pendingDirectPeerAdditions[peer.Address] = true
+	c.pendingDirectPeerAdditions[key] = true
 	return nil
 }
 
@@ -2589,7 +2603,7 @@ func (c *Controller) peerConfigHashes(resource routerapi.Resource) map[string]st
 	out := map[string]string{}
 	for _, address := range spec.Peers {
 		address = strings.TrimSpace(address)
-		if peer, ok := c.desiredPeerKeys[address]; ok {
+		if peer, ok := c.desiredPeerKeys[desiredPeerKey(address)]; ok {
 			out[address] = desiredPeerHash(peer)
 		}
 	}
@@ -2697,6 +2711,15 @@ func goBGPPeerEndpoint(value string) (string, uint32) {
 		return value, 0
 	}
 	return host, uint32(port)
+}
+
+// desiredPeerKey is the static neighbor identity shared by the configuration
+// and GoBGP's ListPeer response. The configuration retains its endpoint so an
+// explicit transport port is still applied, while reconciliation uses the
+// address that GoBGP reports for that neighbor.
+func desiredPeerKey(value string) string {
+	address, _ := goBGPPeerEndpoint(value)
+	return strings.TrimSpace(address)
 }
 
 func goBGPPeerTransport(passiveMode bool, remotePort uint32) *gobgpapi.Transport {
