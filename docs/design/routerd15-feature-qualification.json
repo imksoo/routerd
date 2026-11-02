@@ -71,12 +71,12 @@
     "as_of_revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 180,
+    "scoped_linux_evidence_references": 181,
     "feature_functions_fully_qualified": 0,
-    "open_check_statements": 89,
+    "open_check_statements": 88,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "VRRP：独立クライアント実通信、主系停止引継ぎ、構成撤回、再適用復旧",
-    "next_scope": "`HealthCheck` と `EgressRoutePolicy`：物理 WAN 障害",
+    "last_closed_scope": "PVE 仮想 NIC の WAN リンク断：独立クライアント実通信、WAN-B 切替、リンク復帰、構成撤回・再適用",
+    "next_scope": "DHCPv6 prefix-delegation lifecycle：独立 PVE ピアでの更新、失効撤回、復旧",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -2389,6 +2389,22 @@
         "物理 WAN 障害、既存 TCP 接続、DHCP リース継続、IPv6 VRRP、FreeBSD、および全機能認定。"
       ]
     },
+    "linux-pve-physical-wan-link-81444257": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
+      "reference": "evidence/routerd15-81444257-physical-wan-link-pve-20261102.md",
+      "source_binding": "候補配布物 SHA-256 a07047cfc3bc3fc9131fc2bbda7e052bc736f0e52cc1deb7229fafa5cdb039a7。",
+      "environment": "PVE VLAN 3131、3132、3133。VM219 候補、VM220 独立二上流、VM224 独立クライアント。WAN-A 専用仮想 NIC の PVE リンク状態を変更した。",
+      "checks": [
+        "通常時の WAN-A 選択と、独立クライアント HTTP の NAT44 後送信元 198.18.16.2 を独立上流で確認した。",
+        "PVE が WAN-A 専用仮想 NIC を link_down=1 にすると、候補の ens19 は NO-CARRIER、WAN-A HealthCheck は Unhealthy、選択は WAN-B となり、独立クライアント HTTP は NAT44 後送信元 198.18.17.1 で継続した。",
+        "PVE のリンク復帰後、候補の再起動や設定再適用なしに WAN-A と送信元 198.18.16.2 へ復帰した。空構成への置換は方針と新規 HTTP を撤回し、同じ構成の再適用は両方を復旧した。"
+      ],
+      "excludes": [
+        "物理ケーブル、回線終端装置、ISP 網、PPPoE、IPv6 動的経路、ECMP、既存 TCP 接続、同時多重障害、FreeBSD、および全機能認定。"
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4484,7 +4500,8 @@
           "linux-pve-ipv4-mark-policy-81444257",
           "linux-pve-ipv4-hash-policy-81444257",
           "linux-pve-dhcpv4-policy-81444257",
-          "linux-pve-vrrp-81444257"
+          "linux-pve-vrrp-81444257",
+          "linux-pve-physical-wan-link-81444257"
         ]
       },
       "freebsd": {
@@ -4494,9 +4511,7 @@
           "freebsd-pf-two-egress-52a52b4c"
         ]
       },
-      "required_remaining_checks": [
-        "物理 WAN 障害"
-      ]
+      "required_remaining_checks": []
     },
     {
       "id": "event-rules-and-derived-events",

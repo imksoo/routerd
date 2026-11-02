@@ -136,6 +136,19 @@ WAN アドレス、既定経路、経路表 123 が撤回され、HTTP は失敗
 [`routerd15-81444257-dhcpv4-policy-pve-20261102.md`](../../evidence/routerd15-81444257-dhcpv4-policy-pve-20261102.md)
 に記録しています。異なるゲートウェイへの切替、VRRP、物理 WAN 障害は未試験です。
 
+現行リビジョン `81444257` では、PVE VM219 の VLAN 3132 専用 WAN-A 仮想 NIC を
+`link_down=1` にして、WAN リンク断を実通信で確認しました。VM219 の `ens19` は
+`NO-CARRIER` となり、WAN-A の HealthCheck は `Unhealthy`、優先 EgressRoutePolicy は
+WAN-B へ切り替わりました。VLAN 3131 の独立 VM224 の新規 HTTP は継続し、VLAN 3133 の
+独立 VM220 は NAT44 後の送信元 `198.18.17.1` を記録しました。
+
+`link_down=0` の復帰では、候補機の再起動や設定再適用なしに WAN-A と送信元
+`198.18.16.2` へ戻りました。空の新規 1.5 構成への置換は経路方針と新規 HTTP を撤回し、
+同じ構成の再適用は復旧しました。これは PVE 仮想 NIC のリンク状態試験であり、物理ケーブル、
+回線終端装置、ISP 網の切断試験ではありません。詳細は
+[`routerd15-81444257-physical-wan-link-pve-20261102.md`](../../evidence/routerd15-81444257-physical-wan-link-pve-20261102.md)
+に記録しています。
+
 Linux DHCPv4 サーバーと予約の PVE 試験は `2c3fe143` に記録しています。VM219 を候補ルーター、
 VM224 を予約済み MAC アドレスのクライアント、VM220 を別 MAC アドレスの動的クライアントとして
 VLAN 3131 に接続しました。VM224 は予約アドレス `198.18.15.50`、VM220 は同じアドレスを要求しても
