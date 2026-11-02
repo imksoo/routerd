@@ -62,10 +62,10 @@ func (c DSLiteTunnelController) checkTunnelInputs(ctx context.Context, name stri
 		return err
 	}
 	for _, receipt := range receipts {
-		if receipt.Name != name {
+		if receipt.Interface != source.Interface || receipt.Address != source.Address+"/128" || receipt.PDName != source.PDName || receipt.PDPrefix != source.PDPrefix || receipt.ValidUntil != pdLifetimeDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds) {
 			continue
 		}
-		if receipt.Pending || receipt.Interface != source.Interface || receipt.Address != source.Address+"/128" || receipt.PDName != source.PDName || receipt.PDPrefix != source.PDPrefix || receipt.ValidUntil != pdLifetimeDeadline(source.Lease.LastReplyAt, source.Lease.ValidSeconds) {
+		if receipt.Pending {
 			return errDSLiteInputsChanged
 		}
 		observed, err := c.observeEndpoint(ctx, source.Interface, receipt.Address)
