@@ -764,6 +764,15 @@ func TestIPv4PolicyRouteGatewayResolution(t *testing.T) {
 	if gateway, err := controller.routeGateway(ctx, "wan0", "dhcpv4", "192.0.2.1"); err != nil || gateway != "192.0.2.1" {
 		t.Fatalf("dhcpv4 pre-resolved gateway = %q err=%v", gateway, err)
 	}
+	controller.CommandOutput = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "ip" || strings.Join(args, " ") != "-4 route show default dev wan0" {
+			return nil, fmt.Errorf("unexpected command %s %v", name, args)
+		}
+		return []byte("default via 198.18.16.1 dev wan0 proto dhcp metric 4242\n"), nil
+	}
+	if gateway, err := controller.routeGateway(ctx, "wan0", "dhcpv4", ""); err != nil || gateway != "198.18.16.1" {
+		t.Fatalf("dhcpv4 derived gateway = %q err=%v", gateway, err)
+	}
 	if _, err := controller.routeGateway(ctx, "wan0", "static", ""); err == nil {
 		t.Fatal("empty static gateway should be rejected")
 	}

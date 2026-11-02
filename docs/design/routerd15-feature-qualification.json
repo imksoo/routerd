@@ -71,12 +71,12 @@
     "as_of_revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 41,
-    "scoped_linux_evidence_references": 178,
+    "scoped_linux_evidence_references": 179,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 89,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "`EgressRoutePolicy` の IPv4 ハッシュ方式：独立クライアント実通信、撤去、復旧",
-    "next_scope": "`HealthCheck` と `EgressRoutePolicy`：動的ゲートウェイまたは送信元、VRRP、物理 WAN 障害",
+    "last_closed_scope": "`EgressRoutePolicy` の DHCPv4 動的ゲートウェイ：独立クライアント実通信、リース失効、復旧",
+    "next_scope": "`HealthCheck` と `EgressRoutePolicy`：VRRP、物理 WAN 障害",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -147,7 +147,7 @@
           ]
         }
       ],
-      "backlog_rule": "The remaining 90 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
+      "backlog_rule": "The remaining 89 planning statements stay individually attached to features[].required_remaining_checks. Before execution, expand only the selected statement into observed packets or traffic, withdrawal, recovery and security-boundary assertions; do not add hypothetical rejection matrices."
     }
   },
   "examples": [
@@ -2357,6 +2357,22 @@
       ],
       "excludes": ["動的ゲートウェイまたは送信元、VRRP、物理 WAN 障害、FreeBSD、および全機能認定。"]
     },
+    "linux-pve-dhcpv4-policy-81444257": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "81444257bd89a9f3f25ed9fd7e7f1023c6fa18c9",
+      "reference": "evidence/routerd15-81444257-dhcpv4-policy-pve-20261102.md",
+      "source_binding": "候補配布物 SHA-256 a07047cfc3bc3fc9131fc2bbda7e052bc736f0e52cc1deb7229fafa5cdb039a7。",
+      "environment": "PVE VLAN 3131 と VLAN 3132。VM219 候補、独立 VM224 クライアント、独立 VM220 DHCPv4 サーバおよび HTTP 上流。",
+      "checks": [
+        "DHCPv4 で得たゲートウェイ 198.18.16.1 を、経路表 123、優先度 10123、マーク 0x122 の IPv4 方針経路へ反映した。",
+        "独立クライアントの新規 HTTP は独立上流へ到達し、上流は NAT44 後の送信元 198.18.16.100 を記録した。",
+        "独立 DHCPv4 サーバの停止後、リース失効は候補の WAN アドレス、既定経路、経路表 123 を撤回して通信を停止した。サーバだけの再開は候補の再起動なしに全てを復旧した。"
+      ],
+      "excludes": [
+        "異なるゲートウェイへの切替、送信元選択、VRRP、物理 WAN 障害、IPv6 動的ゲートウェイ、FreeBSD、および全機能認定。"
+      ]
+    },
     "linux-pve-dns-three-vm-vlan-485b0f7b": {
       "level": "independent-peer",
       "outcome": "pass",
@@ -4450,7 +4466,8 @@
           "linux-pve-health-policy-package-restart-81444257",
           "linux-pve-ipv6-host-policy-81444257",
           "linux-pve-ipv4-mark-policy-81444257",
-          "linux-pve-ipv4-hash-policy-81444257"
+          "linux-pve-ipv4-hash-policy-81444257",
+          "linux-pve-dhcpv4-policy-81444257"
         ]
       },
       "freebsd": {
@@ -4461,7 +4478,7 @@
         ]
       },
       "required_remaining_checks": [
-        "動的ゲートウェイまたは送信元、VRRP、物理 WAN 障害"
+        "VRRP、物理 WAN 障害"
       ]
     },
     {
