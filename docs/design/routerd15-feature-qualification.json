@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "8dc7e08ec3f286ace9cc1e30cf408971e0506735",
+    "as_of_revision": "edffd8a0bbf11439080c3d43c7a82a32b2380f7e",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 163,
+    "scoped_linux_evidence_references": 164,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "PortForward: PVE VLAN new flow, established-flow retention, withdrawal and recovery",
-    "next_scope": "LIN-PORTFORWARD-EXISTING-FLOW-011",
+    "last_closed_scope": "WireGuard: 現行 Linux PVE ピア、親の復旧、撤回、再適用",
+    "next_scope": "LIN-IPIP-PVE-012",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -111,6 +111,28 @@
             "WAN peer reaches declared TCP PortForward backend",
             "After withdrawal, a new WAN connection is denied while the established mapped flow remains observable",
             "Restoring the PortForward restores new WAN traffic without management loss"
+          ]
+        },
+        {
+          "id": "LIN-WIREGUARD-PARENT-CHILD-012",
+          "feature": "WireGuard 親子資源",
+          "state": "passed",
+          "objective": "独立 PVE VLAN ピアで、現行 Linux の WireGuard 親、子アドレス、経路、親の復旧、撤回、再適用を観測する。",
+          "pass_requires": [
+            "独立ピアが routerd 所有の親を通じて認証済みトンネル通信を交換する",
+            "親の停止後に routerd が親、子アドレス、経路を復旧する",
+            "構成置換で親、子アドレス、経路を撤回し、再適用でピア通信を戻す"
+          ]
+        },
+        {
+          "id": "LIN-IPIP-PVE-012",
+          "feature": "TunnelInterface IPIP 親子資源",
+          "state": "planned",
+          "objective": "独立 PVE VLAN の外側ピアで、routerd 所有 IPIP 親、子アドレス、経路、撤回、再適用を観測する。",
+          "pass_requires": [
+            "独立ピアが routerd 所有の親を通じて IPIP 通信を交換する",
+            "構成撤回で親、子アドレス、経路を消去し、再適用でピア通信を戻す",
+            "PVE 試験後に試験用インターフェース、経路、ファイアウォール規則、鍵を残さない"
           ]
         }
       ],
@@ -542,6 +564,25 @@
       ],
       "excludes": [
         "FreeBSD、物理回線および完全な WireGuard 機能認定"
+      ]
+    },
+    "linux-wireguard-pve-edffd8a0": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "edffd8a0bbf11439080c3d43c7a82a32b2380f7e",
+      "reference": "evidence/routerd15-edffd8a0-wireguard-parent-child-pve-20261102.md",
+      "source_binding": {
+        "routerd_archive_sha256": "e44cf91f10ff3ff46755cd57aa8656d711985eca5b3ce5ed3b6433147e8aafdc"
+      },
+      "environment": "隔離 PVE の VLAN 3132。VM219 は空の 1.5 状態領域で候補 routerd を稼働し、VM220 は独立した Linux WireGuard ピアです。",
+      "checks": [
+        "候補 routerd が WireGuard 親、子 IPv4 アドレス、経路、外側 WAN 受信許可を作成した",
+        "独立ピアとの認証済みハンドシェイクおよび候補からの 3/3 ICMP を観測した",
+        "親を停止後に routerd が親を復旧し、子アドレスと経路を保って 3/3 ICMP が戻った",
+        "構成撤回は親、子アドレス、経路と独立ピア到達性を消去し、再適用後の独立ピア ICMP は 3/3 成功した"
+      ],
+      "excludes": [
+        "鍵ローテーション、複数ピアの経路制御、高可用性、FreeBSD、物理回線および完全な WireGuard 機能認定"
       ]
     },
     "linux-vrf-pve-c6b42c1c": {
@@ -3047,7 +3088,8 @@
           "linux-wireguard-peer-f54ceecb",
           "linux-combined-native-3e58c93a",
           "linux-wireguard-pve-b1ae8709",
-          "linux-wireguard-pve-8e732fe2"
+          "linux-wireguard-pve-8e732fe2",
+          "linux-wireguard-pve-edffd8a0"
         ]
       },
       "freebsd": {
