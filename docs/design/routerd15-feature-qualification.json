@@ -68,15 +68,15 @@
     "example_inventory_rule": "examples[] is the exact set of 90 baseline tracked paths. Presence is verified at the pinned current revision; complete semantic/example execution is unknown. Only declared-kind changes are listed separately."
   },
   "linux_execution_progress": {
-    "as_of_revision": "edffd8a0bbf11439080c3d43c7a82a32b2380f7e",
+    "as_of_revision": "0067d447677b2193a83f85f94a7bb36d868f25af",
     "feature_functions_total": 50,
     "feature_functions_with_scoped_linux_evidence": 42,
-    "scoped_linux_evidence_references": 164,
+    "scoped_linux_evidence_references": 165,
     "feature_functions_fully_qualified": 0,
     "open_check_statements": 94,
     "counting_note": "Open check statements are the managed backlog. They are not represented as a fictitious count of packet cases: each statement is decomposed into a concrete peer, traffic, withdrawal and recovery observation when it enters the execution board.",
-    "last_closed_scope": "WireGuard: 現行 Linux PVE ピア、親の復旧、撤回、再適用",
-    "next_scope": "LIN-IPIP-PVE-012",
+    "last_closed_scope": "IPIP: 現行 Linux PVE ピア、親子資源、撤回、再適用",
+    "next_scope": "LIN-FOU-PVE-013",
     "execution_board": {
       "rule": "A board item closes only the named observation. A passing item neither qualifies its whole feature nor reduces a different required_remaining_checks statement.",
       "active": {
@@ -127,12 +127,23 @@
         {
           "id": "LIN-IPIP-PVE-012",
           "feature": "TunnelInterface IPIP 親子資源",
-          "state": "planned",
+          "state": "passed",
           "objective": "独立 PVE VLAN の外側ピアで、routerd 所有 IPIP 親、子アドレス、経路、撤回、再適用を観測する。",
           "pass_requires": [
             "独立ピアが routerd 所有の親を通じて IPIP 通信を交換する",
             "構成撤回で親、子アドレス、経路を消去し、再適用でピア通信を戻す",
             "PVE 試験後に試験用インターフェース、経路、ファイアウォール規則、鍵を残さない"
+          ]
+        },
+        {
+          "id": "LIN-FOU-PVE-013",
+          "feature": "TunnelInterface FOU 親子資源",
+          "state": "planned",
+          "objective": "独立 PVE VLAN の外側 UDP ピアで、現行 Linux の FOU 親、子アドレス、経路、撤回、再適用を観測する。",
+          "pass_requires": [
+            "独立ピアが routerd 所有の FOU 親を通じてカプセル化通信を交換する",
+            "構成撤回で親、子アドレス、経路を消去し、再適用でピア通信を戻す",
+            "PVE 試験後に試験用インターフェース、経路、ファイアウォール規則を残さない"
           ]
         }
       ],
@@ -2646,6 +2657,26 @@
         "固定の切替時間、物理 WAN 障害、再起動または再起動後の永続性、IPv6、VRRP、ハッシュ選択、動的ゲートウェイおよび送信元モード。",
         "FreeBSD、および健全性連動ルーティング全体または routerd 1.0 全機能の合格判定。"
       ]
+    },
+    "linux-ipip-pve-0067d447": {
+      "level": "independent-peer",
+      "outcome": "pass",
+      "revision": "0067d447677b2193a83f85f94a7bb36d868f25af",
+      "reference": "evidence/routerd15-0067d447-ipip-parent-child-pve-20261102.md",
+      "source_binding": {
+        "routerd_archive_sha256": "8e8814884d49f5a23c96b1f3b65e17b03ce57bdacb37b0d58d40daac21470169"
+      },
+      "environment": "隔離 PVE の VLAN 3132。VM219 は新規 1.5 設定で候補 routerd を稼働し、VM220 は独立した Linux IPIP ピアです。",
+      "checks": [
+        "候補 routerd が IPIP 親、子 IPv4 アドレス、経路、外側 WAN 受信許可を作成した",
+        "新規 1.5 設定の FirewallZone が TunnelInterface を参照し、入力ゾーン規則へ実際に接続された",
+        "独立ピアとの ICMP は双方とも 3/3 成功した",
+        "構成撤回は親、子アドレス、経路と独立ピア到達性を消去し、再適用後の双方 ICMP は各 3/3 成功した",
+        "PVE の試験用 ISO、配布アーカイブ、接続、スナップショットを削除し、VM219 と VM220 は稼働、VM224 は停止へ復元した"
+      ],
+      "excludes": [
+        "FOU/GUE、複数トンネルの経路制御、高可用性、FreeBSD、物理回線および完全な TunnelInterface 機能認定"
+      ]
     }
   },
   "features": [
@@ -3974,7 +4005,8 @@
         "scoped_evidence": [
           "linux-fou-candidate-5be3b91e",
           "linux-gue-candidate-5be3b91e",
-          "linux-fou-gue-candidate-fedafe49"
+          "linux-fou-gue-candidate-fedafe49",
+          "linux-ipip-pve-0067d447"
         ]
       },
       "freebsd": {
@@ -3984,7 +4016,7 @@
         ]
       },
       "required_remaining_checks": [
-        "Actual IPIP/FOU/WireGuard peers and routing",
+        "現行 Linux 実行物での独立 FOU ピアと経路",
         "Native parent proof, MTU, cloud/on-prem source identity and withdrawal"
       ],
       "finding_references": [
